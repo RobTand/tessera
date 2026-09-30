@@ -33,7 +33,7 @@ def main():
     store = dense.Store(args.stub)
     with dense.init_vllm_world1():
         for module in args.modules.split(","):
-            short = f"{module.split('.')[-3]}.{module.split('.')[-1]}"
+            short = dense.short_name(module)
             for leg, fused in (("fused", True), ("triton", False)):
                 layer, method, info = dense.build_served(store, module, mode="resident", tp_rank=0,
                                                          tp_size=1, fused=fused)

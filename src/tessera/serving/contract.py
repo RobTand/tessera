@@ -1174,7 +1174,7 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
                     f"{spot} is empty; a lane with no wire predicate omits the block rather "
                     "than publishing an empty one, because 'no constraint' and 'nobody wrote "
                     "the constraint down' must not read the same to a gate")
-            for field in ("column_rates", "window_bits", "grid_arities"):
+            for field in ("column_rates", "column_rates_routed_moe", "window_bits", "grid_arities"):
                 if field not in lane["requires"]:
                     continue
                 values = lane["requires"][field]
@@ -1187,6 +1187,21 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
                 if sorted(values) != list(values) or len(set(values)) != len(values):
                     raise ValueError(
                         f"{spot}.{field} must be ascending and without repeats, got {values!r}")
+            # A structure-scoped rate set (tessera#694) narrows the lane's own:
+            # a launch cannot reach a rate the lane does not read, and the
+            # field is meaningless without the wire predicate it narrows.
+            if "column_rates_routed_moe" in lane["requires"]:
+                if "column_rates" not in lane["requires"]:
+                    raise ValueError(
+                        f"{spot}.column_rates_routed_moe narrows column_rates, which this lane "
+                        "does not publish; a launch bound without the wire predicate it narrows "
+                        "is not decidable")
+                extra = sorted(set(lane["requires"]["column_rates_routed_moe"])
+                               - set(lane["requires"]["column_rates"]))
+                if extra:
+                    raise ValueError(
+                        f"{spot}.column_rates_routed_moe names {extra}, which column_rates does "
+                        "not; the routed-expert launch cannot reach a rate the lane does not read")
             # The decoration classes (#264): whether the lane reads a unit
             # that CARRIES the thing.  A boolean, so 'false' is a claim ("it
             # does not") and an absent field is an absence, exactly as for
@@ -2428,7 +2443,7 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
 
 
 def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],
-                          rates: "tuple[int, ...]", grid: str) -> tuple[str, ...]:
+                          rates: "tuple[int, ...]", grid: str, structure: str) -> tuple[str, ...]:
     """Which of ``route``'s extension lanes can read a rung, by the published predicate.
 
     The predicate is the one the extension itself publishes at
@@ -2442,7 +2457,10 @@ def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping
     are tied to ``kernel_window_gemv``'s own constants by
     ``tests/test_lane_reachability.py``, so a cell whose ``executes`` names
     a lane launch is bound to the kernel transitively, and the day the
-    kernel drops a rate the contract stops validating.
+    kernel drops a rate the contract stops validating.  ``structure`` is the
+    cell's: a lane may publish a rate set its routed-expert launch reaches
+    that is narrower than what it reads (``column_rates_routed_moe``,
+    tessera#694), and the decision core decides it against the structure.
     """
     from ..alphabet import SERIALISABLE_GRIDS
     from .scheme import decide_lane_requirements
@@ -2459,6 +2477,7 @@ def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping
         "plane": route_wire_spelling("plane", str(wire["plane"])),
         "release_overrides": 0, "diagonals": False, "start_state": False,
         "rotation": "NONE", "grid_arity": arities[grid],
+        "structure": str(structure),
     }
     out = []
     for entry in contract["native_extensions"]:
@@ -2490,7 +2509,7 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     structure, regime, the residency its serve flag names, and the lanes each of its
     rungs can reach.
     """
-    from ..grammar import rate_set, root_from_q256
+    from ..grammar import rate_set
     from .scheme import launch_pairs
 
     wires = {int(w["q256"]): w for w in entry["attested_wire"]}
@@ -2518,7 +2537,7 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     for rung in cell["rungs_q256"]:
         rates = rate_set(Fraction(int(rung) * ar, 256), cap=cap)
         lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
-                                      str(entry["grid"]))
+                                      str(entry["grid"]), str(cell["structure"]))
         for mode in modes:
             want |= launch_pairs(route, structure=cell["structure"],
                                  regime=cell["regime"], mode=mode, lanes=lanes)
@@ -2875,8 +2894,10 @@ def validate_producer_interface(block: Any, where: str) -> None:
     producer decides whether to pass the option from the pinned runtime's own
     table.  Every value but ``drivers`` is a constant this module owns and
     :mod:`tessera.producer_authority` reads, and is checked here; the
-    ``drivers`` list names repository files the installed package does not
-    carry, so its equality with the tree is held by
+    ``drivers`` list names the repository entry points that declare the
+    option -- driver scripts outside the package (``experiments/``,
+    ``tools/``) and package modules alike (``src/tessera/export_serving.py``
+    since tessera#687) -- so its equality with the tree is held by
     ``tests/test_producer_authority_drivers.py``.
     """
     _require_keys(block, where, required={"schema", "reuse_authority"})

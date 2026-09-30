@@ -31,6 +31,65 @@ def write_serving_manifest(path: Path, manifest: dict) -> None:
     path.write_bytes(json.dumps(manifest, separators=(",", ":")).encode("utf-8"))
 
 
+def require_json(value, what: str) -> None:
+    """Refuse ``value`` unless :func:`write_serving_manifest` can serialize it.
+
+    A driver calls this on a record it will write at the end of a long run,
+    so a non-JSON value (an argparse ``Path``, say) refuses in seconds and by
+    its key, not after the encode. Raises ``ValueError`` naming ``what`` and
+    the dotted key of the first offending value.
+    """
+    try:
+        json.dumps(value, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{what} is not JSON: {_first_non_json(value, what) or exc}") from exc
+
+
+def _first_non_json(value, where):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, (str, int, float, bool)) and key is not None:
+                return f"{where} has a {type(key).__name__} key"
+            found = _first_non_json(item, f"{where}.{key}")
+            if found:
+                return found
+        return None
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found = _first_non_json(item, f"{where}[{index}]")
+            if found:
+                return found
+        return None
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return None
+    return f"{where} is {type(value).__name__}"
+
+
+def unique_json_pairs(pairs):
+    """Object-pairs hook refusing duplicate keys (tessera#703).
+
+    Single home for the strict-load discipline: ``cached_unit.read_manifest``
+    uses this rather than keeping its own copy, so the byte layer stays
+    torch-free and every strict reader refuses the same way.
+    """
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def read_serving_manifest(path: "str | Path") -> dict:
+    """Load ``tessera_serving_manifest.json``, refusing duplicate keys.
+
+    The strict counterpart to :func:`write_serving_manifest`: every reader
+    of a serving manifest goes through here so a duplicate-keyed sidecar is
+    refused at read instead of being admitted silently.
+    """
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique_json_pairs)
+
+
 def parse_partition(value: str) -> tuple[int, int]:
     try:
         index, count = map(int, value.split("/"))
@@ -241,11 +300,26 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
     """
     if not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", runtime_image or ""):
         raise ValueError("partition runtime image must be an exact repository@sha256 digest")
+    # ``root`` is a checkout root (holding ``src/`` and ``experiments/``)
+    # or an installed holder (holding the ``tessera`` package, #691 item
+    # 4): the digest covers the code the exporter runs from either way, and
+    # anything else is refused with its location.
+    if (root / "experiments").is_dir() and (root / "src").is_dir():
+        paths = sorted([*(p for p in root.joinpath("src").rglob("*")
+                           if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}),
+                        *root.joinpath("experiments").glob("*.py"),
+                        root / "src/tessera/serving/runtime_contract.json"])
+    elif (root / "tessera" / "serving").is_dir():
+        package = root / "tessera"
+        paths = sorted([*(p for p in package.rglob("*")
+                           if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}
+                           and p.is_file() and "__pycache__" not in p.parts),
+                        package / "serving" / "runtime_contract.json"])
+    else:
+        raise FileNotFoundError(
+            f"{root} is neither a Tessera checkout (src/ + experiments/) "
+            "nor a directory holding an installed tessera package")
     digest = hashlib.sha256()
-    paths = sorted([*(p for p in root.joinpath("src").rglob("*")
-                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}),
-                    *root.joinpath("experiments").glob("*.py"),
-                    root / "src/tessera/serving/runtime_contract.json"])
     for path in paths:
         digest.update(str(path.relative_to(root)).encode() + b"\0")
         digest.update(path.read_bytes())
@@ -328,6 +402,141 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
     return total
 
 
+def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
+                                      *, window_bits: int, tile_rows: int) -> int:
+    """One expert projection's slot in the compact routed lane (tessera#624).
+
+    The runtime's compact window lane (``serving.moe_route`` with
+    ``compact_window_lane`` true, every TESSERA_FP8/TESSERA_BF16 stack) never
+    allocates a decoded tile: ``native_window_moe.WindowUnitAxis._alloc``
+    holds, per part and per expert, the repacked BODY words (rows padded to
+    the 512-row tile, ``sum(rates)`` bits per padded row), one ``[rate, col0,
+    n, word0]`` int32 run per distinct rate, the fp32 row scales, the int32
+    column permutation and initial-state register (``cols`` each), the
+    family's state table (bf16 ``2^L`` values for the value family; uint8
+    ``2^L`` codes plus the 256-byte native grid for e4m3), and four int32
+    per-expert scalars (``tile_words``, ``total_words``, ``has_init`` and
+    ``finish``'s ``word_off``).  This prices exactly those tensors from the
+    unit's own verified manifest (rates, window bits, geometry); the
+    per-part ``run_off`` is :func:`routed_window_part_resident_bytes` and
+    the fused lane's tables :func:`routed_fused_unit_bytes`.
+
+    Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
+    (w13) or columns and their rate slice (w2) through the same function.
+    """
+    if family not in ("TESSERA_BF16", "TESSERA_FP8"):
+        raise ValueError(f"no compact routed accounting for family {family!r}")
+    rows, cols, bits, tile = int(rows), int(cols), int(window_bits), int(tile_rows)
+    rates = tuple(int(rate) for rate in rates)
+    if rows <= 0 or cols <= 0 or len(rates) != cols or tile <= 0 or tile % 8:
+        raise ValueError("invalid compact routed unit geometry")
+    if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
+        raise ValueError("invalid compact routed window layout")
+    padded = -(-rows // tile) * tile
+    words = padded * sum(rates) // 8
+    tables = (1 << bits) * 2 if family == "TESSERA_BF16" else (1 << bits) + 256
+    runs = len(set(rates)) * 16
+    per_expert_scalars = 4 * 4  # tile_words, total_words, has_init, word_off (int32)
+    return words + tables + rows * 4 + runs + cols * 8 + per_expert_scalars
+
+
+def routed_window_part_resident_bytes(experts: int) -> int:
+    """The per-part ``run_off`` the axis adds at ``finish``: ``[E + 1]``
+    int64, since ``torch.cumsum`` promotes the int32 run counts it sums
+    (``WindowUnitAxis.finish`` and ``prepare_grouped_window_gemm`` alike)."""
+    if int(experts) <= 0:
+        raise ValueError("a routed stack needs at least one expert")
+    return 8 * (int(experts) + 1)
+
+
+def routed_fused_table_bytes(window_bits: int) -> int:
+    """One composed 16-bit lookup table the fused routed lane (tessera#685)
+    holds per expert projection beside the bundle's planes, as the runtime's
+    ``FusedRoutedWindowMoE.resident_bytes`` publishes it (both families; the
+    value family's table is a view the self-report still counts)."""
+    return 2 * (1 << int(window_bits))
+
+
+#: The fused routed lane's per-projection launch tables since contract v45
+#: (tessera#694), restated from ``tessera.routed_fused`` so this module stays
+#: torch-free (``tests/test_export_routed_resident_pricing.py`` pins them
+#: equal): the run pair is int32 ``[8]`` per expert, and each ``BK``-column
+#: block carries an int32 ``[BDESC_INTS]`` descriptor.
+ROUTED_FUSED_RUN_PAIR_INTS = 8
+ROUTED_FUSED_BLOCK_COLS = 32
+ROUTED_FUSED_BDESC_INTS = 12
+
+
+def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
+    """What the fused routed lane holds per expert projection beside the
+    bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
+    the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
+    since contract v45 (tessera#694), the projection's run pair and its
+    block descriptors (``routed_fused.projection_tables``).  ``cols`` is the
+    unit's rank-local column count, which sets the descriptor count."""
+    cols = int(cols)
+    if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
+        raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
+                         f"blocks; {cols} columns are not")
+    return (routed_fused_table_bytes(window_bits) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
+            + 4 * ROUTED_FUSED_BDESC_INTS * (cols // ROUTED_FUSED_BLOCK_COLS))
+
+
+def vocab_parallel_rows(rows: int, tp_size: int, *, padding: int = 64) -> int:
+    """Rows one rank holds of a vocab-parallel table: the runtime pads the
+    vocabulary to a multiple of ``padding`` before cutting it ``tp_size`` ways."""
+    rows, tp_size, padding = int(rows), int(tp_size), int(padding)
+    if rows <= 0 or tp_size <= 0 or padding <= 0:
+        raise ValueError("invalid vocab-parallel geometry")
+    padded = -(-rows // padding) * padding
+    return -(-padded // tp_size)
+
+
+def mtp_draft_embed_head_duplicate_bytes(vocab_tensors, tp_size: int) -> int:
+    """The MTP draft's own ``embed_tokens`` + ``lm_head`` allocations (tessera#645).
+
+    The draft model allocates a vocab-parallel embedding and head of its own
+    before the loader points them at the target's, so each rank holds one
+    more rank-local copy of both at load peak.  ``vocab_tensors`` is
+    ``[(rows, cols, element_bytes), ...]`` for the target's passthrough
+    embedding and head tensors; the duplicate is their rank-local cut.
+    """
+    total = 0
+    for rows, cols, element_bytes in vocab_tensors:
+        total += vocab_parallel_rows(rows, tp_size) * int(cols) * int(element_bytes)
+    return total
+
+
+def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_bytes: int,
+                       mtp_layers: int) -> dict:
+    """The per-rank fit block: named line items and their sum, one row per rank.
+
+    Every item is one named line whose sum is ``total_bytes``; a reader adding
+    a budget adds an item rather than folding it into another.  Only the
+    compact routed stacks and the MTP draft duplicate are priced here; dense
+    modules and passthrough tensors are not, and the note says so.
+    """
+    tp_size = int(tp_size)
+    ranks = []
+    for rank, routed in enumerate(routed_bytes_by_rank):
+        items = {"routed_moe_resident_mode_bytes": int(routed),
+                 "mtp_draft_embed_head_duplicate_bytes": int(mtp_duplicate_bytes)}
+        ranks.append({"rank": rank, "items": items, "total_bytes": sum(items.values())})
+    if len(ranks) != tp_size:
+        raise ValueError(f"{len(ranks)} routed rank figures for tp_size {tp_size}")
+    return {
+        "tp_size": tp_size,
+        "ranks": ranks,
+        "mtp_draft_layers": int(mtp_layers),
+        "note": ("routed_moe_resident_mode_bytes is each rank's cut of every routed stack "
+                 "(packed planes, tables, per-expert bookkeeping and the fused lane's "
+                 "composed tables where its shape admits the stack); "
+                 "mtp_draft_embed_head_duplicate_bytes is the MTP draft's own rank-local "
+                 "embed_tokens + lm_head (0 when the config declares no draft layers). "
+                 "Dense modules and passthrough tensors are not priced per rank here."),
+    }
+
+
 def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: int) -> dict:
     roles = [role for module in modules.values() for role in module["roles"]]
     params = sum(r["rows"] * r["cols"] for r in roles)
@@ -369,7 +578,7 @@ def _expected_outputs(owned: set[str], modules: dict) -> set[str]:
                 # same quantity the dense route reads as
                 # ``trellis_input_global_scale`` (``nvfp4_moe_route``
                 # :107-109, :328-331), written beside each wire by
-                # ``export_tessera_serving`` (:2356-2371).  The role declares
+                # ``tessera.export_serving`` (:2413-2429).  The role declares
                 # the scale exactly when the export wrote one, so expect it
                 # from the declaration rather than from the family: a role
                 # that declares a scale and wrote none is as broken as a
@@ -402,13 +611,26 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
         return
     if not isinstance(plan, dict):
         raise ValueError("explicit export plan must be an object")
+    # The entry SHAPE is the published schema's one implementation (#691
+    # item 3): this gate used to repeat a weaker check ("grid" and "q256"
+    # present), so a sidecar field the schema accepts was refused downstream
+    # of the argument-time gate that had accepted it.  Imported lazily: this
+    # module sits under the validator in some import orders. Relative, so a
+    # sealed historical copy of this file stays importable: an absolute
+    # ``tessera.*`` import reads as an escape into the current producer
+    # (historical_producer._SealedLoader) and refuses the whole package.
+    from .serving_plan import SCHEMA_KEY, validate_serving_plan
+    try:
+        validate_serving_plan(plan)
+    except ValueError as exc:
+        raise ValueError(f"explicit export plan {exc}") from exc
     requested, passthrough = {}, set()
     for name, spec in plan.items():
+        if name == SCHEMA_KEY:
+            continue
         if spec in ("PASSTHROUGH", "BF16"):
             passthrough.add(name)
             continue
-        if not isinstance(spec, dict) or "grid" not in spec or "q256" not in spec:
-            raise ValueError(f"explicit export plan has invalid entry {name!r}")
         requested[name] = spec
     planned_stacks = {name for name in requested if name.endswith(".experts")}
     emitted_stacks = {name for name, module in modules.items()
@@ -518,7 +740,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
         raise ValueError(f"merge output already exists: {out}")
     loaded = []
     for path in map(Path, paths):
-        manifest = json.loads((path / "tessera_serving_manifest.json").read_text())
+        manifest = read_serving_manifest(path / "tessera_serving_manifest.json")
         part = manifest.get("export_partition", {})
         if part.get("schema") != SCHEMA:
             raise ValueError(f"{path}: unsupported serving partition schema")

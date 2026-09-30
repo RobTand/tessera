@@ -551,5 +551,5 @@ def test_the_census_expectations_come_from_the_route():
     assert go["decode"] == expected
     assert go["batch"] == expected
     gc = fp8_gemv.census_expected(compiled=True)
-    assert (fp8_gemv.COMPILED_SYMBOL, fp8_gemv.COMPILED_DECODER) in gc["decode"]
-    assert (fp8_gemv.COMPILED_SYMBOL, fp8_gemv.COMPILED_DECODER) in gc["batch"]
+    assert gc["decode"] == expected
+    assert gc["batch"] == expected

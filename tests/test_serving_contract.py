@@ -22,7 +22,7 @@ import re
 
 import pytest
 
-from withdrawn_cells import withdrawn_cells, withdrawn_v39_cells
+from withdrawn_cells import withdrawn_cells, withdrawn_v38_cells, withdrawn_v39_cells
 
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
@@ -880,6 +880,40 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
         assert not (pairs & _WITHDRAWN_CLAIMS[cell["id"]]), cell["id"]
 
 
+def test_a_reminted_cell_id_names_its_image_and_rung(contract):
+    """A re-minted id is the same scope with a different claim (tessera#622).
+
+    A cell id IS its scope: ``validate_serving_contract`` derives it from
+    (family, structure, platform, regime) and refuses any other spelling.  So
+    when contract v38 attested the routed E4M3 scope again, on the GLM census,
+    it reused the two ids the withdrawn LFM cells held
+    (``_WITHDRAWN_V38_CELL_IDS``).  The id cannot tell the two attestations
+    apart -- it names the scope, not the receipt -- so the cell must: the
+    shipped cell carries the image and rungs the GLM receipt measured, and
+    neither is the withdrawn cell's.  If a shipped cell ever came to agree with
+    the withdrawn one on image or rungs, the withdrawn claim would be back
+    under a live id and nothing but this test would notice.
+
+    Every withdrawn v38 id must be checked, so the test cannot pass by the
+    fixture and the table drifting apart.
+    """
+    shipped = _cells(contract)
+    receipt = (ROOT / GLM_X_RECEIPT).read_text(encoding="utf-8")
+    checked = set()
+    for withdrawn in withdrawn_v38_cells():
+        if withdrawn["id"] not in shipped:
+            continue
+        cell = shipped[withdrawn["id"]]
+        checked.add(cell["id"])
+        assert cell["runtime"]["image"] != withdrawn["runtime"]["image"], cell["id"]
+        assert sorted(cell["rungs_q256"]) != sorted(withdrawn["rungs_q256"]), cell["id"]
+        # The image the live cell names is the one the GLM receipt records.
+        _, digest = cell["runtime"]["image"].split("@", 1)
+        assert digest.startswith("sha256:"), cell["id"]
+        assert digest in receipt, (cell["id"], digest)
+    assert checked == _WITHDRAWN_V38_CELL_IDS, checked
+
+
 def test_every_cell_executes_a_launch_its_route_can_make(contract):
     """The shipped table, read against the launch table rather than mutated."""
     from tessera.serving.contract import cell_executes, cell_residency_modes
@@ -1133,13 +1167,41 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     synthetic["executes"] = [compact]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
-    # At q256 896 the rate set is {3, 4}; the lane reads rate-4 columns only,
-    # so the rung does not reach it and the compact launch is the whole set.
-    mixed = dict(synthetic, rungs_q256=[896], executes=[compact])
+    # At q256 896 the rate set is {3, 4}.  Since contract v45 (tessera#694)
+    # the lane reads every rate 1..8 -- the wire's own run table -- so the
+    # mixed rung reaches it as q256 1024 does and both launches are the set;
+    # a claim of the compact launch alone is refused there too.  (At v42-v44
+    # the lane read rate-4 columns only and the compact launch was the whole
+    # set at 896; the derivation followed lane.requires then as now.)
+    mixed = dict(synthetic, rungs_q256=[896], executes=[compact, fused])
     _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
-    mixed["executes"] = [compact, fused]
+    mixed["executes"] = [compact]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
+    # At q256 1792 (rate 7) the lane READS the wire but its routed-expert
+    # launch does not reach the rate on the target
+    # (lane.requires.column_rates_routed_moe is 1..6: the two-table gate/up
+    # launch does not fit sm_121's shared memory above it), so an expert stack
+    # derives the compact launch alone -- the structure is what the decision
+    # reads -- while a dense module at the same rung derives the fused dense
+    # identity beside the Triton GEMM, the one-table launch reading every rate.
+    # (the format row stamps attested_wire per attested rung; 1792 is not one,
+    # so the derivation is given a copy of the shipped stamp at that rung)
+    import copy
+    stamped = copy.deepcopy(entry)
+    stamped["attested_wire"] = list(stamped["attested_wire"]) + [
+        {**stamped["attested_wire"][0], "q256": 1792}]
+    high = dict(synthetic, rungs_q256=[1792], executes=[compact])
+    _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
+    high["executes"] = [compact, fused]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
+    dense_high = {
+        "structure": "dense", "regime": regime, "rungs_q256": [1792],
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+        "executes": [{"symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm"},
+                     {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"}]}
+    _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, contract, "synthetic")
     synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert
     # stack, and so is the materialising launch v38 removed (tessera#604).

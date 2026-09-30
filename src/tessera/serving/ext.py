@@ -111,7 +111,7 @@ LANE_FIELDS = ("decoder", "requires")
 #: a property of a LATER slice, ``layout.slice_unit`` -- is caught.
 LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane",
                            "release_overrides", "diagonals", "rotation",
-                           "start_state", "grid_arities")
+                           "start_state", "grid_arities", "column_rates_routed_moe")
 
 #: The window GEMV's lane, and the reason this block exists.
 #:
@@ -205,21 +205,29 @@ ROUTED_FUSED_E4M3_MODULE_NAME = "tessera_routed_fused_e4m3"
 ROUTED_FUSED_VALUE_MODULE_NAME = "tessera_routed_fused_value"
 ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
 
-#: What a routed stack's wire must be for the fused lane to read it.  The
-#: kernel reads one shape: every column at RATE 4 (16 rows of 4-bit codes are
-#: two 32-bit words, the stream the decoder's funnel shift walks), window
-#: bits 14 (its lookup table is 2^14 entries per expert), the channel plane
-#: of the window body, no decoration.  A rung that mixes rates (q256=896 is
-#: rate 3 and 4 columns) refuses this lane at load, module by module, and
-#: keeps the compact adapter -- so the predicate is published, as the GEMV
-#: lane's is, for a producer to read before it encodes.  ``start_state`` is
-#: deliberately ABSENT, not false: the kernel reads a TP shard's start state
-#: (``has_init``) and a whole unit alike, so it carries no predicate on it.
-#: ``routed_fused.fused_routed_window_supported`` is the load-time decision
-#: over the prepared bundles; ``tests/test_routed_fused_window.py`` ties the
-#: two.
+#: What a routed stack's wire must be for the fused lane to read it.  Since
+#: contract v45 (tessera#694) the kernel reads the wire's run table itself:
+#: every column rate of the window grammar, 1..8, one or two runs per unit --
+#: the two rates bracketing a stack's root, so the mixed-rate q256 rungs
+#: (896, 928, 1088, ...) run fused beside q256=1024 -- window bits 14 (its
+#: lookup table is 2^14 entries per expert), the channel plane of the window
+#: body, no decoration.  (v42-v44 read one shape, every column at rate 4, and
+#: the mixed-rate rungs kept the compact adapter.)  The predicate is
+#: published, as the GEMV lane's is, for a producer to read before it
+#: encodes.  ``start_state`` is deliberately ABSENT, not false: the kernel
+#: reads a TP shard's start state (``has_init``) and a whole unit alike, so it
+#: carries no predicate on it.  ``routed_fused.fused_routed_window_supported``
+#: is the load-time decision over the prepared bundles;
+#: ``tests/test_routed_fused_window.py`` ties the two.
 ROUTED_FUSED_LANE_REQUIRES = {
-    "column_rates": [4],
+    "column_rates": [1, 2, 3, 4, 5, 6, 7, 8],
+    # The rates the ROUTED-EXPERT (gate/up) launch reaches on the target:
+    # its two 32 KB tables plus the word stages for rates 6..8 exceed sm_121's
+    # 101,376 B per-block opt-in shared memory, so those stacks keep the
+    # compact adapter; the one-table down/dense launch reads every rate.
+    # Derived in routed_fused.ROUTED_LANE_RATES from the kernel's own layout
+    # and pinned equal here by tests/test_routed_fused_window.py.
+    "column_rates_routed_moe": [1, 2, 3, 4, 5, 6],
     "window_bits": [14],
     "body": "window",
     "plane": "channel",

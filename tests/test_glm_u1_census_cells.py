@@ -11,14 +11,18 @@ replays the census tool's own join over each receipt's records against the
 PACKAGED table, the way ``test_glm_x_census_cells`` does for the v38 receipt.
 Contract v42 (tessera#640) adds a ninth receipt here: stub B served again with
 the fused routed window lane as the default dispatch, on which the four window
-routed cells name the fused pair beside the compact one.
+routed cells name the fused pair beside the compact one.  Contract v43 adds a
+tenth, the fused dense identity on stub B's q256 1024 dense modules, and
+contract v45 (tessera#694) an eleventh: stub B on the kernel that reads the
+wire's run table at every rate, on which every routed stack and every dense
+module of the stub takes the fused kernel.
 
 What it pins:
 
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
-2. each GLM-image cell covers EXACTLY the rungs the ten receipts (these
-   nine and v38's) carried for its family and structure -- a cell widened
+2. each GLM-image cell covers EXACTLY the rungs the twelve receipts (these
+   eleven and v38's) carried for its family and structure -- a cell widened
    past its receipts, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
@@ -62,6 +66,11 @@ RECEIPTS = {
     # q256 1024 dense modules, the receipt the four GLM-image dense cells name
     # the fused pair on (docs/measurements/2026-09-28-dense-fused-window.md).
     "b_fused_dense": "b3f9d176018d23d23faf963fa7823462493f80de51fbff49babd527958b3295e",
+    # Contract v45 (tessera#694): stub B served on the kernel that reads the
+    # wire's run table at every rate, on which every routed stack and every
+    # dense module of the stub takes the fused kernel
+    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md).
+    "b_fused_mixed": "2d578c1ce50d1cfcb7cf5e53a6f67cee67a006f820b44a650ff5de68c40c8887",
 }
 #: The dense modules of stub B that take the fused identity (q256 1024, rows a
 #: multiple of 128), with the launch each recorded; every other dense module
@@ -89,6 +98,18 @@ FUSED_RECEIPT_ROUTED = {
     "language_model.model.layers.7.mlp.experts.routed_experts": (
         "tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window_folded"),
 }
+#: The routed stacks of stub B by module under the v45 kernel, which reads the
+#: wire's run table at every rate: every stack takes the fused lane, the three
+#: mixed-rate E4M3 stacks (q256 928, 896 and 1088) that ``FUSED_RECEIPT_ROUTED``
+#: records on the compact adapter among them.
+FUSED_MIXED_RECEIPT_ROUTED = {
+    f"language_model.model.layers.{layer}.mlp.experts.routed_experts": (
+        "tessera.routed_fused.FusedRoutedWindowMoE.__call__", decoder)
+    for layer, decoder in ((3, "native_routed_fused_window"),
+                           (4, "native_routed_fused_window"),
+                           (5, "native_routed_fused_window"),
+                           (6, "native_routed_fused_window"),
+                           (7, "native_routed_fused_window_folded"))}
 #: The v38 receipt the six widened cells were first minted on; its rungs are
 #: part of what each cell must cover.
 V38 = ("glm53_x_stub_tp1_eager_census.json", "glm53_x_stub_config.json")
@@ -298,6 +319,44 @@ def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
             assert (fused_symbol, decoder) in pairs, cell["id"]
             assert pairs[0][0] == "tessera::window_gemm_dense" and len(pairs) == 2, cell["id"]
             assert 1024 in cell["rungs_q256"], cell["id"]
+
+
+def test_every_module_ran_the_fused_kernel_at_every_rate_the_stub_carries():
+    """Contract v45 (tessera#694): the mixed-rate receipt, module for module.
+
+    The fused window kernel reads the wire's run table at every rate, so every
+    routed stack of stub B -- the three mixed-rate E4M3 stacks the v42 and v43
+    receipts recorded on the compact adapter among them -- recorded the fused
+    routed pair in both phases, and all sixteen dense modules the fused dense
+    identity under the family's decoder, at every rung the stub carries.  The
+    cells' ``executes`` lists already name both pairs (v42, v43), the replay
+    above joins every record, and both required lanes engaged.
+    """
+    receipt = _load(_paths("b_fused_mixed")[0])
+    tool = _tool()
+    rungs = _declared_rungs(tool, receipt, _paths("b_fused_mixed")[1])
+    dense_decoder = {"TESSERA_FP8": "native_fused_window_dense",
+                     "TESSERA_BF16": "native_fused_window_dense_folded"}
+    for phase, records in receipt["records"].items():
+        assert len(records) == 21, phase
+        routed = {name: (rec["symbol"], rec["decoder"])
+                  for name, rec in records.items() if rec["kind"] == "moe"}
+        assert routed == FUSED_MIXED_RECEIPT_ROUTED, phase
+        dense = {name: rec for name, rec in records.items() if rec["kind"] == "dense"}
+        assert len(dense) == 16, phase
+        for name, rec in dense.items():
+            family = rec["policy"].partition(":")[0]
+            assert (rec["symbol"], rec["decoder"]) == (
+                "tessera::fused_window_dense", dense_decoder[family]), (phase, name)
+        owners = receipt["record_owner"][phase]
+        assert {rungs[owners[name]] for name in routed} == {896, 928, 1024, 1088}, phase
+        assert {rungs[owners[name]] for name in dense} == {832, 880, 960, 1024, 1088}, phase
+    engagement = receipt["lane_engagement"]
+    assert engagement["all_required_engaged"] is True
+    assert engagement["required_lanes"] == [
+        "tessera_routed_fused_e4m3", "tessera_routed_fused_value"]
+    same_stub = _load(_paths("b")[0])
+    assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
 
 
 def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():

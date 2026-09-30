@@ -222,12 +222,7 @@ _UNROUTED = _BODY + "self_attn.o_proj"
 
 
 def _exporter():
-    spec = importlib.util.spec_from_file_location(
-        "export_tessera_serving",
-        _ROOT / "experiments" / "export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 def _tiny_checkpoint(tmp_path: Path) -> Path:

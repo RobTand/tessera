@@ -481,7 +481,7 @@ def _coerce_refit_gauss_seidel(obj):
     refuses it anywhere else rather than ignore it -- so one bool applied to
     every unit cannot be true on a checkpoint whose units sit on different
     planes.  GLM is exactly that shape -- E4M3/CHANNEL attention beside
-    E2M1x2/LUT16 experts -- and ``experiments/export_tessera_serving.py``
+    E2M1x2/LUT16 experts -- and ``tessera.export_serving``
     builds it from ONE ``ActivationSource``, reading ``(grid, q256)`` per
     member, so a bare ``True`` refuses at the first CHANNEL unit and the
     sweep cannot be measured on that model at all.  ``{"lut16": True}`` is
@@ -1017,7 +1017,7 @@ class ActivationSource:
         from .cached_unit import tensor_identity
 
         identity = self._sealed_identity()
-        from .hessian_capture import REFERENCE_OWNER_TYPES
+        from .hessian_capture import REFERENCE_OWNER_TYPES, v1_seal_header
         if isinstance(self.hessians, REFERENCE_OWNER_TYPES):
             self.hessians.require_provenance(self.provenance)
         prefetch = _resolve_seal_prefetch()
@@ -1040,9 +1040,7 @@ class ActivationSource:
                     memo[name] = _UnitDigest(_tensor_signature(H),
                                              host_fingerprint(value), sha256)
         digest = hashlib.sha256()
-        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
-                                  "identity": identity},
-                                 sort_keys=True, default=str).encode())
+        digest.update(v1_seal_header(identity))
         for name in sorted(units):
             unit_sha256 = units[name]
             digest.update(b"\0" + name.encode() + b"\0")

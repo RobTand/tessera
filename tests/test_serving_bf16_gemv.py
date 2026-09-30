@@ -217,13 +217,12 @@ def test_the_census_expectations_come_from_the_route():
     # On the folded arithmetic's own decoder since tessera#614.
     assert route.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
     expected = set(route.DENSE_LAUNCHES)
-    assert expected == {route.DENSE_LAUNCH, route.DENSE_FUSED_LAUNCH} and len(expected) == 2
     go = route.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected
     gc = route.census_expected(compiled=True)
-    assert (route.COMPILED_SYMBOL, route.COMPILED_DECODER) in gc["decode"]
-    assert (route.COMPILED_SYMBOL, route.COMPILED_DECODER) in gc["batch"]
+    assert gc["decode"] == expected
+    assert gc["batch"] == expected
     assert route.GEMM_SYMBOL == "torch.mm"
 
 

@@ -94,6 +94,8 @@ import re
 import sys
 from typing import Any, Iterable
 
+from ..serving_parts import sha256_file
+
 __all__ = [
     "SCHEMA",
     "BuildIdentityError",
@@ -268,7 +270,7 @@ def _read_dispatch(line: str) -> dict | None:
 def _sha256(path: Path) -> str | None:
     if not path.is_file():
         return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_file(path)
 
 
 def _autotune_digest(slot: Path) -> tuple[int, str | None]:
@@ -291,8 +293,7 @@ def _autotune_digest(slot: Path) -> tuple[int, str | None]:
         records.append([str(p.relative_to(slot)), payload])
     if not records:
         return 0, None
-    blob = json.dumps(records, sort_keys=True, separators=(",", ":")).encode()
-    return len(records), hashlib.sha256(blob).hexdigest()
+    return len(records), _fingerprint(records)
 
 
 def read_cache_root(root: str | Path, aot_keys: Iterable[str],
@@ -432,7 +433,7 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
     return record
 
 
-def _fingerprint(identity: dict) -> str:
+def _fingerprint(identity: dict | list) -> str:
     blob = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(blob).hexdigest()
 

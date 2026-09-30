@@ -1010,6 +1010,29 @@ def scheduler_kwargs(args):
     return kwargs
 
 
+def _json_object(text):
+    """argparse type: a JSON object, refused by name at parse time."""
+    import argparse
+    import json
+    try:
+        value = json.loads(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"not valid JSON: {exc}")
+    if not isinstance(value, dict):
+        raise argparse.ArgumentTypeError("must be a JSON object")
+    return value
+
+
+def compilation_kwargs(args):
+    """vLLM's compilation_config, only when the command line named one.
+
+    Absent, the engine build is exactly what it was before this flag existed.
+    """
+    if args.compilation_config is None:
+        return {}
+    return {"compilation_config": args.compilation_config}
+
+
 def engine_backend_kwargs(args):
     """The engine's backend choices, assembled where a test can read it.
 
@@ -1398,6 +1421,13 @@ def parse_args(argv=None, env=None):
                          "graphs) instead of eager; the route records then carry M='*' because "
                          "the record is written from the trace, and a route that cannot be traced "
                          "fails here with its own traceback instead of an engine-start refusal")
+    ap.add_argument("--compilation-config", type=_json_object, default=None, metavar="JSON",
+                    help="a JSON object passed unchanged to vLLM as compilation_config; requires "
+                         "--compiled. Without it a compiled GLM-5.3 census stops at engine start "
+                         "(glm53_nope refuses VLLM_COMPILE with any graph mode but "
+                         "FULL_DECODE_ONLY). Recorded in the receipt beside "
+                         "runtime.execution_mode. Compiled records attest routes only: shapes "
+                         "are not attested")
     ap.add_argument("--allow-fallback-decoder", action="store_true",
                     help="accept a module decoded by the pure-torch fallback instead of the "
                          "native span-2 kernel; without it a fallback serve REFUSES, because a "
@@ -1517,6 +1547,8 @@ def parse_args(argv=None, env=None):
         args.runtime_image_declaration = declared_reference(args.runtime_image, env=env)
     except RuntimeImageError as exc:
         ap.error(f"--runtime-image {args.runtime_image}: {exc}")
+    if args.compilation_config is not None and not args.compiled:
+        ap.error("--compilation-config requires --compiled (an eager engine has no compilation)")
     args.execution_mode = "compiled" if args.compiled else "eager"
     return args
 
@@ -1696,7 +1728,7 @@ def main() -> int:
     # group existed builds the same engine it always did.
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
               seed=0, **memory_budget_kwargs(args), **scheduler_kwargs(args),
-              **engine_backend_kwargs(args), **engine_scope_kwargs(args),
+              **compilation_kwargs(args), **engine_backend_kwargs(args), **engine_scope_kwargs(args),
               **topology_kwargs(args),
               **({"speculative_config": args.speculative_config} if args.draft_routes else {}))
 
@@ -1848,6 +1880,14 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
+        # The compilation config the engine was told to use (null: vLLM's
+        # default), and the limit of what a compiled observation attests: it
+        # names the routes that ran, not the regime each launch served
+        # (census.py marks compiled dense records unsupported and joins a
+        # compiled routed record only to a single-launch cell).
+        "compilation_config": args.compilation_config,
+        "compiled_attestation": ("routes_only_shapes_unattested"
+                                 if args.compiled else None),
         # WHAT THE ENGINE WAS ALLOWED TO SPEND, and whether the KV cache was
         # bounded separately from the fraction that leaves room for it.  A
         # receipt whose budget is inferred from whoever typed the command is

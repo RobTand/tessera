@@ -75,6 +75,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
 
 from tessera.serving.backend import capability_token, gcn_arch_token  # noqa: E402
+from tessera.serving_parts import read_serving_manifest  # noqa: E402
 
 #: Bumped when the receipt's shape changes.  A consumer keys on it, and #460
 #: mints cells from receipts that carry it.
@@ -853,7 +854,7 @@ def main(argv=None) -> int:
                   "manifest the export wrote, never off a config a producer intended",
                   file=sys.stderr)
             return 2
-        reference = reference_set_report(json.loads(open(manifest_path).read()))
+        reference = reference_set_report(read_serving_manifest(manifest_path))
 
     steps = {}
     steps[STEP_DEVICE_IDENTITY] = (

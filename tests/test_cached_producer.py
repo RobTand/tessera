@@ -30,11 +30,7 @@ def _api():
 
 
 def _exporter():
-    spec = importlib.util.spec_from_file_location(
-        "cached_test_exporter", ROOT / "experiments/export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 @pytest.fixture(scope="module")
@@ -1087,3 +1083,29 @@ def test_committed_intake_consumes_only_the_witness_payload(tmp_path, calibrated
     assert established["established"] == "committed"
     assert established["committed_units_served"] == len(case["logical"])
     assert (case["out"] / "model.safetensors").read_bytes() == (first["out"] / "model.safetensors").read_bytes()
+
+
+def test_manifest_sha256_has_a_single_owner():
+    """#708: the cached-unit manifest seal was spelled inline twice (:514,
+    :534). Both spellings now go through one owner; the golden pins the
+    value so the fold cannot move a digest."""
+    from tessera.cached_unit import _manifest_sha256
+    manifest = {"units": {}, "label": "golden"}
+    assert _manifest_sha256(manifest) == (
+        "be04b7ecfb4aa0d8888488aa9991dec23cf4edd79098778cfc870637a4afda2a")
+
+
+def test_hessian_v1_seal_header_has_a_single_owner():
+    """#708: export._seal and hessian_capture.capture_sha256_from_units
+    spelled the v1 seal header byte-identically. One owner; goldens pin
+    both the header and the full seal value (the full-seal golden passes
+    before and after, proving the value never moves)."""
+    from tessera.hessian_capture import capture_sha256_from_units, v1_seal_header
+    identity = {"model": "golden", "seqlen": 128, "source": "fixture"}
+    assert hashlib.sha256(v1_seal_header(identity)).hexdigest() == (
+        "1b50c4d5d1dff0173ac81d413c2dbd89ffe9691e72dd0513024543323535b1b7")
+    provenance = {"text_sha256": "0" * 64, "fit_tokens": 8,
+                  "fit_ids_sha256": "1" * 64, "model": "golden",
+                  "seqlen": 128, "source": "fixture"}
+    assert capture_sha256_from_units(provenance, {"w": "ab" * 32}) == (
+        "3e7fe0e4ca2c3d45fe7ffc386211dcf42127e673c5b13e1071e3f24f42e07a1f")

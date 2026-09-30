@@ -45,11 +45,7 @@ from tessera.serving.scheme import (MOE_GROUPS, expert_role_declarations,  # noq
                                     validate_tessera_moe_scheme)
 from tessera.moe_execution import ResearchSelectedMoeConfig
 
-_spec = importlib.util.spec_from_file_location(
-    "export_tessera_serving",
-    Path(__file__).resolve().parents[1] / "experiments" / "export_tessera_serving.py")
-export = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(export)
+export = importlib.import_module("tessera.export_serving")
 
 HIDDEN, MOE_INTER, EXPERTS = 128, 64, 4
 LAYER = "model.language_model.layers.1"

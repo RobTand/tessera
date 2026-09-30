@@ -108,7 +108,7 @@ def main(argv=None):
         raise ValueError('output filesystem lacks the reviewed artifact plus staging space')
     if len(os.sched_getaffinity(0))<doc['intake_threads']+1:raise ValueError('intake exceeds admitted aggregate CPU affinity')
     root=Path(__file__).resolve().parents[1]
-    spec=importlib.util.spec_from_file_location('glm_cpu_exporter',root/'experiments/export_tessera_serving.py')
+    spec=importlib.util.spec_from_file_location('tessera.export_serving',root/'src/tessera/export_serving.py')
     exporter=importlib.util.module_from_spec(spec);spec.loader.exec_module(exporter)
     def forbidden(*a,**k):raise RuntimeError('reuse-only export attempted encoding')
     exporter.encode_linear_planes=forbidden

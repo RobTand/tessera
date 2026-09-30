@@ -1,5 +1,179 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for CPU timing-evidence requirements (Refs #688).
+The census planner can describe the missing per-scope CUDA-event/profiler,
+Netdata, wire/runtime-identity and native-preparation evidence. It rejects
+stale or populated plans and emits null measurements, not a timing receipt.
+The GPU timing panel remains held; no performance or qualification is claimed.
+See [the CPU interface](design/native-census-planning.md#timing-evidence-requirements).
+
+Re-stamped 2026-09-29 for the CPU census planning slice (Refs #689).
+`tools/plan_native_census.py` binds explicit rank-local scopes to the packaged
+contract and shared dispatch registry, with stable scope IDs. Its versioned
+plans are explicitly unexecuted and unqualified, not device receipts or cells.
+No GPU execution, runtime admission, reader range, wire, or numerical behavior
+changes. See [the planning interface](design/native-census-planning.md).
+
+Re-stamped 2026-09-30 for the fused window kernel's two-run descriptor ring.
+A two-run chunk's block descriptors now reach shared memory by `cp.async`
+with the word stages' copies, four chunks ahead, into a ring the word copies
+and the previous-word loads map from; it replaces the 768 B column-map ring
+and the down and dense launches' global descriptor reads. Every two-run chunk
+loop waits on its global loads only at its end. No contract field, rung,
+route or `executes` entry moves, and every output is bitwise equal to
+master's (`docs/measurements/2026-09-30-descriptor-ring.md`).
+
+Re-stamped 2026-09-29 for the fused window kernel's per-pair instantiation,
+the two-run column map and the first chunk's load settle. Each run pair is
+now its own `routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`, which the
+host picks from the launch's `tile_words` (`pair_of`), instead of one kernel
+per mode switching on the pair per item; the gate/up launch of a two-run
+stack reads its column map from a 768 B shared-memory ring
+(`Layout<MODE>::OFF_MAP`) instead of mapping each column again in every
+producer thread; and the producers consume the first chunk's global loads
+before the chunk loop, so the loop waits for the next chunk's loads where
+they move into place rather than before the decode. No contract field, rung,
+route or `executes` entry moves, and every output is bitwise equal to
+master's (`docs/measurements/2026-09-29-two-run-column-map.md`,
+`docs/measurements/2026-09-29-per-pair-kernel.md`).
+
+Re-stamped 2026-09-29 for the shared-candidate pricing boundary (Refs #567).
+Retain conservative per-unit pricing until a downstream consumer supports the
+shared term. A unitless candidate is uncharged and makes the derived partition
+unavailable; it is not a zero-byte resource. Replay-cache hits can share tensors,
+but cache keys alone do not prove one allocation across lifetimes or ranks.
+No schema, composition, wire, runtime gate, or numerical behavior changes.
+See [the boundary](design/shared-candidate-pricing-boundary.md).
+
+Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
+Arity-one E2M1 remains research-only: the existing serving export gate refuses
+its absent reader range before encoding, and an explicit research override
+records the refusal rather than admitting the artifact. The production menu
+requires attestation; generic research encoding is not serving qualification.
+No reader range, family mapping, recipe, wire bytes, default, or runtime gate
+changes. See [the decision](design/e2m1-k1-production-boundary.md).
+
+Re-stamped 2026-09-29 for the NoPE verdict carrier (tessera#698). When route
+tracing is enabled, the existing backend startup report also records its
+compilation mode, resolved CUDA-graph mode, and eager-equivalence verdict in
+`backend_execution_identity`. A later disagreement is exposed in
+`backend_execution_identity_conflict`, without replacing the first identity;
+no report means JSON null, not equivalent. The additive `dispatch_coverage`
+header states that Python dispatches are counted, torch.compile tracing is
+not counted, and CUDA-graph replays are not counted. Python execution during
+startup or graph capture can still contribute counts. An empty histogram is
+therefore not proof that no kernel ran. No backend arithmetic, admission,
+quality claim, runtime-contract cell, or trace schema/version changes.
+
+Re-stamped 2026-09-29 for compiled dense census expectations (tessera#638).
+FP8 and BF16 census helpers derive both eager and compiled expectations from
+`scheme.ROUTE_LAUNCHES`, without the retired materialised GEMM/GEMV combined
+pair. The prepared native bundle's pair is still what dense dispatch emits
+for every M and residency. This changes census validation only: no kernel,
+serving arithmetic, lane admission, or runtime-contract cell changes. CPU
+regressions execute the actual dispatch body with prepared-bundle doubles;
+they are not device or compiled-kernel measurements.
+
+Re-stamped 2026-09-29 for the fused window kernel's mixed rates (contract
+v45, tessera#694, item 2 of #690). The one persistent kernel behind the fused
+routed (v42) and dense (v43) identities now runs every rate its run table
+already encoded: `Params::slot_words` sizes the word stages per launch from
+the pair's larger rate (`routed_fused.slot_words_for_pair`, `2r + 2 * (r odd)`
+words per column and 64-row half, rounded up to 4), a `Layout<MODE>` template
+places the fixed shared-memory region ahead of the word ring, and the launch
+requests `smem_bytes(mode, slot)` dynamically. The device decides which rates
+a structure reaches: sm_121's 101,376 B per block holds the two-table gate/up
+launch at slot 8 (rates 1-4) and 12 (rates 5-6) but not 16 (rates 7-8), and
+the one-table down/dense launch at every slot, so `ROUTED_LANE_RATES` is
+`(1, 2, 3, 4, 5, 6)` and the dense identity reaches 1..8. Both fused
+`native_extensions` entries publish `lane.requires.column_rates = [1..8]` and
+a NEW structure-scoped field, `column_rates_routed_moe = [1..6]`, which
+`scheme.decide_lane_requirements` decides only over a `routed_moe` structure
+fact and refuses by name without one (`_lanes_a_rung_reaches` and the export
+plan gate pass the cell's structure; the validator holds the field to an
+ascending subset of `column_rates`; a v44 reader refuses the field, the
+fail-closed direction). An odd rate's 64-row half is 8-byte aligned at odd
+half indices, so the producer copies every half in 16-byte `cp.async` pieces
+from the aligned pair before it and the decoder reads it at the slot's third
+word, loading a word past a lane's eight fields only where a field reaches
+into it; one correctness fix rode along (the previous window word is loaded
+for every 8-row group whose window starts inside the half's first word, not
+the first group alone). The producers enter the chunk loop once per item
+through a switch on the stack's run pair, and each pair is a compile-time
+instantiation; built for rate 4 alone, the E4M3 gate/up launch compiles to
+3,376 sm_121 SASS instructions against the v44 kernel's 3,368. (Since the
+two-run column map, the pair is a kernel template parameter the host picks,
+not a per-item switch: see "Mixed rates (contract v45)" in section 3.3.) Measured on
+layer 3 of GLM-5.3-Flash (288 experts, M 1 to 2048), the E4M3 R1024 routed
+stack runs 2.9% to 6.3% faster than master, and the R832, R960 and R1088
+stacks run 2.0x to 3.9x faster than the compact adapter they replace but at
+1.50x to 1.71x of R1024's time, short of #694's 1.5x. The export prices each
+fused unit's table, run pair and block descriptors
+(`serving_parts.routed_fused_unit_bytes`). No cell's `executes`, rungs or
+flags move. A TP1 eager census of stub B on the GLM image served all 21 of
+its modules on the fused kernel in both phases: the five routed stacks (E4M3
+at q256 896, 928, 1024 and 1088; BF16 at 1024) on the fused routed pair, and
+the sixteen dense modules on the fused dense identity at every rung from 832
+to 1088 (`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`).
+The fixture names the four E4M3 window ids as re-measured at v45. E2M1 stays on
+`a4_span2`. See §3.3 "Mixed rates" and
+`docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
+
+Re-stamped 2026-09-28 for drafters in the research GLM53 NoPE backend
+(tessera#695). Speculative method `dflash` is refused by name in every
+execution mode: the pinned vLLM cannot load a DFlash drafter for GLM5-next. Its
+V2 runner calls `set_eagle3_aux_hidden_state_layers` for dflash, and neither
+GLM5-next class implements `SupportsEagle3`; and `_get_kv_cache_groups_glm5_next`
+returns None for the DFlash2 drafter's sliding-window layers. An in-image test
+reads both facts off the runtime. A drafter under CUDA graphs is no longer
+refused wholesale: `glm53_nope._SPECULATIVE_GRAPH_RECEIPTS` admits a drafter
+graph path by receipt, keyed by method, draft tokens, whether later draft
+steps reuse the first step's sparse indices (`index_share_for_mtp_iteration`),
+compilation mode and CUDA-graph mode. The table is empty, so every drafter
+still serves eager, and the refusal names the configuration and what is
+measured. `eager_equivalence_gap` now checks the drafter's graph families for
+padding: target verification and the drafter's first step, at whole requests
+of 1 + k tokens; the drafter's later steps, at one token per request; and
+mixed batches. With a drafter, the reference is an eager serve of the same
+speculative configuration. Eager drafters other than dflash keep their
+admission on any runner. See §5.1.1. The step-1 measurements on the
+four-layer stub add no receipt
+(`docs/measurements/2026-09-28-glm53-drafter-graphs-695.md`); admission is
+measured on the release artifact.
+
+Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
+(tessera#508). `glm53_nope._config_reason` no longer requires
+`--enforce-eager`. Under compilation mode NONE it admits CUDA-graph modes
+FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE, and under VLLM_COMPILE it
+admits FULL_DECODE_ONLY, on one measured V2 model runner: the pinned image's
+`v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317 backported (sha256
+`1c30b8c0...`, image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b`,
+whose vLLM differs from the stock image `f8dbe1a0...` in that file alone). The
+stock runner is refused by name: its generic slot mapping reads the kpool
+tail's block-table row by absolute position, and past the table in a long
+prefill. In a stock eager serve with PyTorch's caching allocator off,
+compute-sanitizer counts 128 invalid reads at `block_table.py:344` on one
+3649-token prompt and the engine dies; on the backport it counts none. Also
+refused by name: STOCK_TORCH_COMPILE, graphs under DYNAMO_TRACE_ONCE,
+piecewise graphs under VLLM_COMPILE, the V1 runner, and any graph mode with a
+speculative config. Admission and the eager-equivalence claim are now separate
+verdicts: `glm53_nope.eager_equivalence_gap` says whether an admitted
+configuration runs eager's arithmetic, and every serving process prints the
+verdict once on stderr. A capture list that pads some batch sizes withholds
+the claim (vLLM's mHC TileLang op picks its split-K by token count; a batch of
+5 replayed in the 8-token graph moved top-20 logprobs by up to 0.98081 nats on
+an identical prefix), and so does a compilation mode whose default op settings
+replace eager's (custom_ops `none`, IR ops `native`; vLLM's GLM5-next model
+has no `@support_torch_compile`, so VLLM_COMPILE and DYNAMO_TRACE_ONCE compile
+nothing). Capturing every size from 1 to the largest restores the claim for
+about 0.02 s of capture and no graph-pool bytes per added size on the
+four-layer stub. Not attested: the full model at TP2, a drafter, the quality
+of a serve without the claim (it needs its own served KL), and any contract
+cell under compiled execution. The contract version and its cells are
+unchanged. See §5.1.1 and
+`docs/measurements/2026-09-28-glm53-nope-graphs-508.md`.
+
 Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
 v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
@@ -128,6 +302,43 @@ and v1 bundles need no authority. Bytes, wires, contract cells, serving
 defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
 for a caller that supplies PrismaQuant's authority.
 
+Re-stamped 2026-09-28 for the #691 review fixes on the #687 schema. The
+contract's `producer_interface.reuse_authority.drivers` (v43) lists the
+supported exporter `src/tessera/export_serving.py` ALONGSIDE the legacy shim
+`experiments/export_tessera_serving.py`, admitted explicitly by
+`tests/test_producer_authority_drivers.py` via its re-export, so a producer
+that has not moved its driver keeps passing `--producer-authority` to a path
+that takes it. One validator owns the plan entry shape:
+`serving_parts.validate_explicit_plan` and `export_serving.project_expert_plan`
+route through `tessera.serving_plan.validate_serving_plan` (the probe's
+accepted-here/refused-there sidecar disagreement is gone). Plans may declare
+`"schema": "tessera.serving_plan.v1"` under a reserved top-level key,
+recorded as `plan_schema` in the manifest beside the published plan; the
+`prismaquant_*` annotation names are retired for a neutral
+`producer_annotations` object, copied through and never read. The exporter
+derives its code root instead of counting parents (installed-wheel
+`export_identity` digests the package) and stamps the install's
+`direct_url.json` commit when git cannot, refusing instead of `unknown` when
+neither answers. `experiments/moe_plan_baseline.py` drives the real module,
+not the shim's namespace. No cell, rung, route, format row or served byte
+changes.
+
+Re-stamped 2026-09-28 for the supported exporter and the published serving
+plan (tessera#687). `experiments/export_tessera_serving.py` moved into the
+package as `tessera.export_serving` (entry point `python -m
+tessera.export_serving`; the old path is a shim), the stock-twin config
+symbols its stock arm used moved with it to `tessera.stock`, and
+`tessera.serving_plan` publishes the `--plan-json` schema
+`tessera.serving_plan.v1` (per tensor `"PASSTHROUGH"`/`"BF16"` or
+`{"grid","q256"}`; per `<moe>.experts` stack `{"grid","q256","source_layout"}`;
+the two `prismaquant_charged_bits*` producer annotations are copied through
+and never read). `family_for` and `module_scheme_key` moved to the same
+module so a producer runs the fused-group check without importing
+`experiments/`. `producer_interface.reuse_authority.drivers` names the
+exporter at its new package path (contract v43) and the equality test scans
+`experiments/`, `tools/` and `src/tessera/`. No cell, rung, route, format row
+or served byte changes.
+
 Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a
 mixed-rate window rung, a window span yields all of its rate calls as a tuple,
 and the batched LDLQ driver runs them on per-thread CUDA side streams
@@ -154,6 +365,12 @@ attests. The exporter's cached intake passes `routed_moe` for a projected
 unit. It refuses a historical producer that takes no structure only at a rung
 where the structure changes the wire. No contract cell, serving default or
 route changes.
+
+Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
+targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
+in its dependency graph but records it under `excluded_tests` with its reason,
+not in the pytest target list. Its manual CUDA gate is not executed or certified
+by that selection; pytest consumers and full-run escalation remain unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
@@ -1462,7 +1679,8 @@ layout, packaged cells, release pins and serving gates are unchanged.
 
 This doc covers the path from a PrismaQuant rung assignment to a served
 Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
-plan), `experiments/export_tessera_serving.py` (plan to checkpoint),
+plan, off the supported path since tessera#687 -- the producer writes the plan),
+`tessera.export_serving` (`python -m tessera.export_serving`; plan to checkpoint),
 `tools/tessera_route_census.py` (checkpoint to route), and `tessera.control`
 plus `experiments/uniform_control.py` (the gate that judges the result).
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
@@ -1683,6 +1901,14 @@ that the graph read everything relevant, so where it did not, the answer is
 `full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
+The explicitly standalone `tests/test_native_a4_serving.py` is a manual CUDA
+`run_gate`/`__main__` harness with no pytest items. After all candidate-selection
+paths, the selector removes it from pytest targets and records its path and
+reason in `excluded_tests` (also displayed in the text receipt). It remains in
+the graph so its pytest consumers are still selected. No general absence-of-test
+heuristic drops modules: pytest can collect imported, inherited or generated
+cases. No exclusion weakens uncertainty escalation or PrismaBuild's requirement
+that every assigned pytest file have a collection/outcome record (tessera#647).
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
 A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
@@ -1825,7 +2051,7 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
-`export_tessera_serving.fused_module` is the one statement of that roster --
+`tessera.export_serving.fused_module` is the one statement of that roster --
 q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
 and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
@@ -1922,7 +2148,7 @@ their original bytes and modes.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
-`export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
+`tessera.export_serving --partition INDEX/COUNT` gives a complete decoder
 layer to `layer % COUNT`; non-body tensors belong to index zero. Every worker
 validates the same full plan before selecting its work, so a fused module and
 an expert stack cannot be divided between workers. Each worker reads and writes
@@ -2136,7 +2362,7 @@ this adds no cost there.
 
 ### 2.3 Priced inputs remain bound across the process handoff
 
-`export_tessera_serving.py --priced-inputs BUILD --priced-inputs-sha256 SHA`
+`tessera.export_serving --priced-inputs BUILD --priced-inputs-sha256 SHA`
 accepts the preflight's build anchor and the SHA-256 returned directly with
 its publication. Both flags are required together. `PricedInputsSnapshot`
 reads the bytes once, checks their digest against the argument, and reads the
@@ -2470,7 +2696,19 @@ disagreeing unit lists its rows by census owner or site rather than being
 absorbed (tessera#557: the manifest prices the tile, the per-row scales, the
 NVFP4 A-side scalar and the load-pinned trellis tables, and the mixed3
 capture re-derived over those figures closes; per-module pricing of the
-shared tables is exact for one NVFP4 unit per trellis). `cache_capacity` may
+shared tables is exact for one NVFP4 unit per trellis). A routed FP8/BF16
+stack is priced as the compact window lane holds it (tessera#624): the
+repacked planes, per-expert tables, permutations and bookkeeping of
+`WindowUnitAxis`, the per-part `run_off` (int64 `[E + 1]`: `finish`'s
+`torch.cumsum` promotes its int32 counts), and the fused lane's composed
+tables (#685) with, since contract v45, each projection's run pair and block
+descriptors (`serving_parts.routed_fused_unit_bytes`) where the stack's wire
+shape admits the lane (`routed_fused.fused_routed_unit_shape_refusal`: one
+rate or two adjacent rates, the gate/up launch within `ROUTED_LANE_RATES` on
+sm_121) -- never a decoded tile, which that lane does not allocate. The figure is the whole stack at TP1; the
+manifest's `totals.per_rank` block (`--fit-tp-size`) prices each rank's cut
+beside the MTP draft's own embed/head duplicate as its own line item
+(tessera#645). `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
@@ -3074,7 +3312,7 @@ research `wire_recipe` spelling unchanged (tessera#662).
 Both use the same unit-record construction and wire verifier. Expert export
 requires the projected identity; dense export uses the common encoding identity.
 Both require exact field equality against freshly supplied source and capture.
-`export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
+`tessera.export_serving --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates
 wire geometry/rates/profile/reach/encoder identity and complete plane extents,
@@ -3301,9 +3539,11 @@ is the one the family already publishes.
 same attribute, and it is the default (tessera#640, contract v42).**
 `PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
 supported` whether the loaded stack is one the fused lane serves -- every
-column at rate 4, `window_bits` 14, window body, channel plane, no decoration,
-the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128 == 0`,
-the predicate `native_extensions[].lane.requires` publishes -- and builds
+column at a rate in `ROUTED_LANE_RATES` (1..6 since contract v45, tessera#694;
+rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
+decoration, the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128
+== 0`, the predicate `native_extensions[].lane.requires` publishes
+(`column_rates` for the wire, `column_rates_routed_moe` for this launch) -- and builds
 `tessera.routed_fused.FusedRoutedWindowMoE` when it is, the compact
 `NativeWindowMoE` otherwise, logging the refusal reason at INFO.
 `TESSERA_ROUTED_FUSED=0` keeps the compact adapter for every stack. The fused
@@ -3336,8 +3576,10 @@ the compact pair, since the same change), and the forward runs under its own
 adapter's. Both pairs sit in `scheme.ROUTE_LAUNCHES` as the first
 LANE-BEARING rows since v31: each names the extension it needs, so
 `_validate_cell_executes` derives the fused pair only at a rung the
-extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`:
-q256 1024, not the mixed-rate 896), and the compact rows keep
+extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`,
+which since v45 reads the cell's structure: a routed cell reaches the lane only
+where every rate of the rung is in `column_rates_routed_moe`, a dense cell
+wherever every rate is in `column_rates`), and the compact rows keep
 `when_lane_absent` False because the compact adapter still runs beside the
 lane -- for the stacks the predicate refuses and for the opt-out. A TP1 eager
 resident route census of the rate-4 u1 stub B on the GLM serving image
@@ -3358,7 +3600,7 @@ path; that gap is measured in the same document.
 **The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
 unweighted case of the routed lane, and since v43 the same kernel serves the
 q256 1024 dense and shared-expert window modules of both families through a
-`DENSE` template instantiation (`routed_fused_kernel<FP8, MODE, DENSE, SPLIT>`
+`DENSE` template instantiation (`routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`
 in `serving/csrc/routed_fused_window.cu`; host entry
 `tessera.routed_fused.dense_forward`). Two things differ from the routed
 case. First, decode has too few work items -- an item is 64 rows of `x` by 128
@@ -3379,11 +3621,12 @@ M = 2048) for a model-forward patch and a changed census module count; instead
 `native_window.PreparedDenseNativeModule` runs each role as one op into its
 column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
 op like `window_gemm_dense`). The lane is decided once per module at weight
-load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (rate 4
-in every column of every role, rows a multiple of 128, columns a multiple of 32
-and at least 128, window 14, the identity column order, the family's
-arithmetic -- `epilogue` for E4M3, `folded` for value -- and a bundle prepared
-with the attested native quantiser); a refusal names its reason
+load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
+column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
+multiple of 128, columns a multiple of 32 and at least 128, window 14, the
+identity column order, the family's arithmetic -- `epilogue` for E4M3, `folded`
+for value -- a bundle prepared with the attested native quantiser, and a
+word-stage slot the device's shared memory holds); a refusal names its reason
 (`lane_reason`, logged), `TESSERA_DENSE_FUSED=0` keeps the Triton lane for
 every module, and a build failure of the library after admission is the
 published `when_unavailable` substitution. The module answers its own
@@ -3417,10 +3660,122 @@ gap from the CUDA wheel's headers for the census container and is a no-op
 where `/usr/local/cuda/include` is complete. The served-path oracle
 (`experiments/dense_fused_oracle.py`, `tests/test_dense_fused_window.py`),
 profiles, NCU, census and bench receipts are recorded in
-`docs/measurements/2026-09-28-dense-fused-window.md`. The lane covers rate 4
-only, on both structures; the mixed-rate rungs the allocator prices (832-1088
-today) stay on the Triton GEMM and the compact adapter, which is the next
-kernel change (tessera#690).
+`docs/measurements/2026-09-28-dense-fused-window.md`.
+
+**Mixed rates (contract v45, tessera#694).** The kernel's run table was never
+rate-4-only -- a column block is a pair of runs `(r_lo, n_lo, r_hi, n_hi)` and
+`decode_rows<FP8, R>` exists for R in 1..8 -- but its word ring was sized for
+rate 4 and its shared-memory layout was fixed, so the predicate admitted rate 4
+alone. Since v45 the word stages are sized per launch: `Params::slot_words`
+carries `slot_words_for_rate(r) = 2r + 2 * (r odd)` words per (column, 64-row
+half) rounded up to 4 for the larger rate of the pair (`routed_fused.
+slot_words_for_pair`), a `Layout<MODE>` template places the tables, B and A
+stages, scales, descriptors, the claim counter and the two-run block-descriptor
+ring ahead of the word ring, and
+`smem_bytes(mode, slot) = SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot * 4`
+is the dynamic shared memory the launch requests (91,600 B fixed for the
+two-table gate/up modes, 58,640 B for down and dense; `SLOT_WORDS_MAX` 16).
+The two extra words at an odd rate are the copy path: a column's words
+start 16-byte
+aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
+8-byte aligned at odd half indices, and the producer copies every half in
+16-byte `cp.async` pieces (from the aligned word pair before it when it is
+misaligned, with one 8-byte tail when it is not) instead of the 8-byte copies
+the first cut of this version made; the decode reads the half from the slot's
+third word there, and loads a word past a lane's eight fields only where a
+field reaches into it, so no launch reads past a half. Each run pair
+(`r_lo`, one run or two) is its own kernel instantiation,
+`routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`: the host reads the
+pair off the launch's `tile_words` (`pair_of`: `tile_words / 16` is the sum
+of the column rates, `K * r_lo + n_hi` with `0 <= n_hi < K`, and adjacency
+leaves no other pair with that sum), launches only pairs `launch_decodes`
+admits and refuses any other by name, and the kernel traps on an expert whose
+run table is not the pair it was built for. The slot size, the copy pattern,
+the window shifts and, for one run, the column map are constants, and each
+pair gets its own register allocation: 94 to 112 registers per
+instantiation, no spills, and the E4M3 rate-4 gate/up kernel compiles to
+3,352 sm_121 SASS instructions at 98 registers, its table lookups folding the
+table base into the load's immediate. The chunk loop carries the previous
+window word and the activation chunk in registers and loads chunk kc + 1's
+at the top of iteration kc; the first chunk's loads are consumed before the
+loop (an XOR with a zero ptxas cannot fold), because loads that write the
+loop-carried registers directly make ptxas guard those registers with the
+loads' scoreboard on every iteration, which the next chunk's loads share:
+the decode's first instruction then waited for the next chunk's global
+loads, as master's kernel did. The wait placement is ptxas's (checked on the
+image's CUDA 13.0.88; a toolchain change must re-check it). On the T8R expert
+stacks this runs the rate-4 R1024 stack 3 to 10% faster than master at M 1 to
+2048 and keeps the two-run stacks 5 to 9% faster
+(`docs/measurements/2026-09-29-per-pair-kernel.md`). Until this change one
+kernel per mode held every pair's loop behind a per-item switch, at 118 to
+128 registers against the 128-register cap, and a change to one pair's loop
+moved the others' code: the two-run
+column map below cost the unchanged rate-4 gate/up loop 11% more executed
+instructions (`docs/measurements/2026-09-29-two-run-column-map.md`). The
+library now holds 67 instantiations per family instead of five, and nvcc
+compiles each family's source in about 35 s instead of 28 s on sparky. A two-run chunk
+branches warp-uniformly on the run per half, and maps each column from its
+32-column block descriptor (`BDESC_INTS` 12 int32 per projection per chunk).
+The descriptors travel with the word stages' copies: the producer threads
+that issue no words (six for gate/up, three for down and dense) copy chunk
+kc + 4's descriptors in 16-byte `cp.async` pieces with chunk kc + 2's words,
+into a ring of `DRING_STAGES` 4 chunks (384 B for gate/up, 192 B for down and
+dense), and the first two chunks' descriptors are stored before the loop, so
+the word copies and the previous-word loads map their columns from shared
+memory. Every two-run chunk loop then waits on its global loads only at its
+end, after all of its table lookups (sm_121, CUDA 13.0.88), and on the T8R
+expert stacks the two-run stacks run 31 to 38% faster than with the global
+reads, R1088 at 1.13 to 1.18 times R1024's time per call. The one-run loops
+keep their load order (the previous word, then the activation chunk): issuing
+the activation chunk first cost the one-run R1024 stack 2 to 7% at M = 1 and 2
+with no change in instruction count. Before, the
+gate/up launch read each descriptor from global memory once per (chunk,
+half, column) and kept a packed map in a 768 B ring, and the down and dense
+launches read it from global memory in both places: a dependent global load
+on the producer's chunk loop whose wait sat ahead of the next copy or the
+decode (`docs/measurements/2026-09-29-two-run-column-map.md`,
+`docs/measurements/2026-09-30-descriptor-ring.md`). The host checks that each
+descriptor tensor is 16-byte aligned. Two rates of a
+pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
+`run_pair` refuses a wider one by name and no instantiation reads one. The
+device decides the rates: sm_121 grants 101,376 B per block
+(`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
+8 (97,744 B; rates 1-4) and slot 12 (100,816 B; rates 5 and 6) and not slot
+16 (103,888 B; rates 7 and 8), while the one-table down launch holds every
+slot (70,928 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
+inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
+role in its own launch and so has no two-table gate/up mode, reaches 1..8. A
+routed stack whose larger rate is 7 or 8 keeps the compact adapter, and the
+predicate names the slot and the bytes; it may JIT-build the extension to ask
+the device (a first call on a cold cache pays nvcc). One correctness fix rode
+along: the previous window
+word was loaded for the first 8-row group only, but a field's 14-bit window
+reaches 13 bits before it, so at rate 1 the groups whose window starts inside
+the half's first word (`8 * j * rate < 32`) read a stale word; every such
+group now loads it. Because one lane serves both structures and the
+contract's `executes` list is the census's admissible set, the two fused
+entries publish `lane.requires.column_rates_routed_moe = [1..6]` beside
+`column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
+over a `routed_moe` structure fact and refuses by name without one,
+`_lanes_a_rung_reaches` and the export plan gate pass the cell's structure,
+and the validator holds the field to an ascending subset of `column_rates`.
+The field is not additive for a v44 reader or for PrismaQuant's mirror of the
+roster (`lane_eligibility.LANE_REQUIREMENT_FIELDS`, `tessera_render.
+planned_wire_facts`, which must also carry the structure fact), which is why
+the version moved. The export follows the lane: `routed_fused.
+fused_routed_unit_shape_refusal` builds the packer's run table from a unit's
+manifest rates and asks `run_pair` and the part's own launch, and every unit
+it admits is priced with its table, run pair and block descriptors
+(`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash
+expert per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU
+test receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
+routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832,
+R960 and R1088) run 2.0x to 3.9x faster than the compact adapter but at 1.50x
+to 1.71x of R1024. A TP1 eager census of stub B on the GLM image recorded every routed
+stack and every dense module on the fused kernel
+(`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`,
+replayed by `tests/test_glm_u1_census_cells.py`). E2M1 fused stays parked; the
+E2M1_K2 routed stacks stay on the A4 span-2 grouped path.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 
@@ -3738,7 +4093,7 @@ than what degree they were built for — `schema_minor`, and `tp_agnostic`
 (`SLICEABLE_SCHEMA_MINOR`), which is the one home of that rule and lives with
 the cutter, not in the exporter's comment. Both keys go into
 `tessera_config.json` (`export._write_config`) and into the loader-visible
-`quantization_config` (`export_tessera_serving.py`,
+`quantization_config` (`tessera.export_serving`,
 `serving_parts.merge_serving_parts`), because those are two different configs
 and only the second is what vLLM hands the plugin.
 
@@ -4232,7 +4587,7 @@ loader agree by construction, and a requirement the contract grows is
 *refused* by any gate that has not learned it -- on the plan side too,
 which used to skip unknown fields. The block is read on both sides:
 
-- **Plan time.** `experiments/export_tessera_serving.py --require-lane LANE`
+- **Plan time.** `tessera.export_serving --require-lane LANE`
   calls `scheme.refuse_unreachable_lane` at argument time, beside
   `check_recipe`, for the default rung and every plan override. It needs no
   shape -- reachability is a function of the rung alone (`grammar.rate_set`)
@@ -4513,7 +4868,7 @@ a block that names no stack it serves is refused at config parse.
 
 **The exporter writes it.** A `--plan-json` entry keyed `<moe>.experts` -- the
 STACK, not one of its leaves, because vLLM builds one method for the stack --
-gives every expert of it one rung; `export_tessera_serving.py` then writes one
+gives every expert of it one rung; `tessera.export_serving` then writes one
 container per expert per projection under `<moe>.experts.{e}.{proj}.wire`,
 derives each group's `wire_stride` as the maximum over that group's blobs, and
 declares the `routed_moe` scheme through
@@ -6181,16 +6536,60 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 
 `TESSERA_RESEARCH_GLM53_NOPE=1` asks the same entry point to register
 `TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
-Selection additionally requires `--enforce-eager --attention-backend CUSTOM
---kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
-Normal selection is eager-only and refuses non-NONE compilation or CUDA graph
-modes. The four-layer whole-engine graph arm differed by 0.67253 logprob nats
-from eager despite global compile mode NONE in both arms; isolated attention
-graph equality does not qualify the model graph path.
+Selection additionally requires `--attention-backend CUSTOM --kv-cache-dtype
+fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
 registration is refused. Without the environment setting, normal plugin loading
 is unchanged.
+
+**Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
+tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
+DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
+vLLM's V2 model runner, and only on the runner source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
+backported (`_GRAPH_RUNNER_SHA256`, image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
+NONE that admits FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE; under
+VLLM_COMPILE, FULL_DECODE_ONLY. The gate judges the graph mode vLLM will run
+(`_graph_mode`): this backend's metadata builder supports uniform batches
+only, so a FULL request becomes FULL_DECODE_ONLY, or FULL_AND_PIECEWISE when
+attention is a splitting op. Every other combination is refused with its
+reason: the stock runner (its generic slot mapping reads the kpool tail's
+block-table row by absolute position, and past the table in a long prefill),
+STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
+(measured without graphs only), piecewise graphs under VLLM_COMPILE (they need
+vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
+drafter graph path without a receipt (tessera#695). Drafters are admitted
+under CUDA graphs only through `_SPECULATIVE_GRAPH_RECEIPTS`, keyed by method,
+draft tokens, sparse-index sharing across draft steps, compilation mode and
+CUDA-graph mode; the table is empty, so drafters serve eager. Speculative
+method `dflash` is refused in every mode, eager included: the pinned vLLM
+cannot load it for GLM5-next (no `SupportsEagle3` on either GLM5-next class,
+and no KV cache grouping for sliding-window drafter layers).
+`docs/measurements/2026-09-28-glm53-drafter-graphs-695.md` has the step-1
+drafter measurements on the four-layer stub, which add no receipt.
+
+**Admission does not claim equality with eager.**
+`glm53_nope.eager_equivalence_gap` answers that separately, and every serving
+process prints the answer once on stderr. Eager itself is not repeat-exact on
+this model (FlashInfer's fused MoE finalize reduces with atomics), so "equal"
+means that every completion of the equality suite is one an eager serve also
+produced. With a drafter, that eager serve runs the same speculative
+configuration: verification runs 1 + k query tokens per request, so a serve
+without the drafter is a different computation. The claim is withheld, with the measured figure, for two reasons.
+The first is a capture list that pads batch sizes: the V2 runner replays a
+batch of n tokens in the smallest captured graph of at least n, and vLLM's mHC
+TileLang op picks its split-K by token count (`mhc_fused_post_pre_tilelang`),
+so a padded replay runs another valid reduction order. Capturing every size
+from 1 to the largest removes it, at about 0.02 s of capture and no graph-pool
+bytes per added size on the four-layer stub. The second is a compilation mode
+whose default op settings differ from eager's: VLLM_COMPILE compiles nothing
+for this model (it has no `@support_torch_compile`) but switches `custom_ops`
+to `none` and the RMSNorm IR ops to `native`. A configuration without the
+claim runs correctly, but its quality needs its own served KL-vs-BF16 instead
+of inheriting eager's. The claim is a log line, not a contract field, and no
+contract cell attests compiled execution.
+`docs/measurements/2026-09-28-glm53-nope-graphs-508.md` has the receipts.
 
 The extension requires SM121 and GLM5-next text geometry: latent rank512,
 NoPE256, RoPE0, index_topk2048 and index_kpool4. Context parallelism is refused.

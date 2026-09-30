@@ -187,8 +187,32 @@ def test_the_packaged_contract_validates_at_v33(contract):
     four GLM-image E4M3/BF16 cells) name the fused pair beside the Triton pair,
     each on a served census of its own image.  No image, rung, flag or format
     row moves; the pin is unchanged.
+
+    v44 (tessera#687) is ADDITIVE for a lane reader and moves no schema: the
+    exporter became the supported entry point ``src/tessera/export_serving``
+    (``python -m tessera.export_serving``), so the ``producer_interface``
+    reuse-authority drivers list names the package path alongside the
+    ``experiments/`` shim row (tessera#691 item 1).  The option a driver must
+    declare is unchanged; no cell, rung, route, launch, grade, format row
+    or flag moves.
+
+    v45 (tessera#694) widens the two fused lanes' published predicate:
+    ``lane.requires.column_rates`` moves from ``[4]`` to ``[1..8]`` on both
+    entries -- the kernel reads the wire's run table at every rate -- and a
+    structure-scoped ``column_rates_routed_moe`` ``[1..6]`` enters beside it:
+    the routed-expert (gate/up, two-table) launch does not fit sm_121's
+    101,376 B per-block shared memory above rate 6, so an expert stack there
+    keeps the compact adapter while the one-table down/dense launch reads
+    every rate.  Every rung of the two window families up to rate 6 reaches
+    the fused pair the way q256 1024 did.  The cells' ``executes`` are
+    unchanged -- each routed/dense window cell already named the fused pair
+    beside the compact/Triton pair on a rung set that includes 1024 (all of
+    them at rates <= 6), and the derivation now reaches it at their other
+    rungs too.  NOT additive for a validator: ``column_rates_routed_moe`` is
+    a new ``lane.requires`` field a v44 reader (and PrismaQuant's mirror of
+    the roster) refuses, the fail-closed direction.  (v44 is tessera#691's.)
     """
-    assert int(contract["contract_version"]) == 43
+    assert int(contract["contract_version"]) == 45
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
@@ -393,6 +417,19 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
         "tessera_e4m3_k1_dense_sm121_decode_resident",
         "tessera_e4m3_k1_dense_sm121_batch_resident"}
     assert set(recorded["remeasured_at_v43"]) <= standing
+    # Contract v45 (tessera#694) changes the kernel behind both fused launches
+    # and widens their predicate to rates 1..8 / routed 1..6, but no executes
+    # list, rung or id moves, so no cell is withdrawn or re-earned.  A served
+    # census of stub B on the GLM image recorded the fused pair on every
+    # routed stack and every dense module, at every rung the stub carries
+    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Route census");
+    # the fixture's ``remeasured_at_v45`` list names the four E4M3 window ids.
+    assert set(recorded["remeasured_at_v45"]) == {
+        "tessera_e4m3_k1_dense_sm121_decode_resident",
+        "tessera_e4m3_k1_dense_sm121_batch_resident",
+        "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+        "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
+    assert set(recorded["remeasured_at_v45"]) <= standing
     launch = {("TESSERA_E4M3_K1", "dense"): [
                   ("tessera::window_gemm_dense", "native_window_gemm"),
                   ("tessera::fused_window_dense", "native_fused_window_dense")],
@@ -532,3 +569,16 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
               if cell["platform"] == "sm_121"}
     assert len(images) == 2, images
     assert block["platforms"]["sm_121"]["serve_image"] in images
+
+
+def test_the_changelog_is_newest_first_and_heads_at_the_contract_version(contract):
+    """A reader takes ``changelog[0]`` as the current version's account.
+
+    Two PRs that each minted a version (tessera#693 v43, tessera#691 v44) left
+    the later entry below the earlier one; nothing refused it.  The changelog
+    is strictly descending and its head is the packaged ``contract_version``.
+    """
+    versions = [int(entry["contract_version"]) for entry in contract["changelog"]]
+    assert versions[0] == int(contract["contract_version"]), versions[:3]
+    assert all(a > b for a, b in zip(versions, versions[1:])), [
+        (a, b) for a, b in zip(versions, versions[1:]) if a <= b]

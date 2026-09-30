@@ -606,11 +606,13 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
         # The fused warp-specialised lane (tessera#640) on the same epilogue
         # arithmetic.  ``PackedWindowMoeBundles.adapter`` takes it for every
-        # stack ``routed_fused.fused_routed_window_supported`` admits (every
-        # column at rate 4, window 14, identity order -- the q256=1024 GLM
-        # stacks) unless ``TESSERA_ROUTED_FUSED=0``; the compact pair above
-        # stays the dispatch for the rest (the mixed-rate q256=896 rung, a
-        # box whose toolchain cannot build the library, the opt-out).  The
+        # stack ``routed_fused.fused_routed_window_supported`` admits (the
+        # wire's one- or two-rate run table at rates 1..8 in the packer's
+        # column order, window 14 -- every GLM q256 rung since contract v45,
+        # tessera#694; v42-v44 read rate 4 alone) unless
+        # ``TESSERA_ROUTED_FUSED=0``; the compact pair above stays the
+        # dispatch for the rest (a box whose toolchain cannot build the
+        # library, the opt-out).  The
         # FIRST lane-bearing row since #538: ``lane`` names the extension
         # ``native_extensions`` publishes for it, so a cell derives this pair
         # only at a rung the extension's own ``lane.requires`` admits
@@ -768,13 +770,13 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
     non-empty set drops the ``when_lane_absent`` launch, exactly as the routes'
     own ``elif ... tessera_gemv is None`` branch does.
 
-    There is deliberately no RATE axis.  A rate decides whether the lane can
-    read a rung at all -- ``refuse_unreachable_lane``, and the caller passes
-    the answer in ``lanes`` -- and above that it decides only which M the GEMV
-    covers *within* a regime, never which launches the regime contains: the
-    one-row forward is always the GEMV and the batch regime always holds both,
-    rate-1 columns or not.  A rate filter here read as the second and cost the
-    batch cell its GEMV launch.
+    There is deliberately no RATE axis. A rate decides whether a prepared
+    lane can read a rung -- ``refuse_unreachable_lane``, represented here by
+    ``lanes``. Dispatch alternatives come from ``ROUTE_LAUNCHES``, not from a
+    universal GEMV/GEMM split: native dense preparation may serve either
+    regime, and a regime describes problem shape rather than one kernel.
+    Keep any within-regime M/rate decision in the owning lane. Adding a rate
+    filter here would incorrectly erase alternatives from a regime's census.
     """
     if route not in ROUTE_LAUNCHES:
         raise ValueError(
@@ -1275,6 +1277,15 @@ def lane_rate_report(lane: str, rates, contract: "Mapping | None" = None) -> dic
 #: preflight and fell back module by module at load.
 _LANE_WIRE_CHECKS = {
     "column_rates": ("rates", "every_in"),
+    # Structure-scoped (tessera#694): the rates the lane's ROUTED-EXPERT launch
+    # reaches on the target, decided over ``facts["rates"]`` only when
+    # ``facts["structure"]`` is the routed-MoE structure; a caller that did
+    # not state the structure is refused by name, and any other structure is
+    # decided as not binding.  The fused window lane reads every rate of the
+    # wire (``column_rates``) but its two-table gate/up launch holds fewer
+    # word-stage words in sm_121's opt-in shared memory than the one-table
+    # down/dense launch, so a stack above this set keeps the compact adapter.
+    "column_rates_routed_moe": ("rates", "every_in_routed_moe"),
     "window_bits": ("window_bits", "one_of"),
     "body": ("body", "wire_spelling"),
     "plane": ("plane", "wire_spelling"),
@@ -1334,6 +1345,21 @@ def decide_lane_requirements(lane: str, requires: Mapping[str, Any],
     refusals: "list[str]" = []
     for name in sorted(requires):
         fact_name, how = _LANE_WIRE_CHECKS[name]
+        if how == "every_in_routed_moe":
+            structure = facts.get("structure")
+            if structure is None:
+                refusals.append(
+                    f"the unit's structure was not read, so the lane's {name} requirement "
+                    f"({requires[name]!r}) cannot be decided; absent evidence is not a pass")
+                continue
+            if structure not in STRUCTURES:
+                refusals.append(
+                    f"the unit's structure {structure!r} is not one this build serves "
+                    f"({list(STRUCTURES)}), so the lane's {name} requirement cannot be decided")
+                continue
+            if structure != STRUCTURE_ROUTED_MOE:
+                continue                     # decided: the requirement binds expert stacks only
+            how = "every_in"
         value = facts.get(fact_name)
         if value is None or (how == "every_in" and not tuple(value)):
             refusals.append(
@@ -1343,7 +1369,13 @@ def decide_lane_requirements(lane: str, requires: Mapping[str, Any],
         if how == "every_in":
             supported = [int(r) for r in requires[name]]
             offending = sorted({int(r) for r in value} - set(supported))
-            if offending:
+            if offending and name == "column_rates_routed_moe":
+                refusals.append(
+                    f"{name} {offending} are outside the rates this lane's routed-expert "
+                    f"launch reaches ({supported}); the lane reads the wire at these rates "
+                    "but the gate/up launch's two tables and word stages do not fit the "
+                    "target's shared memory at them, so the stack keeps the compact adapter")
+            elif offending:
                 refusals.append(
                     f"{name} {offending} are outside the rates this lane reads "
                     f"({supported}); the lane repacks each column at its own rate, "
@@ -1456,7 +1488,8 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
                             target: str, release_overrides: int = 0,
                             diagonals: bool = False, rotation: str = "NONE",
                             start_state: bool = False,
-                            grid_arity: int = 1) -> tuple[int, ...]:
+                            grid_arity: int = 1,
+                            structure: "str | None" = None) -> tuple[int, ...]:
     """Refuse, AT PLAN TIME, a rung whose columns ``lane`` could never read.
 
     THE SEAM MOVES ONE STAGE EARLIER, and that is the whole point of #104.
@@ -1498,7 +1531,11 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
     ``start_state`` -- a slice is a later act, ``layout.slice_unit``, which
     the byte-time gate reads off the wire), unrotated, no diagonals, no
     RELEASE overrides, a scalar (arity-1) grid.  A caller planning otherwise
-    says so and is refused by name.
+    says so and is refused by name.  ``structure`` is what the plan serves the
+    unit AS (``tessera.structure.STRUCTURES``); it has NO passing default: a
+    lane that publishes a structure-scoped requirement (the fused window
+    lanes' ``column_rates_routed_moe``, tessera#694) refuses a plan that did
+    not state it, and a lane that publishes none does not read it.
     """
     from fractions import Fraction
 
@@ -1521,12 +1558,23 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
         "plane": str(plane), "release_overrides": int(release_overrides),
         "diagonals": bool(diagonals), "rotation": str(rotation),
         "start_state": bool(start_state), "grid_arity": int(grid_arity),
+        "structure": None if structure is None else str(structure),
     }
     refusals = decide_lane_requirements(lane, requires, facts)
     if not refusals:
         return rates
     notes = ""
-    if any(refusal.startswith("column_rates") for refusal in refusals):
+    if any(refusal.startswith("column_rates_routed_moe") for refusal in refusals):
+        notes = (
+            f" q256={q256} realises column rates {list(rates)}; the lane reads them on the "
+            f"wire (runtime_contract.json native_extensions[{lane}].lane.requires."
+            "column_rates) but its routed-expert launch reaches only column_rates_routed_moe "
+            "on the target, so an expert stack at this rung is served by the compact adapter "
+            "and an artifact built to measure the lane on it would measure that adapter. "
+            "Re-plan the stack on a rung whose rate set is inside column_rates_routed_moe, "
+            "or plan it as a dense structure, which the lane's one-table launch reads at "
+            "every published rate.")
+    elif any(refusal.startswith("column_rates") for refusal in refusals):
         root = Fraction(q256, 256)
         notes = (
             f" q256={q256} is root rate {float(root):.4f}, which bresenham_rate_schedule "

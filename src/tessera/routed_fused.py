@@ -109,15 +109,162 @@ BM = 64
 HALF = 64
 BN = 128
 BK = 32
-RATE = 4
+#: The column rates the kernel decodes: every rate of the window grammar, so a
+#: stack's one- or two-rate run table (the two rates bracketing its root) is
+#: read as the wire lays it out.  ``RATE_MAX`` sizes the per-column word slot.
+RATE_MIN = 1
+RATE_MAX = 8
+RATES = tuple(range(RATE_MIN, RATE_MAX + 1))
+SLOT_WORDS_MAX = 2 * RATE_MAX         # the rate-8 word-stage slot, int32 words per (half, column)
+BDESC_INTS = 12                       # int32 words per 32-column block descriptor
 WINDOW_BITS = 14
 TABLE_ENTRIES = 1 << WINDOW_BITS
-CHUNK_WORDS = 64          # int32 words per column per 512-row tile at rate 4
 MIN_COLS = 4 * BK
+#: The kernel's shared-memory layout, restated for the support predicates (the
+#: library's attributes are checked against these at load): the word stages
+#: come last and are sized per launch by the stack's rates, so the fixed part
+#: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense,
+#: and the two-run block-descriptor ring -- DRING_STAGES chunks of BDESC_INTS
+#: int32 per projection) and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK
+#: * slot_words * 4`` bytes.  A block on sm_121 may opt in to 101,376 B, so the
+#: gate/up launch fits slots up to 12 words (rates <= 6) and the down/dense
+#: launch every rate.
+WORD_STAGES = 3
+DRING_STAGES = 4
+SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
+#: The per-block dynamic shared memory sm_121 (GB10, the contract's target
+#: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
+#: Optin`` there; the library reads the live value per device, this is the
+#: figure the PUBLISHED predicate is derived from.
+SM121_MAX_DYNAMIC_SMEM = 101_376
+
+
+def _round_up_4(words: int) -> int:
+    return -(-int(words) // 4) * 4
+
+
+def chunk_words(rate: int) -> int:
+    """int32 words one column at ``rate`` occupies per 512-row tile."""
+    return 16 * int(rate)
+
+
+def slot_words_for_rate(rate: int) -> int:
+    """The word-stage slot one column at ``rate`` needs: its ``2 * rate`` words,
+    plus two at an odd rate -- a 64-row half at an odd rate starts on an
+    8-byte boundary when its index is odd, and the kernel copies it in 16-byte
+    pieces from the aligned word pair before it (``issue_words`` in
+    ``routed_fused_window.cu``), which lands in the slot too.  The decode reads
+    no word past the half."""
+    rate = int(rate)
+    return 2 * rate + (2 if rate & 1 else 0)
+
+
+def slot_words_for_pair(pair: torch.Tensor) -> int:
+    """The launch's slot: the larger of the two rates' slots, rounded up to a
+    multiple of 4 (16-byte copies stay aligned), at least 4."""
+    r_lo, _c0, _n_lo, _w0, r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
+    need = max(slot_words_for_rate(r_lo), slot_words_for_rate(r_hi) if n_hi > 0 else 0, 4)
+    return _round_up_4(need)
+
+
+def smem_bytes(mode: int, slot_words: int) -> int:
+    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
+    return SMEM_FIXED[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+
+
+#: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
+#: reaches on the target platform: those whose one-rate slot fits sm_121's
+#: opt-in shared memory -- slots 8 and 12 (rates 1..6) fit, the 16-word slot
+#: of rates 7 and 8 does not.  A two-rate pair's slot is the larger rate's, so
+#: the set is closed under bracketing.  Published as the fused lanes'
+#: ``column_rates_routed_moe`` (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``,
+#: contract v45, tessera#694); the down/dense one-table launch reads every
+#: rate in ``RATES``.  Derived, not typed: the day the layout changes, this
+#: changes with it and the contract's pin fails until the JSON follows.
+ROUTED_LANE_RATES = tuple(
+    r for r in RATES
+    if smem_bytes(0, _round_up_4(slot_words_for_rate(r))) <= SM121_MAX_DYNAMIC_SMEM)
+
+
+def smem_reason(mode: int, slot_words: int, device: torch.device, family: str) -> "str | None":
+    """Why the launch does not fit the device's opt-in shared-memory limit, or ``None``.
+
+    The limit is read from the built library (``cudaDevAttrMaxSharedMemoryPer
+    BlockOptin``; torch publishes no such property).  A library that cannot be
+    built answers ``None`` here: the build failure is the caller's, reported
+    where the adapter is constructed, not a lane refusal.
+    """
+    try:
+        lib = _ext(family)
+    except Exception:  # noqa: BLE001 -- the build's failure is reported by from_bundles
+        return None
+    index = device.index if device.index is not None else torch.cuda.current_device()
+    need, have = smem_bytes(mode, slot_words), int(lib.max_dynamic_smem_bytes(index))
+    if need <= have:
+        return None
+    what = "gate/up" if mode != 2 else "down/dense"
+    return (f"the {what} launch at {slot_words}-word slots needs {need} bytes of shared memory "
+            f"per block and this device allows {have}")
 
 
 def fused_routed_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE, "1") != "0"
+
+
+def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: int,
+                                    rates, window_bits: int) -> "str | None":
+    """The wire-shape half of :func:`fused_routed_window_supported`, on one
+    unit's manifest facts alone -- what an exporter can decide before any
+    bundle exists (tessera#624 prices the lane's tables only where the
+    stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
+
+    Only what the manifest says is checked here, with the runtime
+    predicate's own helpers: family, window bits, the column count the tiles
+    need, the run table the packer lays out for these rates (one run per
+    distinct rate, sorted by rate) as :func:`run_pair` reads it -- one rate or
+    two ADJACENT rates, each in 1..8 (contract v45, tessera#694) -- the
+    word-stage slot that pair needs against the target platform's opt-in
+    shared memory (``SM121_MAX_DYNAMIC_SMEM``) in the part's own launch (the
+    two-table gate/up launch reaches ``ROUTED_LANE_RATES``, the one-table
+    down launch every rate), and the row multiples the kernel's tiles need.
+    Device, arithmetic, the activation quantizer, the column order and the
+    env toggle are runtime facts the runtime predicate keeps.  A stack is
+    refused whole when any of its parts is, as at runtime, so a GLM stack
+    (one rung for all three parts) is admitted exactly where
+    ``column_rates_routed_moe`` admits its rates.  Returns the refusal, or
+    ``None`` when the shape serves.
+    """
+    if family not in ("value", "e4m3"):
+        return f"family {family!r} is not a window family"
+    if int(window_bits) != WINDOW_BITS:
+        return f"{part} window_bits {window_bits} != {WINDOW_BITS}"
+    cols = int(cols)
+    if cols % BK != 0 or cols < MIN_COLS:
+        return f"{part} has {cols} columns; the lane needs a multiple of {BK} and at least {MIN_COLS}"
+    rates = tuple(int(r) for r in rates)
+    if len(rates) != cols:
+        return f"{part} carries {len(rates)} column rates for {cols} columns"
+    table, col0, word0 = [], 0, 0
+    for rate in sorted(set(rates)):
+        count = rates.count(rate)
+        table.append((rate, col0, count, word0))
+        col0, word0 = col0 + count, word0 + chunk_words(rate) * count
+    pair, why = run_pair(torch.tensor(table, dtype=torch.int32), cols)
+    if pair is None:
+        return f"{part} run table: {why}"
+    mode = 2 if part == "down" else 0
+    slot = slot_words_for_pair(pair)
+    if smem_bytes(mode, slot) > SM121_MAX_DYNAMIC_SMEM:
+        what = "down" if mode == 2 else "gate/up"
+        return (f"the {what} launch at {slot}-word slots needs {smem_bytes(mode, slot)} bytes of "
+                f"shared memory per block; sm_121 allows {SM121_MAX_DYNAMIC_SMEM}")
+    rows = int(rows)
+    if part == "down":
+        if rows % BN != 0:
+            return f"the hidden size {rows} is not a multiple of {BN}"
+    elif rows % HALF != 0:
+        return f"the intermediate size {rows} is not a multiple of {HALF}"
+    return None
 
 
 def fused_dense_window_enabled() -> bool:
@@ -206,8 +353,13 @@ def _ext(family: str):
             f"the fused routed window extension was built for {token} ({PLATFORM_TOKEN_ENV}) and "
             f"this process's device is {probed}; the library under {build} is a compile-gate "
             "artifact and is refused as a serving path.")
-    for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK), ("RATE", RATE),
-                       ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8)):
+    for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
+                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
+                       ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
+                       ("WORD_STAGES", WORD_STAGES), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
+                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]),
+                       # the gate/up rates the library instantiates ARE the ones the host admits
+                       ("GATE_UP_RATE_MAX", max(ROUTED_LANE_RATES))):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{module} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
@@ -256,16 +408,120 @@ def words_by_expert(bundle) -> torch.Tensor:
     return words.view(e, width)
 
 
+def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str | None]":
+    """One unit's run table as the kernel's run pair, or why it is refused.
+
+    ``runs`` is the wire's ``[R, 4]`` table of ``(rate, col0, ncols, word0)``
+    rows, the packer's stable sort of the columns by (rate, column) into one
+    contiguous run per rate.  The kernel reads one or two runs -- the grammar
+    mixes only the two rates bracketing a stack's root, which are ADJACENT
+    (``grammar.rate_set``) -- as the int32 ``[8]`` pair
+    ``(r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)`` with ``r_hi = r_lo + 1``
+    and ``w_hi = 16 * n_lo * r_lo`` (a one-run table has ``n_hi = 0``).  Each
+    (r_lo, one or two runs) pair is its own kernel instantiation, which the
+    host picks from the launch's ``tile_words`` (``pair_of`` in the kernel
+    source), so a pair of rates further apart -- which no grammar schedule
+    emits -- is refused here by name rather than decoded.  Returns
+    ``(pair, None)`` or ``(None, reason)``.
+    """
+    runs = runs.reshape(-1, 4)
+    n_runs = int(runs.shape[0])
+    if n_runs not in (1, 2):
+        return None, f"run table has {n_runs} runs; the lane reads one or two (the two rates bracketing the root)"
+    rows = [tuple(int(v) for v in row) for row in runs.tolist()]
+    r_lo, c_lo, n_lo, w_lo = rows[0]
+    if r_lo not in RATES or c_lo != 0 or w_lo != 0 or n_lo <= 0:
+        return None, f"first run {rows[0]} is not (rate in {RATE_MIN}..{RATE_MAX}, 0, n, 0)"
+    if n_runs == 1:
+        if n_lo != cols:
+            return None, f"the one run covers {n_lo} of {cols} columns"
+        pair = (r_lo, 0, n_lo, 0, 0, n_lo, 0, 16 * n_lo * r_lo)
+    else:
+        r_hi, c_hi, n_hi, w_hi = rows[1]
+        if r_hi not in RATES or r_hi <= r_lo:
+            return None, f"second run rate {r_hi} is not above the first's {r_lo} within {RATE_MIN}..{RATE_MAX}"
+        if r_hi != r_lo + 1:
+            return None, (f"second run rate {r_hi} is not adjacent to the first's {r_lo}: the lane reads the "
+                          "two adjacent rates bracketing a root (grammar.rate_set)")
+        if c_hi != n_lo or n_hi <= 0 or n_lo + n_hi != cols or w_hi != 16 * n_lo * r_lo:
+            return None, f"runs {rows} do not tile {cols} columns as (rate, 0, n_lo, 0), (rate, n_lo, n_hi, 16 * n_lo * rate)"
+        pair = (r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)
+    return torch.tensor(pair, dtype=torch.int32, device=runs.device), None
+
+
+def pair_tile_words(pair: torch.Tensor) -> int:
+    """``16 * (n_lo * r_lo + n_hi * r_hi)``: the wire's words per 512-row tile."""
+    r_lo, _c0, n_lo, _w0, r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
+    return 16 * (n_lo * r_lo + n_hi * r_hi)
+
+
+def perm_reason(perm: torch.Tensor, n_lo: int, cols: int) -> "str | None":
+    """Why ``perm`` (``[E, cols]`` or ``[cols]``) is not the packer's order.
+
+    The kernel recovers a column's permuted position from its rank within its
+    run, which holds exactly when the permutation lists the low-rate columns
+    in ascending column order, then the high-rate columns in ascending order
+    -- the stable sort by (rate, column) every packer performs.
+    """
+    p = perm.reshape(-1, cols).to(torch.int64)
+    if int(p.shape[1]) != cols:
+        return f"perm has {int(perm.numel())} entries for {cols} columns"
+    sorted_p, _ = torch.sort(p, dim=1)
+    arange = torch.arange(cols, dtype=torch.int64, device=p.device)
+    if not bool((sorted_p == arange).all()):
+        return "perm is not a permutation of the columns"
+    for lo, hi, name in ((0, n_lo, "low-rate"), (n_lo, cols, "high-rate")):
+        seg = p[:, lo:hi]
+        if seg.shape[1] > 1 and not bool((seg[:, 1:] > seg[:, :-1]).all()):
+            return f"the {name} run's columns are not in ascending column order"
+    return None
+
+
+def block_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
+    """The per-32-column-block descriptors the kernel maps lane groups with.
+
+    int32 ``[E, cols / 32, BDESC_INTS]``: words 0..7 hold 32 bytes, the
+    in-block position (0..31) of the block's low-rate columns in ascending
+    order followed by its high-rate columns in ascending order; word 8 is the
+    number of low-rate columns in the blocks before this one, word 9 the
+    number in this block; words 10..11 pad the descriptor to 48 bytes.  With
+    this the kernel decodes the ``m``-th descriptor entry in lane group ``m``,
+    so a warp's four columns share a rate except in the one straddling group.
+    """
+    p = perm.reshape(-1, cols).to(torch.int64)
+    e = int(p.shape[0])
+    nk = cols // BK
+    device = p.device
+    is_hi_pos = (torch.arange(cols, device=device) >= n_lo).to(torch.int64)          # per permuted position
+    is_hi_col = torch.zeros(e, cols, dtype=torch.int64, device=device)
+    is_hi_col.scatter_(1, p, is_hi_pos.expand(e, cols))                              # per original column
+    is_hi_blk = is_hi_col.reshape(e, nk, BK)
+    cib = torch.arange(BK, device=device).expand(e, nk, BK)
+    order = torch.argsort(is_hi_blk * BK + cib, dim=2)                               # lo (asc) then hi (asc)
+    packed = order.reshape(e, nk, 8, 4)
+    words = (packed[..., 0] | (packed[..., 1] << 8) | (packed[..., 2] << 16) | (packed[..., 3] << 24))
+    cnt_lo = BK - is_hi_blk.sum(dim=2)                                               # [E, nk]
+    before = torch.cumsum(cnt_lo, dim=1) - cnt_lo
+    desc = torch.zeros(e, nk, BDESC_INTS, dtype=torch.int64, device=device)
+    desc[..., :8] = words
+    desc[..., 8] = before
+    desc[..., 9] = cnt_lo
+    # 0x80000000 cannot occur (in-block positions are < 32), so the int32 view is exact.
+    return desc.to(torch.int32).contiguous()
+
+
 def fused_routed_window_supported(gate, up, down) -> "str | None":
     """Why this lane refuses a stack, or ``None`` when it serves it.
 
-    The kernel reads one wire shape: window bits 14, every column at rate 4
-    in one run starting at word 0 (the ``[[4, 0, cols, 0]]`` run table every
-    q256=1024 GLM stack carries), identity column permutation, and the
-    family's published arithmetic (folded for value, epilogue for e4m3).  A
-    stack outside that shape -- the mixed-rate q256=896 E4M3 rung, a permuted
-    column order -- keeps the compact adapter, and the reason is the string
-    returned here so a log can say which.
+    The kernel reads the window wire as the packer lays it out: window bits
+    14, one or two column-rate runs per expert (the two rates bracketing the
+    stack's root, rates 1..8), the packer's column order (low-rate columns
+    ascending, then high-rate ascending), and the family's published
+    arithmetic (folded for value, epilogue for e4m3).  One run table and one
+    ``tile_words`` per stack: the kernel takes a single tile stride for all
+    experts and for both gate and up.  A stack outside that shape keeps the
+    compact adapter, and the reason is the string returned here so a log can
+    say which.
     """
     if not fused_routed_window_enabled():
         return f"disabled by {ENV_TOGGLE}=0"
@@ -296,20 +552,31 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name}: {exc}"
         if b.words_all.dtype != torch.int32:
             return f"{name} words must be int32"
-        # One run per expert: run_off == 0, 1, ..., E and the table is [E, 4].
+        # One run table for the stack: every expert carries the same one or two
+        # runs (run_off == 0, R, 2R, ...), and it is the kernel's run pair.
         runs = b.runs_all.reshape(-1, 4)
-        want_off = torch.arange(e + 1, dtype=b.run_off.dtype, device=b.run_off.device)
-        if int(runs.shape[0]) != e or not bool((b.run_off == want_off).all()):
-            return f"{name} carries {int(runs.shape[0])} runs for {e} experts; the lane reads one rate-{RATE} run per expert"
-        want_run = torch.tensor([RATE, 0, b.cols, 0], dtype=runs.dtype, device=runs.device)
-        if not bool((runs == want_run).all()):
-            return f"{name} run table is not [[{RATE}, 0, {b.cols}, 0]] for every expert (mixed rates or a rate other than {RATE})"
-        arange = torch.arange(b.cols, dtype=b.perm_all.dtype, device=b.perm_all.device)
-        if tuple(b.perm_all.shape) != (e, b.cols) or not bool((b.perm_all == arange).all()):
-            return f"{name} permutes its columns; the lane reads the identity order"
-        want_tile = b.cols * CHUNK_WORDS
+        n_runs = int(runs.shape[0])
+        if n_runs % e != 0 or (n_runs // e) not in (1, 2):
+            return f"{name} carries {n_runs} runs for {e} experts; the lane reads one or two runs per expert"
+        per = n_runs // e
+        want_off = torch.arange(e + 1, dtype=b.run_off.dtype, device=b.run_off.device) * per
+        if not bool((b.run_off == want_off).all()):
+            return f"{name} experts do not all carry {per} run(s)"
+        runs_e = runs.reshape(e, per, 4)
+        if not bool((runs_e == runs_e[:1]).all()):
+            return f"{name} experts disagree on their run tables; the lane reads one schedule per stack"
+        pair, why = run_pair(runs_e[0], b.cols)
+        if pair is None:
+            return f"{name} {why}"
+        n_lo = int(pair[2])
+        if tuple(b.perm_all.shape) != (e, b.cols):
+            return f"{name} perm_all is not [E, cols]"
+        why = perm_reason(b.perm_all, n_lo, b.cols)
+        if why is not None:
+            return f"{name} {why}; the lane reads the packer's column order"
+        want_tile = pair_tile_words(pair)
         if not bool((b.tile_words == want_tile).all()):
-            return f"{name} tile_words is not {want_tile} for every expert"
+            return f"{name} tile_words is not {want_tile} (from its run table) for every expert"
         if tuple(b.init_all.shape) != (e, b.cols) or b.init_all.dtype != torch.int32:
             return f"{name} init_all must be int32 [E, cols]"
         if b.has_init.dtype != torch.int32 or b.has_init.numel() != e:
@@ -324,7 +591,38 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
         return f"the intermediate size {gate.rows} is not a multiple of {HALF}"
     if down.rows % BN != 0:
         return f"the hidden size {down.rows} is not a multiple of {BN}"
+    if int(gate.tile_words[0]) != int(up.tile_words[0]):
+        return (f"gate tile_words {int(gate.tile_words[0])} != up tile_words {int(up.tile_words[0])}; "
+                "the gate/up launch reads one tile stride for both")
+    # The word-stage slot each launch needs, against the device's shared memory.
+    for mode, bs in ((0, (gate, up)), (2, (down,))):
+        slot = max(slot_words_for_pair(run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)[0]) for b in bs)
+        why = smem_reason(mode, slot, down.device, fam)
+        if why is not None:
+            return why
     return None
+
+
+def projection_tables(bundle) -> "tuple[torch.Tensor, torch.Tensor, int, int]":
+    """The launch tables the lane builds for one projection's bundle.
+
+    ``(runs, bdesc, tile_words, slot_words)``: the stack's run pair broadcast
+    to int32 ``[E, 8]``, the block descriptors (int32 ``[E, cols / 32,
+    BDESC_INTS]``, :func:`block_desc`), the wire's words per 512-row tile and
+    the word-stage slot the pair needs.  :meth:`FusedRoutedWindowMoE.
+    from_bundles` builds the lane from these, and ``runs`` and ``bdesc`` are
+    two of the tensors its ``resident_bytes`` counts, so the exporter's price
+    (``serving_parts.routed_fused_unit_bytes``) is tested against this
+    function rather than a restatement.  The caller has admitted the stack
+    (:func:`fused_routed_window_supported`).
+    """
+    e = int(bundle.experts)
+    pair, why = run_pair(bundle.runs_all.reshape(e, -1, 4)[0], bundle.cols)
+    if pair is None:
+        raise GrammarError(f"the fused routed window lane refuses this projection: {why}")
+    return (pair.reshape(1, 8).expand(e, 8).contiguous(),
+            block_desc(bundle.perm_all, int(pair[2]), int(bundle.cols)),
+            pair_tile_words(pair), slot_words_for_pair(pair))
 
 
 @dataclasses.dataclass(frozen=True)
@@ -374,6 +672,18 @@ class FusedRoutedWindowMoE:
     words_gate: torch.Tensor
     words_up: torch.Tensor
     words_down: torch.Tensor
+    #: The run pairs (int32 ``[E, 8]``, one row per expert, all equal) and the
+    #: block descriptors (int32 ``[E, K / 32, BDESC_INTS]``) of each projection.
+    runs_gate: torch.Tensor
+    runs_up: torch.Tensor
+    runs_down: torch.Tensor
+    bdesc_gate: torch.Tensor
+    bdesc_up: torch.Tensor
+    bdesc_down: torch.Tensor
+    tile_words_gate_up: int
+    tile_words_down: int
+    slot_words_gate_up: int
+    slot_words_down: int
     counters: torch.Tensor
     activation: str = "silu"
 
@@ -390,11 +700,18 @@ class FusedRoutedWindowMoE:
         # the ``when_unavailable`` answer the contract publishes -- and not on
         # the first forward of a serve.
         _ext(down.family)
+        runs_gate, bdesc_gate, tw_gate, sw_gate = projection_tables(gate)
+        runs_up, bdesc_up, _tw_up, sw_up = projection_tables(up)
+        runs_down, bdesc_down, tw_down, sw_down = projection_tables(down)
         return cls(gate=gate, up=up, down=down, family=down.family, arithmetic=down.arithmetic,
                    table_gate=compose_table16(gate), table_up=compose_table16(up),
                    table_down=compose_table16(down),
                    words_gate=words_by_expert(gate), words_up=words_by_expert(up),
                    words_down=words_by_expert(down),
+                   runs_gate=runs_gate, runs_up=runs_up, runs_down=runs_down,
+                   bdesc_gate=bdesc_gate, bdesc_up=bdesc_up, bdesc_down=bdesc_down,
+                   tile_words_gate_up=tw_gate, tile_words_down=tw_down,
+                   slot_words_gate_up=max(sw_gate, sw_up), slot_words_down=sw_down,
                    counters=torch.zeros(2, dtype=torch.int32, device=down.device),
                    activation=activation)
 
@@ -426,6 +743,12 @@ class FusedRoutedWindowMoE:
         yield "routed_fused.table_gate", self.table_gate
         yield "routed_fused.table_up", self.table_up
         yield "routed_fused.table_down", self.table_down
+        yield "routed_fused.runs_gate", self.runs_gate
+        yield "routed_fused.runs_up", self.runs_up
+        yield "routed_fused.runs_down", self.runs_down
+        yield "routed_fused.bdesc_gate", self.bdesc_gate
+        yield "routed_fused.bdesc_up", self.bdesc_up
+        yield "routed_fused.bdesc_down", self.bdesc_down
 
     def resident_bytes(self) -> int:
         return sum(t.numel() * t.element_size() for _n, t in self.named_tables())
@@ -462,10 +785,16 @@ class FusedRoutedWindowMoE:
             b0 = b1 = self.down
             w0 = w1 = self.words_down
             t0 = t1 = self.table_down
+            r0 = r1 = self.runs_down
+            d0 = d1 = self.bdesc_down
+            tile_words, slot_words = self.tile_words_down, self.slot_words_down
         else:
             b0, b1 = self.gate, self.up
             w0, w1 = self.words_gate, self.words_up
             t0, t1 = self.table_gate, self.table_up
+            r0, r1 = self.runs_gate, self.runs_up
+            d0, d1 = self.bdesc_gate, self.bdesc_up
+            tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
         empty = self.counters.new_zeros(0, dtype=torch.float32)
         slot = self.counters[counter:counter + 1]
         slot.zero_()   # in-stream: a captured forward replays with a fresh work list
@@ -476,7 +805,8 @@ class FusedRoutedWindowMoE:
             w0, w1, t0, t1,
             b0.init_all, b1.init_all, b0.has_init, b1.has_init,
             b0.scale_all, b1.scale_all,
-            int(b0.cols) * CHUNK_WORDS,
+            r0, r1, d0, d1,
+            int(tile_words), int(slot_words),
             routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off,
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
@@ -605,13 +935,14 @@ def fused_dense_window_supported(bundle) -> "str | None":
     """Why the dense identity refuses a prepared role, or ``None`` when it serves it.
 
     ``bundle`` is a ``window_gemm.PreparedWindowGemm`` (the frozen role the
-    Triton dense GEMM runs).  The kernel reads the routed lane's one wire shape
-    -- every column at rate 4 in one run from word 0, window bits 14, identity
-    column order, the family's published arithmetic (folded for value,
-    epilogue for e4m3) -- plus the dense tile: rows a multiple of 128 (one
-    128-column B block per item) and columns a multiple of 32 and at least
-    128.  A role outside it keeps ``tessera::window_gemm_dense``, and the
-    reason is the string returned here so a load log can say which.
+    Triton dense GEMM runs).  The kernel reads the routed lane's wire shape --
+    one or two column-rate runs (rates 1..8, the two bracketing the root),
+    window bits 14, the packer's column order, the family's published
+    arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
+    rows a multiple of 128 (one 128-column B block per item) and columns a
+    multiple of 32 and at least 128.  A role outside it keeps
+    ``tessera::window_gemm_dense``, and the reason is the string returned
+    here so a load log can say which.
     """
     if not fused_dense_window_enabled():
         return f"disabled by {ENV_TOGGLE_DENSE}=0"
@@ -634,16 +965,17 @@ def fused_dense_window_supported(bundle) -> "str | None":
         return f"{rows} rows; the dense identity needs a multiple of {BN}"
     if bundle.words.dtype != torch.int32 or bundle.words.dim() != 1:
         return "words must be a flat int32 stream"
-    runs = bundle.runs.reshape(-1, 4)
-    want_run = torch.tensor([[RATE, 0, cols, 0]], dtype=runs.dtype, device=runs.device)
-    if tuple(runs.shape) != (1, 4) or not bool((runs == want_run).all()):
-        return (f"run table is not [[{RATE}, 0, {cols}, 0]] (mixed rates, or a rate other "
-                f"than {RATE})")
-    arange = torch.arange(cols, dtype=bundle.perm.dtype, device=bundle.perm.device)
-    if bundle.perm.numel() != cols or not bool((bundle.perm == arange).all()):
-        return "the role permutes its columns; the kernel reads the identity order"
-    if int(bundle.tile_words) != cols * CHUNK_WORDS:
-        return f"tile_words {bundle.tile_words} is not {cols * CHUNK_WORDS}"
+    pair, why = run_pair(bundle.runs, cols)
+    if pair is None:
+        return why
+    why = perm_reason(bundle.perm, int(pair[2]), cols)
+    if why is not None:
+        return f"{why}; the kernel reads the packer's column order"
+    if int(bundle.tile_words) != pair_tile_words(pair):
+        return f"tile_words {bundle.tile_words} is not {pair_tile_words(pair)} (from the run table)"
+    why = smem_reason(2, slot_words_for_pair(pair), bundle.device, fam)
+    if why is not None:
+        return why
     if bundle.init_perm.dtype != torch.int32 or bundle.init_perm.numel() != cols:
         return "init_perm must be int32 [cols]"
     if bundle.scale.dtype != torch.float32 or bundle.scale.numel() != rows:
@@ -675,7 +1007,10 @@ class FusedDenseWindowRole:
     ``words``/``init``/``wscale`` are views of the bundle's own tensors (no new
     storage); ``table16`` is the composed 16-bit table (32 KB, new storage,
     counted by the module's residency accounting); ``has_init`` is the one
-    int32 flag the kernel reads per expert.
+    int32 flag the kernel reads per expert; ``runs`` is the run pair (int32
+    ``[1, 8]``) and ``bdesc`` the block descriptors (int32 ``[1, K / 32,
+    BDESC_INTS]``, 1.5 bytes per column) the kernel maps its lane groups with;
+    ``tile_words`` is the wire's words per 512-row tile, from the run pair.
     """
     family: str
     rows: int
@@ -685,18 +1020,20 @@ class FusedDenseWindowRole:
     init: torch.Tensor        # int32 [1, K]
     has_init: torch.Tensor    # int32 [1]
     wscale: torch.Tensor      # fp32 [1, N]
+    runs: torch.Tensor        # int32 [1, 8]
+    bdesc: torch.Tensor       # int32 [1, K / 32, BDESC_INTS]
+    tile_words: int
+    slot_words: int
 
     @property
     def fp8(self) -> bool:
         return self.family == "e4m3"
 
-    @property
-    def tile_words(self) -> int:
-        return self.cols * CHUNK_WORDS
-
     def named_tables(self):
         yield "fused_table16", self.table16
         yield "fused_has_init", self.has_init
+        yield "fused_runs", self.runs
+        yield "fused_bdesc", self.bdesc
 
 
 def prepare_dense_role(bundle) -> FusedDenseWindowRole:
@@ -706,15 +1043,20 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
         raise GrammarError(f"the fused dense identity refuses this role: {reason}")
     _ext(bundle.family)
     device = bundle.device
+    cols = int(bundle.cols)
+    pair, why = run_pair(bundle.runs, cols)
+    assert pair is not None, why              # the predicate above admitted it
     return FusedDenseWindowRole(
-        family=bundle.family, rows=int(bundle.rows), cols=int(bundle.cols),
+        family=bundle.family, rows=int(bundle.rows), cols=cols,
         words=bundle.words.reshape(1, -1), table16=compose_dense_table16(bundle),
         init=bundle.init_perm.reshape(1, -1),
         has_init=torch.tensor([1 if bundle.has_init else 0], dtype=torch.int32, device=device),
-        wscale=bundle.scale.reshape(1, -1))
+        wscale=bundle.scale.reshape(1, -1),
+        runs=pair.reshape(1, 8), bdesc=block_desc(bundle.perm, int(pair[2]), cols),
+        tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
-def dense_k_split(m: int, rows: int, cols: int, sms: int) -> int:
+def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
     """How many ways to split K for one role at ``m`` rows: the bandwidth model.
 
     An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
@@ -726,7 +1068,9 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int) -> int:
 
         t(S) = wire * sms / min(S * items0, sms) + 2 * S * m * rows * 4
 
-    with ``wire = rows * cols / 2`` (rate 4).  The minimiser over the integers
+    with ``wire = rows * tile_words * 4 / 512`` -- the role's wire bytes, from
+    its words per 512-row tile (``rows * cols / 2`` at rate 4, the default
+    when ``tile_words`` is not given).  The minimiser over the integers
     ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
     SM count and the byte counts, nothing else.
     """
@@ -734,9 +1078,9 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int) -> int:
     nk = cols // BK
     if items0 >= sms or m <= 0:
         return 1
+    wire = rows * cols // 2 if tile_words is None else rows * int(tile_words) * 4 // 512
     best_s, best_t = 1, None
     for s in range(1, min(nk, -(-sms // items0)) + 1):
-        wire = rows * cols // 2
         t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
         if best_t is None or t < best_t:
             best_s, best_t = s, t
@@ -744,13 +1088,15 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int) -> int:
 
 
 def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.Tensor | None",
-                  out: torch.Tensor, counter: torch.Tensor) -> None:
+                  out: torch.Tensor, counter: torch.Tensor, *, zeroed: bool = False) -> None:
     """One role's launch into ``out`` (a ``[M, rows]`` view, unit column stride).
 
     ``x`` is the family's A operand as the route quantised it (e4m3 + fp32
     ``a_scale`` for E4M3, bf16 for value), contiguous ``[M, cols]``; ``counter``
-    is one int32 slot this call zeroes in-stream.  No host synchronisation, so
-    a captured forward replays.
+    is one int32 slot this call zeroes in-stream -- unless ``zeroed`` says the
+    caller already zeroed it in-stream before this call (the module op zeroes
+    all its roles' slots with one fill).  No host synchronisation, so a
+    captured forward replays.
     """
     lib = _ext(role.family)
     m = int(x.shape[0])
@@ -758,15 +1104,21 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
         return
     index = x.device.index if x.device.index is not None else torch.cuda.current_device()
     sms = _sm_count(index)
-    s = dense_k_split(m, role.rows, role.cols, sms)
-    if s > 1:
-        partial = torch.empty((s, m, role.rows), dtype=torch.float32, device=x.device)
-    else:
-        partial = x.new_empty(0, dtype=torch.float32)
-    slot = counter[:1]
-    slot.zero_()
-    empty = x.new_empty(0, dtype=torch.float32)
+    s = dense_k_split(m, role.rows, role.cols, sms, tile_words=role.tile_words)
+    if s > 1 and out.stride(0) % 4 != 0:
+        # The split path's reduce stores four bf16 (uint2) per thread at
+        # 4-aligned columns; a row stride that is only even would misalign
+        # them, so such a view takes the unsplit path.
+        s = 1
+    # One zero-size fp32 placeholder stands for whichever of the split
+    # workspace and ``a_scale`` the launch does not read (an unsplit launch
+    # reads no workspace, the value family no ``a_scale``).
+    empty = x.new_empty(0, dtype=torch.float32) if (s == 1 or a_scale is None) else None
+    partial = torch.empty((s, m, role.rows), dtype=torch.float32, device=x.device) if s > 1 else empty
+    slot = counter if counter.numel() == 1 else counter[:1]
+    if not zeroed:
+        slot.zero_()
     lib.dense_forward(
         bool(role.fp8), x, a_scale if a_scale is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,
-        int(role.tile_words), slot, int(s), partial, out, sms)
+        role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms)

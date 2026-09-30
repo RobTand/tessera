@@ -79,7 +79,13 @@ from .wire import (
     unpack_uniform,
 )
 
-__all__ = ["build_unit_artifact", "read_unit_artifact", "encoder_profile_id"]
+__all__ = ["build_unit_artifact", "read_unit_artifact", "encoder_profile_id",
+           "TERMINAL_SLOT_ID"]
+
+#: The slot id of the terminal a unit artifact declares.  It is written into
+#: the manifest, so its length is wire bytes; consumers that price the
+#: manifest read it here instead of repeating the literal.
+TERMINAL_SLOT_ID = "t-nvfp4"
 
 
 def _normalize_reach(
@@ -684,7 +690,7 @@ def build_unit_artifact(
             )
         payloads[PlaneKind.INITIAL_STATE] = pack_uniform(start, state_bits)
     spec = TerminalSpec(
-        "t-nvfp4",
+        TERMINAL_SLOT_ID,
         widths,
         released_positions=unit.released_positions,
         # A LUT plane has no base plane: its count is zero, exactly as a

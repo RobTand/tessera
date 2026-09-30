@@ -42,10 +42,29 @@ FUSED = (
     (re.compile(r"^(.*\.feed_forward\.)(w1|w3)\.weight$"), "w13", ("w1", "w3")),
 )
 
+# HF ``architectures[0]`` names whose vLLM class keeps the q/k/v Linears
+# SEPARATE -- it builds no ``qkv_proj`` module at all (contract v44
+# construction census).  For these, the q/k/v row of ``FUSED`` names a module
+# the runtime never constructs, which the plugin refuses at load.  This is
+# explicit data keyed on the architecture the exporter already reads from
+# ``config.json``, not a heuristic over the tensor names: the names are
+# identical either way, so no name rule can tell the two apart (tessera#706).
+SEPARATE_QKV_ARCHITECTURES = frozenset({"Glm5NextForConditionalGeneration"})
 
-def fused_module(tensor_name: str):
-    """``(fused module name, ordered member tensor names)`` or ``None``."""
+
+def fused_module(tensor_name: str, architecture: str | None = None):
+    """``(fused module name, ordered member tensor names)`` or ``None``.
+
+    ``architecture`` is the checkpoint's HF ``architectures[0]``.  When it
+    is in :data:`SEPARATE_QKV_ARCHITECTURES` the ``qkv_proj`` row does not
+    apply and a q/k/v tensor answers ``None`` (its own module is the Linear);
+    every other row is unchanged.  ``None`` (the default) keeps the name-only
+    rule exactly as it was.
+    """
+    separate_qkv = architecture in SEPARATE_QKV_ARCHITECTURES
     for pattern, fused, members in FUSED:
+        if separate_qkv and fused == "qkv_proj":
+            continue
         match = pattern.match(tensor_name)
         if match:
             return match.group(1) + fused, tuple(match.group(1) + m + ".weight" for m in members)

@@ -76,8 +76,10 @@ import routed_pair_oracle as rpo  # noqa: E402  (bound arithmetic, profiler and 
 
 STUB = "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-B"
 #: The q256 1024 dense modules of stub B (rate 4 in every column, rows a
-#: multiple of 128): the ones the fused identity serves.  Everything else in
-#: the stub is q256 832/880/960/1088 and keeps the Triton lane.
+#: multiple of 128): the ones the v43 fused identity served, and the default.
+#: Since v45 (tessera#694) the fused identity also serves the stub's other
+#: dense modules, q256 832/880/960/1088 (two runs, rates 3/4 and 4/5); pass
+#: them with --modules.
 MODULES = (
     "model.language_model.layers.5.mlp.shared_experts.down_proj",      # TESSERA_FP8, row-parallel
     "model.language_model.layers.5.mlp.shared_experts.gate_up_proj",   # TESSERA_BF16, column-parallel
@@ -88,6 +90,16 @@ M1_READ_GBPS = 239.4      # the box's measured M = 1 read ceiling (GB10, LPDDR5x
 ISSUE = "RobTand/tessera#640 (dense follow-up, contract v43)"
 
 log = rpo.log
+
+
+def short_name(module: str) -> str:
+    """The module's label in leg names and file names: its layer index and the
+    path below ``mlp`` (``5.shared_experts.gate_up_proj``, ``0.down_proj``).
+    The last two dotted components alone name two layers' shared experts the
+    same, and one profile's table and trace files then overwrote another's."""
+    parts = module.split(".")
+    i = parts.index("layers") + 1 if "layers" in parts else max(len(parts) - 3, 0)
+    return ".".join([parts[i]] + [p for p in parts[i + 1:] if p != "mlp"])
 
 
 class Store:
@@ -305,11 +317,18 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
         }
     case["fused_vs_triton_bf16_ulps"] = rpo.bf16_ulp_stats(outputs["fused"], outputs["triton"])
     case["fused_vs_triton_max_abs"] = float((outputs["fused"].float() - outputs["triton"].float()).abs().max())
+    # The fused lane shares the wire with the Triton lane and holds, per role,
+    # only its launch arguments (FusedDenseWindowRole.named_tables): the int16
+    # decode table, the int32 has-init flag, the int32 [1, 8] run pair and the
+    # int32 [K / BK, BDESC_INTS] block descriptors (tessera#694 added the last
+    # two), K being the layer's local columns.
+    per_role = (rf.TABLE_ENTRIES * 2 + 4 + 8 * 4
+                + (int(fused_info["local_columns"]) // rf.BK) * rf.BDESC_INTS * 4)
     case["residency"] = {
         "fused_bytes": fused_info["resident_bytes"], "triton_bytes": triton_info["resident_bytes"],
         "delta_bytes": fused_info["resident_bytes"] - triton_info["resident_bytes"],
         "fused_tables": fused_info["resident_fused_tables"],
-        "expected_delta_bytes": fused_info["resident_fused_tables"] * (rf.TABLE_ENTRIES * 2 + 4)}
+        "expected_delta_bytes": fused_info["resident_fused_tables"] * per_role}
     case["pass"] = bool(
         case["lane_ok"]
         and all(leg["vs_reference"]["pass"] and leg["deterministic"] and leg["pair_is_the_layers"]
@@ -342,7 +361,7 @@ def run_oracle(args):
         report["modules"][module] = entry
         for tp_rank, tp_size in tp_legs:
             for m in ms:
-                name = f"{module.split('.')[-3]}.{module.split('.')[-1]}[tp{tp_size}r{tp_rank}] M={m}"
+                name = f"{short_name(module)}[tp{tp_size}r{tp_rank}] M={m}"
                 try:
                     case, y_res = oracle_case(store, module, m, args.seed + m, args.sigma,
                                               "resident", tp_rank, tp_size, sms)
@@ -427,7 +446,7 @@ def run_profile(args):
                 torch.cuda.synchronize()
                 entry.setdefault("fused_vs_triton", {})[str(m)] = rpo.bf16_ulp_stats(a, b)
                 for leg, (layer, method) in layers.items():
-                    name = f"{module.split('.')[-3]}.{module.split('.')[-1]}_{leg}_M{m}"
+                    name = f"{short_name(module)}_{leg}_M{m}"
                     log("profiling", name)
                     try:
                         iters_wall = 200 if m <= 8 else 30
@@ -463,7 +482,7 @@ def run_profile(args):
     sampler.stop_flag = True
     report["pass"] = bool(report["modules"])
     for module, entry in report["modules"].items():
-        short = f"{module.split('.')[-3]}.{module.split('.')[-1]}"
+        short = short_name(module)
         expected = {f"{short}_{leg}_M{m}" for leg in ("fused", "triton") for m in ms}
         complete = (not entry.get("error") and set(entry["legs"]) == expected
                     and all(not leg.get("error") for leg in entry["legs"].values()))

@@ -8,6 +8,15 @@ own table, or the E4M3 bytes through its own codes/native tables -- and the
 routing is applied to the per-expert reference outputs exactly as the
 semantics state.  Packed streams for rates the legacy repacker cannot emit
 come from the independent bitstream packer.
+
+Every parity check holds the kernel per output element to a bound DERIVED
+from the dtypes and the operation counts of its arithmetic (``fused_bound``'s
+model, stated once in that module's docstring): the reference is fp64 over
+the same quantised inputs, each route is one GEMM (``S = 1``: the Triton
+chunked accumulation's depth is at most ``K``) through the family's epilogue
+multiplies and the routing weight where the kernel applies it, and the
+reduction is the fp32 route sum rounded once -- with each route rounded to
+bf16 first only under ``round_routes=True``.  Nothing is fitted.
 """
 
 import dataclasses
@@ -23,6 +32,7 @@ from tessera import kernel_window_gemv as kg     # noqa: E402
 from tessera import window_gemm_grouped as wgg   # noqa: E402
 from tessera.errors import GrammarError          # noqa: E402
 
+import fused_bound as fb                         # noqa: E402
 import window_pack_reference as wpr              # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
@@ -105,24 +115,61 @@ def _quant(x):
     return native_fp8_quant(x)
 
 
-def _oracle(experts, x, ids, rw, family):
-    """Per-expert references (host loop over E only), then the routing sum."""
-    y = []
+def _a64(family, x):
+    """The scaled fp64 A operand the kernel multiplies: the route's own
+    per-token E4M3 quantisation times its scale (the kernel quantises a bf16
+    x with the same quantiser), or the bf16 x itself."""
     if family == "e4m3":
-        x_fp8, a = _quant(x)
-        xq = x_fp8.float()
-    else:
-        xq, a = x, None
-    for e in experts:
-        y_e = e.reference(xq, family)
-        if family == "e4m3":
-            y_e = y_e * a
-        y.append(y_e)
-    stacked = torch.stack(y)                                  # [E, T, rows]
-    t_tokens = ids.shape[0]
-    rows_sel = torch.arange(t_tokens, device=ids.device)[:, None].expand_as(ids)
-    picked = stacked[ids.long().clamp(0, len(experts) - 1), rows_sel]   # [T, K, rows]
-    return (picked * rw[..., None]).sum(1).bfloat16()
+        xq, a = _quant(x)
+        return xq.double() * a.double().reshape(-1, 1)
+    return x.double()
+
+
+def _route_bounds(experts, a64, ids, family, *, weight=None, folded=False, rounded=True,
+                  route_input=False):
+    """Per route ``(r, bound)``, each ``[T, top_k, rows]`` fp64: the fp64
+    reference of the route's own expert (host loop over E and top_k only) and
+    ``fused_bound.dense_bound`` on it -- ``S = 1``, the family's epilogue
+    multiplies (``folded`` selects the value family's contract), one more
+    multiply when the kernel applies the routing ``weight`` (``[T, top_k]``),
+    and the route's bf16 rounding unless ``rounded=False`` (a route the
+    reduction sums in fp32).  ``route_input``: ``a64`` is route-indexed
+    ``[T * top_k, cols]`` instead of token-indexed ``[T, cols]``."""
+    t, k = ids.shape
+    rows, cols = experts[0].rows, experts[0].cols
+    a_route = a64.reshape(t, k, cols) if route_input else a64[:, None, :].expand(t, k, cols)
+    r = torch.zeros(t, k, rows, dtype=torch.float64, device="cuda")
+    b = torch.zeros_like(r)
+    for e, expert in enumerate(experts):
+        w64 = fb.fp64_weight(expert, family, folded=folded)
+        for j in range(k):
+            wj = None if weight is None else weight[:, j:j + 1].double()
+            r_e, b_e = fb.dense_bound(family, a_route[:, j], w64, cols, 1, weight=wj,
+                                      folded=folded, rounded=rounded)
+            sel = (ids[:, j] == e)[:, None]
+            r[:, j] = torch.where(sel, r_e, r[:, j])
+            b[:, j] = torch.where(sel, b_e, b[:, j])
+    return r, b
+
+
+def _oracle(experts, x, ids, rw, family, *, round_routes=False):
+    """The reduction's definition and its derived bound, ``(r, bound)`` fp64
+    ``[T, rows]``: per route the expert's GEMM under the default (epilogue)
+    arithmetic with the routing weight on the fp32 accumulator, then the fp32
+    route sum rounded once (``fused_bound.route_sum_bound``) -- the routes
+    unrounded (fp32 atomics) unless ``round_routes``."""
+    r, b = _route_bounds(experts, _a64(family, x), ids, family, weight=rw, folded=False,
+                         rounded=round_routes)
+    return fb.route_sum_bound(r, b, top_k_dim=1)
+
+
+def _within(out, oracle, what):
+    """``out`` within the derived bound of the fp64 reference, per element;
+    prints the worst ``|out - r| / bound``."""
+    r, bound = oracle
+    ratio = fb.check_within(out, r, bound, what)
+    print(f"GROUPED-BOUND {what} out/bound={ratio:.4f}")
+    return ratio
 
 
 def _stack(rows, cols, family, seeds, *, rates=None):
@@ -135,6 +182,12 @@ def _stack(rows, cols, family, seeds, *, rates=None):
 
 
 def _tol(ref):
+    """A SCREEN, not a derived bound: ``5e-3 + 1e-2 * max|ref|`` was picked,
+    not derived.  No check in this file, ``test_routed_fused_window.py`` or
+    ``test_dense_fused_window.py`` uses it any more (they hold every kernel to
+    ``fused_bound``'s derived per-element bounds); it stays importable only
+    because ``test_native_window_moe.py`` still imports it, and that file's
+    end-to-end comparisons are outside tessera#693 follow-up 3."""
     return 5e-3 + 1e-2 * float(ref.float().abs().max())
 
 
@@ -154,9 +207,8 @@ def test_grouped_bf16_matches_the_per_expert_oracle():
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
     out = prepared(x, ids, rw)
-    ref = _oracle(stack, x, ids, rw, "value")
     assert out.shape == (t, rows) and out.dtype == torch.bfloat16
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    _within(out, _oracle(stack, x, ids, rw, "value"), "bf16 grouped vs the fp64 reference")
 
 
 @cuda
@@ -174,8 +226,7 @@ def test_grouped_fp8_matches_the_per_expert_oracle():
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
     out = prepared(x, ids, rw)
-    ref = _oracle(stack, x, ids, rw, "e4m3")
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    _within(out, _oracle(stack, x, ids, rw, "e4m3"), "fp8 grouped vs the fp64 reference")
 
 
 @cuda
@@ -188,9 +239,8 @@ def test_grouped_m_tails():
         ids = torch.randint(0, experts, (t, 2), device="cuda", dtype=torch.int32)
         rw = torch.rand(t, 2, device="cuda")
         out = prepared(x, ids, rw)
-        ref = _oracle(stack, x, ids, rw, "value")
         assert out.shape == (t, rows)
-        assert float((out.float() - ref.float()).abs().max()) < _tol(ref), f"T={t}"
+        _within(out, _oracle(stack, x, ids, rw, "value"), f"M tail T={t}")
     empty = torch.randn(0, cols, device="cuda").bfloat16()
     out = prepared(empty, torch.zeros(0, 2, device="cuda", dtype=torch.int32),
                    torch.zeros(0, 2, device="cuda"))
@@ -199,7 +249,7 @@ def test_grouped_m_tails():
 
 @cuda
 def test_grouped_empty_experts_and_repeated_ids():
-    rows, cols, experts = 768, 192, 4
+    rows, cols = 768, 192
     stack = _stack(rows, cols, "value", [41, 42, 43, 44])
     prepared = wgg.prepare_grouped_window_gemm([e.unit for e in stack], block_m=32, block_n=64, block_k=64)
     t, k = 16, 2
@@ -209,8 +259,7 @@ def test_grouped_empty_experts_and_repeated_ids():
     ids = torch.tensor([[1, 3]] * t, device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
     out = prepared(x, ids, rw)
-    ref = _oracle(stack, x, ids, rw, "value")
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    _within(out, _oracle(stack, x, ids, rw, "value"), "experts 0 and 2 empty")
 
     # one token routes the same expert twice; another repeats across tokens
     ids = torch.zeros(t, k, device="cuda", dtype=torch.int32)
@@ -219,15 +268,13 @@ def test_grouped_empty_experts_and_repeated_ids():
     ids[1] = torch.tensor([3, 3], device="cuda")
     rw = torch.rand(t, k, device="cuda")
     out = prepared(x, ids, rw)
-    ref = _oracle(stack, x, ids, rw, "value")
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    _within(out, _oracle(stack, x, ids, rw, "value"), "repeated ids")
 
     # a zero route weight contributes nothing
     rw = torch.rand(t, k, device="cuda")
     rw[:, 0] = 0.0
     out = prepared(x, ids, rw)
-    ref = _oracle(stack, x, ids, rw, "value")
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    _within(out, _oracle(stack, x, ids, rw, "value"), "zero route weight")
 
 
 @cuda
@@ -249,8 +296,7 @@ def test_grouped_per_expert_history_and_row_cut():
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
     out = prepared(x, ids, rw)
-    ref = _oracle(stack, x, ids, rw, "value")
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    _within(out, _oracle(stack, x, ids, rw, "value"), "per-expert history and row cut")
 
 
 @cuda
@@ -303,14 +349,23 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
     and gemm2 with ``not apply_router_weight_on_input``;
     ``topk_weight_and_reduce.py`` weights the per-route outputs only when the
     input did not already carry the weights, then sums.
+
+    Checked STAGE-WISE against derived bounds (``fused_bound``), each stage
+    on the exact input the kernel consumed: gemm1 per route within
+    ``dense_bound`` (``S = 1``, the routing weight as one more multiply iff
+    it is applied on input, one bf16 rounding) of the fp64 reference; the
+    SwiGLU is this test's own torch op; gemm2 on that same bf16 activation --
+    re-quantised by the route's own quantiser for E4M3 -- per route with the
+    weight iff it was NOT applied on input, unrounded, then the fp32 route
+    sum rounded once (``route_sum_bound``).  A placement error (a weight
+    applied twice, or never) moves ``r`` by a factor of the weight and cannot
+    pass.
     """
     rows_h, cols_h, inter, experts = 768, 192, 96, 3
     t, k = 16, 2
     seeds = [81, 82, 83]
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
-    sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
-    route_rows = torch.arange(t * k, device="cuda")
 
     for family, arithmetic in (("value", "epilogue"), ("e4m3", "epilogue"),
                                ("value", "folded")):
@@ -326,53 +381,30 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
                                              block_m=32, block_n=64, block_k=64,
                                              arithmetic=arithmetic)
         x = torch.randn(t, cols_h, device="cuda").bfloat16()
-        if family == "e4m3":
-            x_in, a1 = _quant(x)
-            xq1 = x_in.float()
-        else:
-            xq1, a1 = x, None
-
-        def reference(weight_input):
-            picked1 = torch.stack([e.reference(xq1, family, folded=folded)
-                                   for e in gu_stack])                           # [E,T,2I]
-            if family == "e4m3":
-                picked1 = picked1 * a1.reshape(1, t, 1)
-            routes1 = picked1[ids.long(), sel]                                   # [T,K,2I]
-            if weight_input:
-                routes1 = routes1 * rw[..., None]      # gemm1 MUL_ROUTED_WEIGHT
-            route = routes1.bfloat16()
-            gate, up = route[..., :inter].float(), route[..., inter:].float()
-            act = (torch.nn.functional.silu(gate) * up).bfloat16()               # [T,K,I]
-            flat = act.reshape(t * k, inter)
-            if family == "e4m3":
-                a_in, a2 = _quant(flat)
-                flat_q = a_in.float()
-            else:
-                flat_q, a2 = flat, None
-            picked2 = torch.stack([e.reference(flat_q, family, folded=folded)
-                                   for e in dn_stack])                           # [E,T*K,H]
-            routes2 = picked2[ids.long().reshape(-1), route_rows]                    # [T*K, H]
-            routes2 = routes2.reshape(t, k, rows_h)
-            if family == "e4m3":
-                routes2 = routes2 * a2.reshape(t, k, 1)
-            if not weight_input:
-                routes2 = (routes2 * rw[..., None]).bfloat16()   # gemm2 cast
-            else:
-                routes2 = routes2.bfloat16()
-            return routes2.float().sum(1).bfloat16()             # moe_sum
+        a64 = _a64(family, x)
 
         for weight_input in (False, True):
+            what = f"{family}/{arithmetic} apply_router_weight_on_input={weight_input}"
             route = gu(x, ids, rw, preserve=True,
                        apply_router_weight_on_input=weight_input)
             assert route.shape == (t, k, 2 * inter) and route.dtype == torch.bfloat16
+            # gemm1: MUL_ROUTED_WEIGHT on the fp32 accumulator iff weight on input
+            _within(route, _route_bounds(gu_stack, a64, ids, family,
+                                         weight=rw if weight_input else None,
+                                         folded=folded, rounded=True),
+                    f"{what}: gemm1 per route")
             gate, up = route[..., :inter].float(), route[..., inter:].float()
             act = (torch.nn.functional.silu(gate) * up).bfloat16()
-            out = dn(act.reshape(t * k, inter), ids, rw, route_input=True,
+            flat = act.reshape(t * k, inter)
+            out = dn(flat, ids, rw, route_input=True,
                      apply_router_weight_on_input=weight_input)
-            ref = reference(weight_input)
             assert out.shape == (t, rows_h)
-            assert float((out.float() - ref.float()).abs().max()) < _tol(ref), \
-                f"{family}/{arithmetic} apply_router_weight_on_input={weight_input}"
+            # gemm2 on the same activation: weighted iff not on input, the
+            # routes summed unrounded in fp32, one bf16 rounding
+            r2, b2 = _route_bounds(dn_stack, _a64(family, flat), ids, family,
+                                   weight=None if weight_input else rw,
+                                   folded=folded, rounded=False, route_input=True)
+            _within(out, fb.route_sum_bound(r2, b2, top_k_dim=1), f"{what}: gemm2 reduced")
             if family == "e4m3":
                 # the per-route scale must be indexed by route, not by token:
                 # the prequantized path and the internal-quantizer path agree
@@ -413,15 +445,12 @@ def test_grouped_folded_arithmetic_is_decode_folded_and_differs_from_epilogue():
     x = torch.randn(t, cols, device="cuda").bfloat16()
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
-    sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
     route = folded(x, ids, rw, preserve=True)
-    y_e = []
-    for e in stack:
-        w = e.values.float().cuda()[e.states.cuda()]
-        w = (w * e.scale[:, None]).bfloat16().float()        # decode_folded
-        y_e.append(x.float() @ w.t())
-    ref = torch.stack(y_e)[ids.long(), sel].bfloat16()
-    assert float((route.float() - ref.float()).abs().max()) < _tol(ref)
+    # ``fused_bound.fp64_weight(folded=True)`` is decode_folded's weight,
+    # ``bf16(fp32(value * row_scale))``; no epilogue multiply, and no routing
+    # weight in a route-preserving projection without weight on input
+    _within(route, _route_bounds(stack, x.double(), ids, "value", folded=True, rounded=True),
+            "folded route-preserving projection")
     epi = dense(x, ids, rw, preserve=True)
     assert not torch.allclose(route.float(), epi.float(), rtol=1e-3, atol=1e-5), \
         "folded and epilogue arithmetic must differ on nontrivial scales"
@@ -447,10 +476,9 @@ def test_grouped_round_routes_is_the_stock_boundary():
     ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
     rw = torch.rand(t, k, device="cuda")
     out = prepared(x, ids, rw, round_routes=True)
-    sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
-    routes = torch.stack([e.reference(x, "value") for e in stack])[ids.long(), sel]
-    ref = (routes * rw[..., None]).bfloat16().float().sum(1).bfloat16()
-    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    # every route rounded to bf16 before the fp32 sum: the per-route bound
+    # ends in half a bf16 ulp, the sum adds gamma(top_k) and one rounding
+    _within(out, _oracle(stack, x, ids, rw, "value", round_routes=True), "round_routes")
     plain = prepared(x, ids, rw, round_routes=False)
     assert not torch.allclose(out.float(), plain.float(), rtol=0, atol=0), \
         "the round_routes boundary must be observable"
