@@ -67,11 +67,12 @@ derived runtime suffix. Before v48, no cell named the image the GLM-5.3 release
 serves on. The cells are eager only: no CUDA-graph serve of GLM-5.3 on this
 image computes eager's arithmetic. vLLM's default compile mode switches the
 norm operators. With `mode NONE` the graph serve still departs, from context
-5 on, and vLLM's source attributes it: a FULL capture freezes the GLM
-indexer's logits-and-top-k branch, because vLLM captures at
-`max_seq_len = max_model_len`, while eager takes the short-context causal
-fill. The two sum the same tokens in a different order. The controlled pair at
-`max_model_len 2048` is not yet run. Tessera's launches are identical in both. No route, launch, rung, grade or schema changes. See
+5 on: a FULL capture freezes the GLM indexer's logits-and-top-k branch,
+because vLLM captures at `max_seq_len = max_model_len`, while eager takes the
+short-context causal fill. The two sum the same tokens in a different order.
+The same serve at `max_model_len 2048` (= `index_topk`) is 48/48
+eager-equivalent, which confirms the branch; no release-sized context is.
+Tessera's launches are identical in both. No route, launch, rung, grade or schema changes. See
 [the receipt](measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md).
 
 Re-stamped 2026-09-30 for the GLM MTP draft interface on the vLLM nightly

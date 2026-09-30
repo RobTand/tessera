@@ -103,8 +103,12 @@ earliest decode step (and context length) at which any choice departs.
 | sbG2 | graphs | FULL_DECODE_ONLY, sizes 1..8 | 1..8 | 0 | 33 | 0.768 | step 0 |
 | sbP1 | graphs | `{"cudagraph_mode":"FULL_AND_PIECEWISE"}` (vLLM runs FULL_DECODE_ONLY) | 1, 2, 4, 8 | 0 | 33 | 0.768 | step 0 |
 | sbG3 | graphs | `{"mode":"NONE"}`, FULL_DECODE_ONLY, sizes 1..8 | 1..8 | 0 | 30 | 0.612 | step 1, context 5 |
+| sbG4 | graphs | default mode, `custom_ops ['all']`, `--kernel-config` IR priority `['vllm_c', 'native']` for both norms, FULL_DECODE_ONLY, sizes 1..8 | 1..8 | 0 | 30 | 0.612 | step 1, context 5 |
+| sbE6 | `--enforce-eager`, `max_model_len 2048` | none | none | 48 | 0 | 0 | none |
+| sbG6 | graphs, `max_model_len 2048` | `{"mode":"NONE"}`, FULL_DECODE_ONLY, sizes 1..8 | 1..8 | **48** | 0 | 0 | none |
 
-Every graph arm replayed every captured size (FULL replays per size in the
+sbE6 is judged against sbE1 and sbE2, sbG6 against sbE6, sbE1 and sbE2
+(48/48 against sbE6 alone as well). Every graph arm replayed every captured size (FULL replays per size in the
 dispatch log: size 1 808, size 8 44 to 180), so no result is read off a
 serve whose graphs never ran. Common serve settings: `max_model_len 4096`,
 `max_num_batched_tokens 2048`, chunked prefill, no prefix caching,
@@ -129,6 +133,12 @@ graphs, and behaves exactly like sbG1.
 `mode: NONE` (sbG3) removes this cause: the engine log resolves
 `custom_ops ['all']` and `rms_norm ['vllm_c', ...]`, and the prefill token of
 every choice equals eager's.
+
+sbG4 isolates it: the default compile mode with `custom_ops ['all']` and the
+eager IR op priority for both norms returns, response for response, exactly
+sbG3's tokens and top-20 logprobs (all 20 response files identical). The mode
+itself changes nothing for this model; the operator resolution is the whole
+of cause 1.
 
 ### Cause 2: the capture freezes the GLM indexer's long-context branch
 
@@ -175,13 +185,16 @@ File digests (vLLM package paths, read from the pinned image):
 | `v1/worker/gpu/model_states/default.py` | `f1d34d5c8c03be6e5afec8c2a24480ec259ca7c87392462f4e52d6c4eb775733` |
 | `v1/attention/backends/mla/flashinfer_mla_sparse_sm120.py` | `102ca08793d567f95598eefeb34c3f6ec50b3b9d704f162d1402b97b12b5777b` |
 
-**Not yet run: the discriminating pair.** The mechanism predicts that a
-capture at `max_model_len 2048` (so `max_seq_len <= index_topk`) takes the
-causal fill and matches eager. Arms sbE6 and sbG6 (the sbG3 configuration at
-`max_model_len 2048`, and its eager control) are queued behind other GPU work
-on sparky. Until they run, cause 2 rests on the cited source and on the
-departure pattern above (context 5, never before), not on a controlled
-experiment. A 2048-token context is not a release configuration either way.
+**The discriminating pair confirms it.** The mechanism predicts that a
+capture at `max_model_len 2048` (so the capture's `max_seq_len <= index_topk`)
+takes the causal fill and matches eager. sbG6 is sbG3 with only
+`max_model_len` changed from 4096 to 2048: 48 of 48 choices are members, in
+both passes, with every captured size replayed. Its eager control sbE6 is
+48/48 against the 4096 eager serves, so eager does not depend on
+`max_model_len` here and the pools are the same object. On this image a
+FULL_DECODE_ONLY graph serve of GLM-5.3 with `mode NONE` is eager-equivalent
+exactly when `max_model_len <= index_topk` (2048), which excludes every
+release configuration.
 
 **Smallest reproducer:** stub B, TP 1, `mode NONE`,
 `cudagraph_mode FULL_DECODE_ONLY`, capture sizes 1..8, `max_model_len 4096`;
@@ -216,10 +229,13 @@ eager's arithmetic there, and the reason is a vLLM branch Tessera does not
 own. The options are a design decision and are listed in the coordinator
 mail, not taken here:
 
-- a compiled scope whose receipt names the attributed vLLM divergence, with
+- a compiled scope whose receipt names the measured vLLM divergence (the
+  same tokens reduced in another order at contexts of at most 2048), with
   the release's quality gates measured on the graph serve itself;
-- an upstream vLLM change so the capture does not freeze the long-context
-  branch;
+- a vLLM change, upstream or as a runtime plugin, so a FULL capture keeps
+  the short-context branch where eager takes it (for example one graph per
+  size and branch, chosen by the step's `max_seq_len`), then the suite
+  again;
 - eager-only for GLM-5.3 on this stack.
 
 Tessera does not patch vLLM's eager path to manufacture equality: that would
@@ -238,7 +254,7 @@ was measured on it.
 Measured: the eager census; equality of the arms in the table; the replayed
 graph sizes; the causes above, from the engine logs and the cited sources.
 
-Not measured: the discriminating pair at `max_model_len 2048`; the drafter
+Not measured: the drafter
 arms; the newer nightly's load smoke; graph-vs-eager speed on this stack (not taken while no graph
 configuration is eager-equivalent); CUDA-graph capture time and pool memory at
 the release's `max_num_seqs` and TP 2; any TP 2 arm (both Sparks are needed,
