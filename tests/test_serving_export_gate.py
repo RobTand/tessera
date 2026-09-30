@@ -676,6 +676,9 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             continue
         if cell["regime"] == "batch":
             cell["rungs_q256"] = [compiled_rung]
+            # lane schema v11: a cell's run tables are derived from its census
+            # rungs under the family's rule, so the moved rung's table follows it
+            cell["run_tables"] = [[7]]
             cell["qualification"] = "compile_only"
             cell["route_status"] = "unbacked"
             # Which lanes reach the moved rung is the validator's derivation,

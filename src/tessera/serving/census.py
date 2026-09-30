@@ -236,9 +236,11 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             continue
         modes = _cell_modes(cell)
         for mode in modes:
-            # One cell per (family, residency, regime) in this block's scope:
-            # the validator refuses two cells of one (platform, family,
-            # structure, regime, image, execution mode) at one residency.
+            # Several cells may share a (family, residency, regime): a cell
+            # that declares both residencies (the streamed dense E4M3 cells)
+            # overlaps the resident cell of the same regime.  The LAST cell in
+            # table order that covers the rung is the one joined, which is the
+            # precedence the per-rung dict this replaced had.
             by_regime.setdefault((cell["family"], mode, cell["regime"]), []).append(cell)
 
     phases = {}
@@ -272,7 +274,7 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             family = families_by_route.get(route)
             rung = rungs_by_module.get(name)
             cell = (None if rung is None or family is None
-                    else next((c for c in by_regime.get((family, mode, regime), ())
+                    else next((c for c in reversed(by_regime.get((family, mode, regime), ()))
                                if cell_covers_rung(c, int(rung), entries.get(family))), None))
             if cell is None:
                 unattested += 1
