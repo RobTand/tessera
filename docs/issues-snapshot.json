@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-30T15:48:11Z",
+ "generated": "2026-09-30T19:29:45Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -3576,7 +3576,7 @@
     "title": "[P2] Restore and qualify PB CPU test dependency coverage"
    },
    "1802": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Add bounded deferred checkpoint incoming CPU prerequisite"
    },
    "1803": {
@@ -3656,7 +3656,7 @@
     "title": "Measure #87 BF16 boundary instrument A/B with frozen-source receipts"
    },
    "1820": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Charge opt-in compilation caches separately from replay scratch"
    },
    "1821": {
@@ -3668,24 +3668,88 @@
     "title": "[P1] Share assignment metadata hashing without changing serialized bindings"
    },
    "1823": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Own timed profiler lifetime independently of anchor execution"
    },
    "1824": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Declare separately charged container compilation caches"
    },
    "1825": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Separate timed observer lifetime from anchor execution"
+   },
+   "1826": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate workspace receipt byte hashing onto the shared owner"
+   },
+   "1827": {
+    "state": "OPEN",
+    "title": "[P2] Bind immutable calibration artifacts in Tessera campaign intake"
+   },
+   "1828": {
+    "state": "CLOSED",
+    "title": "[P3] Bind rendered-weight publication to the shared admitted-owner adapter"
+   },
+   "1829": {
+    "state": "CLOSED",
+    "title": "[P1] Share workspace receipt hashing without changing published bytes"
    },
    "183": {
     "state": "CLOSED",
     "title": "Tessera campaign omits live packed experts; packed MoE capture/export projection remains unsupported"
    },
+   "1830": {
+    "state": "CLOSED",
+    "title": "[P2] Add CPU research checkpoint incoming contract"
+   },
+   "1831": {
+    "state": "OPEN",
+    "title": "[P2] Bind immutable Tessera calibration input and real corpus"
+   },
+   "1832": {
+    "state": "CLOSED",
+    "title": "[P3] Bind render publications to admitted PB owners"
+   },
+   "1833": {
+    "state": "CLOSED",
+    "title": "[P2] Classify incoming data guard and refresh reader-bound references"
+   },
+   "1834": {
+    "state": "OPEN",
+    "title": "[P2] Deliver bounded PWC sealed-load CPU slice"
+   },
+   "1835": {
+    "state": "OPEN",
+    "title": "[P3] Plan charged render destinations before preparing tensors"
+   },
+   "1836": {
+    "state": "CLOSED",
+    "title": "[P2] Classify incoming data guard and refresh reader-bound references"
+   },
+   "1837": {
+    "state": "CLOSED",
+    "title": "[P1] glm5_next: declare the attention fused groups the construction runtime loads (prerequisite for pricing attention units)"
+   },
+   "1838": {
+    "state": "OPEN",
+    "title": "[P1] Consolidate bound-read byte hashing onto the shared owner"
+   },
+   "1839": {
+    "state": "OPEN",
+    "title": "[P2] Reuse sealed IO for bounded PWC loads"
+   },
    "184": {
     "state": "CLOSED",
     "title": "run-pipeline accepts COST_PATH_OVERRIDE for Tessera but never consumes the prepriced file"
+   },
+   "1840": {
+    "state": "CLOSED",
+    "title": "glm5_next: declare the attention fused groups the construction runtime loads"
+   },
+   "1841": {
+    "state": "OPEN",
+    "title": "[P2] Hosted CPU CI lacks cache-charge test prerequisites"
    },
    "185": {
     "state": "CLOSED",
@@ -10213,9 +10277,45 @@
     "state": "OPEN",
     "title": "[P2] test_serving_name_mapping does not run on the nightly image: get_unstacked_mapper became get_rename_mapper (drops None renames)"
    },
+   "754": {
+    "state": "CLOSED",
+    "title": "Fused routed T-16 gate/up at rates 7 and 8 (two word stages; contract v49)"
+   },
+   "755": {
+    "state": "CLOSED",
+    "title": "contract v48: GLM cells on the vLLM nightly image (eager; graphs blocked by vLLM, #702)"
+   },
+   "756": {
+    "state": "CLOSED",
+    "title": "tests: the step-kernel spy restores the whole Viterbi kernel cache"
+   },
+   "757": {
+    "state": "CLOSED",
+    "title": "Contract v50: allowable Tessera-8 rungs are a rule over run tables (lane schema v11, #750)"
+   },
+   "758": {
+    "state": "CLOSED",
+    "title": "Dense value launch reads rates 9-14; Tessera-16 allowable_rungs rule (contract v51)"
+   },
+   "759": {
+    "state": "OPEN",
+    "title": "Dense fused identity: a role's last 128-row block may be partial (#750 WP2)"
+   },
    "76": {
     "state": "CLOSED",
     "title": "_fit_lut's re-fitted table is taken on 16 of 72 passes, 12 of them on one unit; the amax table ships"
+   },
+   "760": {
+    "state": "CLOSED",
+    "title": "docs: the controlled pair confirms the GLM indexer capture branch (#702)"
+   },
+   "761": {
+    "state": "OPEN",
+    "title": "Contract v52: the T-16 dense census covers every BF16 rung (#750)"
+   },
+   "762": {
+    "state": "OPEN",
+    "title": "[P3] tests/test_native_a4_serving.py has no test functions, so every full-suite pbtest exits 1"
    },
    "77": {
     "state": "CLOSED",

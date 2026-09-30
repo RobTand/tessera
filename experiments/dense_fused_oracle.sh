@@ -24,6 +24,9 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 # The E4M3 family's tensor-core instruction (routed_fused.library_for) rides in when set.
 [[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_VERBOSE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_VERBOSE=$TESSERA_ROUTED_FUSED_VERBOSE")
+# The stub the container mounts is the stub the driver reads: ``--stub`` is
+# passed below (a later ``--stub`` in the arguments still wins, and must name
+# this same path, since nothing else is mounted).
 STUB=${DENSE_ORACLE_STUB:-/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-B}
 [[ -d "$STUB" ]] || { echo "missing stub checkpoint: $STUB" >&2; exit 2; }
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton" "$OUT/torch-ext"
@@ -60,4 +63,4 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
-  "${PREFIX[@]:1}" "${COMMAND[@]}" --out "$OUT" "$@"
+  "${PREFIX[@]:1}" "${COMMAND[@]}" --out "$OUT" --stub "$STUB" "$@"

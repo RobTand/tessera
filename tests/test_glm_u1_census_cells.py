@@ -15,14 +15,17 @@ routed cells name the fused pair beside the compact one.  Contract v43 adds a
 tenth, the fused dense identity on stub B's q256 1024 dense modules, and
 contract v45 (tessera#694) an eleventh: stub B on the kernel that reads the
 wire's run table at every rate, on which every routed stack and every dense
-module of the stub takes the fused kernel.
+module of the stub takes the fused kernel.  Contract v52 (#750) adds two
+more: the T-16 dense census stubs t16d1 and t16d2, whose sixteen dense modules
+are BF16 at one rung of every run table [1]..[14] and the pairs between them,
+on which every dense module takes the fused dense identity.
 
 What it pins:
 
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
-2. each GLM-image cell covers EXACTLY the rungs the twelve receipts (these
-   eleven and v38's) carried for its family and structure -- a cell widened
+2. each GLM-image cell covers EXACTLY the rungs the receipts (these and
+   v38's) carried for its family and structure -- a cell widened
    past its receipts, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
@@ -41,6 +44,7 @@ from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
     load_serving_contract,
+    rung_rates,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +80,21 @@ RECEIPTS = {
     # since c4fc615002, on which every E4M3 module takes the E4M3-instruction
     # pair (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md).
     "b_e4m3mma": "eb4c6ee974cfa1d017ba277535241b3ccc4e3df27f2352b248d339f5a38117b1",
+    # Contract v52 (#750, the T-16 dense census): stubs whose sixteen dense
+    # MLP modules are BF16 at one rung of every run table, fresh encodes, and
+    # whose five routed stacks are stub B's cached units, on which every dense
+    # module takes the fused dense identity under the value library
+    # (docs/measurements/2026-09-30-t16-dense-census.md).
+    "t16d1": "561f7e8c136bf9d236c11d5067cfd97924254ec86dd8db3848a380f7dd731c28",
+    "t16d2": "6b4b48d40145087097bb115371e6a794b0ff72bc9b19141311bc6fd7d5d8d497",
+}
+#: The BF16 dense rungs each T-16 census stub carries: one rung of every run
+#: table the stub covers -- on t16d1, [1]..[8] and the seven pairs between
+#: them (fifteen tables); on t16d2, [8,9]..[14] (twelve tables, rates the
+#: dense launch reads since contract v51 and the routed launches do not).
+T16_DENSE_RUNGS = {
+    "t16d1": {256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048},
+    "t16d2": set(range(2176, 3585, 128)),
 }
 #: The dense modules of stub B that take the fused identity (q256 1024, rows a
 #: multiple of 128), with the launch each recorded; every other dense module
@@ -414,6 +433,53 @@ def test_every_e4m3_module_ran_the_e4m3_instruction_and_the_cells_name_it():
                 (e["symbol"], e["decoder"]) for e in e4m3["executes"]}, e4m3["id"]
             bf16 = cells[f"tessera_bf16_k1_{structure}_sm121_{regime}_resident"]
             assert not any(e["decoder"].endswith("_e4m3mma") for e in bf16["executes"]), bf16["id"]
+
+
+@pytest.mark.parametrize("stub", sorted(T16_DENSE_RUNGS))
+def test_every_t16_dense_module_ran_the_fused_identity_at_its_run_table(stub):
+    """Contract v52 (#750): the T-16 dense census receipts, module for module.
+
+    Every one of the sixteen BF16 dense modules recorded the fused dense
+    identity under the value library's folded decoder in both phases, at the
+    rungs the stub's plan names -- one of every run table the stub covers --
+    and the routed stacks recorded stub B's pairs (the E4M3-instruction and
+    folded routed launches).  The value lane engaged.  The two GLM-image BF16
+    dense cells carry every one of these rungs, so their derived run tables
+    are the stub's."""
+    receipt_path, config_path = _paths(stub)
+    receipt = _load(receipt_path)
+    tool = _tool()
+    rungs = _declared_rungs(tool, receipt, config_path)
+    fused = ("tessera::fused_window_dense", "native_fused_window_dense_folded")
+    routed_want = {"TESSERA_FP8": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                                   "native_routed_fused_window_e4m3mma"),
+                   "TESSERA_BF16": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                                    "native_routed_fused_window_folded")}
+    for phase, records in receipt["records"].items():
+        assert len(records) == 21, phase
+        owners = receipt["record_owner"][phase]
+        dense = {name: rec for name, rec in records.items() if rec["kind"] == "dense"}
+        assert len(dense) == 16, phase
+        for name, rec in dense.items():
+            assert rec["policy"].partition(":")[0] == "TESSERA_BF16", (phase, name)
+            assert (rec["symbol"], rec["decoder"]) == fused, (phase, name)
+        assert {rungs[owners[name]] for name in dense} == T16_DENSE_RUNGS[stub], phase
+        for name, rec in records.items():
+            if rec["kind"] == "moe":
+                family = rec["policy"].partition(":")[0]
+                assert (rec["symbol"], rec["decoder"]) == routed_want[family], (phase, name)
+    engagement = receipt["lane_engagement"]
+    assert engagement["all_required_engaged"] is True
+    assert engagement["required_lanes"] == ["tessera_routed_fused_value"]
+    contract = load_serving_contract()
+    row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
+    tables = {rung_rates(row, q) for q in T16_DENSE_RUNGS[stub]}
+    assert len(tables) == len(T16_DENSE_RUNGS[stub])  # one rung per run table
+    cells = {c["id"]: c for c in contract["lane_eligibility"]["cells"]}
+    for regime in ("decode", "batch"):
+        cell = cells[f"tessera_bf16_k1_dense_sm121_{regime}_resident"]
+        assert T16_DENSE_RUNGS[stub] <= set(cell["rungs_q256"]), cell["id"]
+        assert tables <= {tuple(t) for t in cell["run_tables"]}, cell["id"]
 
 
 def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
