@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the dense K split's makespan model (tessera#750
+WP2). `routed_fused.dense_k_split` now prices the wave count: `S * items`
+equal items on `sms` SMs end when an SM with `ceil(S * items / sms)` of them
+finishes, and each item pays a measured fixed cost
+(`DENSE_ITEM_FIXED_BYTES`). A 4096-row role at decode (32 items) splits three
+ways instead of two, and a 64-item role (`q_b`) splits three ways instead of
+running two waves unsplit. No launch, route, rung or served byte changes;
+the split changes only the fp32 summation order, inside the derived bound.
+
 Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
 `routed_fused_window.cu` gains a fourth library, `tessera_routed_fused_e2m1`,
 on the block-scaled FP4 instruction (sm_121a). It is producer-side until a
@@ -371,9 +380,9 @@ v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
 default: the same persistent CUDA kernel in its `DENSE` instantiation (E = 1,
 identity routing, no epilogue activation; `tessera.routed_fused.dense_forward`),
-which splits K into fp32 partials that a fixed-order reduce sums when fewer
-work items than SMs exist (`dense_k_split`, a bandwidth model in the SM count
-and the byte counts, S = 1 in prefill) and rounds once to bf16
+which splits K into fp32 partials that a fixed-order reduce sums when the
+work items leave SMs idle (`dense_k_split`, a makespan model in the SM count,
+the byte counts and one measured per-item cost, S = 1 in prefill) and rounds once to bf16
 (`tessera::fused_window_dense`, decoders `native_fused_window_dense` /
 `native_fused_window_dense_folded`). The integration is per Linear, not per
 MLP: vLLM applies the activation between the two Linears it owns, so each
@@ -3835,9 +3844,12 @@ each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
 S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
-of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/32,
-ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
-the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+of the launch's makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) /
+nk + c) + 2 S M N 4` over `1 .. min(K/32, sms)` (`item` the wire bytes of one
+128-row block over K, `c = DENSE_ITEM_FIXED_BYTES` the measured per-item cost;
+tessera#750: the last wave's idle SMs cost a whole wave, so 32 items split
+three ways, not two). Prefill shapes, whose items fill whole waves or whose
+partials outweigh the idle tail, run the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
 forward replays (the work counter is zeroed inside the region; the partial is
 a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not

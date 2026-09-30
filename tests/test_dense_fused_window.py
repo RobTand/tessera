@@ -9,7 +9,7 @@ the grouped and fused routed tests use (``test_window_gemm_grouped.Expert``)
 and against the Triton window GEMM the module keeps as its other lane:
 
 * parity for both window families at M = 1, 3, 64, 65, 200 and 1536, and at
-  the first M the bandwidth model runs in one pass, so both the split-K regime
+  the first M the makespan model runs in one pass, so both the split-K regime
   (S > 1) and the one-pass regime (S = 1) are measured;
 * a TP row cut's start state (``has_init``);
 * the real GLM dense role shapes (down 4096x6144, gate/up 12288x4096 and
@@ -131,7 +131,7 @@ def _bound(expert, family, xq, a, s):
 
 
 def _split(role, m):
-    """The K split the kernel runs at ``m`` rows (the bandwidth model)."""
+    """The K split the kernel runs at ``m`` rows (the makespan model)."""
     sms = rf._sm_count(torch.cuda.current_device())
     return rf.dense_k_split(m, role.rows, role.cols, sms, tile_words=role.tile_words)
 
@@ -188,8 +188,8 @@ def test_dense_forward_matches_the_definition_and_the_triton_lane(family, m):
 @cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
-    """``dense_k_split`` splits K when fewer items than SMs exist (decode) and
-    runs one pass once every SM has an item (prefill); parity holds in both,
+    """``dense_k_split`` splits K when the items leave SMs idle (decode) and
+    runs one pass once they fill whole waves (prefill); parity holds in both,
     at the first one-pass M this device reaches rather than a fixed M."""
     sms = rf._sm_count(torch.cuda.current_device())
     n_blocks = ROWS // rf.BN
@@ -667,34 +667,50 @@ def test_the_opt_out_is_read_before_any_role_fact(monkeypatch):
     assert rf.fused_dense_window_enabled() is True
 
 
-def test_the_k_split_model_is_the_bandwidth_model():
-    """Pure arithmetic: one pass once every SM has an item; otherwise the
-    integer minimiser of ``wire * sms / min(S * items0, sms) + 2 S M N 4``
-    over ``1 .. min(K / 32, ceil(sms / items0))``, restated here."""
+def test_the_k_split_model_is_the_makespan_model():
+    """Pure arithmetic: the integer minimiser, smaller ``S`` on a tie, of
+    ``ceil(S items0 / sms) sms (item ceil(nk / S) / nk + c) + [S > 1] 2 S M N 4``
+    over ``1 .. min(K / 32, sms)``, restated here (``item`` the wire bytes of
+    one 128-row block over all of K, ``c`` the measured per-item cost)."""
     sms = 48
 
-    def restated(m, rows, cols):
-        items0 = -(-m // rf.BM) * (rows // rf.BN)
-        if m <= 0 or items0 >= sms:
+    def restated(m, rows, cols, words=None):
+        if m <= 0:
             return 1
-        wire = rows * cols // 2
-        return min(range(1, min(cols // rf.BK, -(-sms // items0)) + 1),
-                   key=lambda s: wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4)
+        items0 = -(-m // rf.BM) * -(-rows // rf.BN)
+        nk = cols // rf.BK
+        item = rf.BN * (64 * cols if words is None else words) * 4 / 512
+
+        def t(s):
+            waves = -(-(s * items0) // sms)
+            return (waves * sms * (item * -(-nk // s) / nk + rf.DENSE_ITEM_FIXED_BYTES)
+                    + (2.0 * s * m * rows * 4 if s > 1 else 0.0))
+
+        return min(range(1, min(nk, sms) + 1), key=lambda s: (t(s), s))
 
     assert rf.dense_k_split(0, 256, 4096, sms) == 1
     assert rf.dense_k_split(8192, 256, 4096, sms) == 1
-    assert rf.dense_k_split(1, 6144, 4096, sms) == 1          # 48 blocks: every SM busy
+    assert rf.dense_k_split(1, 6144, 4096, sms) == 1          # 48 items: one full wave
     for m, rows, cols in ((1, 256, 4096), (1, 4096, 2048), (8, 4096, 4096), (64, 2048, 4096),
-                          (200, 4096, 6144), (1, 12288, 4096), (3, 128, 128)):
+                          (200, 4096, 6144), (1, 12288, 4096), (3, 128, 128), (1, 8192, 1536),
+                          (1, 512, 4096), (1, 32, 4096), (1, 4096, 128)):
         got = rf.dense_k_split(m, rows, cols, sms)
         assert got == restated(m, rows, cols), (m, rows, cols, got)
         assert 1 <= got <= cols // rf.BK
         # the wire is the role's own words per tile: rate 4 restates the default
         assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
+    for words in (16 * 4096, 128 * 4096):
+        assert rf.dense_k_split(32, 256, 4096, sms, tile_words=words) == restated(32, 256, 4096, words)
     assert rf.dense_k_split(1, 256, 4096, sms) > 1
-    # the wire's bytes move the optimum where the split is not capped by
-    # ceil(sms / items0): at M = 32 x 256 x 4096 (2 items, cap 24) rate 1
-    # (16 words per column per tile), rate 4 and rate 8 pick three splits
+    # The wave count decides: 32 items (a 4096-row role at decode) split
+    # three ways fill two waves exactly, where two ways leave the second wave
+    # a third full and cost as much as one pass (tessera#750).
+    assert rf.dense_k_split(1, 4096, 4096, sms) == 3
+    # 64 items (q_b, 8192 rows) are two waves at S = 1 for 1.33 waves of work.
+    assert rf.dense_k_split(1, 8192, 1536, sms) == 3
+    # the wire's bytes move the optimum: at M = 32 x 256 x 4096 (2 items)
+    # rate 1 (16 words per column per tile), rate 4 and rate 8 pick three
+    # splits, heavier wire for more
     light = rf.dense_k_split(32, 256, 4096, sms, tile_words=16 * 4096)
     heavy = rf.dense_k_split(32, 256, 4096, sms, tile_words=128 * 4096)
     assert light < rf.dense_k_split(32, 256, 4096, sms) < heavy, (light, heavy)
@@ -748,7 +764,7 @@ def test_dense_forward_decodes_every_rate_exactly(family, q256):
     torch restatement of that arithmetic BITWISE at every (row, column) --
     which catches a wrong column map, run offset, or field position at any
     rate, in either run, with and without a start state.  ``S`` is whatever
-    the bandwidth model picks for ``M = cols`` rows, so the split path's
+    the makespan model picks for ``M = cols`` rows, so the split path's
     partials and reduce are read too (a split adds exact zeros only)."""
     _one_hot_exact(family, q256)
 

@@ -35,9 +35,10 @@ unweighted case of the down projection, and the same kernel serves it: one
 launch per role of a merged Linear (``routed_fused_kernel<FP8, 2, DENSE>``),
 row ``m`` of ``x`` as route ``m``, the role's rows written into their column
 slice of the module's output, and -- when ``ceil(M / 64) * rows / 128`` items
-would leave SMs idle, which is every decode shape -- the K range split ``S``
-ways into an fp32 workspace that a fixed-order reduce sums before the one
-epilogue (:func:`dense_k_split` states the model that picks ``S``).  It is
+would leave SMs idle, in the only or the last wave, which is every decode
+shape -- the K range split ``S`` ways into an fp32 workspace that a
+fixed-order reduce sums before the one epilogue (:func:`dense_k_split` states
+the model that picks ``S``).  It is
 its own launch identity, ``tessera::fused_window_dense`` (the functional
 custom op in ``serving.native_window``) with the decoders
 ``native_fused_window_dense`` (E4M3, epilogue) and
@@ -162,6 +163,14 @@ BK = 32
 #: whole 512-row tiles, so the partial block's pad rows read words the repack
 #: wrote (zeros) and are never stored.
 DENSE_ROW_QUANTUM = 4
+#: The dense launch's fixed cost per item, as the wire bytes one SM streams in
+#: that time at its share of the read rate (:func:`dense_k_split`): the
+#: item's claim (one atomic), its first K chunk's latency and its epilogue.
+#: Measured on GB10: at 32 items of a 4096 x 4096 role, forced splits of equal
+#: share (S = 3, 6, 12: two, four and eight waves) cost c = 1.5 us more per
+#: wave, which at 232.2 GB/s / 48 SMs is 7.3 KB (PENDING the sparklina
+#: receipt).
+DENSE_ITEM_FIXED_BYTES = 7300
 #: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
 #: every rate of the window grammar up to 8, so a stack's one- or two-rate run
 #: table (the two rates bracketing its root) is read as the wire lays it out.
@@ -1378,31 +1387,44 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
 
 
 def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
-    """How many ways to split K for one role at ``m`` rows: the bandwidth model.
+    """How many ways to split K for one role at ``m`` rows: the makespan model.
 
     An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
-    ceil(m / 64) * ceil(rows / 128)`` (the last block partial on an N-tail).  When ``items0 >= sms`` every SM has work and
-    the answer is 1 (prefill is untouched).  Below that, each split adds items
-    and costs an fp32 partial written and read back; the time model is the
-    wire bytes served by ``min(S * items0, sms)`` SMs at the per-SM share of
-    the bandwidth, plus the partial traffic at full bandwidth:
+    ceil(m / 64) * ceil(rows / 128)`` (the last block partial on an N-tail).
+    A split ``S`` makes ``S * items0`` items of ``ceil(K / 32 / S)`` K chunks at
+    most (the kernel's ``kc0 = ks * nk / S``), and the persistent grid hands
+    them to ``sms`` SMs, so the launch ends when an SM that got
+    ``ceil(S * items0 / sms)`` items finishes them.  Each item streams its
+    chunks' wire bytes at one SM's share of the read rate and pays
+    :data:`DENSE_ITEM_FIXED_BYTES` besides; each split adds an fp32 partial
+    written and read back at the full rate:
 
-        t(S) = wire * sms / min(S * items0, sms) + 2 * S * m * rows * 4
+        t(S) = ceil(S * items0 / sms) * sms * (item * ceil(nk / S) / nk + c)
+               + [S > 1] * 2 * S * m * rows * 4
 
-    with ``wire = rows * tile_words * 4 / 512`` -- the role's wire bytes, from
-    its words per 512-row tile (``rows * cols / 2`` at rate 4, the default
-    when ``tile_words`` is not given).  The minimiser over the integers
-    ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
-    SM count and the byte counts, nothing else.
+    with ``item = 128 * tile_words * 4 / 512``, the wire bytes of one 128-row
+    block over all of K (``tile_words`` the role's words per 512-row tile;
+    ``64 * cols``, rate 4, when not given), ``nk = K / 32`` and ``c =``
+    :data:`DENSE_ITEM_FIXED_BYTES`.  The integer minimiser over ``1 ..
+    min(nk, sms)`` is returned, the smaller ``S`` on a tie.  The wave count is
+    the point: a split that leaves the last wave partly idle costs a whole
+    wave (tessera#750: at 32 items, ``S = 2`` is 64 items, two waves of half
+    an item, no faster than ``S = 1``; ``S = 3`` is two full waves of a
+    third).  The partial term prices the workspace at the read rate even
+    where it stays in L2, so it errs toward fewer splits.
     """
+    if m <= 0:
+        return 1
     items0 = -(-m // BM) * -(-rows // BN)
     nk = cols // BK
-    if items0 >= sms or m <= 0:
-        return 1
-    wire = rows * cols // 2 if tile_words is None else rows * int(tile_words) * 4 // 512
+    words = 64 * cols if tile_words is None else int(tile_words)
+    item = BN * words * 4 / 512
     best_s, best_t = 1, None
-    for s in range(1, min(nk, -(-sms // items0)) + 1):
-        t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
+    for s in range(1, max(1, min(nk, sms)) + 1):
+        waves = -(-(s * items0) // sms)
+        t = waves * sms * (item * -(-nk // s) / nk + DENSE_ITEM_FIXED_BYTES)
+        if s > 1:
+            t += 2.0 * s * m * rows * 4
         if best_t is None or t < best_t:
             best_s, best_t = s, t
     return best_s
