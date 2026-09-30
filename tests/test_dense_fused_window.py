@@ -864,3 +864,77 @@ def test_the_dense_width_follows_the_split_and_the_family(family, monkeypatch):
     _x, xq, a = _inputs(family, one_pass_m, COLS, 61)
     _fused(role, xq, a)
     assert seen == [(1, rf.BM)]
+
+
+# --- random fractional mixes inside every run table (tessera#750) ----------------
+
+#: The dense twin of ``test_routed_fused_window.test_random_mixes_inside_every_pair_decode_exactly``:
+#: the dense identity reads every rate 1..8, so every adjacent pair is attested
+#: at random rungs inside it, with the upper-rate columns placed at random.
+DENSE_MIX_PAIRS = [r for r in rf.RATES if r + 1 in rf.RATES]
+
+
+def _mix_rungs(r, seed, draws=4):
+    """Rungs strictly inside ``(256 r, 256 (r + 1))`` over 256 columns: one
+    upper-rate column, all but one, and random interior counts (fixed seed)."""
+    import random
+
+    rng = random.Random(seed)
+    return [256 * r + 1, 256 * r + 255] + sorted(rng.sample(range(256 * r + 2, 256 * r + 255), draws - 2))
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("r", DENSE_MIX_PAIRS)
+def test_dense_random_mixes_inside_every_pair_decode_exactly(family, r):
+    """At random rungs of the pair ``(r, r + 1)``, placed at random: one-hot
+    rows decode bitwise with and without a start state, random inputs sit
+    within the derived bound in the split and one-pass regimes, and the
+    forward replays in a CUDA graph."""
+    from fractions import Fraction
+
+    from tessera.grammar import rate_set
+
+    sms = rf._sm_count(torch.cuda.current_device())
+    for q256 in _mix_rungs(r, 7700 + r):
+        assert rate_set(Fraction(q256, 256), cap=8) == (r, r + 1), q256
+        g = torch.Generator().manual_seed(7800 + q256)
+        sched = _sched(COLS, q256)
+        rates = tuple(sched[i] for i in torch.randperm(COLS, generator=g).tolist())
+        for seed, init in ((7900 + q256, None), (8000 + q256, _init(COLS, 8100 + q256))):
+            expert, bundle = _role(family, rates=rates, seed=seed, init=init)
+            assert rf.fused_dense_window_supported(bundle) is None, (family, q256)
+            role = rf.prepare_dense_role(bundle)
+            assert role.tile_words == 16 * sum(rates)
+            _x, xq, a, hot = fb.one_hot_inputs(family, COLS, _quant)
+            got = _fused(role, xq, a)
+            want = fb.one_hot_expected(expert, family, hot, a)
+            bad = got != want
+            assert not bool(bad.any()), (
+                f"{family} q256={q256} init={init is not None}: {int(bad.sum())} of "
+                f"{bad.numel()} one-hot products differ; first at {bad.nonzero()[0].tolist()}")
+        w64 = fb.fp64_weight(expert, family)
+        one_pass_m = rf.BM * -(-sms // (ROWS // rf.BN))
+        for m in (1, one_pass_m):
+            s = rf.dense_k_split(m, ROWS, COLS, sms, tile_words=role.tile_words)
+            _x, xq, a = _inputs(family, m, COLS, 8200 + m + q256)
+            r64, bound = fb.dense_bound(family, _a64(family, xq, a), w64, COLS, s)
+            fb.check_within(_fused(role, xq, a), r64, bound,
+                            f"{family} q256={q256} M={m} S={s}: fused vs the fp64 reference")
+        _x, xq, a = _inputs(family, 40, COLS, 8300 + q256)
+        eager = _fused(role, xq, a)
+        out = torch.empty_like(eager)
+        counter = torch.zeros(1, dtype=torch.int32, device="cuda")
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            _fused(role, xq, a, out, counter)
+        torch.cuda.current_stream().wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            _fused(role, xq, a, out, counter)
+        for _ in range(2):
+            out.zero_()
+            graph.replay()
+            torch.cuda.synchronize()
+            assert torch.equal(out, eager), (family, q256)
