@@ -59,7 +59,10 @@ inspected interface's, or TP != 2, PP > 1, DP > 1, EP, sequence-parallel MoE
 already on, decode or prefill context parallelism, mHC off, or speculative
 decoding without the opt-in.  A recognized interface whose objects do not look
 as inspected (``o_proj`` not reducing, a MoE whose output is already reduced
-or whose final reduction is already skipped, a zero-expert MoE) fails closed.
+or whose final reduction is already skipped, a zero-expert MoE) also declines:
+each layer is checked, before anything on it changes, on its first forward in
+vLLM's profile run, which never takes SP; a layer that fails runs the stock
+forward and no later pass takes SP.
 """
 from __future__ import annotations
 
@@ -236,7 +239,13 @@ def _import_all() -> tuple[tuple[Any, ...] | None, str]:
 
 
 class SpState:
-    """Per-process SP state: the measured threshold and its table."""
+    """Per-process SP state: the measured threshold, its table, and the per-pass decision.
+
+    SP is decided once per model pass, at its first layer, so every layer of a
+    pass agrees.  No pass takes SP before one complete pass has prepared every
+    layer it ran (vLLM's profile run): a layer that cannot be prepared then
+    declines the whole serve to stock before any activation was sharded.
+    """
 
     def __init__(self, mode: str, max_tokens: int, tp_size: int):
         self.mode = mode
@@ -245,9 +254,41 @@ class SpState:
         self.t_star: float | None = float(tp_size) if mode == "force" else None
         self.table: list[dict] = []
         self.lock = threading.Lock()
+        self.declined: str | None = None  # why a layer could not be prepared
+        self.ready = False                # a complete pass prepared every layer it ran
+        self.pass_sp = False              # the decision for the pass in flight
+        self._pass_open = False
+        self._pass_ok = True
 
     def use_sp(self, num_tokens: int) -> bool:
         return self.t_star is not None and num_tokens >= self.t_star
+
+    def begin_pass(self, num_tokens: int, capturing: bool) -> bool:
+        """At a pass's first layer: settle the previous pass, then decide this one."""
+        if self._pass_open and self._pass_ok and self.declined is None and not self.ready:
+            self.ready = True
+            _log.warning("tessera.glm53_prefill: SP mHC armed (T*=%s, mode %s)", self.t_star, self.mode)
+        self._pass_open, self._pass_ok = True, True
+        # A captured graph always holds the stock op sequence, whatever T* is.
+        self.pass_sp = (self.ready and self.declined is None and not capturing
+                        and self.use_sp(num_tokens))
+        return self.pass_sp
+
+    def prepare(self, layer: Any) -> bool:
+        """Prepare ``layer``; False (and the serve declines to stock) when it cannot be."""
+        if layer.__dict__.get("_tessera_sp_ready"):
+            return True
+        try:
+            prepare_layer(layer)
+        except RuntimeError as exc:
+            if self.pass_sp:
+                raise  # activations of this pass are already sharded: no stock path back
+            self._pass_ok = False
+            if self.declined is None:
+                self.declined = str(exc)
+                _log.warning("tessera.glm53_prefill: %s; SP mHC declines to stock for this serve", exc)
+            return False
+        return True
 
     def wants_measurement(self, num_tokens: int) -> bool:
         return (self.mode == "auto" and self.t_star is None
@@ -269,7 +310,8 @@ def prepare_layer(layer: Any) -> None:
     """Turn off the two reductions the rebound forward now performs itself.
 
     Runs on a layer's first forward (vLLM's profile run, before any capture).
-    Fails closed when the objects are not the inspected ones.
+    Raises ``RuntimeError``, before changing anything, when the objects are not
+    the inspected ones; :meth:`SpState.prepare` turns that into a decline.
     """
     if layer.__dict__.get("_tessera_sp_ready"):
         return
@@ -362,15 +404,17 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
     def forward(self, positions, hidden_states, residual=None, post=None, comb=None):
         if not self.mhc or self.is_mtp_layer:
             return stock_forward(self, positions, hidden_states, residual, post, comb)
-        prepare_layer(self)
         num_tokens = positions.shape[0]
-        capturing = torch.cuda.is_current_stream_capturing()
-        if post is None and state.wants_measurement(num_tokens) and not capturing:
-            with state.lock:
-                if state.t_star is None:
-                    measure_t_star(self, state, ops, torch, hidden_states.device)
-        # A captured graph always holds the stock op sequence, whatever T* is.
-        sp = state.use_sp(num_tokens) and not capturing
+        if post is None and self.layer_idx == 0:
+            capturing = torch.cuda.is_current_stream_capturing()
+            if state.wants_measurement(num_tokens) and not capturing and state.declined is None:
+                with state.lock:
+                    if state.t_star is None:
+                        measure_t_star(self, state, ops, torch, hidden_states.device)
+            state.begin_pass(num_tokens, capturing)
+        if not state.prepare(self):
+            return stock_forward(self, positions, hidden_states, residual, post, comb)
+        sp = state.pass_sp
 
         x = hidden_states
         if post is None:
