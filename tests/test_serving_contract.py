@@ -129,16 +129,21 @@ _GLM_X_CELLS = (
     # identity beside the Triton GEMM, on a second census of stub B whose
     # q256 1024 shared-expert modules took the lane
     # (``tests/test_glm_u1_census_cells.py``).
+    # Contract v47: the E4M3 cells name the E4M3 instruction's pair too, on a
+    # census of stub B with that library as the dispatch.
     ("TESSERA_E4M3_K1", "dense", [832, 864, 896, 928, 960, 1024, 1088],
      "fp8_per_token_dynamic", (("tessera::window_gemm_dense", "native_window_gemm"),
-                               ("tessera::fused_window_dense", "native_fused_window_dense"))),
+                               ("tessera::fused_window_dense", "native_fused_window_dense"),
+                               ("tessera::fused_window_dense",
+                                "native_fused_window_dense_e4m3mma"))),
     ("TESSERA_BF16_K1", "dense", [832, 864, 880, 896, 928, 960, 1024, 1088],
      "bf16_unquantized", (("tessera::window_gemm_dense", "native_window_gemm_folded"),
                           ("tessera::fused_window_dense",
                            "native_fused_window_dense_folded"))),
     ("TESSERA_E4M3_K1", "routed_moe", [832, 864, 896, 928, 944, 960, 1024, 1088],
      "fp8_per_token_dynamic",
-     ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"))),
+     ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"),
+      (_FUSED_MOE, "native_routed_fused_window_e4m3mma"))),
     ("TESSERA_BF16_K1", "routed_moe", [1024], "bf16_unquantized",
      ((_COMPACT_MOE, "native_window_moe_compact_folded"),
       (_FUSED_MOE, "native_routed_fused_window_folded"))),
@@ -190,10 +195,14 @@ for _family, _contract, _rung in (("TESSERA_E4M3_K1", "fp8_per_token_dynamic", 1
             # Contract v43: the fused window kernel's dense identity, earned on
             # a second census of the same artifact on this image, in both
             # residencies (tests/test_dense_fused_census_cells.py).
+            # Contract v47: the E4M3 instruction's dense pair, on a third
+            # census of the same artifact on this image, in both residencies.
             "executes": [{"symbol": "tessera::window_gemm_dense",
                           "decoder": "native_window_gemm"},
                          {"symbol": "tessera::fused_window_dense",
-                          "decoder": "native_fused_window_dense"}],
+                          "decoder": "native_fused_window_dense"},
+                         {"symbol": "tessera::fused_window_dense",
+                          "decoder": "native_fused_window_dense_e4m3mma"}],
             "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
             "requires_plugin": "tessera",
             "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
@@ -231,18 +240,22 @@ _WITHDRAWN_CELL_IDS = frozenset({
 #: and rung.  At contract v42 (tessera#640) the routed pair names a second
 #: launch, the fused routed window lane's, on ``ROUTED_FUSED_RECEIPT``; at
 #: v43 the dense pair names a second launch too, the fused window kernel's
-#: dense identity, on ``DENSE_FUSED_RECEIPT``.  A re-earned cell must execute
+#: dense identity, on ``DENSE_FUSED_RECEIPT``; at v47 the E4M3 cells name the
+#: E4M3 instruction's pair beside them, on ``E4M3MMA_RECEIPT``.  A re-earned cell must execute
 #: its launches here, never a claim ``_WITHDRAWN_CLAIMS`` records for its id.
 ROUTED_FUSED_RECEIPT = "docs/measurements/2026-09-28-routed-fused-640.md"
 DENSE_FUSED_RECEIPT = "docs/measurements/2026-09-28-dense-fused-window.md"
+E4M3MMA_RECEIPT = "docs/measurements/2026-09-30-e4m3-cells-census-matrix.md"
 _REEARNED = {
     **{f"tessera_e4m3_k1_dense_sm121_{_regime}_resident":
        (GLM_X_RECEIPT, {("tessera::window_gemm_dense", "native_window_gemm"),
-                        ("tessera::fused_window_dense", "native_fused_window_dense")})
+                        ("tessera::fused_window_dense", "native_fused_window_dense"),
+                        ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma")})
        for _regime in ("decode", "batch")},
     **{f"tessera_e4m3_k1_routed_moe_sm121_{_regime}_resident":
        (GLM_X_RECEIPT, {(_COMPACT_MOE, "native_window_moe_compact"),
-                        (_FUSED_MOE, "native_routed_fused_window")})
+                        (_FUSED_MOE, "native_routed_fused_window"),
+                        (_FUSED_MOE, "native_routed_fused_window_e4m3mma")})
        for _regime in ("decode", "batch")},
 }
 #: At contract v39 (tessera#604) the routed E2M1 pair v39 withdraws comes back
@@ -692,7 +705,8 @@ def test_the_launch_tables_lane_is_the_published_extension():
          "tessera_routed_fused_value"),
         # Contract v46: the E4M3 family's tensor-core instruction is a third
         # library of the same source, with its own routed and dense rows.  Both
-        # stand in EXPERIMENTAL_LAUNCHES until a served census earns them cells.
+        # stood in EXPERIMENTAL_LAUNCHES until contract v47's censuses earned
+        # them the six E4M3 cells.
         (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_e4m3mma",
          "tessera_routed_fused_mma_e4m3"),
         (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma",
@@ -749,12 +763,12 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
         assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, decoder)
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, fused_decoder)
         # the E4M3 family's dense identity on its own instruction is a third
-        # launch the FP8 route makes (experimental: in the expectation, in no cell)
+        # launch the FP8 route makes (attested since contract v47)
         extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
         if module is fp8_route:
             assert module.DENSE_FUSED_MMA_E4M3_LAUNCH == (
                 FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-            assert module.DENSE_FUSED_MMA_E4M3_LAUNCH in scheme.EXPERIMENTAL_LAUNCHES
+            assert module.DENSE_FUSED_MMA_E4M3_LAUNCH not in scheme.EXPERIMENTAL_LAUNCHES
         assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
                             include_experimental=True) == set(module.DENSE_LAUNCHES), route
@@ -807,6 +821,7 @@ def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     pytest.importorskip("torch")
     from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, WINDOW_GEMM_SYMBOL
     from tessera.serving.telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                                           DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
                                            DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
                                            DECODER_NATIVE_WINDOW_GEMM,
                                            DECODER_NATIVE_WINDOW_GEMM_FOLDED)
@@ -816,8 +831,12 @@ def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     # Since contract v43 a dense route makes one of two launches per module,
     # the Triton window GEMM or the fused window kernel's dense identity.
     made_by_family = {
+        # Contract v46/v47: the E4M3 family's dense identity on its own
+        # instruction is a third launch (fp8_route.DENSE_FUSED_MMA_E4M3_LAUNCH).
         "TESSERA_E4M3_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM),
-                            (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)},
+                            (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE),
+                            (FUSED_WINDOW_DENSE_SYMBOL,
+                             DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)},
         "TESSERA_BF16_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_FOLDED),
                             (FUSED_WINDOW_DENSE_SYMBOL,
                              DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)},
@@ -889,6 +908,8 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
             assert (ROOT / ROUTED_FUSED_RECEIPT).is_file(), cell["id"]
         if cell["structure"] == "dense" and cell["family"] == "TESSERA_E4M3_K1":
             assert (ROOT / DENSE_FUSED_RECEIPT).is_file(), cell["id"]
+        if cell["family"] == "TESSERA_E4M3_K1":
+            assert (ROOT / E4M3MMA_RECEIPT).is_file(), cell["id"]
         pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
         assert pairs == launch, cell["id"]
         assert not (pairs & _WITHDRAWN_CLAIMS[cell["id"]]), cell["id"]
@@ -977,17 +998,20 @@ def test_the_native_route_pairs_are_attested_and_censusable():
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
     fused_fp8 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW)
     fused_bf16 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
-    # Contract v46 puts the E4M3 instruction library's two pairs back in the
-    # experimental set: FP8 only, one routed and one dense, until a served
-    # census earns them cells.
+    # Contract v46 put the E4M3 instruction library's two pairs in the
+    # experimental set (FP8 only, one routed and one dense); contract v47's
+    # censuses on both E4M3 cell images earned them the six E4M3 cells, and
+    # the set is empty again.
     from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL
     mma_routed = (ROUTED_FUSED_WINDOW_SYMBOL,
                   telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)
     mma_dense = (FUSED_WINDOW_DENSE_SYMBOL,
                  telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-    assert EXPERIMENTAL_LAUNCHES == frozenset({mma_routed, mma_dense})
-    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {mma_routed}
-    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {mma_dense}
+    assert EXPERIMENTAL_LAUNCHES == frozenset()
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == set()
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == set()
+    assert mma_routed in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
+    assert mma_dense in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
     assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == set()
     assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == set()
     assert fused_fp8 in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
@@ -1024,7 +1048,8 @@ def test_the_native_route_pairs_are_attested_and_censusable():
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8,
         mma_routed}
     assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {
-        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8}
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8,
+        mma_routed}
     # Narrowed to a box with NO extension prepared, the fused row drops and
     # the compact row stays (it is not ``when_lane_absent``: it runs beside
     # the lane too, for the stacks the lane's geometry check refuses).
@@ -1055,7 +1080,8 @@ def test_the_native_route_pairs_are_attested_and_censusable():
                         telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
     assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == {
         (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED), dense_fused_bf16}
-    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {promoted, dense_fused_fp8}
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {promoted, dense_fused_fp8,
+                                                                    mma_dense}
     assert dense_fused_fp8 not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE,
                                                include_experimental=True)
     assert dense_fused_bf16 not in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
@@ -1179,17 +1205,21 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
                "decoder": "native_window_moe_compact"}
     fused = {"symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
              "decoder": "native_routed_fused_window"}
+    # Contract v47: the E4M3 instruction's library reads every rate 1..8 on
+    # both launches, so it is in the derived set at every rung below.
+    mma = {"symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+           "decoder": "native_routed_fused_window_e4m3mma"}
     synthetic = {
         "structure": "routed_moe", "regime": regime, "rungs_q256": [1024],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-        "executes": [compact, fused]}
+        "executes": [compact, fused, mma]}
     # A synthetic execution claim checks the derivation without publishing
     # a receipt-bearing cell in the packaged contract.  At q256 1024 every
     # column is at rate 4, so the fused lane's own predicate admits the rung
     # and the build makes BOTH launches (contract v42, tessera#640); a claim
     # of the compact launch alone is refused there.
     _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
-    synthetic["executes"] = [compact]
+    synthetic["executes"] = [compact, fused]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
     # At q256 896 the rate set is {3, 4}.  Since contract v45 (tessera#694)
@@ -1198,9 +1228,9 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     # a claim of the compact launch alone is refused there too.  (At v42-v44
     # the lane read rate-4 columns only and the compact launch was the whole
     # set at 896; the derivation followed lane.requires then as now.)
-    mixed = dict(synthetic, rungs_q256=[896], executes=[compact, fused])
+    mixed = dict(synthetic, rungs_q256=[896], executes=[compact, fused, mma])
     _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
-    mixed["executes"] = [compact]
+    mixed["executes"] = [compact, fused]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
     # At q256 1792 (rate 7) the lane READS the wire but its routed-expert
@@ -1210,22 +1240,29 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     # derives the compact launch alone -- the structure is what the decision
     # reads -- while a dense module at the same rung derives the fused dense
     # identity beside the Triton GEMM, the one-table launch reading every rate.
+    # That is the 16-bit library's limit; contract v47's E4M3-instruction
+    # pair is derived at this rung on both structures (below).
     # (the format row stamps attested_wire per attested rung; 1792 is not one,
     # so the derivation is given a copy of the shipped stamp at that rung)
     import copy
     stamped = copy.deepcopy(entry)
     stamped["attested_wire"] = list(stamped["attested_wire"]) + [
         {**stamped["attested_wire"][0], "q256": 1792}]
-    high = dict(synthetic, rungs_q256=[1792], executes=[compact])
+    # The E4M3 instruction's library publishes column_rates_routed_moe 1..8
+    # (its gate/up launch fits at rate 8), so it reaches the rung the 16-bit
+    # library's routed launch does not.
+    high = dict(synthetic, rungs_q256=[1792], executes=[compact, mma])
     _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
-    high["executes"] = [compact, fused]
+    high["executes"] = [compact, fused, mma]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
     dense_high = {
         "structure": "dense", "regime": regime, "rungs_q256": [1792],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "executes": [{"symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm"},
-                     {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"}]}
+                     {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"},
+                     {"symbol": "tessera::fused_window_dense",
+                      "decoder": "native_fused_window_dense_e4m3mma"}]}
     _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, contract, "synthetic")
     synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert

@@ -577,7 +577,8 @@ def test_an_fp8_owner_never_declares_the_materialising_launch():
     assert compact in pairs
     # Contract v41 (tessera#640): the fused lane's pair beside the compact one.
     # Contract v46: the E4M3 instruction's library is a second fused decoder
-    # the same owner can launch (TESSERA_FUSED_E4M3_MMA=e4m3), experimental.
+    # the same owner can launch (the default; TESSERA_FUSED_E4M3_MMA=f16 takes
+    # the 16-bit library), attested since contract v47.
     assert moe.owner_launch_pairs(wire, world=1) == {compact, fused, fused_mma8}
     # A compressed BF16 expert stack has no materialising launch at any world,
     # and its selected owner's decoders are not admissible either (#613).

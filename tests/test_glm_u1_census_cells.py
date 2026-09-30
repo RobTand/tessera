@@ -71,6 +71,11 @@ RECEIPTS = {
     # dense module of the stub takes the fused kernel
     # (docs/measurements/2026-09-28-mixed-rate-fused-window.md).
     "b_fused_mixed": "2d578c1ce50d1cfcb7cf5e53a6f67cee67a006f820b44a650ff5de68c40c8887",
+    # Contract v47: stub B served with the E4M3 family's own tensor-core
+    # instruction (tessera_routed_fused_mma_e4m3) as the dispatch, its default
+    # since c4fc615002, on which every E4M3 module takes the E4M3-instruction
+    # pair (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md).
+    "b_e4m3mma": "eb4c6ee974cfa1d017ba277535241b3ccc4e3df27f2352b248d339f5a38117b1",
 }
 #: The dense modules of stub B that take the fused identity (q256 1024, rows a
 #: multiple of 128), with the launch each recorded; every other dense module
@@ -272,7 +277,8 @@ def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
             cell = cells[f"tessera_{family}_k1_routed_moe_sm121_{regime}_resident"]
             pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
             assert (fused, decoder) in pairs, cell["id"]
-            assert len(pairs) == 2, cell["id"]
+            # Contract v47 adds the E4M3 instruction's routed pair to the E4M3 cells.
+            assert len(pairs) == (3 if family == "e4m3" else 2), cell["id"]
             assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell["id"]
 
 
@@ -317,7 +323,9 @@ def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
             cell = cells[f"tessera_{family}_k1_dense_sm121_{regime}_resident"]
             pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
             assert (fused_symbol, decoder) in pairs, cell["id"]
-            assert pairs[0][0] == "tessera::window_gemm_dense" and len(pairs) == 2, cell["id"]
+            assert pairs[0][0] == "tessera::window_gemm_dense", cell["id"]
+            # Contract v47 adds the E4M3 instruction's dense pair to the E4M3 cells.
+            assert len(pairs) == (3 if family == "e4m3" else 2), cell["id"]
             assert 1024 in cell["rungs_q256"], cell["id"]
 
 
@@ -357,6 +365,55 @@ def test_every_module_ran_the_fused_kernel_at_every_rate_the_stub_carries():
         "tessera_routed_fused_e4m3", "tessera_routed_fused_value"]
     same_stub = _load(_paths("b")[0])
     assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
+
+
+def test_every_e4m3_module_ran_the_e4m3_instruction_and_the_cells_name_it():
+    """Contract v47: the E4M3-instruction receipt, module for module.
+
+    With the E4M3 instruction's library as the dispatch, every E4M3 module of
+    stub B -- the four routed stacks at q256 896, 928, 1024 and 1088 and the
+    eight dense modules at 832, 960, 1024 and 1088 -- recorded the library's
+    pair for its structure in both phases, and every BF16 module the value
+    library's folded pair, exactly as the v45 receipt did.  Both required
+    lanes engaged.  The four GLM-image E4M3 cells name the E4M3-instruction
+    pair for their structure; the BF16 cells do not.
+    """
+    receipt = _load(_paths("b_e4m3mma")[0])
+    tool = _tool()
+    rungs = _declared_rungs(tool, receipt, _paths("b_e4m3mma")[1])
+    want = {("TESSERA_FP8", "moe"): ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                                     "native_routed_fused_window_e4m3mma"),
+            ("TESSERA_BF16", "moe"): ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                                      "native_routed_fused_window_folded"),
+            ("TESSERA_FP8", "dense"): ("tessera::fused_window_dense",
+                                       "native_fused_window_dense_e4m3mma"),
+            ("TESSERA_BF16", "dense"): ("tessera::fused_window_dense",
+                                        "native_fused_window_dense_folded")}
+    for phase, records in receipt["records"].items():
+        assert len(records) == 21, phase
+        owners = receipt["record_owner"][phase]
+        e4m3_rungs: dict = {}
+        for name, rec in records.items():
+            family = rec["policy"].partition(":")[0]
+            assert (rec["symbol"], rec["decoder"]) == want[(family, rec["kind"])], (phase, name)
+            if family == "TESSERA_FP8":
+                e4m3_rungs.setdefault(rec["kind"], set()).add(rungs[owners[name]])
+        assert e4m3_rungs == {"moe": {896, 928, 1024, 1088},
+                              "dense": {832, 960, 1024, 1088}}, phase
+    engagement = receipt["lane_engagement"]
+    assert engagement["all_required_engaged"] is True
+    assert engagement["required_lanes"] == [
+        "tessera_routed_fused_mma_e4m3", "tessera_routed_fused_value"]
+    same_stub = _load(_paths("b")[0])
+    assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
+    cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
+    for regime in ("decode", "batch"):
+        for structure, kind in (("dense", "dense"), ("routed_moe", "moe")):
+            e4m3 = cells[f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident"]
+            assert want[("TESSERA_FP8", kind)] in {
+                (e["symbol"], e["decoder"]) for e in e4m3["executes"]}, e4m3["id"]
+            bf16 = cells[f"tessera_bf16_k1_{structure}_sm121_{regime}_resident"]
+            assert not any(e["decoder"].endswith("_e4m3mma") for e in bf16["executes"]), bf16["id"]
 
 
 def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
