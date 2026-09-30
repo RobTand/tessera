@@ -170,6 +170,26 @@ def _canon(ins: str) -> str:
     return head + " " + ",".join(parts)
 
 
+_ANON = re.compile(r"_GLOBAL__N__[0-9a-f]+_\d+_\w+?_cu_[0-9a-f]+")
+
+
+def _kernel_name(name: str) -> str:
+    """The mangled name with the anonymous namespace's per-file hash removed:
+    nvcc hashes the translation unit into it, so an edit anywhere in the file
+    renames every kernel."""
+    return _ANON.sub("_GLOBAL__N_", name)
+
+
+def _kernels(path: str) -> dict:
+    out = {}
+    for name, seq in json.load(open(path))["kernels"].items():
+        key = _kernel_name(name)
+        if key in out:
+            raise SystemExit(f"{path}: two kernels share the name {key} once the namespace hash is removed")
+        out[key] = seq
+    return out
+
+
 def _opcodes(seq) -> collections.Counter:
     return collections.Counter(s.split(" ")[0] for s in seq)
 
@@ -181,8 +201,8 @@ def compare(args) -> int:
         b = os.path.join(args.after, f"{library}.json")
         if not (os.path.exists(a) and os.path.exists(b)):
             continue
-        ka = json.load(open(a))["kernels"]
-        kb = json.load(open(b))["kernels"]
+        ka = _kernels(a)
+        kb = _kernels(b)
         rows = {"identical": [], "multiset": [], "differs": [], "only_before": [], "only_after": []}
         for name in sorted(set(ka) | set(kb)):
             if name not in kb:
