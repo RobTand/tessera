@@ -1504,7 +1504,9 @@ def dense_forward_roles(roles: "list[FusedDenseWindowRole]", x: torch.Tensor, a_
     :func:`dense_k_split` prices the launch over all of them.  ``fixup``
     reduces a K split in-kernel: the last split of a tile to arrive sums the
     ``S`` partials in split order and applies the epilogue, bitwise the
-    reduce kernel's result.  ``fixup=False`` takes the reduce kernel and one
+    reduce kernel's result.  The fixup stores four bytes at a time, so an
+    output view needs only an even row stride; ``fixup=False`` takes the
+    reduce kernel (uint2 stores: a row stride of 2 mod 4 runs unsplit) and one
     role per call (the oracle).  The work counter and the per-tile arrival
     counts are one int32 buffer zeroed in-stream here, and the workspace is
     the caching allocator's, so a captured forward replays.

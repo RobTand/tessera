@@ -1225,14 +1225,15 @@ def _roles_out(roles, xq, a, *, fixup=True):
 
 @cuda
 @pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
-@pytest.mark.parametrize("rows", [256, 160, 32])
+@pytest.mark.parametrize("rows", [256, 160, 32, 12, 4])
 def test_the_in_kernel_fixup_is_the_reduce_kernel_bitwise(family, rows, monkeypatch):
     """The same partials reduced two ways -- in the kernel by the last split
     of each tile to arrive, and by ``dense_reduce_kernel`` after the launch --
     agree BITWISE at every split the launch takes (2 .. 5, the last at three K
     chunks per item), at one superblock (M = 1, 40, 64) and several (65, 200),
-    for whole blocks and an N-tail.  Both sum in split order from 0.f, so the
-    arrival order the fixup sees does not reach the output."""
+    for whole blocks and N-tails down to the row quantum (4).  Both sum in
+    split order from 0.f, so the arrival order the fixup sees does not reach
+    the output."""
     _expert, bundle = _role(family, rows=rows, cols=WIDE_COLS, rates=_sched(WIDE_COLS, 1088),
                             seed=9100 + rows)
     role = rf.prepare_dense_role(bundle)
@@ -1247,15 +1248,19 @@ def test_the_in_kernel_fixup_is_the_reduce_kernel_bitwise(family, rows, monkeypa
             assert torch.equal(_roles_out([role], xq, a, fixup=False), reduced)
 
 
-#: A module in miniature with role boundaries everywhere: whole blocks, N-tails
+#: Modules in miniature with role boundaries everywhere: whole blocks, N-tails
 #: (32, 64, 160 rows: the KDA input module's small roles and a tail after a
-#: whole block) and two roles of the same height apart.
+#: whole block), two roles of the same height apart, and roles of 4 and 12
+#: rows ahead of others, so a role's first column is 4-aligned but not
+#: 32-aligned (the row quantum, ``DENSE_ROW_QUANTUM``).
 MODULE_ROWS = [256, 32, 64, 160, 256]
+MODULE_ROW_SETS = [MODULE_ROWS, [4, 256, 12, 32, 160]]
 
 
 @cuda
 @pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
-def test_one_launch_of_a_modules_roles_is_each_role_alone_bitwise(family, monkeypatch):
+@pytest.mark.parametrize("module_rows", MODULE_ROW_SETS, ids=["blocks-and-tails", "quantum-offsets"])
+def test_one_launch_of_a_modules_roles_is_each_role_alone_bitwise(family, module_rows, monkeypatch):
     """One launch of five roles against each role launched alone at the same
     split: every role's columns BITWISE equal at its column offset, at S = 1
     (including the wide superblock at M = 200) and in the split regime.  With
@@ -1263,7 +1268,7 @@ def test_one_launch_of_a_modules_roles_is_each_role_alone_bitwise(family, monkey
     module launch to the one-role launch the definition-bound tests read."""
     rates = _sched(WIDE_COLS, 832)
     roles = [rf.prepare_dense_role(_role(family, rows=r, cols=WIDE_COLS, rates=rates, seed=9300 + i)[1])
-             for i, r in enumerate(MODULE_ROWS)]
+             for i, r in enumerate(module_rows)]
     for m in (1, 40, 200):
         _x, xq, a = _inputs(family, m, WIDE_COLS, 9400 + m)
         for s in (1, 2, rf.dense_split_max(WIDE_COLS)):
@@ -1282,6 +1287,28 @@ def test_one_launch_of_a_modules_roles_is_each_role_alone_bitwise(family, monkey
     together = _roles_out(many, xq, a)
     for i, role in enumerate(many):
         assert torch.equal(together[:, 32 * i:32 * (i + 1)], _roles_out([role], xq, a))
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+def test_the_fixup_serves_a_row_stride_that_is_only_even(family, monkeypatch):
+    """The fixup stores through the epilogue's four-byte ``store_seg``, which
+    needs only an even row stride, and reads the fp32 workspace, which is
+    contiguous.  So unlike the reduce launch (uint2 stores) it keeps its split
+    for a ``[M, rows]`` view whose row stride is 2 mod 4, gives the answer of
+    a contiguous output, and leaves the columns past the view untouched."""
+    rows = 160
+    role = rf.prepare_dense_role(_role(family, rows=rows, cols=WIDE_COLS, rates=_sched(WIDE_COLS, 1088),
+                                       seed=9650)[1])
+    for m in (1, 40):
+        _x, xq, a = _inputs(family, m, WIDE_COLS, 9660 + m)
+        _force_split(monkeypatch, 3)
+        wide = torch.zeros(m, rows + 2, dtype=torch.bfloat16, device="cuda")
+        view = wide[:, :rows]
+        assert view.stride(0) % 4 == 2
+        rf.dense_forward_roles([role], xq, a, view)
+        assert torch.equal(view, _roles_out([role], xq, a)), (family, m)
+        assert torch.equal(wide[:, rows:], torch.zeros_like(wide[:, rows:]))
 
 
 @cuda
