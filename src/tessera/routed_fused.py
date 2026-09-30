@@ -264,19 +264,26 @@ def has_width(library: str, mode: int, bm: int) -> bool:
 #: ``1`` takes 128 wherever the launch has them -- for measuring the two widths
 #: against each other, which give the same output bits.
 ENV_WIDE = "TESSERA_ROUTED_FUSED_WIDE"
-#: The smallest step (tokens for a routed stack, rows of ``x`` for a dense
-#: role) that ``auto`` runs at 128-route superblocks.  Unreachable until a
-#: measured A/B sets it (tessera#741).
-WIDE_MIN_ROWS = 1 << 30
+#: The smallest routed step, in tokens, that ``auto`` runs at 128-route
+#: superblocks on the E4M3 instruction's library.  Measured over the T8R
+#: release's three routed rungs with recorded prefill routing
+#: (afetch-ab-20260930T063741Z, tessera#741): 128 routes took 7-17% off the
+#: kernel at 2048 tokens on every rung and was within 2.5% of 64 at 512, so
+#: 2048 is the smallest measured step where it wins.
+WIDE_MIN_ROWS = 2048
+#: The threshold where no A/B has measured the width -- a dense role's rows of
+#: ``x`` on either library, and the f16 instruction's routed down launch -- so
+#: ``auto`` never takes it there.
+WIDE_UNMEASURED = 1 << 30
 
 
-def superblock_rows(library: str, mode: int, rows: int) -> int:
+def superblock_rows(library: str, mode: int, rows: int, *, dense: bool = False) -> int:
     """The routes per superblock of one launch: ``BM`` or ``BM_WIDE``.
 
     ``mode`` is the kernel mode (0/1 gate/up, 2 routed down or dense) and
-    ``rows`` the step's tokens (routed) or rows of ``x`` (dense).  A pure
-    function of host-visible integers and the environment -- no device read --
-    so a captured forward records the width with its shapes.
+    ``rows`` the step's tokens (routed) or, with ``dense``, rows of ``x``.  A
+    pure function of host-visible integers and the environment -- no device
+    read -- so a captured forward records the width with its shapes.
     """
     if not has_width(library, mode, BM_WIDE):
         return BM
@@ -287,7 +294,8 @@ def superblock_rows(library: str, mode: int, rows: int) -> int:
         return BM_WIDE
     if want != "auto":
         raise GrammarError(f"{ENV_WIDE}={want!r}: expected auto, 0 or 1")
-    return BM_WIDE if int(rows) >= WIDE_MIN_ROWS else BM
+    floor = WIDE_MIN_ROWS if library_mma8(library) and not dense else WIDE_UNMEASURED
+    return BM_WIDE if int(rows) >= floor else BM
 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
@@ -1332,7 +1340,7 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
         slot.zero_()
     # The wide superblock only where K is not split (``dense_k_split`` is the
     # 64-route model, and a split launch has idle SMs to fill, not rows).
-    bm = superblock_rows(role.library, 2, m) if s == 1 else BM
+    bm = superblock_rows(role.library, 2, m, dense=True) if s == 1 else BM
     lib.dense_forward(
         bool(role.fp8), x, a_scale if a_scale is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,

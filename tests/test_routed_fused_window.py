@@ -973,7 +973,9 @@ def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
     captured forward records the width with its shapes).  128 routes exist on
     the E4M3 family's one-table launch in both libraries and on its gate/up
     launch on the E4M3 instruction; ``auto`` takes them from
-    ``WIDE_MIN_ROWS``, ``1`` always, ``0`` never.  The wide A region is one
+    ``WIDE_MIN_ROWS`` routed tokens on the E4M3 instruction and from
+    ``WIDE_UNMEASURED`` elsewhere (dense rows, the f16 instruction), ``1``
+    always, ``0`` never.  The wide A region is one
     more A tile per stage (8 KB on 16-bit tiles, 4 KB on 8-bit ones), which
     every launch that has the width holds at every slot it decodes; the
     published formula and the lanes' rates do not move."""
@@ -984,14 +986,18 @@ def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
             has = mode in modes
             assert rf.has_width(library, mode, rf.BM) and rf.has_width(library, mode, rf.BM_WIDE) == has
             assert not rf.has_width(library, mode, 96)
-            assert rf.superblock_rows(library, mode, rf.WIDE_MIN_ROWS) == (rf.BM_WIDE if has else rf.BM)
-            assert rf.superblock_rows(library, mode, rf.WIDE_MIN_ROWS - 1) == rf.BM
+            floor = rf.WIDE_MIN_ROWS if rf.library_mma8(library) else rf.WIDE_UNMEASURED
+            assert rf.superblock_rows(library, mode, floor) == (rf.BM_WIDE if has else rf.BM)
+            assert rf.superblock_rows(library, mode, floor - 1) == rf.BM
+            assert rf.superblock_rows(library, mode, rf.WIDE_UNMEASURED - 1, dense=True) == rf.BM
+            assert rf.superblock_rows(library, mode, rf.WIDE_UNMEASURED, dense=True) \
+                == (rf.BM_WIDE if has else rf.BM)
     monkeypatch.setenv(rf.ENV_WIDE, "1")
     for library, modes in wide_modes.items():
         assert [rf.superblock_rows(library, mode, 1) for mode in (0, 1, 2)] \
             == [rf.BM_WIDE if mode in modes else rf.BM for mode in (0, 1, 2)], library
     monkeypatch.setenv(rf.ENV_WIDE, "0")
-    assert rf.superblock_rows("e4m3mma", 0, rf.WIDE_MIN_ROWS) == rf.BM
+    assert rf.superblock_rows("e4m3mma", 0, rf.WIDE_UNMEASURED) == rf.BM
     monkeypatch.setenv(rf.ENV_WIDE, "yes")
     with pytest.raises(GrammarError, match=rf.ENV_WIDE):
         rf.superblock_rows("e4m3", 2, 1)
