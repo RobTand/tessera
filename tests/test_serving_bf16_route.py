@@ -550,18 +550,31 @@ def test_scheme_and_blob_must_agree(monkeypatch):
 
 
 @requires_cuda
-def test_route_record_names_the_family_mode_contract_and_decoder(monkeypatch):
+@pytest.mark.parametrize("fused_lane", [True, False], ids=["fused", "triton"])
+def test_route_record_names_the_family_mode_contract_and_decoder(monkeypatch, fused_lane):
+    """The record names the launch the module's lane ran: the fused window
+    kernel's dense identity by default (this module's rows are a multiple of
+    the dense row quantum), the Triton window GEMM under ``TESSERA_DENSE_FUSED=0``."""
+    from tessera.routed_fused import ENV_TOGGLE_DENSE
     from tessera.serving.telemetry import read_route
+    monkeypatch.setenv(ENV_TOGGLE_DENSE, "1" if fused_lane else "0")
     _g, layer, _m, _x, _r = _drive(monkeypatch, MODE_STREAMED)
-    from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
+    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, WINDOW_GEMM_SYMBOL
 
     rec = read_route(layer)
     assert rec is not None and rec["policy"] == f"{TESSERA_BF16}:streamed"
     assert rec["state"] == "served"
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "bf16_unquantized"
-    assert rec["symbol"] == WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
-    assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED == layer.tessera_decoder
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert rec["decoder"] == layer.tessera_decoder
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    if fused_lane:
+        assert rec["symbol"] == FUSED_WINDOW_DENSE_SYMBOL == "tessera::fused_window_dense"
+        assert rec["decoder"] == telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED
+        assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
+    else:
+        assert rec["symbol"] == WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
+        assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED
+        assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
     assert rec["decoder"] in telemetry.DECODERS
 
 

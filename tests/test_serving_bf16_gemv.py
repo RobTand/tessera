@@ -19,7 +19,7 @@ import types
 
 import pytest
 
-from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
+from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, WINDOW_GEMM_SYMBOL
 
 torch = pytest.importorskip("torch")
 
@@ -420,7 +420,7 @@ def test_streamed_prepares_folded_native_without_materialized_planes(monkeypatch
     assert layer.tessera_native is not None
     for name in ("tessera_gemv", "tessera_prepared", "weight_bf16", "wire_bytes"):
         assert not hasattr(layer, name)
-    assert layer.tessera_decoder == route.DENSE_LAUNCH[1]
+    assert layer.tessera_decoder == route.DENSE_FUSED_LAUNCH[1] == layer.tessera_native.launch_pair[1]
     assert torch.equal(layer.tessera_native.row_scale(), scale.cuda())
 
 
@@ -436,7 +436,7 @@ def test_rung_outside_reference_gemv_range_uses_dense_native(monkeypatch):
     assert layer.tessera_native is not None
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "bf16_unquantized"
     assert rec["state"] == "served"
     exact, bound = _dense_reference(values, scale, x)
@@ -472,7 +472,7 @@ def test_supported_rungs_declare_the_same_dense_compile_graph(monkeypatch):
 
     assert in_range.tessera_native is not None
     assert out_of_range.tessera_native is not None
-    assert WINDOW_GEMM_SYMBOL in gemv
+    assert FUSED_WINDOW_DENSE_SYMBOL in gemv and WINDOW_GEMM_SYMBOL not in gemv
     assert route.STREAMED_APPLY_OP not in gemv
     assert gemv == torch_lane, "the same native dispatch must declare the same graph"
 
@@ -486,15 +486,22 @@ def test_resident_also_holds_only_the_packed_native_bundle(monkeypatch):
 
 
 @requires_cuda
+@pytest.mark.parametrize("fused_lane", [True, False], ids=["fused", "triton"])
 @pytest.mark.parametrize("m", [1, 2, 3, 4, 5, 8])
-def test_decode_regime_serves_the_folded_native_window_gemm(monkeypatch, m):
-    """Keep the dtype-derived error bar, against the current folded weights."""
+def test_decode_regime_serves_the_folded_native_window_gemm(monkeypatch, m, fused_lane):
+    """Keep the dtype-derived error bar, against the current folded weights, on
+    both dense lanes: the fused window kernel's identity (the default for this
+    64-row module since the N-tail) and the Triton window GEMM
+    (``TESSERA_DENSE_FUSED=0``)."""
+    from tessera.routed_fused import ENV_TOGGLE_DENSE
     from tessera.serving.telemetry import read_route
+    monkeypatch.setenv(ENV_TOGGLE_DENSE, "1" if fused_lane else "0")
     got, layer, _m, x, (values, scale) = _drive(monkeypatch, MODE_STREAMED, q256=1024,
                                                 m=m, seed=11)
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    want = route.DENSE_FUSED_LAUNCH if fused_lane else route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == want == layer.tessera_native.launch_pair
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "bf16_unquantized"
     assert rec["state"] == "served"
     exact, bound = _dense_reference(values, scale, x)
@@ -511,7 +518,7 @@ def test_prefill_keeps_the_folded_native_window_path(monkeypatch, m):
                                                 m=m, seed=12)
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
     assert rec["state"] == "served"
     exact, bound = _dense_reference(values, scale, x)
     assert bool(((got.float() - exact).abs() <= bound).all())
@@ -558,7 +565,7 @@ def test_rate1_columns_keep_dense_dispatch_across_decode_sizes(monkeypatch):
         assert layer.tessera_native is not None
         rec = read_route(layer)
         assert rec is not None
-        assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+        assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
         assert tuple(got.shape) == (m, layer.tessera_rows)
         exact, bound = _dense_reference(values, scale, x)
         assert bool(((got.float() - exact).abs() <= bound).all())
@@ -647,7 +654,7 @@ def test_optional_gemv_extension_is_not_needed_by_dense_dispatch(monkeypatch):
     assert not hasattr(layer, "tessera_gemv")
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
 
 
 @requires_cuda
@@ -673,4 +680,4 @@ def test_the_dispatch_survives_a_compiled_forward_with_a_dynamic_token_dim(monke
     rec = read_route(layer)
     assert rec is not None
     assert str(rec["shape"]).startswith("M*:")
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == route.DENSE_FUSED_LAUNCH
