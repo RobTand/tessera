@@ -117,6 +117,18 @@ constexpr int WINDOW_BITS = 14;
 constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 constexpr int STAGES = 2;
 constexpr int WORD_STAGES = 3;
+// The activation prefetch distance, in chunks (0: none).  Each chunk's A row
+// is loaded into registers one chunk ahead (``load_a``), and the chunk loop's
+// last register move waits for it.  NCU on the routed launch (M = 1, 512 and
+// 2048) put that wait on the producers' critical path: the warps that stage A
+// rows stalled on it, and every other producer waited for them at the
+// producers' barrier.  A ``prefetch.global.L1`` of the row A_PREFETCH chunks
+// ahead brings the line in while earlier chunks decode.
+#ifndef TESSERA_ROUTED_FUSED_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_A_PREFETCH 0
+#endif
+constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
+static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
 
 // One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
 // E4M3 instruction.
@@ -278,6 +290,9 @@ __device__ __forceinline__ void cp_async16(void* smem, const void* gmem) {
 __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;" :: "r"(s), "l"(gmem) : "memory");
+}
+__device__ __forceinline__ void prefetch_l1(const void* gmem) {
+    asm volatile("prefetch.global.L1 [%0];" :: "l"(gmem));
 }
 __device__ __forceinline__ void cp_async_commit() {
     asm volatile("cp.async.commit_group;" ::: "memory");
@@ -806,6 +821,14 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                 }
             };
+            auto prefetch_a = [&](int kc) {
+                if (arow >= 0) {
+                    if constexpr (FP8)
+                        prefetch_l1(reinterpret_cast<const uint8_t*>(p.x) + arow * p.K + kc * BK + (tid & 1) * 16);
+                    else
+                        prefetch_l1(reinterpret_cast<const uint16_t*>(p.x) + arow * p.K + kc * BK + (tid & 3) * 8);
+                }
+            };
             auto store_a = [&](int stage, const uint4& a) {
                 uint8_t* A = As + stage * A_STAGE;
                 if constexpr (FAMILY_MMA8) {
@@ -974,6 +997,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
                 load_a(kc0, a_cur);
+                if constexpr (A_PREFETCH > 0) {
+                    #pragma unroll
+                    for (int d = 2; d < A_PREFETCH; ++d)
+                        if (d < nkc) prefetch_a(kc0 + d);
+                }
                 // Settle the first chunk's loads here, before the chunk loop.
                 // They land in the registers the loop carries (``prev_cur``,
                 // ``a_cur``), so without a use here ptxas guards those
@@ -1001,6 +1029,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
                     } else {
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
+                    }
+                    if constexpr (A_PREFETCH > 0) {
+                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
