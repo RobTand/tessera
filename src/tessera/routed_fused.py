@@ -451,13 +451,18 @@ def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
-def _cflags(token: str, fp8: bool, mma8: bool = False) -> list:
+def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> list:
+    """A library's compile flags.  ``fp4`` is the E2M1 family's library
+    (``tessera.routed_fused_e2m1``): its define, and the architecture-specific
+    target its block-scaled FP4 instruction exists on.  The other libraries'
+    flags do not move."""
     from .serving.backend import offload_flags
 
     return ["-O3", "-lineinfo", "-std=c++17",
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
-            *offload_flags(token)]
+            *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
+            *offload_flags(token, arch_specific=fp4)]
 
 
 def _probed_or_none(probe):
