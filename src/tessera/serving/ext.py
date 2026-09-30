@@ -44,6 +44,7 @@ __all__ = [
     "NATIVE_EXTENSIONS",
     "ROUTED_FUSED_E4M3_MODULE_NAME",
     "ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES",
+    "ROUTED_FUSED_VALUE_LANE_REQUIRES",
     "ROUTED_FUSED_MMA_E4M3_MODULE_NAME",
     "ROUTED_FUSED_LANE_REQUIRES",
     "ROUTED_FUSED_SOURCE",
@@ -254,6 +255,21 @@ ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES = {
     **ROUTED_FUSED_LANE_REQUIRES,
     "column_rates_routed_moe": [1, 2, 3, 4, 5, 6, 7, 8],
 }
+#: The value family's library (tessera#750 item 4): its one-table DENSE
+#: launch decodes every rate a 14-bit window holds, 1..14
+#: (``routed_fused.DENSE_RATE_MAX["value"]``), so ``column_rates`` -- the
+#: rates a dense module's wire may carry and still take the lane -- is 1..14.
+#: The routed launches stay at 1..8 (``ROUTED_RATE_MAX``): the two-table
+#: gate/up launch at rate 9 needs 101,840 B at two word stages, above sm_121's
+#: 101,376 B opt-in block, and the routed down launch is not built above 8, so
+#: ``column_rates_routed_moe`` keeps a routed stack at 9..14 on the compact
+#: adapter.  Rates 15 and 16 are excluded by geometry: a 15- or 16-bit window
+#: needs a 64 or 128 KB table, which leaves one word stage or none.
+ROUTED_FUSED_VALUE_LANE_REQUIRES = {
+    **ROUTED_FUSED_LANE_REQUIRES,
+    "column_rates": list(range(1, 15)),
+    "column_rates_routed_moe": [1, 2, 3, 4, 5, 6, 7, 8],
+}
 
 #: The native code this package can load INTO A SERVING PROCESS, as the
 #: runtime contract publishes it.
@@ -375,7 +391,7 @@ NATIVE_EXTENSIONS = [
         "loaded_by": "tessera.serving.moe_route",
         "routes": ["TESSERA_BF16"],
         "lane": {"decoder": "native_routed_fused_window_folded",
-                 "requires": ROUTED_FUSED_LANE_REQUIRES},
+                 "requires": ROUTED_FUSED_VALUE_LANE_REQUIRES},
         "when_unavailable": {
             "resident": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "native_window_moe_compact_folded"},
