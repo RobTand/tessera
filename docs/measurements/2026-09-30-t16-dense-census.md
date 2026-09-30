@@ -126,7 +126,33 @@ Triton window GEMM (`TESSERA_DENSE_FUSED=0`):
   Before contract v51 the Triton window GEMM was the only dense lane at rates 9
   to 14, so T16D2's profile is the before-and-after for those rates.
 
-Both are pending; results are added here when they land.
+### Numerics: both stubs pass
+
+Both oracle rows ran on sparklina from the clean checkout at `0beaf139f0`
+(source tree `07d4e177...`), each on the stub whose config digest its census
+receipt names (`e2c92112...` and `676dffd2...`):
+
+| Stub | PB | Run (UTC) | Cases | Violations, fused / Triton | Worst diff over bound, fused / Triton | Fused against Triton |
+|---|---|---|---|---|---|---|
+| T16D1 | `f810690b` | 21:20:56 to 21:29:50 | 320 | 0 / 0 | 0.865 / 0.865 | at most 1 bf16 ulp per row |
+| T16D2 | `be0e22b5` | 21:21:32 to 21:34:21 | 320 | 0 / 0 | 0.870 / 0.870 | at most 1 bf16 ulp per row |
+
+- Each stub's 320 cases are its 16 dense modules at M 1, 3, 64, 512, 2048
+  and 8192, resident, at TP 1 and on each rank of TP 2 (288 cases), plus the
+  same modules streamed at TP 1, M 1 and 8192 (32 cases).
+- Every fused leg recorded `(tessera::fused_window_dense,
+  native_fused_window_dense_folded)`, so the oracle exercised the decoder the
+  census attests at every rate from 1 to 14.
+- Every leg was deterministic across repeated calls.
+- Receipts:
+  `/mnt/shared/tessera-measurements/t16-coverage-20260930/dense-oracle-t16d1-oracle-20260930T203731Z/oracle.json`
+  and `.../dense-oracle-t16d2-oracle-20260930T203808Z/oracle.json`.
+
+### Timing
+
+The two profile rows were still queued when this was written: both Sparks
+were drained for a TP 2 window. Their results go to #750 and to the T-16
+kernel log when they land. Nothing in contract v52 reads them.
 
 ## What v52 changes
 
