@@ -27,7 +27,10 @@ re-encoded.
 | T16D2 | `experiments/t16_census/plan-T16D2.assign.json` | 2176, 2304, 2432, 2560, 2688, 2816, 2944, 3072, 3200, 3328, 3456, 3584 | `[8,9]` to `[14]` (12 tables) |
 
 Each stub was exported with `experiments/t16_census/export_census_stub.sh`
-through PrismaBuild on sparky (`--tag gb10`, not a timing row). The plan uses
+through PrismaBuild on sparky (`--tag gb10`, not a timing row), from the full
+export plans committed as `experiments/t16_census/plan-T16D1.json` (sha256
+`8c44b626...`) and `plan-T16D2.json` (sha256 `1eeece0d...`), byte-identical to
+the copies the script read from the share. The plan uses
 one rung per table because a rung's run table is what a cell's coverage is
 derived from; the fraction inside a pair is runtime data that the fused kernel
 reads (the MIX oracle in `tests/test_dense_fused_window.py` covers random
