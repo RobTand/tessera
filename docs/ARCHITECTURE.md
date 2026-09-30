@@ -5,8 +5,9 @@ Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
 on the block-scaled FP4 instruction (sm_121a). It is producer-side until a
 route admits the E2M1x2 window body: no contract version, `native_extensions`
 entry, launch row or cell changes, and the three existing libraries' SASS is
-instruction-identical (value 77/77, E4M3-f16 107/107, E4M3-instruction
-137/137). See the fused lane's section.
+instruction-identical to master's (value 101/101, E4M3-f16 107/107,
+E4M3-instruction 137/137; PB `0ab25e95` against `ac4fb3e4`). See the fused
+lane's section.
 
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
