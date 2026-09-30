@@ -79,6 +79,7 @@ class ReuseAuthority(Protocol):
         when the roster holds no such binding.  A ``False`` answer refuses in
         strict mode and becomes a recorded warning in permissive mode.
         """
+        ...
 
     def served_activations(self, policy, adoptions: dict, units: dict) -> dict:
         """The served activations a bound policy requires of these adoptions.
@@ -86,6 +87,7 @@ class ReuseAuthority(Protocol):
         Returns ``{unit: {"group": key, "input_global_scale": value}}``, which
         the bundle's ``served_activations`` must equal exactly.
         """
+        ...
 
 
 def _json_copy(value):
