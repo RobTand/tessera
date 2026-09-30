@@ -37,14 +37,20 @@ ACT = "/mnt/shared/dq-runs/glm53-bf16-pread-probe-1469b9b-20260830/act"
 RUNGS = [768, 800, 832, 864, 896, 928, 960, 992, 1024, 1088, 1152, 1216, 1280]
 
 
-def encode(w: "torch.Tensor", q256: int, name: str) -> "torch.Tensor":
+def encode(w: "torch.Tensor", q256: int, name: str, grid: str = "e4m3") -> "torch.Tensor":
+    """The unit encoded at ``q256`` and decoded the way its route serves it:
+    E4M3 bytes widened by the row scale, or (``grid="bf16"``, Tessera-16) the
+    BF16 tile with the row scale folded in, as the folded lane reads it."""
     import torch
-    from tessera.alphabet import E4M3_GRID
-    from tessera.decode import materialize_fp8
+    from tessera.alphabet import BF16_GRID, E4M3_GRID
+    from tessera.decode import materialize_bf16_folded, materialize_fp8
     from tessera.export import encode_linear_planes
 
-    _exported, unit, forests = encode_linear_planes(w, grid=E4M3_GRID, q256=q256, name=name,
+    payload = BF16_GRID if grid == "bf16" else E4M3_GRID
+    _exported, unit, forests = encode_linear_planes(w, grid=payload, q256=q256, name=name,
                                                     verify=True)
+    if grid == "bf16":
+        return materialize_bf16_folded(unit, forests, None).float()
     tile, row_scale = materialize_fp8(unit, forests, None)
     # materialize_fp8 returns the E4M3FN BYTES (uint8): view them as FP8
     # before widening, or the byte codes 0..255 are read as values.
@@ -137,6 +143,8 @@ def main() -> int:
     ap.add_argument("--projs", default="gate_proj,up_proj,down_proj")
     ap.add_argument("--rungs", default=",".join(map(str, RUNGS)))
     ap.add_argument("--rows", type=int, default=0, help="encode only the first ROWS rows (0 = all)")
+    ap.add_argument("--grid", choices=("e4m3", "bf16"), default="e4m3",
+                    help="the payload grid: Tessera-8 (E4M3) or Tessera-16 (BF16, folded lane)")
     args = ap.parse_args()
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -150,12 +158,13 @@ def main() -> int:
         return 0
     import torch
     from safetensors import safe_open
-    from tessera.alphabet import E4M3_GRID
+    from tessera.alphabet import BF16_GRID, E4M3_GRID
     from tessera.export import wire_recipe
 
     torch.manual_seed(0)
     mapping = json.load(open(f"{SRC}/model.safetensors.index.json"))["weight_map"]
-    meta = {"recipe": {str(q): repr(wire_recipe(E4M3_GRID, q)) for q in rungs[:1]},
+    payload = BF16_GRID if args.grid == "bf16" else E4M3_GRID
+    meta = {"grid": args.grid, "recipe": {str(q): repr(wire_recipe(payload, q)) for q in rungs[:1]},
             "tessera_head": os.environ.get("TESSERA_HEAD"), "image": os.environ.get("ORACLE_IMAGE"),
             "host": os.environ.get("HOST_NAME"), "pb_action": os.environ.get("PB_ACTION_KEY"),
             "src": SRC, "act": ACT, "rungs": rungs}
@@ -175,7 +184,7 @@ def main() -> int:
                 ref = x @ w.T if proj != "down_proj" else None
                 for q in rungs:
                     t = time.time()
-                    w_hat = encode(w, q, name)
+                    w_hat = encode(w, q, name, args.grid)
                     d = w_hat - w
                     row = {"layer": layer, "expert": expert, "proj": proj, "q256": q,
                            "shape": list(w.shape), "w_mse": float(d.pow(2).mean()),
