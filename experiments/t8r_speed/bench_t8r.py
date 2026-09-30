@@ -325,12 +325,17 @@ def balanced_routing(m, device):
 
 
 def routing_files(root, ms):
-    """``{M: [path, ...]}`` of recorded top-k ids under ``root/m<M>/*.pt``."""
+    """``{M: [path, ...]}`` of recorded top-k ids under ``root/m<M>/*.pt|*.json``.
+
+    A ``.json`` file is a list of ``.pt`` paths (relative to ``root``) whose ids
+    are concatenated in order: consecutive prefill chunks of one layer make that
+    layer's routing for one larger step.
+    """
     out = {}
     for m in ms:
         d = os.path.join(root, f"m{m}")
         if os.path.isdir(d):
-            out[m] = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".pt"))
+            out[m] = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith((".pt", ".json")))
     return out
 
 
@@ -340,7 +345,13 @@ def recorded_routing(path, m, device):
     Time depends on how many routes each expert receives, not on the weights,
     so the weights stay 1/top_k as in ``balanced_routing``.
     """
-    ids = torch.load(path, map_location="cpu", weights_only=False)["ids"]
+    if path.endswith(".json"):
+        root = os.path.dirname(os.path.dirname(path))
+        parts = [torch.load(os.path.join(root, q), map_location="cpu", weights_only=False)["ids"]
+                 for q in json.load(open(path))]
+        ids = torch.cat(parts, 0)
+    else:
+        ids = torch.load(path, map_location="cpu", weights_only=False)["ids"]
     if tuple(ids.shape) != (m, TOP_K):
         raise ValueError(f"{path}: ids shape {tuple(ids.shape)} != ({m}, {TOP_K})")
     ids = ids.to(device=device, dtype=torch.int32)
@@ -352,7 +363,8 @@ def routing_stats(ids):
     """Per-expert route counts and the fused kernel's 64-route superblocks."""
     n = torch.bincount(ids.flatten().long().cpu(), minlength=EXPERTS)
     return {"experts_touched": int((n > 0).sum()), "max_routes": int(n.max()),
-            "superblocks": int(((n + 63) // 64).sum())}
+            "superblocks": int(((n + 63) // 64).sum()),
+            "superblocks_128": int(((n + 127) // 128).sum())}
 
 
 # ------------------------------------------------------------------ timing
@@ -466,7 +478,8 @@ def main():
                 for m in ms:
                     cases.append((str(m), m, None))
                     if kind == "routed":
-                        cases += [(f"{m}@{os.path.basename(f)[:-3]}", m, f) for f in recorded.get(m, [])]
+                        cases += [(f"{m}@{os.path.splitext(os.path.basename(f))[0]}", m, f)
+                                  for f in recorded.get(m, [])]
                 for key, m, rfile in cases:
                     # seeded per (group, M), so two arms that run different
                     # group sets still see the same x and can compare outputs
