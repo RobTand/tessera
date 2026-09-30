@@ -1264,29 +1264,37 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     mixed["executes"] = [compact, fused]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
-    # At q256 1792 (rate 7) the lane READS the wire but its routed-expert
-    # launch does not reach the rate on the target
-    # (lane.requires.column_rates_routed_moe is 1..6: the two-table gate/up
-    # launch does not fit sm_121's shared memory above it), so an expert stack
-    # derives the compact launch alone -- the structure is what the decision
-    # reads -- while a dense module at the same rung derives the fused dense
-    # identity beside the Triton GEMM, the one-table launch reading every rate.
-    # That is the 16-bit library's limit; contract v47's E4M3-instruction
-    # pair is derived at this rung on both structures (below).
+    # At q256 1792 (rate 7) every library's routed-expert launch reaches the
+    # rung since contract v49 (the 16-bit libraries' two-table gate/up launch
+    # runs rates 7 and 8 at two word stages), so an expert stack derives all
+    # three launches and a claim without the 16-bit lane is refused.
     # (the format row stamps attested_wire per attested rung; 1792 is not one,
     # so the derivation is given a copy of the shipped stamp at that rung)
     import copy
     stamped = copy.deepcopy(entry)
     stamped["attested_wire"] = list(stamped["attested_wire"]) + [
         {**stamped["attested_wire"][0], "q256": 1792}]
-    # The E4M3 instruction's library publishes column_rates_routed_moe 1..8
-    # (its gate/up launch fits at rate 8), so it reaches the rung the 16-bit
-    # library's routed launch does not.
-    high = dict(synthetic, rungs_q256=[1792], executes=[compact, mma])
+    high = dict(synthetic, rungs_q256=[1792], executes=[compact, fused, mma])
     _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
-    high["executes"] = [compact, fused, mma]
+    high["executes"] = [compact, mma]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
+    # The decision reads the published lane.requires against the structure:
+    # under v48's 16-bit column_rates_routed_moe (1..6) the same expert stack
+    # derives the compact launch beside the E4M3 instruction's alone, while a
+    # dense module at the rung derives the fused dense identity beside the
+    # Triton GEMM (the one-table launch reads every rate) on either contract.
+    v48 = copy.deepcopy(contract)
+    for ext in v48["native_extensions"]:
+        requires = ext.get("lane", {}).get("requires", {})
+        if (ext.get("module_name_prefix") in ("tessera_routed_fused_e4m3", "tessera_routed_fused_value")
+                and "column_rates_routed_moe" in requires):
+            requires["column_rates_routed_moe"] = [1, 2, 3, 4, 5, 6]
+    high["executes"] = [compact, mma]
+    _validate_cell_executes(high, "TESSERA_FP8", stamped, v48, "synthetic")
+    high["executes"] = [compact, fused, mma]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(high, "TESSERA_FP8", stamped, v48, "synthetic")
     dense_high = {
         "structure": "dense", "regime": regime, "rungs_q256": [1792],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
@@ -1294,7 +1302,8 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
                      {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"},
                      {"symbol": "tessera::fused_window_dense",
                       "decoder": "native_fused_window_dense_e4m3mma"}]}
-    _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, contract, "synthetic")
+    for published in (contract, v48):
+        _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, published, "synthetic")
     synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert
     # stack, and so is the materialising launch v38 removed (tessera#604).

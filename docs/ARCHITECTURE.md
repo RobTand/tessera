@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the 16-bit routed gate/up launch at rates 7 and 8
+(contract v49, Refs #750). `routed_fused_window.cu` instantiates each launch
+at `word_stages(mode, slot_words)`: three word stages where the slot fits
+sm_121's 101,376 B opt-in block, else two. The value and E4M3-f16 libraries'
+two-table gate/up launch now holds the 16-word slot of rates 7 and 8 at two
+stages (99,792 B), so both libraries' `column_rates_routed_moe` moves from
+1..6 to 1..8, the E4M3 instruction's value. Every other instantiation keeps
+three stages and its SASS (value 69/69, E4M3-instruction 137/137, E4M3-f16
+98/99 up to one commuted `LOP3`). No cell's rungs reach rate 7 or 8, so no
+cell's derived `executes` changes; a routed census at those rates is still
+needed to attest them.
 Re-stamped 2026-09-30 for the GLM cells on the vLLM nightly (tessera#702,
 contract v48). One TP1 eager route census of u1 stub B on image `5be13705`
 (eugr nightly 155ce16b plus the nccl230 layer, vLLM `0.30.1rc1.dev336`), with
@@ -178,11 +189,13 @@ words per column and 64-row half, rounded up to 4), a `Layout<MODE>` template
 places the fixed shared-memory region ahead of the word ring, and the launch
 requests `smem_bytes(mode, slot)` dynamically. The device decides which rates
 a structure reaches: sm_121's 101,376 B per block holds the two-table gate/up
-launch at slot 8 (rates 1-4) and 12 (rates 5-6) but not 16 (rates 7-8), and
-the one-table down/dense launch at every slot, so `ROUTED_LANE_RATES` is
-`(1, 2, 3, 4, 5, 6)` and the dense identity reaches 1..8. Both fused
-`native_extensions` entries publish `lane.requires.column_rates = [1..8]` and
-a NEW structure-scoped field, `column_rates_routed_moe = [1..6]`, which
+launch at slot 8 (rates 1-4) and 12 (rates 5-6) at three word stages, and
+at slot 16 (rates 7-8) only at two (`routed_fused.word_stages`, contract v49;
+at v45-v47 the 16-bit libraries stopped at rate 6), and the one-table
+down/dense launch at every slot, so `ROUTED_LANE_RATES` is 1..8 and the dense
+identity reaches 1..8. Both fused `native_extensions` entries publish
+`lane.requires.column_rates = [1..8]` and a NEW structure-scoped field,
+`column_rates_routed_moe` (`[1..6]` at v45, `[1..8]` since v49), which
 `scheme.decide_lane_requirements` decides only over a `routed_moe` structure
 fact and refuses by name without one (`_lanes_a_rung_reaches` and the export
 plan gate pass the cell's structure; the validator holds the field to an
@@ -3636,8 +3649,8 @@ is the one the family already publishes.
 same attribute, and it is the default (tessera#640, contract v42).**
 `PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
 supported` whether the loaded stack is one the fused lane serves -- every
-column at a rate in `ROUTED_LANE_RATES` (1..6 since contract v45, tessera#694;
-rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
+column at a rate in `ROUTED_LANE_RATES` (1..8 since contract v49; 1..6 at
+v45-v47, tessera#694; rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
 decoration, the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128
 == 0`, the predicate `native_extensions[].lane.requires` publishes
 (`column_rates` for the wire, `column_rates_routed_moe` for this launch) -- and builds
@@ -3837,22 +3850,28 @@ pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
-8 (97,744 B; rates 1-4) and slot 12 (100,816 B; rates 5 and 6) and not slot
-16 (103,888 B; rates 7 and 8), while the one-table down launch holds every
-slot (70,928 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
-inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
-role in its own launch and so has no two-table gate/up mode, reaches 1..8. A
-routed stack whose larger rate is 7 or 8 keeps the compact adapter, and the
-predicate names the slot and the bytes; it may JIT-build the extension to ask
-the device (a first call on a cold cache pays nvcc). One correctness fix rode
+8 (97,744 B; rates 1-4) and slot 12 (100,816 B; rates 5 and 6) at three word
+stages, while the one-table down launch holds every slot (70,928 B at 16).
+Slot 16 (rates 7 and 8) needs 103,888 B at three stages, so since contract v49
+each instantiation takes `word_stages(mode, slot)` -- three where the slot
+fits, else two -- and the 16-bit gate/up launch runs slot 16 at 99,792 B with
+the word copy issued one chunk ahead instead of two (`cp_async_wait<0>`, then
+the producer barrier, then the next chunk's words; the descriptor ring keeps
+its four stages). `ROUTED_LANE_RATES` is derived from exactly that inequality
+at the instantiation's own stages -- 1..8 -- and the dense identity, which
+runs each role in its own launch and so has no two-table gate/up mode, reaches
+1..8. A part with less opt-in shared memory than sm_121 refuses the slots it
+cannot hold, and the predicate names the launch, the slot and the bytes; it
+may JIT-build the extension to ask the device (a first call on a cold cache
+pays nvcc). One correctness fix rode
 along: the previous window
 word was loaded for the first 8-row group only, but a field's 14-bit window
 reaches 13 bits before it, so at rate 1 the groups whose window starts inside
 the half's first word (`8 * j * rate < 32`) read a stale word; every such
 group now loads it. Because one lane serves both structures and the
 contract's `executes` list is the census's admissible set, the two fused
-entries publish `lane.requires.column_rates_routed_moe = [1..6]` beside
-`column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
+entries publish `lane.requires.column_rates_routed_moe` (`[1..6]` at v45,
+`[1..8]` since v49) beside `column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
 over a `routed_moe` structure fact and refuses by name without one,
 `_lanes_a_rung_reaches` and the export plan gate pass the cell's structure,
 and the validator holds the field to an ascending subset of `column_rates`.
