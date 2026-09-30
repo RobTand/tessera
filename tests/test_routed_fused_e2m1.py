@@ -15,7 +15,10 @@ dequantised ``scaled_fp4_quant`` output the kernel consumes.  Held here:
 * a TP2 rank-1 row cut (a carried start state) computes the whole unit's rows
   bit for bit; two runs are bitwise equal; a CUDA-graph replay equals eager;
 * the dense identity at M = 1..300 with and without a K split, and its split
-  cap refused by name;
+  cap refused by name; rows that end inside a 256-row block (32, 128, 384:
+  GLM-5.3's DSA indexer ``weights_proj`` and ``wk``, and a block and a half)
+  write only their own rows, and a rank's row cut of a dense unit computes
+  the whole unit's rows;
 * the refusals by name, the chunk descriptors against a brute-force count,
   and the scope: the library is not reachable from ``tessera.serving``.
 
@@ -454,6 +457,68 @@ def test_dense_forward_against_the_decode(m, kind):
 
 
 @gpu
+@pytest.mark.parametrize("kind", ["onehot", "random"])
+@pytest.mark.parametrize("rows", [32, 128, 384])
+def test_dense_rows_that_end_inside_a_block(rows, kind):
+    """A projection whose rows end inside the last 256-row block: the launch
+    decodes the whole block from the wire's padded tile, and every row it
+    writes is the projection's own -- the rest of ``out`` and of the next
+    row's columns are untouched (``out`` is a column slice of a wider
+    buffer, filled with a sentinel)."""
+    blob = _encode(rows, H, 448, 7000 + rows)
+    w = _ref_weight(blob, None)
+    cap = fe.dense_split_max(H)
+    for m in (1, 100):
+        x = _x(m, H, kind, rows + m)
+        gs = _gs(x)
+        role = fe.prepare_dense_role(_unit(blob), gs)
+        a = _a_deq(x, gs)
+        exact = kind == "onehot"
+        ref = (a @ w.T).float().mul(role.ratio[0]).double() if exact else (a @ w.T) * float(role.ratio[0])
+        bound = (a.abs() @ w.abs().T) * float(role.ratio[0]) * H * 2.0 ** -23
+        for k_split in (1, cap):
+            wide = torch.full((m, rows + 64), -7.0, dtype=torch.bfloat16, device="cuda")
+            out = wide[:, :rows]
+            fe.dense_forward(role, x, k_split=k_split, out=out)
+            torch.cuda.synchronize()
+            _check(out, ref, bound, exact, f"dense rows={rows} M={m} S={k_split}")
+            assert bool((wide[:, rows:] == -7.0).all()), f"rows={rows} S={k_split} wrote past its rows"
+            captured = torch.full_like(wide, -7.0)
+            s = torch.cuda.Stream()
+            s.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(s):
+                fe.dense_forward(role, x, k_split=k_split, out=captured[:, :rows])
+            torch.cuda.current_stream().wait_stream(s)
+            graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(graph):
+                fe.dense_forward(role, x, k_split=k_split, out=captured[:, :rows])
+            captured.fill_(-7.0)
+            graph.replay()
+            torch.cuda.synchronize()
+            assert torch.equal(captured.view(torch.int16), wide.view(torch.int16)), (rows, k_split)
+
+
+@gpu
+@pytest.mark.parametrize("cut", [(0, 128), (256, 384)])
+def test_a_dense_row_cut_is_the_whole_units_rows(cut):
+    """A column-parallel dense module's rank holds a row cut of the unit (the
+    second from a carried start state): its output is the whole unit's rows
+    of the cut bit for bit, one-hot and random, unsplit and at the cap."""
+    _, _, db = _blobs(448)
+    cap = fe.dense_split_max(I)
+    for kind in ("onehot", "random"):
+        x = _x(100, I, kind, 9000 + cut[0])
+        gs = _gs(x)
+        whole = fe.prepare_dense_role(_unit(db[0]), gs)
+        part = fe.prepare_dense_role(_unit(db[0], rows=cut), gs)
+        for k_split in (1, cap):
+            want = fe.dense_forward(whole, x, k_split=k_split)[:, cut[0]:cut[1]].contiguous()
+            got = fe.dense_forward(part, x, k_split=k_split)
+            torch.cuda.synchronize()
+            assert torch.equal(got.view(torch.int16), want.view(torch.int16)), (cut, kind, k_split)
+
+
+@gpu
 def test_a_split_past_the_cap_is_refused_by_name():
     """The host wrapper and the library each refuse a split that leaves an
     item one K chunk (a descriptor slot could be rewritten before it is read)."""
@@ -488,9 +553,9 @@ def test_the_stack_refusals_name_their_reason(monkeypatch):
     assert "disabled" in fe.fused_routed_e2m1_supported(gate, up, down)
     monkeypatch.delenv(rf.ENV_TOGGLE)
     _, _, db = _blobs(448)
-    unit = _unit(db[0], rows=(0, 128))
-    assert "256-row blocks" in fe.dense_role_reason(unit)
-    with pytest.raises(GrammarError, match="256-row blocks"):
+    unit = _replace(_unit(db[0]), rows=48)
+    assert "multiple of 32" in fe.dense_role_reason(unit)
+    with pytest.raises(GrammarError, match="multiple of 32"):
         fe.prepare_dense_role(unit, 1.0)
     with pytest.raises(GrammarError, match="one static scalar"):
         fe.FusedRoutedE2M1MoE.from_bundles(gate, up, down, gs13=torch.ones(2), gs2=1.0)
