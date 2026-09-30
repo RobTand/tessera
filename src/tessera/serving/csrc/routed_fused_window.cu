@@ -116,7 +116,13 @@ constexpr int TILE_ROWS = 512;
 constexpr int WINDOW_BITS = 14;
 constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 constexpr int STAGES = 2;
+// The word stages a launch's chunk loop cycles through: three (words issued
+// two chunks ahead of their decode) wherever the pair's slot fits the block at
+// three, and WORD_STAGES_MIN (one chunk ahead) where it does not -- only the
+// 16-bit libraries' two-table gate/up launch at slot 16, the pairs that read a
+// rate-7 or rate-8 run (``word_stages``).
 constexpr int WORD_STAGES = 3;
+constexpr int WORD_STAGES_MIN = 2;
 // The activation prefetch distance, in chunks (0: none).  Each chunk's A row
 // is loaded into registers one chunk ahead (``load_a``), and the chunk loop's
 // last register move waits for it.  NCU on the routed launch (M = 1, 512 and
@@ -154,10 +160,11 @@ constexpr int DESC_INTS = 2 * 8;
 // the two words the odd-rate copies start early by), rounded to a multiple of
 // 4 so the 16-byte copies stay aligned.  A block on sm_121 may opt in to
 // 101,376 B of dynamic shared memory; the two-table gate/up launch needs
-// 91,600 + 768 * slot_words, so it fits slots up to 12 words (rates <= 6) and
-// not the 16-word slot of rates 7 and 8; the one-table down/dense launch
-// (MODE 2) fits every rate.  The host entries check the launch against the
-// device's own limit.
+// 91,600 + 256 * slot_words per word stage, so at three stages it fits slots
+// up to 12 words (rates <= 6) and not the 16-word slot of rates 7 and 8
+// (103,888 B); there it runs two stages (99,792 B, ``word_stages``).  The
+// one-table down/dense launch (MODE 2) fits every rate at three.  The host
+// entries check the launch against the device's own limit.
 //
 // The descriptor ring (``OFF_DRING``) holds a two-run chunk's block
 // descriptors (``col_map``: BDESC_INTS int32 per projection, one for down and
@@ -202,8 +209,24 @@ template <int MODE, int BMT = BM> struct Layout {
 };
 constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // 16: the rate-8 slot
 __host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK * slot_words; }
+__host__ __device__ constexpr int smem_bytes_ws(int mode, int slot_words, int word_stages) {
+    return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + word_stages * w_stage_ints(slot_words) * 4;
+}
+// The per-block dynamic shared memory sm_121 (GB10, the contract's target)
+// lets a kernel opt in to.  It bounds which pairs are INSTANTIATED, and at how
+// many word stages; every launch is checked against the live device's own
+// limit (``check_slot``), and ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the
+// same figure.
+constexpr int SM121_SMEM_OPTIN = 101376;
+// The word stages a launch of ``mode`` at ``slot_words``-word slots takes:
+// WORD_STAGES where they fit the target's block, else WORD_STAGES_MIN.  A
+// pure function of the two, so the host sizes the block the kernel lays out
+// (``routed_fused.word_stages``).
+__host__ __device__ constexpr int word_stages(int mode, int slot_words) {
+    return smem_bytes_ws(mode, slot_words, WORD_STAGES) <= SM121_SMEM_OPTIN ? WORD_STAGES : WORD_STAGES_MIN;
+}
 __host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
-    return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + WORD_STAGES * w_stage_ints(slot_words) * 4;
+    return smem_bytes_ws(mode, slot_words, word_stages(mode, slot_words));
 }
 // The same at ``bmt``-route superblocks: the published figure at BM, the
 // larger A region at BM_WIDE.
@@ -229,11 +252,6 @@ __host__ __device__ constexpr int pair_slot_words(int r_lo, bool two) {
     const int need = (lo > hi ? lo : hi) > 4 ? (lo > hi ? lo : hi) : 4;
     return (need + 3) / 4 * 4;
 }
-// The per-block dynamic shared memory sm_121 (GB10, the contract's target)
-// lets a kernel opt in to.  It bounds which pairs are INSTANTIATED only; every
-// launch is checked against the live device's own limit (``check_slot``), and
-// ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the same figure.
-constexpr int SM121_SMEM_OPTIN = 101376;
 // The dynamic shared memory a launch at ``slot_words``-word slots and
 // ``bmt``-route superblocks takes.
 __host__ __device__ constexpr int launch_smem_bytes(int mode, int slot_words, int bmt = BM) {
@@ -249,8 +267,9 @@ __host__ __device__ constexpr bool has_width(bool fp8, bool mma8, int mode, int 
 }
 // Whether the launch of ``mode`` decodes the pair (``r_lo``; ``two``: a second
 // run at ``r_lo + 1``): rates in 1..8, and the pair's slot fits the target's
-// block.  The two-table gate/up launch reaches rates 1..6 (one run) and pairs
-// up to (5, 6); the one-table down/dense launch every rate and pair.  Only
+// block at its word stages.  Both launches reach every rate and pair on sm_121:
+// the two-table gate/up launch of the 16-bit libraries at two word stages for
+// the pairs that read a rate-7 or rate-8 run, three elsewhere.  Only
 // these pairs are instantiated; the host refuses any other before a launch
 // (``launch``), as ``routed_fused.fused_routed_window_supported`` does first.
 __host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two) {
@@ -896,6 +915,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 constexpr int RH = RL + 1;                  // read only when TWO
                 constexpr int SW = pair_slot_words(RL, TWO);
                 constexpr int W_STAGE = w_stage_ints(SW);
+                // The word stages this pair's launch cycles through
+                // (``word_stages``): at WORD_STAGES a chunk's words are
+                // issued two chunks ahead of its decode, at WORD_STAGES_MIN
+                // one.
+                constexpr int WS = word_stages(MODE, SW);
+                static_assert(WS == WORD_STAGES || WS == WORD_STAGES_MIN, "two or three word stages");
                 // Chunk kc's block descriptor for half h: the expert's, in
                 // global memory (``ring`` false: the first chunks, before the
                 // ring's copies land), or its copy in the descriptor ring (see
@@ -930,7 +955,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int q = tid & 1;
                         const ColMap c = col_map<RL, TWO>(blk_of(kc, ih, ring), n_lo, w_hi, kc, mm);
                         const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
-                        int32_t* dst = Ws + (kc % WORD_STAGES) * W_STAGE + (ih * BK + mm) * SW;
+                        int32_t* dst = Ws + (kc % WS) * W_STAGE + (ih * BK + mm) * SW;
                         if constexpr (TWO) {
                             if (c.lo) copy_half<RL>(dst, src, t64_i, q);
                             else copy_half<RH>(dst, src, t64_i, q);
@@ -982,6 +1007,18 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // descriptors (``issue_words`` at iteration kc - 2,
                 // ``load_prev`` at kc - 1) passed after reading them.  The first
                 // two chunks' words map from the global descriptors.
+                //
+                // At WORD_STAGES_MIN group 1 carries no words, and the group
+                // iteration kc commits carries chunk kc + 1's words (and chunk
+                // kc + 4's descriptors); the iteration waits for every group,
+                // so the same visibility holds a fortiori: chunk kc + 1's
+                // descriptors, which ``issue_words(kc + 1)`` maps from, joined
+                // a group committed no later than iteration kc - 3 (group 0
+                // for kc0 + 2, group 1 for kc0 + 3; kc0 + 1's are stored
+                // directly), and the overwrite of chunk kc's slot still
+                // follows its last reader (``issue_words`` at iteration
+                // kc - 1, ``load_prev`` at kc - 1) across iteration kc's
+                // barrier.
                 if constexpr (TWO) {
                     const int t = tid - 128;
                     if (t >= 0 && t < 3 * L::PROJ) {
@@ -998,7 +1035,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 issue_words(kc0, false);
                 if (nkc > 2) issue_desc(kc0 + 2);
                 cp_async_commit();                     // group 0
-                if (nkc > 1) issue_words(kc0 + 1, false);
+                if constexpr (WS == WORD_STAGES) {
+                    if (nkc > 1) issue_words(kc0 + 1, false);
+                }
                 if (nkc > 3) issue_desc(kc0 + 3);
                 cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
@@ -1043,15 +1082,21 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     if constexpr (PREFETCH_A) {
                         if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
-                    cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
+                    // Chunk kc's words (and the tables) have landed ...
+                    if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
+                    else cp_async_wait<0>();
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                    if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                    if constexpr (WS == WORD_STAGES) {
+                        if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                    } else {
+                        if (ic + 1 < nkc) issue_words(kc + 1, TWO);
+                    }
                     if (ic + 4 < nkc) issue_desc(kc + 4);
                     cp_async_commit();
                     const int stage = gc & 1;
                     if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
                     store_a(stage, a_cur);
-                    const int32_t* W = Ws + (kc % WORD_STAGES) * W_STAGE;
+                    const int32_t* W = Ws + (kc % WS) * W_STAGE;
                     uint8_t* B = Bs + stage * B_STAGE_BYTES;
                     const int32_t* Wc[2];
                     const float* ws[2];
@@ -1766,6 +1811,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
+    m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
@@ -1780,6 +1826,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("WINDOW_BITS") = WINDOW_BITS;
     m.def("smem_bytes", [](int64_t mode, int64_t slot_words) { return (int64_t)smem_bytes((int)mode, (int)slot_words); },
           "dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots");
+    m.def("word_stages", [](int64_t mode, int64_t slot_words) { return (int64_t)word_stages((int)mode, (int)slot_words); },
+          "word stages the launch of ``mode`` cycles through at ``slot_words``-word slots");
     m.def("max_dynamic_smem_bytes", [](int64_t device) { return (int64_t)max_dynamic_smem_bytes((int)device); },
           "cudaDevAttrMaxSharedMemoryPerBlockOptin of the device");
     m.attr("THREADS") = THREADS;

@@ -55,19 +55,26 @@ def family(request, monkeypatch):
 
 #: The rungs the mixed-rate routed tests read (tessera#694): the GLM E4M3
 #: rungs q256 832 (rates 3/4), 928, 960 (3/4), 1088 (4/5), 1152, the one-rate
-#: 768 and 1280, 1408 (5/6) and 1536 (rate 6, the largest the two-table
-#: gate/up launch fits in the sm_121 shared-memory block since the 16-byte
-#: odd-rate copies), and the low extremes 256 (rate 1) and 384 (1/2); 256 and
-#: 576 columns realise each exactly.  Rates 7 and 8 on gate/up are refused by
-#: name (``test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold``).
-Q256_CASES = [256, 384, 768, 832, 928, 960, 1088, 1152, 1280, 1408, 1536]
+#: 768 and 1280, 1408 (5/6) and 1536 (rate 6, the largest slot the 16-bit
+#: libraries' two-table gate/up launch holds at three word stages), the low
+#: extremes 256 (rate 1) and 384 (1/2), and the 16-word slot above it: 1600
+#: (6/7), 1792 (rate 7), 1920 (7/8) and 2048 (rate 8), which the 16-bit
+#: gate/up launch runs at two word stages (``routed_fused.word_stages``) and
+#: the E4M3 instruction's at three -- with 512 (rate 2), 640 (2/3) and 1024
+#: (rate 4), every one-run rate 1..8 and every adjacent pair is a case, so
+#: every (pair, launch) instantiation meets the oracle.  256 and 576 columns
+#: realise each exactly.
+Q256_CASES = [256, 384, 512, 640, 768, 832, 928, 960, 1024, 1088, 1152, 1280, 1408, 1536, 1600, 1792,
+              1920, 2048]
 #: The rungs the CUDA-graph capture test replays: the #640 rate-4 rung, every
 #: other one-rate rung the routed lane reaches -- 256 (rate 1), 512 (rate 2),
 #: 768 (rate 3: every odd half takes the aligned-pair copy), 1280 (rate 5,
 #: odd at slot 12) and 1536 (rate 6, slot 12 on the two-table launch) -- and
 #: the GLM two-run tables 832 and 960 (3/4), 1088 (4/5) and 1152 (4/5, half
-#: and half), so every rate in ``ROUTED_LANE_RATES`` replays in a graph.
-CAPTURE_Q256 = [1024, 256, 512, 768, 1280, 1536, 832, 960, 1088, 1152]
+#: and half), and the two-word-stage slot: 1792 (rate 7), 2048 (rate 8) and
+#: 1600 (6/7), 1920 (7/8) -- so every rate in ``ROUTED_LANE_RATES`` replays in
+#: a graph.
+CAPTURE_Q256 = [1024, 256, 512, 768, 1280, 1536, 832, 960, 1088, 1152, 1792, 2048, 1600, 1920]
 
 L = 14
 # gate/up: [INTER, HIDDEN] at rate 4 (two 512-row tiles: INTER > 512);
@@ -532,7 +539,9 @@ def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
     indices, and the copies are 16-byte pieces from the aligned pair before
     it); a launch's slot is the larger of its pair's, rounded to a multiple of
     4; the word stages sit after the fixed part (two tables for gate/up, one
-    for down/dense) and their size follows the slot."""
+    for down/dense) and their size follows the slot -- three stages where
+    they fit sm_121's block, two where they do not (the 16-bit gate/up
+    launch at the 16-word slot of rates 7 and 8)."""
     assert [rf.slot_words_for_rate(r) for r in rf.RATES] == [4, 4, 8, 8, 12, 12, 16, 16]
 
     def pair(r_lo, r_hi=0, n_hi=0):
@@ -545,41 +554,74 @@ def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
     assert rf.slot_words_for_pair(pair(3, 8, 0)) == 8
     assert rf.smem_bytes(0, 8) == rf.smem_bytes(1, 8) == 91_600 + 3 * 2 * rf.BK * 8 * 4 == 97_744
     assert rf.smem_bytes(0, 12) == 100_816          # rates 5 and 6: 560 B under sm_121's 101,376
-    assert rf.smem_bytes(0, 16) == 103_888          # over sm_121's 101,376: gate/up refuses rates 7 and 8
-    assert rf.smem_bytes(2, 16) == 70_928           # the one-table down/dense launch fits every rate
+    # three stages of the 16-word slot would take 103,888 B, over sm_121's
+    # 101,376: the 16-bit gate/up launch runs rates 7 and 8 at two
+    assert rf.SMEM_FIXED[0] + rf.WORD_STAGES * 2 * rf.BK * 16 * 4 == 103_888 > rf.SM121_MAX_DYNAMIC_SMEM
+    assert [rf.word_stages(0, sw) for sw in (4, 8, 12, 16)] == [3, 3, 3, 2] == \
+        [rf.word_stages(1, sw) for sw in (4, 8, 12, 16)]
+    assert rf.smem_bytes(0, 16) == rf.smem_bytes(1, 16) == 91_600 + 2 * 2 * rf.BK * 16 * 4 == 99_792
+    assert rf.smem_bytes(2, 16) == 70_928           # the one-table down/dense launch: three stages at every rate
+    assert all(rf.word_stages(2, sw) == rf.WORD_STAGES for sw in (4, 8, 12, 16))
+    assert all(rf.word_stages(m, 16, mma8=True) == rf.WORD_STAGES for m in (0, 1, 2))
+    assert rf.WORD_STAGES_MIN == 2 < rf.WORD_STAGES == 3
     # the fixed parts differ by a table and the gate/up launch's second
     # projection in the descriptor ring: 4 chunks x 12 int32 x 4 B
     assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED[2] == 32_768 + rf.DRING_STAGES * rf.BDESC_INTS * 4
     assert rf.SLOT_WORDS_MAX == rf.slot_words_for_rate(rf.RATE_MAX) == 16
 
 
+class _SmallerDevice:
+    """A built library whose device reports ``have`` bytes of opt-in shared
+    memory: the refusal path of a part with less than sm_121's."""
+
+    def __init__(self, lib, have):
+        self._lib, self._have = lib, int(have)
+
+    def max_dynamic_smem_bytes(self, _index):
+        return self._have
+
+    def __getattr__(self, name):
+        return getattr(self._lib, name)
+
+
 @cuda
-def test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold():
-    """A gate/up stack whose slot does not fit the device's opt-in shared
-    memory is refused by name (the compact adapter serves it); one that fits
-    is admitted.  Rate 7 (q256 1792) is the first the two-table launch cannot
-    hold on sm_121; rate 6 (q256 1536) is the largest it can."""
+def test_support_predicate_admits_the_gate_up_slots_the_device_holds(monkeypatch):
+    """Every gate/up slot fits sm_121's opt-in shared memory at its word
+    stages -- the 16-word slot of rates 7 and 8 at two -- so a rate-7 stack
+    (q256 1792) is admitted on the value library, and the library's own
+    layout functions are the host's.  A device that holds less is refused by
+    name, the launch and both byte counts in the reason (the compact adapter
+    serves it)."""
     lib = rf._ext("value")
     have = int(lib.max_dynamic_smem_bytes(torch.cuda.current_device()))
-    assert int(lib.smem_bytes(0, 16)) == rf.smem_bytes(0, 16) and int(lib.smem_bytes(2, 16)) == rf.smem_bytes(2, 16)
+    for mode, sw in ((0, 12), (0, 16), (2, 16)):
+        assert int(lib.smem_bytes(mode, sw)) == rf.smem_bytes(mode, sw)
+        assert int(lib.word_stages(mode, sw)) == rf.word_stages(mode, sw)
     # predicate == loader on the target: the rates whose one-rate gate/up slot
     # this device holds are exactly the published column_rates_routed_moe
     admitted = tuple(r for r in rf.RATES
                      if rf.smem_bytes(0, rf._round_up_4(rf.slot_words_for_rate(r))) <= have)
     if have == rf.SM121_MAX_DYNAMIC_SMEM:
-        assert admitted == rf.ROUTED_LANE_RATES
+        assert admitted == rf.ROUTED_LANE_RATES == rf.RATES
     else:  # another device: the published set is sm_121's, and this test says which device it ran on
         assert admitted, have
-    for q256, slot in ((1792, 16), (1536, 12)):
-        b = _bundles("value", _stacks("value", q256=q256, cut=False))
-        reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
+    stacks = {q256: _bundles("value", _stacks("value", q256=q256, cut=False)) for q256 in (1792, 1536, 1024)}
+    for q256, b in stacks.items():
+        slot = rf.slot_words_for_rate(q256 // 256)
         if rf.smem_bytes(0, slot) <= have:
-            assert reason is None, reason
-        else:
-            assert reason is not None and "shared memory" in reason and "gate/up" in reason \
-                and str(rf.smem_bytes(0, slot)) in reason and str(have) in reason
-    # the same rates on the down/dense launch fit: one table, not two
-    assert rf.smem_bytes(2, 16) <= have
+            assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None, q256
+    # a device with the 8-word slot's three stages and no more: rates 5..8
+    # refused by name, rate 4 admitted
+    small = rf.smem_bytes(0, 8)
+    real = rf._ext
+    monkeypatch.setattr(rf, "_ext", lambda library, *a, **k: _SmallerDevice(real(library, *a, **k), small))
+    for q256, slot in ((1792, 16), (1536, 12)):
+        b = stacks[q256]
+        reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
+        assert reason is not None and "shared memory" in reason and "gate/up" in reason \
+            and str(rf.smem_bytes(0, slot)) in reason and str(small) in reason, reason
+    b = stacks[1024]
+    assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None
 
 
 @cuda
@@ -659,7 +701,7 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
     # the routed-expert launch's set is DERIVED from the kernel's shared-memory
     # layout at the target's opt-in limit, and published equal to it
     assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES) \
-        == [1, 2, 3, 4, 5, 6]
+        == list(range(1, 9))
     assert rf.ROUTED_LANE_RATES == tuple(
         r for r in rf.RATES
         if rf.smem_bytes(0, rf.slot_words_for_pair(torch.tensor([r, 0, 64, 0, 0, 64, 0, 0], dtype=torch.int32)))
@@ -827,11 +869,11 @@ def _rate_bound(family, q256):
 
 # --- the E4M3 instruction (``tessera_routed_fused_mma_e4m3``) ---------------------
 
-#: Rungs only the E4M3 instruction's gate/up launch reaches: its 16 KB byte
-#: tables leave room for the rate-8 slot (58,832 B against sm_121's 101,376 B),
-#: where the 16-bit tables do not (103,888 B).  q256 1792 is rate 7, 1920 the
-#: 7/8 pair, 2048 rate 8.
-MMA8_ONLY_Q256 = [1792, 1920, 2048]
+#: The rungs at the 16-word gate/up slot: q256 1792 is rate 7, 1920 the 7/8
+#: pair, 2048 rate 8.  The E4M3 instruction's 16 KB byte tables hold three
+#: word stages of it (58,832 B against sm_121's 101,376 B); the 16-bit
+#: libraries' 32 KB tables hold two (99,792 B; three would be 103,888 B).
+SLOT16_Q256 = [1792, 1920, 2048]
 
 
 def test_library_for_reads_the_instruction_choice(monkeypatch):
@@ -881,39 +923,27 @@ def test_the_e4m3_instructions_layout_and_rates():
 
 
 @cuda
-@pytest.mark.parametrize("q256", MMA8_ONLY_Q256)
-def test_the_e4m3_instruction_serves_gate_up_at_rates_7_and_8(q256, monkeypatch):
-    """Where the 16-bit library refuses the gate/up slot by name, the E4M3
-    instruction's admits it, decodes every one-hot product exactly (both
-    build paths), stays within the derived bounds, and replays in a graph."""
-    monkeypatch.setenv(rf.ENV_E4M3_MMA, "f16")
-    b = _bundles("e4m3", _stacks("e4m3", q256=q256, cut=False))
-    reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
-    assert reason is not None and "gate/up" in reason and "shared memory" in reason, reason
-    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
-    assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None
-    for build in ("prepare", "axis"):
-        _decode_exact("e4m3", q256, build)
-    _rate_bound("e4m3", q256)
-    fused = _fused(_bundles("e4m3", _stacks("e4m3", q256=q256)))
-    assert fused.library == "e4m3mma"
-    t = 40
-    x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
-    ids, rw = _routes(t, TOP_K, 33)
-    eager = fused(x, ids, rw)
-    side = torch.cuda.Stream()
-    side.wait_stream(torch.cuda.current_stream())
-    with torch.cuda.stream(side):
-        fused(x, ids, rw)
-    torch.cuda.current_stream().wait_stream(side)
-    graph = torch.cuda.CUDAGraph()
-    with torch.cuda.graph(graph):
-        captured = fused(x, ids, rw)
-    for _ in range(2):
-        captured.zero_()
-        graph.replay()
-        torch.cuda.synchronize()
-        assert torch.equal(captured, eager)
+@pytest.mark.parametrize("q256", SLOT16_Q256)
+def test_every_library_serves_gate_up_at_rates_7_and_8(q256, monkeypatch):
+    """Every library admits the 16-word gate/up slot: the 16-bit ones at two
+    word stages, the E4M3 instruction's at three, each as its own layout
+    says.  The one-hot oracle, the derived bounds and graph replay at these
+    rungs are ``Q256_CASES`` / ``CAPTURE_Q256`` on every library."""
+    for library, family, choice in (("value", "value", None), ("e4m3", "e4m3", "f16"),
+                                    ("e4m3mma", "e4m3", "e4m3")):
+        if choice is not None:
+            monkeypatch.setenv(rf.ENV_E4M3_MMA, choice)
+        b = _bundles(family, _stacks(family, q256=q256, cut=False))
+        assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None, library
+        fused = _fused(b)
+        assert fused.library == library
+        mma8 = rf.library_mma8(library)
+        lib = rf._ext(library)
+        stages = int(lib.word_stages(0, fused.slot_words_gate_up))
+        assert stages == rf.word_stages(0, fused.slot_words_gate_up, mma8=mma8) \
+            == (rf.WORD_STAGES if mma8 else rf.WORD_STAGES_MIN), library
+        assert int(lib.launch_smem_bytes(0, fused.slot_words_gate_up, rf.BM)) \
+            == rf.launch_smem_bytes(0, fused.slot_words_gate_up, mma8=mma8) <= rf.SM121_MAX_DYNAMIC_SMEM
 
 
 @cuda
@@ -1015,7 +1045,7 @@ def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
     # the 16-bit gate/up layout cannot hold it even at the smallest slot
     assert rf.smem_bytes(0, 4) + 8192 > rf.SM121_MAX_DYNAMIC_SMEM
     assert rf.smem_bytes(2, 16) == 70_928
-    assert rf.ROUTED_LANE_RATES == (1, 2, 3, 4, 5, 6)
+    assert rf.ROUTED_LANE_RATES == rf.RATES
 
 
 def _skewed(ids):
@@ -1024,10 +1054,10 @@ def _skewed(ids):
 
 
 #: (library id, q256): the GLM rungs on both E4M3 libraries -- rate 4 and the
-#: two-run 3/4 and 4/5 tables -- and the E4M3 instruction's gate/up-only rates
-#: 7 and 8, where its wide gate/up launch runs the largest slot.
+#: two-run 3/4 and 4/5 tables -- and rates 7 and 8 on the E4M3 instruction,
+#: whose wide gate/up launch runs the largest slot.
 WIDE_CASES = ([(lib, q) for lib in ("e4m3", "e4m3mma") for q in (1024, 832, 1088)]
-              + [("e4m3mma", q) for q in MMA8_ONLY_Q256])
+              + [("e4m3mma", q) for q in SLOT16_Q256])
 
 
 @cuda

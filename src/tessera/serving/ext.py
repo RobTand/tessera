@@ -231,12 +231,13 @@ ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
 ROUTED_FUSED_LANE_REQUIRES = {
     "column_rates": [1, 2, 3, 4, 5, 6, 7, 8],
     # The rates the ROUTED-EXPERT (gate/up) launch reaches on the target:
-    # its two 32 KB tables plus the word stages for rates 6..8 exceed sm_121's
-    # 101,376 B per-block opt-in shared memory, so those stacks keep the
-    # compact adapter; the one-table down/dense launch reads every rate.
+    # every rate -- its two 32 KB tables and three word stages of the 16-word
+    # slot of rates 7 and 8 would exceed sm_121's 101,376 B per-block opt-in
+    # shared memory, so that slot runs at two word stages (1..6 through
+    # contract v47).  The one-table down/dense launch reads every rate.
     # Derived in routed_fused.ROUTED_LANE_RATES from the kernel's own layout
     # and pinned equal here by tests/test_routed_fused_window.py.
-    "column_rates_routed_moe": [1, 2, 3, 4, 5, 6],
+    "column_rates_routed_moe": [1, 2, 3, 4, 5, 6, 7, 8],
     "window_bits": [14],
     "body": "window",
     "plane": "channel",
@@ -246,8 +247,9 @@ ROUTED_FUSED_LANE_REQUIRES = {
     "grid_arities": [1],
 }
 #: The same predicate on the E4M3 instruction's library: its 16 KB byte
-#: tables leave the gate/up launch room for the rate-8 slot, so the
-#: routed-expert launch reads every rate (``routed_fused.routed_lane_rates``).
+#: tables leave the gate/up launch room for three word stages of the rate-8
+#: slot, so the routed-expert launch reads every rate
+#: (``routed_fused.routed_lane_rates``), as the 16-bit libraries' does at two.
 ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES = {
     **ROUTED_FUSED_LANE_REQUIRES,
     "column_rates_routed_moe": [1, 2, 3, 4, 5, 6, 7, 8],

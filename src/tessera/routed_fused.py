@@ -170,11 +170,15 @@ MIN_COLS = 4 * BK
 #: come last and are sized per launch by the stack's rates, so the fixed part
 #: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense,
 #: and the two-run block-descriptor ring -- DRING_STAGES chunks of BDESC_INTS
-#: int32 per projection) and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK
-#: * slot_words * 4`` bytes.  A block on sm_121 may opt in to 101,376 B, so the
-#: gate/up launch fits slots up to 12 words (rates <= 6) and the down/dense
-#: launch every rate.
+#: int32 per projection) and a launch needs ``SMEM_FIXED[mode] + stages * 2 * BK
+#: * slot_words * 4`` bytes at :func:`word_stages` stages.  A block on sm_121
+#: may opt in to 101,376 B, so at WORD_STAGES the 16-bit gate/up launch fits
+#: slots up to 12 words (rates <= 6) and the down/dense launch every rate; the
+#: 16-word slot of rates 7 and 8 takes the gate/up launch at WORD_STAGES_MIN
+#: (99,792 B), where each chunk's words are issued one chunk ahead of their
+#: decode instead of two.
 WORD_STAGES = 3
+WORD_STAGES_MIN = 2
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
 #: The same fixed part on the E4M3 instruction: 16 KB byte tables and 8-bit
@@ -215,10 +219,24 @@ def slot_words_for_pair(pair: torch.Tensor) -> int:
     return _round_up_4(need)
 
 
-def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False) -> int:
-    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
+def _smem_bytes_at_stages(mode: int, slot_words: int, stages: int, *, mma8: bool = False) -> int:
     fixed = SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED
-    return fixed[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+    return fixed[int(mode)] + int(stages) * 2 * BK * int(slot_words) * 4
+
+
+def word_stages(mode: int, slot_words: int, *, mma8: bool = False) -> int:
+    """The word stages the launch of ``mode`` cycles through at
+    ``slot_words``-word slots (``word_stages`` in the kernel): WORD_STAGES
+    where they fit sm_121's opt-in block, else WORD_STAGES_MIN.  The library
+    publishes both constants and is checked against them at load."""
+    fits = _smem_bytes_at_stages(mode, slot_words, WORD_STAGES, mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM
+    return WORD_STAGES if fits else WORD_STAGES_MIN
+
+
+def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False) -> int:
+    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word
+    slots, at its :func:`word_stages`."""
+    return _smem_bytes_at_stages(mode, slot_words, word_stages(mode, slot_words, mma8=mma8), mma8=mma8)
 
 
 def library_for(family: str) -> str:
@@ -304,22 +322,24 @@ def superblock_rows(library: str, mode: int, rows: int, *, dense: bool = False) 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
 #: reaches on the target platform: those whose one-rate slot fits sm_121's
-#: opt-in shared memory -- slots 8 and 12 (rates 1..6) fit, the 16-word slot
-#: of rates 7 and 8 does not.  A two-rate pair's slot is the larger rate's, so
-#: the set is closed under bracketing.  Published as the fused lanes'
-#: ``column_rates_routed_moe`` (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``,
-#: contract v45, tessera#694); the down/dense one-table launch reads every
-#: rate in ``RATES``.  Derived, not typed: the day the layout changes, this
-#: changes with it and the contract's pin fails until the JSON follows.
+#: opt-in shared memory at the launch's :func:`word_stages` -- every rate
+#: since the 16-word slot of rates 7 and 8 runs at WORD_STAGES_MIN (at
+#: WORD_STAGES only slots 8 and 12, rates 1..6, fit; contract v45 published
+#: that).  A two-rate pair's slot is the larger rate's, so the set is closed
+#: under bracketing.  Published as the fused lanes' ``column_rates_routed_moe``
+#: (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``, tessera#694); the down/dense
+#: one-table launch reads every rate in ``RATES``.  Derived, not typed: the day
+#: the layout changes, this changes with it and the contract's pin fails until
+#: the JSON follows.
 ROUTED_LANE_RATES = tuple(
     r for r in RATES
     if smem_bytes(0, _round_up_4(slot_words_for_rate(r))) <= SM121_MAX_DYNAMIC_SMEM)
 
 
 def routed_lane_rates(library: str) -> "tuple[int, ...]":
-    """:data:`ROUTED_LANE_RATES` for one library: every rate on the E4M3
-    instruction (its 16 KB tables leave room for the rate-8 slot), the
-    published 1..6 on the 16-bit libraries."""
+    """:data:`ROUTED_LANE_RATES` for one library: every rate, on the E4M3
+    instruction at three word stages (its 16 KB tables leave room for the
+    rate-8 slot), on the 16-bit libraries at two for rates 7 and 8."""
     mma8 = library_mma8(library)
     return tuple(r for r in RATES
                  if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM)
@@ -504,6 +524,7 @@ def _ext(library: str):
                        ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
+                       ("WORD_STAGES_MIN", WORD_STAGES_MIN),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
