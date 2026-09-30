@@ -381,6 +381,10 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
         raise ValueError(f"unknown dense resident decoder {decoder!r}")
     if not native_roles:
         raise ValueError("native dense resident accounting requires per-role layout")
+    # the dense loader's own bound (tessera#750 item 4: 1..14), not the
+    # routed stacks' 1..8 below
+    from .compact_prep import DENSE_WINDOW_RATE_MAX
+
     total, role_rows = rows * 4, 0
     for role in native_roles:
         count, width = int(role["rows"]), int(role["cols"])
@@ -388,7 +392,8 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
         bits, tile = int(role["window_bits"]), int(role["tile_rows"])
         if count <= 0 or width != cols or len(rates) != width or tile <= 0 or tile % 8:
             raise ValueError("invalid native dense role geometry")
-        if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
+        if bits <= 0 or any(rate < 1 or rate > min(bits, DENSE_WINDOW_RATE_MAX)
+                            for rate in rates):
             raise ValueError("invalid native dense window layout")
         padded = -(-count // tile) * tile
         words = padded * sum(rates) // 8

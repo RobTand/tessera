@@ -6,7 +6,8 @@
 // WHAT IT COMPUTES.  The same functions of the wire as the Triton grouped
 // window GEMM (``tessera.window_gemm_grouped``): the 14-bit window state of
 // row ``n`` in column ``k`` is the last 14 bits of that column's MSB-first bit
-// stream (``rate`` bits per row, any rate 1..8, per column -- the run table's
+// stream (``rate`` bits per row per column: 1..8 on the routed launches, up
+// to RATE_MAX on the dense one -- the run table's
 // one rate or two ADJACENT rates, the pair bracketing the stack's root) ending
 // after row ``n``, looked up in the expert's table.  The BF16 (value) family
 // is FOLDED -- ``bf16(table[state] * row_scale[n])`` before the dot, no
@@ -103,18 +104,30 @@ constexpr int BK = 32;                              // k columns per chunk
 // the lane's window once per chunk (``decode_rows``).  The run table's rates
 // are the grammar's -- one rate, or the two ADJACENT rates bracketing the root
 // (``grammar.rate_set``); a non-adjacent pair is refused by name
-// (``routed_fused.run_pair``) and traps here -- and every rate 1..8 is read.
+// (``routed_fused.run_pair``) and traps here -- and every rate up to RATE_MAX
+// is read on the dense launch, up to ROUTED_RATE_MAX on the routed ones.
 // Each (low rate, one or two runs) pair is its own KERNEL instantiation
 // (``routed_fused_kernel<..., RL, TWO>``), chosen on the host from the
 // launch's ``tile_words`` (``pair_of``): one launch carries one pair, so each
 // pair gets its own register allocation and scheduling instead of sharing
 // one kernel's with every other pair (``launch_decodes``).
 constexpr int RATE_MIN = 1;
-constexpr int RATE_MAX = 8;
+// The largest rate this library decodes, on its dense launch.  A code's
+// window is WINDOW_BITS = 14 bits, so the value family's BF16 grid reads rates
+// 1..14 (tessera#750 item 4: rates 15 and 16 widen the window to 15 and 16
+// bits, whose 64 KB and 128 KB tables leave the one-table block one word
+// stage and none).  The E4M3 grids' codes are 8 bits.
+constexpr int RATE_MAX = FAMILY_FP8 ? 8 : 14;
+// The routed-expert launches (gate/up and down) read 1..8 in every family.
+// The two-table gate/up launch has no room for a slot above rate 8 even at two
+// word stages (101,840 B at rate 9 against sm_121's 101,376 B), and the down
+// launch reads the same run tables as the stack's gate/up.
+constexpr int ROUTED_RATE_MAX = 8;
 constexpr int BDESC_INTS = 12;                      // per-32-column descriptor (see ``col_map``)
 constexpr int TILE_ROWS = 512;
 constexpr int WINDOW_BITS = 14;
 constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
+static_assert(RATE_MAX <= WINDOW_BITS && ROUTED_RATE_MAX <= RATE_MAX, "a code fits its window");
 constexpr int STAGES = 2;
 // The word stages a launch's chunk loop cycles through: three (words issued
 // two chunks ahead of their decode) wherever the pair's slot fits the block at
@@ -207,7 +220,7 @@ template <int MODE, int BMT = BM> struct Layout {
     static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
     static_assert(OFF_DRING % 16 == 0, "the descriptor ring takes 16-byte copies");
 };
-constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // 16: the rate-8 slot
+constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // the RATE_MAX slot: 28 (value), 16 (E4M3)
 __host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK * slot_words; }
 __host__ __device__ constexpr int smem_bytes_ws(int mode, int slot_words, int word_stages) {
     return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + word_stages * w_stage_ints(slot_words) * 4;
@@ -266,14 +279,17 @@ __host__ __device__ constexpr bool has_width(bool fp8, bool mma8, int mode, int 
     return bmt == BM || (bmt == BM_WIDE && fp8 && (mode == 2 || mma8));
 }
 // Whether the launch of ``mode`` decodes the pair (``r_lo``; ``two``: a second
-// run at ``r_lo + 1``): rates in 1..8, and the pair's slot fits the target's
-// block at its word stages.  Both launches reach every rate and pair on sm_121:
-// the two-table gate/up launch of the 16-bit libraries at two word stages for
-// the pairs that read a rate-7 or rate-8 run, three elsewhere.  Only
-// these pairs are instantiated; the host refuses any other before a launch
-// (``launch``), as ``routed_fused.fused_routed_window_supported`` does first.
-__host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two) {
-    return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= RATE_MAX
+// run at ``r_lo + 1``): rates in 1..ROUTED_RATE_MAX on the routed launches and
+// 1..RATE_MAX on the dense one (``dense``), and the pair's slot fits the
+// target's block at its word stages.  Every launch reaches every rate and pair
+// of its range on sm_121: the two-table gate/up launch of the 16-bit libraries
+// at two word stages for the pairs that read a rate-7 or rate-8 run, three
+// elsewhere; the value family's dense launch at three up to rate 14 (80,144 B).
+// Only these pairs are instantiated; the host refuses any other before a
+// launch (``launch``), as ``routed_fused.fused_routed_window_supported`` and
+// ``fused_dense_window_supported`` do first.
+__host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two, bool dense = false) {
+    return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= (dense ? RATE_MAX : ROUTED_RATE_MAX)
         && smem_bytes(mode, pair_slot_words(r_lo, two)) <= SM121_SMEM_OPTIN;
 }
 // The run pair a launch's ``tile_words`` fixes.  A 512-row tile holds 16 words
@@ -294,7 +310,7 @@ __host__ __device__ constexpr PairKey pair_of(int tile_words, int K) {
 // routed-expert launch and the pairs this library instantiates cannot drift.
 __host__ __device__ constexpr int gate_up_rate_max() {
     int r = RATE_MIN - 1;
-    for (int x = RATE_MIN; x <= RATE_MAX; ++x)
+    for (int x = RATE_MIN; x <= ROUTED_RATE_MAX; ++x)
         if (launch_decodes(0, x, false)) r = x;
     return r;
 }
@@ -504,41 +520,71 @@ __device__ __forceinline__ void copy_half(int32_t* dst, const int32_t* src, int 
 // window state of row ``n`` is the last 14 bits of the column's MSB-first
 // stream ending after row ``n``.  Lane ``j`` holds rows 8j..8j+7, whose bits
 // start at stream bit ``8 * j * R`` of the half: word ``b`` of the slot, bit
-// ``u`` into it.  The lane re-aligns a three-word window on ``u`` once
-// (``Z0 | Z1 | Z2`` = the 96 stream bits from 32 before its first row), after
-// which every row's field sits at a compile-time position; at rates 4 and 8
-// ``u`` is 0 and the window is the slot's words themselves -- the rate-4 path
-// is exactly the original kernel's constant shifts.  ``prev`` is the word
-// before the half's first word (the previous 64 rows, the previous tile's
-// last word of the column, the cut's start state, or zero).
+// ``u`` into it.  The lane re-aligns an NZ-word window on ``u`` once (the 32
+// stream bits before its first row, then its eight fields' 8 * R bits: three
+// words up to rate 8, four at rates 9..12, five at 13 and 14), after which
+// every row's field sits at a compile-time position; at rates 4, 8 and 12 ``u``
+// is 0 and the window is the slot's words themselves -- the rate-4 path is
+// exactly the original kernel's constant shifts.  ``prev`` is the word before
+// the half's first word (the previous 64 rows, the previous tile's last word of
+// the column, the cut's start state, or zero).
+//
+// Two forms of one window.  Rates 1..8 (NZ <= 3) keep the three named words
+// ``Z0 | Z1 | Z2`` and the statements of the kernel that contract v49 attests,
+// so every rate-1..8 instantiation compiles to that kernel's SASS: an array of
+// NZ words moves ptxas's schedule in 21 of the E4M3 libraries' 244 kernels
+// (tessera#750 item 4; the receipt is in
+// docs/measurements/2026-09-30-t16-dense-rates-9-14.md).  Rates 9..14 read the
+// NZ-word array ``Zw``.  One form can replace both once a same-session timing
+// A/B shows the array form costs nothing at rates 1..8.
 template <bool FP8, int R>
 __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, int j,
                                             const TabT* T, const float* ws,
                                             uint32_t (&packed)[4]) {
     constexpr bool ALIGNED = (8 * R) % 32 == 0;
-    constexpr bool WIDE = 8 * R > 32;                 // rows reach past 32 bits: Z2 is read
+    constexpr int NZ = 1 + (8 * R + 31) / 32;         // the window's words: 2 (R <= 4) .. 5 (R = 14)
     const int bits0 = 8 * j * R;
     const int b = bits0 >> 5;
     const uint32_t wm1 = (b > 0) ? (uint32_t)Wc[b - 1] : prev;
     const uint32_t w0 = (uint32_t)Wc[b];
-    uint32_t Z0, Z1, Z2 = 0;
-    if constexpr (ALIGNED) {
-        Z0 = wm1;
-        Z1 = w0;
-        if constexpr (WIDE) Z2 = (uint32_t)Wc[b + 1];
-    } else {
-        const int u = bits0 & 31;                     // 1..31 here, 0 only for j = 0
-        // The lane's eight fields end 8 * R bits after bits0; the next word is
-        // read only where a field reaches into it, so the last lane of a half
-        // never reads past the half's 2 * R words.
-        const uint32_t w1 = (u + 8 * R > 32) ? (uint32_t)Wc[b + 1] : 0u;
-        // the 32 stream bits starting u into (hi:lo), MSB-first; u = 0 gives hi
-        Z0 = __funnelshift_rc(w0, wm1, 32 - u);
-        Z1 = __funnelshift_rc(w1, w0, 32 - u);
-        if constexpr (WIDE) {
-            const uint32_t w2 = (u + 8 * R > 64) ? (uint32_t)Wc[b + 2] : 0u;
-            Z2 = __funnelshift_rc(w2, w1, 32 - u);
+    constexpr bool WIDE = 8 * R > 32;                 // rows reach past 32 bits: Z2 is read
+    [[maybe_unused]] uint32_t Z0, Z1, Z2 = 0;         // rates 1..8
+    [[maybe_unused]] uint32_t Zw[NZ > 3 ? NZ : 1];    // rates 9..14
+    if constexpr (NZ <= 3) {
+        if constexpr (ALIGNED) {
+            Z0 = wm1;
+            Z1 = w0;
+            if constexpr (WIDE) Z2 = (uint32_t)Wc[b + 1];
+        } else {
+            const int u = bits0 & 31;                 // 1..31 here, 0 only for j = 0
+            // The lane's eight fields end 8 * R bits after bits0; the next word
+            // is read only where a field reaches into it, so the last lane of a
+            // half never reads past the half's 2 * R words.
+            const uint32_t w1 = (u + 8 * R > 32) ? (uint32_t)Wc[b + 1] : 0u;
+            // the 32 stream bits starting u into (hi:lo), MSB-first; u = 0 gives hi
+            Z0 = __funnelshift_rc(w0, wm1, 32 - u);
+            Z1 = __funnelshift_rc(w1, w0, 32 - u);
+            if constexpr (WIDE) {
+                const uint32_t w2 = (u + 8 * R > 64) ? (uint32_t)Wc[b + 2] : 0u;
+                Z2 = __funnelshift_rc(w2, w1, 32 - u);
+            }
         }
+    } else if constexpr (ALIGNED) {
+        Zw[0] = wm1;
+        Zw[1] = w0;
+        #pragma unroll
+        for (int k = 2; k < NZ; ++k) Zw[k] = (uint32_t)Wc[b + k - 1];
+    } else {
+        const int u = bits0 & 31;
+        // w[k]: slot word b + k - 1 (w[0] the word before), read only where a
+        // field reaches into it, as above.
+        uint32_t w[NZ + 1];
+        w[0] = wm1;
+        w[1] = w0;
+        #pragma unroll
+        for (int k = 2; k <= NZ; ++k) w[k] = (u + 8 * R > 32 * (k - 1)) ? (uint32_t)Wc[b + k - 1] : 0u;
+        #pragma unroll
+        for (int k = 0; k < NZ; ++k) Zw[k] = __funnelshift_rc(w[k + 1], w[k], 32 - u);
     }
     [[maybe_unused]] uint32_t v8[8];                  // FAMILY_MMA8: the eight table bytes
     #pragma unroll
@@ -547,11 +593,15 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
         #pragma unroll
         for (int i = 0; i < 2; ++i) {
             const int e = (r + i + 1) * R;            // the field ends here, in the window
-            const int k1 = (e - 1) >> 5;              // 0: (Z0:Z1), 1: (Z1:Z2)
+            const int k1 = (e - 1) >> 5;              // the field lies in window words k1, k1 + 1
             const int shift = 32 * (k1 + 1) - e;
-            const uint32_t lo = k1 ? Z2 : Z1;
-            const uint32_t hi = k1 ? Z1 : Z0;
-            s[i] = __funnelshift_r(lo, hi, shift) & 0x3FFFu;
+            if constexpr (NZ <= 3) {
+                const uint32_t lo = k1 ? Z2 : Z1;
+                const uint32_t hi = k1 ? Z1 : Z0;
+                s[i] = __funnelshift_r(lo, hi, shift) & 0x3FFFu;
+            } else {
+                s[i] = __funnelshift_r(Zw[k1 + 1], Zw[k1], shift) & 0x3FFFu;
+            }
         }
         uint32_t t0 = T[s[0]], t1 = T[s[1]];
         if constexpr (!FP8) {
@@ -630,7 +680,7 @@ template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
-    static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
+    static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
                   "wide superblocks: the launches ``has_width`` names, unsplit");
     static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
@@ -1411,10 +1461,13 @@ void launch_pair(const Params& p, int grid, cudaStream_t stream) {
 template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false, int BMT = BM>
 void launch(const Params& p, int grid, cudaStream_t stream) {
     const PairKey k = pair_of(p.tile_words, p.K);
-    switch (k.two ? RATE_MAX + k.r_lo : k.r_lo) {
+    // One case per (r_lo, two); a two-run key is offset past every rate.
+    constexpr int KEY_TWO = 16;
+    static_assert(RATE_MAX < KEY_TWO, "one-run and two-run keys stay apart");
+    switch (k.two ? KEY_TWO + k.r_lo : k.r_lo) {
 #define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
-        case (T ? RATE_MAX : 0) + R:                                                           \
-            if constexpr (launch_decodes(MODE, R, T)) {                                        \
+        case (T ? KEY_TWO : 0) + R:                                                            \
+            if constexpr (launch_decodes(MODE, R, T, DENSE)) {                                 \
                 launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT>(p, grid, stream);              \
                 return;                                                                        \
             }                                                                                  \
@@ -1423,16 +1476,23 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
         TESSERA_ROUTED_FUSED_PAIR(3, false) TESSERA_ROUTED_FUSED_PAIR(4, false)
         TESSERA_ROUTED_FUSED_PAIR(5, false) TESSERA_ROUTED_FUSED_PAIR(6, false)
         TESSERA_ROUTED_FUSED_PAIR(7, false) TESSERA_ROUTED_FUSED_PAIR(8, false)
+        TESSERA_ROUTED_FUSED_PAIR(9, false) TESSERA_ROUTED_FUSED_PAIR(10, false)
+        TESSERA_ROUTED_FUSED_PAIR(11, false) TESSERA_ROUTED_FUSED_PAIR(12, false)
+        TESSERA_ROUTED_FUSED_PAIR(13, false) TESSERA_ROUTED_FUSED_PAIR(14, false)
         TESSERA_ROUTED_FUSED_PAIR(1, true) TESSERA_ROUTED_FUSED_PAIR(2, true)
         TESSERA_ROUTED_FUSED_PAIR(3, true) TESSERA_ROUTED_FUSED_PAIR(4, true)
         TESSERA_ROUTED_FUSED_PAIR(5, true) TESSERA_ROUTED_FUSED_PAIR(6, true)
-        TESSERA_ROUTED_FUSED_PAIR(7, true)
+        TESSERA_ROUTED_FUSED_PAIR(7, true) TESSERA_ROUTED_FUSED_PAIR(8, true)
+        TESSERA_ROUTED_FUSED_PAIR(9, true) TESSERA_ROUTED_FUSED_PAIR(10, true)
+        TESSERA_ROUTED_FUSED_PAIR(11, true) TESSERA_ROUTED_FUSED_PAIR(12, true)
+        TESSERA_ROUTED_FUSED_PAIR(13, true)
 #undef TESSERA_ROUTED_FUSED_PAIR
         default: break;
     }
-    TORCH_CHECK(false, "the ", (MODE == 2 ? "down/dense" : "gate/up"), " launch does not decode the run pair (r_lo ",
-                k.r_lo, (k.two ? ", two runs" : ", one run"), ") that tile_words ", p.tile_words, " fixes at K ", p.K,
-                "; rates ", RATE_MIN, "..", RATE_MAX, ", and the pair's word slot must fit the block's shared memory");
+    TORCH_CHECK(false, "the ", (MODE == 2 ? (DENSE ? "dense" : "down") : "gate/up"),
+                " launch does not decode the run pair (r_lo ", k.r_lo, (k.two ? ", two runs" : ", one run"),
+                ") that tile_words ", p.tile_words, " fixes at K ", p.K, "; rates ", RATE_MIN, "..",
+                (DENSE ? RATE_MAX : ROUTED_RATE_MAX), ", and the pair's word slot must fit the block's shared memory");
 }
 
 // The word tensors both host entries take: int32 [E, words_stride], 16-byte
@@ -1591,8 +1651,8 @@ void routed_fused_forward(
     } else {
         TORCH_CHECK(out.dim() == 2 && out.size(0) == P && out.size(1) == N, "mode 2 out must be [P, H]");
     }
-    TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
-                "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
+    TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * ROUTED_RATE_MAX && tile_words % 16 == 0,
+                "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", ROUTED_RATE_MAX);
     TORCH_CHECK(grid >= 1, "grid must be positive");
 
     Params p{};
@@ -1809,6 +1869,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("BK") = BK;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
+    m.attr("ROUTED_RATE_MAX") = ROUTED_RATE_MAX;
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;

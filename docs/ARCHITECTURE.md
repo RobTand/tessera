@@ -1,5 +1,20 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the value library's dense launch at rates 9 to 14
+(contract v51, Refs #750 item 4). `routed_fused_window.cu`'s `RATE_MAX` is 14
+on the value library and 8 on the E4M3 ones, and it now bounds the dense
+launch only; `ROUTED_RATE_MAX` (8) bounds both routed launches. The dense
+launch holds the 28-word slot of rates 13 and 14 at three word stages
+(80,144 B), and `decode_rows` reads up to five words per lane. Its rate-1..8
+window keeps v49's statements, so those kernels' SASS does not move. The
+two-table gate/up launch cannot hold rate 9's slot even at two stages
+(101,840 B), so `tessera_routed_fused_value` publishes `column_rates` 1..14 beside
+`column_rates_routed_moe` 1..8. `compact_prep.prepare_window_compact` takes the
+caller's bound: 14 for a dense unit (`DENSE_WINDOW_RATE_MAX`), 8 for a routed
+one. Rates 15 and 16 are excluded by geometry: their 64 KB and 128 KB tables
+leave the one-table block one word stage and none. No cell's rungs reach rate
+9, so a dense census at those rates is still needed to attest them.
+
 Re-stamped 2026-09-30 for allowable rungs as a rule (contract v50,
 `lane_eligibility.schema` v11, tessera#750). A window-grammar rung mixes at
 most two adjacent column rates, its run table (`grammar.rate_set`), and the
@@ -214,8 +229,11 @@ launch at slot 8 (rates 1-4) and 12 (rates 5-6) at three word stages, and
 at slot 16 (rates 7-8) only at two (`routed_fused.word_stages`, contract v49;
 at v45-v47 the 16-bit libraries stopped at rate 6), and the one-table
 down/dense launch at every slot, so `ROUTED_LANE_RATES` is 1..8 and the dense
-identity reaches 1..8. Both fused `native_extensions` entries publish
-`lane.requires.column_rates = [1..8]` and a NEW structure-scoped field,
+identity reaches 1..8 (1..14 on the value library since v51: its one-table
+dense launch holds the 28-word slot of rates 13 and 14 at three stages,
+80,144 B, while both routed launches stop at `ROUTED_RATE_MAX` = 8). The fused
+`native_extensions` entries publish `lane.requires.column_rates = [1..8]`
+(`[1..14]` on `tessera_routed_fused_value` since v51) and a NEW structure-scoped field,
 `column_rates_routed_moe` (`[1..6]` at v45, `[1..8]` since v49), which
 `scheme.decide_lane_requirements` decides only over a `routed_moe` structure
 fact and refuses by name without one (`_lanes_a_rung_reaches` and the export
@@ -3881,19 +3899,19 @@ the producer barrier, then the next chunk's words; the descriptor ring keeps
 its four stages). `ROUTED_LANE_RATES` is derived from exactly that inequality
 at the instantiation's own stages -- 1..8 -- and the dense identity, which
 runs each role in its own launch and so has no two-table gate/up mode, reaches
-1..8. A part with less opt-in shared memory than sm_121 refuses the slots it
-cannot hold, and the predicate names the launch, the slot and the bytes; it
-may JIT-build the extension to ask the device (a first call on a cold cache
-pays nvcc). One correctness fix rode
-along: the previous window
-word was loaded for the first 8-row group only, but a field's 14-bit window
-reaches 13 bits before it, so at rate 1 the groups whose window starts inside
-the half's first word (`8 * j * rate < 32`) read a stale word; every such
-group now loads it. Because one lane serves both structures and the
-contract's `executes` list is the census's admissible set, the two fused
-entries publish `lane.requires.column_rates_routed_moe` (`[1..6]` at v45,
-`[1..8]` since v49) beside `column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
-over a `routed_moe` structure fact and refuses by name without one,
+1..8, and 1..14 on the value library since contract v51 (`DENSE_RATE_MAX`). A
+part with less opt-in shared memory than sm_121 refuses the slots it cannot
+hold, and the predicate names the launch, the slot and the bytes; it may
+JIT-build the extension to ask the device (a first call on a cold cache pays
+nvcc). One correctness fix rode along: the previous window word was loaded for
+the first 8-row group only, but a field's 14-bit window reaches 13 bits before
+it, so at rate 1 the groups whose window starts inside the half's first word
+(`8 * j * rate < 32`) read a stale word; every such group now loads it.
+Because one lane serves both structures and the contract's `executes` list is
+the census's admissible set, the two fused entries publish
+`lane.requires.column_rates_routed_moe` (`[1..6]` at v45, `[1..8]` since v49)
+beside `column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it
+only over a `routed_moe` structure fact and refuses by name without one,
 `_lanes_a_rung_reaches` and the export plan gate pass the cell's structure,
 and the validator holds the field to an ascending subset of `column_rates`.
 The field is not additive for a v44 reader or for PrismaQuant's mirror of the
@@ -3903,13 +3921,13 @@ the version moved. The export follows the lane: `routed_fused.
 fused_routed_unit_shape_refusal` builds the packer's run table from a unit's
 manifest rates and asks `run_pair` and the part's own launch, and every unit
 it admits is priced with its table, run pair and block descriptors
-(`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash
-expert per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU
-test receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
-routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832,
-R960 and R1088) run 2.0x to 3.9x faster than the compact adapter but at 1.50x
-to 1.71x of R1024. A TP1 eager census of stub B on the GLM image recorded every routed
-stack and every dense module on the fused kernel
+(`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash expert
+per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU test
+receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
+routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832, R960
+and R1088) run 2.0x to 3.9x faster than the compact adapter but at 1.50x to
+1.71x of R1024. A TP1 eager census of stub B on the GLM image recorded every
+routed stack and every dense module on the fused kernel
 (`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`,
 replayed by `tests/test_glm_u1_census_cells.py`). E2M1 fused stays parked; the
 E2M1_K2 routed stacks stay on the A4 span-2 grouped path.

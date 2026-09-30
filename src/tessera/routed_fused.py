@@ -77,6 +77,7 @@ __all__ = [
     "ENV_E4M3_MMA",
     "ENV_TOGGLE_DENSE",
     "ENV_WIDE",
+    "DENSE_RATE_MAX",
     "LIBRARIES",
     "FusedDenseWindowRole",
     "FusedRoutedWindowMoE",
@@ -91,6 +92,7 @@ __all__ = [
     "compose_table8",
     "dense_forward",
     "dense_k_split",
+    "dense_rates",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
     "fused_routed_window_supported",
@@ -154,13 +156,22 @@ BM_WIDE = 128
 HALF = 64
 BN = 128
 BK = 32
-#: The column rates the kernel decodes: every rate of the window grammar, so a
-#: stack's one- or two-rate run table (the two rates bracketing its root) is
-#: read as the wire lays it out.  ``RATE_MAX`` sizes the per-column word slot.
+#: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
+#: every rate of the window grammar up to 8, so a stack's one- or two-rate run
+#: table (the two rates bracketing its root) is read as the wire lays it out.
+#: ``RATE_MAX`` sizes the routed launches' per-column word slot; the kernel
+#: publishes it as ``ROUTED_RATE_MAX``.
 RATE_MIN = 1
 RATE_MAX = 8
 RATES = tuple(range(RATE_MIN, RATE_MAX + 1))
 SLOT_WORDS_MAX = 2 * RATE_MAX         # the rate-8 word-stage slot, int32 words per (half, column)
+#: The largest rate the DENSE launch decodes, per window family (the kernel's
+#: ``RATE_MAX``).  A code fits its 14-bit window, so the value family's BF16
+#: grid reads rates 1..14 (tessera#750 item 4: rates 15 and 16 widen the
+#: window to 15 and 16 bits, whose 64 KB and 128 KB tables leave the one-table
+#: block one word stage and none); the E4M3 grids' codes are 8 bits.  The
+#: one-table launch fits the rate-14 slot at three word stages (80,144 B).
+DENSE_RATE_MAX = {"value": 14, "e4m3": 8}
 BDESC_INTS = 12                       # int32 words per 32-column block descriptor
 WINDOW_BITS = 14
 TABLE_ENTRIES = 1 << WINDOW_BITS
@@ -198,6 +209,12 @@ def _round_up_4(words: int) -> int:
 def chunk_words(rate: int) -> int:
     """int32 words one column at ``rate`` occupies per 512-row tile."""
     return 16 * int(rate)
+
+
+def dense_rates(family: str) -> "tuple[int, ...]":
+    """The column rates the family's dense launch decodes: 1..14 on the value
+    family, 1..8 on the E4M3 family."""
+    return tuple(range(RATE_MIN, DENSE_RATE_MAX[family] + 1))
 
 
 def slot_words_for_rate(rate: int) -> int:
@@ -520,8 +537,10 @@ def _ext(library: str):
             f"the fused routed window extension was built for {token} ({PLATFORM_TOKEN_ENV}) and "
             f"this process's device is {probed}; the library under {build} is a compile-gate "
             "artifact and is refused as a serving path.")
+    dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
-                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
+                       ("RATE_MIN", RATE_MIN), ("ROUTED_RATE_MAX", RATE_MAX),
+                       ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
                        ("WORD_STAGES_MIN", WORD_STAGES_MIN),
@@ -596,7 +615,8 @@ def words_by_expert(bundle) -> torch.Tensor:
     return words.view(e, width)
 
 
-def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str | None]":
+def run_pair(runs: torch.Tensor, cols: int, *, rate_max: int = RATE_MAX,
+             ) -> "tuple[torch.Tensor | None, str | None]":
     """One unit's run table as the kernel's run pair, or why it is refused.
 
     ``runs`` is the wire's ``[R, 4]`` table of ``(rate, col0, ncols, word0)``
@@ -609,25 +629,28 @@ def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str |
     (r_lo, one or two runs) pair is its own kernel instantiation, which the
     host picks from the launch's ``tile_words`` (``pair_of`` in the kernel
     source), so a pair of rates further apart -- which no grammar schedule
-    emits -- is refused here by name rather than decoded.  Returns
-    ``(pair, None)`` or ``(None, reason)``.
+    emits -- is refused here by name rather than decoded.  ``rate_max`` is the
+    launch's ceiling: :data:`RATE_MAX` on the routed launches, the family's
+    :data:`DENSE_RATE_MAX` on the dense one.  Returns ``(pair, None)`` or
+    ``(None, reason)``.
     """
+    rates = range(RATE_MIN, int(rate_max) + 1)
     runs = runs.reshape(-1, 4)
     n_runs = int(runs.shape[0])
     if n_runs not in (1, 2):
         return None, f"run table has {n_runs} runs; the lane reads one or two (the two rates bracketing the root)"
     rows = [tuple(int(v) for v in row) for row in runs.tolist()]
     r_lo, c_lo, n_lo, w_lo = rows[0]
-    if r_lo not in RATES or c_lo != 0 or w_lo != 0 or n_lo <= 0:
-        return None, f"first run {rows[0]} is not (rate in {RATE_MIN}..{RATE_MAX}, 0, n, 0)"
+    if r_lo not in rates or c_lo != 0 or w_lo != 0 or n_lo <= 0:
+        return None, f"first run {rows[0]} is not (rate in {RATE_MIN}..{rate_max}, 0, n, 0)"
     if n_runs == 1:
         if n_lo != cols:
             return None, f"the one run covers {n_lo} of {cols} columns"
         pair = (r_lo, 0, n_lo, 0, 0, n_lo, 0, 16 * n_lo * r_lo)
     else:
         r_hi, c_hi, n_hi, w_hi = rows[1]
-        if r_hi not in RATES or r_hi <= r_lo:
-            return None, f"second run rate {r_hi} is not above the first's {r_lo} within {RATE_MIN}..{RATE_MAX}"
+        if r_hi not in rates or r_hi <= r_lo:
+            return None, f"second run rate {r_hi} is not above the first's {r_lo} within {RATE_MIN}..{rate_max}"
         if r_hi != r_lo + 1:
             return None, (f"second run rate {r_hi} is not adjacent to the first's {r_lo}: the lane reads the "
                           "two adjacent rates bracketing a root (grammar.rate_set)")
@@ -1153,7 +1176,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
 
     ``bundle`` is a ``window_gemm.PreparedWindowGemm`` (the frozen role the
     Triton dense GEMM runs).  The kernel reads the routed lane's wire shape --
-    one or two column-rate runs (rates 1..8, the two bracketing the root),
+    one or two column-rate runs (the two bracketing the root, at rates up to
+    the family's :data:`DENSE_RATE_MAX`: 14 on the value family, 8 on E4M3),
     window bits 14, the packer's column order, the family's published
     arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
     rows a multiple of 128 (one 128-column B block per item) and columns a
@@ -1182,7 +1206,7 @@ def fused_dense_window_supported(bundle) -> "str | None":
         return f"{rows} rows; the dense identity needs a multiple of {BN}"
     if bundle.words.dtype != torch.int32 or bundle.words.dim() != 1:
         return "words must be a flat int32 stream"
-    pair, why = run_pair(bundle.runs, cols)
+    pair, why = run_pair(bundle.runs, cols, rate_max=DENSE_RATE_MAX[fam])
     if pair is None:
         return why
     why = perm_reason(bundle.perm, int(pair[2]), cols)
@@ -1289,7 +1313,7 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
     _ext(library)
     device = bundle.device
     cols = int(bundle.cols)
-    pair, why = run_pair(bundle.runs, cols)
+    pair, why = run_pair(bundle.runs, cols, rate_max=DENSE_RATE_MAX[bundle.family])
     assert pair is not None, why              # the predicate above admitted it
     return FusedDenseWindowRole(
         family=bundle.family, rows=int(bundle.rows), cols=cols,

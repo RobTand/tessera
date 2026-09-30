@@ -1335,9 +1335,11 @@ _LANE_WIRE_CHECKS = {
     # ``facts["structure"]`` is the routed-MoE structure; a caller that did
     # not state the structure is refused by name, and any other structure is
     # decided as not binding.  The fused window lane reads every rate of the
-    # wire (``column_rates``) but its two-table gate/up launch holds fewer
-    # word-stage words in sm_121's opt-in shared memory than the one-table
-    # down/dense launch, so a stack above this set keeps the compact adapter.
+    # wire (``column_rates``) on its one-table dense launch, but its two-table
+    # gate/up launch holds fewer word-stage words in sm_121's opt-in shared
+    # memory, and the value library's dense launch reaches rates (9..14,
+    # tessera#750 item 4) its routed launches are not built for, so a stack
+    # above this set keeps the compact adapter.
     "column_rates_routed_moe": ("rates", "every_in_routed_moe"),
     "window_bits": ("window_bits", "one_of"),
     "body": ("body", "wire_spelling"),
@@ -1425,9 +1427,10 @@ def decide_lane_requirements(lane: str, requires: Mapping[str, Any],
             if offending and name == "column_rates_routed_moe":
                 refusals.append(
                     f"{name} {offending} are outside the rates this lane's routed-expert "
-                    f"launch reaches ({supported}); the lane reads the wire at these rates "
-                    "but the gate/up launch's two tables and word stages do not fit the "
-                    "target's shared memory at them, so the stack keeps the compact adapter")
+                    f"launches reach ({supported}); the lane reads the wire at these rates "
+                    "but its routed launches do not reach them on the target (the gate/up "
+                    "launch's two tables and word stages exceed the target's shared memory "
+                    "above that set), so the stack keeps the compact adapter")
             elif offending:
                 refusals.append(
                     f"{name} {offending} are outside the rates this lane reads "
@@ -1625,8 +1628,8 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
             "on the target, so an expert stack at this rung is served by the compact adapter "
             "and an artifact built to measure the lane on it would measure that adapter. "
             "Re-plan the stack on a rung whose rate set is inside column_rates_routed_moe, "
-            "or plan it as a dense structure, which the lane's one-table launch reads at "
-            "every published rate.")
+            "or plan it as a dense structure, which the lane's one-table dense launch reads "
+            "at every rate of column_rates.")
     elif any(refusal.startswith("column_rates") for refusal in refusals):
         root = Fraction(q256, 256)
         notes = (
