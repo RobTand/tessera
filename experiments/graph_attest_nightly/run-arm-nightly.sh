@@ -36,6 +36,10 @@ avail_gib() { awk '/^MemAvailable:/{printf "%d", $2/1048576}' /proc/meminfo; }
 } > "$OUT/$ARM.prelaunch.txt" 2>&1
 [ "$(hostname)" = sparky ] || { echo "arm $ARM: sparky only"; exit 3; }
 [ -e "$WINDOW" ] && { echo "arm $ARM: a TP2 window is active"; exit 3; }
+# A queued TP2 window holds the box between windows too (coordinator 21:20Z ordering:
+# the speed window, then the A8SE --only-2c window); remove the file to release.
+HOLD=${GA_HOLD:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/HOLD}
+[ -e "$HOLD" ] && { echo "arm $ARM: held by $HOLD"; exit 3; }
 docker ps -q | grep -q . && { echo "arm $ARM: another container is resident"; cat "$OUT/$ARM.prelaunch.txt"; exit 3; }
 nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . && { echo "arm $ARM: a GPU process is resident"; exit 3; }
 [ "$(avail_gib)" -ge "$MIN_AVAIL_GIB" ] || { echo "arm $ARM: MemAvailable $(avail_gib) GiB < $MIN_AVAIL_GIB"; exit 3; }
