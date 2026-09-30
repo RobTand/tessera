@@ -7,7 +7,7 @@
 #   the producer's calibration cache, which the exporter reads only through the
 #   producer's own authority file (--producer-authority, tessera#599).
 #   The routed units come from stub B's cache through a routed-only manifest
-#   ($R/cache-B-routed: the bundle's 4320 expert units, symlinked; the exporter
+#   ($R/cache-B-routed: the bundle's 4320 expert units, hard-linked (the bundle refuses a symlink that resolves outside it); the exporter
 #   requires the manifest to cover exactly the planned cached units).
 set -uo pipefail
 S="$1"
