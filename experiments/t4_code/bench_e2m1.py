@@ -69,7 +69,7 @@ L = 14
 A4_Q256 = 896
 #: rows x cols per rank at TP2 (GLM-5.3-Flash; the #750 dense list).  The
 #: indexer's ``wk`` (128 rows) and ``weights_proj`` (32) and ``lm_head``
-#: (77440 = 302.5 blocks of 256) are listed so the refusal is recorded.
+#: (77440 = 302.5 blocks of 256) end inside a 256-row block.
 DENSE = {
     "mla_o": (4096, 8192), "mla_qb": (8192, 1536), "mla_qa_kva": (2048, 4096),
     "mla_qa": (1536, 4096), "mla_kva": (512, 4096), "kda_o": (4096, 4096),
@@ -375,8 +375,8 @@ class Dense:
 
         rows, cols = DENSE[shape]
         head = {"leg": "e2m1", "shape": shape, "rows": rows, "cols": cols, "q256": q256}
-        if rows % re2.BN:   # before the encode: lm_head's is 317 M weights
-            head["refused"] = f"{rows} rows; the dense launch writes {re2.BN}-row blocks"
+        if rows % re2.DENSE_ROWS:   # before the encode
+            head["refused"] = f"{rows} rows; the dense launch needs a multiple of {re2.DENSE_ROWS}"
             return head, None, None
         unit = window_unit(window_wire(rows, cols, q256, zlib.crc32(f"{shape}:{q256}".encode()), self.dev),
                            self.dev)
