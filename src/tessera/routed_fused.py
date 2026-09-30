@@ -123,12 +123,14 @@ MIN_COLS = 4 * BK
 #: The kernel's shared-memory layout, restated for the support predicates (the
 #: library's attributes are checked against these at load): the word stages
 #: come last and are sized per launch by the stack's rates, so the fixed part
-#: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense)
-#: and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot_words * 4``
-#: bytes.  A block on sm_121 may opt in to 101,376 B, so the gate/up launch
-#: fits slots up to 12 words (rates <= 6) and the down/dense launch every rate.
+#: is ``SMEM_FIXED[mode]`` (two 32 KB tables and the two-run column-map ring --
+#: WORD_STAGES chunks of one int32 per half and column -- for gate/up, one table
+#: for down/dense) and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK
+#: * slot_words * 4`` bytes.  A block on sm_121 may opt in to 101,376 B, so the
+#: gate/up launch fits slots up to 12 words (rates <= 6) and the down/dense
+#: launch every rate.
 WORD_STAGES = 3
-SMEM_FIXED = {0: 91_216, 1: 91_216, 2: 58_448}
+SMEM_FIXED = {0: 91_984, 1: 91_984, 2: 58_448}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -415,9 +417,10 @@ def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str |
     (``grammar.rate_set``) -- as the int32 ``[8]`` pair
     ``(r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)`` with ``r_hi = r_lo + 1``
     and ``w_hi = 16 * n_lo * r_lo`` (a one-run table has ``n_hi = 0``).  Each
-    (r_lo, one or two runs) pair is a compile-time instantiation of the
-    kernel's chunk loop, so a pair of rates further apart -- which no grammar
-    schedule emits -- is refused here by name rather than decoded.  Returns
+    (r_lo, one or two runs) pair is its own kernel instantiation, which the
+    host picks from the launch's ``tile_words`` (``pair_of`` in the kernel
+    source), so a pair of rates further apart -- which no grammar schedule
+    emits -- is refused here by name rather than decoded.  Returns
     ``(pair, None)`` or ``(None, reason)``.
     """
     runs = runs.reshape(-1, 4)

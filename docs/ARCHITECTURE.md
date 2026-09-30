@@ -1,5 +1,19 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for the fused window kernel's per-pair instantiation,
+the two-run column map and the first chunk's load settle. Each run pair is
+now its own `routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`, which the
+host picks from the launch's `tile_words` (`pair_of`), instead of one kernel
+per mode switching on the pair per item; the gate/up launch of a two-run
+stack reads its column map from a 768 B shared-memory ring
+(`Layout<MODE>::OFF_MAP`) instead of mapping each column again in every
+producer thread; and the producers consume the first chunk's global loads
+before the chunk loop, so the loop waits for the next chunk's loads where
+they move into place rather than before the decode. No contract field, rung,
+route or `executes` entry moves, and every output is bitwise equal to
+master's (`docs/measurements/2026-09-29-two-run-column-map.md`,
+`docs/measurements/2026-09-29-per-pair-kernel.md`).
+
 Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
 Arity-one E2M1 remains research-only: the existing serving export gate refuses
 its absent reader range before encoding, and an explicit research override
@@ -56,7 +70,9 @@ for every 8-row group whose window starts inside the half's first word, not
 the first group alone). The producers enter the chunk loop once per item
 through a switch on the stack's run pair, and each pair is a compile-time
 instantiation; built for rate 4 alone, the E4M3 gate/up launch compiles to
-3,376 sm_121 SASS instructions against the v44 kernel's 3,368. Measured on
+3,376 sm_121 SASS instructions against the v44 kernel's 3,368. (Since the
+two-run column map, the pair is a kernel template parameter the host picks,
+not a per-item switch: see "Mixed rates (contract v45)" in section 3.3.) Measured on
 layer 3 of GLM-5.3-Flash (288 experts, M 1 to 2048), the E4M3 R1024 routed
 stack runs 2.9% to 6.3% faster than master, and the R832, R960 and R1088
 stacks run 2.0x to 3.9x faster than the compact adapter they replace but at
@@ -3553,7 +3569,7 @@ path; that gap is measured in the same document.
 **The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
 unweighted case of the routed lane, and since v43 the same kernel serves the
 q256 1024 dense and shared-expert window modules of both families through a
-`DENSE` template instantiation (`routed_fused_kernel<FP8, MODE, DENSE, SPLIT>`
+`DENSE` template instantiation (`routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`
 in `serving/csrc/routed_fused_window.cu`; host entry
 `tessera.routed_fused.dense_forward`). Two things differ from the routed
 case. First, decode has too few work items -- an item is 64 rows of `x` by 128
@@ -3623,9 +3639,10 @@ alone. Since v45 the word stages are sized per launch: `Params::slot_words`
 carries `slot_words_for_rate(r) = 2r + 2 * (r odd)` words per (column, 64-row
 half) rounded up to 4 for the larger rate of the pair (`routed_fused.
 slot_words_for_pair`), a `Layout<MODE>` template places the tables, B and A
-stages, scales, descriptors and the claim counter ahead of the word ring, and
+stages, scales, descriptors, the claim counter and (gate/up) the column-map
+ring ahead of the word ring, and
 `smem_bytes(mode, slot) = SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot * 4`
-is the dynamic shared memory the launch requests (91,216 B fixed for the
+is the dynamic shared memory the launch requests (91,984 B fixed for the
 two-table gate/up modes, 58,448 B for down; `SLOT_WORDS_MAX` 16). The two
 extra words at an odd rate are the copy path: a column's words start 16-byte
 aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
@@ -3634,21 +3651,53 @@ aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
 misaligned, with one 8-byte tail when it is not) instead of the 8-byte copies
 the first cut of this version made; the decode reads the half from the slot's
 third word there, and loads a word past a lane's eight fields only where a
-field reaches into it, so no launch reads past a half. The producers enter
-the chunk loop once per item through a switch on the stack's run pair
-(`r_lo`, one run or two), and each pair is a compile-time instantiation:
-the slot size, the copy pattern, the window shifts and, for one run, the
-column map are constants (built for rate 4 alone, the E4M3 gate/up launch
-compiles to 3,376 sm_121 SASS instructions against the v44 kernel's 3,368,
-with no spills in any instantiation); a
-two-run chunk branches warp-uniformly on the run per half and reads its
-column map once, with the previous word. Two rates of a
+field reaches into it, so no launch reads past a half. Each run pair
+(`r_lo`, one run or two) is its own kernel instantiation,
+`routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`: the host reads the
+pair off the launch's `tile_words` (`pair_of`: `tile_words / 16` is the sum
+of the column rates, `K * r_lo + n_hi` with `0 <= n_hi < K`, and adjacency
+leaves no other pair with that sum), launches only pairs `launch_decodes`
+admits and refuses any other by name, and the kernel traps on an expert whose
+run table is not the pair it was built for. The slot size, the copy pattern,
+the window shifts and, for one run, the column map are constants, and each
+pair gets its own register allocation: 94 to 112 registers per
+instantiation, no spills, and the E4M3 rate-4 gate/up kernel compiles to
+3,352 sm_121 SASS instructions at 98 registers, its table lookups folding the
+table base into the load's immediate. The chunk loop carries the previous
+window word and the activation chunk in registers and loads chunk kc + 1's
+at the top of iteration kc; the first chunk's loads are consumed before the
+loop (an XOR with a zero ptxas cannot fold), because loads that write the
+loop-carried registers directly make ptxas guard those registers with the
+loads' scoreboard on every iteration, which the next chunk's loads share:
+the decode's first instruction then waited for the next chunk's global
+loads, as master's kernel did. The wait placement is ptxas's (checked on the
+image's CUDA 13.0.88; a toolchain change must re-check it). On the T8R expert
+stacks this runs the rate-4 R1024 stack 3 to 10% faster than master at M 1 to
+2048 and keeps the two-run stacks 5 to 9% faster
+(`docs/measurements/2026-09-29-per-pair-kernel.md`). Until this change one
+kernel per mode held every pair's loop behind a per-item switch, at 118 to 128 registers against the 128-register
+cap, and a change to one pair's loop moved the others' code: the two-run
+column map below cost the unchanged rate-4 gate/up loop 11% more executed
+instructions (`docs/measurements/2026-09-29-two-run-column-map.md`). The
+library now holds 67 instantiations per family instead of five, and nvcc
+compiles each family's source in about 35 s instead of 28 s on sparky. A two-run chunk
+branches warp-uniformly on the run per half. In the gate/up
+launch its column map is read from the block descriptor once per (chunk, half,
+column): the thread that issues a column's words maps it and stores the map,
+packed into one int32 (in-block position, run, rank), in a 768 B ring of
+`WORD_STAGES` chunks in shared memory, and every producer's previous-word load
+and decode read it from there past the next producer barrier. Before, every
+producer thread mapped the column again from global memory (eight per column
+per half), a dependent load chain that doubled the launch's long-scoreboard
+stall. The down launch maps one half, which both halves read; the ring made it
+slower there, so it keeps the global map
+(`docs/measurements/2026-09-29-two-run-column-map.md`). Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
-`run_pair` refuses a wider one by name and the kernel traps on it. The
+`run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
-8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rates 5 and 6) and not slot
-16 (103,504 B; rates 7 and 8), while the one-table down launch holds every
+8 (98,128 B; rates 1-4) and slot 12 (101,200 B; rates 5 and 6) and not slot
+16 (104,272 B; rates 7 and 8), while the one-table down launch holds every
 slot (70,736 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
 inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
 role in its own launch and so has no two-table gate/up mode, reaches 1..8. A

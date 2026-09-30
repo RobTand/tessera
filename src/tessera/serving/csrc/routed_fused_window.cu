@@ -90,8 +90,11 @@ constexpr int BK = 32;                              // k columns per chunk
 // are the grammar's -- one rate, or the two ADJACENT rates bracketing the root
 // (``grammar.rate_set``); a non-adjacent pair is refused by name
 // (``routed_fused.run_pair``) and traps here -- and every rate 1..8 is read.
-// Each (low rate, one or two runs) pair is its own compile-time instantiation
-// of the producers' chunk loop, entered once per item (``launch_decodes``).
+// Each (low rate, one or two runs) pair is its own KERNEL instantiation
+// (``routed_fused_kernel<..., RL, TWO>``), chosen on the host from the
+// launch's ``tile_words`` (``pair_of``): one launch carries one pair, so each
+// pair gets its own register allocation and scheduling instead of sharing
+// one kernel's with every other pair (``launch_decodes``).
 constexpr int RATE_MIN = 1;
 constexpr int RATE_MAX = 8;
 constexpr int BDESC_INTS = 12;                      // per-32-column descriptor (see ``col_map``)
@@ -112,19 +115,34 @@ constexpr int DESC_INTS = 2 * 8;
 // the two words the odd-rate copies start early by), rounded to a multiple of
 // 4 so the 16-byte copies stay aligned.  A block on sm_121 may opt in to
 // 101,376 B of dynamic shared memory; the two-table gate/up launch needs
-// 91,216 + 768 * slot_words, so it fits slots up to 12 words (rates <= 6) and
+// 91,984 + 768 * slot_words, so it fits slots up to 12 words (rates <= 6) and
 // not the 16-word slot of rates 7 and 8; the one-table down/dense launch
 // (MODE 2) fits every rate.  The host entries check the launch against the
 // device's own limit.
+//
+// The column-map ring (``OFF_MAP``, gate/up only) holds a two-run chunk's
+// column map, one packed int32 per (half, column) (``pack_col``), in a ring of
+// WORD_STAGES chunks beside the word stages: the thread that issues a column's
+// words maps the column from the block descriptor once and stores it, and
+// every producer's ``load_prev`` reads it back from shared memory instead of
+// mapping the column again from global memory.  The down/dense launch (MODE
+// 2) has no ring: it maps one half, which both halves read, so the ring saves
+// it half as much and its extra barrier made it slower
+// (docs/measurements/2026-09-29-two-run-column-map.md).  A one-run unit's map
+// is computed, so it never touches the ring.
 template <int MODE> struct Layout {
     static constexpr int TABLES = (MODE == 2) ? 1 : 2;
+    static constexpr bool MAP_RING = (MODE != 2);
+    static constexpr int MAP_STAGE = MAP_RING ? 2 * BK : 0;     // int32 per ring slot
     static constexpr int OFF_TABLES = 0;
     static constexpr int OFF_B = OFF_TABLES + TABLES * TABLE_BYTES;
     static constexpr int OFF_A = OFF_B + STAGES * B_STAGE_BYTES;
     static constexpr int OFF_WSCALE = OFF_A + STAGES * A_STAGE_BYTES;
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
-    static constexpr int OFF_W = OFF_CLAIM + 16;                // 91,216 (two tables) / 58,448 (one)
+    static constexpr int OFF_MAP = OFF_CLAIM + 16;
+    static constexpr int OFF_W = OFF_MAP + WORD_STAGES * MAP_STAGE * 4;   // 91,984 (two tables) / 58,448 (one)
+    static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
 };
 constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // 16: the rate-8 slot
 __host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK * slot_words; }
@@ -158,11 +176,24 @@ constexpr int SM121_SMEM_OPTIN = 101376;
 // Whether the launch of ``mode`` decodes the pair (``r_lo``; ``two``: a second
 // run at ``r_lo + 1``): rates in 1..8, and the pair's slot fits the target's
 // block.  The two-table gate/up launch reaches rates 1..6 (one run) and pairs
-// up to (5, 6); the one-table down/dense launch every rate and pair.  A pair
-// outside the set traps -- the host refuses it before any launch.
+// up to (5, 6); the one-table down/dense launch every rate and pair.  Only
+// these pairs are instantiated; the host refuses any other before a launch
+// (``launch``), as ``routed_fused.fused_routed_window_supported`` does first.
 __host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two) {
     return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= RATE_MAX
         && smem_bytes(mode, pair_slot_words(r_lo, two)) <= SM121_SMEM_OPTIN;
+}
+// The run pair a launch's ``tile_words`` fixes.  A 512-row tile holds 16 words
+// per unit of column rate, so ``tile_words / 16`` is the sum of the column
+// rates, ``K * r_lo + n_hi`` for a pair (r_lo; n_hi columns at r_lo + 1) with
+// 0 <= n_hi < K: ``r_lo`` is the quotient and ``n_hi`` the remainder.  (Two
+// runs need n_lo, n_hi > 0 -- ``routed_fused.run_pair`` -- and a pair's two
+// rates are adjacent, so no other pair has the same sum.)  The kernel checks
+// every expert's run table against the pair it was built for and traps on a
+// mismatch.
+struct PairKey { int r_lo; bool two; };
+__host__ __device__ constexpr PairKey pair_of(int tile_words, int K) {
+    return PairKey{tile_words / 16 / K, (tile_words / 16) % K != 0};
 }
 // The largest one-run rate the gate/up launch decodes: published as the
 // library's GATE_UP_RATE_MAX, checked at load against
@@ -174,9 +205,6 @@ __host__ __device__ constexpr int gate_up_rate_max() {
         if (launch_decodes(0, x, false)) r = x;
     return r;
 }
-// Compile-time tags the per-item dispatch hands the chunk loop.
-template <int R> struct RateTag { static constexpr int value = R; };
-template <bool T> struct TwoTag { static constexpr bool value = T; };
 
 constexpr int BAR_FULL0 = 1;
 constexpr int BAR_EMPTY0 = 3;
@@ -306,6 +334,27 @@ __device__ __forceinline__ ColMap col_map(const int32_t* bdesc, int n_lo, int w_
         c.p = c.lo ? rank : n_lo + rank;
         c.cw0 = c.lo ? rank * 16 * RL : w_hi + rank * 16 * (RL + 1);
     }
+    return c;
+}
+// A two-run column map as one int32 in the column-map ring (see Layout):
+// bits 0..4 the in-block position, bit 5 the low-rate run, bits 6..31 the
+// column's rank within its run (``rank <= p < K < 2^26``, checked by the host
+// entry).  ``unpack_col`` rebuilds ``p`` and ``cw0`` from the rank with the
+// same arithmetic as ``col_map``, so the map it returns is the same.
+constexpr int MAP_RANK_BITS = 26;
+__device__ __forceinline__ int32_t pack_col(const ColMap& c, int n_lo) {
+    const int rank = c.lo ? c.p : c.p - n_lo;
+    return (int32_t)(((uint32_t)rank << 6) | ((uint32_t)c.lo << 5) | (uint32_t)c.cib);
+}
+template <int RL>
+__device__ __forceinline__ ColMap unpack_col(int32_t w, int n_lo, int w_hi) {
+    ColMap c;
+    const int rank = (int)((uint32_t)w >> 6);
+    c.cib = w & 31;
+    c.lo = (w >> 5) & 1;
+    c.rate = c.lo ? RL : RL + 1;
+    c.p = c.lo ? rank : n_lo + rank;
+    c.cw0 = c.lo ? rank * 16 * RL : w_hi + rank * 16 * (RL + 1);
     return c;
 }
 // The words of one column's 64-row half at rate R into its word-stage slot, as
@@ -452,10 +501,13 @@ struct Params {
     float* partial;                // DENSE && SPLIT: fp32 [S, M, N] raw accumulators
 };
 
-template <bool FP8, int MODE, bool DENSE, bool SPLIT>
+// ``RL``, ``TWO``: the launch's run pair (``pair_of``) -- the low (or only)
+// rate, and whether a second run at ``RL + 1`` exists.
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
+    static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
     using L = Layout<MODE>;
     extern __shared__ __align__(128) uint8_t smem[];
     uint16_t* tab = reinterpret_cast<uint16_t*>(smem + L::OFF_TABLES);
@@ -600,19 +652,20 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // The run pair must tile K and the wire's tile_words exactly, its
             // two rates must be adjacent (``grammar.rate_set``: a stack mixes
             // only the two bracketing its root; ``run_pair`` refuses any other
-            // pair by name), and gate and up must carry ONE pair, since the
-            // item's chunk loop is instantiated for one.  The Python owner
-            // checks the first two per stack; the third needs no check of its
-            // own: equal ``cols`` and equal ``tile_words``
-            // (``fused_routed_window_supported``) fix 16 * (K * r_lo + n_hi),
-            // with 0 <= n_hi < K, and so the whole adjacent pair.  A mismatch
-            // here would address outside the expert's words, so it traps
-            // rather than reads.
+            // pair by name), and gate and up must carry ONE pair: the one this
+            // kernel is instantiated for.  The Python owner checks the first
+            // two per stack; the third needs no check of its own: equal
+            // ``cols`` and equal ``tile_words`` (``fused_routed_window_supported``)
+            // fix 16 * (K * r_lo + n_hi), with 0 <= n_hi < K, and so the whole
+            // adjacent pair -- the one the host chose this instantiation from
+            // (``pair_of``).  A mismatch here would address outside the
+            // expert's words, so it traps rather than reads.
             if (tid == 0) {
                 #pragma unroll
                 for (int h = 0; h < 2; ++h) {
                     const RunPair& rp = rp_h[h];
-                    if (rp.n_lo + rp.n_hi != p.K
+                    if (rp.r_lo != RL || (rp.n_hi > 0) != TWO
+                        || rp.n_lo + rp.n_hi != p.K
                         || 16 * (rp.n_lo * rp.r_lo + rp.n_hi * rp.r_hi) != p.tile_words
                         || rp.r_lo < RATE_MIN || rp.r_lo > RATE_MAX
                         || slot_words_for_rate(rp.r_lo) > p.slot_words
@@ -684,7 +737,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 }
             };
 
-            // The item's chunk loop, instantiated per run pair: ``RL`` the low
+            // The item's chunk loop, for the kernel's run pair: ``RL`` the low
             // (or only) rate, ``TWO`` whether a second run at ``RL + 1``
             // exists.  The slot size, the copy pattern, the window shifts and --
             // for one run -- the column map are compile-time, so a uniform
@@ -693,20 +746,34 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // block (``decode_two``).  tessera#694: the first version switched
             // on the column's rate per half per chunk, and its rate-4 launches
             // ran 1.31x (down) to 1.49x (gate/up) slower than the v44 kernel's.
-            auto run = [&](auto rl_tag, auto two_tag) {
-                constexpr int RL = decltype(rl_tag)::value;
-                constexpr bool TWO = decltype(two_tag)::value;
+            // Until the pair became a kernel template parameter, one kernel
+            // held every pair's loop behind a per-item switch, and a change to
+            // the two-run loop moved the one-run loop's registers: the
+            // column-map ring cost the rate-4 gate/up launch 11% more
+            // instructions on its table lookups with its own source unchanged
+            // (docs/measurements/2026-09-29-two-run-column-map.md).
+            auto run = [&]() {
                 constexpr int RH = RL + 1;                  // read only when TWO
                 constexpr int SW = pair_slot_words(RL, TWO);
                 constexpr int W_STAGE = w_stage_ints(SW);
+                // A two-run gate/up unit maps its columns through the ring.
+                constexpr bool RING = TWO && L::MAP_RING;
                 // The words of chunk kc for half ih, lane group mm (``copy_half``).
                 // SW never exceeds the launch's slot (the trap check above), so
-                // the stages fit the shared memory the host sized.
+                // the stages fit the shared memory the host sized.  With the
+                // ring, the thread also stores the column's map (see Layout)
+                // for ``load_prev``.  The ring's address is formed here, where
+                // it is used, not held in a register for the whole chunk loop.
                 auto issue_words = [&](int kc) {
                     if (tid < 128) {
                         const int mm = (tid >> 1) & 31;
                         const int q = tid & 1;
                         const ColMap c = col_map<RL, TWO>(bdesc_i, n_lo, w_hi, kc, mm);
+                        if constexpr (RING) {
+                            if (q == 0)
+                                reinterpret_cast<int32_t*>(smem + L::OFF_MAP)
+                                    [(kc % WORD_STAGES) * L::MAP_STAGE + ih * BK + mm] = pack_col(c, n_lo);
+                        }
                         const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
                         int32_t* dst = Ws + (kc % WORD_STAGES) * W_STAGE + (ih * BK + mm) * SW;
                         if constexpr (TWO) {
@@ -725,12 +792,19 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // loading it for j = 0 alone left rows 8..12 of every half after
                 // the first reading a zero history at rate 1).  The chunk's column
                 // map comes back too: the chunk's decode, one iteration later,
-                // reads it instead of mapping the column again.
+                // reads it instead of mapping the column again.  With the ring,
+                // it reads the map ``issue_words`` stored for the chunk, which
+                // is visible to every producer only past a producer barrier
+                // after the store: the chunk loop calls it there.
                 auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2]) {
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
                         // MODE 2 reads one projection: both halves map alike.
-                        cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(bdesc_h[h], n_lo, w_hi, kc, m);
+                        if constexpr (RING)
+                            cm[h] = unpack_col<RL>(reinterpret_cast<const int32_t*>(smem + L::OFF_MAP)
+                                                       [(kc % WORD_STAGES) * L::MAP_STAGE + h * BK + m], n_lo, w_hi);
+                        else
+                            cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(bdesc_h[h], n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
                         if (8 * j * c.rate >= 32) continue;
                         const int wr0 = 2 * c.rate * t64_h[h];
@@ -747,18 +821,51 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 cp_async_commit();                     // group 0: the tables and the first chunk's words
                 if (nkc > 1) issue_words(kc0 + 1);
                 cp_async_commit();                     // group 1
+                // With the ring: the first chunk's map, stored just above, is
+                // read by every producer's ``load_prev`` below.
+                if constexpr (RING) bar_sync(BAR_PROD, PRODUCER_THREADS);
                 int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
                 ColMap cm_cur[2], cm_nxt[2];
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur);
                 load_a(kc0, a_cur);
+                // Settle the first chunk's loads here, before the chunk loop.
+                // They land in the registers the loop carries (``prev_cur``,
+                // ``a_cur``), so without a use here ptxas guards those
+                // registers with the loads' scoreboard on EVERY iteration, and
+                // the next chunk's loads (``load_prev``/``load_a`` at the top
+                // of the loop) share that scoreboard: the chunk's store and
+                // decode then waited for the NEXT chunk's global loads, one
+                // global latency per chunk.  XOR with a zero the compiler
+                // cannot fold (``K`` is positive) consumes them here, and the
+                // loop's only wait on those loads is at its end, where the next
+                // chunk's values move into place, behind the chunk's own work.
+                // Verified on the image's ptxas (CUDA 13.0.88); re-check the chunk
+                // loop's scoreboard waits on a toolchain change.
+                {
+                    const int32_t zero = p.K >> 31;
+                    prev_cur[0] ^= zero; prev_cur[1] ^= zero;
+                    a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
+                    a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
+                }
                 for (int ic = 0; ic < nkc; ++ic, ++gc) {
                     const int kc = kc0 + ic;
-                    if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt); load_a(kc + 1, a_nxt); }
+                    if constexpr (!RING) {
+                        if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt); load_a(kc + 1, a_nxt); }
+                    } else {
+                        if (ic + 1 < nkc) load_a(kc + 1, a_nxt);
+                    }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
                     if (ic + 2 < nkc) issue_words(kc + 2);
                     cp_async_commit();
+                    // With the ring, chunk kc + 1's map is read past the barrier
+                    // above: ``issue_words`` stored it one iteration ago (or
+                    // before the loop), and ``issue_words(kc + 4)``, which reuses
+                    // its slot, runs only past the barrier two iterations on.
+                    if constexpr (RING) {
+                        if (ic + 1 < nkc) load_prev(kc + 1, prev_nxt, cm_nxt);
+                    }
                     const int stage = gc & 1;
                     if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
                     store_a(stage, a_cur);
@@ -803,28 +910,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     a_cur = a_nxt;
                 }
             };
-            // ONE dispatch per item on the pair (every item of a launch carries
-            // the same one: one run table per stack, gate and up alike).  A pair
-            // this launch does not decode (``launch_decodes``) traps; the host
-            // refuses it first (``fused_routed_window_supported``: the device's
-            // shared memory; ``run_pair``: adjacency).
-            switch (rp_h[0].n_hi > 0 ? RATE_MAX + rp_h[0].r_lo : rp_h[0].r_lo) {
-#define TESSERA_ROUTED_FUSED_PAIR(R, T)                                        \
-                case (T ? RATE_MAX : 0) + R:                                   \
-                    if constexpr (launch_decodes(MODE, R, T)) run(RateTag<R>{}, TwoTag<T>{}); \
-                    else __trap();                                             \
-                    break;
-                TESSERA_ROUTED_FUSED_PAIR(1, false) TESSERA_ROUTED_FUSED_PAIR(2, false)
-                TESSERA_ROUTED_FUSED_PAIR(3, false) TESSERA_ROUTED_FUSED_PAIR(4, false)
-                TESSERA_ROUTED_FUSED_PAIR(5, false) TESSERA_ROUTED_FUSED_PAIR(6, false)
-                TESSERA_ROUTED_FUSED_PAIR(7, false) TESSERA_ROUTED_FUSED_PAIR(8, false)
-                TESSERA_ROUTED_FUSED_PAIR(1, true) TESSERA_ROUTED_FUSED_PAIR(2, true)
-                TESSERA_ROUTED_FUSED_PAIR(3, true) TESSERA_ROUTED_FUSED_PAIR(4, true)
-                TESSERA_ROUTED_FUSED_PAIR(5, true) TESSERA_ROUTED_FUSED_PAIR(6, true)
-                TESSERA_ROUTED_FUSED_PAIR(7, true)
-#undef TESSERA_ROUTED_FUSED_PAIR
-                default: __trap();
-            }
+            // Every item of a launch carries the kernel's pair (one run table
+            // per stack, gate and up alike; checked above).
+            run();
             ++item_idx;
         }
     } else {
@@ -1009,17 +1097,49 @@ int max_dynamic_smem_bytes(int device) {
     return v;
 }
 
-template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false>
-void launch(const Params& p, int grid, cudaStream_t stream) {
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
+void launch_pair(const Params& p, int grid, cudaStream_t stream) {
     const int smem = smem_bytes(MODE, p.slot_words);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
     if (smem > attributed) {
-        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT>,
+        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>,
                                             cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
         attributed = smem;
     }
-    routed_fused_kernel<FP8, MODE, DENSE, SPLIT><<<grid, THREADS, smem, stream>>>(p);
+    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO><<<grid, THREADS, smem, stream>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+// The launch's run pair, from its ``tile_words`` (``pair_of``), picks the
+// kernel instantiation.  A pair this launch does not decode
+// (``launch_decodes``) is refused here, before any launch; the Python owner
+// refuses it first (``fused_routed_window_supported``: the device's shared
+// memory; ``run_pair``: adjacency).
+template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false>
+void launch(const Params& p, int grid, cudaStream_t stream) {
+    const PairKey k = pair_of(p.tile_words, p.K);
+    switch (k.two ? RATE_MAX + k.r_lo : k.r_lo) {
+#define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
+        case (T ? RATE_MAX : 0) + R:                                                           \
+            if constexpr (launch_decodes(MODE, R, T)) {                                        \
+                launch_pair<FP8, MODE, DENSE, SPLIT, R, T>(p, grid, stream);                   \
+                return;                                                                        \
+            }                                                                                  \
+            break;
+        TESSERA_ROUTED_FUSED_PAIR(1, false) TESSERA_ROUTED_FUSED_PAIR(2, false)
+        TESSERA_ROUTED_FUSED_PAIR(3, false) TESSERA_ROUTED_FUSED_PAIR(4, false)
+        TESSERA_ROUTED_FUSED_PAIR(5, false) TESSERA_ROUTED_FUSED_PAIR(6, false)
+        TESSERA_ROUTED_FUSED_PAIR(7, false) TESSERA_ROUTED_FUSED_PAIR(8, false)
+        TESSERA_ROUTED_FUSED_PAIR(1, true) TESSERA_ROUTED_FUSED_PAIR(2, true)
+        TESSERA_ROUTED_FUSED_PAIR(3, true) TESSERA_ROUTED_FUSED_PAIR(4, true)
+        TESSERA_ROUTED_FUSED_PAIR(5, true) TESSERA_ROUTED_FUSED_PAIR(6, true)
+        TESSERA_ROUTED_FUSED_PAIR(7, true)
+#undef TESSERA_ROUTED_FUSED_PAIR
+        default: break;
+    }
+    TORCH_CHECK(false, "the ", (MODE == 2 ? "down/dense" : "gate/up"), " launch does not decode the run pair (r_lo ",
+                k.r_lo, (k.two ? ", two runs" : ", one run"), ") that tile_words ", p.tile_words, " fixes at K ", p.K,
+                "; rates ", RATE_MIN, "..", RATE_MAX, ", and the pair's word slot must fit the block's shared memory");
 }
 
 // The word tensors both host entries take: int32 [E, words_stride], 16-byte
@@ -1170,6 +1290,8 @@ void routed_fused_forward(
     }
     TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
                 "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
+    TORCH_CHECK(K < (int64_t(1) << MAP_RANK_BITS), "K must be below 2^", MAP_RANK_BITS,
+                " (the column-map ring's rank field, see pack_col)");
     TORCH_CHECK(grid >= 1, "grid must be positive");
 
     Params p{};
