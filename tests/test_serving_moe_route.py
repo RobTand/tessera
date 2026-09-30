@@ -181,16 +181,20 @@ def test_the_expert_route_publishes_one_launch_in_both_regimes():
     from tessera.serving.scheme import (ROUTED_FUSED_WINDOW_SYMBOL, TESSERA_BF16,
                                         WINDOW_MOE_COMPACT_SYMBOL)
     from tessera.serving.telemetry import (
-        DECODER_NATIVE_ROUTED_FUSED_WINDOW, DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+        DECODER_NATIVE_ROUTED_FUSED_WINDOW, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
+        DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
         DECODER_NATIVE_WINDOW_MOE_COMPACT, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
         DECODER_TORCH_STOCK)
 
     expected = moe_route.census_expected(compiled=False)
     assert set(expected) == {"decode", "batch"}
     assert expected["decode"] == expected["batch"]
+    # Contract v46: the E4M3 instruction's fused library is a second
+    # experimental decoder of the same symbol, admitted beside the f16 one.
     assert expected["decode"] == {
         (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW)}
+        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW),
+        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)}
     assert (moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK) not in expected["decode"]
     # A traced forward changes nothing: the combined ``a+b`` symbol the window
     # routes stamp under compile exists because two launches share one graph.

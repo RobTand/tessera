@@ -568,6 +568,7 @@ def test_an_fp8_owner_never_declares_the_materialising_launch():
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
     compact = (WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact")
     fused = (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window")
+    fused_mma8 = (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_e4m3mma")
     wire = moe.owner_wire(_glm_shape(2, A8))
     pairs = moe.owner_launch_pairs(wire, world=2)
     assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in pairs
@@ -575,7 +576,9 @@ def test_an_fp8_owner_never_declares_the_materialising_launch():
     assert ("vllm.fused_moe.modular_kernel", "research_selected_torch_window") in pairs
     assert compact in pairs
     # Contract v41 (tessera#640): the fused lane's pair beside the compact one.
-    assert moe.owner_launch_pairs(wire, world=1) == {compact, fused}
+    # Contract v46: the E4M3 instruction's library is a second fused decoder
+    # the same owner can launch (TESSERA_FUSED_E4M3_MMA=e4m3), experimental.
+    assert moe.owner_launch_pairs(wire, world=1) == {compact, fused, fused_mma8}
     # A compressed BF16 expert stack has no materialising launch at any world,
     # and its selected owner's decoders are not admissible either (#613).
     for world in (1, 2):
