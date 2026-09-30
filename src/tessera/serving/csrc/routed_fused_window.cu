@@ -193,6 +193,25 @@ constexpr int DESC_INTS = 2 * 8;
 // that global latency sat on the chunk loop's critical path.  A one-run
 // unit's map is computed, so it never touches the ring.
 constexpr int DRING_STAGES = 4;
+// THE STAGED STREAM HISTORY (tessera#750).  A half's decode needs the 32
+// stream bits before its first word (``load_prev``).  That word sits outside
+// the half's copied words, so the chunk loop loaded it from global memory one
+// chunk ahead, into a register the loop's last move waited on.  NCU on the
+// R1024 gate/up launch at M = 512 (E4M3 instruction): that register move
+// (``MOV R66, R72``, the half-1 word) was the kernel's hottest instruction, 7.5%
+// of all warp samples, all long scoreboard, and the producers' barrier behind
+// it another 10.2%: each chunk waited one global latency, whatever the number
+// of producer warps (sixteen measured no faster).  On the E4M3 instruction the
+// word therefore rides the word stages' own copies instead: ``issue_words``
+// copies it (4 bytes, ``cp_async4``) into a per-stage slot two chunks ahead,
+// the chunk's ``cp_async_wait`` and producers' barrier cover it, and the
+// decode reads it from shared memory.  It costs WORD_STAGES * 2 * BK int32
+// (768 B) of shared memory, which the 16-bit libraries' two-table gate/up
+// layout cannot spare at rates 5 and 6 (560 B of headroom), so the value
+// family and the 16-bit E4M3 library keep the register path.
+constexpr bool PREV_STAGED = FAMILY_MMA8;
+constexpr int PREV_STAGE_INTS = 2 * BK;             // one word per (half, column)
+constexpr int PREV_REGION_BYTES = PREV_STAGED ? WORD_STAGES * PREV_STAGE_INTS * 4 : 0;
 // The wide superblock (tessera#741): 128 routes per item instead of BM = 64,
 // so one decoded B tile feeds twice the rows.  Its A region is twice the
 // size (``a_region_bytes``), which fits the one-table down/dense launch at
@@ -220,8 +239,10 @@ template <int MODE, int BMT = BM> struct Layout {
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
     static constexpr int OFF_DRING = OFF_CLAIM + 16;
-    // 91,600 (two tables) / 58,640 (one); 46,544 / 29,968 on the E4M3 instruction
-    static constexpr int OFF_W = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    // The staged stream history (PREV_STAGED; empty on the 16-bit libraries).
+    static constexpr int OFF_PREV = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    // 91,600 (two tables) / 58,640 (one); 47,312 / 30,736 on the E4M3 instruction
+    static constexpr int OFF_W = OFF_PREV + PREV_REGION_BYTES;
     static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
     static_assert(OFF_DRING % 16 == 0, "the descriptor ring takes 16-byte copies");
 };
@@ -339,6 +360,11 @@ __device__ __forceinline__ void cp_async16(void* smem, const void* gmem) {
 __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;" :: "r"(s), "l"(gmem) : "memory");
+}
+// The 4-byte copy is the staged stream history's word (PREV_STAGED).
+__device__ __forceinline__ void cp_async4(void* smem, const void* gmem) {
+    const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+    asm volatile("cp.async.ca.shared.global [%0], [%1], 4;" :: "r"(s), "l"(gmem) : "memory");
 }
 __device__ __forceinline__ void prefetch_l1(const void* gmem) {
     asm volatile("prefetch.global.L1 [%0];" :: "l"(gmem));
@@ -705,6 +731,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
+    int32_t* Ps = reinterpret_cast<int32_t*>(smem + L::OFF_PREV);   // PREV_STAGED only
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
     int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
     int32_t* claim = reinterpret_cast<int32_t*>(smem + L::OFF_CLAIM);
@@ -900,6 +927,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int ih = (tid >> 6) & 1;
             const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
             const int t64_i = ih ? t64_h[1] : t64_h[0];
+            // ... and where its stream history comes from (PREV_STAGED).
+            const int g_i = ih ? g_h[1] : g_h[0];
+            const int32_t* init_i = ih ? init_h[1] : init_h[0];
+            const int hasinit_i = ih ? hasinit_h[1] : hasinit_h[0];
             auto load_a = [&](int kc, uint4& a) {
                 if (arow >= 0) {
                     if constexpr (FP8) {
@@ -1023,6 +1054,20 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         } else {
                             copy_half<RL>(dst, src, t64_i, q);
                         }
+                        // The staged stream history: the 32 bits before the
+                        // half, in the same commit group as its words (see
+                        // PREV_STAGED and ``load_prev``, whose cases these are).
+                        if constexpr (PREV_STAGED) {
+                            if (q == 1) {
+                                int32_t* pd = Ps + (kc % WS) * PREV_STAGE_INTS + ih * BK + mm;
+                                const int wr0 = 2 * c.rate * t64_i;
+                                const int32_t* wcol = tbase_i + c.cw0;
+                                if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
+                                else if (g_i > 0) cp_async4(pd, wcol + 16 * c.rate - 1 - p.tile_words);
+                                else if (hasinit_i) cp_async4(pd, init_i + c.p);
+                                else *pd = 0;
+                            }
+                        }
                     }
                 };
                 // The 32 stream bits before the half's first word, for every row
@@ -1036,13 +1081,16 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // reads it instead of mapping the column again.  A two-run
                 // chunk maps from the descriptor ring (``ring``; see its
                 // schedule below).
+                // With PREV_STAGED the word comes from its stage instead
+                // (``issue_words``; read in the chunk body) and this maps the
+                // columns only.
                 auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2], bool ring) {
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
                         // MODE 2 reads one projection: both halves map alike.
                         cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
-                        if (8 * j * c.rate >= 32) continue;
+                        if (PREV_STAGED || 8 * j * c.rate >= 32) continue;
                         const int wr0 = 2 * c.rate * t64_h[h];
                         const int32_t* wcol = tbase_h[h] + c.cw0;
                         int32_t v;
@@ -1127,7 +1175,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // loop's scoreboard waits on a toolchain change.
                 {
                     const int32_t zero = p.K >> 31;
-                    prev_cur[0] ^= zero; prev_cur[1] ^= zero;
+                    if constexpr (!PREV_STAGED) { prev_cur[0] ^= zero; prev_cur[1] ^= zero; }
                     a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
                     a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
                 }
@@ -1169,22 +1217,33 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         chunk[h] = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
                         ws[h] = wsc + slot * BN + chunk[h] * 8;
                     }
+                    // The chunk's stream history: from its stage (PREV_STAGED;
+                    // zero for the row groups ``load_prev`` skips, as the
+                    // carried registers held), or carried from ``load_prev``.
+                    int32_t pv[2];
+                    #pragma unroll
+                    for (int h = 0; h < 2; ++h) {
+                        if constexpr (PREV_STAGED)
+                            pv[h] = (8 * j * cm_cur[h].rate < 32) ? Ps[(kc % WS) * PREV_STAGE_INTS + h * BK + m] : 0;
+                        else
+                            pv[h] = prev_cur[h];
+                    }
                     const TabT* T0 = tab;
                     const TabT* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
                     uint32_t packed[2][4];
                     if constexpr (!TWO) {
-                        decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
                     } else if constexpr (MODE == 2) {
                         // one column in both halves: one rate
-                        if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RH>(Wc, pv, j, T0, T1, ws, packed);
                     } else {
                         // gate and up share the pair, not the column order
                         const bool lo0 = cm_cur[0].lo, lo1 = cm_cur[1].lo;
-                        if (lo0 && lo1) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else if (lo0) decode_two<FP8, RL, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else decode_two<FP8, RH, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        if (lo0 && lo1) decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
+                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH>(Wc, pv, j, T0, T1, ws, packed);
+                        else if (lo0) decode_two<FP8, RL, RH>(Wc, pv, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RL>(Wc, pv, j, T0, T1, ws, packed);
                     }
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
@@ -1197,7 +1256,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                 make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
                     }
                     bar_arrive(BAR_FULL0 + stage, THREADS);
-                    prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
+                    if constexpr (!PREV_STAGED) { prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1]; }
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
                     a_cur = a_nxt;
                 }
