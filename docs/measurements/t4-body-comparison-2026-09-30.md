@@ -140,7 +140,7 @@ calibration set drawn from different text may see more tokens above its amax
 than this split does.
 
 The cost side (the extra row-amax reduction and a per-row epilogue) is timed
-by `aside_cost.py`, PB `cfa28ea1`, measurement mode on sparklina. A dynamic
+by `aside_cost.py`, PB `f8f09d49`, measurement mode on sparklina. A dynamic
 global also changes the attested contract string (`…_static`), so it is a
 contract decision, not a kernel option.
 
@@ -177,7 +177,7 @@ work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a -cubin`, the decode loop):
   nearest bytes, not the matched pairs above.
 - **The window decodes in 30% fewer instructions** than TCQ at rates 2 to 7.
 - Measured cycles per weight and power are timed by the same PB action
-  `cfa28ea1`; this section is updated when it lands.
+  `f8f09d49`; this section is updated when it lands.
 
 ## Options for the T-4 wire
 
