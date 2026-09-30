@@ -637,6 +637,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
     uint8_t* Ar = smem + L::OFF_ARING;    // the activation ring (A_RING)
+    // The ring serves the routed launches only.  The dense case keeps the
+    // register path: its A/B measured the ring 5-7.5% slower there (tessera
+    // aring A/B, 2026-09-30), so its slot stays reserved and unused.
+    constexpr bool RING = A_RING && !DENSE;
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
     int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
@@ -846,10 +850,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         prefetch_l1(reinterpret_cast<const uint16_t*>(p.x) + arow * p.K + kc * BK + (tid & 3) * 8);
                 }
             };
-            // Chunk kc's A bytes into the activation ring (A_RING): the same
+            // Chunk kc's A bytes into the activation ring (RING): the same
             // 16 bytes ``load_a`` would load, from the thread that stages them.
             auto issue_a = [&](int kc) {
-                if constexpr (A_RING) {
+                if constexpr (RING) {
                     if (arow >= 0)
                         cp_async16(Ar + (kc % WORD_STAGES) * (BMT * BK) + (tid >> 1) * BK + (tid & 1) * 16,
                                    reinterpret_cast<const uint8_t*>(p.x) + arow * p.K + kc * BK + (tid & 1) * 16);
@@ -857,7 +861,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             };
             auto store_a = [&](int stage, int kc, uint4 a) {
                 uint8_t* A = As + stage * A_STAGE;
-                if constexpr (A_RING) {
+                if constexpr (RING) {
                     if (arow >= 0)
                         a = *reinterpret_cast<const uint4*>(Ar + (kc % WORD_STAGES) * (BMT * BK) + (tid >> 1) * BK
                                                             + (tid & 1) * 16);
@@ -1028,8 +1032,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 ColMap cm_cur[2], cm_nxt[2];
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
-                if constexpr (!A_RING) load_a(kc0, a_cur);
-                if constexpr (A_PREFETCH > 0 && !A_RING) {
+                if constexpr (!RING) load_a(kc0, a_cur);
+                if constexpr (A_PREFETCH > 0 && !RING) {
                     #pragma unroll
                     for (int d = 2; d < A_PREFETCH; ++d)
                         if (d < nkc) prefetch_a(kc0 + d);
@@ -1057,14 +1061,14 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     const int kc = kc0 + ic;
                     // The two orders are the measured ones: a one-run loop that
                     // issues the activation chunk first waits longer at M = 1.
-                    if constexpr (A_RING) {
+                    if constexpr (RING) {
                         if (ic + 1 < nkc) load_prev(kc + 1, prev_nxt, cm_nxt, TWO);
                     } else if constexpr (TWO) {
                         if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
                     } else {
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
-                    if constexpr (A_PREFETCH > 0 && !A_RING) {
+                    if constexpr (A_PREFETCH > 0 && !RING) {
                         if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
@@ -1117,7 +1121,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     bar_arrive(BAR_FULL0 + stage, THREADS);
                     prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
-                    if constexpr (!A_RING) a_cur = a_nxt;
+                    if constexpr (!RING) a_cur = a_nxt;
                 }
             };
             // Every item of a launch carries the kernel's pair (one run table
