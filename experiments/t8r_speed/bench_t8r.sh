@@ -39,6 +39,12 @@ fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
 EXTRA_MOUNTS=()
+# BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
+# model, recorded activations), mounted read-only at the same path.
+for d in ${BENCH_RO_MOUNTS:-}; do
+  [[ -d "$d" ]] || { echo "missing BENCH_RO_MOUNTS dir: $d" >&2; exit 2; }
+  EXTRA_MOUNTS+=(-v "$d":"$d":ro)
+done
 # --routing DIR (recorded top-k ids) is read inside the container: mount it read-only.
 prev=""
 for a in "$@"; do
