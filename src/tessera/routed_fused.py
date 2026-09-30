@@ -126,14 +126,18 @@ LIBRARIES = {
     "e4m3mma": (MODULE_NAME_E4M3MMA, "e4m3", True),
 }
 #: Which tensor-core instruction the E4M3 family's fused launches (routed and
-#: dense) take in this process: ``f16`` widens each E4M3 byte to f16 for
-#: ``mma.sync.m16n8k16`` (``tessera_routed_fused_e4m3``), ``e4m3`` runs
-#: ``mma.sync.m16n8k32.e4m3`` on the bytes (``tessera_routed_fused_mma_e4m3``).
-#: Read when an adapter or role is prepared; the prepared object carries its
-#: library and stamps that library's decoder.
+#: dense) take in this process: ``e4m3`` (the default) runs
+#: ``mma.sync.m16n8k32.e4m3`` on the bytes (``tessera_routed_fused_mma_e4m3``),
+#: ``f16`` widens each E4M3 byte to f16 for ``mma.sync.m16n8k16``
+#: (``tessera_routed_fused_e4m3``).  The two compute the same exact products
+#: and differ only in fp32 summation order, and the E4M3 instruction does twice
+#: the work per instruction on half the shared-memory bytes, so it is the
+#: default; ``f16`` stays selectable for A/Bs.  Read when an adapter or role is
+#: prepared; the prepared object carries its library and stamps that library's
+#: decoder.
 ENV_E4M3_MMA = "TESSERA_FUSED_E4M3_MMA"
 E4M3_MMA_CHOICES = ("f16", "e4m3")
-E4M3_MMA_DEFAULT = "f16"
+E4M3_MMA_DEFAULT = "e4m3"
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
@@ -221,9 +225,9 @@ def library_for(family: str) -> str:
     """The library key the family's fused launches take in this process.
 
     The value family has one library.  The E4M3 family takes
-    ``tessera_routed_fused_mma_e4m3`` when ``TESSERA_FUSED_E4M3_MMA=e4m3`` and
-    ``tessera_routed_fused_e4m3`` otherwise; any other value is refused by
-    name rather than read as the default.
+    ``tessera_routed_fused_e4m3`` when ``TESSERA_FUSED_E4M3_MMA=f16`` and
+    ``tessera_routed_fused_mma_e4m3`` otherwise (unset or ``e4m3``); any other
+    value is refused by name rather than read as the default.
     """
     if family != "e4m3":
         return family

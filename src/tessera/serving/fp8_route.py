@@ -93,7 +93,8 @@ GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
 #: admits unless ``TESSERA_DENSE_FUSED=0``.
 DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 #: ``DENSE_FUSED_MMA_E4M3_LAUNCH`` is the same identity on the E4M3
-#: instruction's library (``TESSERA_FUSED_E4M3_MMA=e4m3``), a third pair while
+#: instruction's library (the default; ``TESSERA_FUSED_E4M3_MMA=f16`` takes
+#: the 16-bit library's pair instead), a third pair while
 #: it stands in ``scheme.EXPERIMENTAL_LAUNCHES``: the route can make it, so it
 #: is here and in the census expectation, and no cell names it yet.
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)

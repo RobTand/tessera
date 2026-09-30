@@ -836,7 +836,8 @@ MMA8_ONLY_Q256 = [1792, 1920, 2048]
 
 def test_library_for_reads_the_instruction_choice(monkeypatch):
     monkeypatch.delenv(rf.ENV_E4M3_MMA, raising=False)
-    assert rf.library_for("e4m3") == "e4m3" and rf.library_for("value") == "value"
+    # The E4M3 instruction is the default: unset reads as ``e4m3``.
+    assert rf.library_for("e4m3") == "e4m3mma" and rf.library_for("value") == "value"
     monkeypatch.setenv(rf.ENV_E4M3_MMA, "f16")
     assert rf.library_for("e4m3") == "e4m3"
     monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
