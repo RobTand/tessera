@@ -148,6 +148,16 @@ decode every touched expert to a global scratch, then run a grouped GEMM.
   table is `native[codes[state]]` widened exactly to f16
   (`routed_fused.py`, `compose_table16`). One byte per weight is therefore
   an exact scratch.
+- **The weights are FP8-representable.** The brief for this work assumed
+  that decoded trellis weights are not E4M3 values, so that an FP8 x FP8
+  GEMM would change the math. For the E4M3 family that is not so: every
+  decoded weight is an E4M3 byte, and A8 activations are E4M3 too, so each
+  product is exact in FP8 as well as in BF16. `compose_table16`'s docstring
+  states the same equivalence, and the compact adapter's FP8 x FP8 `tl.dot`
+  is already an attested route. What this note does not measure is the
+  accumulation precision of FP8 tensor-core MMA on sm_121. An FP8 grouped
+  GEMM would need an oracle for that before it could claim bitwise equality
+  with the fp32-accumulated BF16 path.
 - **Lower bound.** Any such path must at least:
   - read the wire once;
   - write the decoded weights once;
