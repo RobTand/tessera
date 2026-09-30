@@ -99,7 +99,11 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
     """The rule is family-wide; coverage is per cell.  The value library's
     dense launch reads 1..14 and its routed launches 1..8, so a routed_moe
     cell's run tables stay at or below [8], and a rung the rule admits is
-    covered only by a cell of a structure whose census reached its table."""
+    covered only by a cell of a structure whose census reached its table.
+    Contract v52's dense census (the t16d1 stub, one rung of every table
+    [1]..[8] and each pair between them) brings the dense cells' tables to
+    [1]..[8], so they cover every rung 256..2048; the routed cells stay at
+    stub B's [4]."""
     row = _row(contract, BF16)
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
@@ -114,10 +118,12 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
         assert rates <= (routed_rates if cell["structure"] == "routed_moe" else dense_rates), \
             cell["id"]
     routed, dense = _cell(contract, BF16_ROUTED), _cell(contract, BF16_DENSE)
-    assert routed["run_tables"] == [[4]] and dense["run_tables"] == [[3, 4], [4], [4, 5]]
+    assert routed["run_tables"] == [[4]]
+    assert dense["run_tables"] == sorted([[r] for r in range(1, 9)]
+                                         + [[r, r + 1] for r in range(1, 8)])
     assert [q for q in range(256, 3585) if cell_covers_rung(routed, q, row)] == [1024]
     assert [q for q in range(256, 3585)
-            if cell_covers_rung(dense, q, row)] == list(range(769, 1280))
+            if cell_covers_rung(dense, q, row)] == list(range(256, 2049))
 
 
 def test_a_rung_resolves_to_its_run_table():

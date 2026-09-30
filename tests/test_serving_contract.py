@@ -90,10 +90,16 @@ _CELL_LAWS: dict[str, dict[str, object]] = {}
 #: (``docs/measurements/tessera-glm-x-census-2026-09-26.md``).  Contract v39
 #: withdraws E2M1 128..768 with the routed cells that named the materialising
 #: launch, and adds the rungs the eight u1 stub censuses carried
-#: (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).
+#: (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).  Contract v52
+#: adds the BF16 dense rungs the T-16 census stub carried, one of every run
+#: table [1]..[8] and the pairs between them
+#: (``docs/measurements/2026-09-30-t16-dense-census.md``).
+_T16D1_RUNGS = [256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
+                1920, 2048]
 _FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896],
                  "TESSERA_E4M3_K1": [832, 864, 896, 928, 944, 960, 1024, 1088],
-                 "TESSERA_BF16_K1": [832, 864, 880, 896, 928, 960, 1024, 1088, 1792]}
+                 "TESSERA_BF16_K1": sorted({832, 864, 880, 896, 928, 960, 1024, 1088, 1792}
+                                           | set(_T16D1_RUNGS))}
 
 #: MINTED at contract v38 (tessera#604): eight cells on the GLM serving image,
 #: from one TP1 eager route census of a GLM-5.3-Flash stub whose nine Tessera
@@ -137,7 +143,9 @@ _GLM_X_CELLS = (
                                ("tessera::fused_window_dense", "native_fused_window_dense"),
                                ("tessera::fused_window_dense",
                                 "native_fused_window_dense_e4m3mma"))),
-    ("TESSERA_BF16_K1", "dense", [832, 864, 880, 896, 928, 960, 1024, 1088],
+    # Contract v52: the BF16 dense cells carry the T-16 census stub's rungs.
+    ("TESSERA_BF16_K1", "dense",
+     sorted({832, 864, 880, 896, 928, 960, 1024, 1088} | set(_T16D1_RUNGS)),
      "bf16_unquantized", (("tessera::window_gemm_dense", "native_window_gemm_folded"),
                           ("tessera::fused_window_dense",
                            "native_fused_window_dense_folded"))),

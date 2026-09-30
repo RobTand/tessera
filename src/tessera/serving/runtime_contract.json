@@ -429,6 +429,11 @@
    "reader_rate_step_q256": 1,
    "reader_rate_bound": "trellis_shaped_domain",
     "attested_rungs_q256": [
+     256,
+     384,
+     512,
+     640,
+     768,
      832,
      864,
      880,
@@ -437,9 +442,66 @@
      960,
      1024,
      1088,
-     1792
+     1152,
+     1280,
+     1408,
+     1536,
+     1664,
+     1792,
+     1920,
+     2048
     ],
     "attested_wire": [
+     {
+      "q256": 256,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 384,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 512,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 640,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 768,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
      {
       "q256": 832,
       "body": "window",
@@ -521,7 +583,77 @@
       "channel_sigma": 1.0
      },
      {
+      "q256": 1152,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 1280,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 1408,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 1536,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 1664,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
       "q256": 1792,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 1920,
+      "body": "window",
+      "span": 1,
+      "plane": "channel",
+      "window_bits": 14,
+      "seed": 0,
+      "sigma": null,
+      "channel_sigma": 1.0
+     },
+     {
+      "q256": 2048,
       "body": "window",
       "span": 1,
       "plane": "channel",
@@ -552,6 +684,11 @@
     "routed_moe"
    ],
    "candidate_rungs_q256": [
+    256,
+    384,
+    512,
+    640,
+    768,
     832,
     864,
     880,
@@ -560,7 +697,14 @@
     960,
     1024,
     1088,
-    1792
+    1152,
+    1280,
+    1408,
+    1536,
+    1664,
+    1792,
+    1920,
+    2048
    ]
   }
  ],
@@ -845,6 +989,11 @@
     "structure": "dense",
     "regime": "decode",
     "rungs_q256": [
+     256,
+     384,
+     512,
+     640,
+     768,
      832,
      864,
      880,
@@ -852,9 +1001,17 @@
      928,
      960,
      1024,
-     1088
+     1088,
+     1152,
+     1280,
+     1408,
+     1536,
+     1664,
+     1792,
+     1920,
+     2048
     ],
-    "run_tables": [[3, 4], [4], [4, 5]],
+    "run_tables": [[1], [1, 2], [2], [2, 3], [3], [3, 4], [4], [4, 5], [5], [5, 6], [6], [6, 7], [7], [7, 8], [8]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -901,6 +1058,11 @@
     "structure": "dense",
     "regime": "batch",
     "rungs_q256": [
+     256,
+     384,
+     512,
+     640,
+     768,
      832,
      864,
      880,
@@ -908,9 +1070,17 @@
      928,
      960,
      1024,
-     1088
+     1088,
+     1152,
+     1280,
+     1408,
+     1536,
+     1664,
+     1792,
+     1920,
+     2048
     ],
-    "run_tables": [[3, 4], [4], [4, 5]],
+    "run_tables": [[1], [1, 2], [2], [2, 3], [3], [3, 4], [4], [4, 5], [5], [5, 6], [6], [6, 7], [7], [7, 8], [8]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
