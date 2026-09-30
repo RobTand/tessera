@@ -46,7 +46,8 @@ from .residency import layer_resident_tensors
 from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
                      parse_compact_blob_for_scheme, validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported
-from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_WINDOW_GEMM,
+from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                        DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA, DECODER_NATIVE_WINDOW_GEMM,
                         DECODER_TORCH_WINDOW, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
                      require_expert_ids)
@@ -55,6 +56,7 @@ __all__ = [
     "ACTIVATION_CONTRACT",
     "DENSE_LAUNCH",
     "DENSE_FUSED_LAUNCH",
+    "DENSE_FUSED_MMA_E4M3_LAUNCH",
     "DENSE_LAUNCHES",
     "PreparedTesseraFp8Module",
     "PreparedTesseraFp8Batch",
@@ -90,8 +92,13 @@ GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
 #: every module whose roles ``routed_fused.fused_dense_window_supported``
 #: admits unless ``TESSERA_DENSE_FUSED=0``.
 DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
+#: ``DENSE_FUSED_MMA_E4M3_LAUNCH`` is the same identity on the E4M3
+#: instruction's library (``TESSERA_FUSED_E4M3_MMA=e4m3``), a third pair while
+#: it stands in ``scheme.EXPERIMENTAL_LAUNCHES``: the route can make it, so it
+#: is here and in the census expectation, and no cell names it yet.
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)
-DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH)
+DENSE_FUSED_MMA_E4M3_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
+DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH, DENSE_FUSED_MMA_E4M3_LAUNCH)
 
 
 class _Fp8Role:

@@ -93,6 +93,7 @@ __all__ = [
     "DECODER_NATIVE_WINDOW_GEMM",
     "DECODER_NATIVE_WINDOW_GEMM_FOLDED",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE",
+    "DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED",
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
@@ -200,6 +201,14 @@ DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
 #: census must be able to say which one served a module.
 DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
 DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
+#: The E4M3 family's two fused identities on its own tensor-core instruction
+#: (``tessera_routed_fused_mma_e4m3``: ``mma.sync.m16n8k32.e4m3.e4m3.f32`` on
+#: the E4M3 bytes, where the two above widen each byte to f16 for
+#: ``m16n8k16``).  The products are the same exact values; the fp32
+#: accumulation order differs (32 products per instruction, not 16), so a
+#: census must be able to say which instruction served a stack or a module.
+DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA = "native_routed_fused_window_e4m3mma"
+DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_WINDOW_GEMM_FOLDED,
@@ -208,7 +217,9 @@ DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_W
                       DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
-                      DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,))
+                      DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
+                      DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,))
 
 ATTR_PREFIX = "_tessera_route_"
 

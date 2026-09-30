@@ -741,7 +741,14 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
              telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)):
         assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, decoder)
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, fused_decoder)
-        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH)
+        # the E4M3 family's dense identity on its own instruction is a third
+        # launch the FP8 route makes (experimental: in the expectation, in no cell)
+        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
+        if module is fp8_route:
+            assert module.DENSE_FUSED_MMA_E4M3_LAUNCH == (
+                FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
+            assert module.DENSE_FUSED_MMA_E4M3_LAUNCH in scheme.EXPERIMENTAL_LAUNCHES
+        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
                             include_experimental=True) == set(module.DENSE_LAUNCHES), route
         for regime in ("decode", "batch"):

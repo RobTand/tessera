@@ -48,6 +48,18 @@ from test_window_gemm_grouped import Expert, _quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
+#: The three libraries every kernel test runs on (see
+#: ``test_routed_fused_window.LIBRARY_IDS``): the value family and the E4M3
+#: family on each tensor-core instruction.
+LIBRARY_IDS = ["value", "e4m3", "e4m3mma"]
+
+
+@pytest.fixture
+def family(request, monkeypatch):
+    lib = request.param
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3" if lib == "e4m3mma" else "f16")
+    return "e4m3" if lib == "e4m3mma" else lib
+
 L = 14
 # One role: two 128-row N blocks, eight 32-column K steps (split-K up to 8).
 ROWS, COLS = 256, 256
@@ -150,7 +162,7 @@ def _within(fused, oracle, what, *, triton=None):
 # --- the kernel against the definition and the Triton lane ------------------------
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("m", M_CASES)
 def test_dense_forward_matches_the_definition_and_the_triton_lane(family, m):
     expert, bundle = _role(family)
@@ -167,7 +179,7 @@ def test_dense_forward_matches_the_definition_and_the_triton_lane(family, m):
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
     """``dense_k_split`` splits K when fewer items than SMs exist (decode) and
     runs one pass once every SM has an item (prefill); parity holds in both,
@@ -190,7 +202,7 @@ def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_dense_forward_reads_a_row_cuts_start_state(family):
     """A TP row shard of a column-parallel module starts its decode inside
     the wire (``has_init``); the kernel reads the same start state the
@@ -207,7 +219,7 @@ def test_dense_forward_reads_a_row_cuts_start_state(family):
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_dense_two_runs_are_bitwise_equal(family):
     """Both regimes: the split-K reduce sums the partials in a fixed order and
     the one-pass epilogue rounds once; no atomics anywhere."""
@@ -227,7 +239,7 @@ DENSE_CAPTURE_Q256 = [1024, 256, 512, 768, 1280, 1536, 1792, 2048, 832, 1088]
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("q256", DENSE_CAPTURE_Q256)
 def test_dense_forward_captures_and_replays_against_eager(family, q256):
     """The work counter is zeroed INSIDE the captured region and the partial
@@ -296,7 +308,7 @@ def _glm_bound(family, a64, w64, k, s):
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("role_name,rows,cols,row_cut", GLM_ROLE_SHAPES)
 def test_dense_forward_on_the_glm_role_shapes(role_name, rows, cols, row_cut, family):
     """The fused lane at the real GLM dense shapes, rate 4 in every column
@@ -456,7 +468,7 @@ def _module_bound(family, ref_w, xq, x, a):
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, monkeypatch):
     """The lane is decided once per module at load; a two-role (gate/up)
     module is served by one op into column slices of one output, its launch
@@ -472,15 +484,18 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
     blob, scheme, ref_w = _encode_module(family, roles, cols=256, seed=5)
     module = _module(blob, scheme)
     assert module.lane == LANE_FUSED and module.lane_reason is None
-    decoder = (telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE if family == "e4m3"
-               else telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
+    library = rf.library_for(family)
+    decoder = {"e4m3": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE,
+               "e4m3mma": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
+               "value": telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED}[library]
     assert module.launch_pair == (FUSED_WINDOW_DENSE_SYMBOL, decoder)
+    table_dtype, table_bytes = (torch.uint8, 1) if library == "e4m3mma" else (torch.int16, 2)
     assert (module.symbol, module.decoder) == module.launch_pair
     assert module.role_names == ("gate_proj", "up_proj")
     named = dict(module.named_tensors())
     for index, facts in enumerate(module.layout_facts()):
         assert named[f"roles.{index}.fused_table16"].shape == (1, rf.TABLE_ENTRIES)
-        assert named[f"roles.{index}.fused_table16"].dtype == torch.int16
+        assert named[f"roles.{index}.fused_table16"].dtype == table_dtype
         # An encoded unit carries a start register whole or cut (all zero for
         # a whole unit -- ``has_history`` false -- and the kernel reads it
         # through the same flag the Triton bundle sets, ``has_init``).
@@ -506,16 +521,17 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
                 f"{family} module M={m} over the same bytes",
                 triton=_served(twin, family, xq, x, a))
     # The fused lane's own storage beyond the shared bundles: one composed
-    # 16-bit table, one int32 flag, the run pair (8 int32) and the block
-    # descriptor (BDESC_INTS int32 per 32 columns) per role (tessera#694).
+    # table (16-bit, or the E4M3 bytes on the E4M3 instruction), one int32
+    # flag, the run pair (8 int32) and the block descriptor (BDESC_INTS int32
+    # per 32 columns) per role (tessera#694).
     assert module.packed_bytes() - twin.packed_bytes() == len(roles) * (
-        rf.TABLE_ENTRIES * 2 + 4 + 8 * 4 + (256 // 32) * rf.BDESC_INTS * 4)
+        rf.TABLE_ENTRIES * table_bytes + 4 + 8 * 4 + (256 // 32) * rf.BDESC_INTS * 4)
     assert not any(name.endswith(("fused_table16", "fused_has_init"))
                    for name, _ in twin.named_tensors())
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_a_module_the_predicate_refuses_keeps_the_triton_lane_and_says_why(family, monkeypatch):
     from tessera.serving.native_window import LANE_TRITON
     from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
@@ -635,17 +651,23 @@ def test_the_dense_identity_is_a_published_launch_of_both_window_routes():
             (fp8_route, TESSERA_FP8, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE),
             (bf16_route, TESSERA_BF16, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)):
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, decoder)
-        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH)
+        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
+        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         for mode in ("resident", "streamed"):
             for regime in ("decode", "batch"):
-                assert set(module.DENSE_LAUNCHES) == launch_pairs(
+                # the attested view is the two v43 pairs; the E4M3
+                # instruction's pair is experimental until a census earns it cells
+                assert {module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH} == launch_pairs(
                     route, structure=STRUCTURE_DENSE, regime=regime, mode=mode), (route, regime, mode)
+                assert set(module.DENSE_LAUNCHES) == launch_pairs(
+                    route, structure=STRUCTURE_DENSE, regime=regime, mode=mode,
+                    include_experimental=True), (route, regime, mode)
 
 
 # --- every rate, and the two-rate schedules (tessera#694) -------------------------
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("q256", Q256_CASES)
 def test_dense_forward_decodes_every_rate_exactly(family, q256):
     """One-hot rows through the real kernel: each output element is one
@@ -673,7 +695,7 @@ def test_dense_forward_decodes_every_rate_exactly(family, q256):
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("q256", [768, 832, 928, 1088, 1152, 2048])
 @pytest.mark.parametrize("cols", [128, COLS])
 def test_dense_forward_at_every_rate_is_within_the_derived_bound(family, q256, cols):
@@ -702,7 +724,7 @@ def test_dense_forward_at_every_rate_is_within_the_derived_bound(family, q256, c
 
 
 @cuda
-@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_a_row_stride_that_is_only_even_takes_the_unsplit_path(family):
     """Follow-up 4 of #693: the split path's reduce stores four bf16 (uint2)
     at 4-aligned columns, so a ``[M, rows]`` view whose row stride is 2 mod 4
@@ -721,7 +743,7 @@ def test_a_row_stride_that_is_only_even_takes_the_unsplit_path(family):
     rf.dense_forward(role, xq, a, view, counter)
     assert torch.equal(view, _fused(role, xq, a))            # S forced to 1: the one-pass answer
     assert torch.equal(wide[:, ROWS:], torch.zeros_like(wide[:, ROWS:]))
-    lib = rf._ext(family)
+    lib = rf._ext(role.library)
     s = 2
     partial = torch.empty((s, m, ROWS), dtype=torch.float32, device="cuda")
     empty = xq.new_empty(0, dtype=torch.float32)

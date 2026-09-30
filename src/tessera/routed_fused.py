@@ -46,10 +46,18 @@ same two extensions.  :func:`fused_dense_window_supported` is the per-role
 predicate; the Triton ``tessera::window_gemm_dense`` stays the dispatch for
 every module it refuses and for ``TESSERA_DENSE_FUSED=0``.
 
-The kernel is JIT-built once per family through ``torch.utils.cpp_extension``
-into two libraries, ``tessera_routed_fused_value`` and
-``tessera_routed_fused_e4m3``, the two ``native_extensions`` entries the
-contract publishes for this source.
+The kernel is JIT-built through ``torch.utils.cpp_extension`` into three
+libraries, the ``native_extensions`` entries the contract publishes for this
+source: ``tessera_routed_fused_value`` (BF16 tables, bf16 ``mma.sync``),
+``tessera_routed_fused_e4m3`` (the E4M3 family widened to f16 for
+``mma.sync.m16n8k16.f16``) and ``tessera_routed_fused_mma_e4m3`` (the E4M3
+family on its own instruction, ``mma.sync.m16n8k32.e4m3.e4m3.f32``: the E4M3
+byte table goes to the B tile as is, the e4m3 activation is staged
+unconverted, 8-bit tables and tiles).  The two E4M3 libraries compute the same
+exact products and differ by fp32 accumulation order only, so each is its
+own decoder identity (``native_routed_fused_window_e4m3mma``,
+``native_fused_window_dense_e4m3mma``); ``TESSERA_FUSED_E4M3_MMA`` picks one
+per process (:func:`library_for`).
 """
 
 from __future__ import annotations
@@ -66,20 +74,27 @@ from .errors import GrammarError
 
 __all__ = [
     "ENV_TOGGLE",
+    "ENV_E4M3_MMA",
     "ENV_TOGGLE_DENSE",
+    "LIBRARIES",
     "FusedDenseWindowRole",
     "FusedRoutedWindowMoE",
     "MODULE_NAME_E4M3",
+    "MODULE_NAME_E4M3MMA",
     "MODULE_NAME_VALUE",
     "SOURCE",
+    "compose_dense_table",
     "compose_dense_table16",
+    "compose_table",
     "compose_table16",
+    "compose_table8",
     "dense_forward",
     "dense_k_split",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
     "fused_routed_window_supported",
     "fused_routed_window_enabled",
+    "library_for",
     "prepare_dense_role",
     "words_by_expert",
 ]
@@ -96,10 +111,27 @@ ENV_TOGGLE = "TESSERA_ROUTED_FUSED"
 #: toggle so the two identities can be measured against their predecessors
 #: independently.
 ENV_TOGGLE_DENSE = "TESSERA_DENSE_FUSED"
-#: The two JIT module names, one library per family.  Literals: the contract's
-#: native-extension scanner reads the ``load(name=...)`` sites statically.
+#: The three JIT module names.  Literals: the contract's native-extension
+#: scanner reads the ``load(name=...)`` sites statically.
 MODULE_NAME_VALUE = "tessera_routed_fused_value"
 MODULE_NAME_E4M3 = "tessera_routed_fused_e4m3"
+MODULE_NAME_E4M3MMA = "tessera_routed_fused_mma_e4m3"
+#: Library key -> ``(module name, family, mma8)``.  ``mma8`` is the E4M3
+#: instruction (``TESSERA_ROUTED_FUSED_MMA8=1``): 8-bit tables and tiles.
+LIBRARIES = {
+    "value": (MODULE_NAME_VALUE, "value", False),
+    "e4m3": (MODULE_NAME_E4M3, "e4m3", False),
+    "e4m3mma": (MODULE_NAME_E4M3MMA, "e4m3", True),
+}
+#: Which tensor-core instruction the E4M3 family's fused launches (routed and
+#: dense) take in this process: ``f16`` widens each E4M3 byte to f16 for
+#: ``mma.sync.m16n8k16`` (``tessera_routed_fused_e4m3``), ``e4m3`` runs
+#: ``mma.sync.m16n8k32.e4m3`` on the bytes (``tessera_routed_fused_mma_e4m3``).
+#: Read when an adapter or role is prepared; the prepared object carries its
+#: library and stamps that library's decoder.
+ENV_E4M3_MMA = "TESSERA_FUSED_E4M3_MMA"
+E4M3_MMA_CHOICES = ("f16", "e4m3")
+E4M3_MMA_DEFAULT = "f16"
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
@@ -132,6 +164,9 @@ MIN_COLS = 4 * BK
 WORD_STAGES = 3
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
+#: The same fixed part on the E4M3 instruction: 16 KB byte tables and 8-bit
+#: A and B stages.  The word stages are the same bytes.
+SMEM_FIXED_MMA8 = {0: 46_544, 1: 46_544, 2: 29_968}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -167,9 +202,30 @@ def slot_words_for_pair(pair: torch.Tensor) -> int:
     return _round_up_4(need)
 
 
-def smem_bytes(mode: int, slot_words: int) -> int:
+def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False) -> int:
     """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
-    return SMEM_FIXED[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+    fixed = SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED
+    return fixed[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+
+
+def library_for(family: str) -> str:
+    """The library key the family's fused launches take in this process.
+
+    The value family has one library.  The E4M3 family takes
+    ``tessera_routed_fused_mma_e4m3`` when ``TESSERA_FUSED_E4M3_MMA=e4m3`` and
+    ``tessera_routed_fused_e4m3`` otherwise; any other value is refused by
+    name rather than read as the default.
+    """
+    if family != "e4m3":
+        return family
+    choice = os.environ.get(ENV_E4M3_MMA, E4M3_MMA_DEFAULT)
+    if choice not in E4M3_MMA_CHOICES:
+        raise GrammarError(f"{ENV_E4M3_MMA}={choice!r}; one of {E4M3_MMA_CHOICES}")
+    return "e4m3mma" if choice == "e4m3" else "e4m3"
+
+
+def library_mma8(library: str) -> bool:
+    return LIBRARIES[library][2]
 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
@@ -186,7 +242,16 @@ ROUTED_LANE_RATES = tuple(
     if smem_bytes(0, _round_up_4(slot_words_for_rate(r))) <= SM121_MAX_DYNAMIC_SMEM)
 
 
-def smem_reason(mode: int, slot_words: int, device: torch.device, family: str) -> "str | None":
+def routed_lane_rates(library: str) -> "tuple[int, ...]":
+    """:data:`ROUTED_LANE_RATES` for one library: every rate on the E4M3
+    instruction (its 16 KB tables leave room for the rate-8 slot), the
+    published 1..6 on the 16-bit libraries."""
+    mma8 = library_mma8(library)
+    return tuple(r for r in RATES
+                 if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM)
+
+
+def smem_reason(mode: int, slot_words: int, device: torch.device, library: str) -> "str | None":
     """Why the launch does not fit the device's opt-in shared-memory limit, or ``None``.
 
     The limit is read from the built library (``cudaDevAttrMaxSharedMemoryPer
@@ -195,11 +260,12 @@ def smem_reason(mode: int, slot_words: int, device: torch.device, family: str) -
     where the adapter is constructed, not a lane refusal.
     """
     try:
-        lib = _ext(family)
+        lib = _ext(library)
     except Exception:  # noqa: BLE001 -- the build's failure is reported by from_bundles
         return None
     index = device.index if device.index is not None else torch.cuda.current_device()
-    need, have = smem_bytes(mode, slot_words), int(lib.max_dynamic_smem_bytes(index))
+    need = smem_bytes(mode, slot_words, mma8=library_mma8(library))
+    have = int(lib.max_dynamic_smem_bytes(index))
     if need <= have:
         return None
     what = "gate/up" if mode != 2 else "down/dense"
@@ -271,11 +337,12 @@ def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
-def _cflags(token: str, fp8: bool) -> list:
+def _cflags(token: str, fp8: bool, mma8: bool = False) -> list:
     from .serving.backend import offload_flags
 
     return ["-O3", "-lineinfo", "-std=c++17",
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
+            f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
             *offload_flags(token)]
 
 
@@ -292,8 +359,9 @@ def _built_library(build: str, module: str) -> "str | None":
 
 
 @functools.lru_cache(maxsize=None)
-def _ext(family: str):
-    """The family's library, built on first use (the window GEMV's loader shape)."""
+def _ext(library: str):
+    """The library (a :data:`LIBRARIES` key; a family names its 16-bit
+    library), built on first use (the window GEMV's loader shape)."""
     from torch.utils.cpp_extension import load
 
     from tessera.serving import ext as serving_ext
@@ -309,11 +377,11 @@ def _ext(family: str):
 
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
 
-    if family not in ("value", "e4m3"):
-        raise GrammarError(f"the fused routed lane serves the value and e4m3 families, got {family!r}")
+    if library not in LIBRARIES:
+        raise GrammarError(f"the fused routed lane builds the libraries {sorted(LIBRARIES)}, got {library!r}")
+    module, family, mma8 = LIBRARIES[library]
     fp8 = family == "e4m3"
     ensure_toolchain_on_path(torch)
-    module = MODULE_NAME_E4M3 if fp8 else MODULE_NAME_VALUE
     # The path the contract publishes IS the file compiled here (#134).
     src = serving_ext.native_source_path(module)
     if detect_backend(torch) != "cuda":
@@ -328,7 +396,12 @@ def _ext(family: str):
     verbose = bool(os.environ.get("TESSERA_ROUTED_FUSED_VERBOSE"))
     try:
         with jit_build_lock(build):
-            if fp8:
+            if mma8:
+                lib = load(
+                    name="tessera_routed_fused_mma_e4m3",  # literal: the contract scanner reads it
+                    sources=[src], build_directory=build,
+                    extra_cuda_cflags=_cflags(token, True, True), verbose=verbose)
+            elif fp8:
                 lib = load(
                     name="tessera_routed_fused_e4m3",   # literal: the contract scanner reads it
                     sources=[src], build_directory=build,
@@ -356,10 +429,11 @@ def _ext(family: str):
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
                        ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
-                       ("WORD_STAGES", WORD_STAGES), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
-                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]),
+                       ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
+                       ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
+                       ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        # the gate/up rates the library instantiates ARE the ones the host admits
-                       ("GATE_UP_RATE_MAX", max(ROUTED_LANE_RATES))):
+                       ("GATE_UP_RATE_MAX", max(routed_lane_rates(library)))):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{module} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
@@ -383,6 +457,22 @@ def compose_table16(bundle) -> torch.Tensor:
     codes = bundle.codes_all.to(torch.int64)                       # [E, 2^L]
     bytes_ = torch.gather(bundle.native_all, 1, codes)              # [E, 2^L] uint8
     return bytes_.view(torch.float8_e4m3fn).to(torch.float16).contiguous().view(torch.int16)
+
+
+def compose_table8(bundle) -> torch.Tensor:
+    """The per-expert E4M3 byte table the E4M3 instruction reads: ``native
+    [codes[state]]`` composed once, uint8 ``[E, 2^L]`` (16 KB per expert).
+    The bytes the f16 table widens, unwidened."""
+    if bundle.family != "e4m3":
+        raise GrammarError("the E4M3 instruction's byte table belongs to the e4m3 family")
+    codes = bundle.codes_all.to(torch.int64)
+    return torch.gather(bundle.native_all, 1, codes).contiguous()
+
+
+def compose_table(bundle, library: str) -> torch.Tensor:
+    """The table ``library`` reads: :func:`compose_table8` on the E4M3
+    instruction, :func:`compose_table16` otherwise."""
+    return compose_table8(bundle) if library_mma8(library) else compose_table16(bundle)
 
 
 def words_by_expert(bundle) -> torch.Tensor:
@@ -595,9 +685,13 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
         return (f"gate tile_words {int(gate.tile_words[0])} != up tile_words {int(up.tile_words[0])}; "
                 "the gate/up launch reads one tile stride for both")
     # The word-stage slot each launch needs, against the device's shared memory.
+    try:
+        library = library_for(fam)
+    except GrammarError as exc:
+        return str(exc)
     for mode, bs in ((0, (gate, up)), (2, (down,))):
         slot = max(slot_words_for_pair(run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)[0]) for b in bs)
-        why = smem_reason(mode, slot, down.device, fam)
+        why = smem_reason(mode, slot, down.device, library)
         if why is not None:
             return why
     return None
@@ -650,8 +744,10 @@ class FusedRoutedWindowMoE:
 
     ``gate``/``up``/``down`` are the compact loader's
     :class:`~tessera.window_gemm_grouped.PreparedGroupedWindowGemm` bundles
-    (the same objects the compact adapter would serve); the three ``table``
-    tensors are :func:`compose_table16` of each and the ``words`` tensors are
+    (the same objects the compact adapter would serve); ``library`` is the
+    :data:`LIBRARIES` key the launches take (:func:`library_for` at
+    construction), the three ``table`` tensors are :func:`compose_table` of
+    each for that library and the ``words`` tensors are
     :func:`words_by_expert` views.  ``__call__`` is the routed forward;
     ``gate_up``/``down_routes`` are the teacher-forced stages the routed pair
     oracle calls.
@@ -666,6 +762,7 @@ class FusedRoutedWindowMoE:
     down: object
     family: str
     arithmetic: str
+    library: str
     table_gate: torch.Tensor
     table_up: torch.Tensor
     table_down: torch.Tensor
@@ -699,13 +796,15 @@ class FusedRoutedWindowMoE:
         # ``PackedWindowMoeBundles.adapter`` substitutes the compact adapter,
         # the ``when_unavailable`` answer the contract publishes -- and not on
         # the first forward of a serve.
-        _ext(down.family)
+        library = library_for(down.family)
+        _ext(library)
         runs_gate, bdesc_gate, tw_gate, sw_gate = projection_tables(gate)
         runs_up, bdesc_up, _tw_up, sw_up = projection_tables(up)
         runs_down, bdesc_down, tw_down, sw_down = projection_tables(down)
         return cls(gate=gate, up=up, down=down, family=down.family, arithmetic=down.arithmetic,
-                   table_gate=compose_table16(gate), table_up=compose_table16(up),
-                   table_down=compose_table16(down),
+                   library=library,
+                   table_gate=compose_table(gate, library), table_up=compose_table(up, library),
+                   table_down=compose_table(down, library),
                    words_gate=words_by_expert(gate), words_up=words_by_expert(up),
                    words_down=words_by_expert(down),
                    runs_gate=runs_gate, runs_up=runs_up, runs_down=runs_down,
@@ -720,10 +819,12 @@ class FusedRoutedWindowMoE:
     def launch_pair(self) -> "tuple[str, str]":
         from .serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
         from .serving.telemetry import (DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
                                         DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
 
-        decoder = (DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED if self.family == "value"
-                   else DECODER_NATIVE_ROUTED_FUSED_WINDOW)
+        decoder = {"value": DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+                   "e4m3": DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+                   "e4m3mma": DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA}[self.library]
         return ROUTED_FUSED_WINDOW_SYMBOL, decoder
 
     @property
@@ -780,7 +881,7 @@ class FusedRoutedWindowMoE:
     def _launch(self, mode: int, x: torch.Tensor, a_scale: "torch.Tensor | None",
                 routing: _Routing, *, a_row_mode: int, mul_weight: bool, limit: float,
                 out: torch.Tensor, counter: int) -> None:
-        lib = _ext(self.family)
+        lib = _ext(self.library)
         if mode == 2:
             b0 = b1 = self.down
             w0 = w1 = self.words_down
@@ -873,7 +974,7 @@ class FusedRoutedWindowMoE:
         self._launch(2, aq, a2, routing, a_row_mode=1, mul_weight=not apply_router_weight_on_input,
                      limit=float("inf"), out=routed, counter=1)
         out = torch.empty((tokens, hidden), dtype=torch.bfloat16, device=self.device)
-        _ext(self.family).token_sum(routed, out, int(routing.top_k))
+        _ext(self.library).token_sum(routed, out, int(routing.top_k))
         return out
 
     # -- the teacher-forced stages (the oracle's interface) ------------------
@@ -923,7 +1024,7 @@ class FusedRoutedWindowMoE:
         routed = torch.empty((routing.routes, hidden), dtype=torch.bfloat16, device=self.device)
         self._launch(2, xq, a2, routing, a_row_mode=2, mul_weight=not apply_router_weight_on_input,
                      limit=float("inf"), out=routed, counter=1)
-        _ext(self.family).token_sum(routed, out, int(routing.top_k))
+        _ext(self.library).token_sum(routed, out, int(routing.top_k))
         return out
 
 
@@ -973,7 +1074,11 @@ def fused_dense_window_supported(bundle) -> "str | None":
         return f"{why}; the kernel reads the packer's column order"
     if int(bundle.tile_words) != pair_tile_words(pair):
         return f"tile_words {bundle.tile_words} is not {pair_tile_words(pair)} (from the run table)"
-    why = smem_reason(2, slot_words_for_pair(pair), bundle.device, fam)
+    try:
+        library = library_for(fam)
+    except GrammarError as exc:
+        return str(exc)
+    why = smem_reason(2, slot_words_for_pair(pair), bundle.device, library)
     if why is not None:
         return why
     if bundle.init_perm.dtype != torch.int32 or bundle.init_perm.numel() != cols:
@@ -1000,13 +1105,26 @@ def compose_dense_table16(bundle) -> torch.Tensor:
             .view(torch.int16).reshape(1, TABLE_ENTRIES))
 
 
+def compose_dense_table(bundle, library: str) -> torch.Tensor:
+    """The table ``library`` reads for one role: the E4M3 bytes, uint8
+    ``[1, 2^L]``, on the E4M3 instruction; :func:`compose_dense_table16`
+    otherwise."""
+    if not library_mma8(library):
+        return compose_dense_table16(bundle)
+    if bundle.family != "e4m3":
+        raise GrammarError("the E4M3 instruction's byte table belongs to the e4m3 family")
+    return bundle.native[bundle.codes.to(torch.int64)].contiguous().reshape(1, TABLE_ENTRIES)
+
+
 @dataclasses.dataclass(frozen=True)
 class FusedDenseWindowRole:
     """One role's kernel inputs, frozen at preparation.
 
     ``words``/``init``/``wscale`` are views of the bundle's own tensors (no new
-    storage); ``table16`` is the composed 16-bit table (32 KB, new storage,
-    counted by the module's residency accounting); ``has_init`` is the one
+    storage); ``table16`` is the composed table the role's library reads (the
+    16-bit table, 32 KB, or on the E4M3 instruction the uint8 E4M3 bytes,
+    16 KB; new storage, counted by the module's residency accounting) --
+    its dtype names the library (:attr:`library`); ``has_init`` is the one
     int32 flag the kernel reads per expert; ``runs`` is the run pair (int32
     ``[1, 8]``) and ``bdesc`` the block descriptors (int32 ``[1, K / 32,
     BDESC_INTS]``, 1.5 bytes per column) the kernel maps its lane groups with;
@@ -1029,6 +1147,16 @@ class FusedDenseWindowRole:
     def fp8(self) -> bool:
         return self.family == "e4m3"
 
+    @property
+    def library(self) -> str:
+        """The :data:`LIBRARIES` key this role launches: the table's dtype says
+        which (uint8 bytes are the E4M3 instruction's), so a role rebuilt from
+        its tensors -- ``tessera::fused_window_dense`` does, per call -- runs
+        the library it was prepared for."""
+        if self.table16.dtype == torch.uint8:
+            return "e4m3mma"
+        return self.family
+
     def named_tables(self):
         yield "fused_table16", self.table16
         yield "fused_has_init", self.has_init
@@ -1041,14 +1169,15 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
     reason = fused_dense_window_supported(bundle)
     if reason is not None:
         raise GrammarError(f"the fused dense identity refuses this role: {reason}")
-    _ext(bundle.family)
+    library = library_for(bundle.family)
+    _ext(library)
     device = bundle.device
     cols = int(bundle.cols)
     pair, why = run_pair(bundle.runs, cols)
     assert pair is not None, why              # the predicate above admitted it
     return FusedDenseWindowRole(
         family=bundle.family, rows=int(bundle.rows), cols=cols,
-        words=bundle.words.reshape(1, -1), table16=compose_dense_table16(bundle),
+        words=bundle.words.reshape(1, -1), table16=compose_dense_table(bundle, library),
         init=bundle.init_perm.reshape(1, -1),
         has_init=torch.tensor([1 if bundle.has_init else 0], dtype=torch.int32, device=device),
         wscale=bundle.scale.reshape(1, -1),
@@ -1098,7 +1227,7 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
     all its roles' slots with one fill).  No host synchronisation, so a
     captured forward replays.
     """
-    lib = _ext(role.family)
+    lib = _ext(role.library)
     m = int(x.shape[0])
     if m == 0:
         return

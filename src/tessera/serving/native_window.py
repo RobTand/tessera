@@ -81,6 +81,7 @@ from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, TESSERA_FP
                      WINDOW_GEMM_SYMBOL)
 from .sharding import AXIS_ROWS, ShardPlan
 from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                        DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
                         DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
                         DECODER_NATIVE_WINDOW_GEMM, DECODER_NATIVE_WINDOW_GEMM_FOLDED)
 
@@ -114,6 +115,12 @@ NATIVE_WINDOW_DECODER = {"epilogue": DECODER_NATIVE_WINDOW_GEMM,
 #: The fused window kernel's dense identity, per arithmetic (contract v43).
 FUSED_WINDOW_DENSE_DECODER = {"epilogue": DECODER_NATIVE_FUSED_WINDOW_DENSE,
                               "folded": DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED}
+#: The dense identity's decoder per ``routed_fused`` library: the E4M3
+#: instruction's library is its own numerical function of the wire (the same
+#: exact products, another fp32 accumulation order), so it stamps its own.
+FUSED_WINDOW_DENSE_LIBRARY_DECODER = {"value": DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+                                      "e4m3": DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                                      "e4m3mma": DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA}
 #: The two lanes a prepared module may run, and the ``(symbol, decoder)`` each
 #: stamps per arithmetic.  ``lane`` is a module fact decided at preparation.
 LANE_TRITON = "triton"
@@ -297,7 +304,10 @@ class PreparedDenseNativeModule:
     @property
     def symbol(self): return DENSE_LANES[self.__lane][0]
     @property
-    def decoder(self): return DENSE_LANES[self.__lane][1][self.__arithmetic]
+    def decoder(self):
+        if self.__lane == LANE_FUSED:
+            return FUSED_WINDOW_DENSE_LIBRARY_DECODER[self.__fused[0].library]
+        return DENSE_LANES[self.__lane][1][self.__arithmetic]
     @property
     def launch_pair(self):
         """The ``(symbol, decoder)`` this module's ``apply`` stamps."""
