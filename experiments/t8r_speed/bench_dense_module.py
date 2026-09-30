@@ -14,6 +14,14 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
 - ``o_proj``: KDA ``o_proj``, one 4096-row role over K = 4096 (the N % 128
   control: a shape the N-tail change leaves on the same launch).
 
+Weights: ``--model DIR`` encodes the real GLM-5.3 bytes of ``--layer L``'s
+tensors (the TP2 rank-0 shard: the leading rows of a column-parallel role, the
+leading columns of the row-parallel ``o_proj``); without it, seeded Gaussian
+weights.  Before timing, each module group records a numerics check: the fused
+lane against the Triton lane on the same prepared wire (both decode the same
+bytes, so the difference is accumulation order), each lane against the source
+``F.linear`` in fp32, and fused determinism.
+
 References at each module's whole shape: bf16 ``F.linear`` (the BF16 source
 passthrough a serve runs today) and ``torch._scaled_mm`` FP8 row-wise.
 
@@ -30,7 +38,7 @@ The forward pass also records torch.profiler device time per kernel and, at
 the Netdata series.
 
 Usage: bench_dense_module.py --out DIR [--modules kda_in,o_proj] [--q256 1024,1088]
-       [--ms 1,2,4,8,16,64,512,2048,8192] [--refs]
+       [--ms 1,2,4,8,16,64,512,2048,8192] [--refs] [--model DIR --layer L]
 """
 from __future__ import annotations
 
@@ -54,6 +62,20 @@ MODULES = {
                 ("f_a_proj", 64), ("g_a_proj", 64)], 4096),
     "o_proj": ([("o_proj", 4096)], 4096),
 }
+SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
+
+
+def source_weight(model, layer, name, rows, cols):
+    """The TP2 rank-0 shard of one real source tensor, bf16 on the GPU."""
+    from safetensors import safe_open
+
+    key = SOURCE_PREFIX.format(layer=layer, name=name)
+    index = json.load(open(os.path.join(model, "model.safetensors.index.json")))["weight_map"]
+    with safe_open(os.path.join(model, index[key]), framework="pt", device="cuda") as fh:
+        w = fh.get_tensor(key)
+    if w.shape[0] < rows or w.shape[1] < cols:
+        raise ValueError(f"{key} is {tuple(w.shape)}; the shard needs [{rows}, {cols}]")
+    return w[:rows, :cols].to(torch.bfloat16).contiguous()
 
 
 def graph_time(call, warmup, iters):
@@ -72,8 +94,9 @@ def graph_time(call, warmup, iters):
     return samples
 
 
-def encode_module(roles, cols, q256, seed):
-    """The served module: encode each role on the E4M3 grid, pack, parse, prepare."""
+def encode_module(roles, cols, q256, seed, source=None):
+    """The served module: encode each role on the E4M3 grid, pack, parse, prepare.
+    ``source(name, rows)`` gives a role's real weight; otherwise seeded Gaussian."""
     from tessera import export, fused
     from tessera.alphabet import E4M3_GRID
     from tessera.serving.native_window import prepare_dense_native_module
@@ -83,12 +106,15 @@ def encode_module(roles, cols, q256, seed):
 
     torch.manual_seed(seed)
     blobs = []
+    weights = []
     t0 = time.time()
     for name, rows in roles:
-        w = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+        w = (source(name, rows).float() if source is not None
+             else torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
         exported, _unit, _forests = export.encode_linear_planes(w, grid=E4M3_GRID, q256=q256, name=name,
                                                                 verify=False)
         blobs.append((name, rows, exported.blob))
+        weights.append(w.bfloat16())
         del w
     blob = fused.pack_fused(blobs)
     rows = sum(r for _, r in roles)
@@ -110,7 +136,36 @@ def encode_module(roles, cols, q256, seed):
                 os.environ.pop("TESSERA_DENSE_FUSED", None)
             else:
                 os.environ["TESSERA_DENSE_FUSED"] = prev
-    return prepare, len(blob), time.time() - t0
+    return prepare, len(blob), time.time() - t0, torch.cat(weights)
+
+
+def numerics(lanes, w_src, cols, ms, seed):
+    """Fused vs Triton on one prepared wire, each vs the source ``F.linear`` (fp32),
+    and fused determinism, at each M."""
+    g = torch.Generator(device="cuda").manual_seed(seed)
+    from tessera.serving.native_ops import native_fp8_quant
+
+    out = {}
+    for m in ms:
+        x = (torch.randn(m, cols, device="cuda", generator=g) * 0.5).bfloat16()
+        xq, a = native_fp8_quant(x)
+        a = a.reshape(-1).contiguous().float()
+        ref = torch.nn.functional.linear(x.float(), w_src.float())
+        got = {k: v.apply(xq, a).float() for k, v in lanes.items()}
+        rec = {}
+        for k, y in got.items():
+            rec[f"{k}_vs_source_rel_fro"] = float((y - ref).norm() / ref.norm())
+        if "fused" in got and "triton" in got:
+            d = got["fused"] - got["triton"]
+            rec["fused_vs_triton_rel_fro"] = float(d.norm() / got["triton"].norm())
+            rec["fused_vs_triton_max_rel"] = float(d.abs().max() / got["triton"].abs().max())
+        if "fused" in lanes:
+            rec["fused_deterministic"] = bool(torch.equal(lanes["fused"].apply(xq, a).float(), got["fused"]))
+        out[str(m)] = rec
+        print(json.dumps({"numerics_m": m, **{k: (round(v, 8) if isinstance(v, float) else v)
+                                               for k, v in rec.items()}}), flush=True)
+    torch.cuda.synchronize()
+    return out
 
 
 def floors(wire_bytes, m, rows, cols, out_bytes=2, a_bytes=1):
@@ -133,6 +188,9 @@ def main():
     ap.add_argument("--power-ms", default="1,512,8192")
     ap.add_argument("--power-s", type=float, default=0.5)
     ap.add_argument("--ncu", action="store_true", help="accepted for the wrapper; not used")
+    ap.add_argument("--model", default=None, help="source checkpoint: encode its real bytes")
+    ap.add_argument("--layer", type=int, default=1, help="the KDA layer read from --model")
+    ap.add_argument("--numerics-ms", default="1,64,2048")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
@@ -150,6 +208,8 @@ def main():
             "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": power.source,
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "dense_row_quantum": getattr(rf, "DENSE_ROW_QUANTUM", None),
+            "weights": ({"model": args.model, "layer": args.layer, "shard": "TP2 rank 0"} if args.model
+                        else "seeded Gaussian"),
             "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean"}
     groups = []          # (key, builder) -> builder() returns (head, make) with make(m) -> (meta, call)
     for name in args.modules.split(","):
@@ -170,7 +230,9 @@ def main():
         kind, name, roles, cols, rows, q = spec
         g = torch.Generator(device=dev).manual_seed(zlib.crc32(f"{name}:{kind}:{q}".encode()))
         if kind == "module":
-            prepare, blob_bytes, enc_s = encode_module(roles, cols, q, zlib.crc32(f"{name}:{q}".encode()))
+            source = ((lambda n, r: source_weight(args.model, args.layer, n, r, cols)) if args.model else None)
+            prepare, blob_bytes, enc_s, w_src = encode_module(roles, cols, q, zlib.crc32(f"{name}:{q}".encode()),
+                                                              source)
             lanes = {}
             for lane in args.lanes.split(","):
                 mod = prepare(lane == "fused")
@@ -179,6 +241,10 @@ def main():
                     "blob_bytes": blob_bytes, "encode_s": enc_s,
                     "lanes": {k: {"lane": v.lane, "reason": v.lane_reason, "launch_pair": list(v.launch_pair)}
                               for k, v in lanes.items()}}
+            head["numerics"] = numerics(lanes, w_src, cols,
+                                        [int(v) for v in args.numerics_ms.split(",") if v],
+                                        zlib.crc32(f"num:{name}:{q}".encode()))
+            del w_src
             wire = sum(r * cols * q // 256 // 8 + 4 * r for _, r in roles)
             head["wire_bytes"] = wire
 
