@@ -79,18 +79,21 @@ def encode(rows, cols, q256, seed, dev):
                          scale_plane=ScalePlaneKind.LUT, window_bits=14).blob
 
 
-def ref_weight(blob, cut, dev):
-    """float64 [rows, cols]: e2m1(code) * e4m3(lut[nibble]) -- the unit global excluded."""
+def ref_weight(blob, cut, dev, axis="rows"):
+    """float64 [rows, cols]: e2m1(code) * e4m3(lut[nibble]) -- the unit global
+    excluded; ``cut`` is a row range, or a column range when ``axis`` is "cols"."""
     unit = parse_unit_artifact(blob, device=dev).unit
     steps, cols = unit.body_bits.shape
     n = steps * 2
-    r0, r1 = cut if cut is not None else (0, n)
     codes = _decode_window(unit, GRID, torch.int64)
-    nib = torch.stack([codes >> 4, codes & 15], dim=1).reshape(n, cols)[r0:r1]
+    nib = torch.stack([codes >> 4, codes & 15], dim=1).reshape(n, cols)
     lut16 = lut_scale_bytes(unit.scale_lut, dev)
-    idx = unit.scale_refine.to(dev).reshape(n, cols // int(unit.half)).long()[r0:r1]
+    idx = unit.scale_refine.to(dev).reshape(n, cols // int(unit.half)).long()
     sf = lut16[idx].view(torch.float8_e4m3fn).double().repeat_interleave(int(unit.half), dim=1)
-    return E2M1.to(dev)[nib] * sf
+    w = E2M1.to(dev)[nib] * sf
+    if cut is None:
+        return w
+    return w[cut[0]:cut[1]] if axis == "rows" else w[:, cut[0]:cut[1]].contiguous()
 
 
 def chunk_desc4(perm, n_lo, cols):
@@ -108,12 +111,13 @@ def chunk_desc4(perm, n_lo, cols):
     return d.to(torch.int32)
 
 
-def stack(blobs, cut, dev):
-    """The per-expert units of one projection, stacked as the launch takes them."""
+def stack(blobs, cut, dev, axis="rows"):
+    """The per-expert units of one projection, stacked as the launch takes
+    them; ``cut`` is a TP rank's row range, or column range for ``axis="cols"``."""
     units = []
     for b in blobs:
         wire = parse_compact_wire(b, device=dev, name="w")
-        units.append(prepare_window_lut_compact(wire, device=dev, **({"rows": cut} if cut else {})))
+        units.append(prepare_window_lut_compact(wire, device=dev, **({axis: cut} if cut else {})))
     u0 = units[0]
     rows, cols = int(u0.rows), int(u0.cols)
     pairs, descs, inits, has = [], [], [], []
@@ -148,7 +152,7 @@ def stack(blobs, cut, dev):
         "global": torch.tensor([u.global_scale for u in units], dtype=torch.float64),
         "runs": torch.stack(pairs).contiguous(), "desc": torch.stack(descs).to(dev).contiguous(),
         "slot_words": rf.slot_words_for_pair(pairs[0].cpu()),
-        "wref": [ref_weight(b, cut, dev) for b in blobs],
+        "wref": [ref_weight(b, cut, dev, axis) for b in blobs],
         "has_any_init": any(has), "runs_table": [int(v) for v in pairs[0].tolist()],
     }
 
@@ -448,7 +452,9 @@ def main():
                 db = [encode(H, I, q, seed + 200 + e, dev) for e in range(E)]
                 cut_gu = (I // 2, I) if cut_name == "rank1" else None
                 gate, up = stack(gb, cut_gu, dev), stack(ub, cut_gu, dev)
-                down = stack(db, None, dev)          # rank 1 of the down cuts columns, not rows
+                # rank 1 of the down cuts the same intermediate range from its
+                # columns, so the served chain reads gate/up's rank-local rows
+                down = stack(db, cut_gu, dev, axis="cols")
                 case.update(runs_gate=gate["runs_table"], runs_down=down["runs_table"],
                             has_init=gate["has_any_init"], tile_words=gate["tile_words"],
                             slot_words=gate["slot_words"])
