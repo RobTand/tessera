@@ -140,7 +140,7 @@ calibration set drawn from different text may see more tokens above its amax
 than this split does.
 
 The cost side (the extra row-amax reduction and a per-row epilogue) is timed
-by `aside_cost.py`, PB `f8f09d49`, measurement mode on sparklina. A dynamic
+by `aside_cost.py`, PB `29dc6d06`, measurement mode on sparklina. A dynamic
 global also changes the attested contract string (`…_static`), so it is a
 contract decision, not a kernel option.
 
@@ -157,7 +157,9 @@ work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a -cubin`, the decode loop):
 
 | body | instructions per weight | rates |
 |---|---|---|
-| window | 6.8 | every rate 1 to 8, at L=12 and L=14 |
+| window, one-run table | 6.8 | every rate 1 to 8, at L=12 and L=14 |
+| window, two-run table | 8.2 | `[1,2]`, `[4,5]` (L=12 and L=14) |
+| window, two-run table | 8.9 | `[3,4]`, `[7,8]` |
 | span-2 TCQ | 9.8 | rates 2 to 7 |
 | span-2 TCQ | 8.0 | rate 1 (no point plane) |
 
@@ -165,19 +167,28 @@ work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a -cubin`, the decode loop):
   (single-rate) tables. One kernel templated on rate covers every one-run
   rate of either body, and no one-run rate is intrinsically dearer to decode.
   Rate differences there come from bytes.
-- **Two-run tables are not measured.** Every matched-byte window arm in the
-  accuracy table except q1024 is a two-run table (`rate_set(q256 / 128)` =
-  `[r, r+1]`), so the accuracy and the decode-cost evidence cover different
-  rungs. On the E4M3 lane, two-run launches pay for the descriptor ring and a
-  per-warp rate branch (#694 measured 1.31× to 1.49× when the rate was a
-  runtime switch). The two-run cost in T-4's register form is the first thing
-  the fused kernel's geometry sweep under the #750 protocol must answer. If
-  that sweep excludes two-run tables, the comparison the allocator faces is
-  window one-run rungs (q256 = 128·r, 0.25 + r/2 bpw) against TCQ at the
-  nearest bytes, not the matched pairs above.
+- **Two-run tables cost 21% to 31% more instructions** than one-run tables
+  (static count only). Every matched-byte window arm in the accuracy table
+  except q1024 is a two-run table (`rate_set(q256 / 128)` = `[r, r+1]`).
+  - Why: the eight k of a B register are consecutive ORIGINAL columns, so in
+    a two-run block their rates differ per column. The two-run variant
+    (`win_decode2`) reads each column's rate from its block's high-rate mask.
+    It then selects one of two per-thread (word, shift) pairs and the second
+    field's shift.
+  - `[1,2]` and `[4,5]` compile to 8.2, `[3,4]` and `[7,8]` to 8.9. The
+    split does not follow the parity of `r`; the counts are per table.
+  - Both stay below span-2 TCQ's 9.8.
+  - Static counts are not cycles. Cycles and power for every row of this
+    table are PB `29dc6d06` (measurement mode, sparklina). The fused
+    kernel's geometry sweep under the #750 protocol then decides which run
+    tables are supported rungs.
+  - If the sweep excludes two-run tables, the allocator compares window
+    one-run rungs (q256 = 128·r, 0.25 + r/2 bpw) against TCQ at the nearest
+    bytes, not the matched pairs above.
 - **The window decodes in 30% fewer instructions** than TCQ at rates 2 to 7.
-- Measured cycles per weight and power are timed by the same PB action
-  `f8f09d49`; this section is updated when it lands.
+- Measured cycles per weight and power are timed by PB `29dc6d06`, which
+  replaced `f8f09d49` to add the two-run rows; this section is updated when
+  it lands.
 
 ## The FP4 MMA's scale-register layout (pinned)
 
