@@ -13,6 +13,11 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
   b 32, f_a 64, g_a 64 (12448 rows) over K = 4096.
 - ``o_proj``: KDA ``o_proj``, one 4096-row role over K = 4096 (the N % 128
   control: a shape the N-tail change leaves on the same launch).
+- One role each, for a K-split sweep of one geometry per launch: KDA
+  ``q_proj`` (4096 x 4096), ``b_proj`` (32 x 4096), ``f_a_proj`` (64 x 4096),
+  ``f_b_proj`` (4096 x 128); MLA ``q_a_proj`` (1536 x 4096),
+  ``kv_a_proj_with_mqa`` (512 x 4096), ``q_b_proj`` (8192 x 1536), read from
+  ``--mla-layer``.
 
 Weights: ``--model DIR`` encodes the real GLM-5.3 bytes of ``--layer L``'s
 tensors (the TP2 rank-0 shard: the leading rows of a column-parallel role, the
@@ -61,7 +66,17 @@ MODULES = {
     "kda_in": ([("q_proj", 4096), ("k_proj", 4096), ("v_proj", 4096), ("b_proj", 32),
                 ("f_a_proj", 64), ("g_a_proj", 64)], 4096),
     "o_proj": ([("o_proj", 4096)], 4096),
+    # One role each, so a K-split sweep times one geometry per launch.
+    "q_proj": ([("q_proj", 4096)], 4096),
+    "b_proj": ([("b_proj", 32)], 4096),
+    "f_a_proj": ([("f_a_proj", 64)], 4096),
+    "f_b_proj": ([("f_b_proj", 4096)], 128),
+    # MLA (a full-attention layer, ``--mla-layer``).
+    "q_a_proj": ([("q_a_proj", 1536)], 4096),
+    "kv_a_proj_with_mqa": ([("kv_a_proj_with_mqa", 512)], 4096),
+    "q_b_proj": ([("q_b_proj", 8192)], 1536),
 }
+MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj"}
 SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
 
 
@@ -191,6 +206,7 @@ def main():
                     help="one apply per (module, lane, M) between cudaProfilerStart/Stop; no timing")
     ap.add_argument("--model", default=None, help="source checkpoint: encode its real bytes")
     ap.add_argument("--layer", type=int, default=1, help="the KDA layer read from --model")
+    ap.add_argument("--mla-layer", type=int, default=3, help="the MLA layer the MLA modules read")
     ap.add_argument("--numerics-ms", default="1,64,2048")
     ap.add_argument("--k-splits", default="",
                     help="measurement only: also time the fused lane at these fixed K splits "
@@ -212,7 +228,8 @@ def main():
             "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": power.source,
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "dense_row_quantum": getattr(rf, "DENSE_ROW_QUANTUM", None),
-            "weights": ({"model": args.model, "layer": args.layer, "shard": "TP2 rank 0"} if args.model
+            "weights": ({"model": args.model, "layer": args.layer, "mla_layer": args.mla_layer,
+                         "shard": "TP2 rank 0"} if args.model
                         else "seeded Gaussian"),
             "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean"}
     groups = []          # (key, builder) -> builder() returns (head, make) with make(m) -> (meta, call)
@@ -234,7 +251,8 @@ def main():
         kind, name, roles, cols, rows, q = spec
         g = torch.Generator(device=dev).manual_seed(zlib.crc32(f"{name}:{kind}:{q}".encode()))
         if kind == "module":
-            source = ((lambda n, r: source_weight(args.model, args.layer, n, r, cols)) if args.model else None)
+            layer = args.mla_layer if name in MLA_MODULES else args.layer
+            source = ((lambda n, r: source_weight(args.model, layer, n, r, cols)) if args.model else None)
             prepare, blob_bytes, enc_s, w_src = encode_module(roles, cols, q, zlib.crc32(f"{name}:{q}".encode()),
                                                               source)
             lanes = {}
