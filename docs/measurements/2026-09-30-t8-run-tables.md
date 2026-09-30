@@ -122,5 +122,8 @@ and 192 inside each pair, over the routed and dense protocol shapes, at
 M = 1, 64, 512 and 8192. When it lands, this section records each pair's time
 against the linear interpolation of its bracketing whole rates.
 
-No table is excluded until that sweep shows one that a higher supported rung
-within one grid step beats at every M.
+The exclusion rule is evaluated per run table (lead, #750, 2026-09-30):
+exclude a two-run table `[r, r+1]` when the one-run table above it, `[r+1]`,
+is at least as fast at every M, beyond the A/B's spread. No table is
+excluded until a sweep shows that. The T8R/PACT release recipe runs `[4,5]`
+and `[3,4]`, so excluding either is the coordinator's call.
