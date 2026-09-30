@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for one dense launch per module on the E4M3 libraries
+(tessera#750 WP2). `routed_fused.dense_forward_roles` launches all of a merged
+Linear's roles at once and reduces a K split in the kernel, bitwise the
+two-launch result (`MULTI = DENSE && FP8` in `routed_fused_window.cu`; the value
+family and every routed launch keep their code, and their SASS differs from
+before by at most one commuted `IADD3`). A dense K split now keeps every item
+at least `STAGES + 1` K chunks long (`dense_split_max`), which closes a window
+in which the producers could rewrite the descriptor and row-scale slot of an
+item still in its epilogue. No route, rung, cell, served byte or contract
+field changes.
+
 Re-stamped 2026-09-30 for the dense K split's makespan model (tessera#750
 WP2). `routed_fused.dense_k_split` now prices the wave count: `S * items`
 equal items on `sms` SMs end when an SM with `ceil(S * items / sms)` of them
@@ -3860,9 +3871,17 @@ a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not
 own, so an MLP-level fusion would have saved one bf16 round trip (about 1% at
 M = 2048) for a model-forward patch and a changed census module count; instead
-`native_window.PreparedDenseNativeModule` runs each role as one op into its
-column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
-op like `window_gemm_dense`). The lane is decided once per module at weight
+`native_window.PreparedDenseNativeModule` runs the module as one op
+(`tessera::fused_window_dense`, a custom op like `window_gemm_dense`) into one
+`[M, rows]` output, each role in its column slice. On the E4M3 libraries one
+launch takes the module's roles (at most `MAX_ROLES` = 8 per launch,
+`routed_fused.dense_forward_roles`): their 128-row blocks are one item list that
+`dense_k_split(..., blocks=)` prices as a whole, and a K split is reduced in the
+kernel -- the last split of a tile to arrive (a per-tile arrival count) sums the
+S partials in split order and applies the epilogue, bitwise the reduce launch's
+result. The GLM KDA input module is therefore two launches (the counter fill
+and the kernel) instead of 13. The value library launches each role, and its
+reduce when split. The lane is decided once per module at weight
 load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
 column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
 multiple of 4 (`DENSE_ROW_QUANTUM`; a multiple of 128 before the N-tail,

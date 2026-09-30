@@ -51,9 +51,12 @@ rates 1..8 in the packer's column order since v45 -- rate 4 alone at v43/v44
 -- window 14, rows a multiple of 4, the last 128-row block partial on an
 N-tail) is served by that kernel's dense case instead:
 the functional custom op ``tessera::fused_window_dense`` launches
-``routed_fused_kernel<FP8, 2, DENSE>`` once per role into the role's column
-slice of one ``[M, rows]`` output (no concatenation), splitting K at decode
-shapes so every SM has an item, and stamps ``native_fused_window_dense`` /
+``routed_fused_kernel<FP8, 2, DENSE>`` into each role's column slice of one
+``[M, rows]`` output (no concatenation), splitting K at decode shapes so
+every SM has an item -- on the E4M3 libraries once per module, every role and
+the split's reduction in one launch (tessera#750 WP2), on the value library
+once per role with a reduce launch after a split -- and stamps
+``native_fused_window_dense`` /
 ``native_fused_window_dense_folded``.  The lane is decided ONCE at
 preparation for the whole module -- a module stamps one decoder -- and the
 Triton op above stays the dispatch for every module the predicate refuses,
@@ -221,18 +224,24 @@ def _fused_window_dense(
     out = torch.empty((m, total), dtype=torch.bfloat16, device=x.device)
     if m == 0:
         return out
+    roles = [rf.FusedDenseWindowRole(
+        family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
+        init=inits[i], has_init=has_inits[i], wscale=wscales[i],
+        runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
+        for i, rows in enumerate(role_rows)]
+    if family == "e4m3":
+        # The E4M3 libraries take the module's roles in one launch and reduce
+        # a K split in-kernel (tessera#750 WP2): one fill and one kernel.
+        rf.dense_forward_roles(roles, x, a_scale, out)
+        return out
     # One in-stream fill zeroes every role's slot, so the launches add none
     # (``zeroed=True``): at small M this op's host time, not its kernels, sets
     # the eager forward's time.
     counter = torch.zeros(len(role_rows), dtype=torch.int32, device=x.device)
     offset = 0
-    for i, rows in enumerate(role_rows):
-        role = rf.FusedDenseWindowRole(
-            family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
-            init=inits[i], has_init=has_inits[i], wscale=wscales[i],
-            runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
-        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1], zeroed=True)
-        offset += int(rows)
+    for i, role in enumerate(roles):
+        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, role.rows), counter[i:i + 1], zeroed=True)
+        offset += role.rows
     return out
 
 

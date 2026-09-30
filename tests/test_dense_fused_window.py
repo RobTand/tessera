@@ -672,16 +672,17 @@ def test_the_k_split_model_is_the_makespan_model():
     ``ceil(S items0 / sms) sms (item ceil(nk / S) / nk + c) + [S > 1] 2 S M N 4``
     over ``1 .. min(nk / (STAGES + 1), sms)``, restated here (``item`` the wire
     bytes of one 128-row block over all of K, ``c`` the measured per-item
-    cost)."""
+    cost, ``items0`` over the launch's blocks: one role's, or the sum of a
+    module's roles' when they share a launch)."""
     sms = 48
     assert rf.STAGES == 2
     for cols, most in ((4096, 42), (1536, 16), (512, 5), (256, 2), (128, 1), (6144, 64)):
         assert rf.dense_split_max(cols) == most
 
-    def restated(m, rows, cols, words=None):
+    def restated(m, rows, cols, words=None, blocks=None):
         if m <= 0:
             return 1
-        items0 = -(-m // rf.BM) * -(-rows // rf.BN)
+        items0 = -(-m // rf.BM) * (-(-rows // rf.BN) if blocks is None else blocks)
         nk = cols // rf.BK
         item = rf.BN * (64 * cols if words is None else words) * 4 / 512
 
@@ -720,6 +721,14 @@ def test_the_k_split_model_is_the_makespan_model():
     assert light < rf.dense_k_split(32, 256, 4096, sms) < heavy, (light, heavy)
     # More rows means more items and never a larger split at the same M.
     assert rf.dense_k_split(1, 2048, 4096, sms) <= rf.dense_k_split(1, 256, 4096, sms)
+    # A module's roles in one launch: their blocks are one item list.  The
+    # GLM KDA input module at TP2 (q, k, v 4096 rows each, b 32, f_a 64,
+    # g_a 64: 99 blocks) splits four ways at decode.
+    kda_rows, kda_blocks = 3 * 4096 + 32 + 64 + 64, 3 * 32 + 3
+    for m in (1, 4, 16, 64, 512):
+        got = rf.dense_k_split(m, kda_rows, 4096, sms, blocks=kda_blocks)
+        assert got == restated(m, kda_rows, 4096, blocks=kda_blocks), (m, got)
+    assert rf.dense_k_split(1, kda_rows, 4096, sms, blocks=kda_blocks) == 4
 
 
 # --- the launch identity is published -------------------------------------------
@@ -1190,6 +1199,143 @@ def test_dense_random_mixes_inside_every_pair_decode_exactly(family, r):
             graph.replay()
             torch.cuda.synchronize()
             assert torch.equal(out, eager), (family, q256)
+
+
+# --- one launch per module, the split reduced in-kernel (tessera#750 WP2) ----------
+
+#: The E4M3 libraries: their dense launch takes a module's roles and reduces a
+#: K split in-kernel (``dense_forward_roles``).  The value library keeps one
+#: launch per role and the reduce launch.
+E4M3_LIBRARY_IDS = ["e4m3", "e4m3mma"]
+#: 512 columns: 16 K chunks, so a split may be 1 .. 5 (``dense_split_max``),
+#: and S = 5 leaves items of three chunks, the fewest the pipeline allows.
+WIDE_COLS = 512
+
+
+def _force_split(monkeypatch, s):
+    """Every launch after this runs at ``s`` (``dense_k_split`` is read per call)."""
+    monkeypatch.setattr(rf, "dense_k_split", lambda *args, **kw: s)
+
+
+def _roles_out(roles, xq, a, *, fixup=True):
+    out = torch.empty(int(xq.shape[0]), sum(r.rows for r in roles), dtype=torch.bfloat16, device="cuda")
+    rf.dense_forward_roles(roles, xq, a, out, fixup=fixup)
+    return out
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("rows", [256, 160, 32])
+def test_the_in_kernel_fixup_is_the_reduce_kernel_bitwise(family, rows, monkeypatch):
+    """The same partials reduced two ways -- in the kernel by the last split
+    of each tile to arrive, and by ``dense_reduce_kernel`` after the launch --
+    agree BITWISE at every split the launch takes (2 .. 5, the last at three K
+    chunks per item), at one superblock (M = 1, 40, 64) and several (65, 200),
+    for whole blocks and an N-tail.  Both sum in split order from 0.f, so the
+    arrival order the fixup sees does not reach the output."""
+    _expert, bundle = _role(family, rows=rows, cols=WIDE_COLS, rates=_sched(WIDE_COLS, 1088),
+                            seed=9100 + rows)
+    role = rf.prepare_dense_role(bundle)
+    assert rf.dense_split_max(WIDE_COLS) == 5
+    for m in (1, 40, 64, 65, 200):
+        _x, xq, a = _inputs(family, m, WIDE_COLS, 9200 + m)
+        for s in range(2, rf.dense_split_max(WIDE_COLS) + 1):
+            _force_split(monkeypatch, s)
+            reduced = _fused(role, xq, a)                     # one role, the reduce launch
+            fixed = _roles_out([role], xq, a)                 # the in-kernel fixup
+            assert torch.equal(fixed, reduced), (family, rows, m, s)
+            assert torch.equal(_roles_out([role], xq, a, fixup=False), reduced)
+
+
+#: A module in miniature with role boundaries everywhere: whole blocks, N-tails
+#: (32, 64, 160 rows: the KDA input module's small roles and a tail after a
+#: whole block) and two roles of the same height apart.
+MODULE_ROWS = [256, 32, 64, 160, 256]
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+def test_one_launch_of_a_modules_roles_is_each_role_alone_bitwise(family, monkeypatch):
+    """One launch of five roles against each role launched alone at the same
+    split: every role's columns BITWISE equal at its column offset, at S = 1
+    (including the wide superblock at M = 200) and in the split regime.  With
+    ``test_the_in_kernel_fixup_is_the_reduce_kernel_bitwise`` this ties the
+    module launch to the one-role launch the definition-bound tests read."""
+    rates = _sched(WIDE_COLS, 832)
+    roles = [rf.prepare_dense_role(_role(family, rows=r, cols=WIDE_COLS, rates=rates, seed=9300 + i)[1])
+             for i, r in enumerate(MODULE_ROWS)]
+    for m in (1, 40, 200):
+        _x, xq, a = _inputs(family, m, WIDE_COLS, 9400 + m)
+        for s in (1, 2, rf.dense_split_max(WIDE_COLS)):
+            _force_split(monkeypatch, s)
+            together = _roles_out(roles, xq, a)
+            offset = 0
+            for role in roles:
+                alone = _roles_out([role], xq, a)
+                assert torch.equal(together[:, offset:offset + role.rows], alone), (family, m, s, role.rows)
+                offset += role.rows
+    # Past MAX_ROLES the module is launched in groups; the answer does not move.
+    many = [rf.prepare_dense_role(_role(family, rows=32, cols=WIDE_COLS, rates=rates, seed=9500 + i)[1])
+            for i in range(rf.MAX_ROLES + 1)]
+    _x, xq, a = _inputs(family, 1, WIDE_COLS, 9600)
+    _force_split(monkeypatch, 3)
+    together = _roles_out(many, xq, a)
+    for i, role in enumerate(many):
+        assert torch.equal(together[:, 32 * i:32 * (i + 1)], _roles_out([role], xq, a))
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+def test_a_module_launch_captures_and_replays_against_eager(family, monkeypatch):
+    """The work counter and the arrival counts are zeroed inside the captured
+    region and the workspace is a graph-pool allocation, so two replays equal
+    the eager module launch bitwise, and new inputs replay to the new answer."""
+    rates = _sched(WIDE_COLS, 1088)
+    roles = [rf.prepare_dense_role(_role(family, rows=r, cols=WIDE_COLS, rates=rates, seed=9700 + i)[1])
+             for i, r in enumerate(MODULE_ROWS)]
+    _force_split(monkeypatch, 3)
+    m = 40
+    _x, xq, a = _inputs(family, m, WIDE_COLS, 9800)
+    eager = _roles_out(roles, xq, a)
+    out = torch.empty_like(eager)
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            rf.dense_forward_roles(roles, xq, a, out)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        rf.dense_forward_roles(roles, xq, a, out)
+    for _ in range(2):
+        out.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(out, eager)
+    _x2, xq2, a2 = _inputs(family, m, WIDE_COLS, 9801)
+    xq.copy_(xq2)
+    a.copy_(a2)
+    graph.replay()
+    torch.cuda.synchronize()
+    assert torch.equal(out, _roles_out(roles, xq2, a2))
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_dense_forward_roles_takes_one_rung_of_one_e4m3_library(family):
+    """A launch's roles share the rung (cols, tile_words, slot_words) and the
+    library; the value family's roles take ``dense_forward``."""
+    _expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    _x, xq, a = _inputs(family, 1, COLS, 9950)
+    if family == "value":
+        with pytest.raises(ValueError, match="one E4M3 library"):
+            _roles_out([role], xq, a)
+        return
+    other = rf.prepare_dense_role(_role(family, cols=WIDE_COLS, seed=9951)[1])
+    with pytest.raises(ValueError, match="share cols"):
+        rf.dense_forward_roles([role, other], xq, a,
+                               torch.empty(1, 2 * ROWS, dtype=torch.bfloat16, device="cuda"))
 
 
 # --- a K split keeps every item at least STAGES + 1 chunks long ----------------

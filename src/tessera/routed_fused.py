@@ -92,6 +92,7 @@ __all__ = [
     "compose_table16",
     "compose_table8",
     "dense_forward",
+    "dense_forward_roles",
     "dense_k_split",
     "dense_rates",
     "dense_split_max",
@@ -178,6 +179,9 @@ DENSE_ITEM_FIXED_BYTES = 7300
 #: row-scale slot two items back is free before it is rewritten; a K split may
 #: not cut an item shorter (:func:`dense_split_max`).
 STAGES = 2
+#: The most roles one dense launch takes (``MAX_ROLES`` in the source): a
+#: module with more is launched in groups of at most this many.
+MAX_ROLES = 8
 #: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
 #: every rate of the window grammar up to 8, so a stack's one- or two-rate run
 #: table (the two rates bracketing its root) is read as the wire lays it out.
@@ -591,7 +595,7 @@ def _ext(library: str):
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
-                       ("WORD_STAGES_MIN", WORD_STAGES_MIN), ("STAGES", STAGES),
+                       ("WORD_STAGES_MIN", WORD_STAGES_MIN), ("STAGES", STAGES), ("MAX_ROLES", MAX_ROLES),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
@@ -1400,11 +1404,15 @@ def dense_split_max(cols: int) -> int:
     return max(1, (int(cols) // BK) // (STAGES + 1))
 
 
-def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
-    """How many ways to split K for one role at ``m`` rows: the makespan model.
+def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None,
+                  blocks: "int | None" = None) -> int:
+    """How many ways to split K for one launch at ``m`` rows: the makespan model.
 
-    An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
-    ceil(m / 64) * ceil(rows / 128)`` (the last block partial on an N-tail).
+    An item is 64 rows of ``x`` by 128 rows of a role, so ``items0 =
+    ceil(m / 64) * blocks``, with ``blocks = ceil(rows / 128)`` for one role
+    (the last block partial on an N-tail).  A launch of several roles
+    (:func:`dense_forward_roles`) passes ``rows`` summed over them and
+    ``blocks`` summed over their own ``ceil(rows_r / 128)``.
     A split ``S`` makes ``S * items0`` items of ``ceil(K / 32 / S)`` K chunks at
     most (the kernel's ``kc0 = ks * nk / S``), and the persistent grid hands
     them to ``sms`` SMs, so the launch ends when an SM that got
@@ -1429,7 +1437,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     """
     if m <= 0:
         return 1
-    items0 = -(-m // BM) * -(-rows // BN)
+    items0 = -(-m // BM) * (-(-rows // BN) if blocks is None else int(blocks))
     nk = cols // BK
     words = 64 * cols if tile_words is None else int(tile_words)
     item = BN * words * 4 / 512
@@ -1483,3 +1491,57 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
         role.words, role.table16, role.init, role.has_init, role.wscale,
         role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms,
         int(bm))
+
+
+def dense_forward_roles(roles: "list[FusedDenseWindowRole]", x: torch.Tensor, a_scale: torch.Tensor,
+                        out: torch.Tensor, *, fixup: bool = True) -> None:
+    """A merged Linear's roles into ``out`` (``[M, sum(rows)]``, unit column
+    stride), each role at its column offset in order: one launch per
+    :data:`MAX_ROLES` roles (tessera#750 WP2).  The E4M3 libraries only.
+
+    The roles share ``cols``, the run pair, ``tile_words`` and ``slot_words``
+    (a module is one rung), so their 128-row blocks form one item list and
+    :func:`dense_k_split` prices the launch over all of them.  ``fixup``
+    reduces a K split in-kernel: the last split of a tile to arrive sums the
+    ``S`` partials in split order and applies the epilogue, bitwise the
+    reduce kernel's result.  ``fixup=False`` takes the reduce kernel and one
+    role per call (the oracle).  The work counter and the per-tile arrival
+    counts are one int32 buffer zeroed in-stream here, and the workspace is
+    the caching allocator's, so a captured forward replays.
+    """
+    if not roles:
+        return
+    lib = _ext(roles[0].library)
+    first = roles[0]
+    for role in roles:
+        if not role.fp8 or role.library != first.library:
+            raise ValueError("dense_forward_roles takes roles of one E4M3 library")
+        if (role.cols, role.tile_words, role.slot_words) != (first.cols, first.tile_words, first.slot_words):
+            raise ValueError("the roles of one launch share cols, tile_words and slot_words (one rung)")
+    m = int(x.shape[0])
+    if m == 0:
+        return
+    index = x.device.index if x.device.index is not None else torch.cuda.current_device()
+    sms = _sm_count(index)
+    offset = 0
+    for g0 in range(0, len(roles), MAX_ROLES):
+        group = roles[g0:g0 + MAX_ROLES]
+        rows = sum(r.rows for r in group)
+        blocks = sum(-(-r.rows // BN) for r in group)
+        s = dense_k_split(m, rows, first.cols, sms, tile_words=first.tile_words, blocks=blocks)
+        if not fixup and len(group) > 1:
+            raise ValueError("a split reduced after the launch takes one role per call")
+        if s > 1 and not fixup and out.stride(0) % 4 != 0:
+            s = 1                     # the reduce kernel stores uint2 at 4-aligned columns
+        bm = superblock_rows(first.library, 2, m, dense=True) if s == 1 else BM
+        nsb = -(-m // bm)
+        counter = torch.zeros(1 + (blocks * nsb if s > 1 and fixup else 0), dtype=torch.int32, device=x.device)
+        partial = (torch.empty((s, m, rows), dtype=torch.float32, device=x.device) if s > 1
+                   else x.new_empty(0, dtype=torch.float32))
+        lib.dense_forward_roles(
+            True, x, a_scale,
+            [r.words for r in group], [r.table16 for r in group], [r.init for r in group],
+            [r.has_init for r in group], [r.wscale for r in group], [r.runs for r in group],
+            [r.bdesc for r in group], int(first.tile_words), int(first.slot_words), counter, int(s), partial,
+            out.narrow(1, offset, rows), sms, int(bm), bool(fixup))
+        offset += rows
