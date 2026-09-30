@@ -153,7 +153,7 @@ decision belongs to the #750 lead.
 
 `decode_cost.cu` decodes each body in register form straight into the FP4
 MMA's B fragments. Both bodies do the same LUT16 scale and nibble-placement
-work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a`, the decode loop):
+work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a -cubin`, the decode loop):
 
 | body | instructions per weight | rates |
 |---|---|---|

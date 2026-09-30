@@ -21,7 +21,9 @@
 // block-scaled FP4 MMA (kind::mxf4nvf4, UE4M3 per 16) MREP times, the A-side
 // reuse of a 16*MREP-row tile, to show whether decode hides under the MMA.
 //
-// Build: nvcc -O3 -std=c++17 -arch=sm_121a -o decode_cost decode_cost.cu
+// Build: nvcc -O3 -std=c++17 -gencode arch=compute_121a,code=sm_121a -o decode_cost decode_cost.cu
+// (``-arch=sm_121a`` also embeds compute_121 PTX, which ptxas refuses for
+// the block-scaled MMA.)
 // Run:   decode_cost [iters] > decode_cost.json
 #include <cstdint>
 #include <cstdio>

@@ -49,7 +49,7 @@ def main():
     src = Path(__file__).resolve().parent / "decode_cost.cu"
     nvcc = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
     binary = out / "decode_cost"
-    cmd = [nvcc, "-O3", "-std=c++17", "-arch=sm_121a", "-o", str(binary), str(src)]
+    cmd = [nvcc, "-O3", "-std=c++17", "-gencode", "arch=compute_121a,code=sm_121a", "-o", str(binary), str(src)]
     subprocess.run(cmd, check=True)
     samples, stop = [], threading.Event()
     th = threading.Thread(target=power_samples, args=(stop, samples), daemon=True)
