@@ -163,6 +163,31 @@ def encoder_source_sha256() -> str:
     return digest.hexdigest()
 
 
+def _encoder_source_profiles(root: Path) -> dict[str, str]:
+    from .source_profiles import ENCODER_SOURCE_V1, source_profiles
+
+    return source_profiles(
+        ((path.relative_to(root).as_posix(), path.read_bytes())
+         for path in sorted(p for p in root.rglob("*")
+                            if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"})),
+        legacy_profile=ENCODER_SOURCE_V1)
+
+
+def encoder_source_profiles() -> dict[str, str]:
+    """Add labelled v2 metadata without changing cached wire identities.
+
+    The old scalar API and its cache remain byte-for-byte the legacy recipe.
+    A package edited after that cached seal cannot be reported as the same
+    encoder: this optional metadata call refuses that mixed snapshot.
+    """
+    from .source_profiles import ENCODER_SOURCE_V1
+
+    profiles = _encoder_source_profiles(Path(__file__).resolve().parent)
+    if profiles[ENCODER_SOURCE_V1] != encoder_source_sha256():
+        raise ValueError("encoder source changed after its cached source seal")
+    return profiles
+
+
 def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
                             activation: ActivationSource | None = None,
                             structure: str = STRUCTURE_DENSE) -> dict:
