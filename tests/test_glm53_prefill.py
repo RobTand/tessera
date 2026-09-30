@@ -371,26 +371,32 @@ def _stack(ranks, seed=0):
     return [Layer(i, len(kinds), ranks, moe, gen) for i, moe in enumerate(kinds)]
 
 
-def _run(ranks, forward, t):
-    """Both ranks through the stack with ``forward``; each rank's final output."""
+def _run(ranks, forward, t, passes=1, stacks=None):
+    """Both ranks through the stack ``passes`` times; each rank's output of the last pass.
+
+    ``forward`` is one callable for both ranks or a per-rank pair (each rank
+    process holds its own SP state).
+    """
     gen = torch.Generator().manual_seed(7)
     hidden = torch.randn(t, H, generator=gen, dtype=torch.float64)
     positions = torch.arange(t)
     out, errors = [None, None], []
+    forwards = forward if isinstance(forward, (list, tuple)) else (forward, forward)
 
     def worker(rank, layers):
         ranks.local.rank = rank
         try:
-            x, res, post, comb = hidden.clone(), None, None, None
-            for layer in layers:
-                x, res, post, comb = forward(layer, positions, x, res, post, comb)
+            for _ in range(passes):
+                x, res, post, comb = hidden.clone(), None, None, None
+                for layer in layers:
+                    x, res, post, comb = forwards[rank](layer, positions, x, res, post, comb)
             out[rank] = x
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
             ranks.barrier.abort()
 
     # Each rank owns its own module objects (the reduce flags are per rank).
-    stacks = [_stack(ranks), _stack(ranks)]
+    stacks = stacks or [_stack(ranks), _stack(ranks)]
     threads = [threading.Thread(target=worker, args=(r, stacks[r])) for r in range(2)]
     for th in threads:
         th.start()
@@ -429,30 +435,56 @@ def test_rebound_forward_equals_stock(tokens, mode):
     assert torch.equal(ref[0], ref[1])
 
     ranks = TwoRanks()
-    state = gp.SpState("force", 2048, 2)
-    if mode == "below":
-        state.t_star = tokens + 1  # every batch is below T*: the non-SP branch
+    states = [gp.SpState("force", 2048, 2) for _ in range(2)]
+    for state in states:
+        if mode == "below":
+            state.t_star = tokens + 1  # every batch is below T*: the non-SP branch
     # Under capture the forced threshold is ignored: a graph holds the stock sequence.
-    fwd = gp.make_forward(stock_forward, _ops(ranks), state,
-                          _Capturing if mode == "capture" else _NoCuda)
-    got, stacks = _run(ranks, fwd, tokens)
+    fwds = [gp.make_forward(stock_forward, _ops(ranks), state,
+                            _Capturing if mode == "capture" else _NoCuda) for state in states]
+    # Pass 1 is the profile run (prepares every layer, never SP); pass 2 is checked.
+    got, stacks = _run(ranks, fwds, tokens, passes=2)
     for r in range(2):
         assert got[r].shape == ref[r].shape
         assert torch.equal(got[r], ref[r]), (mode, tokens, r, (got[r] - ref[r]).abs().max())
     n_layers = len(stacks[0])
+    assert ref_ranks.calls["all_reduce"] == 2 * n_layers
     if mode == "force":
-        # Per layer two all-gathers and two reduce-scatters, plus the final gather.
-        assert ranks.calls == {"all_reduce": 0, "all_gather": 2 * n_layers + 1,
+        # Pass 1 as stock; pass 2 per layer two all-gathers and two reduce-scatters, plus the final gather.
+        assert ranks.calls == {"all_reduce": 2 * n_layers, "all_gather": 2 * n_layers + 1,
                                "reduce_scatter": 2 * n_layers}
+        assert all(s.ready and s.pass_sp for s in states)
     else:
-        assert ranks.calls == {"all_reduce": 2 * n_layers, "all_gather": 0, "reduce_scatter": 0}
-        assert ref_ranks.calls["all_reduce"] == 2 * n_layers
+        assert ranks.calls == {"all_reduce": 4 * n_layers, "all_gather": 0, "reduce_scatter": 0}
+        assert not any(s.pass_sp for s in states)
     for layer in stacks[0]:
         assert layer._tessera_sp_ready and layer.self_attn.o_proj.reduce_results is False
         if layer._mlp_is_moe:
             assert layer.mlp.experts.moe_config.skip_final_all_reduce is True
         else:
             assert layer.mlp.down_proj.reduce_results is False
+
+
+def test_first_pass_is_never_sp_and_an_unpreparable_layer_declines_the_serve():
+    """One layer fails its checks: it runs stock, the serve never takes SP, nothing raises."""
+    ref, _ = _run(TwoRanks(), stock_forward, 8)
+    ranks = TwoRanks()
+    stacks = [_stack(ranks), _stack(ranks)]
+    for layers in stacks:
+        layers[2].mlp.experts._fused_output_is_reduced = True  # not the inspected MoE
+    states = [gp.SpState("force", 2048, 2) for _ in range(2)]
+    fwds = [gp.make_forward(stock_forward, _ops(ranks), st, _NoCuda) for st in states]
+    got, _ = _run(ranks, fwds, 8, passes=3, stacks=stacks)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r])
+    n_layers = len(stacks[0])
+    assert ranks.calls == {"all_reduce": 3 * 2 * n_layers, "all_gather": 0, "reduce_scatter": 0}
+    for st, layers in zip(states, stacks):
+        assert st.declined and "reduces its own output" in st.declined
+        assert not st.ready and not st.pass_sp
+        assert not layers[2].__dict__.get("_tessera_sp_ready")
+        assert layers[2].mlp.experts.moe_config.skip_final_all_reduce is False  # untouched
+        assert layers[2].self_attn.o_proj.reduce_results is True
 
 
 def test_mtp_and_non_mhc_layers_take_the_stock_forward():
