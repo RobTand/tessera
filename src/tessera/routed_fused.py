@@ -108,7 +108,7 @@ SOURCE = "csrc/routed_fused_window.cu"
 # The kernel's geometry, restated for the support predicate (the library's
 # attributes of the same names are checked against these at load).
 BM = 64
-#: The wide superblock (``BM_WIDE`` in the kernel, tessera#SB128): 128 routes
+#: The wide superblock (``BM_WIDE`` in the kernel, tessera#741): 128 routes
 #: per item on the E4M3 family's one-table launch (routed down, dense).
 #: :func:`superblock_rows` picks the width per launch; either width gives the
 #: same output bits.

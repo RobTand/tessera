@@ -780,7 +780,7 @@ def test_the_run_pair_and_block_descriptor_are_the_packers_layout():
     assert before == n_lo
 
 
-# --- the wide superblock (tessera#SB128) ------------------------------------------
+# --- the wide superblock (tessera#741) ------------------------------------------
 
 @cuda
 @pytest.mark.parametrize("q256", [1024, 832, 1088, 2048])

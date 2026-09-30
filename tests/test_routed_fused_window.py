@@ -793,7 +793,7 @@ def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
     print(f"ROUTED-RATE-BOUND {what} down/bound={ratio:.4f}")
 
 
-# --- the wide superblock (tessera#SB128) ------------------------------------------
+# --- the wide superblock (tessera#741) ------------------------------------------
 
 def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
     """``superblock_rows`` reads host integers and the environment only (so a

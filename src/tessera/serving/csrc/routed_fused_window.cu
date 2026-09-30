@@ -136,7 +136,7 @@ constexpr int DESC_INTS = 2 * 8;
 // that global latency sat on the chunk loop's critical path.  A one-run
 // unit's map is computed, so it never touches the ring.
 constexpr int DRING_STAGES = 4;
-// The wide superblock (tessera#SB128): 128 routes per item instead of BM = 64,
+// The wide superblock (tessera#741): 128 routes per item instead of BM = 64,
 // so one decoded B tile feeds twice the rows.  Only the E4M3 family's
 // one-table launch (routed down, dense) has it: its A region doubles to 16 KB
 // (ARAW_STAGES chunks of 128 rows), which the one-table layout has room for
