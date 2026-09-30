@@ -16,6 +16,8 @@
 //     F-bit points; two code-table bytes (rows 4p,4p+1 and 4p+2,4p+3).
 //   Window (L bits, rate r bits per 2-row tuple): per (column, two tuples)
 //     one 32-bit read covering both L-bit windows, two table bytes.
+//   Window over a two-run table [r, r + 1]: the same, with each column's
+//     rate read from its block's high-rate mask (``win_decode2``).
 //
 // MODE 0 XOR-reduces the fragments (decode only).  MODE 1 feeds them to the
 // block-scaled FP4 MMA (kind::mxf4nvf4, UE4M3 per 16) MREP times, the A-side
@@ -211,6 +213,67 @@ __global__ void __launch_bounds__(THREADS) win_decode(const uint32_t* __restrict
     if (threadIdx.x == 0) cyc[blockIdx.x] = c1 - c0;
 }
 
+// ------------------------------------------------------------------ window, two-run table
+// The same register form over a two-run table [RL, RL + 1]: the eight k of a
+// B register are consecutive ORIGINAL columns, so their rates differ per
+// column.  Each column's rate comes from its block's high-rate mask (bit c of
+// a 32-bit word per 32 columns, as a lane would read it beside the staged
+// words); its words sit in a slot sized for RL + 1.  The window position and
+// the second field's shift become runtime values.
+template <int L, int RL, int MODE, int MREP>
+__global__ void __launch_bounds__(THREADS) win_decode2(const uint32_t* __restrict__ g, int words,
+                                                       int iters, uint32_t* out, long long* cyc) {
+    extern __shared__ uint32_t sm[];
+    for (int i = threadIdx.x; i < words; i += THREADS) sm[i] = g[i];
+    __syncthreads();
+    constexpr int COL_W = 1 + STEPS * (RL + 1) / 32 + 1;
+    const uint32_t* str = sm;
+    const uint32_t* hi_mask = str + K * COL_W;                  // K / 32 words
+    const uint32_t* nib = hi_mask + K / 32;
+    const uint8_t* table = reinterpret_cast<const uint8_t*>(nib + (K / 16) * (ROWS / 8) + 1);
+    const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    const int gq = lane >> 2, t = lane & 3;
+    const int s0 = warp * 16 + 2 * gq;
+    uint32_t lut[4] = {0x38403c34u, 0x48444c42u, 0x30283420u, 0x50545856u};
+    uint32_t a[4] = {0x2468aceu ^ lane, 0x13579bdu, 0xfdb97531u, 0x0eca8642u};
+    uint32_t acc = 0;
+    float d[4] = {0.f, 0.f, 0.f, 0.f};
+    constexpr uint32_t MASK = (1u << L) - 1;
+    const int q_lo = 32 + (s0 + 1) * RL - L, q_hi = q_lo + s0 + 1;
+    const int i_lo = q_lo >> 5, i_hi = q_hi >> 5;
+    const uint32_t s_lo = q_lo & 31, s_hi = q_hi & 31;
+    constexpr uint32_t f_lo = 32 - L - RL, f_hi = 32 - L - RL - 1;
+    const long long c0 = clock64();
+    #pragma unroll 1
+    for (int it = 0; it < iters; ++it) {
+        const int kc = (it % CHUNKS) * 64;
+        uint32_t b[2][4] = {{0, 0, 0, 0}, {0, 0, 0, 0}};
+        #pragma unroll
+        for (int h = 0; h < 2; ++h) {
+            const uint32_t m = hi_mask[(kc >> 5) + h] >> (8 * t);
+            #pragma unroll
+            for (int i = 0; i < 8; ++i) {
+                const int k = kc + 32 * h + 8 * t + i;
+                const bool hi = (m >> i) & 1u;
+                // both rates' window positions are per-thread constants; a
+                // column selects one (word, shift) pair and the second field's shift
+                const uint32_t* w = str + k * COL_W + (hi ? i_hi : i_lo);
+                const uint32_t z = __funnelshift_l(w[1], w[0], hi ? s_hi : s_lo);
+                const uint32_t w0 = z >> (32 - L);
+                const uint32_t w1 = (z >> (hi ? f_hi : f_lo)) & MASK;
+                place(b, h, i, table[w0], table[w1]);
+            }
+        }
+        uint32_t sfb[4];
+        sf4(nib, lut, kc, 32 * warp + 4 * gq, sfb);
+        consume<MODE, MREP>(b, sfb, acc, d, a);
+        asm volatile("" ::: "memory");
+    }
+    const long long c1 = clock64();
+    out[blockIdx.x * THREADS + threadIdx.x] = acc ^ __float_as_uint(d[0] + d[1] + d[2] + d[3]);
+    if (threadIdx.x == 0) cyc[blockIdx.x] = c1 - c0;
+}
+
 // ------------------------------------------------------------------ host
 struct Res { double ms, weights, gw_per_s, sm_cycles_per_kweight; int blocks_per_sm; };
 
@@ -271,6 +334,18 @@ void win_case(int iters, int sms, uint32_t* dg, uint32_t* dout, long long* dcyc,
     first = false;
 }
 
+template <int L, int RL, int MODE, int MREP>
+void win2_case(int iters, int sms, uint32_t* dg, uint32_t* dout, long long* dcyc, bool& first) {
+    const int words = K * (1 + STEPS * (RL + 1) / 32 + 1) + K / 32 + (K / 16) * (ROWS / 8) + 1 + (1 << L) / 4;
+    Res r = run(win_decode2<L, RL, MODE, MREP>, words, iters, sms, dg, dout, dcyc);
+    printf("%s{\"body\":\"window\",\"L\":%d,\"rate\":%d,\"run_table\":[%d,%d],\"q256\":%d,\"mode\":%d,"
+           "\"mrep\":%d,\"smem\":%d,\"blocks_per_sm\":%d,\"ms\":%.4f,\"gweights_per_s\":%.2f,"
+           "\"sm_cycles_per_kweight\":%.2f}\n",
+           first ? "" : ",", L, RL, RL, RL + 1, 128 * RL + 64, MODE, MREP, words * 4, r.blocks_per_sm, r.ms,
+           r.gw_per_s, r.sm_cycles_per_kweight);
+    first = false;
+}
+
 template <int MODE, int MREP>
 void all_cases(int iters, int sms, uint32_t* dg, uint32_t* dout, long long* dcyc, bool& first) {
     tcq_case<0, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
@@ -290,6 +365,11 @@ void all_cases(int iters, int sms, uint32_t* dg, uint32_t* dout, long long* dcyc
     win_case<12, 8, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
     win_case<14, 4, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
     win_case<14, 7, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
+    win2_case<12, 1, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
+    win2_case<12, 3, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
+    win2_case<12, 4, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
+    win2_case<12, 7, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
+    win2_case<14, 4, MODE, MREP>(iters, sms, dg, dout, dcyc, first);
 }
 
 int main(int argc, char** argv) {
