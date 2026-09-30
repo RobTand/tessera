@@ -33,6 +33,9 @@ In short:
   through `bench_t8r.sh` with `BENCH_PY=fp8_roofline.py`.
 - **Receipt:** `/mnt/shared/tessera-measurements/t8r-speed-20260929/fp8roof-20260930T031852Z/fp8_roofline.json`,
   PrismaBuild action `fcf2b1dd`.
+- **Bandwidth re-run:** sparky, script at `b361db362b`,
+  `/mnt/shared/tessera-measurements/t8r-speed-20260929/fp8roof-20260930T033217Z/fp8_roofline.json`,
+  PrismaBuild action `5488d94c` (exclusive, 03:37:13Z to 03:37:39Z).
 - **Model:** the GLM-5.3-Flash Tessera-8 release
   (`pact-e4m3-accuracy-20260928/release-t8/exported`), TP2 rank-0 shapes.
 
@@ -40,7 +43,8 @@ A vLLM smoke container that another agent started on sparklina overlapped
 the last seconds of this action. It was importing Python and ran no GPU
 kernels. The tensor-core and accumulation sections finished before it. The
 bandwidth section ran at the end, and its read figure was an instrument
-failure in any case (see below), so bandwidth is re-measured separately.
+failure in any case (see below), so bandwidth was re-measured separately on
+sparky.
 
 ## Tensor-core rates
 
@@ -107,13 +111,16 @@ the exact fp64 dot, relative to `sum_k |a_k w_k|`:
 
 ## Memory bandwidth
 
-- **Copy:** 241.5 GB/s (read plus write), matching the 239.4 GB/s that
-  `scratch_bound.py` measured on 09-30.
-- **Read:** the 47.5 GB/s this run reported is an instrument failure, not a
-  device rate: an int32 sum into int64 is bound by the reduction, not by the
-  loads. The script now reads with a 16-byte-load kernel. Until that re-run
-  lands, the copy rate stands in for the read rate below, which makes the
-  memory floors conservative (too high).
+- **Read:** 232.2 GB/s on sparky with a 16-byte-load kernel over 4 GiB,
+  flat across four launch shapes (230.4 to 232.2 GB/s). The floors below
+  use it.
+- **Copy:** 241.5 GB/s (read plus write) on sparklina, matching the
+  239.4 GB/s that `scratch_bound.py` measured there on 09-30; 227.2 GB/s on
+  sparky. The two boxes differ by about 6%, and a TP2 step waits for the
+  slower rank.
+- The first run's 47.5 GB/s read figure was an instrument failure, not a
+  device rate: its int32 sum into int64 was bound by the reduction, not by
+  the loads.
 
 ## FLOPs per token
 
@@ -160,19 +167,19 @@ or hit L2 is not measured; the floor below charges one pass.
 
 ## The prefill ceiling at TP2
 
-Per rank per step. The routed floor is the wire read at 241.5 GB/s. The MMA
+Per rank per step. The routed floor is the wire read at 232.2 GB/s. The MMA
 floors are the routed FLOPs at the `mma.sync` peak, with the rows the fused
 kernel computes (64 per superblock on master; rows past a superblock's routes
 are computed and discarded).
 
 | Routed layers | M = 512 | M = 2048 | M = 8192 |
 |---|---|---|---|
-| Wire read (DRAM floor) | 323 ms | 323 ms | 323 ms |
+| Wire read (DRAM floor) | 336 ms | 336 ms | 336 ms |
 | f16 MMA, routes only | 35 ms | 141 ms | 563 ms |
 | E4M3 MMA, routes only | 18 ms | 70 ms | 281 ms |
 | f16 MMA, master's padded rows (x4.45, x1.52) | 157 ms | 214 ms | -- |
 | Fused kernel, master, recorded routing | 665 ms | 912 ms | 2,436 ms |
-| Fused kernel / wire-read floor | 2.1x | 2.8x | 7.5x |
+| Fused kernel / wire-read floor | 2.0x | 2.7x | 7.3x |
 
 At M = 512 and M = 2048 the wire read bounds the routed layers, and both
 MMA floors sit under it. At M = 8192 f16 arithmetic (563 ms) passes the wire
@@ -183,25 +190,25 @@ their measured or rate-bound cost:
 
 | Component per step | L512 (M = 512) | L8192 (per M = 2048 step) |
 |---|---|---|
-| Routed, wire-read floor | 323 ms | 323 ms |
+| Routed, wire-read floor | 336 ms | 336 ms |
 | BF16 attention projections | 57 ms (measured 09-29) | 129-167 ms (cuBLAS rate) |
 | Shared and dense, E4M3 MMA floor | 3 ms | 13 ms |
 | Stock non-Linear work and all-reduce | ~37 ms (L512 remainder less routing skew) | 464 ms (named in the 09-30 attribution) |
-| **Ceiling** | **~420 ms** | **~930-970 ms** |
-| EXL3 reference (eager, measured 09-29) | 592 ms (1.41x the ceiling) | 1,403 ms (1.45-1.51x) |
+| **Ceiling** | **~433 ms** | **~943-983 ms** |
+| EXL3 reference (eager, measured 09-29) | 592 ms (1.37x the ceiling) | 1,403 ms (1.43-1.49x) |
 | T8R after levers (a) and (b), estimate | 802 ms | ~1,825 ms (1,122 tok/s) |
 
 What this says about "nearly double EXL3":
 
-- **At MNBT 2048** the ceiling is about 1.4 to 1.5 times EXL3's measured
-  prefill, not 2 times. Even a routed kernel at its wire-read floor leaves
+- **At MNBT 2048** EXL3's measured prefill takes about 1.4 to 1.5 times
+  the ceiling's time, not 2 times. Even a routed kernel at its wire-read floor leaves
   the stock non-Linear work (KDA recurrence, mHC, MLA, glue, all-reduce:
   464 ms) and the BF16 projections (about 150 ms) in every chunk.
 - **At MNBT 8192** the routed wire is read once per 8,192 tokens. With E4M3
-  arithmetic the routed layers stay at the 323 ms floor; with f16 they rise
-  to 563 ms. Per 8,192 tokens: routed 323 ms, projections 516 to 668 ms,
+  arithmetic the routed layers stay at the 336 ms floor; with f16 they rise
+  to 563 ms. Per 8,192 tokens: routed 336 ms, projections 516 to 668 ms,
   shared and dense 50 ms, stock work 1,856 ms if it scales linearly, about
-  2.75 to 2.90 s in all, or 1.9 to 2.0 times EXL3's MNBT-2048 prefill. This
+  2.76 to 2.91 s in all, or 1.9 to 2.0 times EXL3's MNBT-2048 prefill rate. This
   is the regime where FP8 arithmetic pays. Two caveats: T8R rank 1 does not
   fit at MNBT 8192 today, and EXL3 must be re-measured at 8192 before any
   comparison.
