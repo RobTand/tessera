@@ -464,6 +464,34 @@ class Sweep:
             return self.build_bf16_linear(spec)
         return self.build_scaled_mm(spec)
 
+    # -- Nsight Compute: one profiled call per (group, M), no timing
+    def run_ncu(self):
+        """Under ``bench_t8r.sh``'s ``BENCH_NCU=1`` (``ncu --profile-from-start
+        off``): each cell warms up, then ONE call runs inside a
+        ``cudaProfilerStart``/``Stop`` range, so NCU profiles exactly one
+        launch per (group, M) and nothing else."""
+        a = self.args
+        for kind, spec in self.groups():
+            gkey = f"{kind}:{spec}"
+            head, make, keep = self.build(kind, spec)
+            if make is None:
+                emit({"group": gkey, "refused": head.get("refused")})
+                continue
+            for m, how in self.variants(kind):
+                ckey = f"{m}" + (f":{how}" if how else "")
+                _meta, call, _out = make(m, how)
+                for _ in range(max(1, a.warmup)):
+                    call()
+                torch.cuda.synchronize()
+                torch.cuda.profiler.start()
+                call()
+                torch.cuda.synchronize()
+                torch.cuda.profiler.stop()
+                emit({"group": gkey, "M": ckey, "ncu": "profiled"})
+                del call, _out
+            del keep
+            torch.cuda.empty_cache()
+
     # -- the passes
     def run(self, usage, save):
         a = self.args
@@ -544,7 +572,8 @@ def main():
     ap.add_argument("--power-ms", default="512,8192")
     ap.add_argument("--power-s", type=float, default=0.5)
     ap.add_argument("--library", default=None)
-    ap.add_argument("--ncu", action="store_true", help="accepted for the wrapper; not used")
+    ap.add_argument("--ncu", action="store_true",
+                    help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
@@ -555,6 +584,10 @@ def main():
     sms = torch.cuda.get_device_properties(dev).multi_processor_count
     usage = resource_usage(lib)
     sw = Sweep(args, rf, lib, library, mma8, dev, sms)
+    if args.ncu:
+        sw.run_ncu()
+        print("done", flush=True)
+        return 0
     meta = {"device": torch.cuda.get_device_name(), "sms": sms, "experts": EXPERTS, "hidden": HIDDEN,
             "inter": INTER, "top_k": TOP_K, "part": args.part, "cases": args.cases, "ms": args.ms,
             "shapes": args.shapes, "recorded": sw.recorded, "library": library,
