@@ -18,7 +18,8 @@ while IFS= read -r line; do
 done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ -z "${TESSERA_ROUTED_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED=$TESSERA_ROUTED_FUSED")
 [[ -z "${TESSERA_ROUTED_FUSED_WIDE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WIDE=$TESSERA_ROUTED_FUSED_WIDE")
-ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
+# BENCH_ARTIFACT: another exported Tessera artifact (default: the T8R release).
+ART=${BENCH_ARTIFACT:-/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported}
 [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
@@ -69,7 +70,7 @@ rc=0
 docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
-  -e KERNEL_SHA="$KERNEL_SHA" \
+  -e KERNEL_SHA="$KERNEL_SHA" -e BENCH_ARTIFACT="$ART" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
   -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \

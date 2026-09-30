@@ -35,6 +35,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -95,7 +96,8 @@ def _init_vllm_world1(rdv_dir):
 
 from safetensors import safe_open  # noqa: E402
 
-ARTIFACT = "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported"
+ARTIFACT = os.environ.get(
+    "BENCH_ARTIFACT", "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported")
 P = "model.language_model.layers."
 TOP_K, EXPERTS, SWIGLU_LIMIT = 8, 288, 10.0
 TP_SIZE, TP_RANK = 2, 0
@@ -457,6 +459,13 @@ def main():
     ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
     results = []
     plan = [(g, k, mod) for g, k, mod in TESSERA_GROUPS] + [(g, "bf16", (o, i)) for g, o, i in BF16_GROUPS]
+    # Any other artifact's routed layer, named experts.R<q256>.L<layer>; the
+    # name's rate is checked against the artifact's scheme below.
+    known = {g for g, _, _ in plan}
+    for gid in sorted(wanted or ()):
+        hit = re.fullmatch(r"experts\.R(\d+)\.L(\d+)", gid)
+        if hit and gid not in known:
+            plan.append((gid, "routed", P + hit.group(2) + ".mlp.experts"))
     for gid, kind, module in plan:
         if wanted is not None and gid not in wanted and gid.split(".")[0] not in wanted:
             continue
@@ -468,6 +477,9 @@ def main():
                 if kind == "routed":
                     fn, info, holder, bytes_for = build_routed(store, module)
                     width = int(store.schemes[module]["groups"]["w13"]["columns"])
+                    named = re.fullmatch(r"experts\.R(\d+)\.L\d+", gid)
+                    if named and {int(named.group(1))} != set(info["q256"].values()):
+                        raise ValueError(f"{gid}: artifact rates are {info['q256']}")
                 elif kind == "bf16":
                     fn, width, info, holder, bytes_for = build_bf16(*module)
                 else:

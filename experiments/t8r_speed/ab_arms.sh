@@ -5,7 +5,7 @@
 # so no arm always runs first on a cold GPU.  The first arm is the reference.
 # Usage: ab_arms.sh <out_root> <arm> <arm> [<arm> ...]
 # Steps, each recorded with its rc and the host load and GPU power at start:
-#   r<i>/r<i>b  routed bench per arm (R1024 L10, R1088 L11, R832 L42; M 1..2048;
+#   r<i>/r<i>b  routed bench per arm (AB_ROUTED; default R1024 L10, R1088 L11, R832 L42; M 1..2048;
 #               outputs hashed for the bitwise A/B), forward then reverse
 #   n<i>        NCU of the routed launches at M 1 and 512, per arm
 #   d<i>/d<i>b  the Tessera dense and shared-expert groups, forward then reverse
@@ -28,7 +28,7 @@ for arm in "${ARMS[@]}"; do
   [[ -f "$OUT/src-$arm/src/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "missing snapshot: $OUT/src-$arm" >&2; exit 2; }
 done
 sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
-ROUTED=experts.R1024.L10,experts.R1088.L11,experts.R832.L42
+ROUTED=${AB_ROUTED:-experts.R1024.L10,experts.R1088.L11,experts.R832.L42}
 DENSE=shared_gate_up,shared_down,dense_gate_up,dense_down
 MS=${AB_MS:-1,2,4,8,512,2048}
 NCU_MS=${AB_NCU_MS:-1,512}
