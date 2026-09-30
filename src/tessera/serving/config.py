@@ -479,9 +479,11 @@ class TesseraConfig(QuantizationConfig):
     def get_quant_method(self, layer: torch.nn.Module,
                          prefix: str) -> QuantizeMethodBase | None:
         from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+        from .glm53_prefill import install_for_current_config as install_glm53_prefill
         from .mtp_draft_lifetime import install_for_current_config
 
         install_for_current_config()
+        install_glm53_prefill()
         lookup_prefix, target_scheme, ignored = self._module_lookup(prefix)
 
         moe_classes = _moe_layer_classes()
