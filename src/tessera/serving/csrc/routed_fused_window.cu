@@ -173,6 +173,31 @@ __host__ __device__ constexpr int pair_slot_words(int r_lo, bool two) {
 // launch is checked against the live device's own limit (``check_slot``), and
 // ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the same figure.
 constexpr int SM121_SMEM_OPTIN = 101376;
+// The prev-word ring (tessera#737).  Every column's 64-row half needs the 32
+// stream bits before its first word (``load_prev``); master read that word
+// from global memory into a register one chunk ahead, and the chunk loop's
+// last register move waited for it: the one-run gate/up launch's single
+// largest load stall.  The ring holds those words for WORD_STAGES chunks,
+// copied with ``cp.async`` into the word stages' own groups, so a chunk's
+// previous words land two chunks ahead exactly as its words do and the loop
+// carries no register load for them.  It sits after the word stages, 768 B,
+// and exists only where the launch still fits the target's block
+// (``prev_ring``): every pair of the one-table down/dense launch, and the
+// gate/up pairs up to 8-word slots (one run at rates 1..4, the pairs (1, 2)
+// to (3, 4)).  The gate/up launches at 12-word slots keep master's register
+// path; the published smem formula (``smem_bytes``) and the rates the gate/up
+// launch admits (``gate_up_rate_max``) do not change.
+constexpr int PRING_STAGES = WORD_STAGES;
+constexpr int PRING_INTS = 2 * BK;                              // one per (half, column)
+constexpr int PRING_BYTES = PRING_STAGES * PRING_INTS * 4;      // 768
+__host__ __device__ constexpr bool prev_ring(int mode, int slot_words) {
+    return smem_bytes(mode, slot_words) + PRING_BYTES <= SM121_SMEM_OPTIN;
+}
+// The dynamic shared memory a launch at ``slot_words``-word slots takes: the
+// published layout plus the ring where it applies.
+__host__ __device__ constexpr int launch_smem_bytes(int mode, int slot_words) {
+    return smem_bytes(mode, slot_words) + (prev_ring(mode, slot_words) ? PRING_BYTES : 0);
+}
 // Whether the launch of ``mode`` decodes the pair (``r_lo``; ``two``: a second
 // run at ``r_lo + 1``): rates in 1..8, and the pair's slot fits the target's
 // block.  The two-table gate/up launch reaches rates 1..6 (one run) and pairs
@@ -225,6 +250,11 @@ __device__ __forceinline__ void cp_async16(void* smem, const void* gmem) {
 __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;" :: "r"(s), "l"(gmem) : "memory");
+}
+// One word: a column's previous word into the prev-word ring.
+__device__ __forceinline__ void cp_async4(void* smem, const void* gmem) {
+    const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+    asm volatile("cp.async.ca.shared.global [%0], [%1], 4;" :: "r"(s), "l"(gmem) : "memory");
 }
 __device__ __forceinline__ void cp_async_commit() {
     asm volatile("cp.async.commit_group;" ::: "memory");
@@ -379,15 +409,19 @@ __device__ __forceinline__ void copy_half(int32_t* dst, const int32_t* src, int 
 // is exactly the original kernel's constant shifts.  ``prev`` is the word
 // before the half's first word (the previous 64 rows, the previous tile's
 // last word of the column, the cut's start state, or zero).
-template <bool FP8, int R>
-__device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, int j,
+// ``RINGP``: ``prevp`` points at the half's previous word in the prev-word
+// ring (``prev_ring``) and ``prev`` is unused; otherwise ``prev`` is the word.
+template <bool FP8, int R, bool RINGP>
+__device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, const int32_t* prevp, int j,
                                             const uint16_t* T, const float* ws,
                                             uint32_t (&packed)[4]) {
     constexpr bool ALIGNED = (8 * R) % 32 == 0;
     constexpr bool WIDE = 8 * R > 32;                 // rows reach past 32 bits: Z2 is read
     const int bits0 = 8 * j * R;
     const int b = bits0 >> 5;
-    const uint32_t wm1 = (b > 0) ? (uint32_t)Wc[b - 1] : prev;
+    uint32_t wm1;
+    if constexpr (RINGP) wm1 = (uint32_t)*((b > 0) ? Wc + (b - 1) : prevp);
+    else wm1 = (b > 0) ? (uint32_t)Wc[b - 1] : prev;
     const uint32_t w0 = (uint32_t)Wc[b];
     uint32_t Z0, Z1, Z2 = 0;
     if constexpr (ALIGNED) {
@@ -432,12 +466,13 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
 // Both halves of a chunk (rates RA and RB, each compile-time) as ONE
 // straight-line block, so the scheduler can issue the second half's word and
 // table loads while the first half's are in flight.
-template <bool FP8, int RA, int RB>
-__device__ __forceinline__ void decode_two(const int32_t* const (&Wc)[2], const int32_t (&prev)[2], int j,
+template <bool FP8, int RA, int RB, bool RINGP>
+__device__ __forceinline__ void decode_two(const int32_t* const (&Wc)[2], const int32_t (&prev)[2],
+                                           const int32_t* const (&prevp)[2], int j,
                                            const uint16_t* T0, const uint16_t* T1,
                                            const float* const (&ws)[2], uint32_t (&packed)[2][4]) {
-    decode_rows<FP8, RA>(Wc[0], (uint32_t)prev[0], j, T0, ws[0], packed[0]);
-    decode_rows<FP8, RB>(Wc[1], (uint32_t)prev[1], j, T1, ws[1], packed[1]);
+    decode_rows<FP8, RA, RINGP>(Wc[0], (uint32_t)prev[0], prevp[0], j, T0, ws[0], packed[0]);
+    decode_rows<FP8, RB, RINGP>(Wc[1], (uint32_t)prev[1], prevp[1], j, T1, ws[1], packed[1]);
 }
 
 struct Params {
@@ -680,6 +715,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int ih = (tid >> 6) & 1;
             const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
             const int t64_i = ih ? t64_h[1] : t64_h[0];
+            const int g_i = ih ? g_h[1] : g_h[0];
+            const int hasinit_i = ih ? hasinit_h[1] : hasinit_h[0];
+            const int32_t* init_i = ih ? init_h[1] : init_h[0];
             auto load_a = [&](int kc, uint4& a) {
                 if (arow >= 0) {
                     if constexpr (FP8) {
@@ -735,6 +773,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 constexpr int RH = RL + 1;                  // read only when TWO
                 constexpr int SW = pair_slot_words(RL, TWO);
                 constexpr int W_STAGE = w_stage_ints(SW);
+                constexpr bool PR = prev_ring(MODE, SW);
+                // The prev-word ring: after the word stages (``prev_ring``).
+                int32_t* const pring = reinterpret_cast<int32_t*>(smem + L::OFF_W + WORD_STAGES * W_STAGE * 4);
                 // Chunk kc's block descriptor for half h: the expert's, in
                 // global memory (``ring`` false: the first chunks, before the
                 // ring's copies land), or its copy in the descriptor ring (see
@@ -776,6 +817,22 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         } else {
                             copy_half<RL>(dst, src, t64_i, q);
                         }
+                        // The column's previous word (``load_prev``'s three
+                        // sources, or zero) into the ring, in the same group.
+                        // The slot was last read by chunk kc - 3's decode,
+                        // which every producer finished before this
+                        // iteration's barrier (or, at an item's first two
+                        // chunks, before the item's first barrier).
+                        if constexpr (PR) {
+                            if (q == 1) {
+                                int32_t* pd = pring + (kc % PRING_STAGES) * PRING_INTS + ih * BK + mm;
+                                const int32_t* ps = nullptr;
+                                if (t64_i > 0) ps = src - 1;
+                                else if (g_i > 0) ps = src + 16 * c.rate - 1 - p.tile_words;
+                                else if (hasinit_i) ps = init_i + c.p;
+                                if (ps) cp_async4(pd, ps); else *pd = 0;
+                            }
+                        }
                     }
                 };
                 // The 32 stream bits before the half's first word, for every row
@@ -795,6 +852,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         // MODE 2 reads one projection: both halves map alike.
                         cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
+                        if constexpr (PR) continue;                // the word rides the ring
                         if (8 * j * c.rate >= 32) continue;
                         const int wr0 = 2 * c.rate * t64_h[h];
                         const int32_t* wcol = tbase_h[h] + c.cw0;
@@ -896,20 +954,22 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                     const uint16_t* T0 = tab;
                     const uint16_t* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
+                    const int32_t* prevp[2] = {pring + (kc % PRING_STAGES) * PRING_INTS + m,
+                                               pring + (kc % PRING_STAGES) * PRING_INTS + BK + m};
                     uint32_t packed[2][4];
                     if constexpr (!TWO) {
-                        decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        decode_two<FP8, RL, RL, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
                     } else if constexpr (MODE == 2) {
                         // one column in both halves: one rate
-                        if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        if (cm_cur[0].lo) decode_two<FP8, RL, RL, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RH, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
                     } else {
                         // gate and up share the pair, not the column order
                         const bool lo0 = cm_cur[0].lo, lo1 = cm_cur[1].lo;
-                        if (lo0 && lo1) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else if (lo0) decode_two<FP8, RL, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else decode_two<FP8, RH, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        if (lo0 && lo1) decode_two<FP8, RL, RL, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
+                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
+                        else if (lo0) decode_two<FP8, RL, RH, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RL, PR>(Wc, prev_cur, prevp, j, T0, T1, ws, packed);
                     }
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
@@ -1112,7 +1172,7 @@ int max_dynamic_smem_bytes(int device) {
 
 template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
 void launch_pair(const Params& p, int grid, cudaStream_t stream) {
-    const int smem = smem_bytes(MODE, p.slot_words);
+    const int smem = launch_smem_bytes(MODE, p.slot_words);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
     if (smem > attributed) {
         C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>,
@@ -1168,7 +1228,7 @@ void check_words(const torch::Tensor& words, const char* name) {
 void check_slot(int mode, int64_t slot_words, const torch::Tensor& on) {
     TORCH_CHECK(slot_words % 4 == 0 && slot_words >= 4 && slot_words <= SLOT_WORDS_MAX,
                 "slot_words must be a multiple of 4 in [4, ", SLOT_WORDS_MAX, "]");
-    const int need = smem_bytes(mode, (int)slot_words);
+    const int need = launch_smem_bytes(mode, (int)slot_words);
     const int have = max_dynamic_smem_bytes(on.device().index());
     TORCH_CHECK(need <= have, "the ", (mode == 2 ? "down/dense" : "gate/up"), " launch at ", slot_words,
                 "-word slots needs ", need, " bytes of dynamic shared memory per block; device ",
@@ -1509,6 +1569,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
+    m.attr("PRING_BYTES") = PRING_BYTES;
     m.attr("BDESC_INTS") = BDESC_INTS;
     m.attr("WINDOW_BITS") = WINDOW_BITS;
     m.def("smem_bytes", [](int64_t mode, int64_t slot_words) { return (int64_t)smem_bytes((int)mode, (int)slot_words); },

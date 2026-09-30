@@ -168,8 +168,23 @@ def slot_words_for_pair(pair: torch.Tensor) -> int:
 
 
 def smem_bytes(mode: int, slot_words: int) -> int:
-    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
+    """The published layout's dynamic shared memory for the launch of ``mode``
+    at ``slot_words``-word slots: what the lane's admitted rates derive from."""
     return SMEM_FIXED[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+
+
+#: The prev-word ring (``prev_ring`` in ``routed_fused_window.cu``,
+#: tessera#737): each column's previous stream word for WORD_STAGES chunks,
+#: added after the word stages only where the launch still fits the target's
+#: block, so it never changes which launches fit (``ROUTED_LANE_RATES``).
+PRING_BYTES = WORD_STAGES * 2 * BK * 4
+
+
+def launch_smem_bytes(mode: int, slot_words: int) -> int:
+    """The dynamic shared memory the launch actually takes: :func:`smem_bytes`
+    plus the prev-word ring where it fits sm_121's block."""
+    base = smem_bytes(mode, slot_words)
+    return base + (PRING_BYTES if base + PRING_BYTES <= SM121_MAX_DYNAMIC_SMEM else 0)
 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
@@ -199,7 +214,7 @@ def smem_reason(mode: int, slot_words: int, device: torch.device, family: str) -
     except Exception:  # noqa: BLE001 -- the build's failure is reported by from_bundles
         return None
     index = device.index if device.index is not None else torch.cuda.current_device()
-    need, have = smem_bytes(mode, slot_words), int(lib.max_dynamic_smem_bytes(index))
+    need, have = launch_smem_bytes(mode, slot_words), int(lib.max_dynamic_smem_bytes(index))
     if need <= have:
         return None
     what = "gate/up" if mode != 2 else "down/dense"
@@ -357,7 +372,7 @@ def _ext(family: str):
                        ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("WORD_STAGES", WORD_STAGES), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
-                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]),
+                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]), ("PRING_BYTES", PRING_BYTES),
                        # the gate/up rates the library instantiates ARE the ones the host admits
                        ("GATE_UP_RATE_MAX", max(ROUTED_LANE_RATES))):
         if getattr(lib, name) != want:
