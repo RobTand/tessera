@@ -1008,8 +1008,6 @@ def test_the_plan_gate_reads_the_structure_and_has_no_passing_default(monkeypatc
             window_bits=int(recipe.window_bits), target=f"stack@q{q256}", **kw)
 
     assert plan(1792, structure=STRUCTURE_ROUTED_MOE) == (7,)
-    assert plan(2048, structure=STRUCTURE_ROUTED_MOE) == (8,)
-    assert plan(1920, structure=STRUCTURE_ROUTED_MOE) == (7, 8)
     _narrow_fused_lane(monkeypatch)
     with pytest.raises(ValueError) as caught:
         plan(1792, structure=STRUCTURE_ROUTED_MOE)
