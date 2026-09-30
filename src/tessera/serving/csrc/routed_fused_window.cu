@@ -124,8 +124,17 @@ constexpr int WORD_STAGES = 3;
 // rows stalled on it, and every other producer waited for them at the
 // producers' barrier.  A ``prefetch.global.L1`` of the row A_PREFETCH chunks
 // ahead brings the line in while earlier chunks decode.
+//
+// Measured on the E4M3 instruction's routed launches only (recorded prefill
+// routing, drift-symmetric, output bitwise equal; pf4one-ab-20260930T*): at
+// distance 4 the one-run R1024 launch ran at 0.847 (M 512) and 0.861
+// (M 2048) of no prefetch, where removing the A load altogether bounds it at
+// 0.82-0.83; on the two-run R1088 launch the same prefetch cost 2.7-4.2%,
+// and gated off there it measured 1.000/0.998.  So the kernel prefetches on
+// the launches that measurement covers -- the E4M3 instruction's routed
+// one-run pairs (``PREFETCH_A``) -- and nowhere else.
 #ifndef TESSERA_ROUTED_FUSED_A_PREFETCH
-#define TESSERA_ROUTED_FUSED_A_PREFETCH 0
+#define TESSERA_ROUTED_FUSED_A_PREFETCH 4
 #endif
 constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
 static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
@@ -608,6 +617,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT>;
+    constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
     // One A tile of BMT rows, and the consumers' rows: two warp rows of
     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
     // tile, two per row.
@@ -997,7 +1007,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
                 load_a(kc0, a_cur);
-                if constexpr (A_PREFETCH > 0) {
+                if constexpr (PREFETCH_A) {
                     #pragma unroll
                     for (int d = 2; d < A_PREFETCH; ++d)
                         if (d < nkc) prefetch_a(kc0 + d);
@@ -1030,7 +1040,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     } else {
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
-                    if constexpr (A_PREFETCH > 0) {
+                    if constexpr (PREFETCH_A) {
                         if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
