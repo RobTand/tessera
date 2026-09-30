@@ -179,6 +179,31 @@ work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a -cubin`, the decode loop):
 - Measured cycles per weight and power are timed by the same PB action
   `f8f09d49`; this section is updated when it lands.
 
+## The FP4 MMA's scale-register layout (pinned)
+
+`experiments/t4_code/fp4_mma_layout.cu`, PB `bd932440` (GB10, rc 0, raw JSON
+`/mnt/shared/tessera-measurements/t4-code-20260930/fp4-layout1/`). The fused
+lane issues `mma.sync…kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64…ue4m3`
+from inline PTX; nothing else in the tree runs it below Triton's
+`tl.dot_scaled`.
+
+- **Discovery.** Each experiment doubles one byte of one lane's scale
+  register and reads which output rows (SFA) or columns (SFB) change, one k16
+  group at a time. With the thread and byte selectors at 0 (lane = 4g + t):
+  - SFA: lane (g, t=0) byte b scales row g, k16 group b; lane (g, t=1) byte b
+    scales row g + 8, group b. Lanes t = 2, 3 are ignored.
+  - SFB: lane (g, t=0) byte b scales column g, group b. Lanes t = 1, 2, 3 are
+    ignored.
+  - No anomalies; every (row, group) and (column, group) is covered once.
+- **Verification.** 4096 random trials (524,288 outputs): every E2M1 code,
+  UE4M3 scales from 0.25 to 4. All partial sums are exact in fp32, and all
+  outputs equal the double-precision reference bit for bit. That confirms the
+  A, B and D fragment layouts (the sm80 int4 `m16n8k64` ones) as well. It also
+  means the lane's oracle can demand bitwise equality wherever sums are exact.
+- **Build flag.** Compile with `-gencode arch=compute_121a,code=sm_121a`.
+  With nvcc 13.0, `-arch=sm_121a` also embeds `compute_121` PTX, and ptxas
+  refuses the block-scaled MMA there.
+
 ## Options for the T-4 wire
 
 1. **Window body at every rung (q256 128 to 1024), TCQ retired from T-4.**
