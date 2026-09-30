@@ -532,6 +532,17 @@
      }
     ],
     "native_terminal_q256": 4096,
+   "allowable_rungs": {
+    "rule": "window_rate_set",
+    "code_arity": 1,
+    "range_q256": [256, 3584],
+    "step_q256": 1,
+    "run_tables": [[1], [1, 2], [2], [2, 3], [3], [3, 4], [4], [4, 5], [5], [5, 6], [6], [6, 7], [7], [7, 8], [8], [8, 9], [9], [9, 10], [10], [10, 11], [11], [11, 12], [12], [12, 13], [13], [13, 14], [14]],
+    "excluded_run_tables": [],
+    "excluded_q256": [],
+    "wire": {"body": "window", "span": 1, "plane": "channel", "window_bits": 14, "seed": 0, "sigma": null, "channel_sigma": 1.0},
+    "evidence": ["docs/measurements/2026-09-30-t16-run-tables.md", "docs/measurements/2026-09-30-t16-dense-rates-9-14.md"]
+   },
    "residency_modes": [
     "resident",
     "streamed"
@@ -843,6 +854,7 @@
      1024,
      1088
     ],
+    "run_tables": [[3, 4], [4], [4, 5]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -898,6 +910,7 @@
      1024,
      1088
     ],
+    "run_tables": [[3, 4], [4], [4, 5]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -1066,6 +1079,7 @@
     "rungs_q256": [
      1024
     ],
+    "run_tables": [[4]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -1114,6 +1128,7 @@
     "rungs_q256": [
      1024
     ],
+    "run_tables": [[4]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -1454,6 +1469,7 @@
      1024,
      1088
     ],
+    "run_tables": [[3, 4], [4], [4, 5]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -1506,6 +1522,7 @@
      1024,
      1088
     ],
+    "run_tables": [[3, 4], [4], [4, 5]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -1666,6 +1683,7 @@
     "rungs_q256": [
      1024
     ],
+    "run_tables": [[4]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -1714,6 +1732,7 @@
     "rungs_q256": [
      1024
     ],
+    "run_tables": [[4]],
     "activation_contract": "bf16_unquantized",
     "executes": [
      {
@@ -4279,7 +4298,7 @@
   }
  },
  "changelog": [
-  {"contract_version": 51, "date": "2026-09-30", "change": "The value library's dense launch reads column rates 9..14 (Refs #750, item 4 of the T-16 worker): tessera_routed_fused_value's lane.requires.column_rates moves from [1..8] to [1..14]; its column_rates_routed_moe stays [1..8], so a routed stack at 9..14 keeps the compact adapter, and the two E4M3 libraries' lanes do not move. THE KERNEL: csrc/routed_fused_window.cu's RATE_MAX is 14 on the value library and 8 on the E4M3 ones (their grids' codes are 8 bits) and bounds the dense launch only; ROUTED_RATE_MAX (8) bounds both routed launches, and each library publishes both. The dense launch instantiates the one-run rates 9..14 and the pairs 8/9..13/14 at three word stages: the 28-word slot of rates 13 and 14 takes 80,144 B of sm_121's 101,376 B opt-in block. The two-table gate/up launch cannot hold rate 9's 20-word slot even at two stages (101,840 B), and the routed down launch reads the same run tables as its stack's gate/up, so neither is built above 8. decode_rows re-aligns an NZ-word window per lane (three words up to rate 8, four at 9..12, five at 13 and 14). Rates 1..8 keep the three named window words and statements of v49's kernel, so their SASS does not move: a host nvcc build of each library against v49's source gives E4M3 107 of 107 and E4M3-MMA 137 of 137 kernels byte-identical, and value 76 of 77, the dense (7, 8) pair differing by one reassociated shared-memory address with equal instruction and register counts (docs/measurements/2026-09-30-t16-dense-rates-9-14.md). Rates 15 and 16 are excluded by geometry: their 15- and 16-bit windows need 64 KB and 128 KB tables, which leave the one-table block one word stage and none. routed_fused.DENSE_RATE_MAX and dense_rates restate the ceiling and the library is checked against them at load. THE LOADER: compact_prep.prepare_window_compact takes the caller's rate bound; the dense route passes DENSE_WINDOW_RATE_MAX (14) and the routed intake keeps WINDOW_GEMM_RATE_MAX (8). The Triton dense window GEMM already decodes every rate its window holds, so a dense unit at 9..14 whose shape the fused identity refuses keeps the Triton lane. serving_parts.resident_mode_bytes prices a native dense unit up to the same bound. THE CELLS: no cell's rungs reach rate 9, so no cell's derived executes changes and no rung is attested by this entry; a dense census at those rates is what attests them. ADDITIVE for a lane reader: a dense module at rates 9..14 that the value lane refused before is admitted; no other lane.requires field, cell, rung, route, flag, format row, attested_wire stamp, TP/EP bound, activation-quantizer attestation or served byte moves, and lane_eligibility.schema stays v10."},
+  {"contract_version": 51, "date": "2026-09-30", "change": "The value library's dense launch reads column rates 9..14 (Refs #750, item 4 of the T-16 worker): tessera_routed_fused_value's lane.requires.column_rates moves from [1..8] to [1..14]; its column_rates_routed_moe stays [1..8], so a routed stack at 9..14 keeps the compact adapter, and the two E4M3 libraries' lanes do not move. THE KERNEL: csrc/routed_fused_window.cu's RATE_MAX is 14 on the value library and 8 on the E4M3 ones (their grids' codes are 8 bits) and bounds the dense launch only; ROUTED_RATE_MAX (8) bounds both routed launches, and each library publishes both. The dense launch instantiates the one-run rates 9..14 and the pairs 8/9..13/14 at three word stages: the 28-word slot of rates 13 and 14 takes 80,144 B of sm_121's 101,376 B opt-in block. The two-table gate/up launch cannot hold rate 9's 20-word slot even at two stages (101,840 B), and the routed down launch reads the same run tables as its stack's gate/up, so neither is built above 8. decode_rows re-aligns an NZ-word window per lane (three words up to rate 8, four at 9..12, five at 13 and 14). Rates 1..8 keep the three named window words and statements of v49's kernel, so their SASS does not move: a host nvcc build of each library against v49's source gives E4M3 107 of 107 and E4M3-MMA 137 of 137 kernels byte-identical, and value 76 of 77, the dense (7, 8) pair differing by one reassociated shared-memory address with equal instruction and register counts (docs/measurements/2026-09-30-t16-dense-rates-9-14.md). Rates 15 and 16 are excluded by geometry: their 15- and 16-bit windows need 64 KB and 128 KB tables, which leave the one-table block one word stage and none. routed_fused.DENSE_RATE_MAX and dense_rates restate the ceiling and the library is checked against them at load. THE LOADER: compact_prep.prepare_window_compact takes the caller's rate bound; the dense route passes DENSE_WINDOW_RATE_MAX (14) and the routed intake keeps WINDOW_GEMM_RATE_MAX (8). The Triton dense window GEMM already decodes every rate its window holds, so a dense unit at 9..14 whose shape the fused identity refuses keeps the Triton lane. serving_parts.resident_mode_bytes prices a native dense unit up to the same bound. THE RULE (lane schema v11, #750): TESSERA_BF16_K1 publishes allowable_rungs, the second family to do so: window_rate_set, code_arity 1, range_q256 [256, 3584], step_q256 1, run_tables every one-run rate [1]..[14] and every adjacent pair [1,2]..[13,14], excluded_run_tables [] and excluded_q256 [] (the exclusion verdict on two-run tables is pending on #750, as on the E4M3 row), wire the BF16 recipe every attested BF16 rung is stamped with (window, span 1, channel plane, window_bits 14, seed 0, sigma null, channel_sigma 1.0), evidence docs/measurements/2026-09-30-t16-run-tables.md and docs/measurements/2026-09-30-t16-dense-rates-9-14.md. The range stops at 3584 because the wire does: above rate 14 export.wire_recipe widens the window table to the rate (15 and 16 bits), which is a different wire and the geometry that excludes rates 15 and 16. The oracle behind the run tables: tests/test_routed_fused_window.py (both routed launches, rates 1..8 and every pair, v49) and tests/test_dense_fused_window.py (the dense identity, rates 1..14 and every pair: one-hot bitwise decode, the derived bound, graph replay, and random fractional mixes placed at random inside every pair up to 13/14). THE RULE IS FAMILY-WIDE; COVERAGE IS PER CELL. A cell's run tables are derived from its census rungs, and the routed launches read rates 1..8 only, so no routed_moe cell can carry a table above [8]: a rung the rule admits is not servable in every structure, and a consumer asks contract.cell_covers_rung of the cell for its structure. THE CELLS: the eight BF16 cells carry their derived run_tables. The four dense resident cells (decode and batch, and their runtime_1bd4e905 twins) cover [[3,4],[4],[4,5]], so a dense BF16 module is exportable at every rung of 769..1279 (511 rungs) where v50 named their census rungs only. The four routed_moe cells cover [[4]], which is still 1024 alone (a one-run table has one rung); per the lead's ruling on #750, routed T-16 stays at [4] until a release plan names another table. No cell's rungs reach rate 9, so no rung above 8 is covered yet; a dense census at those rates is what covers them. ADDITIVE for a v11 lane reader: a dense module at rates 9..14 that the value lane refused before is admitted, and dense BF16 rungs of 769..1279 are covered; no other lane.requires field, route, flag, executes list, attested_wire stamp, TP/EP bound, activation-quantizer attestation or served byte moves. NOT ADDITIVE for a reader that assumes only TESSERA_E4M3_K1 publishes a rule."},
   {"contract_version": 50, "date": "2026-09-30", "change": "Allowable rungs become a RULE over run tables (lane_eligibility.schema v10 -> v11, tessera#750; Rob 2026-09-30: every valid rate is allowable except ones whose geometry makes them intrinsically worse). A window-grammar rung is a mix of at most two adjacent column rates -- its run table, grammar.rate_set of its per-code root -- and the fused kernels are instantiated per run table, the mix fraction and the upper-rate columns' placement being runtime data; so the kernel oracle attests a VARIANT and every rung of that run table is the same kernel. NEW formats[] FIELD allowable_rungs (optional; on TESSERA_E4M3_K1 only): {rule: window_rate_set, code_arity 1 (the grid's weights per code, validated, so a reader resolves a rung to its run table as rate_set(q256 * code_arity / 256) without knowing the grid), range_q256 [256, 2048], step_q256 1, run_tables [1] [1,2] [2] ... [7,8] [8], excluded_run_tables [], excluded_q256 [], wire (the one wire.recipes entry every allowable rung is cut on), evidence}. A rung q is allowable when it lies in range on step, is not in excluded_q256, and its run table is in run_tables and not in excluded_run_tables (contract.rung_allowable); an unknown rule admits nothing. The run tables are the ones tests/test_routed_fused_window.py and tests/test_dense_fused_window.py attest on GPU: every one-run rate and every adjacent pair, bitwise one-hot decode on both routed launches and the dense identity, within the derived bounds, and graph replay, plus random fractional mixes inside every pair placed at random (docs/measurements/2026-09-30-t8-run-tables.md). NEW CELL FIELD run_tables (v11): the run tables of the cell's census rungs that the family's rule admits, DERIVED by the validator and refused when it differs (contract.derived_cell_run_tables). A cell covers a rung when the rung is a census rung (rungs_q256) or the rule admits it and its run table is one of the cell's (contract.cell_covers_rung, the one predicate scheme.refuse_unserveable_wire, the census join and export_serving's attested_by read). The ten E4M3 cells: dense decode/batch (streamed) [[4]]; dense and routed_moe decode/batch resident, on image f8dbe1a0 and on the v48 nightly image, [[3,4],[4],[4,5]]. So a routed E4M3 stack is exportable at every rung of 769..1279 (511 rungs) where v47 named 8, and dense resident likewise; rungs outside a cell's run tables still need a census. UNCHANGED: attested_rungs_q256, attested_wire and cell rungs_q256 keep listing the census rungs, one stamp per census rung; an attested rung the rule admits must be stamped with the rule's wire (validated). No route, flag, launch, executes list, TP/EP bound or served byte moves. NOT ADDITIVE for a reader that refuses unknown cell fields or schemas outside v5..v10 (PrismaQuant's lane_eligibility reader): it must accept v11 and run_tables before its pin moves past v49."},
   {"contract_version": 49, "date": "2026-09-30", "change": "The 16-bit libraries' routed-expert launch reaches rates 7 and 8 (Refs #750, WP7): lane.requires.column_rates_routed_moe moves from [1..6] to [1..8] on tessera_routed_fused_e4m3 and tessera_routed_fused_value, the value tessera_routed_fused_mma_e4m3 published at v46. THE KERNEL: csrc/routed_fused_window.cu instantiates each launch at word_stages(mode, slot_words) -- WORD_STAGES (3) where the slot's word ring fits sm_121's 101,376 B opt-in block, else WORD_STAGES_MIN (2) -- and the two-table gate/up launch at the 16-word slot of rates 7 and 8, 103,888 B at three stages, runs at two in 99,792 B: the producers wait for the current chunk's words (cp_async_wait<0>), pass the producer barrier and only then issue the next chunk's, so no chunk overwrites a stage the decode still reads; the descriptor ring keeps its four stages. Every other instantiation keeps three stages; its SASS is identical to v48's (the kernel v47 published; v48 moved no kernel) on the value library (69/69) and the E4M3 instruction's (137/137), and on the E4M3-f16 library 98/99 are identical and one differs by a commuted LOP3.LUT operand pair and a .reuse hint (accepted on #750). routed_fused.word_stages and smem_bytes restate the layout, the library publishes WORD_STAGES_MIN and word_stages and is checked against them at load, and ROUTED_LANE_RATES is derived from the inequality at the instantiation's own stages (1..8). THE ORACLE: the one-hot decode oracle, the derived-bound oracle and CUDA-graph capture at every one-run rate 1..8 and every adjacent pair, on all three libraries and both stack builds, PB ee6b92ed: 297 passed, 0 failed, 0 skipped; a TP2 rank-1 test cuts real encoded wires with prepare_window_compact and holds both fused launches to the whole unit's rank-1 rows bitwise at every such rung (tessera#729). THE CELLS: no cell's rungs reach rate 7 or 8 on a routed structure, so no cell's derived executes changes and no rung is attested by this entry; a routed census at those rates is what attests them. The export follows: routed_fused.fused_routed_unit_shape_refusal admits a 16-bit routed unit at rate 7 or 8, and export_serving.routed_stack_resident_bytes prices it with the fused lane's tables. ADDITIVE for a lane reader: a rung the 16-bit routed launch refused at v47 is admitted; no other lane.requires field, cell, rung, route, flag, format row, attested_wire stamp, TP/EP bound, activation-quantizer attestation or served byte moves, and lane_eligibility.schema stays v10."},
   {"contract_version": 48, "date": "2026-09-30", "change": "Eight GLM cells on the vLLM nightly image the GLM-5.3 release serves on (tessera#702): localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a (eugr nightly 155ce16b plus the nccl230 layer; vLLM 0.30.1rc1.dev336+gaf5b4857e.d20260929, torch 2.13.0+cu130). WHAT WAS WRONG: every GLM cell named image f8dbe1a0 (vLLM 0.28.1rc1.dev397 with the GLM53 NoPE plugin and vLLM's CUSTOM attention), and a cell is a receipt from ONE image, so a serve on the nightly resolved all of its Tessera modules to no cell. WHAT WAS MEASURED: one TP1 eager route census of the u1 stub B on the nightly, resident, with the NoPE plugin off and the image's own FLASHINFER_MLA_SPARSE_SM120 attention, fp8_ds_mla KV, triton MoE, FlashInfer autotune off, --require-lane tessera_routed_fused_mma_e4m3 --require-lane tessera_routed_fused_value --expect-modules 21: verdict served, problems [], 21 modules in both phases, both lanes engaged, and every module on exactly the launch pair the v47 f8dbe1a0 receipt of the same stub recorded (experiments/results/glm53_u1_stub_b_nightly_tp1_eager_census.json and its .log, beside experiments/results/glm53_u1_stub_b_config.json; replayed by tests/test_glm_nightly_census_cells.py). WHAT MOVED ON THE TABLE: tessera_{e4m3,bf16}_k1_{dense,routed_moe}_sm121_{decode,batch}_resident twins on the nightly image, each id carrying the derived runtime suffix because the f8dbe1a0 cells hold the bare scope ids, each on exactly the rungs stub B carried (E4M3 dense 832/960/1024/1088, BF16 dense 832/880/960/1024/1088, E4M3 routed 896/928/1024/1088, BF16 routed 1024; the release artifact's 1024 in all four), each naming the launches the validator derives, which are its twin's, grade route_only, serve flag TESSERA_SERVE_MODE=resident. EAGER ONLY, deliberately: no CUDA-graph serve of GLM-5.3 on this image computes eager's arithmetic. vLLM's default compile mode switches the norm operators, and with mode NONE the graph serve still departs from context 5 on, which vLLM's source attributes to a FULL capture freezing the GLM indexer's logits-and-top-k branch (captured at max_seq_len = max_model_len) where eager takes the short-context causal fill, so decode sums the same tokens in another order (the controlled pair at max_model_len 2048 is not yet run); Tessera's launches are identical in both. The receipt and the options are docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md. No existing cell, rung, route, launch, grade or schema moved: lane-eligibility schema stays v10, and a v10 reader admits the new cells with no change of its own."},

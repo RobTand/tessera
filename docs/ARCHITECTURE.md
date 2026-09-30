@@ -12,8 +12,16 @@ two-table gate/up launch cannot hold rate 9's slot even at two stages
 `column_rates_routed_moe` 1..8. `compact_prep.prepare_window_compact` takes the
 caller's bound: 14 for a dense unit (`DENSE_WINDOW_RATE_MAX`), 8 for a routed
 one. Rates 15 and 16 are excluded by geometry: their 64 KB and 128 KB tables
-leave the one-table block one word stage and none. No cell's rungs reach rate
-9, so a dense census at those rates is still needed to attest them.
+leave the one-table block one word stage and none. v51 also gives
+`TESSERA_BF16_K1` an `allowable_rungs` rule: run tables [1] to [14] and every
+adjacent pair, range 256..3584 (above rate 14 the wire widens its table), nothing
+excluded yet. The rule is family-wide, but coverage is per cell: the routed
+launches read 1..8, so no routed cell can carry a table above [8]. The dense BF16
+cells now cover every rung of 769..1279; the routed ones still cover 1024 alone.
+No cell's rungs reach rate 9, so a dense census at those rates is still needed
+to cover them. Receipts: [dense rates 9 to
+14](measurements/2026-09-30-t16-dense-rates-9-14.md) and [the T-16 run
+tables](measurements/2026-09-30-t16-run-tables.md).
 
 Re-stamped 2026-09-30 for allowable rungs as a rule (contract v50,
 `lane_eligibility.schema` v11, tessera#750). A window-grammar rung mixes at

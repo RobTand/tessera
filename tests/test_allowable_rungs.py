@@ -71,6 +71,55 @@ def test_the_e4m3_rule_admits_every_rung_of_its_attested_run_tables(contract):
         assert {k: v for k, v in item.items() if k != "q256"} == rule["wire"]
 
 
+BF16 = "TESSERA_BF16_K1"
+BF16_ROUTED = "tessera_bf16_k1_routed_moe_sm121_batch_resident"
+BF16_DENSE = "tessera_bf16_k1_dense_sm121_batch_resident"
+
+
+def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
+    """Contract v51: Tessera-16's rule attests every one-run rate 1..14 and
+    every adjacent pair, the rates the value library's dense launch reads,
+    over 256..3584.  The range stops where the wire does: above rate 14 the
+    exporter widens the window table to the rate, so 3585 would be cut on
+    another wire (and rates 15 and 16 are excluded by geometry)."""
+    row = _row(contract, BF16)
+    rule = row["allowable_rungs"]
+    assert rule["rule"] == "window_rate_set" and rule["code_arity"] == 1
+    assert rule["range_q256"] == [256, 3584] and rule["step_q256"] == 1
+    tables = [tuple(t) for t in rule["run_tables"]]
+    assert tables == sorted({(r,) for r in range(1, 15)} | {(r, r + 1) for r in range(1, 14)})
+    assert rule["excluded_run_tables"] == [] and rule["excluded_q256"] == []
+    assert [q for q in range(256, 4097) if rung_allowable(row, q)] == list(range(256, 3585))
+    assert rung_rates(row, 3584) == (14,) and rung_rates(row, 3585) == (14, 15)
+    for item in row["attested_wire"]:
+        assert {k: v for k, v in item.items() if k != "q256"} == rule["wire"]
+
+
+def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(contract):
+    """The rule is family-wide; coverage is per cell.  The value library's
+    dense launch reads 1..14 and its routed launches 1..8, so a routed_moe
+    cell's run tables stay at or below [8], and a rung the rule admits is
+    covered only by a cell of a structure whose census reached its table."""
+    row = _row(contract, BF16)
+    by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
+    requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
+    dense_rates = set(requires["column_rates"])
+    routed_rates = set(requires["column_rates_routed_moe"])
+    assert dense_rates == set(range(1, 15)) and routed_rates == set(range(1, 9))
+    assert {r for t in row["allowable_rungs"]["run_tables"] for r in t} == dense_rates
+    cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == BF16]
+    assert cells
+    for cell in cells:
+        rates = {r for t in cell.get("run_tables", ()) for r in t}
+        assert rates <= (routed_rates if cell["structure"] == "routed_moe" else dense_rates), \
+            cell["id"]
+    routed, dense = _cell(contract, BF16_ROUTED), _cell(contract, BF16_DENSE)
+    assert routed["run_tables"] == [[4]] and dense["run_tables"] == [[3, 4], [4], [4, 5]]
+    assert [q for q in range(256, 3585) if cell_covers_rung(routed, q, row)] == [1024]
+    assert [q for q in range(256, 3585)
+            if cell_covers_rung(dense, q, row)] == list(range(769, 1280))
+
+
 def test_a_rung_resolves_to_its_run_table():
     row = {"grid": "E4M3", "native_terminal_q256": 2048}
     assert rung_rates(row, 1024) == (4,)
