@@ -79,8 +79,11 @@ MODULES = {
     "q_a_proj": ([("q_a_proj", 1536)], 4096),
     "kv_a_proj_with_mqa": ([("kv_a_proj_with_mqa", 512)], 4096),
     "q_b_proj": ([("q_b_proj", 8192)], 1536),
+    # vLLM's merged MLA input (``fused_qkv_a_proj``, replicated): two roles, one
+    # module, so the E4M3 libraries take it in one launch (tessera#750 WP2).
+    "fused_qkv_a": ([("q_a_proj", 1536), ("kv_a_proj_with_mqa", 512)], 4096),
 }
-MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj"}
+MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "fused_qkv_a"}
 SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
 
 
