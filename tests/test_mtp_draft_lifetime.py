@@ -546,3 +546,15 @@ def test_interface_table_pins_every_touched_module():
         assert all(len(digest) == 64 and int(digest, 16) >= 0 for digest in interface.digests)
     # Distinct interfaces are distinct sources; one digest set cannot match both.
     assert len({interface.digests for interface in lifetime._INTERFACES}) == len(names)
+
+
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY, {"patch_sources": False}], indirect=True,
+                         ids=["fd4a15126", "nightly", "declined"])
+def test_draft_load_rename_is_the_recognized_interfaces(draft_runtime):
+    """tessera#749: only the nightly's source renames the checkpoint in load_weights."""
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+    expected = {"fd4a15126": None, "nightly-20260929": ("model.language_model.", "model.")}
+    if lifetime._RESOLVED[1] is None:
+        assert lifetime.draft_load_rename() is None
+    else:
+        assert lifetime.draft_load_rename() == expected[draft_runtime.interface]

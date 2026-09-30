@@ -52,11 +52,18 @@ class _Interface:
     ``shared_head.head`` ParallelLMHead that target sharing then discards. The
     nightly builds ``SharedHead(defer_lm_head=True)`` (no head storage), so only
     the draft ``embed_tokens`` is left to intercept there.
+
+    ``draft_load_rename``: the checkpoint-prefix rule the draft class applies
+    inside ``load_weights`` without declaring an ``hf_to_vllm_mapper``, so vLLM
+    never hands it to the quant config (``TesseraConfig._module_lookup`` adopts
+    it). None where the class declares its mapper (fd4a15126's image carries
+    ``Glm5NextMTP.hf_to_vllm_mapper``).
     """
     name: str
     glm_module: str
     digests: tuple[str, ...]  # the GLM MTP module, then _COMMON_MODULES
     draft_heads: bool
+    draft_load_rename: tuple[str, str] | None = None
 
 
 _INTERFACES = (
@@ -87,7 +94,11 @@ _INTERFACES = (
          "01576027a0262d2135800aab0ddb2fe2701fae2177c33f8ad2426240b6e04073",
          "5291c330c4ed5634a9ea1d535364c26162b60251aa2af03fd409b88c34d836e2",
          "e6e3477d926deb12fd1b50d4e6a7d649f97a5c2b6524cc2e4a604c80bb653f20"),
-        draft_heads=False),
+        draft_heads=False,
+        # common/mtp.py load_weights: ``if name.startswith("model.language_model."):
+        # name = name.replace("model.language_model.", "model.", 1)``; the class
+        # declares no hf_to_vllm_mapper.
+        draft_load_rename=("model.language_model.", "model.")),
 )
 
 
@@ -347,6 +358,17 @@ def _wrap_load(original: Any, *, returns_draft: bool, draft_heads: bool):
         finally:
             _LOAD.reset(token)
     return load
+
+
+def draft_load_rename() -> tuple[str, str] | None:
+    """The recognized GLM MTP draft's in-code checkpoint rename, if it has one.
+
+    None when the running vLLM matches no inspected interface (the draft lookup
+    then refuses as it always did), or when the class declares its own mapper.
+    """
+    with _INSTALL_LOCK:
+        match = _supported_interface()
+    return None if match is None else match[0].draft_load_rename
 
 
 def install_for_current_config() -> None:

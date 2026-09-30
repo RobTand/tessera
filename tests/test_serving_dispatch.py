@@ -444,6 +444,96 @@ def test_glm_mtp_bare_draft_prefix_resolves_declared_expert(monkeypatch):
     assert calls[0][0][1] == actual
 
 
+def _nightly_draft_rename(monkeypatch, rename=("model.language_model.", "model.")):
+    """tessera#749: the nightly Glm5NextMTP declares no mapper; its load_weights
+    strips ``model.language_model.`` in code, and only a source-recognized
+    interface says so."""
+    from tessera.serving import mtp_draft_lifetime
+
+    calls = []
+    monkeypatch.setattr(mtp_draft_lifetime, "draft_load_rename",
+                        lambda: calls.append(1) or rename)
+    return calls
+
+
+def test_glm_mtp_nightly_draft_without_mapper_resolves_ignored_shared_linear(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch, start=8)
+    source = "model.language_model.layers.8.mlp.shared_experts.gate_up_proj"
+    actual = "model.layers.8.mlp.shared_experts.gate_up_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())  # the only mapper vLLM hands us
+    calls = _nightly_draft_rename(monkeypatch)
+    assert type(config.get_quant_method(_layer(), actual)).__name__ == "UnquantizedLinearMethod"
+    # The body table stays public; the draft view is the adopted second one.
+    assert "language_model.model.layers.8.mlp.shared_experts.gate_up_proj" in config.ignore
+    assert len(config._mapped_views) == 2
+    config.get_quant_method(_layer(), actual)
+    assert len(calls) == 1, "adopted once, not re-resolved per layer"
+
+
+def test_glm_mtp_nightly_draft_without_mapper_resolves_declared_expert(monkeypatch):
+    from tessera.serving import moe_route
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch, start=8)
+    source = "model.language_model.layers.8.mlp.experts"
+    actual = "model.layers.8.mlp.experts"
+    config = _resolved(_config(_moe_scheme(), targets=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    _nightly_draft_rename(monkeypatch)
+    calls = []
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or object())
+    assert config.get_quant_method(object.__new__(RoutedExperts), actual) is not None
+    assert calls[0][0][1] == actual
+    assert "language_model.model.layers.8.mlp.experts" in config.target_scheme
+
+
+def test_glm_mtp_unrecognized_draft_without_mapper_still_refuses(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch, start=8)
+    source = "model.language_model.layers.8.mlp.shared_experts.gate_up_proj"
+    actual = "model.layers.8.mlp.shared_experts.gate_up_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    _nightly_draft_rename(monkeypatch, rename=None)
+    with pytest.raises(ValueError, match="declares no wire"):
+        config.get_quant_method(_layer(), actual)
+    assert len(config._mapped_views) == 1
+
+
+@pytest.mark.parametrize("context", ["none", "wrong_architecture", "wrong_method"])
+def test_glm_mtp_draft_rename_is_not_adopted_outside_a_glm_mtp_serve(monkeypatch, context):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    if context == "none":
+        from vllm import config as vllm_config
+        monkeypatch.setattr(vllm_config, "get_current_vllm_config_or_none", lambda: None)
+    elif context == "wrong_architecture":
+        _glm_mtp_context(monkeypatch, architecture="DeepSeekMTPModel", start=8)
+    else:
+        _glm_mtp_context(monkeypatch, method="eagle", start=8)
+    source = "model.language_model.layers.8.mlp.shared_experts.gate_up_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    calls = _nightly_draft_rename(monkeypatch)
+    with pytest.raises(ValueError, match="declares no wire"):
+        config.get_quant_method(_layer(), "model.layers.8.mlp.shared_experts.gate_up_proj")
+    assert not calls and len(config._mapped_views) == 1
+
+
+def test_glm_mtp_draft_rename_waits_for_the_body_view(monkeypatch):
+    """Before any mapper, a rename must not become the public body table."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch, start=8)
+    source = "model.language_model.layers.8.mlp.shared_experts.gate_up_proj"
+    config = _resolved(_config(ignore=(source,)))
+    calls = _nightly_draft_rename(monkeypatch)
+    assert type(config.get_quant_method(_layer(), source)).__name__ == "UnquantizedLinearMethod"
+    assert not calls and config.ignore == (source,)
+
+
 @pytest.mark.parametrize("context", ["none", "missing_draft_config", "wrong_architecture",
                                       "wrong_text_type", "wrong_method", "wrong_index"])
 def test_glm_mtp_bare_draft_prefix_refuses_outside_its_draft_scope(monkeypatch, context):
