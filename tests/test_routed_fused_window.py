@@ -1401,17 +1401,22 @@ def _replays(fused, t=40, seed=31):
 def test_random_mixes_inside_every_pair_decode_exactly(family, r):
     """Every rung of the pair ``(r, r + 1)`` runs the pair's one kernel.  The
     rungs are on a step of 4 (256 and 576 columns realise them exactly), and
-    each expert's projection places its upper-rate columns at random, so the
+    each projection places its upper-rate columns at random -- one placement
+    per projection, which is what a grouped stack holds (``window_gemm_grouped``
+    refuses experts whose packed layouts differ), and a different one for gate
+    and up, whose column orders the gate/up launch maps separately -- so the
     block descriptors hold every in-block split from all-low to all-high."""
     for i, q256 in enumerate(_mix_rungs(r, 4, 7500 + 16 * r)):
         assert rate_set(Fraction(q256, 256), cap=8) == (r, r + 1), q256
 
-        def place(schedule, s, i=i):
-            return _shuffle(schedule, 97 * s + i)
+        def place(schedule, s, i=i, q256=q256):
+            projection = (s - 300) // 10            # _stacks: gate 300+e, up 310+e, down 320+e
+            return _shuffle(schedule, 7919 * q256 + 97 * projection + i)
 
         stacks = _stacks(family, q256=q256, place=place)
         assert {len(set(e.rates)) for e in stacks[0] + stacks[2]} == {2}, q256
-        assert len({e.rates for e in stacks[0]}) > 1, "the experts' placements should differ"
+        assert len({e.rates for e in stacks[0]}) == 1, "one placement per projection"
+        assert stacks[0][0].rates != stacks[1][0].rates, "gate and up should differ"
         for build in ("prepare", "axis"):
             _decode_exact(family, q256, build, place=place)
         _rate_bound(family, q256, place=place)
