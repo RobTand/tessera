@@ -791,3 +791,127 @@ def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
     diff = int((out != dn).sum())
     assert diff == 0, f"{what}: the forward differs from its staged composition in {diff} elements"
     print(f"ROUTED-RATE-BOUND {what} down/bound={ratio:.4f}")
+
+
+# --- the wide superblock (tessera#SB128) ------------------------------------------
+
+def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
+    """``superblock_rows`` reads host integers and the environment only (so a
+    captured forward records the width with its shapes): 128 routes only on
+    the E4M3 family's one-table launch, from ``WIDE_MIN_ROWS`` under ``auto``
+    or always under ``1``; 64 everywhere else.  The wide A region adds 8 KB,
+    which the one-table layout holds at every slot; the published formula and
+    the lane's rates do not move."""
+    monkeypatch.delenv(rf.ENV_WIDE, raising=False)
+    assert rf.superblock_rows(2, True, rf.WIDE_MIN_ROWS) == rf.BM_WIDE
+    assert rf.superblock_rows(2, True, rf.WIDE_MIN_ROWS - 1) == rf.BM
+    for mode in (0, 1):
+        assert rf.superblock_rows(mode, True, rf.WIDE_MIN_ROWS) == rf.BM
+    assert rf.superblock_rows(2, False, rf.WIDE_MIN_ROWS) == rf.BM
+    monkeypatch.setenv(rf.ENV_WIDE, "1")
+    assert rf.superblock_rows(2, True, 1) == rf.BM_WIDE
+    assert rf.superblock_rows(0, True, 1) == rf.BM and rf.superblock_rows(2, False, 1) == rf.BM
+    monkeypatch.setenv(rf.ENV_WIDE, "0")
+    assert rf.superblock_rows(2, True, rf.WIDE_MIN_ROWS) == rf.BM
+    monkeypatch.setenv(rf.ENV_WIDE, "yes")
+    with pytest.raises(GrammarError, match=rf.ENV_WIDE):
+        rf.superblock_rows(2, True, 1)
+    assert rf.SMEM_FIXED_DOWN_WIDE == rf.SMEM_FIXED[2] + 8192
+    for sw in (4, 8, 12, 16):
+        wide = rf.launch_smem_bytes(2, sw, rf.BM_WIDE)
+        assert wide == rf.launch_smem_bytes(2, sw) + 8192 <= rf.SM121_MAX_DYNAMIC_SMEM, sw
+    assert rf.smem_bytes(2, 16) == 70_928
+    assert rf.ROUTED_LANE_RATES == (1, 2, 3, 4, 5, 6)
+
+
+def _skewed(ids):
+    """Two thirds of the routes onto expert 0: superblocks of every fill."""
+    return torch.where(ids < 3, torch.zeros_like(ids), ids)
+
+
+@cuda
+@pytest.mark.parametrize("q256", [1024, 832, 1088])
+def test_wide_down_superblocks_are_bitwise_the_64_route_launch(q256, monkeypatch):
+    """The routed down launch at 128-route superblocks computes each route's
+    row with the same MMAs in the same K order as at 64, so the forward and
+    the ``down_routes`` stage are the 64-route launch's bits: from one route
+    to superblocks past 128 routes (300 x 3 routes, skewed), at the GLM
+    rungs (rate 4, and the two-run 3/4 and 4/5 tables); and a forward
+    captured at 128 replays to the eager 64-route answer.  The oracle
+    parity tests hold the 64-route launch, so this carries them over."""
+    stacks = _stacks("e4m3", q256=q256)
+    fused = _fused(_bundles("e4m3", stacks))
+    for t, skew in ((1, False), (40, False), (71, True), (150, False), (300, True)):
+        x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+        ids, rw = _routes(t, TOP_K, 4100 + t)
+        if skew:
+            ids = _skewed(ids)
+        act = torch.randn(t * TOP_K, INTER, device="cuda").bfloat16()
+        monkeypatch.setenv(rf.ENV_WIDE, "0")
+        narrow, narrow_dn = fused(x, ids, rw), fused.down_routes(act, ids, rw)
+        monkeypatch.setenv(rf.ENV_WIDE, "1")
+        wide, wide_dn = fused(x, ids, rw), fused.down_routes(act, ids, rw)
+        assert torch.equal(wide, narrow), (q256, t, skew)
+        assert torch.equal(wide_dn, narrow_dn), (q256, t, skew)
+    # capture at 128, replay against the eager 64-route forward
+    t = 300
+    x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+    ids, rw = _routes(t, TOP_K, 4500)
+    ids = _skewed(ids)
+    monkeypatch.setenv(rf.ENV_WIDE, "0")
+    eager = fused(x, ids, rw)
+    monkeypatch.setenv(rf.ENV_WIDE, "1")
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            fused(x, ids, rw)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = fused(x, ids, rw)
+    for _ in range(2):
+        captured.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(captured, eager), q256
+
+
+@cuda
+def test_the_routed_width_reaches_the_down_launch_only(monkeypatch):
+    """The ``bm`` each launch receives: gate/up always 64; down 128 under
+    ``1`` in the E4M3 family, 64 under ``0`` and in the value family; and the
+    ``item_off`` it receives counts superblocks of that width."""
+    for family in ("e4m3", "value"):
+        fused = _fused(_bundles(family, _stacks(family, cut=False)))
+        lib = rf._ext(family)
+        seen = []
+
+        class Spy:
+            def __getattr__(self, name):
+                return getattr(lib, name)
+
+            def routed_fused_forward(self, *args):
+                mode, item_off, bm = int(args[0]), args[-9], int(args[-1])
+                seen.append((mode, bm, [int(v) for v in item_off.tolist()]))
+                return lib.routed_fused_forward(*args)
+
+        monkeypatch.setattr(rf, "_ext", lambda _f, spy=Spy(): spy)
+        t = 300
+        x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+        ids, rw = _routes(t, TOP_K, 4600)
+        ids = _skewed(ids)
+        counts = torch.bincount(ids.reshape(-1).long(), minlength=EXPERTS).tolist()
+
+        def off(bm):
+            out = [0]
+            for c in counts:
+                out.append(out[-1] + -(-c // bm))
+            return out
+
+        for setting, want in (("1", rf.BM_WIDE if family == "e4m3" else rf.BM), ("0", rf.BM)):
+            monkeypatch.setenv(rf.ENV_WIDE, setting)
+            seen.clear()
+            fused(x, ids, rw)
+            assert seen == [(0, rf.BM, off(rf.BM)), (2, want, off(want))], (family, setting)
+        monkeypatch.undo()

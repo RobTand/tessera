@@ -778,3 +778,63 @@ def test_the_run_pair_and_block_descriptor_are_the_packers_layout():
         assert words[8] == before and words[9] == cnt_lo and words[10] == words[11] == 0
         before += cnt_lo
     assert before == n_lo
+
+
+# --- the wide superblock (tessera#SB128) ------------------------------------------
+
+@cuda
+@pytest.mark.parametrize("q256", [1024, 832, 1088, 2048])
+def test_wide_dense_superblocks_are_bitwise_the_64_row_launch(q256, monkeypatch):
+    """The E4M3 dense launch at 128-row superblocks (unsplit) gives the
+    64-row launch's bits at every fill of the last superblock -- M below,
+    at and past 64 and 128 -- and at the one-run and two-run rungs, with and
+    without a row cut's start state.  K is held unsplit so both widths run
+    at every M; the oracle parity tests hold the 64-row launch."""
+    monkeypatch.setattr(rf, "dense_k_split", lambda *a, **k: 1)
+    for init in (None, _init(COLS, 43)):
+        _expert, bundle = _role("e4m3", rates=_sched(COLS, q256), seed=720 + q256, init=init)
+        role = rf.prepare_dense_role(bundle)
+        for m in (1, 63, 64, 65, 127, 128, 129, 200, 300):
+            _x, xq, a = _inputs("e4m3", m, COLS, 90 + m)
+            monkeypatch.setenv(rf.ENV_WIDE, "0")
+            narrow = _fused(role, xq, a)
+            monkeypatch.setenv(rf.ENV_WIDE, "1")
+            wide = _fused(role, xq, a)
+            assert torch.equal(wide, narrow), (q256, m, init is not None)
+
+
+@cuda
+@pytest.mark.parametrize("family", FAMILIES)
+def test_the_dense_width_follows_the_split_and_the_family(family, monkeypatch):
+    """A split launch keeps 64-row superblocks (the split model is the 64-row
+    one, and a split has SMs to fill, not rows); an unsplit E4M3 launch takes
+    the width ``superblock_rows`` picks; the value family has 64 only."""
+    lib = rf._ext(family)
+    seen = []
+
+    class Spy:
+        def __getattr__(self, name):
+            return getattr(lib, name)
+
+        def dense_forward(self, *args):
+            seen.append((int(args[-5]), int(args[-1])))          # (k_split, bm)
+            return lib.dense_forward(*args)
+
+    monkeypatch.setattr(rf, "_ext", lambda _f: Spy())
+    _expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    sms = rf._sm_count(torch.cuda.current_device())
+    one_pass_m = rf.BM * -(-sms // (ROWS // rf.BN))
+    monkeypatch.setenv(rf.ENV_WIDE, "1")
+    for m in (1, one_pass_m):
+        _x, xq, a = _inputs(family, m, COLS, 60 + m)
+        seen.clear()
+        _fused(role, xq, a)
+        (s, bm), = seen
+        want = rf.BM_WIDE if (family == "e4m3" and s == 1) else rf.BM
+        assert bm == want and (s > 1) == (m == 1), (family, m, s, bm)
+    monkeypatch.setenv(rf.ENV_WIDE, "0")
+    seen.clear()
+    _x, xq, a = _inputs(family, one_pass_m, COLS, 61)
+    _fused(role, xq, a)
+    assert seen == [(1, rf.BM)]

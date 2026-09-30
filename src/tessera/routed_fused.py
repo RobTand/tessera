@@ -67,6 +67,7 @@ from .errors import GrammarError
 __all__ = [
     "ENV_TOGGLE",
     "ENV_TOGGLE_DENSE",
+    "ENV_WIDE",
     "FusedDenseWindowRole",
     "FusedRoutedWindowMoE",
     "MODULE_NAME_E4M3",
@@ -81,6 +82,7 @@ __all__ = [
     "fused_routed_window_supported",
     "fused_routed_window_enabled",
     "prepare_dense_role",
+    "superblock_rows",
     "words_by_expert",
 ]
 
@@ -106,6 +108,11 @@ SOURCE = "csrc/routed_fused_window.cu"
 # The kernel's geometry, restated for the support predicate (the library's
 # attributes of the same names are checked against these at load).
 BM = 64
+#: The wide superblock (``BM_WIDE`` in the kernel, tessera#SB128): 128 routes
+#: per item on the E4M3 family's one-table launch (routed down, dense).
+#: :func:`superblock_rows` picks the width per launch; either width gives the
+#: same output bits.
+BM_WIDE = 128
 HALF = 64
 BN = 128
 BK = 32
@@ -132,6 +139,9 @@ MIN_COLS = 4 * BK
 WORD_STAGES = 3
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
+#: The one-table layout at ``BM_WIDE``-route superblocks: its A region is 16 KB
+#: instead of 8 KB (``a_region_bytes`` in the kernel).
+SMEM_FIXED_DOWN_WIDE = SMEM_FIXED[2] + 4 * (BM_WIDE - BM) * BK
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -180,11 +190,43 @@ def smem_bytes(mode: int, slot_words: int) -> int:
 PRING_BYTES = WORD_STAGES * 2 * BK * 4
 
 
-def launch_smem_bytes(mode: int, slot_words: int) -> int:
-    """The dynamic shared memory the launch actually takes: :func:`smem_bytes`
-    plus the prev-word ring where it fits sm_121's block."""
-    base = smem_bytes(mode, slot_words)
+def launch_smem_bytes(mode: int, slot_words: int, bm: int = BM) -> int:
+    """The dynamic shared memory the launch actually takes at ``bm``-route
+    superblocks: :func:`smem_bytes` (plus 8 KB for the wide A region) plus the
+    prev-word ring where it fits sm_121's block."""
+    base = smem_bytes(mode, slot_words) + 4 * (int(bm) - BM) * BK
     return base + (PRING_BYTES if base + PRING_BYTES <= SM121_MAX_DYNAMIC_SMEM else 0)
+
+
+#: ``TESSERA_ROUTED_FUSED_WIDE``: ``auto`` (unset) lets :func:`superblock_rows`
+#: pick the width from the launch's rows; ``0`` keeps 64-route superblocks and
+#: ``1`` takes 128 wherever the launch has them -- for measuring the two widths
+#: against each other, which give the same output bits.
+ENV_WIDE = "TESSERA_ROUTED_FUSED_WIDE"
+#: The smallest step (tokens for a routed stack, rows of ``x`` for a dense role)
+#: that ``auto`` runs at 128-route superblocks.
+WIDE_MIN_ROWS = 1 << 30
+
+
+def superblock_rows(mode: int, fp8: bool, rows: int) -> int:
+    """The routes per superblock of one launch: ``BM`` or ``BM_WIDE``.
+
+    ``mode`` is the kernel mode (2: routed down or dense) and ``rows`` the
+    step's tokens (routed) or rows of ``x`` (dense).  A pure function of
+    host-visible integers and the environment -- no device read -- so a
+    captured forward records the width with its shapes.  Only the E4M3
+    family's one-table launch has the wide width.
+    """
+    if not fp8 or int(mode) != 2:
+        return BM
+    want = os.environ.get(ENV_WIDE, "auto")
+    if want == "0":
+        return BM
+    if want == "1":
+        return BM_WIDE
+    if want != "auto":
+        raise GrammarError(f"{ENV_WIDE}={want!r}: expected auto, 0 or 1")
+    return BM_WIDE if int(rows) >= WIDE_MIN_ROWS else BM
 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
@@ -373,6 +415,8 @@ def _ext(family: str):
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("WORD_STAGES", WORD_STAGES), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
                        ("SMEM_FIXED_DOWN", SMEM_FIXED[2]), ("PRING_BYTES", PRING_BYTES),
+                       ("BM_WIDE", BM_WIDE), ("SMEM_FIXED_DOWN_WIDE", SMEM_FIXED_DOWN_WIDE),
+                       ("HAS_WIDE", fp8),
                        # the gate/up rates the library instantiates ARE the ones the host admits
                        ("GATE_UP_RATE_MAX", max(ROUTED_LANE_RATES))):
         if getattr(lib, name) != want:
@@ -645,13 +689,26 @@ class _Routing:
     offsets: torch.Tensor      # [E + 1] int32
     flat_sorted: torch.Tensor  # [P] int32
     rw_sorted: torch.Tensor    # [P] fp32
-    item_off: torch.Tensor     # [E + 1] int32
+    item_off: torch.Tensor     # [E + 1] int32: prefix sum of ceil(routes_e / BM)
     tokens: int
     top_k: int
+    counts: torch.Tensor       # [E] int32: routes per expert
 
     @property
     def routes(self) -> int:
         return self.tokens * self.top_k
+
+    def superblocks(self, bm: int) -> torch.Tensor:
+        """``item_off`` for ``bm``-route superblocks: [E + 1] int32."""
+        if int(bm) == BM:
+            return self.item_off
+        return _item_off(self.counts, int(bm))
+
+
+def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
+    item_off = torch.zeros(counts.numel() + 1, dtype=torch.int32, device=counts.device)
+    item_off[1:] = torch.cumsum((counts + (bm - 1)) // bm, 0, dtype=torch.int32)
+    return item_off
 
 
 @functools.lru_cache(maxsize=None)
@@ -786,11 +843,8 @@ class FusedRoutedWindowMoE:
         order = torch.argsort(ids, stable=True)
         flat_sorted = order.to(torch.int32).contiguous()
         rw_sorted = routing_weights.reshape(-1).to(torch.float32)[order].contiguous()
-        superblocks = (counts + (BM - 1)) // BM
-        item_off = torch.zeros(e + 1, dtype=torch.int32, device=self.device)
-        item_off[1:] = torch.cumsum(superblocks, 0, dtype=torch.int32)
         return _Routing(offsets=offsets, flat_sorted=flat_sorted, rw_sorted=rw_sorted,
-                        item_off=item_off, tokens=tokens, top_k=top_k)
+                        item_off=_item_off(counts, BM), tokens=tokens, top_k=top_k, counts=counts)
 
     def _launch(self, mode: int, x: torch.Tensor, a_scale: "torch.Tensor | None",
                 routing: _Routing, *, a_row_mode: int, mul_weight: bool, limit: float,
@@ -810,6 +864,7 @@ class FusedRoutedWindowMoE:
             r0, r1 = self.runs_gate, self.runs_up
             d0, d1 = self.bdesc_gate, self.bdesc_up
             tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
+        bm = superblock_rows(mode, self.fp8, routing.tokens)
         empty = self.counters.new_zeros(0, dtype=torch.float32)
         slot = self.counters[counter:counter + 1]
         slot.zero_()   # in-stream: a captured forward replays with a fresh work list
@@ -822,10 +877,10 @@ class FusedRoutedWindowMoE:
             b0.scale_all, b1.scale_all,
             r0, r1, d0, d1,
             int(tile_words), int(slot_words),
-            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
-            out, _sm_count(index))
+            out, _sm_count(index), int(bm))
 
     def _quantized(self, x: torch.Tensor, a_scale: "torch.Tensor | None", rows: int):
         """The A operand the family's kernel reads: bf16 as is, or e4m3 + scale."""
@@ -1133,7 +1188,11 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
     slot = counter if counter.numel() == 1 else counter[:1]
     if not zeroed:
         slot.zero_()
+    # The wide superblock only where K is not split (``dense_k_split`` is the
+    # 64-route model, and a split launch has idle SMs to fill, not rows).
+    bm = superblock_rows(2, bool(role.fp8), m) if s == 1 else BM
     lib.dense_forward(
         bool(role.fp8), x, a_scale if a_scale is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,
-        role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms)
+        role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms,
+        int(bm))
