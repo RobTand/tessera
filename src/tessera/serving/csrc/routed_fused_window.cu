@@ -98,6 +98,11 @@ constexpr int BM = 64;                              // routes per superblock
 constexpr int BN = 128;                             // B columns per item (two halves)
 constexpr int HALF = 64;
 constexpr int BK = 32;                              // k columns per chunk
+// The dense identity's row quantum (N-tail): a role's last BN block may be
+// partial.  The epilogue stores SEGW <= 4 columns at a time and the split
+// reduce four, so a role's rows are a multiple of 4 and each store is wholly
+// inside the role or wholly past it.
+constexpr int DENSE_ROW_QUANTUM = 4;
 // Column rates the decode reads (bits per code): a column's 512-row chunk is
 // ``16 * rate`` int32 words, a 64-row half of it ``2 * rate`` words.  Rates 4
 // and 8 put a lane's eight rows on word boundaries; every other rate re-aligns
@@ -784,7 +789,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const int c = tid;
                 float v;
                 if (MODE == 2) {
-                    v = p.wscale0[(long)e * p.N + n0 + c];
+                    if constexpr (DENSE) {
+                        // N-tail: a role's last block may hold fewer than BN
+                        // rows; the columns past N are never stored.
+                        v = (n0 + c < p.N) ? p.wscale0[(long)e * p.N + n0 + c] : 0.f;
+                    } else {
+                        v = p.wscale0[(long)e * p.N + n0 + c];
+                    }
                 } else {
                     const int q = c >> 5, r = c & 31;
                     const int h = r >> 4;
@@ -1297,6 +1308,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // segments are gate columns, the rest the up columns 16 on.
             constexpr int NSEG = FAMILY_MMA8 ? 2 : 4;
             constexpr int SEGW = FAMILY_MMA8 ? 4 : 2;
+            static_assert(!DENSE || DENSE_ROW_QUANTUM % SEGW == 0,
+                          "a dense store segment lies wholly inside the role or wholly past it");
             constexpr int SEGSTRIDE = FAMILY_MMA8 ? 16 : 8;
             const int q4 = lane & 3;
             auto accv = [&](int mi, int sg, int c, int hr) -> float {
@@ -1336,6 +1349,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         #pragma unroll
                         for (int sg = 0; sg < NSEG; ++sg) {
                             const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            // N-tail (SPLIT is dense-only): N % SEGW == 0, so a
+                            // segment is wholly inside the role or wholly past it.
+                            if (n0 + cb >= p.N) continue;
                             if constexpr (SEGW == 4)
                                 *reinterpret_cast<float4*>(part + cb) = make_float4(
                                     accv(mi, sg, 0, hr), accv(mi, sg, 1, hr), accv(mi, sg, 2, hr), accv(mi, sg, 3, hr));
@@ -1387,6 +1403,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         #pragma unroll
                         for (int sg = 0; sg < NSEG; ++sg) {
                             const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            if constexpr (DENSE) {
+                                // N-tail: N % SEGW == 0, so a segment is
+                                // wholly inside the role or wholly past it.
+                                if (n0 + cb >= p.N) continue;
+                            }
                             uint32_t w[SEGW / 2] = {};
                             #pragma unroll
                             for (int c = 0; c < SEGW; ++c) {
@@ -1744,7 +1765,11 @@ void dense_forward(
     TORCH_CHECK(wscale.dim() == 2 && wscale.size(0) == 1 && wscale.scalar_type() == torch::kFloat32
                 && wscale.is_contiguous(), "wscale must be fp32 [1, N]");
     const int64_t N = wscale.size(1);
-    TORCH_CHECK(N % BN == 0 && N > 0, "the role's rows must be a multiple of ", BN);
+    // N-tail: the last block may hold fewer than BN rows.  The epilogue stores
+    // and the split reduce write DENSE_ROW_QUANTUM columns at a time, so N is a
+    // multiple of it and a store is wholly inside the role or wholly past it.
+    TORCH_CHECK(N % DENSE_ROW_QUANTUM == 0 && N > 0, "the role's rows must be a multiple of ",
+                DENSE_ROW_QUANTUM);
     TORCH_CHECK(words.is_cuda() && words.dim() == 2 && words.size(0) == 1
                 && words.scalar_type() == torch::kInt32 && words.is_contiguous(), "words must be int32 [1, W]");
     TORCH_CHECK(table.dim() == 2 && table.size(0) == 1 && table.size(1) == TABLE_ENTRIES
@@ -1807,7 +1832,12 @@ void dense_forward(
     p.rw_sorted = nullptr;
     p.item_off = nullptr;
     p.counter = counter.data_ptr<int32_t>();
-    p.n_blocks = (int)(N / BN);
+    p.n_blocks = (int)((N + BN - 1) / BN);
+    // The wire is padded to whole 512-row tiles, so the last (partial) block's
+    // rows are words the repack wrote; refuse a words tensor that stops short.
+    TORCH_CHECK(words.size(1) >= ((long)p.n_blocks * BN + TILE_ROWS - 1) / TILE_ROWS * tile_words,
+                "words must hold every ", TILE_ROWS, "-row tile the role's ", p.n_blocks,
+                " blocks of ", BN, " rows read");
     p.top_k = 1;
     p.a_row_mode = 2;
     p.mul_weight = 0;
@@ -1867,6 +1897,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("BN") = BN;
     m.attr("HALF") = HALF;
     m.attr("BK") = BK;
+    m.attr("DENSE_ROW_QUANTUM") = DENSE_ROW_QUANTUM;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("ROUTED_RATE_MAX") = ROUTED_RATE_MAX;
