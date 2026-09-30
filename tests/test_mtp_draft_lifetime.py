@@ -1,4 +1,9 @@
-"""CPU stand-in for the fd4a15126 GLM MTP construction/load/share boundary.
+"""CPU stand-in for the inspected GLM MTP construction/load/share boundaries.
+
+Two interfaces: fd4a15126 (``glm5next.nvidia.mtp``; the draft builds its own
+embed_tokens and per-layer heads) and the nightly-20260929 stack
+(``glm5next.common.mtp``; ``SharedHead(defer_lm_head=True)`` builds no head,
+so only embed_tokens is intercepted). tessera#749.
 
 Exercises installation through the production quant-config entry, not a helper.
 The allocator/profiler evidence is small CPU storage, not a GB10/image receipt.
@@ -25,10 +30,20 @@ from test_serving_dispatch import runtime_modules as _runtime_modules
 runtime_modules = _runtime_modules  # pytest discovers the isolated runtime fixture
 
 
+NIGHTLY = {"interface": "nightly-20260929"}
+
+
 @pytest.fixture
-def draft_runtime(monkeypatch, runtime_modules):
+def draft_runtime(request, monkeypatch, runtime_modules):
     from tessera.serving import lane
     from tessera.serving.config import TesseraConfig
+
+    params = getattr(request, "param", {})
+    interface = params.get("interface", "fd4a15126")
+    draft_heads = interface == "fd4a15126"
+    glm_name, absent_glm = ("vllm.models.glm5next.nvidia.mtp", "vllm.models.glm5next.common.mtp")
+    if not draft_heads:
+        glm_name, absent_glm = absent_glm, glm_name
 
     lane.reset_for_tests()
     monkeypatch.setenv("TESSERA_SERVE_MODE", "resident")
@@ -57,7 +72,7 @@ def draft_runtime(monkeypatch, runtime_modules):
     class Head(Vocab):
         pass
 
-    glm: Any = types.ModuleType("vllm.models.glm5next.nvidia.mtp")
+    glm: Any = types.ModuleType(glm_name)
     deepseek: Any = types.ModuleType("vllm.model_executor.models.deepseek_mtp")
     v1: Any = types.ModuleType("vllm.v1.spec_decode.llm_base_proposer")
     v2: Any = types.ModuleType("vllm.v1.worker.gpu.spec_decode.mtp.speculator")
@@ -71,6 +86,8 @@ def draft_runtime(monkeypatch, runtime_modules):
             if parent not in sys.modules:
                 monkeypatch.setitem(sys.modules, parent, types.ModuleType(parent))
         monkeypatch.setitem(sys.modules, module.__name__, module)
+    # The other interface's GLM module is absent, as on each real image.
+    monkeypatch.setitem(sys.modules, absent_glm, None)
     glm.VocabParallelEmbedding = Vocab
     deepseek.ParallelLMHead = Head
 
@@ -82,8 +99,9 @@ def draft_runtime(monkeypatch, runtime_modules):
             layer.shared_head = torch.nn.Module()
             layer.shared_head.norm = torch.nn.Parameter(torch.empty(8))
             layer.shared_head.norm.data.fill_(5)
+            # The nightly's SharedHead(defer_lm_head=True) builds no head.
             layer.shared_head.head = deepseek.ParallelLMHead(
-                64, 8, prefix="model.layers.4.head", quant_config=config)
+                64, 8, prefix="model.layers.4.head", quant_config=config) if draft_heads else None
             self.model.layers = torch.nn.ModuleDict({"4": layer})
             self.model.embed_tokens = glm.VocabParallelEmbedding(
                 64, 8, prefix="model.embed_tokens")
@@ -127,9 +145,12 @@ def draft_runtime(monkeypatch, runtime_modules):
         draft = glm.Glm5NextMTP()
         if during_load[0] is not None:
             during_load[0]()
+        # A nightly draft has no head parameter; a head weight would KeyError
+        # in its stock load_weights, so the nightly checkpoint carries none.
         draft.load_weights([
             ("model.language_model.layers.4.embed_tokens.weight", torch.zeros(64, 8)),
-            ("model.language_model.layers.4.shared_head.head.weight", torch.zeros(64, 8)),
+            *([("model.language_model.layers.4.shared_head.head.weight", torch.zeros(64, 8))]
+              if draft_heads else []),
             ("model.language_model.layers.4.shared_head.norm", torch.full((8,), 7.0)),
         ])
         # A later load workspace overlaps vocab lifetime in the old code.
@@ -171,12 +192,15 @@ def draft_runtime(monkeypatch, runtime_modules):
     except ImportError:
         pass  # RED must fail on the behavior, not a missing new module.
     else:
-        monkeypatch.setattr(mtp_draft_lifetime, "_require_supported_sources", lambda *args: None)
+        if params.get("patch_sources", True):
+            monkeypatch.setattr(mtp_draft_lifetime, "_require_supported_sources",
+                                lambda *args: None)
     config.get_quant_method(torch.nn.Module(), "target.attention")
     yield NS(glm=glm, deepseek=deepseek, v1=v1, v2=v2, config=config, current=current,
              target=target, before=before, allocations=allocations, snapshots=snapshots,
              fail=fail, break_share=break_share, during_load=during_load,
-             Vocab=Vocab, Head=Head, world=world, rank=rank)
+             Vocab=Vocab, Head=Head, world=world, rank=rank, interface=interface,
+             draft_heads=draft_heads)
     lane.reset_for_tests()
 
 
@@ -287,6 +311,7 @@ def test_profile_peak_excludes_preexisting_tensor_garbage(draft_runtime, tmp_pat
             gc.enable()
 
 
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY], indirect=True, ids=["fd4a15126", "nightly"])
 @pytest.mark.parametrize("runner", ["v1", "v2"])
 @pytest.mark.parametrize("world, rank", [(1, 0), (2, 0), (2, 1)])
 def test_production_hook_avoids_duplicate_peak_and_preserves_forward(draft_runtime, runner, world, rank):
@@ -295,19 +320,21 @@ def test_production_hook_avoids_duplicate_peak_and_preserves_forward(draft_runti
     r.target.model.embed_tokens = r.Vocab(64, 8, prefix="target.embed_tokens")
     r.target.lm_head = r.Head(64, 8, prefix="target.lm_head")
     r.before = [p.clone() for p in r.target.parameters()]
-    duplicate_bytes = 4096 // world
+    # One 64x8 fp32 vocabulary is 2048 bytes. fd4a15126 builds a draft
+    # embed_tokens and a per-layer head; the nightly defers the head upstream.
+    duplicate_bytes = (4096 if r.draft_heads else 2048) // world
     legacy, before_trace, before = _profile_load(r, runner, legacy=True)
     assert before["duplicate_live_at_workspace_bytes"] == duplicate_bytes
     del legacy
     allocation_start = len(r.allocations)
     draft, after_trace, after = _profile_load(r, runner, legacy=False)
-    evidence = {"runner": runner, "before": before, "after": after,
+    evidence = {"interface": r.interface, "runner": runner, "before": before, "after": after,
                 "device": "cpu", "vocab_shape": [64 // world, 8], "tp_size": world, "tp_rank": rank}
     print(json.dumps(evidence))
     if output := os.environ.get("TESSERA_MTP_CPU_EVIDENCE"):
         root = Path(output)
         root.mkdir(parents=True, exist_ok=True)
-        label = f"{runner}-tp{world}-rank{rank}"
+        label = f"{r.interface}-{runner}-tp{world}-rank{rank}"
         (root / f"{label}.json").write_text(json.dumps(evidence) + "\n")
         (root / f"{label}-before.trace.json").write_text(json.dumps(before_trace))
         (root / f"{label}-after.trace.json").write_text(json.dumps(after_trace))
@@ -329,6 +356,7 @@ def test_production_hook_avoids_duplicate_peak_and_preserves_forward(draft_runti
     assert draft.model.embed_tokens.weight.data_ptr() == r.target.model.embed_tokens.weight.data_ptr()
 
 
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY], indirect=True, ids=["fd4a15126", "nightly"])
 @pytest.mark.parametrize("runner", ["v1", "v2"])
 def test_exception_restores_context_and_unrelated_thread(draft_runtime, runner):
     r = draft_runtime
@@ -356,17 +384,21 @@ def test_exception_restores_context_and_unrelated_thread(draft_runtime, runner):
     assert r.glm.VocabParallelEmbedding is old_binding
 
 
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY], indirect=True, ids=["fd4a15126", "nightly"])
 @pytest.mark.parametrize("unsupported", ["shape", "dtype", "layout", "quantized", "lora", "pp"])
 def test_unsupported_target_refuses_before_draft_allocation(draft_runtime, monkeypatch, unsupported):
     r = draft_runtime
+    # The placeholder contract covers only the vocabularies an interface
+    # intercepts: the head on fd4a15126, embed_tokens on the nightly.
+    vocab = r.target.lm_head if r.draft_heads else r.target.model.embed_tokens
     if unsupported == "shape":
-        r.target.lm_head.weight = torch.nn.Parameter(torch.empty(32, 8), requires_grad=False)
+        vocab.weight = torch.nn.Parameter(torch.empty(32, 8), requires_grad=False)
     elif unsupported == "dtype":
-        r.target.lm_head.weight = torch.nn.Parameter(torch.empty(64, 8, dtype=torch.float16), requires_grad=False)
+        vocab.weight = torch.nn.Parameter(torch.empty(64, 8, dtype=torch.float16), requires_grad=False)
     elif unsupported == "layout":
-        r.target.lm_head.weight = torch.nn.Parameter(torch.empty(8, 64).T, requires_grad=False)
+        vocab.weight = torch.nn.Parameter(torch.empty(8, 64).T, requires_grad=False)
     elif unsupported == "quantized":
-        r.target.lm_head.quant_method = object()
+        vocab.quant_method = object()
     elif unsupported == "lora":
         r.current.lora_config = object()
     else:
@@ -377,6 +409,7 @@ def test_unsupported_target_refuses_before_draft_allocation(draft_runtime, monke
     assert len(r.allocations) == count
 
 
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY], indirect=True, ids=["fd4a15126", "nightly"])
 def test_sharing_verification_refuses_and_restores_context(draft_runtime):
     r = draft_runtime
     r.break_share[0] = True
@@ -426,6 +459,7 @@ def test_nested_unrelated_load_restores_outer_interception(draft_runtime):
     assert outer.model.embed_tokens is r.target.model.embed_tokens
 
 
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY], indirect=True, ids=["fd4a15126", "nightly"])
 def test_unsupported_signature_refuses_without_partial_install(draft_runtime, monkeypatch):
     r = draft_runtime
     assert getattr(r.glm.VocabParallelEmbedding, "_tessera_mtp_constructor", False), \
@@ -436,3 +470,91 @@ def test_unsupported_signature_refuses_without_partial_install(draft_runtime, mo
     with pytest.raises(RuntimeError, match="Tessera MTP.*signature"):
         r.config.get_quant_method(torch.nn.Module(), "target.attention")
     assert r.glm.VocabParallelEmbedding is binding
+
+
+@pytest.mark.parametrize("draft_runtime", [NIGHTLY], indirect=True, ids=["nightly"])
+def test_nightly_leaves_the_target_head_to_stock(draft_runtime):
+    """The nightly builds no draft head, so an unusual target head is not ours to refuse."""
+    r = draft_runtime
+    r.target.lm_head.quant_method = object()
+    draft = _load(r, "v2")
+    assert r.snapshots[-1] == 0
+    assert draft.model.embed_tokens is r.target.model.embed_tokens
+    assert draft.model.layers["4"].shared_head.head is r.target.lm_head
+    assert not getattr(r.deepseek.ParallelLMHead, "_tessera_mtp_constructor", False)
+
+
+@pytest.mark.parametrize("draft_runtime", [{"patch_sources": False}, {**NIGHTLY, "patch_sources": False}],
+                         indirect=True, ids=["fd4a15126", "nightly"])
+def test_unmatched_sources_decline_to_stock_load(draft_runtime, caplog):
+    """tessera#749: no inspected interface matches, so the serve loads stock and says so."""
+    import logging
+
+    r = draft_runtime
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+    # The fixture's construction-time get_quant_method already declined.
+    assert not getattr(r.glm.VocabParallelEmbedding, "_tessera_mtp_constructor", False)
+    assert not getattr(r.glm, "_tessera_mtp_lifetime", False)
+    assert lifetime._RESOLVED[1] is None
+    with caplog.at_level(logging.WARNING, logger=lifetime.__name__):
+        for _ in range(3):
+            r.config.get_quant_method(torch.nn.Module(), "target.attention")
+    # Resolved once per module set: no per-layer re-hash, no repeated warning.
+    assert not [rec for rec in caplog.records if "saving absent" in rec.getMessage()]
+    draft = _load(r, "v2")
+    assert r.snapshots[-1] == (4096 if r.draft_heads else 2048)
+    assert draft.model.embed_tokens is r.target.model.embed_tokens
+
+
+def test_decline_is_logged_with_each_interface_reason(caplog, monkeypatch):
+    import logging
+
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+    # Every candidate absent, whatever vLLM this interpreter carries.
+    for name in (*(i.glm_module for i in lifetime._INTERFACES), *lifetime._COMMON_MODULES):
+        monkeypatch.setitem(sys.modules, name, None)
+    saved = list(lifetime._RESOLVED)
+    lifetime._RESOLVED[:] = [None, None]
+    try:
+        with caplog.at_level(logging.WARNING, logger=lifetime.__name__):
+            assert lifetime._supported_interface() is None
+    finally:
+        lifetime._RESOLVED[:] = saved
+    messages = [rec.getMessage() for rec in caplog.records if "saving absent" in rec.getMessage()]
+    assert len(messages) == 1 and "tessera#749" in messages[0]
+    for interface in lifetime._INTERFACES:
+        assert f"{interface.name}: not importable: {interface.glm_module}" in messages[0]
+
+
+def test_candidate_import_crash_is_a_non_match(monkeypatch):
+    """A module that raises at import (not ImportError) declines instead of failing the serve."""
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+
+    def boom(name, *args, **kwargs):
+        raise RuntimeError(f"ops registration failed in {name}")
+    monkeypatch.setattr(lifetime.importlib, "import_module", boom)
+    assert lifetime._import("vllm.models.glm5next.nvidia.mtp") is None
+    assert "RuntimeError" in lifetime._IMPORT_ERRORS["vllm.models.glm5next.nvidia.mtp"]
+
+
+def test_interface_table_pins_every_touched_module():
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+    names = [interface.name for interface in lifetime._INTERFACES]
+    assert names == ["fd4a15126", "nightly-20260929"]
+    for interface in lifetime._INTERFACES:
+        assert len(interface.digests) == 1 + len(lifetime._COMMON_MODULES)
+        assert all(len(digest) == 64 and int(digest, 16) >= 0 for digest in interface.digests)
+    # Distinct interfaces are distinct sources; one digest set cannot match both.
+    assert len({interface.digests for interface in lifetime._INTERFACES}) == len(names)
+
+
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY, {"patch_sources": False}], indirect=True,
+                         ids=["fd4a15126", "nightly", "declined"])
+def test_draft_load_rename_is_the_recognized_interfaces(draft_runtime):
+    """tessera#749: only the nightly's source renames the checkpoint in load_weights."""
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+    expected = {"fd4a15126": None, "nightly-20260929": ("model.language_model.", "model.")}
+    if lifetime._RESOLVED[1] is None:
+        assert lifetime.draft_load_rename() is None
+    else:
+        assert lifetime.draft_load_rename() == expected[draft_runtime.interface]

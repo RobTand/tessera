@@ -38,6 +38,25 @@ def glm5next_mtp_module_prefix(declared: str, *, architecture: str,
     return f"model.layers.{index}.mtp_block.{remainder}"
 
 
+class PrefixRename:
+    """A name-only mapper for one prefix rule a runtime applies in code.
+
+    ``apply_vllm_mapper`` reads only ``apply_list``. This carries a rule a draft
+    class applies inside its own ``load_weights`` instead of declaring it as an
+    ``hf_to_vllm_mapper`` (the nightly-20260929 ``Glm5NextMTP``: tessera#749),
+    so the quant config can see the module names that load writes.
+    """
+
+    def __init__(self, old: str, new: str):
+        if not old or not old.endswith(".") or (new and not new.endswith(".")):
+            raise ValueError(f"a prefix rename maps dotted prefixes, got {old!r} -> {new!r}")
+        self.old, self.new = old, new
+
+    def apply_list(self, names):
+        return [self.new + name[len(self.old):] if name.startswith(self.old) else name
+                for name in names]
+
+
 def module_name_mapper(mapper):
     """Use the same name-only view the runtime hands quantization configs.
 

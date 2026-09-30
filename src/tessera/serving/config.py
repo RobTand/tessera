@@ -218,6 +218,7 @@ class TesseraConfig(QuantizationConfig):
         self._mapped_views: list[tuple[dict[str, dict], tuple[str, ...]]] = [
             (self.target_scheme, self.ignore)]
         self._mapper_applied = False
+        self._draft_rename_resolved = False
         # Resolve the residency HERE, at config parse, so an unset or misspelt
         # mode is one clear message before any weight is touched.
         self._mode = serve_mode()
@@ -418,6 +419,37 @@ class TesseraConfig(QuantizationConfig):
         declare_compile_identity(**facts)
         self._declared = True
 
+    def _adopt_draft_load_rename(self) -> None:
+        """The draft view a GLM MTP class that renames in code never hands us.
+
+        vLLM gives a quant config the model class's ``hf_to_vllm_mapper``. The
+        nightly-20260929 ``Glm5NextMTP`` declares none: its ``load_weights``
+        strips ``model.language_model.`` to ``model.`` itself, so the draft's
+        module-space view never arrives and every draft Linear would refuse as
+        undeclared (tessera#749). Only an interface recognized by source digest
+        (``mtp_draft_lifetime._INTERFACES``) names that rule; any other runtime
+        leaves the lookup to refuse exactly as before. The body view must exist
+        first, so this never becomes the public body table.
+        """
+        from vllm.config import get_current_vllm_config_or_none
+
+        current = get_current_vllm_config_or_none()
+        speculative = getattr(current, "speculative_config", None)
+        draft = getattr(speculative, "draft_model_config", None)
+        if (getattr(speculative, "method", None) != "mtp"
+                or getattr(getattr(draft, "hf_config", None), "architectures", None)
+                != ["Glm5NextMTPModel"]):
+            return
+        from .mtp_draft_lifetime import draft_load_rename
+        from .weights_mapper import PrefixRename
+
+        # Resolved once per config: a declined interface stays declined, and an
+        # adopted view is not appended twice.
+        self._draft_rename_resolved = True
+        rename = draft_load_rename()
+        if rename is not None:
+            self.apply_vllm_mapper(PrefixRename(*rename))
+
     def _module_lookup(self, prefix: str) -> tuple[str, dict[str, dict], tuple[str, ...]]:
         """Resolve only the stock GLM MTP draft's model-owned block insertion.
 
@@ -437,6 +469,8 @@ class TesseraConfig(QuantizationConfig):
         under the same guards, and only one spelling may be declared.
         """
         blocked = ".mtp_block." in prefix
+        if self._mapper_applied and not self._draft_rename_resolved:
+            self._adopt_draft_load_rename()
         if not blocked and (prefix in self.target_scheme or prefix in self.ignore
                             or len(self._mapped_views) < 2):
             # The body view owns it, or there is no second view to consult.
