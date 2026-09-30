@@ -493,11 +493,12 @@ def vocab_parallel_rows(rows: int, tp_size: int, *, padding: int = 64) -> int:
 
 
 def mtp_draft_embed_head_duplicate_bytes(vocab_tensors, tp_size: int) -> int:
-    """The MTP draft's own ``embed_tokens`` + ``lm_head`` allocations (tessera#645).
+    """Conservative legacy MTP ``embed_tokens`` + ``lm_head`` allowance (#645).
 
-    The draft model allocates a vocab-parallel embedding and head of its own
-    before the loader points them at the target's, so each rank holds one
-    more rank-local copy of both at load peak.  ``vocab_tensors`` is
+    The legacy stock draft allocates a vocab-parallel embedding and head before
+    the loader points them at the target's. The source-guarded Tessera draft
+    lifetime hook avoids these allocations; this fit allowance stays unchanged
+    until full-model/image qualification, not inferred from CPU stand-ins.  ``vocab_tensors`` is
     ``[(rows, cols, element_bytes), ...]`` for the target's passthrough
     embedding and head tensors; the duplicate is their rank-local cut.
     """
