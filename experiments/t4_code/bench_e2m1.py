@@ -375,6 +375,9 @@ class Dense:
 
         rows, cols = DENSE[shape]
         head = {"leg": "e2m1", "shape": shape, "rows": rows, "cols": cols, "q256": q256}
+        if rows % re2.BN:   # before the encode: lm_head's is 317 M weights
+            head["refused"] = f"{rows} rows; the dense launch writes {re2.BN}-row blocks"
+            return head, None, None
         unit = window_unit(window_wire(rows, cols, q256, zlib.crc32(f"{shape}:{q256}".encode()), self.dev),
                            self.dev)
         why = re2.dense_role_reason(unit)
