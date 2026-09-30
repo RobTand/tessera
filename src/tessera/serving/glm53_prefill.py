@@ -34,9 +34,10 @@ capture never takes the SP branch, so a decode graph captures the stock op
 sequence whatever ``T*`` is.  Module construction and weight sharding do
 not change.
 
-``T*`` is measured, per serve, at the first forward that carries
-``max_num_batched_tokens`` tokens (vLLM's profile run, before graph capture):
-per token count on a power-of-two grid, the mHC saving (two
+``T*`` is measured, per serve, at the first forward that is not a graph
+capture (vLLM's profile run, which runs even with ``kv_cache_memory_bytes``),
+on tensors of its own up to ``max_num_batched_tokens``: per token count on a
+power-of-two grid, the mHC saving (two
 ``hc_fused_post_pre`` calls on ``T`` tokens against two on ``T/2``) against the
 extra collective time (an all-gather plus a reduce-scatter against an
 all-reduce, twice per layer), each the median of CUDA-event timings on this
@@ -290,9 +291,9 @@ class SpState:
             return False
         return True
 
-    def wants_measurement(self, num_tokens: int) -> bool:
-        return (self.mode == "auto" and self.t_star is None
-                and num_tokens >= min(self.max_tokens, T_GRID[-1]))
+    def wants_measurement(self) -> bool:
+        """Measure on the first non-capturing pass, whatever its size (the timings use their own tensors)."""
+        return self.mode == "auto" and self.t_star is None
 
 
 def choose_t_star(rows: list[dict]) -> float:
@@ -407,7 +408,7 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
         num_tokens = positions.shape[0]
         if post is None and self.layer_idx == 0:
             capturing = torch.cuda.is_current_stream_capturing()
-            if state.wants_measurement(num_tokens) and not capturing and state.declined is None:
+            if state.wants_measurement() and not capturing and state.declined is None:
                 with state.lock:
                     if state.t_star is None:
                         measure_t_star(self, state, ops, torch, hidden_states.device)
