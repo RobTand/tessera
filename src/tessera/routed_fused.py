@@ -192,9 +192,12 @@ WORD_STAGES = 3
 WORD_STAGES_MIN = 2
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
-#: The same fixed part on the E4M3 instruction: 16 KB byte tables and 8-bit
-#: A and B stages.  The word stages are the same bytes.
-SMEM_FIXED_MMA8 = {0: 46_544, 1: 46_544, 2: 29_968}
+#: The staged stream history on the E4M3 instruction: one int32 per (half,
+#: column) per word stage (``PREV_STAGED`` in ``routed_fused_window.cu``).
+PREV_REGION_BYTES_MMA8 = WORD_STAGES * 2 * BK * 4
+#: The same fixed part on the E4M3 instruction: 16 KB byte tables, 8-bit A and
+#: B stages, and the staged stream history.  The word stages are the same bytes.
+SMEM_FIXED_MMA8 = {0: 47_312, 1: 47_312, 2: 30_736}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
