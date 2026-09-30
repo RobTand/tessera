@@ -23,6 +23,8 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
   ``f_b_proj`` (4096 x 128); MLA ``q_a_proj`` (1536 x 4096),
   ``kv_a_proj_with_mqa`` (512 x 4096), ``q_b_proj`` (8192 x 1536), read from
   ``--mla-layer``.
+- ``idx_wq_b``: the DSA indexer's ``wq_b`` (4096 x 1536, replicated), from the
+  same ``--mla-layer``.
 
 Weights: ``--model DIR`` encodes the real GLM-5.3 bytes of ``--layer L``'s
 tensors (the TP2 rank-0 shard: the leading rows of a column-parallel role, the
@@ -87,10 +89,14 @@ MODULES = {
     # vLLM's merged MLA input (``fused_qkv_a_proj``, replicated): two roles, one
     # module, so the E4M3 libraries take it in one launch (tessera#750 WP2).
     "fused_qkv_a": ([("q_a_proj", 1536), ("kv_a_proj_with_mqa", 512)], 4096),
+    # The DSA indexer's query projection: a ``ReplicatedLinear`` (every rank
+    # holds all 4096 rows) that vLLM offers the quant config.  Its sibling
+    # ``wk_weights_proj`` is built with ``quant_config=None`` and is not.
+    "idx_wq_b": ([("indexer.wq_b", 4096)], 1536),
     # The LM head (``ParallelLMHead``): the vocab split across TP2.
     "lm_head": ([("lm_head", 77440)], 4096),
 }
-MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "fused_qkv_a"}
+MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "fused_qkv_a", "idx_wq_b"}
 SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
 #: Roles whose source tensor is not under a layer's ``self_attn``.
 SOURCE_KEYS = {"lm_head": "lm_head.weight"}
