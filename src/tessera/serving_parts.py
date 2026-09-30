@@ -381,10 +381,6 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
         raise ValueError(f"unknown dense resident decoder {decoder!r}")
     if not native_roles:
         raise ValueError("native dense resident accounting requires per-role layout")
-    # the dense loader's own bound (tessera#750 item 4: 1..14), not the
-    # routed stacks' 1..8 below
-    from .compact_prep import DENSE_WINDOW_RATE_MAX
-
     total, role_rows = rows * 4, 0
     for role in native_roles:
         count, width = int(role["rows"]), int(role["cols"])
@@ -392,7 +388,7 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
         bits, tile = int(role["window_bits"]), int(role["tile_rows"])
         if count <= 0 or width != cols or len(rates) != width or tile <= 0 or tile % 8:
             raise ValueError("invalid native dense role geometry")
-        if bits <= 0 or any(rate < 1 or rate > min(bits, DENSE_WINDOW_RATE_MAX)
+        if bits <= 0 or any(rate < 1 or rate > min(bits, NATIVE_DENSE_WINDOW_RATE_MAX)
                             for rate in rates):
             raise ValueError("invalid native dense window layout")
         padded = -(-count // tile) * tile
@@ -460,6 +456,13 @@ def routed_fused_table_bytes(window_bits: int) -> int:
     ``FusedRoutedWindowMoE.resident_bytes`` publishes it (both families; the
     value family's table is a view the self-report still counts)."""
     return 2 * (1 << int(window_bits))
+
+
+#: The dense loader's column-rate bound (tessera#750 item 4: every rate a
+#: 14-bit window holds), restated from ``compact_prep.DENSE_WINDOW_RATE_MAX``
+#: so this module stays torch-free (``tests/test_export_routed_resident_
+#: pricing.py`` pins them equal).  The routed stacks' bound stays 8.
+NATIVE_DENSE_WINDOW_RATE_MAX = 14
 
 
 #: The fused routed lane's per-projection launch tables since contract v45

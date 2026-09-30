@@ -924,19 +924,23 @@ RATE7_FACTS = {
 
 def test_the_fused_lanes_publish_the_routed_launchs_rates_inside_the_wires():
     """Every fused lane publishes ``column_rates_routed_moe`` inside
-    ``column_rates``, equal to the build's own derivation for its library;
+    ``column_rates``, equal to the build's own derivation for its library:
     since the 16-bit gate/up launch runs the 16-word slot at two word stages,
-    that is every rate the lane reads on all three libraries.  The validator
-    refuses a copy that names a rate the lane does not read."""
+    the routed launches read every rate 1..8 on all three libraries.
+    ``column_rates`` is the library's dense launch's set, which is the same
+    1..8 on the E4M3 libraries and 1..14 on the value library (tessera#750
+    item 4).  The validator refuses a copy that names a rate the lane does not
+    read."""
     from tessera import routed_fused as rf
 
     for lane, library in ((ext.ROUTED_FUSED_E4M3_MODULE_NAME, "e4m3"),
                           (ext.ROUTED_FUSED_VALUE_MODULE_NAME, "value"),
                           (ext.ROUTED_FUSED_MMA_E4M3_MODULE_NAME, "e4m3mma")):
         requires = lane_requirements(lane)
-        assert requires["column_rates_routed_moe"] == list(rf.routed_lane_rates(library))
+        family = "value" if library == "value" else "e4m3"
+        assert requires["column_rates_routed_moe"] == list(rf.routed_lane_rates(library)) == list(rf.RATES)
         assert set(requires["column_rates_routed_moe"]) <= set(requires["column_rates"])
-        assert requires["column_rates_routed_moe"] == requires["column_rates"] == list(rf.RATES)
+        assert requires["column_rates"] == list(rf.dense_rates(family))
     assert lane_requirements(ext.ROUTED_FUSED_E4M3_MODULE_NAME) == ext.ROUTED_FUSED_LANE_REQUIRES
     assert "column_rates_routed_moe" in ext.LANE_REQUIREMENT_FIELDS
     assert "column_rates_routed_moe" not in lane_requirements(LANE)   # the GEMV lane has one launch shape

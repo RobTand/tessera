@@ -244,6 +244,30 @@ def test_fused_unit_pricing_is_the_lane_tables():
         routed_fused_unit_bytes(WINDOW_BITS, 100)
 
 
+def test_dense_pricing_follows_the_dense_loaders_rate_bound():
+    """tessera#750 item 4: a native dense unit is priced at every rate the
+    dense loader admits (1..14 on a 14-bit window) -- the torch-free restated
+    bound is the loader's and the dense launch's -- and refused above it."""
+    from tessera.compact_prep import DENSE_WINDOW_RATE_MAX, WINDOW_GEMM_RATE_MAX
+
+    assert serving_parts.NATIVE_DENSE_WINDOW_RATE_MAX == DENSE_WINDOW_RATE_MAX \
+        == routed_fused.DENSE_RATE_MAX["value"] == WINDOW_BITS == 14
+    assert WINDOW_GEMM_RATE_MAX == routed_fused.RATE_MAX == 8
+
+    def role(rate, bits=WINDOW_BITS):
+        return [{"rows": 256, "cols": 128, "rates": [rate] * 128, "window_bits": bits, "tile_rows": 512}]
+
+    priced = {rate: serving_parts.dense_resident_bytes_resident_mode(
+        "TESSERA_BF16", 256, 128, native_roles=role(rate)) for rate in (8, 9, 14)}
+    # the body words grow by one rate's 512 * 128 / 8 bytes per tile per rate
+    assert priced[9] - priced[8] == 512 * 128 // 8
+    assert priced[14] - priced[9] == 5 * 512 * 128 // 8
+    for rate, bits in ((15, WINDOW_BITS), (15, 16), (9, 8)):
+        with pytest.raises(ValueError, match="native dense window layout"):
+            serving_parts.dense_resident_bytes_resident_mode(
+                "TESSERA_BF16", 256, 128, native_roles=role(rate, bits))
+
+
 def _stack_layouts(rates_w13, rates_w2) -> list:
     """The write loop's per-unit layout records for an ``EXPERTS``-deep stack."""
     layouts = []
