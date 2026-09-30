@@ -968,9 +968,12 @@ def test_the_dense_width_follows_the_split_and_the_family(family, monkeypatch):
 # --- random fractional mixes inside every run table (tessera#750) ----------------
 
 #: The dense twin of ``test_routed_fused_window.test_random_mixes_inside_every_pair_decode_exactly``:
-#: the dense identity reads every rate 1..8, so every adjacent pair is attested
-#: at random rungs inside it, with the upper-rate columns placed at random.
-DENSE_MIX_PAIRS = [r for r in rf.RATES if r + 1 in rf.RATES]
+#: every adjacent pair the family's dense identity reads (1/2..7/8 on E4M3,
+#: 1/2..13/14 on the value family since contract v51) is attested at random
+#: rungs inside it, with the upper-rate columns placed at random.
+DENSE_MIX_CASES = [(lib, r) for lib in LIBRARY_IDS
+                   for r in rf.dense_rates("e4m3" if lib == "e4m3mma" else lib)
+                   if r + 1 in rf.dense_rates("e4m3" if lib == "e4m3mma" else lib)]
 
 
 def _mix_rungs(r, seed, draws=4):
@@ -983,22 +986,24 @@ def _mix_rungs(r, seed, draws=4):
 
 
 @cuda
-@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
-@pytest.mark.parametrize("r", DENSE_MIX_PAIRS)
+@pytest.mark.parametrize("family,r", DENSE_MIX_CASES, indirect=["family"])
 def test_dense_random_mixes_inside_every_pair_decode_exactly(family, r):
     """At random rungs of the pair ``(r, r + 1)``, placed at random: one-hot
     rows decode bitwise with and without a start state, random inputs sit
     within the derived bound in the split and one-pass regimes, and the
-    forward replays in a CUDA graph."""
+    forward replays in a CUDA graph.  A pair above rate 8 is scheduled at the
+    value family's dense cap, 14; the pairs up to 7/8 keep cap 8, so their
+    rungs and placements are the ones v50 attested."""
     from fractions import Fraction
 
     from tessera.grammar import rate_set
 
+    cap = 8 if r + 1 <= 8 else max(rf.dense_rates(family))
     sms = rf._sm_count(torch.cuda.current_device())
     for q256 in _mix_rungs(r, 7700 + r):
-        assert rate_set(Fraction(q256, 256), cap=8) == (r, r + 1), q256
+        assert rate_set(Fraction(q256, 256), cap=cap) == (r, r + 1), q256
         g = torch.Generator().manual_seed(7800 + q256)
-        sched = _sched(COLS, q256)
+        sched = _sched(COLS, q256, cap)
         rates = tuple(sched[i] for i in torch.randperm(COLS, generator=g).tolist())
         for seed, init in ((7900 + q256, None), (8000 + q256, _init(COLS, 8100 + q256))):
             expert, bundle = _role(family, rates=rates, seed=seed, init=init)
