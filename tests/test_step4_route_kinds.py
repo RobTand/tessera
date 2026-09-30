@@ -73,7 +73,7 @@ def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
 def _two_launch_moe(family="TESSERA_FP8"):
     """One family whose routed stacks split across its two admissible pairs."""
     from experiments.step4_route_qualification import MOE_LAUNCHES
-    (compact_symbol, compact_decoder), (fused_symbol, fused_decoder) = MOE_LAUNCHES[family][1]
+    (compact_symbol, compact_decoder), (fused_symbol, fused_decoder) = MOE_LAUNCHES[family][1][:2]
     dense = "model.layers.0.mlp.down_proj"
     compact, fused = "model.layers.3.mlp.experts", "model.layers.4.mlp.experts"
     expected = {family: {"count": 3, "names": sorted([dense, compact, fused]), "kinds": {
@@ -216,7 +216,8 @@ def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, m
     # routed kind also publishes the compact adapter's lane-free launch, and
     # since contract v43 every dense kind publishes the Triton window GEMM's
     # lane-free launch beside the fused dense identity's lane row.
-    assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_value"]
+    assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_mma_e4m3",
+                                       "tessera_routed_fused_value"]
     for family, kinds in record["module_kind_launches"].items():
         assert any(row["lane"] is None for row in kinds["moe"]), family
         assert any(row["lane"] is None for row in kinds["dense"]), family

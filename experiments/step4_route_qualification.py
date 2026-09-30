@@ -104,6 +104,9 @@ NATIVE_WINDOW_GEMM_FOLDED_DECODER = "native_window_gemm_folded"
 NATIVE_FUSED_WINDOW_DENSE_DECODER = "native_fused_window_dense"
 NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER = "native_fused_window_dense_folded"
 NATIVE_SPAN2_GEMM_DECODER = "native_span2_gemm"
+#: Contract v46: the E4M3 family's tensor-core instruction library
+#: (``routed_fused.library_for``), experimental; TESSERA_FP8 only.
+NATIVE_FUSED_WINDOW_DENSE_E4M3MMA_DECODER = "native_fused_window_dense_e4m3mma"
 #: ``scheme.{FP8,BF16,NVFP4}_ACTIVATION_CONTRACT``.
 FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
 BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
@@ -122,7 +125,8 @@ NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 DENSE_LAUNCHES = {
     "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (
         (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER))),
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER),
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_E4M3MMA_DECODER))),
     "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (
         (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
         (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER))),
@@ -143,7 +147,8 @@ FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
 MOE_LAUNCHES = {
     "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (
         (COMPACT_WINDOW_MOE_SYMBOL, "native_window_moe_compact"),
-        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window"))),
+        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window"),
+        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window_e4m3mma"))),
     "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (
         (COMPACT_WINDOW_MOE_SYMBOL, "native_window_moe_compact_folded"),
         (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window_folded"))),

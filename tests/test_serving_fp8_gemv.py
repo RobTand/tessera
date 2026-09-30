@@ -536,6 +536,9 @@ def test_the_census_expectations_come_from_the_route():
     kernel's dense identity as a second launch the route decides per module
     at weight load, so the expectation is now exactly the route's own
     ``DENSE_LAUNCHES`` -- two pairs, of which any one module stamps one.
+    Contract v46 adds the E4M3 instruction library's dense identity as a
+    third, experimental pair: a census reads the experimental view, so the
+    expectation is three.
     Asserted as EQUALITY, because the defect this whole file is about was an
     expectation wider than the dispatch.
 
@@ -546,7 +549,7 @@ def test_the_census_expectations_come_from_the_route():
     """
     expected = set(route.DENSE_LAUNCHES)
     assert (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM) in expected
-    assert len(expected) == 2
+    assert len(expected) == 3
     go = fp8_gemv.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected
