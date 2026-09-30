@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for the CPU census planning slice (Refs #689).
+`tools/plan_native_census.py` binds explicit rank-local scopes to the packaged
+contract and shared dispatch registry, with stable scope IDs. Its versioned
+plans are explicitly unexecuted and unqualified, not device receipts or cells.
+No GPU execution, runtime admission, reader range, wire, or numerical behavior
+changes. See [the planning interface](design/native-census-planning.md).
+
 Re-stamped 2026-09-30 for the fused window kernel's two-run descriptor ring.
 A two-run chunk's block descriptors now reach shared memory by `cp.async`
 with the word stages' copies, four chunks ahead, into a ring the word copies
