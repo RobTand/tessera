@@ -77,8 +77,12 @@ def test_actual_prepared_bundle_does_not_report_the_retired_pair(
     if output := os.environ.get("TS638_OUT"):
         name = f"case-{family}-{mode}-{compiled}-{m}.json"
         (Path(output) / name).write_text(json.dumps(evidence, sort_keys=True) + "\n")
-    assert pair == (layer.tessera_native.launch_pair if family == "fp8"
-                    else driver.route.DENSE_LAUNCH)
+    # The launch the prepared bundle declared, and on BF16 the fused dense
+    # identity: the fixture's 64-row module is one partial row block, which the
+    # fused kernel takes since the N-tail (#759).
+    assert pair == layer.tessera_native.launch_pair
+    if family == "bf16":
+        assert pair == driver.route.DENSE_FUSED_LAUNCH
     assert pair in expected and pair != retired
     assert retired not in expected, "census accepts an unobserved retired pair"
     if compiled:
