@@ -55,7 +55,7 @@ from .grammar import Q256_UNIT, bresenham_rate_schedule
 # The TP-agnosticism rule lives with the cutter (``tessera.slicing``, re-exported
 # lazily here); the exporter reads it rather than restating it.
 from .layout import tp_agnostic_at_minor
-from .manifest import BodyKind, RotationState, ScalePlaneKind
+from .manifest import BodyKind, RotationState, ScalePlaneKind, body_rate_cap
 from .structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, STRUCTURES
 from .trellis import ConvCode
 from .encoder_identity import encoder_fixture_id, stamped_fixture_id
@@ -1853,7 +1853,7 @@ def _build_plan(
     """One plan, built.  Memoised through :func:`_plan_for`; never called raw."""
     root = Fraction(q256 * grid.arity, 256)
     body = BodyKind(body)
-    cap = grid.payload_bits if body is BodyKind.WINDOW else grid.rate_cap
+    cap = body_rate_cap(body, grid)
     rates = bresenham_rate_schedule(root, columns, cap=cap)
     if body is BodyKind.WINDOW:
         return rates, grid

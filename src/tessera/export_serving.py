@@ -175,6 +175,7 @@ from tessera.alphabet import (  # noqa: E402
 from tessera.bf16_route import BF16_FAMILY  # noqa: E402
 from tessera.container import SCHEMA_MINOR  # noqa: E402
 from tessera.layout import tp_agnostic_at_minor  # noqa: E402
+from tessera.manifest import body_rate_cap  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, served_recipe)
@@ -664,7 +665,7 @@ def check_lanes(lanes, grid, q256: int, where: "str | None" = None,
     for lane in lanes:
         try:
             rates = refuse_unreachable_lane(
-                lane, grid=grid.name, q256=int(q256), rate_cap=grid.rate_cap,
+                lane, grid=grid.name, q256=int(q256), rate_cap=body_rate_cap(recipe.body, grid),
                 body=recipe.body.name, plane=recipe.scale_plane.name,
                 window_bits=int(recipe.window_bits), target=target)
         except ValueError as exc:

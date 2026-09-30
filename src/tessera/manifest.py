@@ -304,6 +304,19 @@ class BodyKind(IntEnum):
     WINDOW = 1
 
 
+def body_rate_cap(body: "BodyKind | int", grid) -> int:
+    """The highest column rate ``body`` may spend per position on ``grid``.
+
+    The window body's shaping is shared history, not a code bit, so a
+    position may spend the grid's whole payload width (``payload_bits``).
+    The coset trellis spends one bit of the payload on its code and caps one
+    lower (``grid.rate_cap``).  The schedule the encoder builds, the cached
+    unit's receipt, the artifact's geometry, the control plane's terminal
+    rate and the plan-time lane gate all read this one dispatch.
+    """
+    return grid.payload_bits if BodyKind(body) is BodyKind.WINDOW else grid.rate_cap
+
+
 #: The widest window a reader will allocate a table for: a 2^20-entry table
 #: is 1 MiB per unit, and the ALPHABET plane is charged per unit, so nothing
 #: above this is a rate anyone would ship.  A bound, not a tuning constant.

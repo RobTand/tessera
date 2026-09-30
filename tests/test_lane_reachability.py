@@ -33,6 +33,7 @@ import pytest
 from tessera import kernel_window_gemv as kg
 from tessera.control import grid_for_name
 from tessera.export import wire_recipe
+from tessera.manifest import body_rate_cap
 from tessera.grammar import bresenham_rate_schedule, rate_set, root_from_q256
 from tessera.serving import ext
 from tessera.serving.contract import (
@@ -159,7 +160,7 @@ def test_an_integral_root_is_one_rate_and_a_fractional_root_is_two():
 def _refuse(q256):
     recipe = wire_recipe(E4M3, q256)
     return refuse_unreachable_lane(
-        LANE, grid="E4M3", q256=q256, rate_cap=E4M3.rate_cap,
+        LANE, grid="E4M3", q256=q256, rate_cap=body_rate_cap(recipe.body, E4M3),
         body=recipe.body.name, plane=recipe.scale_plane.name,
         window_bits=int(recipe.window_bits), target=f"probe@q{q256}")
 
@@ -1003,11 +1004,13 @@ def test_the_plan_gate_reads_the_structure_and_has_no_passing_default(monkeypatc
     def plan(q256, **kw):
         recipe = wire_recipe(E4M3, q256)
         return refuse_unreachable_lane(
-            FUSED_LANE, grid="E4M3", q256=q256, rate_cap=E4M3.rate_cap,
+            FUSED_LANE, grid="E4M3", q256=q256, rate_cap=body_rate_cap(recipe.body, E4M3),
             body=recipe.body.name, plane=recipe.scale_plane.name,
             window_bits=int(recipe.window_bits), target=f"stack@q{q256}", **kw)
 
     assert plan(1792, structure=STRUCTURE_ROUTED_MOE) == (7,)
+    assert plan(2048, structure=STRUCTURE_ROUTED_MOE) == (8,)
+    assert plan(1920, structure=STRUCTURE_ROUTED_MOE) == (7, 8)
     _narrow_fused_lane(monkeypatch)
     with pytest.raises(ValueError) as caught:
         plan(1792, structure=STRUCTURE_ROUTED_MOE)
