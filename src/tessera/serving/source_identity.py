@@ -23,15 +23,18 @@ vLLM.
 """
 from __future__ import annotations
 
-import hashlib
 from functools import lru_cache
 from pathlib import Path
+
+from ..source_profiles import PACKAGE_SOURCE_V2, source_profiles
 
 __all__ = [
     "SOURCE_IDENTITY_ALGORITHM",
     "SOURCE_SUFFIXES",
     "serving_source_files",
     "serving_source_sha256",
+    "serving_source_profiles",
+    "PACKAGE_SOURCE_V2",
 ]
 
 #: Names the digest's recipe. A change to what the digest covers or how it
@@ -65,18 +68,23 @@ def serving_source_files(src: Path | None = None) -> tuple[Path, ...]:
         and "__pycache__" not in path.parts))
 
 
+def _profiles(src: Path) -> dict[str, str]:
+    return source_profiles(
+        ((path.relative_to(src).as_posix(), path.read_bytes())
+         for path in serving_source_files(src)),
+        legacy_profile=SOURCE_IDENTITY_ALGORITHM,
+        legacy_prefix=SOURCE_IDENTITY_ALGORITHM.encode() + b"\0")
+
+
 def _digest(src: Path) -> str:
-    digest = hashlib.sha256(SOURCE_IDENTITY_ALGORITHM.encode() + b"\0")
-    for path in serving_source_files(src):
-        digest.update(path.relative_to(src).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    return _profiles(src)[SOURCE_IDENTITY_ALGORITHM]
 
 
 @lru_cache(maxsize=None)
-def _cached_digest(src: str) -> str:
-    return _digest(Path(src))
+def _cached_digest(src: str) -> tuple[tuple[str, str], ...]:
+    # Both profiles describe the same startup snapshot. The memo is private
+    # and immutable; callers receive fresh dictionaries rather than its state.
+    return tuple(_profiles(Path(src)).items())
 
 
 def serving_source_sha256(src: Path | None = None) -> str:
@@ -89,4 +97,14 @@ def serving_source_sha256(src: Path | None = None) -> str:
     ran.
     """
     root = (src if src is not None else _default_root()).resolve()
-    return _cached_digest(str(root))
+    return dict(_cached_digest(str(root)))[SOURCE_IDENTITY_ALGORITHM]
+
+
+def serving_source_profiles(src: Path | None = None) -> dict[str, str]:
+    """The labelled legacy and length-framed profiles of one startup snapshot.
+
+    This does not rewrite a cell's existing ``serving_source_sha256`` stamp or
+    reinterpret it as v2. Qualification records keep their declared profile.
+    """
+    root = (src if src is not None else _default_root()).resolve()
+    return dict(_cached_digest(str(root)))

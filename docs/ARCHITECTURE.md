@@ -1,5 +1,27 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for additive source profiles (Refs
+RobTand/prismaquant#1762). `serving_source_profiles()` and
+`cached_unit.encoder_source_profiles()` expose labelled legacy values beside
+`tessera.package_source.v2`. The new digest begins with that ASCII profile
+name and NUL, then hashes records in UTF-8 name-byte order: unsigned u64be
+name length, name bytes, unsigned u64be content length, raw content. Embedded
+NUL is accepted, including native raw-string source. The serving owner keeps
+its existing eight suffixes and `src`-relative names; the encoder keeps its
+five suffixes and package-relative names. For each unchanged selected file
+map, both old scalar recipes are byte-identical. The encoder's formerly
+unnamed recipe is labelled `tessera.encoder_source.v1`; the serving legacy
+recipe remains `tessera.package_source.v1` with its existing tag.
+
+Serving profiles share the existing startup-source memo and return isolated
+copies. Encoder profiles must match the original cached scalar seal, or the
+optional metadata call refuses an edited package. Existing cached wire
+identities and runtime-contract code stamps remain legacy: these APIs do not
+rewrite records, move a pin, requalify cells or change a serving gate. A
+consumer adopting v2 must explicitly compare matching named profiles;
+PrismaQuant adoption is deferred to a later reviewed pin. CPU source-framing
+receipts are not GPU, numerical or serving qualification.
+
 Re-stamped 2026-09-29 for CPU timing-evidence requirements (Refs #688).
 The census planner can describe the missing per-scope CUDA-event/profiler,
 Netdata, wire/runtime-identity and native-preparation evidence. It rejects

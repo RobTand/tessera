@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-29T09:58:09Z",
+ "generated": "2026-09-30T02:14:15Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -76,7 +76,7 @@
     "title": "[P3] Exports read through PB residency and write through produced outputs"
    },
    "1014": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Close the remaining undeclared IO in campaign tooling"
    },
    "1015": {
@@ -1648,7 +1648,7 @@
     "title": "[P2] Stage B render probes drain the GPU queue on 826 per-scalar syncs: up to 880 ms per probe, about 5.5% of the row (prof-2 decides the severity)"
    },
    "1369": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Stage B spill: record a per-range checksum at write and verify it in the IO engine at read (xxh3_64 or crc32c, about 3-10 s of CPU per 272 GB row)"
    },
    "137": {
@@ -1724,7 +1724,7 @@
     "title": "[P3] One SHA-256 hex predicate for the ~10 digest validators (#1301 part 4)"
    },
    "1386": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Consolidate the sorted-roster and source-tree digest recipes (#1301 part 5)"
    },
    "1387": {
@@ -2712,7 +2712,7 @@
     "title": "[P2] PQ logical dedup: unify joint_aura transition twins"
    },
    "1608": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Transition-twin near-miss unification needs a design call"
    },
    "1609": {
@@ -2916,7 +2916,7 @@
     "title": "[P1] Stage A forward capture fans out across PrismaBuild by partition range (#738)"
    },
    "1654": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Row startup idles the GPU 2.5-3 min per PACT gamut row: activations load-all (96-100 s) and the next row's inputs are not staged"
    },
    "1655": {
@@ -3016,11 +3016,11 @@
     "title": "[P2] Delegate export compact-lax fingerprints to DIRECT profiles"
    },
    "1677": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] PACT gamut rows hash their source and re-read the projection serially under the GPU reservation"
    },
    "1678": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Row startup: refuse proofless streaming plans; check the projection on the stream readers (#1654)"
    },
    "1679": {
@@ -3056,11 +3056,11 @@
     "title": "[P2] Delegate aura_cost bytes hashes to bytes_sha256hex"
    },
    "1686": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] dispatch plan derives a seeded row's demand without its seed flags; submit refuses it"
    },
    "1687": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Plan a seeded row's demand from the argv it runs (#1686)"
    },
    "1688": {
@@ -3112,7 +3112,7 @@
     "title": "test: re-pin Tessera allocator output for side-byte pricing"
    },
    "1699": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Delegate adjoint-slice manifest envelope to digests owners"
    },
    "17": {
@@ -3127,41 +3127,405 @@
     "state": "CLOSED",
     "title": "[P3] Docs: the GLM campaign image has no pytest; in-image GPU checks fail closed (#1526)"
    },
+   "1701": {
+    "state": "CLOSED",
+    "title": "Delegate adjoint-slice manifest envelope to digests owners (#1699)"
+   },
+   "1702": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera contract v45 (tessera#701): price mixed-rate stacks on the fused window lane"
+   },
+   "1703": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate census/compat strict indent-2 records to digests owners"
+   },
+   "1704": {
+    "state": "CLOSED",
+    "title": "Delegate census/compat strict indent-2 records to digests owners (#1703)"
+   },
+   "1705": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate chain-seed strict envelope to digests owners"
+   },
+   "1706": {
+    "state": "CLOSED",
+    "title": "Delegate chain-seed strict envelope to digests owners (#1705)"
+   },
+   "1707": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate GLM source oracle hashes to digests owners"
+   },
+   "1708": {
+    "state": "CLOSED",
+    "title": "Pin Tessera a21d74d8, contract v45 (tessera#701)"
+   },
+   "1709": {
+    "state": "CLOSED",
+    "title": "Delegate GLM source oracle hashes to digests owners (#1707)"
+   },
    "171": {
     "state": "CLOSED",
     "title": "Two test fixtures restate the ship-gate ledger instead of deriving it, so a sixth check passes them silently"
+   },
+   "1710": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate catalog-extension fence hashes to digests owners"
+   },
+   "1711": {
+    "state": "CLOSED",
+    "title": "Delegate catalog-extension fence hashes to digests owners (#1710)"
+   },
+   "1712": {
+    "state": "CLOSED",
+    "title": "[P1] route.trace artifact gate raises TypeError on every fully observed artifact (#1626 iterates #1620's (shown, rest) tuple)"
+   },
+   "1713": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate PrismaSnap probe hashes to bytes owner"
+   },
+   "1714": {
+    "state": "CLOSED",
+    "title": "[P2] Core module gained a second private import from the Tessera lane: joint_cost_quantum.py imports _seed_source_identity_cache twice (0569c0bb)"
+   },
+   "1715": {
+    "state": "CLOSED",
+    "title": "[P2] 11 Tessera pricing tests still expect the plane-only price after #1690 added container side bytes to the registry price"
+   },
+   "1716": {
+    "state": "CLOSED",
+    "title": "[P2] PACT card books each unit's Tessera member-name bytes as payload outside the units (#1690): replay test expects 128 B, gets 134 B"
+   },
+   "1717": {
+    "state": "CLOSED",
+    "title": "[P3] test_quantum_failure_counters: the _Sampler stub lacks 'times', which the counters read since #1292"
+   },
+   "1718": {
+    "state": "CLOSED",
+    "title": "Delegate PrismaSnap probe hashes to bytes owner (#1713)"
+   },
+   "1719": {
+    "state": "CLOSED",
+    "title": "[P1] Re-pin Tessera to 83460680 (tessera#725): the pin must name the Tessera the T8R release serve runs"
    },
    "172": {
     "state": "CLOSED",
     "title": "Streaming packed appends record no render-identity section, so a hand-mixed streaming build is unguarded"
    },
+   "1720": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate quantum-handoff manifest hashes to digests owners"
+   },
+   "1721": {
+    "state": "CLOSED",
+    "title": "route.trace artifact gate unpacks _sample's (shown, rest) (#1712)"
+   },
+   "1722": {
+    "state": "CLOSED",
+    "title": "Delegate quantum-handoff manifest hashes to digests owners (#1720)"
+   },
+   "1723": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate checkpoint shared-state hashes to digests owners"
+   },
+   "1724": {
+    "state": "CLOSED",
+    "title": "Pin Tessera 83460680 (tessera#725), contract v45 unchanged"
+   },
+   "1725": {
+    "state": "CLOSED",
+    "title": "[P2] Give seed_source_identity_cache a public name; core stops importing a lane-private helper (#1714)"
+   },
+   "1726": {
+    "state": "CLOSED",
+    "title": "[P2] Tessera pricing tests compare the whole-unit price with plane + side bytes (#1715)"
+   },
+   "1727": {
+    "state": "CLOSED",
+    "title": "[P2] PACT card books the units' member-name bytes as their own field (#1716)"
+   },
+   "1728": {
+    "state": "CLOSED",
+    "title": "[P3] Failure-counters sampler stub publishes GpuPowerSampler.times (#1717)"
+   },
+   "1729": {
+    "state": "CLOSED",
+    "title": "Delegate checkpoint shared-state hashes to digests owners (#1723)"
+   },
    "173": {
     "state": "CLOSED",
     "title": "Same-directory packed appends with different fit calibs merge silently for new pairs"
+   },
+   "1730": {
+    "state": "CLOSED",
+    "title": "[P1] Row startup: stream projected expert weights on the row stream's readers; refuse proofless streaming plans (#1654)"
+   },
+   "1731": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate stage-A capture hashes to digests owners"
+   },
+   "1732": {
+    "state": "CLOSED",
+    "title": "Delegate stage-A capture hashes to digests owners (#1731)"
+   },
+   "1733": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate layer-quanta hashes to digests owners"
+   },
+   "1734": {
+    "state": "CLOSED",
+    "title": "Delegate layer-quanta hashes to digests owner (#1733)"
+   },
+   "1735": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate adjoint-band bytes hashes to digests owner"
+   },
+   "1736": {
+    "state": "CLOSED",
+    "title": "Delegate adjoint-band bytes hashes to digests owner (#1735)"
+   },
+   "1737": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate stage-a-retirement bytes hashes to digests owner"
+   },
+   "1738": {
+    "state": "CLOSED",
+    "title": "Delegate stage-a-retirement bytes hashes to digests owner (#1737)"
+   },
+   "1739": {
+    "state": "CLOSED",
+    "title": "[P1] Bump the Tessera pin to b40c93cb (tessera#729 loader fix)"
    },
    "174": {
     "state": "CLOSED",
     "title": "A pool job that holds no GPU slot can still see and use CUDA"
    },
+   "1740": {
+    "state": "CLOSED",
+    "title": "[P1] Re-pin Tessera to b40c93cb: fix routed loader column-order corruption"
+   },
+   "1741": {
+    "state": "OPEN",
+    "title": "[P2] Memoize row-local served-route refusals without changing member gates"
+   },
+   "1742": {
+    "state": "OPEN",
+    "title": "[P2] Overlap or reuse the exact encoder source identity at row startup"
+   },
+   "1743": {
+    "state": "OPEN",
+    "title": "[P2] Start the verified first RowStream window before serial row preparation ends"
+   },
+   "1744": {
+    "state": "OPEN",
+    "title": "[P2] Remove output-neutral PACT row startup serialization"
+   },
+   "1745": {
+    "state": "CLOSED",
+    "title": "[P1] Refresh the checkpoint deadline citation left stale by dedup #1729"
+   },
+   "1746": {
+    "state": "CLOSED",
+    "title": "[P2] Real-wire R1023 byte-accounting CPU tests exceed the 300-second CI deadline"
+   },
+   "1747": {
+    "state": "CLOSED",
+    "title": "[P2] Route GLM capture compatibility byte hashes through the digest owner"
+   },
+   "1748": {
+    "state": "CLOSED",
+    "title": "[P1] Refresh the checkpoint deadline citation after dedup"
+   },
+   "1749": {
+    "state": "CLOSED",
+    "title": "Consolidate GLM compatibility byte hashes (#1301)"
+   },
    "175": {
     "state": "CLOSED",
     "title": "CI cannot install the now-required private Tessera package"
+   },
+   "1750": {
+    "state": "OPEN",
+    "title": "[P2] Campaign planner bundles anchor groups by count: w03's 90 dense rows ran ~80 s each for ~10 s of GPU work"
+   },
+   "1751": {
+    "state": "CLOSED",
+    "title": "[P2] Document retention of closed source-transition contracts"
+   },
+   "1752": {
+    "state": "CLOSED",
+    "title": "[P2] Share byte-identical incremental source-record framing"
+   },
+   "1753": {
+    "state": "CLOSED",
+    "title": "[P2] Thread serving structure through Tessera CPU byte estimates"
+   },
+   "1754": {
+    "state": "CLOSED",
+    "title": "[P2] Add opt-in measured-work packing for whole dense campaign groups"
+   },
+   "1755": {
+    "state": "CLOSED",
+    "title": "[P2] Emit deterministic offline reduced-stack next-work manifests"
+   },
+   "1756": {
+    "state": "OPEN",
+    "title": "[P2] Refresh stale uv.lock root metadata and missing test-extra dependencies"
+   },
+   "1757": {
+    "state": "OPEN",
+    "title": "[P2] Generalize retained qualification logical requests"
+   },
+   "1758": {
+    "state": "CLOSED",
+    "title": "[P3] Reconcile retired PB IO tracking and consumer blocker"
+   },
+   "1759": {
+    "state": "CLOSED",
+    "title": "[P2] Add opt-in measured-work packing for dense campaign rows"
    },
    "176": {
     "state": "CLOSED",
     "title": "Install the exact Tessera development pin in CI"
    },
+   "1760": {
+    "state": "CLOSED",
+    "title": "Share byte-identical incremental source-record framing"
+   },
+   "1761": {
+    "state": "CLOSED",
+    "title": "[P1] Routed backfill rows size their phase plan from host free memory, not their cgroup cap: 12 rows died on idle sparky"
+   },
+   "1762": {
+    "state": "OPEN",
+    "title": "[P1] NUL-framed source identities do not bind a unique file map"
+   },
+   "1763": {
+    "state": "CLOSED",
+    "title": "[P1] Require producer-bound pilots before joint fanout"
+   },
+   "1764": {
+    "state": "CLOSED",
+    "title": "[P2] Route package-source identity through the shared length-frame owner"
+   },
+   "1765": {
+    "state": "CLOSED",
+    "title": "[P3] #1759 work_profile_bundles adds raw digest sites and breaks main ratchet"
+   },
+   "1766": {
+    "state": "CLOSED",
+    "title": "[P3] Route work-profile bindings through shared digest owners"
+   },
+   "1767": {
+    "state": "CLOSED",
+    "title": "[P2] Emit deterministic offline reduced-stack next-work manifests"
+   },
+   "1768": {
+    "state": "CLOSED",
+    "title": "[P2] Transcribe split v3 pin identity into legal-domain drift reports"
+   },
+   "1769": {
+    "state": "CLOSED",
+    "title": "[P2] Route work-profile byte hashes through the shared owner; repair main ratchet growth"
+   },
    "177": {
     "state": "CLOSED",
     "title": "Fix boundary gate HTTP response contract"
+   },
+   "1770": {
+    "state": "CLOSED",
+    "title": "[P2] Verify Stage B spill payloads without speculative retries"
+   },
+   "1771": {
+    "state": "CLOSED",
+    "title": "[P2] Retain split v3 pin identity in legal-domain drift reports"
+   },
+   "1772": {
+    "state": "CLOSED",
+    "title": "[P2] Share package-source framing and repair work-profile hash growth"
+   },
+   "1773": {
+    "state": "CLOSED",
+    "title": "[P1] Ship the CPU-validated producer-bound pilot admission slice"
+   },
+   "1774": {
+    "state": "CLOSED",
+    "title": "[P2] Share legacy NUL source framing and associated exact-byte owners"
+   },
+   "1775": {
+    "state": "CLOSED",
+    "title": "[P2] Stage B checkpoint persistence: bounded shared-IO-engine publisher CPU slice"
+   },
+   "1776": {
+    "state": "OPEN",
+    "title": "[P2] Replay bounded reduced-stack repair transitions from explicit evidence"
+   },
+   "1777": {
+    "state": "CLOSED",
+    "title": "[P2] Name distinct positive-integer policies without growing the helper ratchet"
+   },
+   "1778": {
+    "state": "CLOSED",
+    "title": "[P2] Price served Tessera structure in CPU accounting"
+   },
+   "1779": {
+    "state": "CLOSED",
+    "title": "[P2] Share legacy source profile and restore distinct integer policies"
    },
    "178": {
     "state": "CLOSED",
     "title": "Refuse empty boundary samples and add paired BF16 measurement"
    },
+   "1780": {
+    "state": "CLOSED",
+    "title": "[P2] Share the identical roster qname layer grammar (#1303 slice)"
+   },
+   "1781": {
+    "state": "CLOSED",
+    "title": "[P1] Lock routed checkpoint resume to admitted stream memory"
+   },
+   "1782": {
+    "state": "CLOSED",
+    "title": "Share the exact roster qname layer grammar (#1780)"
+   },
+   "1783": {
+    "state": "CLOSED",
+    "title": "[P2] Add bounded finite shared-IO publisher prerequisite for Stage B"
+   },
+   "1784": {
+    "state": "CLOSED",
+    "title": "[P2] Preserve real R1023 wire coverage within the CPU deadline"
+   },
+   "1785": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate model-walk metadata hashes to the bytes owner (#1301 slice)"
+   },
+   "1786": {
+    "state": "OPEN",
+    "title": "[P2] Integrate bounded retained-window checkpoint publication (CPU slice)"
+   },
+   "1787": {
+    "state": "OPEN",
+    "title": "[P2] Replay bounded offline Tessera repair histories"
+   },
+   "1788": {
+    "state": "OPEN",
+    "title": "[P3] Preserve ownership guard for pilot-local validation helpers"
+   },
+   "1789": {
+    "state": "OPEN",
+    "title": "[P2] Check campaign group membership before row admission"
+   },
    "179": {
     "state": "CLOSED",
     "title": "Consume Tessera v4 launches and explicit residency"
+   },
+   "1790": {
+    "state": "CLOSED",
+    "title": "Delegate model-walk metadata hashes to shared bytes owner"
+   },
+   "1791": {
+    "state": "OPEN",
+    "title": "[P3] Preserve ownership guard for pilot-local helpers"
    },
    "18": {
     "state": "CLOSED",
@@ -8482,7 +8846,7 @@
     "title": "Do not offer a ROCm build the NVPTX fused Viterbi, and separate the gfx1201 Hessian divergence"
    },
    "477": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] E2M1 K1 is encodable, priceable and unreadable: no reader range can be published for it"
    },
    "478": {
@@ -9022,7 +9386,7 @@
     "title": "Read the v2 catalog extension in rooted cached units"
    },
    "599": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Tessera stands alone: no knowledge of PrismaQuant or PrismaBuild outside a plugin interface"
    },
    "6": {
@@ -9370,7 +9734,7 @@
     "title": "P2: Publish the persistent native resource measurement lane (Refs #654)"
    },
    "677": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Producer should attest the runtime identity it can observe"
    },
    "678": {
@@ -9462,7 +9826,7 @@
     "title": "[P2] Stock vLLM: a one-token prompt reads its KDA state slot as the previous request left it"
    },
    "698": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] The GLM53 NoPE eager-equivalence verdict has no machine-readable carrier; the route trace under-counts graph decode"
    },
    "699": {
@@ -9482,7 +9846,7 @@
     "title": "GLM53 NoPE: admit a drafter's graph path only by receipt; refuse dflash by name (#695)"
    },
    "701": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] The fused window kernel reads the wire's run table at every rate (contract v45)"
    },
    "702": {
@@ -9494,7 +9858,7 @@
     "title": "[P2] Strict read_serving_manifest that refuses duplicate keys; convert all four readers"
    },
    "704": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Route census --compiled has no compilation-config passthrough; the GLM gate refuses VLLM_COMPILE"
    },
    "705": {
@@ -9582,12 +9946,56 @@
     "title": "[P3] Publish fused frame size and terminal slot id (#719)"
    },
    "724": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Window routed intake strands a 20 MiB allocator slab per projection (T8R load +16.5 GB on L43)"
+   },
+   "725": {
+    "state": "CLOSED",
+    "title": "[P1] The window intake repacks in place into the loader's scratch (#724)"
+   },
+   "726": {
+    "state": "CLOSED",
+    "title": "[P2] Census: --compilation-config passthrough and route-only compiled attestation (#704)"
+   },
+   "727": {
+    "state": "CLOSED",
+    "title": "[P1] Partitioned export with --producer-authority crashes writing the manifest (Path in partition identity)"
+   },
+   "728": {
+    "state": "CLOSED",
+    "title": "Record the producer authority's digest, not its path, in a part identity"
+   },
+   "729": {
+    "state": "CLOSED",
+    "title": "[P0] Routed MoE loader stores the TP row-cut start state in original column order; both lanes read it permuted (mixed-rate rank>0 gate/up corrupt)"
    },
    "73": {
     "state": "CLOSED",
     "title": "get_quant_method sniffs MoE class names, so a renamed MoE layer falls through to a silent unquantized fallback"
+   },
+   "730": {
+    "state": "CLOSED",
+    "title": "Store the permuted start state on the routed loader's axis (#729)"
+   },
+   "731": {
+    "state": "CLOSED",
+    "title": "[P2] Correct compiled census expectations and persist the NoPE verdict"
+   },
+   "732": {
+    "state": "CLOSED",
+    "title": "Fused window kernel: per-pair instantiation, two-run column map and the first chunk's load settle"
+   },
+   "733": {
+    "state": "CLOSED",
+    "title": "Fused window kernel: stage a two-run chunk's block descriptors in shared memory"
+   },
+   "734": {
+    "state": "CLOSED",
+    "title": "[P1] Add unmeasured census and timing-evidence planning tools"
+   },
+   "735": {
+    "state": "OPEN",
+    "title": "[P2] Stock vLLM GLM-5.3 prefill: mHC on every TP rank and three MLA/KDA copies (about 100 ms per 2,048-token chunk, estimate)"
    },
    "74": {
     "state": "CLOSED",
