@@ -30,6 +30,7 @@ import types
 import pytest
 import torch
 
+from tessera.errors import GrammarError
 from tessera.serving import moe_route
 from tessera.serving.scheme import validate_tessera_moe_scheme
 # Sibling test modules by their own names: ``tests/conftest.py`` puts this
@@ -186,11 +187,11 @@ def _assert_rank_local_scales(packed, ref, ids):
 
 
 def _fp8_reference_weight_on_input(reference, x, ids, weights, tp_rank, tp_size):
-    """The materialising reference with the route weight in gemm1's fp32
-    accumulator -- the placement actual stock ``fused_experts`` uses when
-    ``apply_router_weight_on_input=True`` (vLLM's MUL_ROUTED_WEIGHT): the
-    activation and the stage-2 quant consume weighted values, and the down
-    stage does not weight again."""
+    """Modular prepare's topk=1 placement: weight bf16 x before quantization.
+
+    Neither GEMM applies the routing weight again. The method-level test
+    independently compares this placement to the actual stock modular kernel.
+    """
     from vllm import _custom_ops  # noqa: F401  (registers torch.ops._C)
 
     local_inter = INTER // tp_size
@@ -202,20 +203,20 @@ def _fp8_reference_weight_on_input(reference, x, ids, weights, tp_rank, tp_size)
         torch.ops._C.dynamic_per_token_scaled_fp8_quant(q, row.reshape(1, -1), s, None)
         return q.reshape(-1).float() * s.reshape(-1)[0]
 
+    assert ids.shape[1] == 1
+    scaled = x * weights.reshape(-1, 1).to(x.dtype)
     out = torch.zeros(x.shape[0], HIDDEN, dtype=torch.float32, device=x.device)
     for token in range(x.shape[0]):
-        xg = _quant(x[token].float())
+        xg = _quant(scaled[token].float())
         for choice in range(ids.shape[1]):
             ref = reference[int(ids[token, choice])]
-            weight = float(weights[token, choice])
             gate = ref["gate"]["weight"][lo:hi].float().to(x.device) \
                 * ref["gate"]["weight_scale"][lo:hi].to(x.device)
             up = ref["up"]["weight"][lo:hi].float().to(x.device) \
                 * ref["up"]["weight_scale"][lo:hi].to(x.device)
             down = ref["down"]["weight"][:, lo:hi].float().to(x.device) \
                 * ref["down"]["weight_scale"].to(x.device)
-            act_q = _quant(torch.nn.functional.silu(weight * (gate @ xg))
-                           * (weight * (up @ xg)))
+            act_q = _quant(torch.nn.functional.silu(gate @ xg) * (up @ xg))
             out[token] += down @ act_q
     return out.bfloat16()
 
@@ -267,13 +268,15 @@ def test_native_loader_shape_produces_rank_local_packed_tiles(wires, rank):
     expected = _fp8_reference(wires[3], x, routing, weights, tp_rank=rank, tp_size=2)
     diff = (got.float() - expected.float()).abs()
     assert float(diff.max()) < 5e-2 + 2e-2 * float(expected.float().abs().max())
-    # The route weight's placement is stock's: on input it multiplies gemm1's
-    # fp32 accumulator (the method-level stock oracle attests that placement);
-    # at this rank's cut the product must be the same placement over the
-    # rank-local tiles, with no second weighting at the down stage.
+    # Stock modular prepare supports input weighting only at topk=1 and
+    # multiplies x before its per-token quantizer. Keep topk=2 as a refusal,
+    # not an accepted legacy-accumulator placement.
     layer.apply_router_weight_on_input = True
-    got_wi = method.apply(layer, x, weights, routing, _SharedSpy(), None)
-    expected_wi = _fp8_reference_weight_on_input(wires[3], x, routing, weights,
+    with pytest.raises(GrammarError, match="only implemented for topk=1"):
+        method.apply(layer, x, weights, routing, _SharedSpy(), None)
+    routing_wi, weights_wi = routing[:, :1].contiguous(), weights[:, :1].contiguous()
+    got_wi = method.apply(layer, x, weights_wi, routing_wi, _SharedSpy(), None)
+    expected_wi = _fp8_reference_weight_on_input(wires[3], x, routing_wi, weights_wi,
                                                  tp_rank=rank, tp_size=2)
     diff = (got_wi.float() - expected_wi.float()).abs()
     assert float(diff.max()) < 5e-3 + 1e-2 * float(expected_wi.float().abs().max())
