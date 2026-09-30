@@ -38,6 +38,10 @@ the byte floor over the time (the WP2 M = 1 criterion: 0.90 or more);
 
 Each cell is timed as a CUDA-graph replay in a forward pass over the cell list
 and again in a reverse pass; the cell's time is the mean of the two medians.
+A replayed module stays in the 24 MB L2 when it fits, so the default (``--l2
+warm``) times decode from L2.  ``--l2 cold`` (or ``warm,cold``) also times
+``apply_cold``: a read of four L2s before each replay evicts the module, as a
+served forward finds it after the rest of the model has passed through.
 The forward pass also records torch.profiler device time per kernel and, at
 ``--power-ms``, NVML board power over a back-to-back loop, with unix times for
 the Netdata series.
@@ -107,6 +111,52 @@ def graph_time(call, warmup, iters):
     samples = time_events(graph.replay, warmup, iters)
     del graph
     return samples
+
+
+def cold_scratch():
+    """A read-only buffer of four L2s (at least 64 MB): reading it before a
+    timed call leaves the call's weights out of L2, as a served forward
+    finds them after the rest of the model has passed through.  Read, not
+    written, so the timed call writes back no dirty lines of it."""
+    l2 = int(getattr(torch.cuda.get_device_properties(0), "L2_cache_size", 0) or (24 << 20))
+    return torch.ones(max(4 * l2, 64 << 20) // 4, dtype=torch.float32, device="cuda")
+
+
+def graph_time_cold(call, warmup, iters, scratch):
+    """``graph_time`` with L2 cleared before each replay (``cold_scratch``);
+    the events bracket the replay alone."""
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            call()
+    torch.cuda.current_stream().wait_stream(side)
+    torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        call()
+    for _ in range(warmup):
+        scratch.sum()
+        graph.replay()
+    torch.cuda.synchronize()
+    out = []
+    for _ in range(iters):
+        scratch.sum()
+        a, b = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        a.record(); graph.replay(); b.record(); b.synchronize()
+        out.append(float(a.elapsed_time(b)))
+    del graph
+    return out
+
+
+def kernel_profile_cold(call, scratch, reps=3):
+    """``kernel_profile`` with L2 cleared before each call; the clearing
+    read's own kernels (profiled alone first) are left out."""
+    alone = kernel_profile(lambda: scratch.sum(), reps=1)["top"]
+    prof = kernel_profile(lambda: (scratch.sum(), call()), reps=reps)
+    top = {k: v for k, v in prof["top"].items() if k not in alone}
+    return {"kernel_us_per_call": sum(v["us_per_call"] for v in top.values()),
+            "launches_per_call": prof["launches_per_call"] - len(alone), "top": top}
 
 
 def encode_module(roles, cols, q256, seed, source=None):
@@ -208,6 +258,9 @@ def main():
     ap.add_argument("--layer", type=int, default=1, help="the KDA layer read from --model")
     ap.add_argument("--mla-layer", type=int, default=3, help="the MLA layer the MLA modules read")
     ap.add_argument("--numerics-ms", default="1,64,2048")
+    ap.add_argument("--l2", default="warm",
+                    help="warm, cold or warm,cold: cold also times apply with L2 cleared before "
+                         "each replay (call apply_cold), the state a served forward finds a module in")
     ap.add_argument("--k-splits", default="",
                     help="measurement only: also time the fused lane at these fixed K splits "
                          "(lane fused@S<s>; the launch's own model picks S on lane fused)")
@@ -220,6 +273,10 @@ def main():
     dev = torch.device("cuda")
     ms = [int(v) for v in args.ms.split(",")]
     power_ms = {int(v) for v in args.power_ms.split(",") if v}
+    l2_modes = {v for v in args.l2.split(",") if v}
+    if not l2_modes <= {"warm", "cold"} or not l2_modes:
+        raise SystemExit(f"--l2 takes warm, cold or both, not {args.l2!r}")
+    scratch = cold_scratch() if "cold" in l2_modes else None
     power = PowerSampler()
     meta = {"device": torch.cuda.get_device_name(), "sms": torch.cuda.get_device_properties(dev).multi_processor_count,
             "library": rf.library_for("e4m3"), "read_gbps": READ_GBPS, "mma_tflops": MMA_E4M3_TFLOPS,
@@ -231,7 +288,9 @@ def main():
             "weights": ({"model": args.model, "layer": args.layer, "mla_layer": args.mla_layer,
                          "shard": "TP2 rank 0"} if args.model
                         else "seeded Gaussian"),
-            "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean"}
+            "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean",
+            "l2": sorted(l2_modes),
+            "cold_scratch_bytes": (scratch.numel() * 4 if scratch is not None else 0)}
     groups = []          # (key, builder) -> builder() returns (head, make) with make(m) -> (meta, call)
     for name in args.modules.split(","):
         roles, cols = MODULES[name]
@@ -246,6 +305,12 @@ def main():
 
     def save():
         json.dump({"meta": meta, "groups": cells}, open(path, "w"), indent=1)
+
+    def ref_calls(call):
+        calls = {"apply": call} if "warm" in l2_modes else {}
+        if "cold" in l2_modes:
+            calls["apply_cold"] = call
+        return calls
 
     def build(spec):
         kind, name, roles, cols, rows, q = spec
@@ -301,7 +366,13 @@ def main():
                 def quant_apply():
                     q8, s8 = native_fp8_quant(x)
                     holder["out"] = mod.apply(q8, s8.reshape(-1))
-                return {"floor": floors(wire, m, rows, cols)}, {"apply": apply, "quant_apply": quant_apply}, holder
+                calls = {"apply": apply, "quant_apply": quant_apply}
+                if "cold" in l2_modes:
+                    calls["apply_cold"] = apply
+                if "warm" not in l2_modes:
+                    calls.pop("apply")
+                    calls.pop("quant_apply")
+                return {"floor": floors(wire, m, rows, cols)}, calls, holder
             extra = [f"fused@S{v}" for v in args.k_splits.split(",") if v] if "fused" in lanes else []
             return head, make, list(lanes) + extra
         if kind == "bf16":
@@ -314,7 +385,7 @@ def main():
 
                 def call():
                     holder["out"] = torch.nn.functional.linear(x, w)
-                return {"floor": floors(rows * cols * 2, m, rows, cols, a_bytes=2)}, {"apply": call}, holder
+                return {"floor": floors(rows * cols * 2, m, rows, cols, a_bytes=2)}, ref_calls(call), holder
             return head, make, ["bf16"]
         w8 = (torch.randn(rows, cols, device=dev, generator=g) * 0.5).to(torch.float8_e4m3fn)
         sw = torch.rand(1, rows, device=dev, generator=g) * 1e-2 + 1e-3
@@ -327,7 +398,7 @@ def main():
 
             def call():
                 holder["out"] = torch._scaled_mm(x, w8.t(), scale_a=sa, scale_b=sw, out_dtype=torch.bfloat16)
-            return {"floor": floors(rows * cols + 4 * rows, m, rows, cols)}, {"apply": call}, holder
+            return {"floor": floors(rows * cols + 4 * rows, m, rows, cols)}, ref_calls(call), holder
         return head, make, ["scaled_mm"]
 
     built = {}
@@ -358,7 +429,9 @@ def main():
                         del calls, holder
                         continue
                     for cname, call in calls.items():
-                        samples = graph_time(call, args.warmup, args.iters)
+                        cold = cname.endswith("_cold")
+                        samples = (graph_time_cold(call, args.warmup, args.iters, scratch) if cold
+                                   else graph_time(call, args.warmup, args.iters))
                         rec = cell.setdefault(cname, {})
                         rec[pas] = {"median_ms": statistics.median(samples), "min_ms": min(samples),
                                     "unix": time.time()}
@@ -366,6 +439,8 @@ def main():
                             rec["floor"] = cmeta["floor"]
                             if cname == "apply":
                                 rec["profile"] = kernel_profile(call, reps=3)
+                            elif cold:
+                                rec["profile"] = kernel_profile_cold(call, scratch, reps=3)
                                 if m in power_ms:
                                     rec["power"] = power.sample_during(call, args.power_s)
                         else:
