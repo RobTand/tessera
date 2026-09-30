@@ -297,21 +297,36 @@ def test_gate_up_against_the_decode(q256, kind):
 
 
 @gpu
-@pytest.mark.parametrize("q256", [448, 512])
-def test_the_rank1_row_cut_is_the_whole_units_rows(q256):
-    """TP2 rank 1 holds rows I/2..I of gate and up, starting mid-stream from
-    the carried state: its route-preserved output is the whole unit's right
-    halves, bit for bit."""
+@pytest.mark.parametrize("q256, cut", [(448, (512, I)), (512, (I // 2, I))])
+def test_a_rank_cut_is_the_whole_units_rows_and_columns(q256, cut):
+    """A TP rank holds rows ``cut`` of gate and up, entered mid-stream from
+    the carried state, and columns ``cut`` of down.  Its route-preserved
+    gate/up output is the whole unit's rows ``cut``, bit for bit; its down
+    routes are the decode's columns ``cut`` within their bound.  A mixed-rate
+    unit cuts its columns only on 256-column superblocks, so at q448 the cut
+    starts at 512, not at TP2's I / 2 = 640; the uniform q512 takes TP2's."""
+    r0, r1 = cut
+    w = r1 - r0
     ids, rw = _routing(q256 + 1)
     x = _x(ids.shape[0], H, "random", q256 + 1)
     whole = _moe(q256, gs13=_gs(x)).gate_up(x, ids, rw)
-    cut = _moe(q256, cut=(I // 2, I), gs13=_gs(x))
-    assert bool(cut.gate.has_init.any()), "the cut must start mid-stream"
-    part = cut.gate_up(x, ids, rw)
+    part_moe = _moe(q256, cut=cut, gs13=_gs(x))
+    assert bool(part_moe.gate.has_init.any()), "the cut must start mid-stream"
+    part = part_moe.gate_up(x, ids, rw)
     torch.cuda.synchronize()
-    h = I // 2
-    assert torch.equal(part[..., :h].view(torch.int16), whole[..., h:I].view(torch.int16))
-    assert torch.equal(part[..., h:].view(torch.int16), whole[..., I + h:].view(torch.int16))
+    assert torch.equal(part[..., :w].view(torch.int16), whole[..., r0:r1].view(torch.int16))
+    assert torch.equal(part[..., w:].view(torch.int16), whole[..., I + r0:I + r1].view(torch.int16))
+
+    xa = _x(ids.numel(), w, "random", q256 + 6)
+    gs2 = _gs(xa)
+    moe = _moe(q256, cut=cut, gs2=gs2)
+    out = moe.down_routes(xa, ids, rw)
+    torch.cuda.synchronize()
+    _, (_, _, wd) = _stack(q256)
+    flat = ids.reshape(-1)
+    ratio = (moe.down.global_all.double() / gs2)[flat].unsqueeze(1) * rw.reshape(-1, 1).double()
+    ref, bound = _down_ref([d[:, r0:r1] for d in wd], _a_deq(xa, gs2), flat, ratio, k=w)
+    _reduced_check(out, ref, bound, ids.shape[0], f"down cols {cut} q256={q256}")
 
 
 def _mode0(moe, x, ids, rw):
@@ -338,9 +353,9 @@ def test_the_swiglu_epilogue_is_the_silu_of_its_own_gate_up(q256):
     assert bool((d <= _ulp(want.double()).float()).all()), float(d.max())
 
 
-def _down_ref(wd, a, experts_of_row, scale):
+def _down_ref(wd, a, experts_of_row, scale, k=I):
     acc, absacc = _per_expert(wd, a, experts_of_row)
-    return acc * scale, absacc * scale * I * 2.0 ** -23
+    return acc * scale, absacc * scale * k * 2.0 ** -23
 
 
 def _reduced_check(out, route_ref, route_bound, tokens, what):
