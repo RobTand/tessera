@@ -1649,6 +1649,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("src", type=Path)
     ap.add_argument("out", type=Path)
+    ap.add_argument("--shared-candidate-pricing", action="store_true",
+                    help="add versioned per-process/rank replay-table composition; legacy unit prices stay intact")
     ap.add_argument("--grid", default="E2M1x2",
                     help="default grid per Linear: E2M1, E2M1x2 (NVFP4), E4M3 (FP8) or BF16 (W16A16)")
     ap.add_argument("--q256", type=int, default=896, help="default body bits per 256 weights")
@@ -2484,6 +2486,9 @@ def main():
     config_groups: dict[str, dict] = {}
     units: dict[str, dict] = {}
     module_records: dict[str, dict] = {}
+    module_replay_groups: dict[str, list[dict]] = {}
+    if args.shared_candidate_pricing and args.partition:
+        raise SystemExit("--shared-candidate-pricing requires a whole artifact, not a serving part")
     twin_modules: dict[str, list[str]] = {NVFP4: [], FP8: [], BF16: []}
     twin_records: dict[str, dict] = {}
     # No seed: every ignored module is named from the tensor that was passed
@@ -2872,6 +2877,10 @@ def main():
                 # exactly when each trellis is prepared once in the serve.
                 trellis_table_bytes = sum(replay_table_bytes(forest, code)
                                           for forest, code in trellis_keys)
+                if args.shared_candidate_pricing:
+                    from tessera.decode import replay_table_spec
+                    module_replay_groups[module] = [replay_table_spec(forest, code)
+                                                    for forest, code in trellis_keys]
                 record.update({"shared_global": shared, "input_global_scale": a_scale,
                                "resident_bytes_resident_mode": dense_resident_bytes_resident_mode(
                                    family, rows_total, cols,
@@ -3233,6 +3242,10 @@ def main():
         "vllm_fp4_predicate": tessera_fp4_predicate,
         "totals": totals, "modules": module_records,
     }
+    if args.shared_candidate_pricing:
+        from tessera.serving_parts import shared_candidate_pricing
+        manifest["shared_candidate_resident_pricing"] = shared_candidate_pricing(
+            module_records, module_replay_groups)
     if partition_record is not None:
         partition_record["output_sha256"] = {
             shard: sha256_file(args.out / shard) for shard in sorted(shards)}

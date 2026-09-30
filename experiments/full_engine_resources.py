@@ -1012,7 +1012,7 @@ def analyze_engine_resource_ledger(raw, ownership_evidence=None, boundary_classi
         identity = _identity(raw["identity"])
         result["identity"] = identity
         result["capture_sha256"] = canonical_snapshot_digest(raw)
-        _int(raw["process_id"], "process_id", 1)
+        result["process_id"] = _int(raw["process_id"], "process_id", 1)
         _int(raw["context_id"], "context_id", 1)
         capture = raw["capture"]
         if capture["errors"]:

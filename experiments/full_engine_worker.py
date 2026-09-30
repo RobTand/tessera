@@ -712,6 +712,14 @@ class ResourceCaptureWorker(Worker):
                 raise ValueError("the served manifest's bytes differ from the plan's artifact checkpoint")
             manifest = json.loads(manifest_bytes)
             modules = manifest["modules"]
+            shared_pricing = manifest.get("shared_candidate_resident_pricing")
+            shared_observation = None
+            if shared_pricing is not None:
+                from tessera.decode import replay_resident_observation
+                if os.environ.get("TESSERA_SERVE_MODE", "resident") != "resident":
+                    raise ValueError("shared-candidate: pricing requires resident serve mode")
+                shared_observation = replay_resident_observation(
+                    shared_pricing, device=self.device, rank=identity.get("rank"))
             units = {}
             for row in plan["canonical_roster"]:
                 # The roster names the fused module vLLM builds (the manifest's
@@ -729,7 +737,9 @@ class ResourceCaptureWorker(Worker):
                     raise ValueError(f"manifest module {module} is {entry['family']}, the roster says {row['family']}")
                 units[row["unit_id"]] = {
                     "module": module, "family": row["family"], "members": list(row["members"]),
-                    "manifest_resident_bytes_resident_mode": int(entry["resident_bytes_resident_mode"])}
+                    "manifest_resident_bytes_resident_mode": (
+                        shared_pricing["private_resident_bytes"][module] if shared_pricing is not None
+                        else int(entry["resident_bytes_resident_mode"]))}
             torch.cuda.synchronize(self.device)
             payload["dense"] = {
                 "schema": "tessera.full_engine_dense_startup_observation.v1",
@@ -747,6 +757,15 @@ class ResourceCaptureWorker(Worker):
                           "resident rows of each unit to equal the manifest figure and the allocator sample "
                           "to bound every resident row live at ready_for_workload; neither number is derived "
                           "from the other here")}
+            if shared_observation is not None and shared_pricing is not None:
+                payload["dense"].update({
+                    "schema": "tessera.full_engine_dense_startup_observation.v2",
+                    "process_id": os.getpid(), "device_type": shared_observation["device_type"],
+                    "device_id": shared_observation["device_id"],
+                    "shared_candidate": shared_observation})
+                payload["dense"]["manifest"].update({
+                    "field": "shared_candidate_resident_pricing.private_resident_bytes",
+                    "resident_mode_bytes_total": shared_pricing["resident_bytes"]})
         except Exception as exc:  # noqa: BLE001 -- a refusal with a reason, beside the ledger
             payload["skipped"] = f"{type(exc).__name__}: {exc}"
         path = self._resource_startup_path()

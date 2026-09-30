@@ -34,15 +34,18 @@ ones the capture itself proves predate any assignment by history order. For
 the boundary tensors it computes the within-capture cross-family geometry
 witness #548 asked for and carries it as an observation.
 """
-from collections import Counter
 import json
+from collections import Counter
 from pathlib import PurePosixPath
+
+from tessera.shared_candidate import qualify_allocations
 
 OWNER_VIEWS_SCHEMA = "tessera.full_engine_owner_views.v1"
 EXTERNAL_RECORDS_SCHEMA = "tessera.full_engine_external_records.v1"
 GEOMETRY_WITNESS_SCHEMA = "tessera.full_engine_boundary_geometry_witness.v1"
 TRANSIENT_WITNESS_SCHEMA = "tessera.full_engine_transient_gap_witness.v1"
 DENSE_STARTUP_CHECK_SCHEMA = "tessera.full_engine_dense_startup_check.v1"
+SHARED_DENSE_STARTUP_CHECK_SCHEMA = "tessera.full_engine_dense_startup_check.v2"
 
 #: The classes a derived view may carry. ``observer`` is the observer's own
 #: footprint: named, counted, and charged to no serve term.
@@ -409,7 +412,7 @@ def derive_owner_views(rows, frames_by_index, *, checkpoint_index, roster, evide
         "by_rule": dict(sorted(Counter(view["rule"] or "none" for view in views).items())),
         "by_class": dict(sorted(Counter(view["class"] or "null" for view in views).items())),
         "null_views": sum(1 for view in views if view["class"] is None),
-        "null_bytes": sum(row["bytes"] for row, view in zip(rows, views) if view["class"] is None),
+        "null_bytes": sum(row["bytes"] for row, view in zip(rows, views, strict=True) if view["class"] is None),
         "candidate_without_unit": sum(1 for view in views
                                       if view["class"] == "candidate" and view["unit"] is None),
     }
@@ -546,7 +549,7 @@ def transient_gap_witness(rows, views, intervals, roster, steps):
             ends_by_step.setdefault(step, []).append((end, unit))
             last_end_in_step[step] = max(last_end_in_step.get(step, 0), end)
     signatures = {}
-    for row, view in zip(rows, views):
+    for row, view in zip(rows, views, strict=True):
         if view["rule"] != "site:vllm":
             continue
         step = _step_of(row["allocate_index"], steps)
@@ -749,11 +752,20 @@ def dense_startup_check(rows, views, dense, *, ready_index):
     row live at ``ready_for_workload``. Any per-unit disagreement refuses the
     domain with the two numbers side by side.
     """
-    if not isinstance(dense, dict) or dense.get("schema") != "tessera.full_engine_dense_startup_observation.v1":
+    if not isinstance(dense, dict) or dense.get("schema") not in (
+            "tessera.full_engine_dense_startup_observation.v1",
+            "tessera.full_engine_dense_startup_observation.v2"):
         return None
+    shared = {}
+    if dense["schema"] == "tessera.full_engine_dense_startup_observation.v2":
+        shared = qualify_allocations(rows, views, dense, ready_index=ready_index)
+    elif "shared_candidate" in dense:
+        raise ValueError("shared-candidate: explicit v2 startup observation required")
     per_unit = Counter()
     resident_rows = {}
-    for row, view in zip(rows, views):
+    for row, view in zip(rows, views, strict=True):
+        if row["allocation_id"] in shared:
+            continue
         if view["class"] == "candidate" and row["free_completed_index"] is None and view["unit"] is not None:
             per_unit[view["unit"]] += row["bytes"]
             resident_rows.setdefault(view["unit"], []).append(_resident_row(row, view))
@@ -780,8 +792,11 @@ def dense_startup_check(rows, views, dense, *, ready_index):
     extra_units = sorted(set(per_unit) - set(dense["units"]))
     disagreeing = sorted(unit_id for unit_id, cell in units.items() if not cell["agree"])
     bounded = dense["memory_allocated_bytes"] >= live_at_ready
-    return {
-        "schema": DENSE_STARTUP_CHECK_SCHEMA,
+    unqualified = sorted(row["allocation_id"] for row, view in zip(rows, views, strict=True)
+                         if view["class"] == "candidate" and view["unit"] is None
+                         and row["free_completed_index"] is None and row["allocation_id"] not in shared)
+    result = {
+        "schema": SHARED_DENSE_STARTUP_CHECK_SCHEMA if shared else DENSE_STARTUP_CHECK_SCHEMA,
         "units": units,
         "units_checked": len(units),
         "units_disagreeing": disagreeing,
@@ -798,13 +813,25 @@ def dense_startup_check(rows, views, dense, *, ready_index):
         "memory_reserved_bytes": dense.get("memory_reserved_bytes"),
         "ledger_live_bytes_at_ready_for_workload": live_at_ready,
         "allocator_sample_bounds_ledger": bounded,
-        "closed": not disagreeing and not extra_units and bounded,
+        "closed": not disagreeing and not extra_units and bounded and (not shared or not unqualified),
         "scope": ("per unit: ledger candidate-owned resident rows against the artifact manifest's own "
                   "resident_bytes_resident_mode; allocator sample at arm against the ledger's live "
                   "bytes at ready_for_workload; closed only on exact per-unit agreement, and a "
                   "disagreeing unit lists its resident rows by census owner or allocation site so the "
                   "difference is named, never absorbed"),
     }
+    if shared:
+        for unit_id, entry in dense["units"].items():
+            result["units"][unit_id]["module"] = entry["module"]
+        result.update({"shared_candidate": dense["shared_candidate"],
+                       "shared_candidate_allocations": shared,
+                       "shared_candidate_resident_bytes": sum(row["bytes"] for row in rows
+                                                              if row["allocation_id"] in shared),
+                       "unqualified_candidate_allocations": unqualified,
+                       "process_id": dense["process_id"], "device_type": dense["device_type"],
+                       "device_id": dense["device_id"],
+                       "ready_index": ready_index})
+    return result
 
 
 def _resident_row(row, view):
@@ -851,9 +878,23 @@ def ownership_observation(*, views, summary, evidence, external_records, geometr
     }
 
 
-def views_by_allocation(ledger):
-    """``{allocation_id: view}`` from a ledger's ownership observation, or ``{}``."""
+def views_by_allocation(ledger, *, strict=False):
+    """Index ownership views; strict joins refuse lossy or incomplete rosters.
+
+    Shared qualification validates the original list before dictionary creation,
+    so neither a conflicting duplicate nor an extra view can disappear in it.
+    Legacy callers retain their original partial-view behavior.
+    """
     observation = ledger.get("owner_views")
     if not isinstance(observation, dict) or observation.get("schema") != OWNERSHIP_OBSERVATION_SCHEMA:
+        if strict:
+            raise ValueError("shared-candidate: missing ledger ownership views")
         return {}
-    return {view["allocation_id"]: view for view in observation["views"]["views"]}
+    views = observation["views"]["views"]
+    if strict:
+        ids = [view["allocation_id"] for view in views]
+        allocation_ids = [row["allocation_id"] for row in ledger["torch_allocations"]]
+        if (len(ids) != len(set(ids)) or len(allocation_ids) != len(set(allocation_ids))
+                or set(ids) != set(allocation_ids)):
+            raise ValueError("shared-candidate: ambiguous or incomplete ledger ownership views")
+    return {view["allocation_id"]: view for view in views}

@@ -537,6 +537,16 @@ def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_byte
     }
 
 
+def shared_candidate_pricing(modules: dict, module_groups: dict) -> dict:
+    """Opt-in additive resident composition; preserve every legacy unit price.
+
+    ``module_groups`` comes from the parsed wire's exact replay table specs,
+    not from module geometry or an assumed default trellis.
+    """
+    from .shared_candidate import build_pricing
+    return build_pricing(modules, module_groups)
+
+
 def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: int) -> dict:
     roles = [role for module in modules.values() for role in module["roles"]]
     params = sum(r["rows"] * r["cols"] for r in roles)

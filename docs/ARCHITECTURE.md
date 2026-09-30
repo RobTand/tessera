@@ -22,6 +22,22 @@ consumer adopting v2 must explicitly compare matching named profiles;
 PrismaQuant adoption is deferred to a later reviewed pin. CPU source-framing
 receipts are not GPU, numerical or serving qualification.
 
+Re-stamped 2026-09-30 for opt-in shared-candidate resident pricing (Refs #567).
+Whole-artifact exports may add `shared_candidate_resident_pricing` v1 with
+explicit trellis groups, module membership, exact int64 component layouts and
+private bytes. Legacy per-module prices and totals are unchanged. Dense startup
+observation/check v2 binds actual live storages to this process/rank/device and
+allocation generations; partition v2 adds `shared_candidate_resident` exactly
+once per qualified group. Report v4 carries the process witness. Requalification
+requires a unique original ownership-view roster matching every allocation,
+exact agreement with the ledger's independently derived `ready_for_workload`
+checkpoint, and group membership covering the complete NVFP4 module roster.
+Missing, stale, ambiguous or aliased proof refuses; unknown candidates never cost zero.
+The weak observation index retains no tensors and changes no cache lifetime,
+wire bytes, tables, numerical path, serving gate or pin. CPU contracts only;
+CUDA residency and served/image qualification remain unmeasured. See
+[the contract](design/shared-candidate-pricing-boundary.md#opt-in-tessera-composition).
+
 Re-stamped 2026-09-29 for CPU timing-evidence requirements (Refs #688).
 The census planner can describe the missing per-scope CUDA-event/profiler,
 Netdata, wire/runtime-identity and native-preparation evidence. It rejects
@@ -64,8 +80,9 @@ Retain conservative per-unit pricing until a downstream consumer supports the
 shared term. A unitless candidate is uncharged and makes the derived partition
 unavailable; it is not a zero-byte resource. Replay-cache hits can share tensors,
 but cache keys alone do not prove one allocation across lifetimes or ranks.
-No schema, composition, wire, runtime gate, or numerical behavior changes.
-See [the boundary](design/shared-candidate-pricing-boundary.md).
+That boundary-only slice changed no schema, composition, wire, runtime gate,
+or numerical behavior. The explicit opt-in composition above extends it;
+legacy receipts keep this boundary. See [the boundary](design/shared-candidate-pricing-boundary.md).
 
 Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
 Arity-one E2M1 remains research-only: the existing serving export gate refuses
