@@ -350,8 +350,9 @@ def main():
                     def at_split():
                         # the split is read at capture; replay runs what was captured
                         model = rf.dense_k_split
-                        rf.dense_k_split = lambda m_, rows_, cols_, sms_, tile_words=None: min(
-                            int(forced), cols_ // rf.BK)
+                        # capped where the library caps it (``dense_split_max``)
+                        rf.dense_k_split = lambda m_, rows_, cols_, sms_, **kw: min(
+                            int(forced), rf.dense_split_max(cols_))
                         try:
                             fn()
                         finally:

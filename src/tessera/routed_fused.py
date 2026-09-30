@@ -94,6 +94,7 @@ __all__ = [
     "dense_forward",
     "dense_k_split",
     "dense_rates",
+    "dense_split_max",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
     "fused_routed_window_supported",
@@ -171,6 +172,12 @@ DENSE_ROW_QUANTUM = 4
 #: wave, which at 232.2 GB/s / 48 SMs is 7.3 KB (PENDING the sparklina
 #: receipt).
 DENSE_ITEM_FIXED_BYTES = 7300
+#: The kernel's A/B stages (``STAGES`` in the source; the library publishes it).
+#: The producers run at most this many K chunks ahead of the consumers, so an
+#: item of at least ``STAGES + 1`` chunks guarantees that the descriptor and
+#: row-scale slot two items back is free before it is rewritten; a K split may
+#: not cut an item shorter (:func:`dense_split_max`).
+STAGES = 2
 #: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
 #: every rate of the window grammar up to 8, so a stack's one- or two-rate run
 #: table (the two rates bracketing its root) is read as the wire lays it out.
@@ -584,7 +591,7 @@ def _ext(library: str):
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
-                       ("WORD_STAGES_MIN", WORD_STAGES_MIN),
+                       ("WORD_STAGES_MIN", WORD_STAGES_MIN), ("STAGES", STAGES),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
@@ -1386,6 +1393,13 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
         tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
+def dense_split_max(cols: int) -> int:
+    """The largest K split the dense launch takes at ``cols`` columns: every
+    split keeps at least ``STAGES + 1`` of the ``cols / 32`` K chunks
+    (:data:`STAGES`).  The library refuses a larger one."""
+    return max(1, (int(cols) // BK) // (STAGES + 1))
+
+
 def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
     """How many ways to split K for one role at ``m`` rows: the makespan model.
 
@@ -1406,7 +1420,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     block over all of K (``tile_words`` the role's words per 512-row tile;
     ``64 * cols``, rate 4, when not given), ``nk = K / 32`` and ``c =``
     :data:`DENSE_ITEM_FIXED_BYTES`.  The integer minimiser over ``1 ..
-    min(nk, sms)`` is returned, the smaller ``S`` on a tie.  The wave count is
+    min(dense_split_max(K), sms)`` is returned, the smaller ``S`` on a tie.  The wave count is
     the point: a split that leaves the last wave partly idle costs a whole
     wave (tessera#750: at 32 items, ``S = 2`` is 64 items, two waves of half
     an item, no faster than ``S = 1``; ``S = 3`` is two full waves of a
@@ -1420,7 +1434,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     words = 64 * cols if tile_words is None else int(tile_words)
     item = BN * words * 4 / 512
     best_s, best_t = 1, None
-    for s in range(1, max(1, min(nk, sms)) + 1):
+    for s in range(1, max(1, min(dense_split_max(cols), sms)) + 1):
         waves = -(-(s * items0) // sms)
         t = waves * sms * (item * -(-nk // s) / nk + DENSE_ITEM_FIXED_BYTES)
         if s > 1:

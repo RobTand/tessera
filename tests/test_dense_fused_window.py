@@ -194,7 +194,7 @@ def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
     sms = rf._sm_count(torch.cuda.current_device())
     n_blocks = ROWS // rf.BN
     split = rf.dense_k_split(1, ROWS, COLS, sms)
-    assert 1 < split <= COLS // rf.BK, (split, sms)
+    assert 1 < split <= rf.dense_split_max(COLS), (split, sms)
     one_pass_m = rf.BM * -(-sms // n_blocks)
     assert -(-one_pass_m // rf.BM) * n_blocks >= sms
     assert rf.dense_k_split(one_pass_m, ROWS, COLS, sms) == 1
@@ -481,12 +481,12 @@ def _served(module, family, xq, x, a):
 def _module_bound(family, ref_w, xq, x, a):
     """``(r, bound)`` for a served module over the fp64 weight ``ref_w``: each
     role's rows run as one dense launch whose K split is at most
-    ``cols // BK`` (``dense_k_split``'s range), so ``S = cols // BK`` bounds
-    every role on the fused lane, and the Triton lane's one pass (``S = 1``)
-    with it."""
+    ``dense_split_max(cols)`` (``dense_k_split``'s range), and the bound grows
+    with ``S``, so that split bounds every role on the fused lane, and the
+    Triton lane's one pass (``S = 1``) with it."""
     cols = int(ref_w.shape[1])
     a64 = _a64(family, xq, a) if family == "e4m3" else x.double()
-    return fb.dense_bound(family, a64, ref_w, cols, cols // rf.BK)
+    return fb.dense_bound(family, a64, ref_w, cols, rf.dense_split_max(cols))
 
 
 @cuda
@@ -670,9 +670,13 @@ def test_the_opt_out_is_read_before_any_role_fact(monkeypatch):
 def test_the_k_split_model_is_the_makespan_model():
     """Pure arithmetic: the integer minimiser, smaller ``S`` on a tie, of
     ``ceil(S items0 / sms) sms (item ceil(nk / S) / nk + c) + [S > 1] 2 S M N 4``
-    over ``1 .. min(K / 32, sms)``, restated here (``item`` the wire bytes of
-    one 128-row block over all of K, ``c`` the measured per-item cost)."""
+    over ``1 .. min(nk / (STAGES + 1), sms)``, restated here (``item`` the wire
+    bytes of one 128-row block over all of K, ``c`` the measured per-item
+    cost)."""
     sms = 48
+    assert rf.STAGES == 2
+    for cols, most in ((4096, 42), (1536, 16), (512, 5), (256, 2), (128, 1), (6144, 64)):
+        assert rf.dense_split_max(cols) == most
 
     def restated(m, rows, cols, words=None):
         if m <= 0:
@@ -686,7 +690,7 @@ def test_the_k_split_model_is_the_makespan_model():
             return (waves * sms * (item * -(-nk // s) / nk + rf.DENSE_ITEM_FIXED_BYTES)
                     + (2.0 * s * m * rows * 4 if s > 1 else 0.0))
 
-        return min(range(1, min(nk, sms) + 1), key=lambda s: (t(s), s))
+        return min(range(1, max(1, min(nk // (rf.STAGES + 1), sms)) + 1), key=lambda s: (t(s), s))
 
     assert rf.dense_k_split(0, 256, 4096, sms) == 1
     assert rf.dense_k_split(8192, 256, 4096, sms) == 1
@@ -696,7 +700,7 @@ def test_the_k_split_model_is_the_makespan_model():
                           (1, 512, 4096), (1, 32, 4096), (1, 4096, 128)):
         got = rf.dense_k_split(m, rows, cols, sms)
         assert got == restated(m, rows, cols), (m, rows, cols, got)
-        assert 1 <= got <= cols // rf.BK
+        assert 1 <= got <= rf.dense_split_max(cols)
         # the wire is the role's own words per tile: rate 4 restates the default
         assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
     for words in (16 * 4096, 128 * 4096):
@@ -1186,3 +1190,31 @@ def test_dense_random_mixes_inside_every_pair_decode_exactly(family, r):
             graph.replay()
             torch.cuda.synchronize()
             assert torch.equal(out, eager), (family, q256)
+
+
+# --- a K split keeps every item at least STAGES + 1 chunks long ----------------
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_a_split_that_leaves_an_item_fewer_than_three_chunks_is_refused(family):
+    """The producers run at most ``STAGES`` K chunks ahead of the consumers,
+    so an item of fewer than ``STAGES + 1`` chunks could let them rewrite the
+    descriptor and row-scale slot of the item two back while its consumers
+    still read it.  The library refuses such a split by name, on every
+    library, and the model never picks one."""
+    _expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    lib = rf._ext(role.library)
+    assert lib.STAGES == rf.STAGES and rf.dense_split_max(COLS) == 2
+    m = 1
+    sms = rf._sm_count(torch.cuda.current_device())
+    _x, xq, a = _inputs(family, m, COLS, 9900)
+    s = rf.dense_split_max(COLS) + 1
+    partial = torch.empty((s, m, ROWS), dtype=torch.float32, device="cuda")
+    out = torch.empty(m, ROWS, dtype=torch.bfloat16, device="cuda")
+    empty = xq.new_empty(0, dtype=torch.float32)
+    with pytest.raises(RuntimeError, match="fewer than 3"):
+        lib.dense_forward(bool(role.fp8), xq, a if a is not None else empty,
+                          role.words, role.table16, role.init, role.has_init, role.wscale,
+                          role.runs, role.bdesc, int(role.tile_words), int(role.slot_words),
+                          torch.zeros(1, dtype=torch.int32, device="cuda"), s, partial, out, sms, rf.BM)

@@ -3845,7 +3845,12 @@ S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
 of the launch's makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) /
-nk + c) + 2 S M N 4` over `1 .. min(K/32, sms)` (`item` the wire bytes of one
+nk + c) + 2 S M N 4` over `1 .. min(dense_split_max(K), sms)`, where
+`dense_split_max(K) = (K / 32) / (STAGES + 1)`: every item keeps at least three
+K chunks, because the producers run at most `STAGES` = 2 chunks ahead and write
+an item's descriptor and row-scale slot (two slots, alternating) when they claim
+it, so a shorter item two back could still be in its epilogue; the library
+refuses a larger split (`item` the wire bytes of one
 128-row block over K, `c = DENSE_ITEM_FIXED_BYTES` the measured per-item cost;
 tessera#750: the last wave's idle SMs cost a whole wave, so 32 items split
 three ways, not two). Prefill shapes, whose items fill whole waves or whose

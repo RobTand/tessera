@@ -50,6 +50,9 @@
 // an fp32 workspace ``[S, M, N]`` and ``dense_reduce_kernel`` sums the ``S``
 // partials in fixed order and applies the epilogue -- deterministic, and the
 // same fp32 operation order as the unsplit epilogue once the sum is formed.
+// A split keeps at least STAGES + 1 K chunks per item, which is what keeps an
+// item's descriptor and row-scale slot live until its consumers are done
+// with it.
 // The dense identity is ``tessera::fused_window_dense`` (``serving.native_
 // window``), decoders ``native_fused_window_dense`` / ``..._folded``.
 //
@@ -2748,6 +2751,12 @@ void dense_forward(
                 "out must be a bf16 [M, N] view with unit column stride and an even row stride");
     const int nk = (int)(K / BK);
     TORCH_CHECK(k_split >= 1 && k_split <= nk, "k_split must be in [1, K / ", BK, "]");
+    // Every item of a split launch keeps at least STAGES + 1 chunks: the
+    // producers run at most STAGES chunks ahead of the consumers, so a slot
+    // two items back (its descriptor, its row scales) is never rewritten
+    // before the consumers have finished with it.
+    TORCH_CHECK(k_split == 1 || k_split <= nk / (STAGES + 1), "k_split ", k_split, " leaves a split fewer than ",
+                STAGES + 1, " of the ", nk, " K chunks; at most ", nk / (STAGES + 1));
     TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, 2, (int)bm) && (bm == BM || k_split == 1), "bm ", bm,
                 ": the dense launch takes ", BM, "-row superblocks, or ", BM_WIDE,
                 " unsplit in the E4M3 family's library");
@@ -3073,6 +3082,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
+    m.attr("STAGES") = STAGES;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
