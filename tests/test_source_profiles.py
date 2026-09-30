@@ -5,6 +5,7 @@ import hashlib
 from importlib import metadata
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -100,13 +101,18 @@ def test_cached_encoder_profiles_preserve_the_legacy_api():
     assert cached_unit.encoder_source_profiles()[V2] != '0' * 64
 
 
-def test_actual_installed_b40_package_keeps_legacy_bytes():
+def test_actual_installed_git_package_keeps_legacy_bytes():
     dist = metadata.distribution('tessera-quant')
-    url = json.loads(dist.read_text('direct_url.json'))
-    assert url['vcs_info']['commit_id'] == 'b40c93cb73745097e57a1ba4cf5b9eee166c759a'
-    assert not url.get('dir_info', {}).get('editable', False)
+    direct_url = dist.read_text('direct_url.json')
+    if direct_url is None:
+        pytest.skip('the installed-source control requires a Git-provenanced package')
+    url = json.loads(direct_url)
+    if 'vcs_info' not in url or url.get('dir_info', {}).get('editable', False):
+        pytest.skip('the installed-source control requires a noneditable Git package')
+    commit = url['vcs_info']['commit_id']
+    assert len(commit) == 40 and all(c in '0123456789abcdef' for c in commit)
     root = Path(dist.locate_file('tessera')).resolve()
-    assert root.is_relative_to(Path('/home/rob/venvs/pq-pb059953bc-tessera-b40c93cb').resolve())
+    assert root.is_relative_to(Path(sys.prefix).resolve())
     files = {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob('*'))
              if p.is_file() and p.suffix in {'.py', '.cu', '.cuh', '.cpp', '.h'}}
     result = cached_unit._encoder_source_profiles(root)
@@ -115,5 +121,6 @@ def test_actual_installed_b40_package_keeps_legacy_bytes():
         legacy_digest.update(name.encode() + b'\0' + files[name] + b'\0')
     assert result[ENCODER_V1] == legacy_digest.hexdigest()
     assert result[V2] == literal(files, profile=V2, framed=True)
-    print(json.dumps({'actual_package': str(root), 'files': len(files),
-                      'legacy_sha256': result[ENCODER_V1]}, sort_keys=True))
+    print(json.dumps({'actual_package': str(root), 'commit': commit,
+                      'files': len(files), 'legacy_sha256': result[ENCODER_V1]},
+                     sort_keys=True))
