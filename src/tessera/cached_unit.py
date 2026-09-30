@@ -153,14 +153,9 @@ def encoder_source_sha256() -> str:
     refuses reuse across edits outside its finite witnesses as well. It may
     reject a harmless source edit, but never relabels the encoder fixture.
     """
-    root = Path(__file__).resolve().parent
-    digest = hashlib.sha256()
-    for path in sorted(p for p in root.rglob("*")
-                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}):
-        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    from .source_profiles import ENCODER_SOURCE_V1
+
+    return _encoder_source_profiles(Path(__file__).resolve().parent)[ENCODER_SOURCE_V1]
 
 
 def _encoder_source_profiles(root: Path) -> dict[str, str]:
