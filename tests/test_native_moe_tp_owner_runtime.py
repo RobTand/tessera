@@ -388,7 +388,7 @@ def test_the_execution_record_is_the_owners_own_cut(tp):
     assert moe.owner_execution(lfm) == moe.EXECUTION
 
 
-def _stock_config_runtime(monkeypatch, *, tensor_parallel):
+def _stock_config_runtime(monkeypatch, tmp_path, *, tensor_parallel):
     """CPU substitution at the stock config-construction boundary.
 
     Named, and only this boundary: the object the engine builds from
@@ -400,7 +400,7 @@ def _stock_config_runtime(monkeypatch, *, tensor_parallel):
     source = Path(__file__).resolve().parents[1] / "experiments/configs/lfm25_first_model_clean_20260907.json"
     document = json.loads(source.read_text())
     document["engine_args"]["tensor_parallel_size"] = tensor_parallel
-    path = source.parent / f".owner-tp{tensor_parallel}.json"
+    path = tmp_path / f".owner-tp{tensor_parallel}.json"
     path.write_text(json.dumps(document))
     return path, document
 
@@ -448,8 +448,8 @@ def test_the_committed_glm_documents_declare_their_own_cut(monkeypatch, tensor_p
 
 
 @pytest.mark.parametrize("tensor_parallel", [1, 2])
-def test_the_serving_config_builds_the_owners_own_cut(monkeypatch, tensor_parallel):
-    path, document = _stock_config_runtime(monkeypatch, tensor_parallel=tensor_parallel)
+def test_the_serving_config_builds_the_owners_own_cut(monkeypatch, tmp_path, tensor_parallel):
+    path, document = _stock_config_runtime(monkeypatch, tmp_path, tensor_parallel=tensor_parallel)
     try:
         config, identity = moe.resolve_serving_config(path, document["runtime_image"],
                                                       tensor_parallel=tensor_parallel)
@@ -466,7 +466,7 @@ def test_the_serving_config_builds_the_owners_own_cut(monkeypatch, tensor_parall
         path.unlink()
 
 
-def test_the_operator_receipt_names_a_standalone_context_and_owns_no_kv(monkeypatch):
+def test_the_operator_receipt_names_a_standalone_context_and_owns_no_kv(monkeypatch, tmp_path):
     """The receipt's context is named, because no engine term may come from it.
 
     The operator bench builds ONE routed owner with the factory under test:
@@ -476,7 +476,7 @@ def test_the_operator_receipt_names_a_standalone_context_and_owns_no_kv(monkeypa
     (`experiments/capture_full_engine_resources.py`) instead.  Charging
     `fixed_KV` here would compose two environments' numbers into one budget.
     """
-    path, document = _stock_config_runtime(monkeypatch, tensor_parallel=1)
+    path, document = _stock_config_runtime(monkeypatch, tmp_path, tensor_parallel=1)
     try:
         _config, identity = moe.resolve_serving_config(path, document["runtime_image"],
                                                        tensor_parallel=1)
