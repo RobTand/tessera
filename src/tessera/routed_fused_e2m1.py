@@ -24,7 +24,9 @@ dense identity (E = 1) with an optional K split.
 Geometry.  A chunk is one instruction's K (64 columns); an item is 256
 output rows (gate/up: 128 gate rows and the same 128 up rows); a superblock
 is 64 routes.  Columns must be a multiple of 64 and at least 256, the
-intermediate size a multiple of 128 and the hidden size of 256.  Every
+intermediate size a multiple of 128 and the hidden size of 256; a dense
+projection's rows a multiple of 32 (the last block is decoded whole from the
+wire's padded tile and written only below its rows).  Every
 column rate 1..8 and every adjacent two-run table is instantiated at three
 word stages; the largest launch (gate/up, rate 8) needs 93,648 B of shared
 memory.
@@ -72,6 +74,7 @@ from .routed_fused import (
 __all__ = [
     "BK",
     "BN",
+    "DENSE_ROWS",
     "HALF_ROWS",
     "MIN_COLS",
     "MODULE_NAME",
@@ -96,6 +99,9 @@ BK = 64
 MIN_COLS = 4 * BK
 DESC_WORDS = 4
 WORD_STAGES = 3
+#: A dense projection's rows are a multiple of this: one 16-byte part of the
+#: LUT16 plane's row run (two rows per byte).
+DENSE_ROWS = 32
 #: Fixed dynamic shared memory per launch mode: the code tables (16 KB each),
 #: two 8 KB B stages and their scales, four A slots, the descriptor and
 #: scale-plane rings.
@@ -505,16 +511,18 @@ class DenseE2M1Role:
 def dense_role_reason(unit) -> "str | None":
     """Why the dense launch refuses a ``compact_prep.WindowLutUnit``, or ``None``.
 
-    The rows must be a multiple of 256 (``BN``): GLM-5.3's DSA indexer ``wk``
-    (128 rows) and ``weights_proj`` (32) are outside this launch."""
+    The rows must be a multiple of 32 (``DENSE_ROWS``, one 16-byte part of
+    the scale plane); they need not fill the last 256-row block, so GLM-5.3's
+    DSA indexer ``wk`` (128 rows) and ``weights_proj`` (32) and a vocab-parallel
+    ``lm_head`` (77,440 rows per rank at TP2) are in."""
     if unit.window_bits != WINDOW_BITS:
         return f"window_bits {unit.window_bits} != {WINDOW_BITS}"
     if unit.arity != 2:
         return f"code arity {unit.arity}; the E2M1 launch reads E2M1x2 tuples"
     if unit.cols % BK != 0 or unit.cols < MIN_COLS:
         return f"{unit.cols} columns; the launch needs a multiple of {BK} and at least {MIN_COLS}"
-    if unit.rows % BN != 0:
-        return f"{unit.rows} rows; the dense launch writes {BN}-row blocks"
+    if unit.rows % DENSE_ROWS != 0 or unit.rows <= 0:
+        return f"{unit.rows} rows; the dense launch needs a positive multiple of {DENSE_ROWS}"
     pair, why = run_pair(unit.rep.runs, unit.cols)
     if pair is None:
         return why

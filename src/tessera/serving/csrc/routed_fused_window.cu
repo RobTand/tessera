@@ -2062,6 +2062,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
             if (tid < 32) {
                 const int grp = tid >> 3, hh = (tid >> 2) & 1;
                 plane_src = (hh ? plane_h[1] : plane_h[0]) + (long)grp * (p.N >> 1) + 16 * (tid & 3);
+                // A dense projection's rows may end inside the item's block
+                // (the host admits N % 32 == 0).  A 16-byte part holds 32 rows;
+                // one wholly past N is not read (the last group's would run
+                // off the plane), so those B rows keep a stale scale, and no
+                // output row reads them: the epilogue writes rows below N only.
+                if (DENSE && n0 + HALF_ROWS * hh + 32 * (tid & 3) >= p.N) plane_src = nullptr;
             }
 
             auto run = [&]() {
@@ -2101,7 +2107,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                         if (hs) cp_async4(slotp + SLOT_PAD - 1, hs);
                         else slotp[SLOT_PAD - 1] = 0;
                     }
-                    if (tid < 32)
+                    if (tid < 32 && (!DENSE || plane_src != nullptr))
                         cp_async16(Pl + (kc % WSTAGES) * PLANE_STAGE + 16 * tid, plane_src + (long)kc * 2 * p.N);
                 };
                 // Chunk kc's A codes and scales into A slot ``aslot``.
@@ -2346,9 +2352,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                     if constexpr (SPLIT) {
                         float* part = p.partial + ((long)ks * p.rows_x + pos) * p.N + nb * BN;
                         #pragma unroll
-                        for (int t = 0; t < 8; ++t)
+                        for (int t = 0; t < 8; ++t) {
+                            if (nb * BN + 64 * nw + 8 * t >= p.N) continue;   // past a dense N % 256
                             *reinterpret_cast<float2*>(part + 64 * nw + 8 * t + 2 * q4) =
                                 make_float2(acc[mi][t][2 * hr], acc[mi][t][2 * hr + 1]);
+                        }
                     } else if constexpr (MODE == 0) {
                         #pragma unroll
                         for (int t = 0; t < 4; ++t) {
@@ -2391,6 +2399,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                                 wv |= (uint32_t)bf16_bits_rn(y) << (16 * c);
                             }
                             const long col = (long)nb * BN + 64 * nw + 8 * t + 2 * q4;
+                            if (DENSE && col >= p.N) continue;                // past a dense N % 256
                             *reinterpret_cast<uint32_t*>(out + (long)flat * p.out_stride + col) = wv;
                         }
                     }
@@ -2917,8 +2926,13 @@ void dense_forward_fp4(
     fp4::check_activation(x, sfa);
     const int64_t M = x.size(0);
     const int64_t K = 2 * x.size(1);
-    TORCH_CHECK(N > 0 && N % fp4::BN == 0, "the role's rows must be a positive multiple of ", fp4::BN);
+    // Rows need not fill the last 256-row block: the launch decodes the whole
+    // block from the wire's padded tile and writes rows below N only.  A
+    // multiple of 32 keeps the plane's 16-byte parts whole.
+    TORCH_CHECK(N > 0 && N % 32 == 0, "the role's rows must be a positive multiple of 32");
     fp4::check_projection(words, codes, init, has_init, plane, lut, ratio, runs, dsc, 1, K, N, "the role");
+    TORCH_CHECK(words.size(1) >= (N + fp4::TILE_WROWS - 1) / fp4::TILE_WROWS * tile_words,
+                "the role's words must hold whole ", fp4::TILE_WROWS, "-row tiles: the last block reads its padding");
     TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
                 "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
     TORCH_CHECK(counter.scalar_type() == torch::kInt32 && counter.numel() >= 1, "counter must be int32");
@@ -2963,7 +2977,7 @@ void dense_forward_fp4(
     p.N = (int)N;
     p.E = 1;
     p.counter = counter.data_ptr<int32_t>();
-    p.n_blocks = (int)(N / fp4::BN);
+    p.n_blocks = (int)((N + fp4::BN - 1) / fp4::BN);
     p.top_k = 1;
     p.a_row_mode = 2;
     p.mul_weight = 0;

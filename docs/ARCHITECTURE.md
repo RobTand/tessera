@@ -3802,7 +3802,11 @@ layer's static global `gs`, staged unconverted; the epilogue is one fp32
 multiply by `global / gs` before the bf16 boundary. That is the activation
 contract the NVFP4 routes already execute (`e2m1_group16_ue4m3_static`),
 unchanged. An item is 256 output rows (gate/up: 128 of each), so the
-intermediate size must be a multiple of 128 and the hidden size of 256; every
+intermediate size must be a multiple of 128 and the hidden size of 256. A
+dense projection's rows need only be a multiple of 32: the last block is
+decoded whole from the wire's padded 1024-row tile and written only below its
+rows, so GLM-5.3's DSA indexer `wk` (128) and `weights_proj` (32) and a TP2
+`lm_head` (77,440) are in. Every
 rate 1..8 and every adjacent two-run table is instantiated at three word
 stages (gate/up at rate 8 needs 93,648 B). The dense identity's K split keeps
 two chunks per item (`routed_fused_e2m1.dense_split_max`, refused by name
