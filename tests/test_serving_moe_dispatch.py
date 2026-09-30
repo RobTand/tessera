@@ -268,6 +268,8 @@ def _moe_class(module, name, base=torch.nn.Module):
 
 def _install_vllm_stubs():
     _module("vllm")
+    # Ordinary MoE dispatch has no current model-construction context.
+    setattr(_module("vllm.config"), "get_current_vllm_config_or_none", lambda: None)
     _module("vllm.model_executor")
     _module("vllm.model_executor.layers")
     _module("vllm.model_executor.layers.quantization")

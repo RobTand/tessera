@@ -38,6 +38,24 @@ wire bytes, tables, numerical path, serving gate or pin. CPU contracts only;
 CUDA residency and served/image qualification remain unmeasured. See
 [the contract](design/shared-candidate-pricing-boundary.md#opt-in-tessera-composition).
 
+Re-stamped 2026-09-30 for the GLM MTP draft vocabulary lifetime (tessera#645).
+During target construction, `TesseraConfig.get_quant_method` installs the
+source-guarded `serving.mtp_draft_lifetime` integration for the stock V1 and
+V2 GLM MTP loaders. Only the inspected runtime sources are supported. With
+PP=1, TP=1/2, no LoRA and plain unquantized vocabulary modules of the checked
+shape/dtype/device/layout, draft construction uses parameter-free vocabulary
+placeholders. The draft loader skips only its exact per-layer embedding/head
+weight names; norms and all non-vocabulary parameters retain stock loading.
+The target is never exposed to draft loading or post-processing. Stock MTP
+sharing replaces every placeholder with the exact target module before the
+loader returns; disagreement refuses. Context-local interception restores on
+exceptions and leaves unrelated loads/threads and stock forward math unchanged.
+CPU stand-ins measure allocation/lifetime and identity, not a qualified image:
+full GLM TP2 peak/watchdog, image digest and MTP acceptance remain unmeasured.
+The existing conservative duplicate fit allowance is retained until that
+qualification; CPU bytes are not extrapolated to the historical per-rank peak.
+See [the CPU receipt](measurements/mtp-draft-vocabulary-lifetime-2026-09-30.md).
+
 Re-stamped 2026-09-29 for CPU timing-evidence requirements (Refs #688).
 The census planner can describe the missing per-scope CUDA-event/profiler,
 Netdata, wire/runtime-identity and native-preparation evidence. It rejects
@@ -2746,8 +2764,10 @@ shape admits the lane (`routed_fused.fused_routed_unit_shape_refusal`: one
 rate or two adjacent rates, the gate/up launch within `ROUTED_LANE_RATES` on
 sm_121) -- never a decoded tile, which that lane does not allocate. The figure is the whole stack at TP1; the
 manifest's `totals.per_rank` block (`--fit-tp-size`) prices each rank's cut
-beside the MTP draft's own embed/head duplicate as its own line item
-(tessera#645). `cache_capacity` may
+beside the legacy MTP draft embed/head duplicate allowance as its own line
+item (tessera#645). The source-guarded draft lifetime integration above avoids
+that allocation, but CPU evidence alone does not remove the conservative
+fit allowance or qualify a serving image. `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
