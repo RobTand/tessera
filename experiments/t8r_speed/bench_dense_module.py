@@ -192,6 +192,9 @@ def main():
     ap.add_argument("--model", default=None, help="source checkpoint: encode its real bytes")
     ap.add_argument("--layer", type=int, default=1, help="the KDA layer read from --model")
     ap.add_argument("--numerics-ms", default="1,64,2048")
+    ap.add_argument("--k-splits", default="",
+                    help="measurement only: also time the fused lane at these fixed K splits "
+                         "(lane fused@S<s>; the launch's own model picks S on lane fused)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
@@ -250,20 +253,39 @@ def main():
             head["wire_bytes"] = wire
 
             def make(m, lane):
-                mod = lanes[lane]
+                base, _, forced = lane.partition("@S")
+                mod = lanes[base]
                 x = (torch.randn(m, cols, device=dev, generator=g) * 0.5).bfloat16()
                 xq, a = native_fp8_quant(x)
                 a = a.reshape(-1).contiguous().float()
                 holder = {}
 
+                def split(fn):
+                    if not forced:
+                        return fn
+
+                    def at_split():
+                        # the split is read at capture; replay runs what was captured
+                        model = rf.dense_k_split
+                        rf.dense_k_split = lambda m_, rows_, cols_, sms_, tile_words=None: min(
+                            int(forced), cols_ // rf.BK)
+                        try:
+                            fn()
+                        finally:
+                            rf.dense_k_split = model
+                    return at_split
+
+                @split
                 def apply():
                     holder["out"] = mod.apply(xq, a)
 
+                @split
                 def quant_apply():
                     q8, s8 = native_fp8_quant(x)
                     holder["out"] = mod.apply(q8, s8.reshape(-1))
                 return {"floor": floors(wire, m, rows, cols)}, {"apply": apply, "quant_apply": quant_apply}, holder
-            return head, make, list(lanes)
+            extra = [f"fused@S{v}" for v in args.k_splits.split(",") if v] if "fused" in lanes else []
+            return head, make, list(lanes) + extra
         if kind == "bf16":
             w = (torch.randn(rows, cols, device=dev, generator=g) * 0.02).bfloat16()
             head = {"kind": kind, "module": name, "rows": rows, "cols": cols, "wire_bytes": rows * cols * 2}
