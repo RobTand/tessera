@@ -107,6 +107,13 @@ constexpr int WORD_STAGES = 3;
 constexpr int TABLE_BYTES = TABLE_ENTRIES * 2;                  // 32768, one table
 constexpr int B_STAGE_BYTES = BK * BN * 2;                      // 8192
 constexpr int A_STAGE_BYTES = BM * BK * 2;                      // 4096
+// The E4M3 family's A region holds the activation chunks as their raw e4m3
+// bytes, ARAW_STAGES chunks deep, in the same bytes the value family's two
+// 16-bit A stages take: copied by cp.async two chunks ahead with the words,
+// widened to f16 by the consumers as they build their MMA fragments.
+constexpr int ARAW_STAGES = 4;
+constexpr int ARAW_STAGE_BYTES = BM * BK;                       // 2048
+static_assert(ARAW_STAGES * ARAW_STAGE_BYTES == STAGES * A_STAGE_BYTES, "the raw ring reuses the A stages' bytes");
 constexpr int WSCALE_FLOATS = 2 * BN;                           // two item slots
 constexpr int DESC_INTS = 2 * 8;
 // The shared-memory layout.  The word stages come LAST and are sized at
@@ -255,6 +262,12 @@ __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
 __device__ __forceinline__ void cp_async4(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 4;" :: "r"(s), "l"(gmem) : "memory");
+}
+// 16 bytes, of which the first ``src_bytes`` come from global memory and the
+// rest are zero: an activation row past the superblock copies nothing.
+__device__ __forceinline__ void cp_async16_zfill(void* smem, const void* gmem, int src_bytes) {
+    const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;" :: "r"(s), "l"(gmem), "r"(src_bytes) : "memory");
 }
 __device__ __forceinline__ void cp_async_commit() {
     asm volatile("cp.async.commit_group;" ::: "memory");
@@ -696,10 +709,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int n_lo = rp_h[0].n_lo;
             const int w_hi = rp_h[0].w_hi;
             // The A row this thread stages (-1: a zero row past the superblock).
+            // E4M3: threads 128..255, two per row, copy the raw chunk
+            // (``issue_a``); value family: every producer, four per row.
             long arow = -1;
             {
-                const int r = FP8 ? (tid >> 1) : (tid >> 2);
-                if ((!FP8 || tid < 128) && r < mb) {
+                const int r = FP8 ? ((tid - 128) >> 1) : (tid >> 2);
+                if ((!FP8 || tid >= 128) && r < mb) {
                     const int pos = pos0 + r;
                     if constexpr (DENSE) {
                         arow = pos;                       // row m of x is route m
@@ -718,6 +733,23 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int g_i = ih ? g_h[1] : g_h[0];
             const int hasinit_i = ih ? hasinit_h[1] : hasinit_h[0];
             const int32_t* init_i = ih ? init_h[1] : init_h[0];
+            // E4M3: chunk kc's activation bytes for the row this thread owns,
+            // 16 of its 32, into raw-ring slot ``gi`` (the chunk's global chunk
+            // index) -- zero past the superblock.  A slot is rewritten two
+            // chunks after the consumers released the chunk it held (see the
+            // loop), and the 16-byte granule is swizzled on the row so the
+            // consumers' fragment loads hit 32 distinct banks.
+            auto issue_a = [&](unsigned gi, int kc) {
+                if constexpr (FP8) {
+                    if (tid >= 128) {
+                        const int r = (tid - 128) >> 1, part = tid & 1;
+                        uint8_t* dst = As + (gi % ARAW_STAGES) * ARAW_STAGE_BYTES + r * BK + ((part ^ ((r >> 2) & 1)) << 4);
+                        const uint8_t* src = reinterpret_cast<const uint8_t*>(p.x)
+                                             + (arow >= 0 ? arow * p.K + kc * BK + part * 16 : 0);
+                        cp_async16_zfill(dst, src, arow >= 0 ? 16 : 0);
+                    }
+                }
+            };
             auto load_a = [&](int kc, uint4& a) {
                 if (arow >= 0) {
                     if constexpr (FP8) {
@@ -773,7 +805,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 constexpr int RH = RL + 1;                  // read only when TWO
                 constexpr int SW = pair_slot_words(RL, TWO);
                 constexpr int W_STAGE = w_stage_ints(SW);
-                constexpr bool PR = prev_ring(MODE, SW);
+                // The value family's two-run gate/up loop keeps the register
+                // path: it still loads its activation chunk into registers, and
+                // with the ring ptxas put that loop's table lookups on the
+                // activation load's scoreboard, so every decode branch waited
+                // on the next chunk's load (checked on CUDA 13.0.88).
+                constexpr bool PR = prev_ring(MODE, SW) && (FP8 || MODE == 2 || !TWO);
                 // The prev-word ring: after the word stages (``prev_ring``).
                 int32_t* const pring = reinterpret_cast<int32_t*>(smem + L::OFF_W + WORD_STAGES * W_STAGE * 4);
                 // Chunk kc's block descriptor for half h: the expert's, in
@@ -894,16 +931,18 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 }
                 issue_words(kc0, false);
                 if (nkc > 2) issue_desc(kc0 + 2);
+                issue_a(gc, kc0);
                 cp_async_commit();                     // group 0
                 if (nkc > 1) issue_words(kc0 + 1, false);
                 if (nkc > 3) issue_desc(kc0 + 3);
+                if (nkc > 1) issue_a(gc + 1, kc0 + 1);
                 cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
                 int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
                 ColMap cm_cur[2], cm_nxt[2];
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
-                load_a(kc0, a_cur);
+                if constexpr (!FP8) load_a(kc0, a_cur);
                 // Settle the first chunk's loads here, before the chunk loop.
                 // They land in the registers the loop carries (``prev_cur``,
                 // ``a_cur``), so without a use here ptxas guards those
@@ -928,18 +967,31 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     // The two orders are the measured ones: a one-run loop that
                     // issues the activation chunk first waits longer at M = 1.
                     if constexpr (TWO) {
-                        if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
+                        if (ic + 1 < nkc) {
+                            if constexpr (!FP8) load_a(kc + 1, a_nxt);
+                            load_prev(kc + 1, prev_nxt, cm_nxt, true);
+                        }
                     } else {
-                        if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
+                        if (ic + 1 < nkc) {
+                            load_prev(kc + 1, prev_nxt, cm_nxt, false);
+                            if constexpr (!FP8) load_a(kc + 1, a_nxt);
+                        }
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
                     if (ic + 2 < nkc) issue_words(kc + 2, TWO);
                     if (ic + 4 < nkc) issue_desc(kc + 4);
-                    cp_async_commit();
+                    if constexpr (!FP8) cp_async_commit();
                     const int stage = gc & 1;
                     if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
-                    store_a(stage, a_cur);
+                    if constexpr (FP8) {
+                        // Past this barrier the consumers have released chunk
+                        // gc - 2, whose raw-ring slot chunk gc + 2 takes.
+                        if (ic + 2 < nkc) issue_a(gc + 2, kc + 2);
+                        cp_async_commit();
+                    } else {
+                        store_a(stage, a_cur);
+                    }
                     const int32_t* W = Ws + (kc % WORD_STAGES) * W_STAGE;
                     uint8_t* B = Bs + stage * B_STAGE_BYTES;
                     const int32_t* Wc[2];
@@ -1014,7 +1066,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             for (int ic = 0; ic < nkc; ++ic, ++gc) {
                 stage = gc & 1;
                 if (ic > 0) bar_sync(BAR_FULL0 + stage, THREADS);
-                const uint8_t* A = As + stage * A_STAGE_BYTES;
+                const uint8_t* A = FP8 ? As + (gc % ARAW_STAGES) * ARAW_STAGE_BYTES : As + stage * A_STAGE_BYTES;
                 const uint8_t* B = Bs + stage * B_STAGE_BYTES;
                 #pragma unroll
                 for (int s = 0; s < BK / 16; ++s) {
@@ -1022,9 +1074,24 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     const int q = lane >> 3;
                     #pragma unroll
                     for (int mi = 0; mi < 2; ++mi) {
-                        const int row = 32 * mw + 16 * mi + 8 * (q & 1) + (lane & 7);
-                        const int kch = 2 * s + (q >> 1);
-                        ldmatrix_x4(a[mi], A + row * (BK * 2) + (aswz(kch, row) << 4));
+                        if constexpr (FP8) {
+                            // The fragment ldmatrix would load from the f16
+                            // tile, built from the raw bytes: register i holds
+                            // row 8 * (i & 1) + lane / 4 of the 16-row block,
+                            // columns 16 s + 8 (i >> 1) + 2 (lane % 4) + {0, 1},
+                            // each e4m3 byte widened exactly to f16.
+                            #pragma unroll
+                            for (int i = 0; i < 4; ++i) {
+                                const int row = 32 * mw + 16 * mi + 8 * (i & 1) + (lane >> 2);
+                                const int k = 8 * (i >> 1) + 2 * (lane & 3);
+                                a[mi][i] = e4m3x2_to_f16x2(*reinterpret_cast<const uint16_t*>(
+                                    A + row * BK + ((s ^ ((row >> 2) & 1)) << 4) + k));
+                            }
+                        } else {
+                            const int row = 32 * mw + 16 * mi + 8 * (q & 1) + (lane & 7);
+                            const int kch = 2 * s + (q >> 1);
+                            ldmatrix_x4(a[mi], A + row * (BK * 2) + (aswz(kch, row) << 4));
+                        }
                     }
                     uint32_t b[4][2];
                     #pragma unroll
