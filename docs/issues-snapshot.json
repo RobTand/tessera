@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-30T02:14:15Z",
+ "generated": "2026-09-30T15:48:11Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2044,7 +2044,7 @@
     "title": "[P2] Share regex SHA-256 validation while preserving refusal contracts"
    },
    "1458": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Declare served-gold requests dependency and align PB test environments with CI"
    },
    "1459": {
@@ -2248,7 +2248,7 @@
     "title": "[P1] Tessera encode path prices the research E2M1 sub-cap recipe, not the served wire"
    },
    "1503": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] build_t4_logical_request.py is r13-only"
    },
    "1504": {
@@ -3368,11 +3368,11 @@
     "title": "[P2] Emit deterministic offline reduced-stack next-work manifests"
    },
    "1756": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Refresh stale uv.lock root metadata and missing test-extra dependencies"
    },
    "1757": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Generalize retained qualification logical requests"
    },
    "1758": {
@@ -3396,7 +3396,7 @@
     "title": "[P1] Routed backfill rows size their phase plan from host free memory, not their cgroup cap: 12 rows died on idle sparky"
    },
    "1762": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] NUL-framed source identities do not bind a unique file map"
    },
    "1763": {
@@ -3456,7 +3456,7 @@
     "title": "[P2] Stage B checkpoint persistence: bounded shared-IO-engine publisher CPU slice"
    },
    "1776": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Replay bounded reduced-stack repair transitions from explicit evidence"
    },
    "1777": {
@@ -3500,19 +3500,19 @@
     "title": "[P2] Delegate model-walk metadata hashes to the bytes owner (#1301 slice)"
    },
    "1786": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Integrate bounded retained-window checkpoint publication (CPU slice)"
    },
    "1787": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Replay bounded offline Tessera repair histories"
    },
    "1788": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Preserve ownership guard for pilot-local validation helpers"
    },
    "1789": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Check campaign group membership before row admission"
    },
    "179": {
@@ -3524,8 +3524,40 @@
     "title": "Delegate model-walk metadata hashes to shared bytes owner"
    },
    "1791": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Preserve ownership guard for pilot-local helpers"
+   },
+   "1792": {
+    "state": "CLOSED",
+    "title": "[P2] Validate row group selections before memory admission"
+   },
+   "1793": {
+    "state": "CLOSED",
+    "title": "[P2] Integrate bounded durable retained-window publication (CPU slice)"
+   },
+   "1794": {
+    "state": "CLOSED",
+    "title": "[P3] Add bounded scatter-read span planning (CPU slice of #1087)"
+   },
+   "1795": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate calibration artifact and draw byte digests onto the shared owner"
+   },
+   "1796": {
+    "state": "CLOSED",
+    "title": "[P2] Plan and merge unsampled fixed-rate expert partitions"
+   },
+   "1797": {
+    "state": "CLOSED",
+    "title": "[P3] Add bounded research scatter-read planning for Stage B (CPU slice)"
+   },
+   "1798": {
+    "state": "CLOSED",
+    "title": "[P1] Deduplicate calibration artifact and draw SHA256 calls"
+   },
+   "1799": {
+    "state": "CLOSED",
+    "title": "[P1] Add framed v2 source profiles without legacy migration"
    },
    "18": {
     "state": "CLOSED",
@@ -3535,13 +3567,117 @@
     "state": "CLOSED",
     "title": "Integrate reviewed Tessera admission and boundary-request fixes"
    },
+   "1800": {
+    "state": "CLOSED",
+    "title": "[P1] Share bounded safetensors prefix validation without merging reader contracts"
+   },
+   "1801": {
+    "state": "CLOSED",
+    "title": "[P2] Restore and qualify PB CPU test dependency coverage"
+   },
+   "1802": {
+    "state": "OPEN",
+    "title": "[P2] Add bounded deferred checkpoint incoming CPU prerequisite"
+   },
+   "1803": {
+    "state": "CLOSED",
+    "title": "[P1] Share bounded safetensors prefix validation without merging IO policies"
+   },
+   "1804": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate the ephemeral dev-mode rendering digest onto the shared byte owner"
+   },
+   "1805": {
+    "state": "CLOSED",
+    "title": "[P1] Share diagnostic fingerprint hashing without changing warning bytes"
+   },
+   "1806": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate cost-journal payload byte digests onto the shared owner"
+   },
+   "1807": {
+    "state": "CLOSED",
+    "title": "[P1] Share cost-journal payload byte digests"
+   },
+   "1808": {
+    "state": "CLOSED",
+    "title": "[P2] Add fixed-rate expert partitions with exact coverage and handoffs"
+   },
+   "1809": {
+    "state": "CLOSED",
+    "title": "[P2] Restore explicit pilot admission in band dry-run CPU fixtures"
+   },
    "181": {
     "state": "CLOSED",
     "title": "Enforce explicit runtime scope throughout Tessera v5 admission"
    },
+   "1810": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate sensitivity-card provenance text fingerprints"
+   },
+   "1811": {
+    "state": "CLOSED",
+    "title": "[P2] Refresh inherited CI fixtures for labelled source profiles and pilot admission"
+   },
+   "1812": {
+    "state": "CLOSED",
+    "title": "[P2] Record pilot override in band dry-run CPU fixtures"
+   },
+   "1813": {
+    "state": "CLOSED",
+    "title": "[P1] Share sensitivity-card provenance hashing without changing identity bytes"
+   },
+   "1814": {
+    "state": "CLOSED",
+    "title": "[P1] Share production-cache metadata digest constructors without changing profiles"
+   },
+   "1815": {
+    "state": "CLOSED",
+    "title": "[P1] Share production-cache metadata hashing without changing bytes"
+   },
+   "1816": {
+    "state": "CLOSED",
+    "title": "[P1] Share assignment metadata byte hashing without changing budget identities"
+   },
+   "1817": {
+    "state": "CLOSED",
+    "title": "[P2] Deliver CPU binding-proof and selected-cache prepare slices"
+   },
+   "1818": {
+    "state": "CLOSED",
+    "title": "[P2] Refresh labelled source-profile CI fixtures"
+   },
+   "1819": {
+    "state": "CLOSED",
+    "title": "[P2] Refresh uv dependency lock metadata"
+   },
    "182": {
     "state": "CLOSED",
     "title": "Measure #87 BF16 boundary instrument A/B with frozen-source receipts"
+   },
+   "1820": {
+    "state": "OPEN",
+    "title": "[P2] Charge opt-in compilation caches separately from replay scratch"
+   },
+   "1821": {
+    "state": "CLOSED",
+    "title": "[P2] Deliver CPU binding-proof, head-progress and metadata fixes"
+   },
+   "1822": {
+    "state": "CLOSED",
+    "title": "[P1] Share assignment metadata hashing without changing serialized bindings"
+   },
+   "1823": {
+    "state": "OPEN",
+    "title": "[P2] Own timed profiler lifetime independently of anchor execution"
+   },
+   "1824": {
+    "state": "OPEN",
+    "title": "[P2] Declare separately charged container compilation caches"
+   },
+   "1825": {
+    "state": "OPEN",
+    "title": "[P2] Separate timed observer lifetime from anchor execution"
    },
    "183": {
     "state": "CLOSED",
@@ -9246,7 +9382,7 @@
     "title": "Make cached-producer H-retention observation thread-aware (#521, #552)"
    },
    "567": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Shared trellis tables need a shared-candidate term: per-module manifest pricing is exact only for one NVFP4 unit per trellis"
    },
    "568": {
@@ -9442,7 +9578,7 @@
     "title": "The census calls it \"prefill\" and the contract calls it \"batch\"; the per-(family, regime) expectation both #10 and #47 need has no mapping"
    },
    "610": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Four native window MoE GPU tests still pass the route weight at topk=2, which the lane now refuses"
    },
    "611": {
@@ -9582,7 +9718,7 @@
     "title": "[P1] Contract v39: withdraw unmakeable E2M1 cells, mint the GLM-image E2M1 cells, widen the window rungs (#604)"
    },
    "642": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Align native MoE tests with modular input weighting"
    },
    "643": {
@@ -9594,7 +9730,7 @@
     "title": "[P1] Cached-unit reader refuses unproven dev-mode adoptions and multi-rung A4 served-activation policies"
    },
    "645": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] MTP draft load holds a duplicate embed_tokens and lm_head until the cache clear: +1.18 GiB per rank of peak on GLM TP2"
    },
    "646": {
@@ -9997,13 +10133,85 @@
     "state": "OPEN",
     "title": "[P2] Stock vLLM GLM-5.3 prefill: mHC on every TP rank and three MLA/KDA copies (about 100 ms per 2,048-token chunk, estimate)"
    },
+   "736": {
+    "state": "CLOSED",
+    "title": "Name the GLM-5.3 T8R L8192 prefill remainder; bound a decode-to-scratch routed path"
+   },
+   "737": {
+    "state": "CLOSED",
+    "title": "[P1] Add framed v2 companions to legacy source identities"
+   },
+   "738": {
+    "state": "CLOSED",
+    "title": "[P1] Add labelled length-framed source identity companions"
+   },
+   "739": {
+    "state": "OPEN",
+    "title": "[P1] Fused routed kernel: the chunk loop waits on its one-chunk-ahead global loads"
+   },
    "74": {
     "state": "CLOSED",
     "title": "formats[].residency_modes is required but never checked against lane.MODES, so a wrong residency list validates"
    },
+   "740": {
+    "state": "CLOSED",
+    "title": "Correct the prefill note: the EXL3 reference runs a different image and MLA backend"
+   },
+   "741": {
+    "state": "CLOSED",
+    "title": "[P1] Fused routed kernel: 128-route superblocks for the E4M3 down/dense launch"
+   },
+   "742": {
+    "state": "CLOSED",
+    "title": "Measure the FP8 prefill roofline on GB10"
+   },
+   "743": {
+    "state": "CLOSED",
+    "title": "[P2] Price qualified shared NVFP4 candidate residency once per process/rank"
+   },
+   "744": {
+    "state": "CLOSED",
+    "title": "[P2] Avoid discarded GLM MTP draft vocabulary allocations"
+   },
+   "745": {
+    "state": "CLOSED",
+    "title": "Run the E4M3 family's fused window kernel on the E4M3 tensor-core instruction (experimental)"
+   },
+   "746": {
+    "state": "CLOSED",
+    "title": "Routed fused kernel: 128-route superblocks from 2048 tokens and one-run activation prefetch on the E4M3 instruction"
+   },
+   "747": {
+    "state": "CLOSED",
+    "title": "Contract v47: the E4M3-instruction pairs leave the experimental set with six cells"
+   },
+   "748": {
+    "state": "CLOSED",
+    "title": "[P3] test_native_moe_tp_owner_runtime writes into the source tree; the PB test runner mounts it read-only"
+   },
+   "749": {
+    "state": "CLOSED",
+    "title": "[P1] #744's MTP vocabulary patch crashes GLM MTP serves on the vLLM nightly stack (module path and source digests)"
+   },
    "75": {
     "state": "CLOSED",
     "title": "The full-H refit earns its keep on the trailing pass: h^1.0 codes + one coupled full-H refit match the GS alternation (screen)"
+   },
+   "750": {
+    "state": "OPEN",
+    "title": "[P0] Kernel coverage epic: native fused T-4/T-8/T-16 kernels for every structure, rate and regime, at roofline"
+   },
+   "751": {
+    "state": "CLOSED",
+    "title": "[P3] Keep native owner config fixtures out of the source tree"
+   },
+   "752": {
+    "state": "CLOSED",
+    "title": "mtp_draft_lifetime: the nightly GLM MTP interface; decline when no interface matches (#749)"
+   },
+   "753": {
+    "state": "OPEN",
+    "title": "[P2] test_serving_name_mapping does not run on the nightly image: get_unstacked_mapper became get_rename_mapper (drops None renames)"
    },
    "76": {
     "state": "CLOSED",
