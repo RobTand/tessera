@@ -230,6 +230,7 @@ class TesseraConfig(QuantizationConfig):
                 full_config["research_selected_moe"])
             self._research_selected_moe.require_targets(self.target_scheme, self._mode)
         self._declared = False
+        self._graph_reported = False
 
     def _check_overlap(self) -> None:
         overlap = sorted(set(self.ignore) & set(self.target_scheme))
@@ -406,6 +407,37 @@ class TesseraConfig(QuantizationConfig):
         require_a_cutter(prefix, world)
         require_a_cuttable_artifact(prefix, world, self._full_config)
 
+    def _report_graph_once(self) -> None:
+        """Say once whether this serve runs a graph configuration a receipt measured equal to eager.
+
+        ``runtime_contract.json``'s ``lane_eligibility.graph_receipts`` (contract
+        v48, tessera#702) publish the graph serves measured equal to eager, each
+        keyed by the vLLM runner sources it ran and the model type; this finds
+        the one this runtime and model match and compares the running
+        configuration with it (``graph_equivalence.graph_verdict``).  It
+        reports; it never refuses.  The research NoPE backend reports its own
+        verdict (``glm53_nope._report_equivalence``), so it is skipped there.
+        """
+        if self._graph_reported:
+            return
+        self._graph_reported = True
+        import os
+
+        if os.environ.get("TESSERA_RESEARCH_GLM53_NOPE") == "1":
+            return
+        try:
+            from vllm.config import get_current_vllm_config_or_none
+        except ImportError:  # a vLLM without the accessor: nothing to consult
+            return
+        current = get_current_vllm_config_or_none()
+        if current is None:
+            return
+        from .contract import cached_serving_contract
+        from .graph_equivalence import report_once
+
+        report_once(current, cached_serving_contract()["lane_eligibility"].get(
+            "graph_receipts", ()))
+
     def _declare_once(self) -> None:
         if self._declared:
             return
@@ -516,6 +548,7 @@ class TesseraConfig(QuantizationConfig):
         from .mtp_draft_lifetime import install_for_current_config
 
         install_for_current_config()
+        self._report_graph_once()
         lookup_prefix, target_scheme, ignored = self._module_lookup(prefix)
 
         moe_classes = _moe_layer_classes()

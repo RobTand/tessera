@@ -127,8 +127,14 @@ __all__ = [
     "EXECUTION_MODES",
     "PLUGIN_ENTRY_POINT",
     "RUNTIME_CODE_KEYS",
+    "RUNTIME_GRAPH_KEY",
     "RUNTIME_SCOPE_KEYS",
     "RUNTIME_VERSION_KEYS",
+    "GRAPH_CAPTURE_EVERY_COUNT",
+    "GRAPH_RECEIPT_KEYS",
+    "GRAPH_VERDICTS",
+    "validate_graph_receipts",
+    "cell_graph_receipt",
     "VERSIONS_KEYS",
     "validate_activation_quantizers",
     "cell_evidence",
@@ -255,6 +261,41 @@ RUNTIME_VERSION_KEYS = frozenset({"vllm", "torch"})
 RUNTIME_CODE_KEYS = frozenset({"tessera_commit", "serving_source_sha256"})
 _COMMIT = re.compile(r"[0-9a-f]{40}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+
+#: The GRAPH half of a cell's ``runtime`` (contract v48, tessera#702): the id
+#: of the ``lane_eligibility.graph_receipts`` entry a ``compiled`` cell rests
+#: on.  Required exactly when ``execution_modes`` names ``compiled``: that
+#: mode is "``enforce_eager`` false", which on its own names no configuration
+#: -- a compilation mode, a CUDA-graph mode, a capture list and the ops they
+#: select are each a different computation (tessera#508, #702) -- so a
+#: compiled cell names the receipt that says WHICH graph serve was measured
+#: equal to eager on its image, and a consumer serves that one.
+RUNTIME_GRAPH_KEY = "graph_receipt"
+
+#: A graph receipt (contract v48, tessera#702).  ``serve`` is what a consumer
+#: passes to vLLM to reproduce the measured graph serve: the compilation and
+#: kernel configs verbatim (JSON, as ``--compilation-config`` /
+#: ``--kernel-config`` take them, without ``cudagraph_capture_sizes``), the
+#: environment, and the capture RULE, because the list depends on the serve's
+#: own ``max_num_seqs`` and draft length.  ``runner_sha256`` digests the vLLM
+#: sources the graph path runs through, relative to the ``vllm`` package, so a
+#: serve that cannot read its own image digest can still find its receipt
+#: (``graph_equivalence.consult``).  ``equivalence`` is the verdict of the
+#: tessera#508 membership criterion on this image -- every greedy choice and
+#: top-20 logprob list of the equality suite is one an eager serve of the same
+#: image also produced -- with its write-up under ``EVIDENCE_RECEIPT_ROOT`` and
+#: its raw data under ``WORLD_SIZE_DATA_ROOT``; ``speculative`` holds the same
+#: verdict per drafter configuration, against an eager serve of that drafter.
+GRAPH_RECEIPT_KEYS = frozenset({"id", "image", "vllm", "torch", "model_type",
+                                "runner_sha256", "serve", "equivalence", "speculative"})
+GRAPH_SERVE_KEYS = frozenset({"compilation_config", "kernel_config", "env", "capture_sizes"})
+#: Every token count from 1 to ``max_num_seqs * (1 + num_speculative_tokens)``
+#: is captured, so no decode batch replays a larger graph than its own
+#: (``graph_equivalence.padded_families``).
+GRAPH_CAPTURE_EVERY_COUNT = "every_count_to_max_decode_tokens"
+GRAPH_VERDICTS = ("eager_equivalent",)
+GRAPH_EQUIVALENCE_KEYS = frozenset({"verdict", "criterion", "receipt", "data"})
+GRAPH_SPECULATIVE_KEYS = frozenset({"method", "num_speculative_tokens"}) | GRAPH_EQUIVALENCE_KEYS
 
 #: ``versions`` (schema v6, #131) says one thing per field and nothing about
 #: a measured runtime: ``tessera`` is the distribution version,
@@ -541,7 +582,7 @@ def cell_runtime_scope(cell: Mapping[str, Any],
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
     _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS),
-                  optional=RUNTIME_VERSION_KEYS | RUNTIME_CODE_KEYS)
+                  optional=RUNTIME_VERSION_KEYS | RUNTIME_CODE_KEYS | {RUNTIME_GRAPH_KEY})
     image = require_runtime_image(runtime["image"], f"{at}.image")
     modes = runtime["execution_modes"]
     if (not isinstance(modes, list) or not modes
@@ -565,7 +606,7 @@ def cell_runtime_versions(cell: Mapping[str, Any],
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
     _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS),
-                  optional=RUNTIME_CODE_KEYS)
+                  optional=RUNTIME_CODE_KEYS | {RUNTIME_GRAPH_KEY})
     out = []
     for field in ("vllm", "torch"):
         value = runtime[field]
@@ -600,6 +641,128 @@ def cell_runtime_code(cell: Mapping[str, Any],
         raise ValueError(
             f"{at}.serving_source_sha256 must be 64 lowercase hex digits, got {digest!r}")
     return commit, digest
+
+
+def _validate_graph_equivalence(entry: Mapping[str, Any], where: str) -> None:
+    if entry["verdict"] not in GRAPH_VERDICTS:
+        raise ValueError(
+            f"{where}.verdict must be one of {list(GRAPH_VERDICTS)}, got {entry['verdict']!r}: "
+            "a graph receipt publishes a serve measured EQUAL to eager; a serve measured "
+            "different is a finding for docs/measurements, not something a compiled cell "
+            "can rest on")
+    if not isinstance(entry["criterion"], str) or not entry["criterion"]:
+        raise ValueError(f"{where}.criterion must name the equality criterion measured")
+    _require_receipt_path(entry["receipt"], where)
+    _require_data_path(entry["data"], f"{where}.data")
+
+
+def validate_graph_receipts(receipts: Any, where: str) -> dict[str, Mapping[str, Any]]:
+    """The ``lane_eligibility.graph_receipts`` list (contract v48), by id, or raise."""
+    if not isinstance(receipts, list):
+        raise ValueError(f"{where} must be a list of graph receipts")
+    out: dict[str, Mapping[str, Any]] = {}
+    for i, entry in enumerate(receipts):
+        at = f"{where}[{i}]"
+        _require_keys(entry, at, required=set(GRAPH_RECEIPT_KEYS))
+        rid = entry["id"]
+        if not isinstance(rid, str) or not rid or rid in out:
+            raise ValueError(f"{at}.id must be a non-empty string no other receipt uses, "
+                             f"got {rid!r}")
+        require_runtime_image(entry["image"], f"{at}.image")
+        for field in ("vllm", "torch", "model_type"):
+            if not isinstance(entry[field], str) or not entry[field]:
+                raise ValueError(f"{at}.{field} must be a non-empty string, got "
+                                 f"{entry[field]!r}")
+        runner = entry["runner_sha256"]
+        if (not isinstance(runner, Mapping) or not runner
+                or any(not isinstance(k, str) or not k or k.startswith("/") or ".." in k
+                       or not isinstance(v, str) or not _SHA256.fullmatch(v)
+                       for k, v in runner.items())):
+            raise ValueError(
+                f"{at}.runner_sha256 must map vllm-package-relative source paths to 64 "
+                f"lowercase hex digits, got {runner!r}")
+        serve = entry["serve"]
+        _require_keys(serve, f"{at}.serve", required=set(GRAPH_SERVE_KEYS))
+        compilation = serve["compilation_config"]
+        if not isinstance(compilation, Mapping) or not compilation.get("cudagraph_mode"):
+            raise ValueError(
+                f"{at}.serve.compilation_config must be a JSON object naming its "
+                f"cudagraph_mode, got {compilation!r}")
+        if "cudagraph_capture_sizes" in compilation:
+            raise ValueError(
+                f"{at}.serve.compilation_config must not carry cudagraph_capture_sizes: "
+                f"the list follows the serve's max_num_seqs and draft length, by the rule "
+                f"serve.capture_sizes names")
+        if not isinstance(serve["kernel_config"], Mapping):
+            raise ValueError(f"{at}.serve.kernel_config must be a JSON object")
+        env = serve["env"]
+        if (not isinstance(env, Mapping)
+                or any(not isinstance(k, str) or not isinstance(v, str) for k, v in env.items())):
+            raise ValueError(f"{at}.serve.env must map variable names to string values")
+        if serve["capture_sizes"] != GRAPH_CAPTURE_EVERY_COUNT:
+            raise ValueError(
+                f"{at}.serve.capture_sizes must be {GRAPH_CAPTURE_EVERY_COUNT!r}, got "
+                f"{serve['capture_sizes']!r}: a decode batch replayed in a larger graph is "
+                "another computation (tessera#508), so no other rule is measured equal")
+        equivalence = entry["equivalence"]
+        _require_keys(equivalence, f"{at}.equivalence", required=set(GRAPH_EQUIVALENCE_KEYS))
+        _validate_graph_equivalence(equivalence, f"{at}.equivalence")
+        speculative = entry["speculative"]
+        if not isinstance(speculative, list):
+            raise ValueError(f"{at}.speculative must be a list (empty: no drafter measured)")
+        seen = set()
+        for j, spec in enumerate(speculative):
+            sat = f"{at}.speculative[{j}]"
+            _require_keys(spec, sat, required=set(GRAPH_SPECULATIVE_KEYS))
+            k = spec["num_speculative_tokens"]
+            if (not isinstance(spec["method"], str) or not spec["method"]
+                    or not isinstance(k, int) or isinstance(k, bool) or k < 1):
+                raise ValueError(f"{sat} must name a method and num_speculative_tokens >= 1")
+            if (spec["method"], k) in seen:
+                raise ValueError(f"{sat} repeats drafter ({spec['method']!r}, {k})")
+            seen.add((spec["method"], k))
+            _validate_graph_equivalence(spec, sat)
+        out[rid] = entry
+    return out
+
+
+def cell_graph_receipt(cell: Mapping[str, Any], contract: Mapping[str, Any],
+                       where: str = "lane_eligibility cell") -> Mapping[str, Any] | None:
+    """The graph receipt a ``compiled`` cell rests on (contract v48), or ``None`` for eager-only.
+
+    Raises when a compiled cell names none, an eager-only cell names one, the
+    id resolves to no receipt, or the receipt was measured on another image or
+    toolchain than the cell's own.
+    """
+    image, modes = cell_runtime_scope(cell, where)
+    runtime = cell["runtime"]
+    name = runtime.get(RUNTIME_GRAPH_KEY)
+    at = f"{where}.runtime.{RUNTIME_GRAPH_KEY}"
+    if "compiled" not in modes:
+        if name is not None:
+            raise ValueError(
+                f"{at} names {name!r} but the cell's execution_modes {list(modes)} do not "
+                "include 'compiled'; a graph receipt scopes a compiled cell only")
+        return None
+    if not isinstance(name, str) or not name:
+        raise ValueError(
+            f"{where} claims execution mode 'compiled' without {RUNTIME_GRAPH_KEY!r}: "
+            "'compiled' is enforce_eager=False, which names no configuration, and a "
+            "consumer cannot serve a mode no receipt pins (tessera#702)")
+    receipts = validate_graph_receipts(
+        contract.get("lane_eligibility", {}).get("graph_receipts", []),
+        "runtime_contract.lane_eligibility.graph_receipts")
+    receipt = receipts.get(name)
+    if receipt is None:
+        raise ValueError(f"{at} names {name!r}, which no graph receipt publishes "
+                         f"({sorted(receipts)})")
+    for field, value in (("image", image), ("vllm", runtime.get("vllm")),
+                         ("torch", runtime.get("torch"))):
+        if receipt[field] != value:
+            raise ValueError(
+                f"{at} names {name!r}, measured on {field} {receipt[field]!r}, but the cell's "
+                f"runtime is {value!r}; a graph receipt attests the image it was measured on")
+    return receipt
 
 
 def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
@@ -1409,7 +1572,11 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
 
     block = contract["lane_eligibility"]
     _require_keys(block, "runtime_contract.lane_eligibility",
-                  required={"schema", "platforms", "regimes", "structures", "cells"})
+                  required={"schema", "platforms", "regimes", "structures", "cells"},
+                  optional={"graph_receipts"})
+    graph_receipts = validate_graph_receipts(
+        block.get("graph_receipts", []), "runtime_contract.lane_eligibility.graph_receipts")
+    graph_receipts_named: set = set()
     if block["schema"] != LANE_ELIGIBILITY_SCHEMA:
         raise ValueError(
             f"runtime_contract.lane_eligibility.schema must be {LANE_ELIGIBILITY_SCHEMA!r}, "
@@ -1485,6 +1652,10 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 f"{where} ({cell['id']!r}) records (vllm, torch) {toolchain} on "
                 f"{runtime_image}, but {known[1]!r} records {known[0]} on the same digest; "
                 "one image cannot be two runtimes. One of the two receipts is misread.")
+        # WHICH GRAPH SERVE a compiled cell rests on (v48, tessera#702).
+        graph = cell_graph_receipt(cell, contract, where)
+        if graph is not None:
+            graph_receipts_named.add(graph["id"])
         if cell["platform"] not in block["platforms"]:
             raise ValueError(f"{where}.platform {cell['platform']!r} is not declared")
         if cell["regime"] not in block["regimes"]:
@@ -1597,6 +1768,14 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                         "A cell is resolved by these facts plus the rung, so two cells "
                         "claiming one of them would make the answer depend on table order.")
                 _cell_scope[key] = cell["id"]
+
+    # A GRAPH RECEIPT NO CELL NAMES scopes nothing (v48, tessera#702): it
+    # would publish a serve configuration no compiled cell rests on.
+    orphans = sorted(set(graph_receipts) - graph_receipts_named)
+    if orphans:
+        raise ValueError(
+            f"runtime_contract.lane_eligibility.graph_receipts publishes {orphans}, which no "
+            "compiled cell names; a receipt is read through the cells it scopes")
 
     # A PLATFORM'S SERVE IMAGE IS ONE OF ITS OWN (v10, #456).
     #

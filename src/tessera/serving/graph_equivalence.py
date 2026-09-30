@@ -26,8 +26,9 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["EAGER_IR_OPS", "graph_mode", "num_draft_tokens", "op_implementation_gap",
-           "padded_families", "padded_token_counts"]
+__all__ = ["EAGER_IR_OPS", "graph_mode", "graph_verdict", "num_draft_tokens",
+           "op_implementation_gap", "padded_families", "padded_token_counts", "receipt_for",
+           "report_once", "runner_digests", "serve_gap"]
 
 #: The op implementations compilation mode NONE resolves, which the eager
 #: reference runs: vLLM appends custom op ``"all"`` unless inductor compiles
@@ -138,3 +139,142 @@ def op_implementation_gap(config: Any) -> str | None:
             gaps.append(f"IR op {op} resolves to {order}, not ['vllm_c', 'native']")
     return "; ".join(gaps) or None
 
+
+# --- the serve-time consult (tessera#702) ------------------------------------
+
+#: Graph verdicts already reported by this process (one line per distinct verdict).
+_REPORTED: set = set()
+
+
+def _plain(value: Any) -> Any:
+    """A vLLM config value as JSON would spell it: enum members by name, sequences as lists."""
+    import enum
+
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    # Before the scalar case: vLLM's modes are int-valued enums, and a
+    # published receipt spells them by name, as the CLI takes them.
+    if isinstance(value, enum.Enum):
+        return value.name
+    return value
+
+
+def _differences(running: Any, attested: Any, path: str) -> list[str]:
+    """Each attested field the running config object does not carry verbatim."""
+    out = []
+    for key, want in attested.items():
+        got = getattr(running, key, None)
+        if isinstance(want, dict):
+            out.extend(_differences(got, want, f"{path}.{key}"))
+        elif _plain(got) != want:
+            out.append(f"{path}.{key} is {_plain(got)!r}, not {want!r}")
+    return out
+
+
+def runner_digests(paths: Any) -> dict[str, str | None]:
+    """sha256 of each vLLM source path (relative to the ``vllm`` package), None if absent."""
+    import hashlib
+    from pathlib import Path
+
+    import vllm
+
+    root = Path(vllm.__file__).parent
+    out = {}
+    for relative in paths:
+        path = root / relative
+        out[relative] = (hashlib.sha256(path.read_bytes()).hexdigest()
+                         if path.is_file() else None)
+    return out
+
+
+def receipt_for(config: Any, receipts: Any, digests: Any = None) -> Any:
+    """The graph receipt measured on this runtime's graph path and model type, or None."""
+    digests = runner_digests if digests is None else digests
+    model_type = getattr(getattr(config.model_config, "hf_text_config", None),
+                         "model_type", None)
+    for receipt in receipts:
+        if receipt["model_type"] != model_type:
+            continue
+        if digests(receipt["runner_sha256"]) == dict(receipt["runner_sha256"]):
+            return receipt
+    return None
+
+
+def serve_gap(config: Any, receipt: Any, environ: Any = None) -> str | None:
+    """How a graph serve differs from the one ``receipt`` measured equal to eager, or None."""
+    import os
+
+    environ = os.environ if environ is None else environ
+    serve = receipt["serve"]
+    gaps = _differences(config.compilation_config, serve["compilation_config"],
+                        "compilation_config")
+    gaps += _differences(config.kernel_config, serve["kernel_config"], "kernel_config")
+    for key, want in serve["env"].items():
+        if environ.get(key) != want:
+            gaps.append(f"environment {key} is {environ.get(key)!r}, not {want!r}")
+    ceiling = config.scheduler_config.max_num_seqs * (1 + num_draft_tokens(config))
+    sizes = sorted(set(config.compilation_config.cudagraph_capture_sizes or ()))
+    missing = [n for n in range(1, ceiling + 1) if n not in sizes]
+    if missing:
+        gaps.append(f"capture sizes {sizes} leave token counts {missing} of 1..{ceiling} "
+                    "to replay a larger graph (every count must be captured)")
+    spec = config.speculative_config
+    if spec is not None:
+        measured = {(s["method"], s["num_speculative_tokens"]) for s in receipt["speculative"]}
+        if (spec.method, num_draft_tokens(config)) not in measured:
+            gaps.append(f"no receipt measures drafter {spec.method!r} at "
+                        f"{num_draft_tokens(config)} draft tokens under graphs "
+                        f"(measured: {sorted(measured) or 'none'})")
+    return "; ".join(gaps) or None
+
+
+def graph_verdict(config: Any, receipts: Any, digests: Any = None,
+                  environ: Any = None) -> tuple[str | None, str | None]:
+    """``(receipt id or None, gap or None)`` for this serve's execution.
+
+    An eager serve (CUDA-graph mode NONE and compilation mode NONE) runs eager's
+    arithmetic by definition and needs no receipt: ``(None, None)``.  A graph
+    serve is claimed equal to eager only when a receipt measured on this
+    runtime's graph path and model type exists and the serve reproduces its
+    configuration.
+    """
+    graph = graph_mode(config.compilation_config)
+    compiled = _name(getattr(config.compilation_config, "mode", None)) not in (None, "NONE")
+    if _name(graph) in (None, "NONE") and not compiled:
+        return None, None
+    receipt = receipt_for(config, receipts, digests)
+    if receipt is None:
+        return None, ("no graph receipt measures this runtime's graph path for model type "
+                      f"{getattr(config.model_config.hf_text_config, 'model_type', None)!r} "
+                      "(runtime_contract.json lane_eligibility.graph_receipts, tessera#702)")
+    gap = serve_gap(config, receipt, environ)
+    if gap is None:
+        return receipt["id"], None
+    return receipt["id"], (f"this serve is not the graph serve receipt {receipt['id']!r} "
+                           f"measured equal to eager ({receipt['equivalence']['receipt']}): "
+                           f"{gap}")
+
+
+def report_once(config: Any, receipts: Any, *, backend: str = "vllm") -> None:
+    """Say once per process whether this serve runs eager's arithmetic, and if not, why."""
+    import sys
+
+    from .telemetry import record_backend_execution_identity
+
+    rid, gap = graph_verdict(config, receipts)
+    if rid is None and gap is None:
+        return  # an eager serve: nothing to claim, and its route trace stays as it was
+    graph = graph_mode(config.compilation_config)
+    record_backend_execution_identity(
+        backend=backend, compilation_mode=_name(config.compilation_config.mode) or "NONE",
+        cuda_graph_mode=_name(graph) or "NONE", eager_equivalence_gap=gap)
+    key = (rid, gap)
+    if key in _REPORTED:
+        return
+    _REPORTED.add(key)
+    if gap is None:
+        print(f"Tessera: CUDA-graph mode {_name(graph)} reproduces graph receipt {rid!r}: "
+              "runs eager's arithmetic (tessera#702)", file=sys.stderr, flush=True)
+    else:
+        print(f"Tessera: WARNING: this serve's outputs are not claimed equal to eager's; "
+              f"measure its quality on it: {gap}", file=sys.stderr, flush=True)

@@ -64,6 +64,40 @@ def _scoped_contract():
     return contract
 
 
+def _validate(contract):
+    """Validate with every compiled cell on a graph receipt of its own runtime.
+
+    Contract v48 (tessera#702): a ``compiled`` cell names the graph receipt it
+    rests on.  These tests are about runtime SCOPE, and ``RUNTIME`` above is
+    compiled, so this attaches one receipt per (image, toolchain) to exactly
+    the compiled cells as they stand when validated; which graph serve a
+    compiled cell rests on is ``tests/test_contract_graph_receipts.py``'s.
+    """
+    receipts: dict = {}
+    for cell in contract["lane_eligibility"]["cells"]:
+        runtime = cell.get("runtime")
+        if not isinstance(runtime, dict):
+            continue
+        if "compiled" not in (runtime.get("execution_modes") or ()):
+            runtime.pop("graph_receipt", None)
+            continue
+        key = (runtime.get("image"), runtime.get("vllm"), runtime.get("torch"))
+        if not all(isinstance(part, str) and part for part in key):
+            continue  # a malformed runtime: the validator refuses it before any receipt
+        runtime["graph_receipt"] = receipts.setdefault(key, f"scope_test_graph_{len(receipts)}")
+    contract["lane_eligibility"]["graph_receipts"] = [{
+        "id": rid, "image": image, "vllm": vllm, "torch": torch,
+        "model_type": "test", "runner_sha256": {"v1/worker/gpu/model_runner.py": "a" * 64},
+        "serve": {"compilation_config": {"cudagraph_mode": "FULL_DECODE_ONLY"},
+                  "kernel_config": {}, "env": {},
+                  "capture_sizes": runtime_contract.GRAPH_CAPTURE_EVERY_COUNT},
+        "equivalence": {"verdict": "eager_equivalent", "criterion": "test",
+                        "receipt": "docs/measurements/x.md", "data": "experiments/results/x.json"},
+        "speculative": [],
+    } for (image, vllm, torch), rid in receipts.items()]
+    runtime_contract.validate_serving_contract(contract)
+
+
 def test_every_published_cell_names_its_measured_runtime_and_toolchain():
     contract = runtime_contract.load_serving_contract()
     # The constant, not a literal: this test is about what a cell must carry,
@@ -76,8 +110,10 @@ def test_every_published_cell_names_its_measured_runtime_and_toolchain():
         image, modes = runtime_contract.cell_runtime_scope(cell)
         vllm, torch = runtime_contract.cell_runtime_versions(cell)
         assert image and modes and vllm and torch
+        # Contract v48 (tessera#702): a compiled cell also names its graph receipt.
+        graph = {runtime_contract.RUNTIME_GRAPH_KEY} if "compiled" in modes else set()
         assert set(cell["runtime"]) == (runtime_contract.RUNTIME_SCOPE_KEYS
-                                        | runtime_contract.RUNTIME_VERSION_KEYS)
+                                        | runtime_contract.RUNTIME_VERSION_KEYS | graph)
 
 
 def test_one_image_carries_one_toolchain():
@@ -155,14 +191,14 @@ def test_the_validator_requires_the_toolchain_on_every_cell():
     contract = _scoped_contract()
     del contract["lane_eligibility"]["cells"][0]["runtime"]["vllm"]
     with pytest.raises(ValueError, match=r"runtime is missing \['vllm'\]"):
-        runtime_contract.validate_serving_contract(contract)
+        _validate(contract)
 
 
 def test_the_validator_refuses_two_toolchains_under_one_image():
     contract = _scoped_contract()
     contract["lane_eligibility"]["cells"][1]["runtime"]["vllm"] = "0.99.1"
     with pytest.raises(ValueError, match="one image cannot be two runtimes"):
-        runtime_contract.validate_serving_contract(contract)
+        _validate(contract)
 
 
 def test_a_cell_may_not_borrow_the_global_default_image_pin():
@@ -170,7 +206,7 @@ def test_a_cell_may_not_borrow_the_global_default_image_pin():
     for cell in contract["lane_eligibility"]["cells"]:
         cell.pop("runtime", None)
     with pytest.raises(ValueError, match="runtime"):
-        runtime_contract.validate_serving_contract(contract)
+        _validate(contract)
 
 
 def test_runtime_variants_have_disjoint_scopes_and_unique_ids():
@@ -184,14 +220,14 @@ def test_runtime_variants_have_disjoint_scopes_and_unique_ids():
     other_image["runtime"]["image"] = OTHER_IMAGE
     other_image["id"] += runtime_contract.cell_runtime_id_suffix(other_image)
     contract["lane_eligibility"]["cells"].extend([other_mode, other_image])
-    runtime_contract.validate_serving_contract(contract)
+    _validate(contract)
 
     # Matching explicit fields, not the label, decides whether two cells
     # collide. A runtime-specific id cannot conceal an overlapping scope.
     other_mode["runtime"]["execution_modes"] = ["eager", "compiled"]
     other_mode["id"] = first["id"] + runtime_contract.cell_runtime_id_suffix(other_mode)
     with pytest.raises(ValueError, match="both cover"):
-        runtime_contract.validate_serving_contract(contract)
+        _validate(contract)
 
 
 def test_different_runtime_scopes_cannot_reuse_one_cell_id():
@@ -200,7 +236,7 @@ def test_different_runtime_scopes_cannot_reuse_one_cell_id():
     variant["runtime"]["image"] = OTHER_IMAGE
     contract["lane_eligibility"]["cells"].append(variant)
     with pytest.raises(ValueError, match="repeats.*id"):
-        runtime_contract.validate_serving_contract(contract)
+        _validate(contract)
 
 
 def test_runtime_id_suffix_is_derived_from_the_scope_not_the_toolchain():
@@ -221,4 +257,4 @@ def test_validator_reads_runtime_scope_instead_of_accepting_prose():
     contract = _scoped_contract()
     contract["lane_eligibility"]["cells"][0]["runtime"]["image"] = "example/runtime:latest"
     with pytest.raises(ValueError, match="digest reference"):
-        runtime_contract.validate_serving_contract(contract)
+        _validate(contract)
