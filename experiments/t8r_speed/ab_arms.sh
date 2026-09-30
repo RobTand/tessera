@@ -12,6 +12,9 @@
 # ab_summary.json: per (family, group, M) each arm's kernel time and power per
 # pass, the bitwise verdict over every arm and pass, and each arm's time over
 # the reference arm's in the same pass.
+# AB_STEPS (default "routed ncu dense") picks the steps; AB_MS (default
+# 1,2,4,8,512,2048) the routed benches' M.  A diagnostic ceiling arm (a load
+# replaced by a register value; wrong output by design) needs only "routed".
 set -uo pipefail
 OUT=${1:?out_root}; shift
 ARMS=("$@")
@@ -22,7 +25,8 @@ done
 sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
 ROUTED=experts.R1024.L10,experts.R1088.L11,experts.R832.L42
 DENSE=shared_gate_up,shared_down,dense_gate_up,dense_down
-MS=1,2,4,8,512,2048
+MS=${AB_MS:-1,2,4,8,512,2048}
+STEPS=" ${AB_STEPS:-routed ncu dense} "
 step() {
   local name=$1; shift
   echo "== step $name start=$(date -u +%FT%TZ) load=$(cut -d' ' -f1-3 /proc/loadavg) gpu_w=$(nvidia-smi --query-gpu=power.draw --format=csv,noheader 2>/dev/null)"
@@ -37,14 +41,20 @@ bench() {   # step-name arm family suffix groups [extra env...]
   step "$name-$arm-$fam$sfx" env BENCH_SRC="$OUT/src-$arm/src" "$@" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS
 }
 N=${#ARMS[@]}
-for ((i = 0; i < N; i++)); do bench "r$i" "${ARMS[i]}" routed "" "$ROUTED"; done
-for ((i = N - 1; i >= 0; i--)); do bench "r${i}b" "${ARMS[i]}" routed b "$ROUTED"; done
-for ((i = 0; i < N; i++)); do
-  step "n$i-${ARMS[i]}-ncu" env BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
-    bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms 1,512
-done
-for ((i = 0; i < N; i++)); do bench "d$i" "${ARMS[i]}" dense "" "$DENSE"; done
-for ((i = N - 1; i >= 0; i--)); do bench "d${i}b" "${ARMS[i]}" dense b "$DENSE"; done
+if [[ $STEPS == *" routed "* ]]; then
+  for ((i = 0; i < N; i++)); do bench "r$i" "${ARMS[i]}" routed "" "$ROUTED"; done
+  for ((i = N - 1; i >= 0; i--)); do bench "r${i}b" "${ARMS[i]}" routed b "$ROUTED"; done
+fi
+if [[ $STEPS == *" ncu "* ]]; then
+  for ((i = 0; i < N; i++)); do
+    step "n$i-${ARMS[i]}-ncu" env BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
+      bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms 1,512
+  done
+fi
+if [[ $STEPS == *" dense "* ]]; then
+  for ((i = 0; i < N; i++)); do bench "d$i" "${ARMS[i]}" dense "" "$DENSE"; done
+  for ((i = N - 1; i >= 0; i--)); do bench "d${i}b" "${ARMS[i]}" dense b "$DENSE"; done
+fi
 python3 - "$OUT" "${ARMS[@]}" <<'PY'
 import json, pathlib, sys
 root, arms = pathlib.Path(sys.argv[1]), sys.argv[2:]
