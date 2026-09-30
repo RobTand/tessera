@@ -1,5 +1,19 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for CPU timing-evidence requirements (Refs #688).
+The census planner can describe the missing per-scope CUDA-event/profiler,
+Netdata, wire/runtime-identity and native-preparation evidence. It rejects
+stale or populated plans and emits null measurements, not a timing receipt.
+The GPU timing panel remains held; no performance or qualification is claimed.
+See [the CPU interface](design/native-census-planning.md#timing-evidence-requirements).
+
+Re-stamped 2026-09-29 for the CPU census planning slice (Refs #689).
+`tools/plan_native_census.py` binds explicit rank-local scopes to the packaged
+contract and shared dispatch registry, with stable scope IDs. Its versioned
+plans are explicitly unexecuted and unqualified, not device receipts or cells.
+No GPU execution, runtime admission, reader range, wire, or numerical behavior
+changes. See [the planning interface](design/native-census-planning.md).
+
 Re-stamped 2026-09-30 for the fused window kernel's two-run descriptor ring.
 A two-run chunk's block descriptors now reach shared memory by `cp.async`
 with the word stages' copies, four chunks ahead, into a ring the word copies
@@ -22,6 +36,14 @@ they move into place rather than before the decode. No contract field, rung,
 route or `executes` entry moves, and every output is bitwise equal to
 master's (`docs/measurements/2026-09-29-two-run-column-map.md`,
 `docs/measurements/2026-09-29-per-pair-kernel.md`).
+
+Re-stamped 2026-09-29 for the shared-candidate pricing boundary (Refs #567).
+Retain conservative per-unit pricing until a downstream consumer supports the
+shared term. A unitless candidate is uncharged and makes the derived partition
+unavailable; it is not a zero-byte resource. Replay-cache hits can share tensors,
+but cache keys alone do not prove one allocation across lifetimes or ranks.
+No schema, composition, wire, runtime gate, or numerical behavior changes.
+See [the boundary](design/shared-candidate-pricing-boundary.md).
 
 Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
 Arity-one E2M1 remains research-only: the existing serving export gate refuses
