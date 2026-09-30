@@ -59,6 +59,7 @@ INTER = 1024            # the TP2 rank's routed intermediate columns
 BK = 32
 READ_GBPS = 232.2       # measured device read bandwidth (fp8-prefill-roofline, sparky)
 MMA_E4M3_TFLOPS = 246.5  # measured mma.sync m16n8k32 e4m3 peak (same doc)
+MMA_BF16_TFLOPS = 123.1  # measured mma.sync m16n8k16 bf16 peak (same doc): the value family's instruction
 SWIGLU_LIMIT = 10.0
 
 # case -> (r_lo, fraction of columns at r_lo + 1, or None for one run)
@@ -100,7 +101,7 @@ def q256_of(r_lo, frac):
     return 256 * r_lo + (0 if frac is None else round(256 * frac))
 
 
-def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8):
+def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8, bf16_table=False):
     """Random words/table/init/scales for ``e`` experts of one projection, and its run tables,
     generated on the device from ``seed`` (deterministic, so two arms see the same bytes)."""
     g = torch.Generator(device=dev).manual_seed(seed)
@@ -115,6 +116,9 @@ def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8):
     if mma8:
         table = torch.randint(0, 256, (e, 1 << 14), generator=g, device=dev, dtype=torch.int32)
         table = torch.where((table & 0x7F) == 0x7F, table - 1, table).to(torch.uint8)
+    elif bf16_table:
+        # the value family's table holds bf16 weights: finite values, as a wire's are
+        table = (torch.randn(e, 1 << 14, generator=g, device=dev) * 0.02).to(torch.bfloat16).view(torch.int16)
     else:
         table = torch.randint(-2**15, 2**15 - 1, (e, 1 << 14), generator=g, device=dev,
                               dtype=torch.int32).to(torch.int16)
@@ -208,9 +212,9 @@ def measure(call, out, args, power, clock, *, graph_ok):
     return cell
 
 
-def floor_ms(move_bytes, flops):
+def floor_ms(move_bytes, flops, tflops=MMA_E4M3_TFLOPS):
     t_mem = move_bytes / (READ_GBPS * 1e9) * 1e3
-    t_mma = flops / (MMA_E4M3_TFLOPS * 1e12) * 1e3
+    t_mma = flops / (tflops * 1e12) * 1e3
     return {"move_bytes": move_bytes, "flops": flops, "mem_ms": t_mem, "mma_ms": t_mma,
             "floor_ms": max(t_mem, t_mma), "bound": "memory" if t_mem >= t_mma else "mma"}
 

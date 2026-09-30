@@ -1,4 +1,10 @@
-"""The supported-rung geometry sweep for Tessera-8 (tessera#750 protocol).
+"""The supported-rung geometry sweep for Tessera-8 and Tessera-16 (tessera#750 protocol).
+
+``--library`` picks the family: the E4M3 family's libraries (the default,
+``routed_fused.library_for("e4m3")``), or ``value``, Tessera-16's folded
+BF16 lane (bf16 activations, bf16 table, the bf16 ``mma.sync`` peak in the
+floor; references vLLM's unquantized Triton MoE and bf16 ``F.linear`` --
+the BF16 source passthrough).
 
 Every q256 rung the sweep names runs through the fused window kernel at the
 protocol's shapes and M, and each cell is timed twice in one job: once in a
@@ -53,8 +59,9 @@ import zlib
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bench_rates import (EXPERTS, HIDDEN, INTER, SWIGLU_LIMIT, TOP_K, Clock, build_projection,  # noqa: E402
-                         emit, floor_ms, parse_case, q256_of, routing_tables, sha)
+from bench_rates import (EXPERTS, HIDDEN, INTER, MMA_BF16_TFLOPS, MMA_E4M3_TFLOPS, SWIGLU_LIMIT,  # noqa: E402
+                         TOP_K, Clock, build_projection, emit, floor_ms, parse_case, q256_of,
+                         routing_tables, sha)
 from bench_t8r import (ENVELOPE_W, PowerSampler, balanced_routing, kernel_profile,  # noqa: E402
                        recorded_routing, routing_files, routing_stats, summarize, time_events)
 
@@ -73,7 +80,9 @@ def geometry(rf, r_lo, frac, mode, mma8):
             "lane_ends_on_word": [(8 * r) % 32 == 0 for r in rates],
             "half_bytes": [8 * r for r in rates],
             "half_copy": ["16B" if (8 * r) % 16 == 0 else "8B tail" for r in rates],
-            "slot_words": slot, "smem_bytes": rf.smem_bytes(mode, slot, mma8=mma8)}
+            "slot_words": slot, "smem_bytes": rf.smem_bytes(mode, slot, mma8=mma8),
+            "word_stages": (rf.word_stages(mode, slot, mma8=mma8) if hasattr(rf, "word_stages")
+                            else getattr(rf, "WORD_STAGES", None))}
 
 
 def resource_usage(lib):
@@ -105,9 +114,9 @@ def resource_usage(lib):
     return {"so": so, "kernels": out}
 
 
-def kernel_usage(usage, mode, dense, r_lo, two, bm):
-    """The instantiation ``routed_fused_kernel<true, MODE, DENSE, SPLIT=false, RL, TWO, BMT>``'s row."""
-    want = f"routed_fused_kernel<true, {mode}, {'true' if dense else 'false'}, false, {r_lo}, " \
+def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True):
+    """The instantiation ``routed_fused_kernel<FP8, MODE, DENSE, SPLIT=false, RL, TWO, BMT>``'s row."""
+    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, false, {r_lo}, " \
            f"{'true' if two else 'false'}, {bm}>"
     for k, v in usage.get("kernels", {}).items():
         if want in k:
@@ -157,6 +166,9 @@ def pick_recorded(root, ms):
 class Sweep:
     def __init__(self, args, rf, lib, library, mma8, dev, sms):
         self.args, self.rf, self.lib, self.library, self.mma8 = args, rf, lib, library, mma8
+        self.fp8 = rf.LIBRARIES[library][1] == "e4m3"
+        self.tflops = MMA_E4M3_TFLOPS if self.fp8 else MMA_BF16_TFLOPS
+        self.abytes = 1 if self.fp8 else 2          # activation bytes per element (e4m3 or bf16)
         self.dev, self.sms = dev, sms
         self.power, self.clock = PowerSampler(), Clock()
         self.cells = {}
@@ -172,20 +184,20 @@ class Sweep:
         rungs = [int(c[1:]) if c.startswith("q") else q256_of(*parse_case(c)) for c in a.cases.split(",")]
         if "routed" in parts:
             if a.refs:
-                g.append(("vllm_fp8_moe", None))
+                g.append(("vllm_fp8_moe" if self.fp8 else "vllm_bf16_moe", None))
             for q in rungs:
                 for mode in (0, 2):
                     g.append(("routed", (q, mode)))
         if "dense" in parts:
             for shape in a.shapes.split(","):
                 if a.refs:
-                    g.append(("scaled_mm", shape))
+                    g.append(("scaled_mm" if self.fp8 else "bf16_linear", shape))
                 for q in rungs:
                     g.append(("dense", (q, shape)))
         return g
 
     def variants(self, kind):
-        if kind in ("routed", "vllm_fp8_moe"):
+        if kind in ("routed", "vllm_fp8_moe", "vllm_bf16_moe"):
             v = [(m, "balanced") for m in self.ms]
             v += [(m, "recorded") for m in sorted(self.recorded)]
             return v
@@ -205,7 +217,8 @@ class Sweep:
         rows, cols = (INTER, HIDDEN) if mode == 0 else (HIDDEN, INTER)
         n_hi = 0 if frac is None else round(cols * frac)
         seed = zlib.crc32(f"q{q}:{mode}".encode())
-        projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, self.dev, self.mma8)
+        projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, self.dev, self.mma8,
+                                  bf16_table=not self.fp8)
                  for i in range(2 if mode == 0 else 1)]
         p0, p1 = projs[0], projs[-1]
         slot_words = max(p["slot_words"] for p in projs)
@@ -222,15 +235,14 @@ class Sweep:
             routes = m * TOP_K
             g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{q}:{mode}:{m}:{how}".encode()))
             xrows = m if mode == 0 else routes
-            x = (torch.randn(xrows, cols, device=self.dev, generator=g) * 0.5).to(torch.float8_e4m3fn)
-            a_scale = torch.rand(xrows, device=self.dev, generator=g) * 0.1 + 0.01
+            x, a_scale = self.activation(xrows, cols, g)
             out = torch.empty((routes, rows), dtype=torch.bfloat16, device=self.dev)
             counter = torch.zeros(1, dtype=torch.int32, device=self.dev)
 
             def call():
                 counter.zero_()
                 self.lib.routed_fused_forward(
-                    mode, True, x, a_scale, p0["words"], p1["words"], p0["table"], p1["table"],
+                    mode, self.fp8, x, a_scale, p0["words"], p1["words"], p0["table"], p1["table"],
                     p0["init"], p1["init"], p0["has_init"], p1["has_init"], p0["scale"], p1["scale"],
                     p0["runs"], p1["runs"], p0["bdesc"], p1["bdesc"], p0["tile_words"], slot_words,
                     offsets, flat_sorted, rw_sorted, item_off, counter, TOP_K,
@@ -238,7 +250,8 @@ class Sweep:
             touched = int(torch.unique(ids).numel())
             wire = touched * sum(p["bytes_per_expert"] for p in projs)
             out_cols = 2 * rows if mode == 0 else rows
-            fl = floor_ms(wire + xrows * cols + routes * rows * 2, 2.0 * routes * out_cols * cols)
+            fl = floor_ms(wire + xrows * cols * self.abytes + routes * rows * 2, 2.0 * routes * out_cols * cols,
+                          self.tflops)
             st = routing_stats(ids)
             meta = {"bm": bm, "routes": routes, "touched": touched, "wire_bytes": wire, "floor": fl,
                     "superblocks": st["superblocks"] if bm == 64 else st["superblocks_128"]}
@@ -256,13 +269,12 @@ class Sweep:
             head["refused"] = f"{rows} rows; the dense identity needs a multiple of {rf.BN}"
             return head, None, None
         p = build_projection(rf, 1, rows, cols, r_lo, n_hi, zlib.crc32(f"{shape}:q{q}".encode()),
-                             self.dev, self.mma8)
+                             self.dev, self.mma8, bf16_table=not self.fp8)
         head["tile_words"] = p["tile_words"]
 
         def make(m, _how):
             g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{shape}:{q}:{m}".encode()))
-            x = (torch.randn(m, cols, device=self.dev, generator=g) * 0.5).to(torch.float8_e4m3fn)
-            a_scale = torch.rand(m, device=self.dev, generator=g) * 0.1 + 0.01
+            x, a_scale = self.activation(m, cols, g)
             out = torch.empty((m, rows), dtype=torch.bfloat16, device=self.dev)
             counter = torch.zeros(1, dtype=torch.int32, device=self.dev)
             s = rf.dense_k_split(m, rows, cols, self.sms, tile_words=p["tile_words"])
@@ -273,15 +285,70 @@ class Sweep:
 
             def call():
                 counter.zero_()
-                self.lib.dense_forward(True, x, a_scale, p["words"], p["table"], p["init"], p["has_init"][:1],
+                self.lib.dense_forward(self.fp8, x, a_scale, p["words"], p["table"], p["init"], p["has_init"][:1],
                                        wscale, p["runs"], p["bdesc"], int(p["tile_words"]),
                                        int(p["slot_words"]), counter, int(s), partial, out, self.sms, int(bm))
             wire = p["bytes_per_expert"] * rows // (-(-rows // 512) * 512)
-            act = m * cols + m * rows * 2 + (2 * s * m * rows * 4 if s > 1 else 0)
+            act = m * cols * self.abytes + m * rows * 2 + (2 * s * m * rows * 4 if s > 1 else 0)
             meta = {"k_split": s, "bm": bm, "wire_bytes": wire,
-                    "floor": floor_ms(wire + act, 2.0 * m * rows * cols)}
+                    "floor": floor_ms(wire + act, 2.0 * m * rows * cols, self.tflops)}
             return meta, call, out
         return head, make, p
+
+    def activation(self, rows, cols, g):
+        """The family's A operand: e4m3 with a per-row scale, or bf16 and no scale."""
+        if self.fp8:
+            x = (torch.randn(rows, cols, device=self.dev, generator=g) * 0.5).to(torch.float8_e4m3fn)
+            return x, torch.rand(rows, device=self.dev, generator=g) * 0.1 + 0.01
+        x = (torch.randn(rows, cols, device=self.dev, generator=g) * 0.5).to(torch.bfloat16)
+        return x, torch.empty(0, dtype=torch.float32, device=self.dev)
+
+    def build_vllm_bf16(self):
+        """vLLM's unquantized Triton MoE on bf16 experts of the same shapes: the
+        BF16 source passthrough of a routed stack (16 bits per weight)."""
+        from vllm.model_executor.layers.fused_moe import fused_experts
+        dev, E = self.dev, EXPERTS
+        g = torch.Generator(device=dev).manual_seed(8016)
+        w13 = (torch.randn(E, 2 * INTER, HIDDEN, device=dev, generator=g) * 0.02).to(torch.bfloat16)
+        w2 = (torch.randn(E, HIDDEN, INTER, device=dev, generator=g) * 0.02).to(torch.bfloat16)
+        head = {"kind": "vllm_bf16_moe", "q256": 4096, "backend": "fused_moe.fused_experts (Triton, unquantized)"}
+
+        def make(m, how):
+            ids, w = self.routing(m, how)
+            x = (torch.randn(m, HIDDEN, device=dev, generator=g) * 0.5).to(torch.bfloat16)
+            holder = {}
+
+            def call():
+                holder["out"] = fused_experts(x, w13, w2, w, ids)
+            call()
+            torch.cuda.synchronize()
+            touched = int(torch.unique(ids).numel())
+            wire = touched * 3 * INTER * HIDDEN * 2
+            routes = m * TOP_K
+            meta = {"routes": routes, "touched": touched, "wire_bytes": wire,
+                    "floor": floor_ms(wire + m * HIDDEN * 4, 2.0 * routes * 3 * INTER * HIDDEN, MMA_BF16_TFLOPS)}
+            return meta, call, holder
+        return head, make, (w13, w2)
+
+    def build_bf16_linear(self, shape):
+        """bf16 ``F.linear`` (cuBLAS) at the dense shape: the BF16 source passthrough."""
+        rows, cols = PROTOCOL_DENSE[shape]
+        dev = self.dev
+        g = torch.Generator(device=dev).manual_seed(zlib.crc32(f"bf16:{shape}".encode()))
+        w = (torch.randn(rows, cols, device=dev, generator=g) * 0.02).to(torch.bfloat16)
+        head = {"kind": "bf16_linear", "q256": 4096, "shape": shape, "rows": rows, "cols": cols}
+
+        def make(m, _how):
+            x = (torch.randn(m, cols, device=dev, generator=g) * 0.5).to(torch.bfloat16)
+            holder = {}
+
+            def call():
+                holder["out"] = torch.nn.functional.linear(x, w)
+            meta = {"wire_bytes": rows * cols * 2,
+                    "floor": floor_ms(rows * cols * 2 + m * cols * 2 + m * rows * 2, 2.0 * m * rows * cols,
+                                      MMA_BF16_TFLOPS)}
+            return meta, call, holder
+        return head, make, w
 
     def build_vllm(self):
         from vllm.model_executor.layers.fused_moe.activation import MoEActivation
@@ -391,6 +458,10 @@ class Sweep:
             return self.build_dense(*spec)
         if kind == "vllm_fp8_moe":
             return self.build_vllm()
+        if kind == "vllm_bf16_moe":
+            return self.build_vllm_bf16()
+        if kind == "bf16_linear":
+            return self.build_bf16_linear(spec)
         return self.build_scaled_mm(spec)
 
     # -- the passes
@@ -420,7 +491,8 @@ class Sweep:
                     cell = rec["cells"].setdefault(ckey, {})
                     try:
                         meta, call, out = make(m, how)
-                        how_t, samples = time_call(call, a.warmup, a.iters, graph=kind != "vllm_fp8_moe")
+                        how_t, samples = time_call(call, a.warmup, a.iters,
+                                                   graph=kind not in ("vllm_fp8_moe", "vllm_bf16_moe"))
                         cell[pas] = {"median_ms": statistics.median(samples), "min_ms": min(samples),
                                      "timer": how_t, "unix": time.time(), "clock": self.clock.read()}
                         if pas == "F":
@@ -432,7 +504,7 @@ class Sweep:
                                 cell["power"] = self.power.sample_during(call, a.power_s)
                             if kind in ("routed", "dense"):
                                 u = kernel_usage(usage, head.get("mode", 2), kind == "dense", head["r_lo"],
-                                                 head["n_hi"] > 0, meta.get("bm", 64))
+                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8)
                                 rec["usage"][str(meta.get("bm", 64))] = u
                         else:
                             f, r = cell.get("F", {}).get("median_ms"), cell["R"]["median_ms"]
@@ -486,6 +558,7 @@ def main():
     meta = {"device": torch.cuda.get_device_name(), "sms": sms, "experts": EXPERTS, "hidden": HIDDEN,
             "inter": INTER, "top_k": TOP_K, "part": args.part, "cases": args.cases, "ms": args.ms,
             "shapes": args.shapes, "recorded": sw.recorded, "library": library,
+            "family": rf.LIBRARIES[library][1], "mma_tflops": sw.tflops,
             "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
             "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
             "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": sw.power.source,
