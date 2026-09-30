@@ -121,13 +121,14 @@ over the same bytes.
 ## Speed
 
 PrismaBuild action `41c77d65` on sparklina timed the routed MoE module
-alone, with `experiments/t8r_speed/bench_t8r.py`, in three arms run one
+alone, with `experiments/t8r_speed/bench_t8r.py`, in four arms run one
 after another:
 
 - **A:** master `1381c3b716`.
 - **B:** this branch at `de3d0f3108`, with `routed_fused.E4M3_MMA_DEFAULT`
   flipped to `"e4m3"` (the only edit).
 - **B′:** B again, as a drift control.
+- **A′:** A again, as a drift control.
 
 Each arm ran the same three rungs of the release T-8 artifact, 30 timed
 iterations per cell. At M = 512, 2048 and 8192 the cells replay the routing
@@ -146,18 +147,23 @@ over the replays:
 | 2048 | 21.91 → 20.62 ms (0.947) | 20.90 → 19.89 ms (0.951) | 22.58 → 21.47 ms (0.953) |
 | 8192 | 64.76 → 61.06 ms (0.941) | 52.24 → 48.26 ms (0.925) | 65.41 → 61.34 ms (0.936) |
 
-How far to trust each row, from the B′/B spread (geometric mean per rung
-and M):
+How far to trust each row, from the B′/B and A′/A spreads (geometric mean
+per rung and M):
 
 - **M = 2048 and 8192:** B′/B is within 0.4% of 1 on every rung, against a
   5–7.5% A→B gain. This is the claim: at prefill sizes the E4M3
   instruction's library is 5–7.5% faster per call.
-- **M = 512:** B′/B is 0.997 on R832 and 1.003 on R1088, so their 3.9%
-  gains hold. On R1024, the first rung each arm ran, B′/B is 0.957: the
-  drift equals the effect, and that rung's M = 512 gain is not established.
-- **M = 1 and 8:** one cell each. B′/B is within 0.6% except R1024 at
-  M = 1 (0.967) and R1088 at M = 1 (1.010). The 2–4% decode gain is
-  suggestive, not established.
+- **M = 512:** B′/B and A′/A are within 0.4% of 1 on R832 and R1088, so
+  their 3.9% gains hold. On R1024, the first rung each arm ran, both repeats
+  ran faster than their first arm (B′/B 0.957, A′/A 0.954): a warm-up drift
+  that each arm's first run carries. The drift-symmetric ratio
+  `sqrt(B·B′) / sqrt(A·A′)`, which cancels it, is 0.966 there, so R1024's
+  M = 512 gain is 3.4%.
+- **M = 1 and 8:** one cell each. B′/B and A′/A are within 0.7% except
+  R1024 at M = 1 (0.967 and 0.970). The 2–4% decode gain is suggestive, not
+  established.
+
+The drift-symmetric ratio on every other rung and M is within 0.6% of B/A.
 
 Power was the same in both arms. The in-process sampler read 76–82 W on
 every timed cell of either arm. Netdata on sparklina agrees at box level:
@@ -171,7 +177,7 @@ served number. Routed MoE was 35.5% of the M = 2048 prefill chunk at TP2
 (`2026-09-30-prefill-attribution.md`), so a 5–7.5% kernel gain is worth
 about 2–3% of prefill wall time before any other change. Receipts:
 `/mnt/shared/tessera-measurements/t8r-speed-20260929/mma8-ab-20260930T035428Z`
-(`master-routed`, `mma8-routed`, `mma8-routedb`, each with
+(`master-routed`, `mma8-routed`, `mma8-routedb`, `master-routedb`, each with
 `bench_t8r.json`).
 
 ## Receipts
