@@ -4,7 +4,8 @@ The layout is bit-exact by construction: a column's 512 codes at R bits are
 ``512 * R`` bits, always a whole number of 32-bit words (``16 * R``), stored
 MSB-first with the first stream bit as bit 31 of the column's first word;
 columns of one rate run are contiguous per tile and tiles carry every run.
-That recipe works for every rate 1..8.
+That recipe works for every rate; this packer admits 1..14, every rate a
+14-bit window holds (the dense value lane's range, tessera#750 item 4).
 
 ``kernel_window_gemv.repack_window_body`` implements the same layout through
 an 8//rate byte-packing step, which is why it only admits rates dividing 8;
@@ -35,8 +36,8 @@ def pack_bitstream(body, rates, tile_rows=kg.TILE_ROWS):
     rates = tuple(int(r) for r in rates)
     if len(rates) != cols:
         raise ValueError(f"{len(rates)} rates for {cols} columns")
-    if any(r < 1 or r > 8 for r in rates):
-        raise ValueError(f"rates outside 1..8: {sorted(set(rates))}")
+    if any(r < 1 or r > 14 for r in rates):
+        raise ValueError(f"rates outside 1..14: {sorted(set(rates))}")
     order = sorted(range(cols), key=lambda c: (rates[c], c))
     perm = torch.tensor(order, dtype=torch.int32)
     rows_p = -(-rows // tile_rows) * tile_rows

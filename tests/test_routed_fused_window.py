@@ -88,24 +88,27 @@ def _init(cols, seed):
                          dtype=torch.int32)
 
 
-def _sched(cols, q256):
+def _sched(cols, q256, cap=8):
     """The grammar's Bresenham schedule for ``q256`` over ``cols`` columns
-    (cap 8: the packer's whole range, so the value family's rungs are read too)."""
+    (cap 8 by default: the routed launches' whole range, so the value family's
+    rungs are read too; 14 for a value rung above 8, which only the dense
+    launch reads)."""
     from fractions import Fraction
 
     from tessera.grammar import bresenham_rate_schedule
 
-    return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=8)
+    return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=cap)
 
 
 def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cut=True, q256=1024,
-            place=None):
+            place=None, cap=8):
     """gate, up, down Expert lists at the ``q256`` rung's schedule (rate 4
     everywhere by default); experts 1 and 3 carry a start state (the TP
     row-cut case) when ``cut``.  ``place(schedule, seed)``, when given,
     rearranges each expert's schedule (its own seed per expert and
-    projection): the rate counts, so the run table, stay the stack's."""
-    r_h, r_i = _sched(hidden, q256), _sched(inter, q256)
+    projection): the rate counts, so the run table, stay the stack's.
+    ``cap`` is the schedule's rate bound (see ``_sched``)."""
+    r_h, r_i = _sched(hidden, q256, cap), _sched(inter, q256, cap)
 
     def rates(schedule, s):
         return schedule if place is None else place(schedule, s)
@@ -634,6 +637,35 @@ def test_support_predicate_admits_the_gate_up_slots_the_device_holds(monkeypatch
 
 @cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_the_routed_launches_stop_at_8_where_the_dense_launch_does_not(family):
+    """tessera#750 item 4: every library publishes its routed launches'
+    ceiling (``ROUTED_RATE_MAX``, 8) beside its dense launch's (``RATE_MAX``:
+    14 on the value library, 8 on the E4M3 ones) and the dense slot it sizes.
+    A value stack at rate 9, or on the 8/9 pair, is refused by name and keeps
+    the compact adapter; the same rates on a dense role take the dense launch
+    (``test_dense_fused_window.py``)."""
+    library = rf.library_for(family)
+    lib = rf._ext(library)
+    dense_max = rf.DENSE_RATE_MAX["value" if library == "value" else "e4m3"]
+    assert int(lib.ROUTED_RATE_MAX) == rf.RATE_MAX == 8
+    assert int(lib.RATE_MAX) == dense_max
+    assert int(lib.SLOT_WORDS_MAX) == rf.slot_words_for_rate(dense_max) == (28 if library == "value" else 16)
+    if family != "value":
+        return
+    for q256, why in ((2304, "first run (9, 0, "), (2176, "second run rate 9 is not above the first's 8 within 1..8")):
+        b = _bundles("value", _stacks("value", q256=q256, cut=False, cap=14))
+        reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
+        assert reason is not None and why in reason, (q256, reason)
+        assert "1..8" in reason, reason
+        for part, rows, cols in (("gate", INTER, HIDDEN), ("down", HIDDEN, INTER)):
+            refusal = rf.fused_routed_unit_shape_refusal(
+                "value", part, rows=rows, cols=cols, rates=_sched(cols, q256, 14),
+                window_bits=rf.WINDOW_BITS)
+            assert refusal is not None and "1..8" in refusal, (q256, part, refusal)
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch):
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
     from tessera.serving.telemetry import DECODERS
@@ -706,6 +738,25 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
     from tessera.serving import ext
 
     assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates"] == list(rf.RATES) == list(range(1, 9))
+    # the value library's dense launch reads every rate its 14-bit window holds
+    # (tessera#750 item 4); its routed launches keep 1..8, and nothing else in
+    # its predicate differs from the E4M3 library's
+    assert ext.ROUTED_FUSED_VALUE_LANE_REQUIRES["column_rates"] == list(rf.dense_rates("value")) \
+        == list(range(1, 15))
+    assert ext.ROUTED_FUSED_VALUE_LANE_REQUIRES["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES)
+    assert {k: v for k, v in ext.ROUTED_FUSED_VALUE_LANE_REQUIRES.items() if k != "column_rates"} \
+        == {k: v for k, v in ext.ROUTED_FUSED_LANE_REQUIRES.items() if k != "column_rates"}
+    lanes = {e["module_name_prefix"]: e["lane"]["requires"] for e in ext.NATIVE_EXTENSIONS if "lane" in e}
+    assert lanes[rf.MODULE_NAME_VALUE] is ext.ROUTED_FUSED_VALUE_LANE_REQUIRES
+    assert lanes[rf.MODULE_NAME_E4M3] is ext.ROUTED_FUSED_LANE_REQUIRES
+    # the geometry behind the split: the one-table dense launch holds the
+    # rate-14 slot (28 words) at three word stages; the two-table gate/up
+    # launch cannot hold rate 9's 20-word slot even at two
+    assert all(rf.word_stages(2, rf._round_up_4(rf.slot_words_for_rate(r))) == rf.WORD_STAGES
+               for r in rf.dense_rates("value"))
+    assert rf.smem_bytes(2, rf.slot_words_for_rate(14)) == 80_144 <= rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.slot_words_for_rate(9) == 20
+    assert rf.smem_bytes(0, 20) == 91_600 + 2 * 2 * rf.BK * 20 * 4 == 101_840 > rf.SM121_MAX_DYNAMIC_SMEM
     # the routed-expert launch's set is DERIVED from the kernel's shared-memory
     # layout at the target's opt-in limit, and published equal to it
     assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES) \

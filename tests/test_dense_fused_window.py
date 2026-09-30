@@ -71,14 +71,21 @@ FAMILIES = ["value", "e4m3"]
 #: plus the two-rate 7/8 and 1/2 extremes.  256 columns realise every one of
 #: them exactly (``bresenham_rate_schedule`` refuses a rung it cannot).
 Q256_CASES = [256, 512, 768, 1024, 1280, 1536, 1792, 2048, 384, 832, 928, 1088, 1152, 1920]
+#: The value family's dense rungs above rate 8 (tessera#750 item 4): every
+#: one-run rate 9..14 (q256 2304..3584) and every adjacent pair from 8/9 to
+#: 13/14 at its midpoint -- the rate-8 low run of 2176 is the only pair whose
+#: low rate the routed launches also read.  The E4M3 grids' codes are 8 bits,
+#: so these are value-only.
+VALUE_DENSE_Q256 = [2304, 2560, 2816, 3072, 3328, 3584, 2176, 2432, 2688, 2944, 3200, 3456]
 
 
-def _sched(cols, q256):
+def _sched(cols, q256, cap=8):
     """The grammar's Bresenham schedule for ``q256`` over ``cols`` columns
-    (cap 8: the packer's whole range, so the value family's rungs are read too)."""
+    (cap 8 by default: the packer's range on both families, so the value
+    family's rungs are read too; 14 for the value family's rungs above 8)."""
     from fractions import Fraction
 
-    return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=8)
+    return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=cap)
 
 
 def _init(cols, seed):
@@ -249,8 +256,23 @@ def test_dense_forward_captures_and_replays_against_eager(family, q256):
     ``DENSE_CAPTURE_Q256``: the run pair, block descriptors, tile stride and
     slot are launch arguments and device tensors the graph holds, so a
     mixed-rate role replays exactly like the rate-4 one."""
-    rates = _sched(COLS, q256)
-    assert set(rates) <= set(rf.RATES) and len(set(rates)) in (1, 2), (q256, sorted(set(rates)))
+    _capture_replays(family, q256)
+
+
+@cuda
+@pytest.mark.parametrize("family", ["value"], indirect=True)
+@pytest.mark.parametrize("q256", VALUE_DENSE_Q256)
+def test_dense_forward_captures_and_replays_above_rate_8(family, q256):
+    """The value family's dense rungs above rate 8 (tessera#750 item 4)
+    capture and replay like the rungs below it: the 20-, 24- and 28-word
+    slots are launch arguments too."""
+    _capture_replays(family, q256, cap=14)
+
+
+def _capture_replays(family, q256, cap=8):
+    rates = _sched(COLS, q256, cap)
+    assert set(rates) <= set(rf.dense_rates(family)) and len(set(rates)) in (1, 2), \
+        (q256, sorted(set(rates)))
     _expert, bundle = _role(family, rates=rates, seed=7500 + q256)
     assert rf.fused_dense_window_supported(bundle) is None, (family, q256)
     role = rf.prepare_dense_role(bundle)
@@ -531,6 +553,44 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
 
 
 @cuda
+@pytest.mark.parametrize("family", ["value"], indirect=True)
+@pytest.mark.parametrize("q256", [2304, 2432, 3456, 3584])
+def test_an_encoded_bf16_module_above_rate_8_takes_the_fused_lane(family, q256, monkeypatch):
+    """tessera#750 item 4, end to end: a BF16 module encoded at a rung above
+    rate 8 loads through ``prepare_window_compact`` at the dense bound, takes
+    the fused dense launch, and serves within the derived bound of its
+    materialised weight on both lanes.  The same wire at the routed stacks'
+    bound (``WINDOW_GEMM_RATE_MAX``) is refused by name."""
+    from tessera.compact_prep import (DENSE_WINDOW_RATE_MAX, WINDOW_GEMM_RATE_MAX,
+                                      prepare_window_compact)
+    from tessera.errors import GrammarError as Refusal
+    from tessera.serving.native_window import LANE_FUSED, LANE_TRITON
+    from tessera.serving.scheme import parse_compact_blob_for_scheme, validate_tessera_scheme
+
+    monkeypatch.delenv(rf.ENV_TOGGLE_DENSE, raising=False)
+    roles = [("gate_proj", 256), ("up_proj", 128)]
+    blob, scheme, ref_w = _encode_module(family, roles, cols=256, q256=q256, seed=11)
+    module = _module(blob, scheme)
+    assert module.lane == LANE_FUSED and module.lane_reason is None, module.lane_reason
+    assert all(max(f.rates) > 8 for f in module.layout_facts()), q256
+    monkeypatch.setenv(rf.ENV_TOGGLE_DENSE, "0")
+    twin = _module(blob, scheme)
+    assert twin.lane == LANE_TRITON
+    for m in (1, 64, 129):
+        x, xq, a = _inputs(family, m, 256, 800 + m)
+        _within(_served(module, family, xq, x, a), _module_bound(family, ref_w, xq, x, a),
+                f"q256={q256} module M={m}", triton=_served(twin, family, xq, x, a))
+    declared = validate_tessera_scheme(scheme, "test")
+    compact = parse_compact_blob_for_scheme(blob, scheme, "test", device="cuda")
+    _name, wire = compact[0]
+    assert DENSE_WINDOW_RATE_MAX == 14 and WINDOW_GEMM_RATE_MAX == 8, declared
+    unit = prepare_window_compact(wire, device="cuda", family="value", rate_max=DENSE_WINDOW_RATE_MAX)
+    assert max(unit.rep.rates) == -(-q256 // 256)
+    with pytest.raises(Refusal, match=r"outside this lane's window GEMM rates 1\.\.8"):
+        prepare_window_compact(wire, device="cuda", family="value")
+
+
+@cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_a_module_the_predicate_refuses_keeps_the_triton_lane_and_says_why(family, monkeypatch):
     from tessera.serving.native_window import LANE_TRITON
@@ -564,6 +624,14 @@ def test_the_predicate_refuses_by_name():
     # two rates (the two bracketing a root) are read since contract v45 (#694)
     _e, mixed = _role("value", rates=tuple(3 if c % 2 else 4 for c in range(COLS)))
     assert rf.fused_dense_window_supported(mixed) is None
+    # the value family's dense launch reads every rate its 14-bit window holds
+    # (tessera#750 item 4); the E4M3 family's stops at 8, its grid's code width
+    assert rf.dense_rates("value") == tuple(range(1, 15)) and rf.dense_rates("e4m3") == rf.RATES
+    _e, r14 = _role("value", rates=(14,) * COLS)
+    assert rf.fused_dense_window_supported(r14) is None
+    _e, r9 = _role("e4m3", rates=(9,) * COLS)
+    assert rf.fused_dense_window_supported(r9) == \
+        f"first run (9, 0, {COLS}, 0) is not (rate in 1..8, 0, n, 0)"
     # three rates are not a grammar schedule; the kernel reads one run pair
     _e, three = _role("value", rates=tuple((2, 3, 4)[c % 3] for c in range(COLS)))
     assert "3 runs" in rf.fused_dense_window_supported(three)
@@ -678,8 +746,24 @@ def test_dense_forward_decodes_every_rate_exactly(family, q256):
     rate, in either run, with and without a start state.  ``S`` is whatever
     the bandwidth model picks for ``M = cols`` rows, so the split path's
     partials and reduce are read too (a split adds exact zeros only)."""
-    rates = _sched(COLS, q256)
-    assert set(rates) <= set(rf.RATES) and len(set(rates)) in (1, 2)
+    _one_hot_exact(family, q256)
+
+
+@cuda
+@pytest.mark.parametrize("family", ["value"], indirect=True)
+@pytest.mark.parametrize("q256", VALUE_DENSE_Q256)
+def test_dense_forward_decodes_every_value_rate_above_8_exactly(family, q256):
+    """The value family's dense launch at every rate 9..14 and every adjacent
+    pair 8/9..13/14 (tessera#750 item 4): the lane's decode window spans up to
+    five words per 8-row lane group at rates 13 and 14, and the one-hot
+    products hold it to the definition bitwise, with and without a start
+    state."""
+    _one_hot_exact(family, q256, cap=14)
+
+
+def _one_hot_exact(family, q256, cap=8):
+    rates = _sched(COLS, q256, cap)
+    assert set(rates) <= set(rf.dense_rates(family)) and len(set(rates)) in (1, 2)
     for seed, init in ((7000 + q256, None), (7100 + q256, _init(COLS, 7200 + q256))):
         expert, bundle = _role(family, rates=rates, seed=seed, init=init)
         assert rf.fused_dense_window_supported(bundle) is None, (family, q256)
@@ -705,7 +789,22 @@ def test_dense_forward_at_every_rate_is_within_the_derived_bound(family, q256, c
     output is within ``fused_bound.dense_bound`` of the fp64 reference per
     element, and within twice it of the Triton lane (follow-up 3 of #693:
     the fused-vs-Triton statistic is a pass criterion with a derived limit)."""
-    rates = _sched(cols, q256)
+    _within_bound(family, q256, cols)
+
+
+@cuda
+@pytest.mark.parametrize("family", ["value"], indirect=True)
+@pytest.mark.parametrize("q256", [2176, 2304, 2944, 3456, 3584])
+@pytest.mark.parametrize("cols", [128, COLS])
+def test_dense_forward_above_rate_8_is_within_the_derived_bound(family, q256, cols):
+    """The value family's dense rungs above rate 8 (tessera#750 item 4), from
+    the 8/9 pair to rate 14, against the fp64 reference and the Triton lane
+    within the same derived bounds as the rungs below 8."""
+    _within_bound(family, q256, cols, cap=14)
+
+
+def _within_bound(family, q256, cols, cap=8):
+    rates = _sched(cols, q256, cap)
     expert, bundle = _role(family, cols=cols, rates=rates, seed=7300 + q256 + cols)
     role = rf.prepare_dense_role(bundle)
     sms = rf._sm_count(torch.cuda.current_device())
