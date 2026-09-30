@@ -6,6 +6,9 @@
 #   (plan: $R/plan-NAME.json, out: $R/stub-NAME).  The Hessian references bind
 #   the producer's calibration cache, which the exporter reads only through the
 #   producer's own authority file (--producer-authority, tessera#599).
+#   The routed units come from stub B's cache through a routed-only manifest
+#   ($R/cache-B-routed: the bundle's 4320 expert units, symlinked; the exporter
+#   requires the manifest to cover exactly the planned cached units).
 set -uo pipefail
 S="$1"
 AUTH="${PRODUCER_AUTHORITY:?set PRODUCER_AUTHORITY to the producer authority file}"
@@ -20,7 +23,7 @@ echo "[export_census_stub] $S host=$(hostname) start=$(date -u +%FT%TZ) head=${T
 PYTHONPATH=src:experiments TMPDIR=$R/tmp "$PY" experiments/export_tessera_serving.py "$SRCR/source-l8" "$OUT" \
   --plan-json "$R/plan-$S.json" --device cuda --producer-authority "$AUTH" \
   --hessian "$U/hessian_capture.references.json" \
-  --cached-expert-units "$SRCR/wires/cached_units.u1-stub-B.v1.json" --cached-hessian-identity committed \
+  --cached-expert-units "$R/cache-B-routed/cached_units.u1-stub-B.routed.v1.json" --cached-hessian-identity committed \
   --cached-producer-package "$PRODUCER" \
   --cached-producer-source-sha256 a4c9209437c7601d4f8cd3ab8ac1e7a2d2db33461a4245e0fbbbdf74a9d8de83 \
   --cached-intake-threads 4 --source-digest-cache "$R/source-digests" --allow-unserveable >> "$LOG" 2>&1
