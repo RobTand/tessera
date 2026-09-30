@@ -38,9 +38,9 @@ fractional mixes inside every pair).
 
 ## The serves
 
-Both censuses ran directly on sparky, one at a time. vLLM work is exempt from
-PrismaBuild, and the coordinator ruled on 2026-09-30 that these stubs serve on
-sparky, which hosts no timing rows. Each ran with
+Both censuses ran directly on sparky, one at a time, under the memory and
+window guards below. vLLM work is exempt from PrismaBuild, and neither serve
+was a timing run. Each ran with
 `experiments/t16_census/census_stub.sh`, which wraps
 `experiments/routed_fused_census.sh` with stub B's v45 serve settings:
 
