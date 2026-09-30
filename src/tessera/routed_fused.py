@@ -77,6 +77,7 @@ __all__ = [
     "ENV_E4M3_MMA",
     "ENV_TOGGLE_DENSE",
     "ENV_WIDE",
+    "DENSE_RATE_MAX",
     "LIBRARIES",
     "FusedDenseWindowRole",
     "FusedRoutedWindowMoE",
@@ -91,6 +92,7 @@ __all__ = [
     "compose_table8",
     "dense_forward",
     "dense_k_split",
+    "dense_rates",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
     "fused_routed_window_supported",
@@ -154,13 +156,22 @@ BM_WIDE = 128
 HALF = 64
 BN = 128
 BK = 32
-#: The column rates the kernel decodes: every rate of the window grammar, so a
-#: stack's one- or two-rate run table (the two rates bracketing its root) is
-#: read as the wire lays it out.  ``RATE_MAX`` sizes the per-column word slot.
+#: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
+#: every rate of the window grammar up to 8, so a stack's one- or two-rate run
+#: table (the two rates bracketing its root) is read as the wire lays it out.
+#: ``RATE_MAX`` sizes the routed launches' per-column word slot; the kernel
+#: publishes it as ``ROUTED_RATE_MAX``.
 RATE_MIN = 1
 RATE_MAX = 8
 RATES = tuple(range(RATE_MIN, RATE_MAX + 1))
 SLOT_WORDS_MAX = 2 * RATE_MAX         # the rate-8 word-stage slot, int32 words per (half, column)
+#: The largest rate the DENSE launch decodes, per window family (the kernel's
+#: ``RATE_MAX``).  A code fits its 14-bit window, so the value family's BF16
+#: grid reads rates 1..14 (tessera#750 item 4: rates 15 and 16 widen the
+#: window to 15 and 16 bits, whose 64 KB and 128 KB tables leave the one-table
+#: block one word stage and none); the E4M3 grids' codes are 8 bits.  The
+#: one-table launch fits the rate-14 slot at three word stages (80,144 B).
+DENSE_RATE_MAX = {"value": 14, "e4m3": 8}
 BDESC_INTS = 12                       # int32 words per 32-column block descriptor
 WINDOW_BITS = 14
 TABLE_ENTRIES = 1 << WINDOW_BITS
@@ -170,16 +181,23 @@ MIN_COLS = 4 * BK
 #: come last and are sized per launch by the stack's rates, so the fixed part
 #: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense,
 #: and the two-run block-descriptor ring -- DRING_STAGES chunks of BDESC_INTS
-#: int32 per projection) and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK
-#: * slot_words * 4`` bytes.  A block on sm_121 may opt in to 101,376 B, so the
-#: gate/up launch fits slots up to 12 words (rates <= 6) and the down/dense
-#: launch every rate.
+#: int32 per projection) and a launch needs ``SMEM_FIXED[mode] + stages * 2 * BK
+#: * slot_words * 4`` bytes at :func:`word_stages` stages.  A block on sm_121
+#: may opt in to 101,376 B, so at WORD_STAGES the 16-bit gate/up launch fits
+#: slots up to 12 words (rates <= 6) and the down/dense launch every rate; the
+#: 16-word slot of rates 7 and 8 takes the gate/up launch at WORD_STAGES_MIN
+#: (99,792 B), where each chunk's words are issued one chunk ahead of their
+#: decode instead of two.
 WORD_STAGES = 3
+WORD_STAGES_MIN = 2
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
-#: The same fixed part on the E4M3 instruction: 16 KB byte tables and 8-bit
-#: A and B stages.  The word stages are the same bytes.
-SMEM_FIXED_MMA8 = {0: 46_544, 1: 46_544, 2: 29_968}
+#: The staged stream history on the E4M3 instruction: one int32 per (half,
+#: column) per word stage (``PREV_STAGED`` in ``routed_fused_window.cu``).
+PREV_REGION_BYTES_MMA8 = WORD_STAGES * 2 * BK * 4
+#: The same fixed part on the E4M3 instruction: 16 KB byte tables, 8-bit A and
+#: B stages, and the staged stream history.  The word stages are the same bytes.
+SMEM_FIXED_MMA8 = {0: 47_312, 1: 47_312, 2: 30_736}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -194,6 +212,12 @@ def _round_up_4(words: int) -> int:
 def chunk_words(rate: int) -> int:
     """int32 words one column at ``rate`` occupies per 512-row tile."""
     return 16 * int(rate)
+
+
+def dense_rates(family: str) -> "tuple[int, ...]":
+    """The column rates the family's dense launch decodes: 1..14 on the value
+    family, 1..8 on the E4M3 family."""
+    return tuple(range(RATE_MIN, DENSE_RATE_MAX[family] + 1))
 
 
 def slot_words_for_rate(rate: int) -> int:
@@ -215,10 +239,24 @@ def slot_words_for_pair(pair: torch.Tensor) -> int:
     return _round_up_4(need)
 
 
-def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False) -> int:
-    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
+def _smem_bytes_at_stages(mode: int, slot_words: int, stages: int, *, mma8: bool = False) -> int:
     fixed = SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED
-    return fixed[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+    return fixed[int(mode)] + int(stages) * 2 * BK * int(slot_words) * 4
+
+
+def word_stages(mode: int, slot_words: int, *, mma8: bool = False) -> int:
+    """The word stages the launch of ``mode`` cycles through at
+    ``slot_words``-word slots (``word_stages`` in the kernel): WORD_STAGES
+    where they fit sm_121's opt-in block, else WORD_STAGES_MIN.  The library
+    publishes both constants and is checked against them at load."""
+    fits = _smem_bytes_at_stages(mode, slot_words, WORD_STAGES, mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM
+    return WORD_STAGES if fits else WORD_STAGES_MIN
+
+
+def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False) -> int:
+    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word
+    slots, at its :func:`word_stages`."""
+    return _smem_bytes_at_stages(mode, slot_words, word_stages(mode, slot_words, mma8=mma8), mma8=mma8)
 
 
 def library_for(family: str) -> str:
@@ -304,22 +342,24 @@ def superblock_rows(library: str, mode: int, rows: int, *, dense: bool = False) 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
 #: reaches on the target platform: those whose one-rate slot fits sm_121's
-#: opt-in shared memory -- slots 8 and 12 (rates 1..6) fit, the 16-word slot
-#: of rates 7 and 8 does not.  A two-rate pair's slot is the larger rate's, so
-#: the set is closed under bracketing.  Published as the fused lanes'
-#: ``column_rates_routed_moe`` (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``,
-#: contract v45, tessera#694); the down/dense one-table launch reads every
-#: rate in ``RATES``.  Derived, not typed: the day the layout changes, this
-#: changes with it and the contract's pin fails until the JSON follows.
+#: opt-in shared memory at the launch's :func:`word_stages` -- every rate
+#: since the 16-word slot of rates 7 and 8 runs at WORD_STAGES_MIN (at
+#: WORD_STAGES only slots 8 and 12, rates 1..6, fit; contract v45 published
+#: that).  A two-rate pair's slot is the larger rate's, so the set is closed
+#: under bracketing.  Published as the fused lanes' ``column_rates_routed_moe``
+#: (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``, tessera#694); the down/dense
+#: one-table launch reads every rate in ``RATES``.  Derived, not typed: the day
+#: the layout changes, this changes with it and the contract's pin fails until
+#: the JSON follows.
 ROUTED_LANE_RATES = tuple(
     r for r in RATES
     if smem_bytes(0, _round_up_4(slot_words_for_rate(r))) <= SM121_MAX_DYNAMIC_SMEM)
 
 
 def routed_lane_rates(library: str) -> "tuple[int, ...]":
-    """:data:`ROUTED_LANE_RATES` for one library: every rate on the E4M3
-    instruction (its 16 KB tables leave room for the rate-8 slot), the
-    published 1..6 on the 16-bit libraries."""
+    """:data:`ROUTED_LANE_RATES` for one library: every rate, on the E4M3
+    instruction at three word stages (its 16 KB tables leave room for the
+    rate-8 slot), on the 16-bit libraries at two for rates 7 and 8."""
     mma8 = library_mma8(library)
     return tuple(r for r in RATES
                  if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM)
@@ -500,10 +540,13 @@ def _ext(library: str):
             f"the fused routed window extension was built for {token} ({PLATFORM_TOKEN_ENV}) and "
             f"this process's device is {probed}; the library under {build} is a compile-gate "
             "artifact and is refused as a serving path.")
+    dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
-                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
+                       ("RATE_MIN", RATE_MIN), ("ROUTED_RATE_MAX", RATE_MAX),
+                       ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
+                       ("WORD_STAGES_MIN", WORD_STAGES_MIN),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
@@ -575,7 +618,8 @@ def words_by_expert(bundle) -> torch.Tensor:
     return words.view(e, width)
 
 
-def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str | None]":
+def run_pair(runs: torch.Tensor, cols: int, *, rate_max: int = RATE_MAX,
+             ) -> "tuple[torch.Tensor | None, str | None]":
     """One unit's run table as the kernel's run pair, or why it is refused.
 
     ``runs`` is the wire's ``[R, 4]`` table of ``(rate, col0, ncols, word0)``
@@ -588,25 +632,28 @@ def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str |
     (r_lo, one or two runs) pair is its own kernel instantiation, which the
     host picks from the launch's ``tile_words`` (``pair_of`` in the kernel
     source), so a pair of rates further apart -- which no grammar schedule
-    emits -- is refused here by name rather than decoded.  Returns
-    ``(pair, None)`` or ``(None, reason)``.
+    emits -- is refused here by name rather than decoded.  ``rate_max`` is the
+    launch's ceiling: :data:`RATE_MAX` on the routed launches, the family's
+    :data:`DENSE_RATE_MAX` on the dense one.  Returns ``(pair, None)`` or
+    ``(None, reason)``.
     """
+    rates = range(RATE_MIN, int(rate_max) + 1)
     runs = runs.reshape(-1, 4)
     n_runs = int(runs.shape[0])
     if n_runs not in (1, 2):
         return None, f"run table has {n_runs} runs; the lane reads one or two (the two rates bracketing the root)"
     rows = [tuple(int(v) for v in row) for row in runs.tolist()]
     r_lo, c_lo, n_lo, w_lo = rows[0]
-    if r_lo not in RATES or c_lo != 0 or w_lo != 0 or n_lo <= 0:
-        return None, f"first run {rows[0]} is not (rate in {RATE_MIN}..{RATE_MAX}, 0, n, 0)"
+    if r_lo not in rates or c_lo != 0 or w_lo != 0 or n_lo <= 0:
+        return None, f"first run {rows[0]} is not (rate in {RATE_MIN}..{rate_max}, 0, n, 0)"
     if n_runs == 1:
         if n_lo != cols:
             return None, f"the one run covers {n_lo} of {cols} columns"
         pair = (r_lo, 0, n_lo, 0, 0, n_lo, 0, 16 * n_lo * r_lo)
     else:
         r_hi, c_hi, n_hi, w_hi = rows[1]
-        if r_hi not in RATES or r_hi <= r_lo:
-            return None, f"second run rate {r_hi} is not above the first's {r_lo} within {RATE_MIN}..{RATE_MAX}"
+        if r_hi not in rates or r_hi <= r_lo:
+            return None, f"second run rate {r_hi} is not above the first's {r_lo} within {RATE_MIN}..{rate_max}"
         if r_hi != r_lo + 1:
             return None, (f"second run rate {r_hi} is not adjacent to the first's {r_lo}: the lane reads the "
                           "two adjacent rates bracketing a root (grammar.rate_set)")
@@ -1132,7 +1179,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
 
     ``bundle`` is a ``window_gemm.PreparedWindowGemm`` (the frozen role the
     Triton dense GEMM runs).  The kernel reads the routed lane's wire shape --
-    one or two column-rate runs (rates 1..8, the two bracketing the root),
+    one or two column-rate runs (the two bracketing the root, at rates up to
+    the family's :data:`DENSE_RATE_MAX`: 14 on the value family, 8 on E4M3),
     window bits 14, the packer's column order, the family's published
     arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
     rows a multiple of 128 (one 128-column B block per item) and columns a
@@ -1161,7 +1209,7 @@ def fused_dense_window_supported(bundle) -> "str | None":
         return f"{rows} rows; the dense identity needs a multiple of {BN}"
     if bundle.words.dtype != torch.int32 or bundle.words.dim() != 1:
         return "words must be a flat int32 stream"
-    pair, why = run_pair(bundle.runs, cols)
+    pair, why = run_pair(bundle.runs, cols, rate_max=DENSE_RATE_MAX[fam])
     if pair is None:
         return why
     why = perm_reason(bundle.perm, int(pair[2]), cols)
@@ -1268,7 +1316,7 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
     _ext(library)
     device = bundle.device
     cols = int(bundle.cols)
-    pair, why = run_pair(bundle.runs, cols)
+    pair, why = run_pair(bundle.runs, cols, rate_max=DENSE_RATE_MAX[bundle.family])
     assert pair is not None, why              # the predicate above admitted it
     return FusedDenseWindowRole(
         family=bundle.family, rows=int(bundle.rows), cols=cols,

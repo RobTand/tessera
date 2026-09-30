@@ -215,7 +215,8 @@ def test_fused_shape_predicate_reads_the_manifest_alone():
     assert "3 runs" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (3, 4, 5, 4) * 32})
     assert "run table" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (9,) * 128})
     # The shared-memory inequality per launch, derived as the runtime derives
-    # it: the two-table gate/up launch reaches the published routed set, the
+    # it: the two-table gate/up launch reaches the published routed set (every
+    # rate since contract v49: rates 7 and 8 run at two word stages), the
     # one-table down launch every rate the kernel decodes.
     for rate in range(1, 9):
         uniform = {**ok, "rates": (rate,) * 128}
@@ -225,7 +226,7 @@ def test_fused_shape_predicate_reads_the_manifest_alone():
             if refusal is not None:
                 assert "shared memory" in refusal
         assert fused_routed_unit_shape_refusal("e4m3", "down", **uniform) is None, rate
-    assert routed_fused.ROUTED_LANE_RATES == (1, 2, 3, 4, 5, 6)
+    assert routed_fused.ROUTED_LANE_RATES == tuple(range(1, 9))
     assert routed_fused_table_bytes(WINDOW_BITS) == 2 * (1 << WINDOW_BITS)
 
 
@@ -243,6 +244,30 @@ def test_fused_unit_pricing_is_the_lane_tables():
         routed_fused_unit_bytes(WINDOW_BITS, 100)
 
 
+def test_dense_pricing_follows_the_dense_loaders_rate_bound():
+    """tessera#750 item 4: a native dense unit is priced at every rate the
+    dense loader admits (1..14 on a 14-bit window) -- the torch-free restated
+    bound is the loader's and the dense launch's -- and refused above it."""
+    from tessera.compact_prep import DENSE_WINDOW_RATE_MAX, WINDOW_GEMM_RATE_MAX
+
+    assert serving_parts.NATIVE_DENSE_WINDOW_RATE_MAX == DENSE_WINDOW_RATE_MAX \
+        == routed_fused.DENSE_RATE_MAX["value"] == WINDOW_BITS == 14
+    assert WINDOW_GEMM_RATE_MAX == routed_fused.RATE_MAX == 8
+
+    def role(rate, bits=WINDOW_BITS):
+        return [{"rows": 256, "cols": 128, "rates": [rate] * 128, "window_bits": bits, "tile_rows": 512}]
+
+    priced = {rate: serving_parts.dense_resident_bytes_resident_mode(
+        "TESSERA_BF16", 256, 128, native_roles=role(rate)) for rate in (8, 9, 14)}
+    # the body words grow by one rate's 512 * 128 / 8 bytes per tile per rate
+    assert priced[9] - priced[8] == 512 * 128 // 8
+    assert priced[14] - priced[9] == 5 * 512 * 128 // 8
+    for rate, bits in ((15, WINDOW_BITS), (15, 16), (9, 8)):
+        with pytest.raises(ValueError, match="native dense window layout"):
+            serving_parts.dense_resident_bytes_resident_mode(
+                "TESSERA_BF16", 256, 128, native_roles=role(rate, bits))
+
+
 def _stack_layouts(rates_w13, rates_w2) -> list:
     """The write loop's per-unit layout records for an ``EXPERTS``-deep stack."""
     layouts = []
@@ -255,18 +280,26 @@ def _stack_layouts(rates_w13, rates_w2) -> list:
     return layouts
 
 
-def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables():
+def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables(monkeypatch):
     """Contract v45: a stack of two adjacent rates (q256 896 as the packer
     mixes rates 3 and 4) takes the fused lane, so its per-stack figure holds
     every unit's composed table, run pair and descriptors; a stack whose
-    gate/up launch the target cannot fit (rate 7) keeps the compact lane
-    alone.  At v44 both were priced as compact-only."""
+    gate/up launch the target cannot fit keeps the compact lane alone.  At
+    v44 both were priced as compact-only.  Since contract v49 every rate's
+    gate/up launch fits sm_121 (rates 7 and 8 at two word stages), so a
+    rate-7 stack is priced with the fused tables there, and the compact-only
+    branch is read on a part whose opt-in block holds the 8-word slot's
+    three stages and no more."""
     part_bytes = 3 * routed_window_part_resident_bytes(EXPERTS)
+    fused_bytes = 3 * EXPERTS * routed_fused_unit_bytes(WINDOW_BITS, 128)
     mixed = (3, 4) * 64
     _units, stack = export.routed_stack_resident_bytes("TESSERA_FP8", EXPERTS, _stack_layouts(mixed, mixed))
-    assert stack == part_bytes + 3 * EXPERTS * routed_fused_unit_bytes(WINDOW_BITS, 128)
-    _units, stack = export.routed_stack_resident_bytes(
-        "TESSERA_BF16", EXPERTS, _stack_layouts((7,) * 128, (7,) * 128))
+    assert stack == part_bytes + fused_bytes
+    high = _stack_layouts((7,) * 128, (7,) * 128)
+    _units, stack = export.routed_stack_resident_bytes("TESSERA_BF16", EXPERTS, high)
+    assert stack == part_bytes + fused_bytes
+    monkeypatch.setattr(routed_fused, "SM121_MAX_DYNAMIC_SMEM", routed_fused.smem_bytes(0, 8))
+    _units, stack = export.routed_stack_resident_bytes("TESSERA_BF16", EXPERTS, high)
     assert stack == part_bytes
 
 

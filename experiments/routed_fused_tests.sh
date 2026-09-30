@@ -12,6 +12,8 @@
 # Environment:
 #   ORACLE_IMAGE      the immutable image reference (required)
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
+#   TEST_RO_MOUNTS    host directories mounted read-only at the same path
+#   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
@@ -34,10 +36,17 @@ CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(
 HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)}
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
 echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF"
+# TEST_RO_MOUNTS: host directories tests read (fixtures such as the A4 wires),
+# mounted read-only at the same path.  TEST_LOCAL_TMP=1 puts TMPDIR and pytest's
+# basetemp on a container tmpfs: flock on an NFS out directory fails with EBADF.
+EXTRA=()
+for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
+BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
+if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
 docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
-  -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
+  -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$OUT/torch-ext" -e PYTHONDONTWRITEBYTECODE=1 \
   -e PYTHONPATH=/work/src:/work/tests:/work/experiments:"$OUT/runner-sp" \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
@@ -45,7 +54,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
-  "${IMAGE_ENV[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
+  "${IMAGE_ENV[@]}" "${EXTRA[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint python3 -w /work "$IMAGE_REF" \
   -m pytest -p no:cacheprovider -q -rA --junitxml="$OUT/junit.xml" \
-  -o "cache_dir=$OUT/tmp/pytest-cache" --basetemp="$OUT/tmp/pytest-tmp" "$@"
+  -o "cache_dir=$OUT/tmp/pytest-cache" --basetemp="$BT" "$@"

@@ -1,5 +1,96 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the staged stream history on the E4M3 instruction
+(Refs #750). In `routed_fused_window.cu`, each half's decode needs the 32
+stream bits before its first word. On the E4M3 instruction's library
+(`PREV_STAGED`), that word now rides the word stages' own copies into a
+768 B per-stage shared-memory slot. It no longer rides a global load into a
+register one chunk ahead, where the loop's last move waited one global
+latency per chunk. `SMEM_FIXED_MMA8` becomes 47,312 B for gate/up and
+30,736 B for down and dense, and the rate-8 gate/up launch takes 59,600 B.
+The value and E4M3-on-`f16` libraries keep the register path; their SASS
+holds master's instructions up to operand and instruction order. No
+contract, rung, route or `executes` entry changes, and every timed output
+is bitwise master's. On the A8S release artifact's R1024 routed stack, the
+routed launches take 10.4% less time per call at M = 512 on recorded L512
+routing, and 8.5% less at M = 2048 on recorded L8192 chunks. Receipt: [the
+staged stream history](measurements/2026-09-30-staged-stream-history.md).
+
+Re-stamped 2026-09-30 for the value library's dense launch at rates 9 to 14
+(contract v51, Refs #750 item 4). `routed_fused_window.cu`'s `RATE_MAX` is 14
+on the value library and 8 on the E4M3 ones, and it now bounds the dense
+launch only; `ROUTED_RATE_MAX` (8) bounds both routed launches. The dense
+launch holds the 28-word slot of rates 13 and 14 at three word stages
+(80,144 B), and `decode_rows` reads up to five words per lane. Its rate-1..8
+window keeps v49's statements, so those kernels' SASS does not move. The
+two-table gate/up launch cannot hold rate 9's slot even at two stages
+(101,840 B), so `tessera_routed_fused_value` publishes `column_rates` 1..14 beside
+`column_rates_routed_moe` 1..8. `compact_prep.prepare_window_compact` takes the
+caller's bound: 14 for a dense unit (`DENSE_WINDOW_RATE_MAX`), 8 for a routed
+one. Rates 15 and 16 are excluded by geometry: their 64 KB and 128 KB tables
+leave the one-table block one word stage and none. v51 also gives
+`TESSERA_BF16_K1` an `allowable_rungs` rule: run tables [1] to [14] and every
+adjacent pair, range 256..3584 (above rate 14 the wire widens its table), nothing
+excluded yet. The rule is family-wide, but coverage is per cell: the routed
+launches read 1..8, so no routed cell can carry a table above [8]. The dense BF16
+cells now cover every rung of 769..1279; the routed ones still cover 1024 alone.
+No cell's rungs reach rate 9, so a dense census at those rates is still needed
+to cover them. Receipts: [dense rates 9 to
+14](measurements/2026-09-30-t16-dense-rates-9-14.md) and [the T-16 run
+tables](measurements/2026-09-30-t16-run-tables.md).
+
+Re-stamped 2026-09-30 for allowable rungs as a rule (contract v50,
+`lane_eligibility.schema` v11, tessera#750). A window-grammar rung mixes at
+most two adjacent column rates, its run table (`grammar.rate_set`), and the
+fused kernels are instantiated per run table. The mix fraction and the
+placement of the upper-rate columns are runtime data. The kernel oracle
+therefore attests a variant, and `formats[].allowable_rungs` states which rungs
+that admits: `window_rate_set` over `range_q256`/`step_q256`, the attested
+`run_tables`, measured `excluded_run_tables` and `excluded_q256`, the one
+`wire` every allowable rung is cut on, and `evidence`. Only `TESSERA_E4M3_K1`
+publishes a rule; its run tables are every rate 1..8 and every adjacent pair.
+A cell's new `run_tables` field is derived: the run tables of its census rungs
+that the rule admits. A cell covers a rung that is a census rung, or one the
+rule admits in one of its run tables (`contract.cell_covers_rung`). The routed
+export gate (`scheme.refuse_unserveable_wire`), the census join
+(`census.cell_launch_agreement`) and the manifest's `attested_by` read that
+one predicate. The routed and dense resident E4M3 cells now cover every rung
+of 769..1279. `attested_rungs_q256`, `attested_wire` and `rungs_q256` still
+list the census rungs. Receipt: [the run-table oracle and geometry
+sweep](measurements/2026-09-30-t8-run-tables.md).
+
+Re-stamped 2026-09-30 for the 16-bit routed gate/up launch at rates 7 and 8
+(contract v49, Refs #750). `routed_fused_window.cu` instantiates each launch
+at `word_stages(mode, slot_words)`: three word stages where the slot fits
+sm_121's 101,376 B opt-in block, else two. The value and E4M3-f16 libraries'
+two-table gate/up launch now holds the 16-word slot of rates 7 and 8 at two
+stages (99,792 B), so both libraries' `column_rates_routed_moe` moves from
+1..6 to 1..8, the E4M3 instruction's value. Every other instantiation keeps
+three stages and its SASS (value 69/69, E4M3-instruction 137/137, E4M3-f16
+98/99 up to one commuted `LOP3`). No cell's rungs reach rate 7 or 8, so no
+cell's derived `executes` changes; a routed census at those rates is still
+needed to attest them.
+
+Re-stamped 2026-09-30 for the GLM cells on the vLLM nightly (tessera#702,
+contract v48). One TP1 eager route census of u1 stub B on image `5be13705`
+(eugr nightly 155ce16b plus the nccl230 layer, vLLM `0.30.1rc1.dev336`), with
+the NoPE plugin off and the image's own `FLASHINFER_MLA_SPARSE_SM120`
+attention, recorded all 21 Tessera modules in both phases on the launch pairs
+the `f8dbe1a0` receipt of the same stub recorded. Eight eager cells are minted
+on that image, the E4M3 and BF16 dense and routed scopes in both regimes, on
+exactly the rungs the stub carried (q256 1024 in all four). Their ids carry the
+derived runtime suffix. Before v48, no cell named the image the GLM-5.3 release
+serves on. The cells are eager only: no CUDA-graph serve of GLM-5.3 on this
+image computes eager's arithmetic. vLLM's default compile mode switches the
+norm operators. With `mode NONE` the graph serve still departs, from context
+5 on: a FULL capture freezes the GLM indexer's logits-and-top-k branch,
+because vLLM captures at `max_seq_len = max_model_len`, while eager takes the
+short-context causal fill. The two sum the same tokens in a different order.
+The same serve at `max_model_len 2048` (= `index_topk`) is 48/48
+eager-equivalent, which confirms the branch; no release-sized context is.
+Tessera's launches are identical in both. No route, launch, rung, grade or schema changes. See
+[the receipt](measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md).
+
 Re-stamped 2026-09-30 for the GLM MTP draft interface on the vLLM nightly
 (tessera#749). `serving.mtp_draft_lifetime` now reads a table of inspected
 interfaces, each identified by the sha256 of every module it touches:
@@ -159,11 +250,16 @@ words per column and 64-row half, rounded up to 4), a `Layout<MODE>` template
 places the fixed shared-memory region ahead of the word ring, and the launch
 requests `smem_bytes(mode, slot)` dynamically. The device decides which rates
 a structure reaches: sm_121's 101,376 B per block holds the two-table gate/up
-launch at slot 8 (rates 1-4) and 12 (rates 5-6) but not 16 (rates 7-8), and
-the one-table down/dense launch at every slot, so `ROUTED_LANE_RATES` is
-`(1, 2, 3, 4, 5, 6)` and the dense identity reaches 1..8. Both fused
-`native_extensions` entries publish `lane.requires.column_rates = [1..8]` and
-a NEW structure-scoped field, `column_rates_routed_moe = [1..6]`, which
+launch at slot 8 (rates 1-4) and 12 (rates 5-6) at three word stages, and
+at slot 16 (rates 7-8) only at two (`routed_fused.word_stages`, contract v49;
+at v45-v47 the 16-bit libraries stopped at rate 6), and the one-table
+down/dense launch at every slot, so `ROUTED_LANE_RATES` is 1..8 and the dense
+identity reaches 1..8 (1..14 on the value library since v51: its one-table
+dense launch holds the 28-word slot of rates 13 and 14 at three stages,
+80,144 B, while both routed launches stop at `ROUTED_RATE_MAX` = 8). The fused
+`native_extensions` entries publish `lane.requires.column_rates = [1..8]`
+(`[1..14]` on `tessera_routed_fused_value` since v51) and a NEW structure-scoped field,
+`column_rates_routed_moe` (`[1..6]` at v45, `[1..8]` since v49), which
 `scheme.decide_lane_requirements` decides only over a `routed_moe` structure
 fact and refuses by name without one (`_lanes_a_rung_reaches` and the export
 plan gate pass the cell's structure; the validator holds the field to an
@@ -3617,8 +3713,8 @@ is the one the family already publishes.
 same attribute, and it is the default (tessera#640, contract v42).**
 `PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
 supported` whether the loaded stack is one the fused lane serves -- every
-column at a rate in `ROUTED_LANE_RATES` (1..6 since contract v45, tessera#694;
-rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
+column at a rate in `ROUTED_LANE_RATES` (1..8 since contract v49; 1..6 at
+v45-v47, tessera#694; rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
 decoration, the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128
 == 0`, the predicate `native_extensions[].lane.requires` publishes
 (`column_rates` for the wire, `column_rates_routed_moe` for this launch) -- and builds
@@ -3813,28 +3909,39 @@ launches read it from global memory in both places: a dependent global load
 on the producer's chunk loop whose wait sat ahead of the next copy or the
 decode (`docs/measurements/2026-09-29-two-run-column-map.md`,
 `docs/measurements/2026-09-30-descriptor-ring.md`). The host checks that each
-descriptor tensor is 16-byte aligned. Two rates of a
+descriptor tensor is 16-byte aligned. The E4M3 instruction's
+library no longer carries the previous window word in a register either: the
+word rides the word stages' copies into a per-stage shared-memory slot
+(`PREV_STAGED`, 768 B), because the loop's last move waited one global
+latency per chunk on its load
+(`docs/measurements/2026-09-30-staged-stream-history.md`). Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
-8 (97,744 B; rates 1-4) and slot 12 (100,816 B; rates 5 and 6) and not slot
-16 (103,888 B; rates 7 and 8), while the one-table down launch holds every
-slot (70,928 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
-inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
-role in its own launch and so has no two-table gate/up mode, reaches 1..8. A
-routed stack whose larger rate is 7 or 8 keeps the compact adapter, and the
-predicate names the slot and the bytes; it may JIT-build the extension to ask
-the device (a first call on a cold cache pays nvcc). One correctness fix rode
-along: the previous window
-word was loaded for the first 8-row group only, but a field's 14-bit window
-reaches 13 bits before it, so at rate 1 the groups whose window starts inside
-the half's first word (`8 * j * rate < 32`) read a stale word; every such
-group now loads it. Because one lane serves both structures and the
-contract's `executes` list is the census's admissible set, the two fused
-entries publish `lane.requires.column_rates_routed_moe = [1..6]` beside
-`column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
-over a `routed_moe` structure fact and refuses by name without one,
+8 (97,744 B; rates 1-4) and slot 12 (100,816 B; rates 5 and 6) at three word
+stages, while the one-table down launch holds every slot (70,928 B at 16).
+Slot 16 (rates 7 and 8) needs 103,888 B at three stages, so since contract v49
+each instantiation takes `word_stages(mode, slot)` -- three where the slot
+fits, else two -- and the 16-bit gate/up launch runs slot 16 at 99,792 B with
+the word copy issued one chunk ahead instead of two (`cp_async_wait<0>`, then
+the producer barrier, then the next chunk's words; the descriptor ring keeps
+its four stages). `ROUTED_LANE_RATES` is derived from exactly that inequality
+at the instantiation's own stages -- 1..8 -- and the dense identity, which
+runs each role in its own launch and so has no two-table gate/up mode, reaches
+1..8, and 1..14 on the value library since contract v51 (`DENSE_RATE_MAX`). A
+part with less opt-in shared memory than sm_121 refuses the slots it cannot
+hold, and the predicate names the launch, the slot and the bytes; it may
+JIT-build the extension to ask the device (a first call on a cold cache pays
+nvcc). One correctness fix rode along: the previous window word was loaded for
+the first 8-row group only, but a field's 14-bit window reaches 13 bits before
+it, so at rate 1 the groups whose window starts inside the half's first word
+(`8 * j * rate < 32`) read a stale word; every such group now loads it.
+Because one lane serves both structures and the contract's `executes` list is
+the census's admissible set, the two fused entries publish
+`lane.requires.column_rates_routed_moe` (`[1..6]` at v45, `[1..8]` since v49)
+beside `column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it
+only over a `routed_moe` structure fact and refuses by name without one,
 `_lanes_a_rung_reaches` and the export plan gate pass the cell's structure,
 and the validator holds the field to an ascending subset of `column_rates`.
 The field is not additive for a v44 reader or for PrismaQuant's mirror of the
@@ -3844,13 +3951,13 @@ the version moved. The export follows the lane: `routed_fused.
 fused_routed_unit_shape_refusal` builds the packer's run table from a unit's
 manifest rates and asks `run_pair` and the part's own launch, and every unit
 it admits is priced with its table, run pair and block descriptors
-(`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash
-expert per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU
-test receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
-routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832,
-R960 and R1088) run 2.0x to 3.9x faster than the compact adapter but at 1.50x
-to 1.71x of R1024. A TP1 eager census of stub B on the GLM image recorded every routed
-stack and every dense module on the fused kernel
+(`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash expert
+per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU test
+receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
+routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832, R960
+and R1088) run 2.0x to 3.9x faster than the compact adapter but at 1.50x to
+1.71x of R1024. A TP1 eager census of stub B on the GLM image recorded every
+routed stack and every dense module on the fused kernel
 (`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`,
 replayed by `tests/test_glm_u1_census_cells.py`). E2M1 fused stays parked; the
 E2M1_K2 routed stacks stay on the A4 span-2 grouped path.
@@ -4403,7 +4510,9 @@ takes `structure` and, for `routed_moe`, first refuses a route
 `MOE_BUILDERS` has no builder for (`refuse_a_family_with_no_expert_route`,
 the one home for that rule at plan, gate and load) and then reads the
 union of `rungs_q256` over the DEVICE-BACKED `lane_eligibility` cells of that
-structure (`scheme.attested_cells`) rather than the row's range. A cell is
+structure (`scheme.attested_cells`) rather than the row's range -- since lane
+schema v11 the rungs those cells COVER, their census rungs and the allowable
+rungs of their run tables (`contract.cell_covers_rung`). A cell is
 selected on the facts it states about itself -- `qualification` and
 `route_status` (`contract.cell_is_device_backed`) -- because the validator
 permits a cell to attest a toolchain and no serve (`compile_only` beside

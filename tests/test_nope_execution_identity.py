@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tessera.serving import telemetry
+from tessera.serving import graph_equivalence, telemetry
 
 
 class Graph(Enum):
@@ -32,6 +32,7 @@ def reporter(gap):
     assert {node.name for node in body} == names
     namespace = {"__package__": "tessera.serving", "sys": sys,
                  "CUDAGraphMode": Graph, "_REPORTED": set(),
+                 "graph_mode": graph_equivalence.graph_mode,
                  "eager_equivalence_gap": lambda config: gap,
                  "_speculative_key": lambda config: None}
     exec(compile(ast.Module(body=[*body], type_ignores=[]), str(path), "exec"), namespace)

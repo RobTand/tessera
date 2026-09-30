@@ -76,7 +76,7 @@ from typing import List, Optional, Sequence
 
 import torch
 
-from ..compact_prep import CompactWire, prepare_window_compact
+from ..compact_prep import DENSE_WINDOW_RATE_MAX, CompactWire, prepare_window_compact
 from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, TESSERA_FP8,
                      WINDOW_GEMM_SYMBOL)
 from .sharding import AXIS_ROWS, ShardPlan
@@ -510,8 +510,11 @@ def prepare_dense_native_module(
         metadata = wire.metadata
         _require_route_unit(family, name, metadata)
         cut = _role_cut(plan, name)
+        # a dense unit serves every rate its window holds (tessera#750 item
+        # 4); the fused lane below admits the rates its library decodes
         unit = prepare_window_compact(
-            wire, device=device, family=window_family, **cut)
+            wire, device=device, family=window_family,
+            rate_max=DENSE_WINDOW_RATE_MAX, **cut)
         if columns is None:
             columns = int(unit.cols)
         elif int(unit.cols) != columns:

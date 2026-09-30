@@ -22,6 +22,7 @@ import re
 
 import pytest
 
+from glm_nightly_cells import NIGHTLY_RUNGS, NIGHTLY_RUNTIME, nightly_id
 from withdrawn_cells import withdrawn_cells, withdrawn_v38_cells, withdrawn_v39_cells
 
 from tessera.serving.contract import (
@@ -161,6 +162,32 @@ for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
             "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
             "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "predicates": [], "runtime": _GLM_X_RUNTIME}
+
+#: MINTED at contract v48 (tessera#702): the four E4M3/BF16 dense and routed
+#: GLM-image scopes again, on the vLLM NIGHTLY image the GLM-5.3 release
+#: serves on (eugr 155ce16b with the nccl230 layer), from one TP1 eager route
+#: census of u1 stub B on that image with the GLM53 NoPE plugin off and the
+#: image's own attention (``GLM_NIGHTLY_RECEIPT``; the receipt is committed as
+#: ``experiments/results/glm53_u1_stub_b_nightly_tp1_eager_census.json`` and
+#: ``tests/test_glm_nightly_census_cells.py`` replays it against the table).
+#: Each cell covers exactly the rungs stub B carried for its family and
+#: structure, and names the launches its f8dbe1a0 twin names.  Eager only: a
+#: FULL_DECODE_ONLY graph serve on this image is not eager's computation
+#: (the measurement doc), so no compiled scope is claimed.  The ids carry the
+#: derived runtime suffix because the f8dbe1a0 cells hold the bare scope ids.
+GLM_NIGHTLY_RECEIPT = "docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md"
+for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
+    if (_family, _structure) not in NIGHTLY_RUNGS:
+        continue
+    for _regime in ("decode", "batch"):
+        _CELL_LAWS[nightly_id(_family, _structure, _regime)] = {
+            "platform": "sm_121", "family": _family, "structure": _structure,
+            "regime": _regime, "rungs_q256": NIGHTLY_RUNGS[(_family, _structure)],
+            "activation_contract": _contract,
+            "executes": [{"symbol": _s, "decoder": _d} for _s, _d in _launches],
+            "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+            "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+            "predicates": [], "runtime": NIGHTLY_RUNTIME}
 
 #: RE-EARNED at contract v34 (tessera#545): the dense native window GEMM, the
 #: one launch ``fp8_route.apply`` and ``bf16_route.apply`` have made since
@@ -593,12 +620,14 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
 
 
 def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(contract):
-    """Three (family, rungs) pairs of regimes on one image, and no more.
+    """Three (family, rungs) pairs of regimes on the GLM serving image, two on
+    the vLLM nightly, and no more.
 
     The TP1 GLM census (v38, tessera#604) added FP8 and BF16 on the GLM serving
     image; the u1 stub censuses (v39) widened FP8 and added the E2M1x2 wire on
     the grouped A4 launch.  The LFM FP8 pair at q1024 was withdrawn at v38 and
-    the materialising E2M1 pair at v39.  Each pair is resident and eager.
+    the materialising E2M1 pair at v39.  v48 (tessera#702) adds FP8 and BF16 on
+    the nightly, on stub B's rungs.  Each pair is resident and eager.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
@@ -609,12 +638,14 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
                               cell["runtime"]["image"]), set()).add(cell["regime"])
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
         assert cell["runtime"]["execution_modes"] == ["eager"]
-    assert len(moe) == 6
-    assert sorted((family, rungs) for family, rungs, _ in by_family) == [
-        ("TESSERA_BF16_K1", (1024,)),
-        ("TESSERA_E2M1_K2", (896,)),
-        ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088))]
-    assert {image for _, _, image in by_family} == {_GLM_X_RUNTIME["image"]}
+    assert len(moe) == 10
+    assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
+        ("TESSERA_BF16_K1", (1024,), _GLM_X_RUNTIME["image"]),
+        ("TESSERA_E2M1_K2", (896,), _GLM_X_RUNTIME["image"]),
+        ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
+         _GLM_X_RUNTIME["image"]),
+        ("TESSERA_BF16_K1", (1024,), NIGHTLY_RUNTIME["image"]),
+        ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
 
@@ -1233,29 +1264,37 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     mixed["executes"] = [compact, fused]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
-    # At q256 1792 (rate 7) the lane READS the wire but its routed-expert
-    # launch does not reach the rate on the target
-    # (lane.requires.column_rates_routed_moe is 1..6: the two-table gate/up
-    # launch does not fit sm_121's shared memory above it), so an expert stack
-    # derives the compact launch alone -- the structure is what the decision
-    # reads -- while a dense module at the same rung derives the fused dense
-    # identity beside the Triton GEMM, the one-table launch reading every rate.
-    # That is the 16-bit library's limit; contract v47's E4M3-instruction
-    # pair is derived at this rung on both structures (below).
+    # At q256 1792 (rate 7) every library's routed-expert launch reaches the
+    # rung since contract v49 (the 16-bit libraries' two-table gate/up launch
+    # runs rates 7 and 8 at two word stages), so an expert stack derives all
+    # three launches and a claim without the 16-bit lane is refused.
     # (the format row stamps attested_wire per attested rung; 1792 is not one,
     # so the derivation is given a copy of the shipped stamp at that rung)
     import copy
     stamped = copy.deepcopy(entry)
     stamped["attested_wire"] = list(stamped["attested_wire"]) + [
         {**stamped["attested_wire"][0], "q256": 1792}]
-    # The E4M3 instruction's library publishes column_rates_routed_moe 1..8
-    # (its gate/up launch fits at rate 8), so it reaches the rung the 16-bit
-    # library's routed launch does not.
-    high = dict(synthetic, rungs_q256=[1792], executes=[compact, mma])
+    high = dict(synthetic, rungs_q256=[1792], executes=[compact, fused, mma])
     _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
-    high["executes"] = [compact, fused, mma]
+    high["executes"] = [compact, mma]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
+    # The decision reads the published lane.requires against the structure:
+    # under v48's 16-bit column_rates_routed_moe (1..6) the same expert stack
+    # derives the compact launch beside the E4M3 instruction's alone, while a
+    # dense module at the rung derives the fused dense identity beside the
+    # Triton GEMM (the one-table launch reads every rate) on either contract.
+    v48 = copy.deepcopy(contract)
+    for ext in v48["native_extensions"]:
+        requires = ext.get("lane", {}).get("requires", {})
+        if (ext.get("module_name_prefix") in ("tessera_routed_fused_e4m3", "tessera_routed_fused_value")
+                and "column_rates_routed_moe" in requires):
+            requires["column_rates_routed_moe"] = [1, 2, 3, 4, 5, 6]
+    high["executes"] = [compact, mma]
+    _validate_cell_executes(high, "TESSERA_FP8", stamped, v48, "synthetic")
+    high["executes"] = [compact, fused, mma]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(high, "TESSERA_FP8", stamped, v48, "synthetic")
     dense_high = {
         "structure": "dense", "regime": regime, "rungs_q256": [1792],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
@@ -1263,7 +1302,8 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
                      {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"},
                      {"symbol": "tessera::fused_window_dense",
                       "decoder": "native_fused_window_dense_e4m3mma"}]}
-    _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, contract, "synthetic")
+    for published in (contract, v48):
+        _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, published, "synthetic")
     synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert
     # stack, and so is the materialising launch v38 removed (tessera#604).

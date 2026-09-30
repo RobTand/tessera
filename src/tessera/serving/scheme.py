@@ -600,7 +600,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         # The dense identity on the E4M3 instruction (``TESSERA_FUSED_E4M3_
         # MMA=e4m3``): the same kernel, launch symbol and admission predicate
         # as the row above, built as ``tessera_routed_fused_mma_e4m3``.
-        # EXPERIMENTAL until a served census earns it cells.
+        # Attested since contract v47 (see ``EXPERIMENTAL_LAUNCHES``).
         {"symbol": FUSED_WINDOW_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": "tessera_routed_fused_mma_e4m3",
          "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
@@ -639,7 +639,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
         # The fused lane on the E4M3 instruction (``TESSERA_FUSED_E4M3_MMA=
-        # e4m3``); see the dense row of the same library.  EXPERIMENTAL.
+        # e4m3``); see the dense row of the same library.  Attested since v47.
         {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_mma_e4m3",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
@@ -1183,9 +1183,10 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     Until this parameter existed a routed stack was held to the dense
     reader's range -- ``[256, 2048]`` on E4M3 -- while the routed cells
     attest exactly one rung, and no producer gate read them.  The bound for
-    a non-dense structure is the union of its cells' rungs, so a rung the
-    dense cells attest and no routed cell does is refused, and the refusal
-    names the cells it read.  ``contract`` is for a caller holding a table
+    a non-dense structure is the union of the rungs its cells cover -- their
+    census rungs and the allowable rungs of their run tables (lane schema v11,
+    tessera#750) -- so a rung the dense cells attest and no routed cell covers
+    is refused, and the refusal names the cells it read.  ``contract`` is for a caller holding a table
     other than the packaged one (tests); the packaged file is the default.
     """
     from .contract import reader_accepts, reader_rate_grid
@@ -1229,7 +1230,9 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
         refuse_a_family_with_no_expert_route(route, target)
         # THE FORMAT ROW IS THE DENSE READER'S RANGE.  A non-dense structure
         # is attested only where a cell of that structure exists, so its
-        # bound is the union of those cells' rungs -- which the contract
+        # bound is the union of the rungs those cells cover (their census
+        # rungs and, since lane schema v11, the allowable rungs of their run
+        # tables; ``contract.cell_covers_rung``) -- which the contract
         # validator already keeps inside the row's range, so this is the
         # tighter of the two and the only one that names the right kernel.
         # A cell that attests a toolchain is not one of these: see
@@ -1255,17 +1258,26 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
                 f"container receipt covers the structure on a runtime image; absence is "
                 f"'unattested', which an export that declares the structure cannot ship on. "
                 + still_legal)
-        rungs = sorted({int(r) for cell in cells for r in cell["rungs_q256"]})
-        if q256 not in rungs:
-            per_cell = "; ".join(f"{cell['id']} attests {sorted(cell['rungs_q256'])}"
-                                 for cell in cells)
+        # Since lane schema v11 a cell covers its census rungs AND every rung
+        # its family's allowable_rungs rule admits in one of its run tables
+        # (tessera#750): ``contract.cell_covers_rung``, the one predicate.
+        from .contract import cell_covers_rung, format_entry
+
+        entry = format_entry(family, contract)
+        if not any(cell_covers_rung(cell, q256, entry) for cell in cells):
+            rungs = sorted({int(r) for cell in cells for r in cell["rungs_q256"]})
+            per_cell = "; ".join(
+                f"{cell['id']} attests {sorted(cell['rungs_q256'])}"
+                + (f" and run tables {cell['run_tables']}" if cell.get("run_tables") else "")
+                for cell in cells)
             raise ValueError(
                 f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs "
                 f"the {structure} cells of runtime_contract.json attest for {family} "
                 f"({rungs}: {per_cell}). The format row's reader range is the dense route's; "
                 f"a {structure} stack is served by a different consuming kernel and is "
-                f"attested only at the rungs its own cells name. Re-plan the stack on one of "
-                f"{rungs}, or serve the rung and publish the cell. " + still_legal)
+                f"attested only at the rungs its own cells cover: their census rungs, and the "
+                f"allowable rungs of their run tables. Re-plan the stack on a covered rung, "
+                f"or serve the rung and publish the cell. " + still_legal)
     expected_plane = ROUTES[route]["plane"]
     if plane != expected_plane:
         raise ValueError(
@@ -1323,9 +1335,11 @@ _LANE_WIRE_CHECKS = {
     # ``facts["structure"]`` is the routed-MoE structure; a caller that did
     # not state the structure is refused by name, and any other structure is
     # decided as not binding.  The fused window lane reads every rate of the
-    # wire (``column_rates``) but its two-table gate/up launch holds fewer
-    # word-stage words in sm_121's opt-in shared memory than the one-table
-    # down/dense launch, so a stack above this set keeps the compact adapter.
+    # wire (``column_rates``) on its one-table dense launch, but its two-table
+    # gate/up launch holds fewer word-stage words in sm_121's opt-in shared
+    # memory, and the value library's dense launch reaches rates (9..14,
+    # tessera#750 item 4) its routed launches are not built for, so a stack
+    # above this set keeps the compact adapter.
     "column_rates_routed_moe": ("rates", "every_in_routed_moe"),
     "window_bits": ("window_bits", "one_of"),
     "body": ("body", "wire_spelling"),
@@ -1413,9 +1427,10 @@ def decide_lane_requirements(lane: str, requires: Mapping[str, Any],
             if offending and name == "column_rates_routed_moe":
                 refusals.append(
                     f"{name} {offending} are outside the rates this lane's routed-expert "
-                    f"launch reaches ({supported}); the lane reads the wire at these rates "
-                    "but the gate/up launch's two tables and word stages do not fit the "
-                    "target's shared memory at them, so the stack keeps the compact adapter")
+                    f"launches reach ({supported}); the lane reads the wire at these rates "
+                    "but its routed launches do not reach them on the target (the gate/up "
+                    "launch's two tables and word stages exceed the target's shared memory "
+                    "above that set), so the stack keeps the compact adapter")
             elif offending:
                 refusals.append(
                     f"{name} {offending} are outside the rates this lane reads "
@@ -1613,8 +1628,8 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
             "on the target, so an expert stack at this rung is served by the compact adapter "
             "and an artifact built to measure the lane on it would measure that adapter. "
             "Re-plan the stack on a rung whose rate set is inside column_rates_routed_moe, "
-            "or plan it as a dense structure, which the lane's one-table launch reads at "
-            "every published rate.")
+            "or plan it as a dense structure, which the lane's one-table dense launch reads "
+            "at every rate of column_rates.")
     elif any(refusal.startswith("column_rates") for refusal in refusals):
         root = Fraction(q256, 256)
         notes = (

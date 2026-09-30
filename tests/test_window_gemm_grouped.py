@@ -43,7 +43,9 @@ L = 14
 def _body(rows, cols, rates, seed):
     g = torch.Generator().manual_seed(seed)
     rate = torch.tensor(rates, dtype=torch.int64)
-    return (torch.randint(0, 1 << 16, (rows, cols), generator=g) & ((1 << rate) - 1)).to(torch.uint8)
+    # int32, not uint8: a rate above 8 (the dense value lane reads 1..14)
+    # carries codes a byte cannot hold; at rates 1..8 the codes are unchanged
+    return (torch.randint(0, 1 << 16, (rows, cols), generator=g) & ((1 << rate) - 1)).to(torch.int32)
 
 
 def _states(body, rates, L, init=None):

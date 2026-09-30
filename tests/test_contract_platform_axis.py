@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from glm_nightly_cells import NIGHTLY_IMAGE, nightly_ids
+
 from tessera.serving.contract import (
     LANE_ELIGIBILITY_SCHEMA,
     PLATFORM_ARCH_KEYS,
@@ -211,6 +213,15 @@ def test_the_packaged_contract_validates_at_v33(contract):
     rungs too.  NOT additive for a validator: ``column_rates_routed_moe`` is
     a new ``lane.requires`` field a v44 reader (and PrismaQuant's mirror of
     the roster) refuses, the fail-closed direction.  (v44 is tessera#691's.)
+
+    v50 (tessera#750) MOVES the lane schema to v11, because what a cell
+    covers changes meaning: a cell used to cover exactly its ``rungs_q256``;
+    it now also covers every rung its family's ``allowable_rungs`` rule admits
+    in one of its ``run_tables`` (the run tables of its census rungs,
+    derived).  A v10 reader that kept reading ``rungs_q256`` alone would
+    refuse rungs this build serves and exports, and a v10 reader that ignored
+    unknown cell fields would do the same silently, so the schema string
+    moves and a v10 reader fails closed on the name.
     """
     assert int(contract["contract_version"]) >= 45
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
@@ -225,7 +236,7 @@ def test_the_packaged_contract_validates_at_v33(contract):
     assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
-    assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")
+    assert LANE_ELIGIBILITY_SCHEMA.endswith(".v11")
 
 
 def test_v46_publishes_the_e4m3_instruction_library(contract):
@@ -277,6 +288,10 @@ def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
         "tessera_e4m3_k1_dense_sm121_batch_resident": "sha256:f8dbe1a0",
         "tessera_e4m3_k1_routed_moe_sm121_decode_resident": "sha256:f8dbe1a0",
         "tessera_e4m3_k1_routed_moe_sm121_batch_resident": "sha256:f8dbe1a0",
+        # Contract v48 (tessera#702): the same four scopes on the vLLM nightly,
+        # censused there with the instruction as the dispatch.
+        **{cell_id: "sha256:5be13705" for cell_id in nightly_ids()
+           if cell_id.startswith("tessera_e4m3_k1_")},
     }
 
 
@@ -618,9 +633,10 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
 
     The design asked that every cell's ``runtime.image`` equal its platform's
     ``serve_image``. The shipped document falsifies that: ``sm_121`` carries
-    two attested images, from v28 (#506) to v38 three, and since v39
+    two attested images, from v28 (#506) to v38 three, from v39
     (tessera#604) two again: the dense pin and the GLM serving image, which is
-    not the platform's ``serve_image``. Taken literally the
+    not the platform's ``serve_image``; and since v48 (tessera#702) three: the
+    vLLM nightly the GLM-5.3 release serves on joins them. Taken literally the
     stronger rule refuses the contract in this repository, so the rule is
     "attested by one of the platform's own cells" instead. This test is the
     measurement.
@@ -628,7 +644,8 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
     block = contract["lane_eligibility"]
     images = {cell["runtime"]["image"] for cell in block["cells"]
               if cell["platform"] == "sm_121"}
-    assert len(images) == 2, images
+    assert len(images) == 3, images
+    assert NIGHTLY_IMAGE in images
     assert block["platforms"]["sm_121"]["serve_image"] in images
 
 

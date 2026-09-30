@@ -234,7 +234,23 @@ if _T695_GC or _T695_DRAFT_LOG:
                 torch.cuda.empty_cache()
                 print(f"[t695] gc before the drafter loads: {collected} objects collected, "
                       f"MemAvailable {before} -> {_t695_available_mib()} MiB", file=sys.stderr, flush=True)
-                return original_load(self, *args, **kwargs)
+                # The drafter load's own torch peak (tessera#695/#749): the peak
+                # counters restart here, so the readout after the load is the
+                # most the caching allocator held while the drafter was built,
+                # on top of the target it shares with.
+                torch.cuda.synchronize()
+                alloc0, resv0 = torch.cuda.memory_allocated(), torch.cuda.memory_reserved()
+                torch.cuda.reset_peak_memory_stats()
+                out = original_load(self, *args, **kwargs)
+                torch.cuda.synchronize()
+                gib = 2 ** 30
+                print(f"[t695] drafter load peak: allocated {alloc0 / gib:.3f} -> peak "
+                      f"{torch.cuda.max_memory_allocated() / gib:.3f} -> "
+                      f"{torch.cuda.memory_allocated() / gib:.3f} GiB; reserved {resv0 / gib:.3f} -> "
+                      f"peak {torch.cuda.max_memory_reserved() / gib:.3f} -> "
+                      f"{torch.cuda.memory_reserved() / gib:.3f} GiB; MemAvailable "
+                      f"{_t695_available_mib()} MiB", file=sys.stderr, flush=True)
+                return out
 
             cls.load_model = load_model
         if _t695_draft_log is not None:
@@ -703,3 +719,139 @@ if _DIGEST_PATH or _MOE_DET or (_PROF_DIR and _PROF_TRIGGER) or _CAPTURE_LOG:
 
     torch.nn.modules.module.register_module_forward_pre_hook(_pre)
     torch.nn.modules.module.register_module_forward_hook(_post, with_kwargs=True)
+
+
+# ---------------------------------------------------------------- tessera#702
+# ``GA_DISPATCH_LOG=<prefix>`` (tessera#702, graph attestation on the vLLM nightly)
+#     Counts what the V2 runner's CUDA-graph managers dispatch on serving steps:
+#     every ``CudaGraphManager.dispatch`` result inside a non-dummy
+#     ``GPUModelRunner.execute_model`` call, keyed by manager class, graph mode,
+#     token count and request count, plus each manager's captured token counts
+#     after its capture. Each engine process rewrites ``<prefix>.<pid>.json`` with
+#     the running totals at most once a second and after every capture, so an
+#     equality arm can show that each captured size was replayed. Host-side
+#     bookkeeping only: no device work, no arithmetic change.
+_GA_DISPATCH_LOG = os.environ.get("GA_DISPATCH_LOG")
+
+if _GA_DISPATCH_LOG:
+    import importlib.abc as _ga_abc
+    import json as _ga_json
+    import sys as _ga_sys
+    import threading as _ga_threading
+    import time as _ga_time
+
+    _GA = {"counts": {}, "captured": {}, "serving": _ga_threading.local(), "last": 0.0,
+           "lock": _ga_threading.Lock(), "dirty": False}
+
+    def _ga_flush(force=False):
+        now = _ga_time.monotonic()
+        if not force and now - _GA["last"] < 1.0:
+            return
+        _GA["last"] = now
+        with _GA["lock"]:
+            rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
+                   "counts": dict(_GA["counts"])}
+            _GA["dirty"] = False
+        path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
+        with open(path + ".tmp", "w") as fh:
+            _ga_json.dump(rec, fh, indent=0, sort_keys=True)
+        os.replace(path + ".tmp", path)
+
+    def _ga_patch_cudagraph(module):
+        cls = module.CudaGraphManager
+        orig_dispatch = cls.dispatch
+        orig_capture = cls.capture
+
+        def dispatch(self, *args, **kwargs):
+            desc = orig_dispatch(self, *args, **kwargs)
+            if getattr(_GA["serving"], "on", False):
+                mode = getattr(getattr(desc, "cg_mode", None), "name", "?")
+                key = (f"{type(self).__name__}|{mode}|tokens={getattr(desc, 'num_tokens', -1)}"
+                       f"|reqs={getattr(desc, 'num_reqs', -1)}")
+                with _GA["lock"]:
+                    _GA["counts"][key] = _GA["counts"].get(key, 0) + 1
+                    _GA["dirty"] = True
+                _ga_flush()
+            return desc
+
+        def capture(self, *args, **kwargs):
+            out = orig_capture(self, *args, **kwargs)
+            try:
+                sizes = self.captured_token_counts()
+            except Exception as exc:  # recorded, never fatal
+                sizes = f"unreadable: {exc!r}"
+            with _GA["lock"]:
+                _GA["captured"][f"{type(self).__name__}@{id(self):x}"] = sizes
+            _ga_flush(force=True)
+            return out
+
+        cls.dispatch = dispatch
+        cls.capture = capture
+        _ga_threading.Thread(target=_ga_flusher, name="ga702-flush", daemon=True).start()
+        print(f"[ga702] CudaGraphManager patched (pid {os.getpid()})", flush=True)
+
+    def _ga_patch_runner(module):
+        # The target forward runs in execute_model; the drafter's propose runs in
+        # sample_tokens. Dummy and profiling runs pass dummy_run=True.
+        cls = module.GPUModelRunner
+        orig_exec, orig_sample = cls.execute_model, cls.sample_tokens
+
+        def execute_model(self, *args, **kwargs):
+            if kwargs.get("dummy_run", False):
+                return orig_exec(self, *args, **kwargs)
+            _GA["serving"].on = True
+            try:
+                return orig_exec(self, *args, **kwargs)
+            finally:
+                _GA["serving"].on = False
+
+        def sample_tokens(self, *args, **kwargs):
+            _GA["serving"].on = True
+            try:
+                return orig_sample(self, *args, **kwargs)
+            finally:
+                _GA["serving"].on = False
+
+        cls.execute_model = execute_model
+        cls.sample_tokens = sample_tokens
+        print(f"[ga702] GPUModelRunner.execute_model/sample_tokens patched (pid {os.getpid()})",
+              flush=True)
+
+    def _ga_flusher():
+        # The last dispatches of a burst land inside the one-second window; a
+        # daemon writes them once the burst is over.
+        while True:
+            _ga_time.sleep(1.0)
+            if _GA["dirty"]:
+                try:
+                    _ga_flush(force=True)
+                except Exception:  # a full disk must not stop the engine
+                    pass
+
+    _GA_PATCHES = {
+        "vllm.v1.worker.gpu.cudagraph_utils": _ga_patch_cudagraph,
+        "vllm.v1.worker.gpu.model_runner": _ga_patch_runner,
+    }
+
+    class _GAFinder(_ga_abc.MetaPathFinder):
+        def find_spec(self, name, path, target=None):
+            patch = _GA_PATCHES.get(name)
+            if patch is None:
+                return None
+            for finder in _ga_sys.meta_path:
+                if finder is self or not hasattr(finder, "find_spec"):
+                    continue
+                spec = finder.find_spec(name, path, target)
+                if spec is None or spec.loader is None:
+                    continue
+                run = spec.loader.exec_module
+
+                def exec_module(module, _run=run, _patch=patch):
+                    _run(module)
+                    _patch(module)
+
+                spec.loader.exec_module = exec_module
+                return spec
+            return None
+
+    _ga_sys.meta_path.insert(0, _GAFinder())

@@ -33,6 +33,7 @@ import pytest
 from tessera import kernel_window_gemv as kg
 from tessera.control import grid_for_name
 from tessera.export import wire_recipe
+from tessera.manifest import body_rate_cap
 from tessera.grammar import bresenham_rate_schedule, rate_set, root_from_q256
 from tessera.serving import ext
 from tessera.serving.contract import (
@@ -159,7 +160,7 @@ def test_an_integral_root_is_one_rate_and_a_fractional_root_is_two():
 def _refuse(q256):
     recipe = wire_recipe(E4M3, q256)
     return refuse_unreachable_lane(
-        LANE, grid="E4M3", q256=q256, rate_cap=E4M3.rate_cap,
+        LANE, grid="E4M3", q256=q256, rate_cap=body_rate_cap(recipe.body, E4M3),
         body=recipe.body.name, plane=recipe.scale_plane.name,
         window_bits=int(recipe.window_bits), target=f"probe@q{q256}")
 
@@ -882,12 +883,36 @@ def test_the_plan_gate_refuses_a_requirement_it_has_not_learned(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# the structure-scoped rate set (tessera#694): the fused window lanes read
-# every rate of the wire but their routed-expert launch reaches fewer on the
-# target, and the contract says which, decided against the plan's structure
+# the structure-scoped rate set (tessera#694): a fused window lane may read
+# every rate of the wire while its routed-expert launch reaches fewer on the
+# target, and the contract says which, decided against the plan's structure.
+# Contracts v45-v48 published 1..6 on the 16-bit libraries (their gate/up
+# launch held three word stages of slots up to 12 words); since the 16-word
+# slot runs at two word stages every lane's routed set is every rate, so the
+# mechanism is exercised on that v45-v48 set (``_narrowed``).
 # --------------------------------------------------------------------------
 
 FUSED_LANE = ext.ROUTED_FUSED_E4M3_MODULE_NAME
+#: The routed set the 16-bit lanes published at contracts v45-v48.
+V48_ROUTED = [1, 2, 3, 4, 5, 6]
+
+
+def _narrowed(requires):
+    """``requires`` with the routed-expert set narrowed to ``V48_ROUTED``."""
+    return dict(requires, column_rates_routed_moe=list(V48_ROUTED))
+
+
+def _narrow_fused_lane(monkeypatch):
+    """Serve every gate (``contract.lane_requirements``) the packaged contract
+    with ``FUSED_LANE``'s routed set narrowed to ``V48_ROUTED``: the v48 lane."""
+    from tessera.serving import contract as contract_module
+
+    real = contract_module.lane_requirements
+
+    def lane_requirements_v48(module_name_prefix, contract=None):
+        requires = real(module_name_prefix, contract)
+        return _narrowed(requires) if module_name_prefix == FUSED_LANE else requires
+    monkeypatch.setattr(contract_module, "lane_requirements", lane_requirements_v48)
 #: Facts of a rate-7 window unit in ``wire_facts_of_parsed``'s vocabulary,
 #: without a structure -- the byte-time reader's view.
 RATE7_FACTS = {
@@ -898,16 +923,25 @@ RATE7_FACTS = {
 
 
 def test_the_fused_lanes_publish_the_routed_launchs_rates_inside_the_wires():
-    """Both fused lanes publish ``column_rates_routed_moe`` as a subset of
-    ``column_rates``, equal to the build's own copy, and the validator refuses
-    a copy that names a rate the lane does not read."""
+    """Every fused lane publishes ``column_rates_routed_moe`` inside
+    ``column_rates``, equal to the build's own derivation for its library:
+    since the 16-bit gate/up launch runs the 16-word slot at two word stages,
+    the routed launches read every rate 1..8 on all three libraries.
+    ``column_rates`` is the library's dense launch's set, which is the same
+    1..8 on the E4M3 libraries and 1..14 on the value library (tessera#750
+    item 4).  The validator refuses a copy that names a rate the lane does not
+    read."""
     from tessera import routed_fused as rf
 
-    for lane in (ext.ROUTED_FUSED_E4M3_MODULE_NAME, ext.ROUTED_FUSED_VALUE_MODULE_NAME):
+    for lane, library in ((ext.ROUTED_FUSED_E4M3_MODULE_NAME, "e4m3"),
+                          (ext.ROUTED_FUSED_VALUE_MODULE_NAME, "value"),
+                          (ext.ROUTED_FUSED_MMA_E4M3_MODULE_NAME, "e4m3mma")):
         requires = lane_requirements(lane)
-        assert requires["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES)
-        assert set(requires["column_rates_routed_moe"]) < set(requires["column_rates"])
-        assert requires == ext.ROUTED_FUSED_LANE_REQUIRES
+        family = "value" if library == "value" else "e4m3"
+        assert requires["column_rates_routed_moe"] == list(rf.routed_lane_rates(library)) == list(rf.RATES)
+        assert set(requires["column_rates_routed_moe"]) <= set(requires["column_rates"])
+        assert requires["column_rates"] == list(rf.dense_rates(family))
+    assert lane_requirements(ext.ROUTED_FUSED_E4M3_MODULE_NAME) == ext.ROUTED_FUSED_LANE_REQUIRES
     assert "column_rates_routed_moe" in ext.LANE_REQUIREMENT_FIELDS
     assert "column_rates_routed_moe" not in lane_requirements(LANE)   # the GEMV lane has one launch shape
 
@@ -931,15 +965,19 @@ def test_the_validator_holds_the_routed_set_inside_the_wires(monkeypatch, mutate
 
 
 def test_the_core_decides_the_routed_set_against_the_structure():
-    """A routed stack at rate 7 is refused by the structure-scoped set and a
-    dense unit at rate 7 is not; a caller that did not state the structure is
-    refused by name (absent evidence is not a pass), and so is a structure
-    this build does not serve.  Rates 4 and 5 (q256 1088's pair) pass either
-    way."""
+    """On a lane whose routed set stops at rate 6 (``V48_ROUTED``), a routed
+    stack at rate 7 is refused by the structure-scoped set and a dense unit at
+    rate 7 is not; a caller that did not state the structure is refused by
+    name (absent evidence is not a pass), and so is a structure this build
+    does not serve.  Rates 4 and 5 (q256 1088's pair) pass either way.  The
+    published lane reaches rate 7 on both structures."""
     from tessera.serving.scheme import decide_lane_requirements
     from tessera.structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
 
-    requires = lane_requirements(FUSED_LANE)
+    published = lane_requirements(FUSED_LANE)
+    for structure in (STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE):
+        assert decide_lane_requirements(FUSED_LANE, published, dict(RATE7_FACTS, structure=structure)) == []
+    requires = _narrowed(published)
     routed6 = dict(RATE7_FACTS, structure=STRUCTURE_ROUTED_MOE)
     refusals = decide_lane_requirements(FUSED_LANE, requires, routed6)
     assert len(refusals) == 1 and refusals[0].startswith("column_rates_routed_moe [7]"), refusals
@@ -958,21 +996,26 @@ def test_the_core_decides_the_routed_set_against_the_structure():
     assert any("rates was not read" in r and "column_rates_routed_moe" in r for r in absent), absent
 
 
-def test_the_plan_gate_reads_the_structure_and_has_no_passing_default():
-    """``refuse_unreachable_lane`` on a fused lane: an expert stack at q256
-    1792 (rate 7) is refused with the launch named and the dense re-plan
-    offered; the same rung as a dense structure passes; a plan that did not
-    state its structure is refused by name; q256 1280 (rate 5) and 1088 (4/5)
-    pass as a stack."""
+def test_the_plan_gate_reads_the_structure_and_has_no_passing_default(monkeypatch):
+    """``refuse_unreachable_lane`` on a fused lane whose routed set stops at
+    rate 6 (``V48_ROUTED``): an expert stack at q256 1792 (rate 7) is refused
+    with the launch named and the dense re-plan offered; the same rung as a
+    dense structure passes; a plan that did not state its structure is refused
+    by name; q256 1280 (rate 5) and 1088 (4/5) pass as a stack.  The published
+    lane plans the rate-7 stack."""
     from tessera.structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
 
     def plan(q256, **kw):
         recipe = wire_recipe(E4M3, q256)
         return refuse_unreachable_lane(
-            FUSED_LANE, grid="E4M3", q256=q256, rate_cap=E4M3.rate_cap,
+            FUSED_LANE, grid="E4M3", q256=q256, rate_cap=body_rate_cap(recipe.body, E4M3),
             body=recipe.body.name, plane=recipe.scale_plane.name,
             window_bits=int(recipe.window_bits), target=f"stack@q{q256}", **kw)
 
+    assert plan(1792, structure=STRUCTURE_ROUTED_MOE) == (7,)
+    assert plan(2048, structure=STRUCTURE_ROUTED_MOE) == (8,)
+    assert plan(1920, structure=STRUCTURE_ROUTED_MOE) == (7, 8)
+    _narrow_fused_lane(monkeypatch)
     with pytest.raises(ValueError) as caught:
         plan(1792, structure=STRUCTURE_ROUTED_MOE)
     message = str(caught.value)
@@ -997,4 +1040,4 @@ def test_the_byte_time_report_cannot_decide_the_routed_set():
     report = lane_wire_report(FUSED_LANE, dict(RATE7_FACTS, rates=(4,)))
     assert not report["readable"]
     assert [r for r in report["refusals"] if "column_rates_routed_moe" in r and "structure was not read" in r]
-    assert report["requirements"]["column_rates_routed_moe"] == [1, 2, 3, 4, 5, 6]
+    assert report["requirements"]["column_rates_routed_moe"] == list(range(1, 9))

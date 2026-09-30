@@ -46,13 +46,19 @@ from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind
 from .unit_artifact import ParsedMetadata, parse_unit_metadata
 
-#: The highest column rate the documented window tile-word layout expresses:
-#: a column's 512-code tile is ``512 * rate`` bits = ``16 * rate`` int32
-#: words, exact for every integer rate, and the window GEMM's own reference
-#: packs 1..8 (``tests/window_pack_reference.py``).  This is the LAYOUT's
-#: bound, not the CUDA GEMV roster's (1, 2, 4), which keeps its own refusal
-#: where it belongs.
+#: The highest column rate :func:`prepare_window_compact` admits unless its
+#: caller names another: the routed-expert lanes' 1..8.  The documented window
+#: tile-word layout is exact for every integer rate -- a column's 512-code tile
+#: is ``512 * rate`` bits = ``16 * rate`` int32 words -- so this is a lane
+#: bound, not the layout's, and not the CUDA GEMV roster's (1, 2, 4), which
+#: keeps its own refusal where it belongs.
 WINDOW_GEMM_RATE_MAX = 8
+#: The dense lanes' bound (tessera#750 item 4): every rate a 14-bit window
+#: holds.  The Triton dense window GEMM reads a state as the window's bits
+#: ending at ``(row + 1) * rate`` for any such rate, the fused dense identity
+#: decodes 1..14 on the value family (``routed_fused.DENSE_RATE_MAX``), and
+#: the window GEMM's own reference packs them (``tests/window_pack_reference.py``).
+DENSE_WINDOW_RATE_MAX = 14
 
 __all__ = [
     "CompactWire",
@@ -61,6 +67,7 @@ __all__ = [
     "require_compact_cut",
     "prepare_span2_compact",
     "prepare_window_compact",
+    "DENSE_WINDOW_RATE_MAX",
     "WINDOW_GEMM_RATE_MAX",
 ]
 
@@ -600,7 +607,8 @@ def _repack_destination(size: int, device, scratch: "dict | None") -> torch.Tens
 
 def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
                            cols: "tuple[int, int]", device,
-                           scratch: "dict | None" = None):
+                           scratch: "dict | None" = None, *,
+                           rate_max: int = WINDOW_GEMM_RATE_MAX):
     """The window BODY plane in ``kernel_window_gemv``'s tile order.
 
     The same ``Repacked`` ``kernel_window_gemv.repack_window_body`` builds
@@ -625,19 +633,22 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     rates_local = rates_all[c0:c1]
     wind = int(metadata.manifest.window_bits)
     require_window_geometry(wind, rates_local)
-    # The bound is the tile-word LAYOUT's, not the CUDA GEMV's roster: a
-    # column chunk is ``512 * rate`` bits = ``16 * rate`` int32 words for every
-    # integer rate, and the bitstream recipe is exact for 1..8
-    # (``tests/window_pack_reference.py``, the window GEMM's own reference).
+    # The bound is the caller's lane's, not the CUDA GEMV's roster: a column
+    # chunk is ``512 * rate`` bits = ``16 * rate`` int32 words for every
+    # integer rate (``tests/window_pack_reference.py``, the window GEMM's own
+    # reference).  Routed stacks stop at WINDOW_GEMM_RATE_MAX (the fused
+    # gate/up launch's 1..8); dense units pass DENSE_WINDOW_RATE_MAX.
     # ``SUPPORTED_RATES`` = (1, 2, 4) is that GEMV's admission and it keeps its
     # own refusal; inheriting it here rejected grammar-valid 3/5/6/7 streams
     # the GEMM serves.
-    bad = sorted({int(r) for r in rates_local} - set(range(1, WINDOW_GEMM_RATE_MAX + 1)))
+    if not 1 <= rate_max <= DENSE_WINDOW_RATE_MAX:
+        raise ValueError(f"rate_max {rate_max} is outside 1..{DENSE_WINDOW_RATE_MAX}")
+    bad = sorted({int(r) for r in rates_local} - set(range(1, rate_max + 1)))
     if bad:
         raise GrammarError(
-            f"rates {bad} are outside the window GEMM's bitstream layout 1.."
-            f"{WINDOW_GEMM_RATE_MAX}: a column chunk is 16 * rate int32 words, "
-            "and the documented recipe covers every integer rate in that range "
+            f"rates {bad} are outside this lane's window GEMM rates 1.."
+            f"{rate_max}: a column chunk is 16 * rate int32 words for every "
+            "integer rate, and the caller's lane bounds the rates it serves "
             "(the CUDA GEMV roster is not this bound)"
         )
     rows_total = metadata.rows
@@ -689,7 +700,8 @@ def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
                            device="cuda", M: int = 1, plan=None,
                            family: "str | None" = None,
                            table_dtype=torch.bfloat16,
-                           scratch: "dict | None" = None):
+                           scratch: "dict | None" = None,
+                           rate_max: int = WINDOW_GEMM_RATE_MAX):
     """A CHANNEL-plane window unit -> the native window GEMM's unit.
 
     The result is ``kernel_window_gemv.WindowGemvUnit`` with the repacked
@@ -713,6 +725,10 @@ def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
     same scratch overwrites: the caller copies the unit out first, as the
     routed intake's ``WindowUnitAxis.put`` does in the same load callback.  A
     unit that must outlive the call (the dense route's) is built without it.
+
+    ``rate_max`` is the caller's lane bound on column rates: the routed
+    stacks' default ``WINDOW_GEMM_RATE_MAX`` (8), or ``DENSE_WINDOW_RATE_MAX``
+    (14) for a dense unit.  A rate above it is refused by name.
     """
     from . import kernel_window_gemv as kg
     from .alphabet import require_hardware_byte_grid
@@ -756,7 +772,8 @@ def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
         metadata.chunks[PlaneKind.DIAG_SV], metadata.rows, device)[r0:r1]
     scale = (scale_rows.float()
              * float(metadata.manifest.scale_plane.global_scale)).reshape(-1).contiguous()
-    rep = _repack_window_compact(metadata, (r0, r1), (c0, c1), device, scratch)
+    rep = _repack_window_compact(metadata, (r0, r1), (c0, c1), device, scratch,
+                                 rate_max=rate_max)
     if plan is None:
         plan = kg.default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype,
                                window_bits=int(metadata.manifest.window_bits))

@@ -175,13 +175,14 @@ from tessera.alphabet import (  # noqa: E402
 from tessera.bf16_route import BF16_FAMILY  # noqa: E402
 from tessera.container import SCHEMA_MINOR  # noqa: E402
 from tessera.layout import tp_agnostic_at_minor  # noqa: E402
+from tessera.manifest import body_rate_cap  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, served_recipe)
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
-    PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
-    load_serving_contract, output_partitions)
+    PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, classify_construction, construction_entry,
+    format_entry, load_serving_contract, output_partitions)
 from tessera.serving.dense_ownership import (  # noqa: E402
     FUSED, fused_module as _fused_module, partition_members)
 from tessera.serving.scheme import (  # noqa: E402
@@ -664,7 +665,7 @@ def check_lanes(lanes, grid, q256: int, where: "str | None" = None,
     for lane in lanes:
         try:
             rates = refuse_unreachable_lane(
-                lane, grid=grid.name, q256=int(q256), rate_cap=grid.rate_cap,
+                lane, grid=grid.name, q256=int(q256), rate_cap=body_rate_cap(recipe.body, grid),
                 body=recipe.body.name, plane=recipe.scale_plane.name,
                 window_bits=int(recipe.window_bits), target=target)
         except ValueError as exc:
@@ -2514,8 +2515,9 @@ def main():
         for unit in record["units"]:
             expert_units.setdefault(unit["source_tensor"], []).append(
                 dict(unit, stack=stack))
-    # ``attested_by`` is the routed_moe cells whose ``rungs_q256`` hold the
-    # stack's rung -- the gate above read them, and the record says which
+    # ``attested_by`` is the routed_moe cells that cover the stack's rung
+    # (``contract.cell_covers_rung``: a census rung, or an allowable rung of
+    # one of the cell's run tables) -- the gate above read them, and the record says which
     # (#135, principle 12).  Empty only under --allow-unserveable, where the
     # manifest's ``serving_gate`` block carries the refusal beside it.
     moe_records = {stack: {"family": record["family"], "grid": record["grid"].name,
@@ -2524,7 +2526,9 @@ def main():
                                cell["id"] for cell in attested_cells(
                                    PAYLOAD_FAMILY_BY_ROUTE[record["family"]],
                                    STRUCTURE_ROUTED_MOE)
-                               if int(record["q256"]) in cell["rungs_q256"]],
+                               if cell_covers_rung(
+                                   cell, int(record["q256"]),
+                                   format_entry(PAYLOAD_FAMILY_BY_ROUTE[record["family"]]))],
                            "source_layout": record["source_layout"],
                            "hidden_size": record["hidden_size"],
                            "intermediate_size": record["intermediate_size"],
