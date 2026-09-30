@@ -246,6 +246,13 @@ class PreparedGroupedWindowGemm:
     block_k: int
     quantizer: str | None = "native"
     arithmetic: str = "epilogue"
+    #: The ``e2m1`` family's scale (E2M1x2 window body over LUT16): per expert,
+    #: the group-16 nibble plane (uint8 ``[E, rows * cols / 32]``), the
+    #: 16-entry UE4M3 table (uint8 ``[E, 16]``) and the fp32 global.  ``None``
+    #: on the other two families, whose scale is ``scale_all``.
+    scale_plane_all: "torch.Tensor | None" = None
+    scale_lut_all: "torch.Tensor | None" = None
+    global_all: "torch.Tensor | None" = None
 
     @property
     def device(self) -> torch.device:
@@ -261,6 +268,10 @@ class PreparedGroupedWindowGemm:
                  apply_router_weight_on_input: bool = False,
                  route_input: bool = False,
                  round_routes: bool = False) -> torch.Tensor:
+        if self.family == "e2m1":
+            raise GrammarError(
+                "the e2m1 family has no grouped Triton GEMM; its stacks are served by the "
+                "fused routed window lane (tessera.routed_fused) only")
         if x.dim() != 2 or x.shape[1] != self.cols or x.device != self.device:
             raise GrammarError(
                 f"x must be a [T, {self.cols}] tensor on {self.device}, got "
@@ -412,16 +423,33 @@ def prepare_grouped_window_gemm_from_soa(
     block_k: int = 64,
     quantizer: str | None = "native",
     arithmetic: str = "epilogue",
+    scale_plane_all: "torch.Tensor | None" = None,
+    scale_lut_all: "torch.Tensor | None" = None,
+    global_all: "torch.Tensor | None" = None,
 ) -> PreparedGroupedWindowGemm:
     """A prebuilt SoA stack -- what a loader fills incrementally -- validated
     once and wrapped.  Shapes, dtypes and the per-expert offsets must already
-    be the kernel's contract; anything else refuses by name."""
+    be the kernel's contract; anything else refuses by name.
+
+    ``family="e2m1"`` is the E2M1x2 window body over the LUT16 plane: its
+    ``codes_all`` holds tuple code bytes, its ``rows`` are weight rows (two
+    per code), and its scale is ``scale_plane_all``/``scale_lut_all``/
+    ``global_all`` instead of ``scale_all``.  Such a bundle is data for the
+    fused routed lane; calling it refuses."""
     if arithmetic not in ("epilogue", "folded"):
         raise GrammarError(f"unknown weight arithmetic {arithmetic!r}")
     if arithmetic == "folded" and family != "value":
         raise GrammarError("the folded weight arithmetic is the BF16 (value family) contract")
-    if family not in ("value", "e4m3"):
-        raise GrammarError(f"window_gemm_grouped serves the value and e4m3 families, got {family!r}")
+    if family not in ("value", "e4m3", "e2m1"):
+        raise GrammarError(
+            f"window_gemm_grouped serves the value, e4m3 and e2m1 families, got {family!r}")
+    e2m1 = family == "e2m1"
+    if e2m1 != (scale_plane_all is not None) or e2m1 != (scale_lut_all is not None) \
+            or e2m1 != (global_all is not None):
+        raise GrammarError(
+            "the scale plane, table and global are the e2m1 family's scale and only its: "
+            f"family {family!r} got plane={scale_plane_all is not None}, "
+            f"table={scale_lut_all is not None}, global={global_all is not None}")
     word_width = int(words_all.shape[1])
     for name, t, shape in (("word_off", word_off, (experts,)),
                            ("tile_words", tile_words, (experts,)),
@@ -433,12 +461,28 @@ def prepare_grouped_window_gemm_from_soa(
     expected_off = torch.arange(experts, device=word_off.device, dtype=word_off.dtype) * word_width
     if not bool((word_off == expected_off).all()):
         raise GrammarError("word_off must be the uniform per-expert word stride")
-    for name, t, shape in (("scale_all", scale_all, (experts, rows)),
-                           ("perm_all", perm_all, (experts, cols)),
-                           ("init_all", init_all, (experts, cols))):
+    shapes = [("perm_all", perm_all, (experts, cols)), ("init_all", init_all, (experts, cols))]
+    if not e2m1:
+        shapes.insert(0, ("scale_all", scale_all, (experts, rows)))
+    for name, t, shape in shapes:
         if tuple(t.shape) != shape:
             raise GrammarError(f"{name} must be {shape}, got {tuple(t.shape)}")
-    if family == "value":
+    if e2m1:
+        if rows % 2 or cols % 16:
+            raise GrammarError(
+                f"an E2M1x2 stack is whole tuples over whole 16-column scale groups: rows "
+                f"{rows} must be even and cols {cols} a multiple of 16")
+        for name, t, shape, dtype in (
+                ("codes_all", codes_all, (experts, 1 << window_bits), torch.uint8),
+                # two rows' nibbles per byte for each 16-column group
+                ("scale_plane_all", scale_plane_all, (experts, rows * (cols // 16) // 2),
+                 torch.uint8),
+                ("scale_lut_all", scale_lut_all, (experts, 16), torch.uint8),
+                ("global_all", global_all, (experts,), torch.float32)):
+            if tuple(t.shape) != shape or t.dtype != dtype:
+                raise GrammarError(
+                    f"{name} must be {dtype} {shape}, got {t.dtype} {tuple(t.shape)}")
+    elif family == "value":
         if tuple(table_all.shape) != (experts, 1 << window_bits) or table_all.dtype != torch.bfloat16:
             raise GrammarError(
                 f"table_all must be bf16 [E, {1 << window_bits}], got "
@@ -455,6 +499,7 @@ def prepare_grouped_window_gemm_from_soa(
         perm_all=perm_all, rows=rows, cols=cols, experts=experts, window_bits=window_bits,
         family=family, block_m=block_m, block_n=block_n, block_k=block_k,
         quantizer=quantizer if family == "e4m3" else "native", arithmetic=arithmetic,
+        scale_plane_all=scale_plane_all, scale_lut_all=scale_lut_all, global_all=global_all,
     )
 
 
