@@ -27,6 +27,8 @@ from vllm.v1.attention.backends.mla.sparse_utils import (
 )
 
 from .backend import probed_platform_token
+from .graph_equivalence import (graph_mode, num_draft_tokens, op_implementation_gap,
+                                padded_families, padded_token_counts)
 
 # Compatibility guards, not device qualification. These are the unmodified
 # sources from eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c.
@@ -72,84 +74,14 @@ def _runner_sha256() -> str:
 
 
 def _graph_mode(compilation) -> CUDAGraphMode:
-    """The CUDA-graph mode vLLM will run for this backend.
-
-    ``resolve_cudagraph_mode_and_sizes`` settles the mode after the backend is
-    chosen, from the least capable metadata builder. This backend's builder
-    (``FlashInferMLASparseMetadataBuilder``) supports ``UNIFORM_BATCH``, never
-    ``ALWAYS``, so a ``FULL`` request loses its mixed-batch half there: to
-    ``FULL_AND_PIECEWISE`` when attention is a splitting op, and to
-    ``FULL_DECODE_ONLY`` otherwise. The gate judges the mode that will run.
-    """
-    mode = compilation.cudagraph_mode
-    if mode is None:
-        return CUDAGraphMode.NONE
-    if mode == CUDAGraphMode.FULL:
-        return (CUDAGraphMode.FULL_AND_PIECEWISE
-                if compilation.splitting_ops_contain_attention()
-                else CUDAGraphMode.FULL_DECODE_ONLY)
-    return mode
+    """The CUDA-graph mode vLLM will run for this backend (``graph_equivalence.graph_mode``)."""
+    mode = graph_mode(compilation)
+    return CUDAGraphMode.NONE if mode is None else mode
 
 
-def _num_draft_tokens(config) -> int:
-    spec = config.speculative_config
-    return int(spec.num_speculative_tokens or 0) if spec is not None else 0
-
-
-def _padded_families(config, graph: CUDAGraphMode) -> list[tuple[str, list[int]]]:
-    """Each graph family's token counts that replay a larger captured graph than their own.
-
-    vLLM's V2 runner (``CudaGraphManager._init_candidates``) runs a batch of n
-    tokens in the smallest captured graph of its family that holds it; a
-    FULL candidate comes before a piecewise one, and a batch larger than
-    every graph of its family runs eager, unpadded. With k draft tokens a
-    decode request carries q = 1 + k query tokens, and the families are:
-
-    - the FULL graphs for uniform decode batches (``FULL_DECODE_ONLY``, and
-      ``FULL_AND_PIECEWISE``'s FULL half): each capture size rounded up to
-      whole requests of q tokens, kept up to ``max_num_seqs`` requests and
-      the largest capture size. Without a drafter this is the decode batch
-      of n requests; with one, the target's verification of n requests, and
-      the drafter's first step, which dispatches on the target's padded
-      count (``AutoRegressiveSpeculator.propose``) and so pads with it;
-    - the drafter's later steps, k >= 2 (``init_cudagraph_manager``): FULL
-      graphs of one token per request, at the capture sizes up to
-      ``max_num_seqs``, in any mode with FULL decode graphs; eager otherwise;
-    - mixed batches (``PIECEWISE``, and ``FULL_AND_PIECEWISE``'s piecewise
-      half): every capture size. Under ``PIECEWISE`` uniform batches take
-      these graphs too.
-
-    These are the families of the autoregressive speculator, which vLLM runs
-    for method ``mtp``; the gate refuses every other drafter under graphs.
-    """
-    sizes = sorted(set(config.compilation_config.cudagraph_capture_sizes or ()))
-    if not sizes or graph == CUDAGraphMode.NONE:
-        return []
-    max_num_seqs = config.scheduler_config.max_num_seqs
-    draft = _num_draft_tokens(config)
-    query = 1 + draft
-    families = []
-    if graph in (CUDAGraphMode.FULL_DECODE_ONLY, CUDAGraphMode.FULL_AND_PIECEWISE):
-        ceiling = min(max_num_seqs * query, sizes[-1])
-        uniform = {-(-n // query) * query for n in sizes}
-        uniform = sorted(n for n in uniform if n <= ceiling)
-        if uniform:
-            families.append(("target verification and draft prefill" if draft else "decode",
-                             [n * query for n in range(1, max_num_seqs + 1)
-                              if n * query < uniform[-1] and n * query not in uniform]))
-        if draft >= 2:
-            steps = [n for n in sizes if n <= max_num_seqs]
-            if steps:
-                families.append(("draft decode",
-                                 [n for n in range(1, steps[-1]) if n not in steps]))
-    if graph in (CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL_AND_PIECEWISE):
-        families.append(("mixed", [n for n in range(1, sizes[-1]) if n not in sizes]))
-    return [(name, counts) for name, counts in families if counts]
-
-
-def _padded_token_counts(config, graph: CUDAGraphMode) -> list[int]:
-    """Token counts that replay a larger captured graph than their own, in any family."""
-    return sorted({n for _, counts in _padded_families(config, graph) for n in counts})
+_num_draft_tokens = num_draft_tokens
+_padded_families = padded_families
+_padded_token_counts = padded_token_counts
 
 
 #: Speculative decoding under CUDA graphs, admitted by receipt (tessera#695).
@@ -224,27 +156,7 @@ def _speculative_reason(config) -> str | None:
             "speculative decoding with CUDA-graph mode NONE")
 
 
-#: The op implementations compilation mode NONE resolves, which the eager
-#: reference runs: vLLM appends custom op ``"all"`` unless inductor compiles
-#: (``config/vllm.py``), and CUDA orders both IR ops ``vllm_c`` before
-#: ``native`` without codegen (``platforms/cuda.py``,
-#: ``get_default_ir_op_priority``). Every other compilation mode defaults to
-#: ``"none"`` and ``native``.
-_EAGER_IR_OPS = ("rms_norm", "fused_add_rms_norm")
-
-
-def _op_implementation_gap(config) -> str | None:
-    """How this configuration's op implementations differ from eager's, or None."""
-    custom = list(config.compilation_config.custom_ops or ())
-    gaps = []
-    if "all" not in custom or any(str(op).startswith("-") for op in custom):
-        gaps.append(f"custom_ops resolves to {custom}, not ['all']")
-    priority = config.kernel_config.ir_op_priority
-    for op in _EAGER_IR_OPS:
-        order = list(getattr(priority, op, None) or ())
-        if order[:1] != ["vllm_c"]:
-            gaps.append(f"IR op {op} resolves to {order}, not ['vllm_c', 'native']")
-    return "; ".join(gaps) or None
+_op_implementation_gap = op_implementation_gap
 
 
 def eager_equivalence_gap(config) -> str | None:
