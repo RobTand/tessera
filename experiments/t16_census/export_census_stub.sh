@@ -2,9 +2,13 @@
 # Export one T-16 dense census stub: the 16 dense MLP modules encoded fresh at
 # the plan's BF16 rungs (GPU), the five routed stacks from u1 stub B's cached
 # expert units (no encode).  Run with cwd = the Tessera checkout.
-# usage: export_census_stub.sh NAME   (plan: $R/plan-NAME.json, out: $R/stub-NAME)
+# usage: PRODUCER_AUTHORITY=/abs/authority.py export_census_stub.sh NAME
+#   (plan: $R/plan-NAME.json, out: $R/stub-NAME).  The Hessian references bind
+#   the producer's calibration cache, which the exporter reads only through the
+#   producer's own authority file (--producer-authority, tessera#599).
 set -uo pipefail
 S="$1"
+AUTH="${PRODUCER_AUTHORITY:?set PRODUCER_AUTHORITY to the producer authority file}"
 R=/mnt/shared/tessera-measurements/t16-coverage-20260930/stubs
 SRCR=/mnt/shared/tessera-runs/moe/u1-stubs-20260926
 U=/mnt/shared/tessera-measurements/glm-canonical-census-20260908/activation-runtime-allocation-20260911/union-a4a8a16-01/cache
@@ -14,7 +18,7 @@ OUT="$R/stub-$S"
 LOG="$R/logs/export-$S-$(date -u +%Y%m%dT%H%M%SZ).log"
 echo "[export_census_stub] $S host=$(hostname) start=$(date -u +%FT%TZ) head=${TESSERA_HEAD:-$(git rev-parse HEAD 2>/dev/null)} gpu=$(nvidia-smi --query-gpu=name,power.draw --format=csv,noheader 2>/dev/null)" | tee "$LOG"
 PYTHONPATH=src:experiments TMPDIR=$R/tmp "$PY" experiments/export_tessera_serving.py "$SRCR/source-l8" "$OUT" \
-  --plan-json "$R/plan-$S.json" --device cuda \
+  --plan-json "$R/plan-$S.json" --device cuda --producer-authority "$AUTH" \
   --hessian "$U/hessian_capture.references.json" \
   --cached-expert-units "$SRCR/wires/cached_units.u1-stub-B.v1.json" --cached-hessian-identity committed \
   --cached-producer-package "$PRODUCER" \
