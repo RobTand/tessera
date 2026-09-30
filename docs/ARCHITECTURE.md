@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for CPU timing-evidence requirements (Refs #688).
+The census planner can describe the missing per-scope CUDA-event/profiler,
+Netdata, wire/runtime-identity and native-preparation evidence. It rejects
+stale or populated plans and emits null measurements, not a timing receipt.
+The GPU timing panel remains held; no performance or qualification is claimed.
+See [the CPU interface](design/native-census-planning.md#timing-evidence-requirements).
+
 Re-stamped 2026-09-29 for the CPU census planning slice (Refs #689).
 `tools/plan_native_census.py` binds explicit rank-local scopes to the packaged
 contract and shared dispatch registry, with stable scope IDs. Its versioned

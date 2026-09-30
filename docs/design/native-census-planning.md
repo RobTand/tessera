@@ -52,3 +52,19 @@ The later GPU arm must load the actual encoded wire, bind its bytes and runtime
 identity, verify geometry/native availability, and collect real route-census
 evidence. New rungs need their own qualification. A CPU plan cannot extend a
 reader range, promote a cell, establish graph replay, or certify served quality.
+
+## Timing evidence requirements
+
+The CPU slice for tessera#688 adds `build_timing_requirements(plan)`. It rebuilds
+and compares the complete plan against the current owner tables before emitting
+`tessera.kernel_timing_requirements.v1`. Stale hashes, altered scopes, or supplied
+measurements refuse rather than being copied into an apparently valid request.
+
+The manifest binds the plan's canonical SHA-256 and each scope ID. It requests
+CUDA-event samples (at least three, as #688 specifies), torch.profiler, matched
+Netdata, observed runtime identity, wire identity, native preparation, and route
+census. Measurements remain null. This is **not**
+`tessera.kernel_timing_receipt.v1`: it contains no medians, IQR, runtime image
+assertion, device execution, or performance result. It performs no submission,
+placement, sharding, or scheduling. The GPU arm is held; its measured 304-row
+panel and the #685 comparison remain outstanding.

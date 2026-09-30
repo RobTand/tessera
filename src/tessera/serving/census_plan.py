@@ -116,3 +116,34 @@ def build_census_plan(requests: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     return {"schema": PLAN_SCHEMA, "status": "not_executed", "gpu_executed": False,
             "contract_sha256": contract_sha, "registry_sha256": registry_sha,
             "rows": sorted(rows, key=lambda row: row["id"])}
+
+
+def build_timing_requirements(plan: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe missing GPU evidence; never manufacture a timing receipt (#688).
+
+    Rebuild the plan against the current owner tables so stale scopes or supplied
+    measurements cannot be laundered into an evidence request. The three-sample
+    minimum is the issue's explicit acceptance, not a statistical assertion.
+    """
+    if not isinstance(plan, Mapping) or plan.get("schema") != PLAN_SCHEMA:
+        raise ValueError("plan must use the current census planning schema")
+    try:
+        rebuilt = build_census_plan([row["scope"] for row in plan["rows"]])
+        if _canonical(plan) != _canonical(rebuilt):
+            raise ValueError("plan differs from the current unmeasured owner-derived plan")
+    except (KeyError, TypeError) as exc:
+        raise ValueError("plan is malformed") from exc
+    return {
+        "schema": "tessera.kernel_timing_requirements.v1",
+        "status": "not_executed",
+        "plan_sha256": hashlib.sha256(_canonical(rebuilt)).hexdigest(),
+        "minimum_samples": 3,
+        "method": "cuda_events",
+        "required_evidence": [
+            "cuda_event_samples", "torch_profiler", "netdata",
+            "observed_runtime_identity", "wire_identity", "native_preparation",
+            "route_census",
+        ],
+        "rows": [{"scope_id": row["id"], "measurement": None}
+                 for row in rebuilt["rows"]],
+    }
