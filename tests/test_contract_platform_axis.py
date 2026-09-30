@@ -20,6 +20,8 @@ from pathlib import Path
 
 import pytest
 
+from glm_nightly_cells import NIGHTLY_IMAGE, nightly_ids
+
 from tessera.serving.contract import (
     LANE_ELIGIBILITY_SCHEMA,
     PLATFORM_ARCH_KEYS,
@@ -277,6 +279,10 @@ def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
         "tessera_e4m3_k1_dense_sm121_batch_resident": "sha256:f8dbe1a0",
         "tessera_e4m3_k1_routed_moe_sm121_decode_resident": "sha256:f8dbe1a0",
         "tessera_e4m3_k1_routed_moe_sm121_batch_resident": "sha256:f8dbe1a0",
+        # Contract v48 (tessera#702): the same four scopes on the vLLM nightly,
+        # censused there with the instruction as the dispatch.
+        **{cell_id: "sha256:5be13705" for cell_id in nightly_ids()
+           if cell_id.startswith("tessera_e4m3_k1_")},
     }
 
 
@@ -618,9 +624,10 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
 
     The design asked that every cell's ``runtime.image`` equal its platform's
     ``serve_image``. The shipped document falsifies that: ``sm_121`` carries
-    two attested images, from v28 (#506) to v38 three, and since v39
+    two attested images, from v28 (#506) to v38 three, from v39
     (tessera#604) two again: the dense pin and the GLM serving image, which is
-    not the platform's ``serve_image``. Taken literally the
+    not the platform's ``serve_image``; and since v48 (tessera#702) three: the
+    vLLM nightly the GLM-5.3 release serves on joins them. Taken literally the
     stronger rule refuses the contract in this repository, so the rule is
     "attested by one of the platform's own cells" instead. This test is the
     measurement.
@@ -628,7 +635,8 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
     block = contract["lane_eligibility"]
     images = {cell["runtime"]["image"] for cell in block["cells"]
               if cell["platform"] == "sm_121"}
-    assert len(images) == 2, images
+    assert len(images) == 3, images
+    assert NIGHTLY_IMAGE in images
     assert block["platforms"]["sm_121"]["serve_image"] in images
 
 

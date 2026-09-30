@@ -1,5 +1,24 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the GLM cells on the vLLM nightly (tessera#702,
+contract v48). One TP1 eager route census of u1 stub B on image `5be13705`
+(eugr nightly 155ce16b plus the nccl230 layer, vLLM `0.30.1rc1.dev336`), with
+the NoPE plugin off and the image's own `FLASHINFER_MLA_SPARSE_SM120`
+attention, recorded all 21 Tessera modules in both phases on the launch pairs
+the `f8dbe1a0` receipt of the same stub recorded. Eight eager cells are minted
+on that image, the E4M3 and BF16 dense and routed scopes in both regimes, on
+exactly the rungs the stub carried (q256 1024 in all four). Their ids carry the
+derived runtime suffix. Before v48, no cell named the image the GLM-5.3 release
+serves on. The cells are eager only: no CUDA-graph serve of GLM-5.3 on this
+image computes eager's arithmetic. vLLM's default compile mode switches the
+norm operators. With `mode NONE` the graph serve still departs, from context
+5 on, and vLLM's source attributes it: a FULL capture freezes the GLM
+indexer's logits-and-top-k branch, because vLLM captures at
+`max_seq_len = max_model_len`, while eager takes the short-context causal
+fill. The two sum the same tokens in a different order. The controlled pair at
+`max_model_len 2048` is not yet run. Tessera's launches are identical in both. No route, launch, rung, grade or schema changes. See
+[the receipt](measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md).
+
 Re-stamped 2026-09-30 for the GLM MTP draft interface on the vLLM nightly
 (tessera#749). `serving.mtp_draft_lifetime` now reads a table of inspected
 interfaces, each identified by the sha256 of every module it touches:

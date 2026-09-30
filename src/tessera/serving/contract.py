@@ -156,6 +156,7 @@ __all__ = [
     "REQUIRES_PLUGIN",
     "contract_path",
     "cell_executes",
+    "derive_cell_executes",
     "cell_predicates",
     "refuse_unevaluated_predicates",
     "cell_residency_modes",
@@ -2494,34 +2495,21 @@ def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping
     return tuple(out)
 
 
-def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
-                            contract: Mapping[str, Any], where: str) -> None:
-    """``executes`` must BE the launches this build makes, not agree with them.
+def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                         contract: Mapping[str, Any], where: str = "cell") -> set:
+    """The launch pairs a cell's axes make: the value ``executes`` must equal.
 
-    Principle 14 applied to the launch: until schema v4 a cell said which A-side
-    contract ran and which rungs a receipt covered, and the only place the
-    LAUNCH appeared was the cell's ``id`` -- so the contract's machine-readable
-    answer to "what does an E4M3 decode execute" was the materialised FP8 pair
-    in every case, which stopped being true the moment an artifact at a
-    lane-readable rung was served (#111).  The value is derived here from
-    ``scheme.ROUTE_LAUNCHES``, the table the routes' own ``census_expected``
-    is built from, narrowed by exactly the axes the cell already carries: the
-    structure, regime, the residency its serve flag names, and the lanes each of its
-    rungs can reach.
+    ``entry`` is the family's ``formats[]`` row and ``route`` its ``scheme.ROUTES``
+    key.  This is ``_validate_cell_executes``'s derivation on its own, so a
+    fixture that moves a cell onto another rung states the launches the
+    validator will demand instead of restating the lane arithmetic by hand
+    (a hand restatement with ``lanes=()`` went stale the day the E4M3
+    instruction's lane reached every rate, contract v47).
     """
     from ..grammar import rate_set
     from .scheme import launch_pairs
 
     wires = {int(w["q256"]): w for w in entry["attested_wire"]}
-    # The family's own published terminal rate, so a rung above what this
-    # family can encode raises here rather than resolving to a rate set.
-    # The cell rungs are per WEIGHT and the bresenham schedule is per CODE: a
-    # code covers ``arity`` weights (export.encode_linear_planes writes
-    # ``q256 * grid.arity``; scheme._per_weight_q256 reads it back), so both
-    # the cap and the rung resolve onto the per-code root.  Resolving the
-    # per-weight rung directly broke at the shaped domain's floor: an arity-2
-    # rung below q256 256 is a full unit at rate 1 per code, not the
-    # sub-1-per-column rate rate_set would have to refuse.
     from fractions import Fraction
 
     from ..alphabet import SERIALISABLE_GRIDS
@@ -2541,6 +2529,35 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
         for mode in modes:
             want |= launch_pairs(route, structure=cell["structure"],
                                  regime=cell["regime"], mode=mode, lanes=lanes)
+    return want
+
+
+def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                            contract: Mapping[str, Any], where: str) -> None:
+    """``executes`` must BE the launches this build makes, not agree with them.
+
+    Principle 14 applied to the launch: until schema v4 a cell said which A-side
+    contract ran and which rungs a receipt covered, and the only place the
+    LAUNCH appeared was the cell's ``id`` -- so the contract's machine-readable
+    answer to "what does an E4M3 decode execute" was the materialised FP8 pair
+    in every case, which stopped being true the moment an artifact at a
+    lane-readable rung was served (#111).  The value is derived here from
+    ``scheme.ROUTE_LAUNCHES``, the table the routes' own ``census_expected``
+    is built from, narrowed by exactly the axes the cell already carries: the
+    structure, regime, the residency its serve flag names, and the lanes each of its
+    rungs can reach.
+    """
+    # The family's own published terminal rate, so a rung above what this
+    # family can encode raises in the derivation rather than resolving to a
+    # rate set.  The cell rungs are per WEIGHT and the bresenham schedule is
+    # per CODE: a code covers ``arity`` weights (export.encode_linear_planes
+    # writes ``q256 * grid.arity``; scheme._per_weight_q256 reads it back), so
+    # both the cap and the rung resolve onto the per-code root.  Resolving the
+    # per-weight rung directly broke at the shaped domain's floor: an arity-2
+    # rung below q256 256 is a full unit at rate 1 per code, not the
+    # sub-1-per-column rate rate_set would have to refuse.
+    want = derive_cell_executes(cell, route, entry, contract, where)
+    modes = cell_residency_modes(cell, where)
     got = cell_executes(cell)
     if got != want:
         raise ValueError(
