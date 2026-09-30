@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
+census stubs of u1 stub B's source carry their 16 dense modules as
+`TESSERA_BF16_K1` at one rung of every run table: `t16d1` covers [1] to [8] and
+the pairs between them, and `t16d2` covers [8,9] to [14]. Both served on the GLM
+image at TP 1, eager, resident, with every dense module on the fused dense pair
+in both phases. The two GLM-image BF16 dense cells gain the census rungs, so
+their derived run tables are all 27 tables the rule admits, and they cover every
+rung of 256..3584. No `executes` list, route or routed cell moves; routed T-16
+stays at `[4]`. Receipt: [the T-16 dense
+census](measurements/2026-09-30-t16-dense-census.md).
+
 Re-stamped 2026-09-30 for the staged stream history on the E4M3 instruction
 (Refs #750). In `routed_fused_window.cu`, each half's decode needs the 32
 stream bits before its first word. On the E4M3 instruction's library

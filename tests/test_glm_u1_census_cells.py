@@ -15,14 +15,17 @@ routed cells name the fused pair beside the compact one.  Contract v43 adds a
 tenth, the fused dense identity on stub B's q256 1024 dense modules, and
 contract v45 (tessera#694) an eleventh: stub B on the kernel that reads the
 wire's run table at every rate, on which every routed stack and every dense
-module of the stub takes the fused kernel.
+module of the stub takes the fused kernel.  Contract v52 (#750) adds two
+more: the T-16 dense census stubs t16d1 and t16d2, whose sixteen dense modules
+are BF16 at one rung of every run table [1]..[14] and the pairs between them,
+on which every dense module takes the fused dense identity.
 
 What it pins:
 
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
-2. each GLM-image cell covers EXACTLY the rungs the twelve receipts (these
-   eleven and v38's) carried for its family and structure -- a cell widened
+2. each GLM-image cell covers EXACTLY the rungs the receipts (these and
+   v38's) carried for its family and structure -- a cell widened
    past its receipts, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
@@ -83,12 +86,15 @@ RECEIPTS = {
     # module takes the fused dense identity under the value library
     # (docs/measurements/2026-09-30-t16-dense-census.md).
     "t16d1": "561f7e8c136bf9d236c11d5067cfd97924254ec86dd8db3848a380f7dd731c28",
+    "t16d2": "6b4b48d40145087097bb115371e6a794b0ff72bc9b19141311bc6fd7d5d8d497",
 }
 #: The BF16 dense rungs each T-16 census stub carries: one rung of every run
 #: table the stub covers -- on t16d1, [1]..[8] and the seven pairs between
-#: them, fifteen tables, fifteen rungs.
+#: them (fifteen tables); on t16d2, [8,9]..[14] (twelve tables, rates the
+#: dense launch reads since contract v51 and the routed launches do not).
 T16_DENSE_RUNGS = {
     "t16d1": {256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792, 1920, 2048},
+    "t16d2": set(range(2176, 3585, 128)),
 }
 #: The dense modules of stub B that take the fused identity (q256 1024, rows a
 #: multiple of 128), with the launch each recorded; every other dense module
