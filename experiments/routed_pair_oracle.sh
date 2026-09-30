@@ -18,6 +18,8 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 # tessera#640: the fused routed lane's opt-out rides into the container when set,
 # so one action can profile the compact adapter as the dispatch (TESSERA_ROUTED_FUSED=0).
 [[ -z "${TESSERA_ROUTED_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED=$TESSERA_ROUTED_FUSED")
+# The E4M3 family's tensor-core instruction (routed_fused.library_for) rides in when set.
+[[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_VERBOSE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_VERBOSE=$TESSERA_ROUTED_FUSED_VERBOSE")
 MEAS=/mnt/shared/tessera-measurements/glm-canonical-census-20260908
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
