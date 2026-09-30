@@ -428,6 +428,9 @@ def main():
             "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
             "start_unix": time.time()}
     recorded = routing_files(args.routing, ms) if args.routing else {}
+    if args.routing and not any(recorded.values()):
+        raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
+                         "(is the directory mounted into the container?)")
     meta["routing"] = {"root": args.routing, "files": {str(m): len(v) for m, v in recorded.items()}}
     meta["vllm_stubbed"] = VLLM_STUBBED
     if not VLLM_STUBBED:

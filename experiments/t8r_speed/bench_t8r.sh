@@ -38,13 +38,22 @@ fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
 EXTRA_MOUNTS=()
+# --routing DIR (recorded top-k ids) is read inside the container: mount it read-only.
+prev=""
+for a in "$@"; do
+  if [[ "$prev" == "--routing" ]]; then
+    [[ -d "$a" ]] || { echo "missing routing dir: $a" >&2; exit 2; }
+    EXTRA_MOUNTS+=(-v "$a":"$a":ro)
+  fi
+  prev="$a"
+done
 # BENCH_PY: the bench script under experiments/t8r_speed (default bench_t8r.py).
 BENCH_PY=${BENCH_PY:-bench_t8r.py}
 COMMAND=(python3 /work/experiments/t8r_speed/$BENCH_PY)
 if [[ "${BENCH_NCU:-0}" == 1 ]]; then
   NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
-  EXTRA_MOUNTS=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
+  EXTRA_MOUNTS+=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all
     --kernel-name "regex:${BENCH_NCU_KERNELS:-routed_fused_kernel|token_sum_kernel|window}"
     --section LaunchStats --section Occupancy --section SpeedOfLight
