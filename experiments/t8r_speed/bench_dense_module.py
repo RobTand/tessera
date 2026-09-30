@@ -13,6 +13,11 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
   b 32, f_a 64, g_a 64 (12448 rows) over K = 4096.
 - ``o_proj``: KDA ``o_proj``, one 4096-row role over K = 4096 (the N % 128
   control: a shape the N-tail change leaves on the same launch).
+- ``lm_head``: the vocab-parallel LM head, one 77440-row role (154880 / 2)
+  over K = 4096, read from the checkpoint's ``lm_head.weight`` (untied).  Its M
+  is the number of positions sampled in a step (vLLM prunes the hidden states
+  to them before the head), so a prefill of 8192 tokens is not one of its
+  shapes; time it at decode batch sizes.
 - One role each, for a K-split sweep of one geometry per launch: KDA
   ``q_proj`` (4096 x 4096), ``b_proj`` (32 x 4096), ``f_a_proj`` (64 x 4096),
   ``f_b_proj`` (4096 x 128); MLA ``q_a_proj`` (1536 x 4096),
@@ -82,16 +87,20 @@ MODULES = {
     # vLLM's merged MLA input (``fused_qkv_a_proj``, replicated): two roles, one
     # module, so the E4M3 libraries take it in one launch (tessera#750 WP2).
     "fused_qkv_a": ([("q_a_proj", 1536), ("kv_a_proj_with_mqa", 512)], 4096),
+    # The LM head (``ParallelLMHead``): the vocab split across TP2.
+    "lm_head": ([("lm_head", 77440)], 4096),
 }
 MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "fused_qkv_a"}
 SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
+#: Roles whose source tensor is not under a layer's ``self_attn``.
+SOURCE_KEYS = {"lm_head": "lm_head.weight"}
 
 
 def source_weight(model, layer, name, rows, cols):
     """The TP2 rank-0 shard of one real source tensor, bf16 on the GPU."""
     from safetensors import safe_open
 
-    key = SOURCE_PREFIX.format(layer=layer, name=name)
+    key = SOURCE_KEYS.get(name) or SOURCE_PREFIX.format(layer=layer, name=name)
     index = json.load(open(os.path.join(model, "model.safetensors.index.json")))["weight_map"]
     with safe_open(os.path.join(model, index[key]), framework="pt", device="cuda") as fh:
         w = fh.get_tensor(key)
