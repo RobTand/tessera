@@ -115,34 +115,34 @@ constexpr int DESC_INTS = 2 * 8;
 // the two words the odd-rate copies start early by), rounded to a multiple of
 // 4 so the 16-byte copies stay aligned.  A block on sm_121 may opt in to
 // 101,376 B of dynamic shared memory; the two-table gate/up launch needs
-// 91,984 + 768 * slot_words, so it fits slots up to 12 words (rates <= 6) and
+// 91,600 + 768 * slot_words, so it fits slots up to 12 words (rates <= 6) and
 // not the 16-word slot of rates 7 and 8; the one-table down/dense launch
 // (MODE 2) fits every rate.  The host entries check the launch against the
 // device's own limit.
 //
-// The column-map ring (``OFF_MAP``, gate/up only) holds a two-run chunk's
-// column map, one packed int32 per (half, column) (``pack_col``), in a ring of
-// WORD_STAGES chunks beside the word stages: the thread that issues a column's
-// words maps the column from the block descriptor once and stores it, and
-// every producer's ``load_prev`` reads it back from shared memory instead of
-// mapping the column again from global memory.  The down/dense launch (MODE
-// 2) has no ring: it maps one half, which both halves read, so the ring saves
-// it half as much and its extra barrier made it slower
-// (docs/measurements/2026-09-29-two-run-column-map.md).  A one-run unit's map
-// is computed, so it never touches the ring.
+// The descriptor ring (``OFF_DRING``) holds a two-run chunk's block
+// descriptors (``col_map``: BDESC_INTS int32 per projection, one for down and
+// dense, two for gate/up) for DRING_STAGES chunks.  They arrive with the word
+// stages' copies, two chunks ahead of the words that need them, so a two-run
+// chunk maps its columns from shared memory: ``issue_words`` and
+// ``load_prev`` each read the global descriptor once per chunk before, and
+// that global latency sat on the chunk loop's critical path.  A one-run
+// unit's map is computed, so it never touches the ring.
+constexpr int DRING_STAGES = 4;
 template <int MODE> struct Layout {
     static constexpr int TABLES = (MODE == 2) ? 1 : 2;
-    static constexpr bool MAP_RING = (MODE != 2);
-    static constexpr int MAP_STAGE = MAP_RING ? 2 * BK : 0;     // int32 per ring slot
+    static constexpr int PROJ = (MODE == 2) ? 1 : 2;             // projections per item
+    static constexpr int DRING_STAGE = PROJ * BDESC_INTS;        // int32 per ring slot
     static constexpr int OFF_TABLES = 0;
     static constexpr int OFF_B = OFF_TABLES + TABLES * TABLE_BYTES;
     static constexpr int OFF_A = OFF_B + STAGES * B_STAGE_BYTES;
     static constexpr int OFF_WSCALE = OFF_A + STAGES * A_STAGE_BYTES;
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
-    static constexpr int OFF_MAP = OFF_CLAIM + 16;
-    static constexpr int OFF_W = OFF_MAP + WORD_STAGES * MAP_STAGE * 4;   // 91,984 (two tables) / 58,448 (one)
+    static constexpr int OFF_DRING = OFF_CLAIM + 16;
+    static constexpr int OFF_W = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;   // 91,600 (two tables) / 58,640 (one)
     static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
+    static_assert(OFF_DRING % 16 == 0, "the descriptor ring takes 16-byte copies");
 };
 constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // 16: the rate-8 slot
 __host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK * slot_words; }
@@ -309,8 +309,10 @@ __device__ __forceinline__ RunPair load_runs(const int32_t* runs, int e) {
 }
 // Column ``m`` of chunk ``kc`` for the pair (RL; TWO: a second run at RL + 1)
 // with ``n_lo`` low-rate columns whose words end at ``w_hi``.
+// ``blk`` is chunk kc's block descriptor, in global memory or in the
+// descriptor ring (see Layout); a one-run unit never reads it.
 template <int RL, bool TWO>
-__device__ __forceinline__ ColMap col_map(const int32_t* bdesc, int n_lo, int w_hi, int kc, int m) {
+__device__ __forceinline__ ColMap col_map(const int32_t* blk, int n_lo, int w_hi, int kc, int m) {
     ColMap c;
     if constexpr (!TWO) {
         // A one-run unit (every q256 whose root is an integer rate, the
@@ -324,7 +326,6 @@ __device__ __forceinline__ ColMap col_map(const int32_t* bdesc, int n_lo, int w_
         c.p = kc * BK + m;
         c.cw0 = c.p * 16 * RL;
     } else {
-        const int32_t* blk = bdesc + (long)kc * BDESC_INTS;
         const int cib = (blk[m >> 2] >> (8 * (m & 3))) & 0xFF;
         const int2 counts = *reinterpret_cast<const int2*>(blk + 8);   // (n_lo_before, cnt_lo)
         c.lo = m < counts.y;
@@ -334,27 +335,6 @@ __device__ __forceinline__ ColMap col_map(const int32_t* bdesc, int n_lo, int w_
         c.p = c.lo ? rank : n_lo + rank;
         c.cw0 = c.lo ? rank * 16 * RL : w_hi + rank * 16 * (RL + 1);
     }
-    return c;
-}
-// A two-run column map as one int32 in the column-map ring (see Layout):
-// bits 0..4 the in-block position, bit 5 the low-rate run, bits 6..31 the
-// column's rank within its run (``rank <= p < K < 2^26``, checked by the host
-// entry).  ``unpack_col`` rebuilds ``p`` and ``cw0`` from the rank with the
-// same arithmetic as ``col_map``, so the map it returns is the same.
-constexpr int MAP_RANK_BITS = 26;
-__device__ __forceinline__ int32_t pack_col(const ColMap& c, int n_lo) {
-    const int rank = c.lo ? c.p : c.p - n_lo;
-    return (int32_t)(((uint32_t)rank << 6) | ((uint32_t)c.lo << 5) | (uint32_t)c.cib);
-}
-template <int RL>
-__device__ __forceinline__ ColMap unpack_col(int32_t w, int n_lo, int w_hi) {
-    ColMap c;
-    const int rank = (int)((uint32_t)w >> 6);
-    c.cib = w & 31;
-    c.lo = (w >> 5) & 1;
-    c.rate = c.lo ? RL : RL + 1;
-    c.p = c.lo ? rank : n_lo + rank;
-    c.cw0 = c.lo ? rank * 16 * RL : w_hi + rank * 16 * (RL + 1);
     return c;
 }
 // The words of one column's 64-row half at rate R into its word-stage slot, as
@@ -700,7 +680,6 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int ih = (tid >> 6) & 1;
             const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
             const int t64_i = ih ? t64_h[1] : t64_h[0];
-            const int32_t* bdesc_i = ih ? bdesc_h[1] : bdesc_h[0];
             auto load_a = [&](int kc, uint4& a) {
                 if (arow >= 0) {
                     if constexpr (FP8) {
@@ -756,24 +735,39 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 constexpr int RH = RL + 1;                  // read only when TWO
                 constexpr int SW = pair_slot_words(RL, TWO);
                 constexpr int W_STAGE = w_stage_ints(SW);
-                // A two-run gate/up unit maps its columns through the ring.
-                constexpr bool RING = TWO && L::MAP_RING;
+                // Chunk kc's block descriptor for half h: the expert's, in
+                // global memory (``ring`` false: the first chunks, before the
+                // ring's copies land), or its copy in the descriptor ring (see
+                // Layout).  The ring's address is formed here, where it is
+                // used, not held in a register for the whole chunk loop.
+                auto blk_of = [&](int kc, int h, bool ring) -> const int32_t* {
+                    if (ring)
+                        return reinterpret_cast<const int32_t*>(smem + L::OFF_DRING)
+                               + (kc % DRING_STAGES) * L::DRING_STAGE + ((MODE == 2) ? 0 : h) * BDESC_INTS;
+                    return ((MODE != 2 && h) ? bdesc_h[1] : bdesc_h[0]) + (long)kc * BDESC_INTS;
+                };
+                // Chunk kc's descriptors into the ring: 16 bytes per thread,
+                // from producer threads that issue no words.  A two-run unit
+                // only (a one-run unit's map is computed).
+                auto issue_desc = [&](int kc) {
+                    if constexpr (TWO) {
+                        const int t = tid - 128;
+                        if (t >= 0 && t < 3 * L::PROJ) {
+                            const int h = t >= 3, part = t - 3 * h;
+                            const int32_t* src = (h ? bdesc_h[1] : bdesc_h[0]) + (long)kc * BDESC_INTS + 4 * part;
+                            cp_async16(reinterpret_cast<int32_t*>(smem + L::OFF_DRING)
+                                           + (kc % DRING_STAGES) * L::DRING_STAGE + h * BDESC_INTS + 4 * part, src);
+                        }
+                    }
+                };
                 // The words of chunk kc for half ih, lane group mm (``copy_half``).
                 // SW never exceeds the launch's slot (the trap check above), so
-                // the stages fit the shared memory the host sized.  With the
-                // ring, the thread also stores the column's map (see Layout)
-                // for ``load_prev``.  The ring's address is formed here, where
-                // it is used, not held in a register for the whole chunk loop.
-                auto issue_words = [&](int kc) {
+                // the stages fit the shared memory the host sized.
+                auto issue_words = [&](int kc, bool ring) {
                     if (tid < 128) {
                         const int mm = (tid >> 1) & 31;
                         const int q = tid & 1;
-                        const ColMap c = col_map<RL, TWO>(bdesc_i, n_lo, w_hi, kc, mm);
-                        if constexpr (RING) {
-                            if (q == 0)
-                                reinterpret_cast<int32_t*>(smem + L::OFF_MAP)
-                                    [(kc % WORD_STAGES) * L::MAP_STAGE + ih * BK + mm] = pack_col(c, n_lo);
-                        }
+                        const ColMap c = col_map<RL, TWO>(blk_of(kc, ih, ring), n_lo, w_hi, kc, mm);
                         const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
                         int32_t* dst = Ws + (kc % WORD_STAGES) * W_STAGE + (ih * BK + mm) * SW;
                         if constexpr (TWO) {
@@ -792,19 +786,14 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // loading it for j = 0 alone left rows 8..12 of every half after
                 // the first reading a zero history at rate 1).  The chunk's column
                 // map comes back too: the chunk's decode, one iteration later,
-                // reads it instead of mapping the column again.  With the ring,
-                // it reads the map ``issue_words`` stored for the chunk, which
-                // is visible to every producer only past a producer barrier
-                // after the store: the chunk loop calls it there.
-                auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2]) {
+                // reads it instead of mapping the column again.  A two-run
+                // chunk maps from the descriptor ring (``ring``; see its
+                // schedule below).
+                auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2], bool ring) {
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
                         // MODE 2 reads one projection: both halves map alike.
-                        if constexpr (RING)
-                            cm[h] = unpack_col<RL>(reinterpret_cast<const int32_t*>(smem + L::OFF_MAP)
-                                                       [(kc % WORD_STAGES) * L::MAP_STAGE + h * BK + m], n_lo, w_hi);
-                        else
-                            cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(bdesc_h[h], n_lo, w_hi, kc, m);
+                        cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
                         if (8 * j * c.rate >= 32) continue;
                         const int wr0 = 2 * c.rate * t64_h[h];
@@ -817,17 +806,45 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                 };
 
-                issue_words(kc0);
-                cp_async_commit();                     // group 0: the tables and the first chunk's words
-                if (nkc > 1) issue_words(kc0 + 1);
+                // The descriptor ring's schedule.  Chunks kc0 and kc0 + 1's
+                // descriptors are stored directly (read from global memory now;
+                // a producer barrier makes them visible), chunk kc0 + 2's copy
+                // joins group 0 (the tables and chunk kc0's words), chunk
+                // kc0 + 3's group 1 (chunk kc0 + 1's words), and the group
+                // iteration kc commits carries chunk kc + 2's words and chunk
+                // kc + 4's descriptors.  So chunk kc + 1's descriptors are
+                // visible to every producer from iteration kc's top (the
+                // map for ``load_prev(kc + 1)``) and chunk kc + 2's past that
+                // iteration's wait and barrier (``issue_words(kc + 2)``).  The
+                // copy of chunk kc + 4 overwrites chunk kc's slot only past
+                // iteration kc's barrier, which every reader of chunk kc's
+                // descriptors (``issue_words`` at iteration kc - 2,
+                // ``load_prev`` at kc - 1) passed after reading them.  The first
+                // two chunks' words map from the global descriptors.
+                if constexpr (TWO) {
+                    const int t = tid - 128;
+                    if (t >= 0 && t < 3 * L::PROJ) {
+                        const int h = t >= 3, part = t - 3 * h;
+                        const int32_t* src = (h ? bdesc_h[1] : bdesc_h[0]) + (long)kc0 * BDESC_INTS + 4 * part;
+                        int32_t* dst = reinterpret_cast<int32_t*>(smem + L::OFF_DRING) + h * BDESC_INTS + 4 * part;
+                        #pragma unroll
+                        for (int c = 0; c < 2; ++c)
+                            if (c < nkc)
+                                *reinterpret_cast<int4*>(dst + ((kc0 + c) % DRING_STAGES) * L::DRING_STAGE) =
+                                    *reinterpret_cast<const int4*>(src + c * BDESC_INTS);
+                    }
+                }
+                issue_words(kc0, false);
+                if (nkc > 2) issue_desc(kc0 + 2);
+                cp_async_commit();                     // group 0
+                if (nkc > 1) issue_words(kc0 + 1, false);
+                if (nkc > 3) issue_desc(kc0 + 3);
                 cp_async_commit();                     // group 1
-                // With the ring: the first chunk's map, stored just above, is
-                // read by every producer's ``load_prev`` below.
-                if constexpr (RING) bar_sync(BAR_PROD, PRODUCER_THREADS);
+                if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
                 int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
                 ColMap cm_cur[2], cm_nxt[2];
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
-                load_prev(kc0, prev_cur, cm_cur);
+                load_prev(kc0, prev_cur, cm_cur, TWO);
                 load_a(kc0, a_cur);
                 // Settle the first chunk's loads here, before the chunk loop.
                 // They land in the registers the loop carries (``prev_cur``,
@@ -850,22 +867,18 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 }
                 for (int ic = 0; ic < nkc; ++ic, ++gc) {
                     const int kc = kc0 + ic;
-                    if constexpr (!RING) {
-                        if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt); load_a(kc + 1, a_nxt); }
+                    // The two orders are the measured ones: a one-run loop that
+                    // issues the activation chunk first waits longer at M = 1.
+                    if constexpr (TWO) {
+                        if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
                     } else {
-                        if (ic + 1 < nkc) load_a(kc + 1, a_nxt);
+                        if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                    if (ic + 2 < nkc) issue_words(kc + 2);
+                    if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                    if (ic + 4 < nkc) issue_desc(kc + 4);
                     cp_async_commit();
-                    // With the ring, chunk kc + 1's map is read past the barrier
-                    // above: ``issue_words`` stored it one iteration ago (or
-                    // before the loop), and ``issue_words(kc + 4)``, which reuses
-                    // its slot, runs only past the barrier two iterations on.
-                    if constexpr (RING) {
-                        if (ic + 1 < nkc) load_prev(kc + 1, prev_nxt, cm_nxt);
-                    }
                     const int stage = gc & 1;
                     if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
                     store_a(stage, a_cur);
@@ -1208,6 +1221,8 @@ void check_run_tables(const torch::Tensor& runs, const torch::Tensor& bdesc, int
     TORCH_CHECK(bdesc.is_cuda() && bdesc.dim() == 3 && bdesc.size(0) == E && bdesc.size(1) == K / BK
                 && bdesc.size(2) == BDESC_INTS && bdesc.scalar_type() == torch::kInt32 && bdesc.is_contiguous(),
                 bdesc_name, " must be int32 [E, K / ", BK, ", ", BDESC_INTS, "]");
+    // The descriptor ring copies a chunk's descriptor in 16-byte pieces.
+    TORCH_CHECK(reinterpret_cast<uintptr_t>(bdesc.data_ptr()) % 16 == 0, bdesc_name, " must be 16-byte aligned");
 }
 
 }  // namespace
@@ -1290,8 +1305,6 @@ void routed_fused_forward(
     }
     TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
                 "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
-    TORCH_CHECK(K < (int64_t(1) << MAP_RANK_BITS), "K must be below 2^", MAP_RANK_BITS,
-                " (the column-map ring's rank field, see pack_col)");
     TORCH_CHECK(grid >= 1, "grid must be positive");
 
     Params p{};
