@@ -13,7 +13,10 @@ stack) and calls the serving route the vLLM plugin dispatches:
   rank-0 partition shapes, on random weights (time does not depend on values).
 
 Routing is synthetic and BALANCED (token t picks experts (8t+j) mod 288), so
-M = 1 touches 8 experts and M >= 36 touches all 288, as a serve does.
+M = 1 touches 8 experts and M >= 36 touches all 288, as a serve does.  With
+``--routing DIR``, every routed group also replays the top-k ids a serve
+recorded (``DIR/m<M>/*.pt``), one ``<M>@<file>`` cell per file, so a real
+routing's per-expert skew can be timed against the balanced cell.
 
 Per (group, M) it records:
 * ``wall``: CUDA events around one eager call, median / IQR of ``--iters``;
@@ -321,6 +324,49 @@ def balanced_routing(m, device):
     return ids, w
 
 
+def routing_files(root, ms):
+    """``{M: [path, ...]}`` of recorded top-k ids under ``root/m<M>/*.pt|*.json``.
+
+    A ``.json`` file is a list of ``.pt`` paths (relative to ``root``) whose ids
+    are concatenated in order: consecutive prefill chunks of one layer make that
+    layer's routing for one larger step.
+    """
+    out = {}
+    for m in ms:
+        d = os.path.join(root, f"m{m}")
+        if os.path.isdir(d):
+            out[m] = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith((".pt", ".json")))
+    return out
+
+
+def recorded_routing(path, m, device):
+    """Top-k ids a serve recorded (``{"ids": int32 [M, top_k]}``), uniform weights.
+
+    Time depends on how many routes each expert receives, not on the weights,
+    so the weights stay 1/top_k as in ``balanced_routing``.
+    """
+    if path.endswith(".json"):
+        root = os.path.dirname(os.path.dirname(path))
+        parts = [torch.load(os.path.join(root, q), map_location="cpu", weights_only=False)["ids"]
+                 for q in json.load(open(path))]
+        ids = torch.cat(parts, 0)
+    else:
+        ids = torch.load(path, map_location="cpu", weights_only=False)["ids"]
+    if tuple(ids.shape) != (m, TOP_K):
+        raise ValueError(f"{path}: ids shape {tuple(ids.shape)} != ({m}, {TOP_K})")
+    ids = ids.to(device=device, dtype=torch.int32)
+    w = torch.full((m, TOP_K), 1.0 / TOP_K, dtype=torch.float32, device=device)
+    return ids, w
+
+
+def routing_stats(ids):
+    """Per-expert route counts and the fused kernel's 64-route superblocks."""
+    n = torch.bincount(ids.flatten().long().cpu(), minlength=EXPERTS)
+    return {"experts_touched": int((n > 0).sum()), "max_routes": int(n.max()),
+            "superblocks": int(((n + 63) // 64).sum()),
+            "superblocks_128": int(((n + 127) // 128).sum())}
+
+
 # ------------------------------------------------------------------ timing
 def summarize(samples):
     s = sorted(samples)
@@ -372,6 +418,9 @@ def main():
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--power-s", type=float, default=3.0)
     ap.add_argument("--no-graph", action="store_true")
+    ap.add_argument("--routing", default=None,
+                    help="directory with m<M>/*.pt recorded top-k ids; each file adds a "
+                         "'<M>@<file>' cell to every routed group (balanced cells stay)")
     ap.add_argument("--ncu", action="store_true",
                     help="one call per (group, M) between cudaProfilerStart/Stop; no timing")
     args = ap.parse_args()
@@ -390,6 +439,11 @@ def main():
             "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
             "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
             "start_unix": time.time()}
+    recorded = routing_files(args.routing, ms) if args.routing else {}
+    if args.routing and not any(recorded.values()):
+        raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
+                         "(is the directory mounted into the container?)")
+    meta["routing"] = {"root": args.routing, "files": {str(m): len(v) for m, v in recorded.items()}}
     meta["vllm_stubbed"] = VLLM_STUBBED
     if not VLLM_STUBBED:
         import vllm
@@ -420,12 +474,23 @@ def main():
                 rec["info"] = info
                 rec["load_s"] = time.time() - t0
                 rec["cells"] = {}
+                cases = []
                 for m in ms:
+                    cases.append((str(m), m, None))
+                    if kind == "routed":
+                        cases += [(f"{m}@{os.path.splitext(os.path.basename(f))[0]}", m, f)
+                                  for f in recorded.get(m, [])]
+                for key, m, rfile in cases:
                     # seeded per (group, M), so two arms that run different
                     # group sets still see the same x and can compare outputs
                     torch.manual_seed(zlib.crc32(f"{gid}:{m}".encode()))
                     x = torch.randn(m, width, device=dev, dtype=torch.bfloat16)
-                    xa = (x,) if kind != "routed" else (x, *balanced_routing(m, dev))
+                    if kind != "routed":
+                        xa = (x,)
+                    elif rfile is None:
+                        xa = (x, *balanced_routing(m, dev))
+                    else:
+                        xa = (x, *recorded_routing(rfile, m, dev))
                     call = lambda: fn(*xa)  # noqa: E731
                     if args.ncu:
                         # ncu --profile-from-start off: exactly one profiled call per (group, M).
@@ -436,11 +501,13 @@ def main():
                         call()
                         torch.cuda.synchronize()
                         torch.cuda.cudart().cudaProfilerStop()
-                        rec["cells"][str(m)] = {"ncu": True, "bytes": bytes_for(m)}
-                        print(json.dumps({"group": gid, "M": m, "ncu": True}), flush=True)
+                        rec["cells"][key] = {"ncu": True, "bytes": bytes_for(m)}
+                        print(json.dumps({"group": gid, "M": key, "ncu": True}), flush=True)
                         del x, xa
                         continue
                     cell = {"bytes": bytes_for(m)}
+                    if kind == "routed":
+                        cell["routing"] = dict(routing_stats(xa[1]), source=rfile or "balanced")
                     # the output's bytes, for a bitwise A/B across kernel arms
                     y = call()
                     torch.cuda.synchronize()
@@ -476,8 +543,8 @@ def main():
                     cell["eff_gbps"] = cell["bytes"] / (best * 1e-3) / 1e9
                     k_us = cell["profile"]["kernel_us_per_call"]
                     cell["eff_gbps_kernel"] = cell["bytes"] / (k_us * 1e-6) / 1e9 if k_us else None
-                    rec["cells"][str(m)] = cell
-                    print(json.dumps({"group": gid, "M": m, "wall_ms": round(cell["wall"]["median_ms"], 4),
+                    rec["cells"][key] = cell
+                    print(json.dumps({"group": gid, "M": key, "wall_ms": round(cell["wall"]["median_ms"], 4),
                                       "graph_ms": round(cell["graph"]["median_ms"], 4) if "graph" in cell else None,
                                       "kernel_ms": round(k_us / 1000, 4),
                                       "GBps_kernel": round(cell["eff_gbps_kernel"] or 0, 1),
