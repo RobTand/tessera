@@ -600,7 +600,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         # The dense identity on the E4M3 instruction (``TESSERA_FUSED_E4M3_
         # MMA=e4m3``): the same kernel, launch symbol and admission predicate
         # as the row above, built as ``tessera_routed_fused_mma_e4m3``.
-        # EXPERIMENTAL until a served census earns it cells.
+        # Attested since contract v47 (see ``EXPERIMENTAL_LAUNCHES``).
         {"symbol": FUSED_WINDOW_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": "tessera_routed_fused_mma_e4m3",
          "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
@@ -639,7 +639,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
         # The fused lane on the E4M3 instruction (``TESSERA_FUSED_E4M3_MMA=
-        # e4m3``); see the dense row of the same library.  EXPERIMENTAL.
+        # e4m3``); see the dense row of the same library.  Attested since v47.
         {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_mma_e4m3",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},

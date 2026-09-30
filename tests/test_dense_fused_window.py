@@ -655,9 +655,10 @@ def test_the_dense_identity_is_a_published_launch_of_both_window_routes():
         assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         for mode in ("resident", "streamed"):
             for regime in ("decode", "batch"):
-                # the attested view is the two v43 pairs; the E4M3
-                # instruction's pair is experimental until a census earns it cells
-                assert {module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH} == launch_pairs(
+                # contract v47 (tessera#747) earned the E4M3 instruction's pair
+                # its cells, so EXPERIMENTAL_LAUNCHES is empty again and the
+                # attested view is every launch the route makes
+                assert set(module.DENSE_LAUNCHES) == launch_pairs(
                     route, structure=STRUCTURE_DENSE, regime=regime, mode=mode), (route, regime, mode)
                 assert set(module.DENSE_LAUNCHES) == launch_pairs(
                     route, structure=STRUCTURE_DENSE, regime=regime, mode=mode,
