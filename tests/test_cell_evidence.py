@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from glm_nightly_cells import nightly_ids
+
 from tessera.serving.contract import (
     EVIDENCE_CONTROL_OUTCOMES,
     EVIDENCE_CONTROL_REFERENCES,
@@ -250,6 +252,11 @@ _EVIDENCE = {
     # (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).  Route only.
     "tessera_e2m1_k2_dense_sm121_decode_resident": _ROUTE_ONLY,
     "tessera_e2m1_k2_dense_sm121_batch_resident": _ROUTE_ONLY,
+    # Contract v48 (tessera#702): the four E4M3/BF16 GLM scopes again on the
+    # vLLM nightly image, from one TP1 eager route census of stub B there
+    # (``docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md``).
+    # Route only: no KL arm, no smoke.
+    **{cell_id: _ROUTE_ONLY for cell_id in nightly_ids()},
 }
 
 #: The evidence the pin-image dense E2M1 pair carried until contract v39
@@ -821,9 +828,11 @@ def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
         if cell["structure"] == "routed_moe" and cell["evidence"]["smoke"]["record"] is None)
     # Since contract v38 (tessera#604) that is every routed cell: the two that
     # carried the record were withdrawn, and the v38 routed cells ran no smoke.
+    # Contract v48 adds the four nightly-image routed cells, route only.
     assert routed_without_record == sorted(
-        f"tessera_{family}_routed_moe_sm121_{regime}_resident"
-        for family in ("e2m1_k2", "e4m3_k1", "bf16_k1") for regime in ("decode", "batch"))
+        [f"tessera_{family}_routed_moe_sm121_{regime}_resident"
+         for family in ("e2m1_k2", "e4m3_k1", "bf16_k1") for regime in ("decode", "batch")]
+        + nightly_ids("routed_moe"))
     for cell in _WITHDRAWN_V38.values():
         smoke = cell["evidence"]["smoke"]
         assert smoke["status"] == "recorded", cell["id"]

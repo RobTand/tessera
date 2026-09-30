@@ -32,6 +32,8 @@ from pathlib import Path
 import pytest
 import torch
 
+from glm_nightly_cells import NIGHTLY_IMAGE
+
 from tessera.alphabet import PayloadGrid
 from tessera.control import GRID_NAMES, grid_for_name
 from tessera.errors import GrammarError
@@ -643,8 +645,9 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
     """
     import copy
 
-    from tessera.serving.contract import load_serving_contract, validate_serving_contract
-    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_FP8, attested_cells, launch_pairs
+    from tessera.serving.contract import (derive_cell_executes, load_serving_contract,
+                                          validate_serving_contract)
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_FP8, attested_cells
 
     served_rung, compiled_rung = 896, 1792
     doc = copy.deepcopy(load_serving_contract())
@@ -660,6 +663,13 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             # the exporter's own output.
             row["attested_wire"] = [dict(stamp) for stamp in row["attested_wire"]] + [
                 {**row["attested_wire"][0], "q256": compiled_rung}]
+    # The premise is ONE image's decode/batch pair.  Contract v48 publishes the
+    # same scope on a second image (the vLLM nightly, tessera#702); that pair is
+    # left out of the copy so the refusal below is about the moved rung alone.
+    doc["lane_eligibility"]["cells"] = [
+        cell for cell in doc["lane_eligibility"]["cells"]
+        if not ((cell["family"], cell["structure"]) == ("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE)
+                and cell["runtime"]["image"] == NIGHTLY_IMAGE)]
     moved = False
     for cell in doc["lane_eligibility"]["cells"]:
         if (cell["family"], cell["structure"]) != ("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE):
@@ -668,19 +678,19 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             cell["rungs_q256"] = [compiled_rung]
             cell["qualification"] = "compile_only"
             cell["route_status"] = "unbacked"
-            # The fused routed window lane reads every rate 1..8 since contract
-            # v45 (tessera#694; at v42-v44 it reached rate-4 rungs only), but
-            # its routed-expert launch reaches rates 1..6 on the target
-            # (lane.requires.column_rates_routed_moe: the two-table gate/up
-            # launch does not fit sm_121's shared memory above them), so at the
-            # moved rung -- rate 7 -- an expert stack's launches are the
-            # lane-free ones; the validator derives that set per rung and
-            # structure and refuses a cell that names a launch its rung cannot
-            # make, or omits one it makes.
+            # Which lanes reach the moved rung is the validator's derivation,
+            # per rung and structure, and it refuses a cell that names a launch
+            # its rung cannot make or omits one it makes.  The fixture reads
+            # that derivation rather than restating it: the 16-bit fused lane's
+            # routed-expert launch reaches rates 1..6 on the target
+            # (lane.requires.column_rates_routed_moe), but the E4M3
+            # instruction's lane reaches 1..8, so since contract v47 the moved
+            # rung -- rate 7 -- makes that lane's pair too, and a hand-written
+            # lane-free set went stale.
+            formats_row = next(r for r in doc["formats"] if r["family"] == "TESSERA_E4M3_K1")
             cell["executes"] = [
                 {"symbol": symbol, "decoder": decoder} for symbol, decoder in sorted(
-                    launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, regime="batch",
-                                 mode="resident", lanes=()))]
+                    derive_cell_executes(cell, TESSERA_FP8, formats_row, doc))]
             moved = True
     assert moved, "test premise: the packaged table publishes a batch routed cell"
     validate_serving_contract(doc)
