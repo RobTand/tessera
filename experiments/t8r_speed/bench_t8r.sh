@@ -71,13 +71,27 @@ if [[ "${BENCH_NCU:-0}" == 1 ]]; then
     --export "$OUT/t8r" --force-overwrite
     python3 /work/experiments/t8r_speed/$BENCH_PY --ncu)
 fi
+# BENCH_EXT_DIR: a torch-extension directory that build_ext.sh filled for this
+# arm's source, so the timed action loads the built libraries instead of
+# compiling them on the measurement host (default: a fresh one under
+# <out_dir>, which compiles here).  Its libraries are listed before and after;
+# a changed list means the action compiled after all.
+EXT_DIR=$OUT/home/torch_extensions
+if [[ -n "${BENCH_EXT_DIR:-}" ]]; then
+  EXT_DIR=$(realpath -m "$BENCH_EXT_DIR")
+  [[ -d "$EXT_DIR" ]] || { echo "missing BENCH_EXT_DIR: $EXT_DIR" >&2; exit 2; }
+  EXTRA_MOUNTS+=(-v "$EXT_DIR":"$EXT_DIR")
+fi
+ext_libs() { (cd "$EXT_DIR" 2>/dev/null && ls -l --time-style=+%s -- */*.so 2>/dev/null | awk '{print $6, $7}'); }
+EXT_BEFORE=$(ext_libs)
+echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
 docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
-  -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
+  -e TORCH_EXTENSIONS_DIR="$EXT_DIR" \
   -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
@@ -85,5 +99,9 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
   "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
+EXT_AFTER=$(ext_libs)
+if [[ -n "${BENCH_EXT_DIR:-}" && "$EXT_AFTER" != "$EXT_BEFORE" ]]; then
+  echo "ext_dir COMPILED IN THE TIMED ACTION: [$(echo "$EXT_AFTER" | tr '\n' ';')]"
+fi
 echo "end=$(date -u +%FT%TZ) rc=$rc"
 exit $rc

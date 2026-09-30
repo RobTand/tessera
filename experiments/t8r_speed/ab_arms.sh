@@ -32,15 +32,21 @@ step() {
   tail -3 "$OUT/$name.log"
 }
 H=experiments/t8r_speed/bench_t8r.sh
+# An arm whose <out_root>/ext-<arm> exists (build_ext.sh, run as its own row off
+# the measurement host) loads its libraries from there instead of compiling
+# them inside this action.
+extenv() { [[ -d "$OUT/ext-$1" ]] && echo "BENCH_EXT_DIR=$OUT/ext-$1"; return 0; }
 bench() {   # step-name arm family suffix groups [extra env...]
   local name=$1 arm=$2 fam=$3 sfx=$4 groups=$5; shift 5
-  step "$name-$arm-$fam$sfx" env BENCH_SRC="$OUT/src-$arm/src" "$@" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS
+  # shellcheck disable=SC2046
+  step "$name-$arm-$fam$sfx" env $(extenv "$arm") BENCH_SRC="$OUT/src-$arm/src" "$@" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS
 }
 N=${#ARMS[@]}
 for ((i = 0; i < N; i++)); do bench "r$i" "${ARMS[i]}" routed "" "$ROUTED"; done
 for ((i = N - 1; i >= 0; i--)); do bench "r${i}b" "${ARMS[i]}" routed b "$ROUTED"; done
 for ((i = 0; i < N; i++)); do
-  step "n$i-${ARMS[i]}-ncu" env BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
+  # shellcheck disable=SC2046
+  step "n$i-${ARMS[i]}-ncu" env $(extenv "${ARMS[i]}") BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
     bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms 1,512
 done
 for ((i = 0; i < N; i++)); do bench "d$i" "${ARMS[i]}" dense "" "$DENSE"; done
