@@ -162,11 +162,15 @@ def test_t_star_infinite_when_sp_never_pays():
 
 def test_state_decisions():
     s = gp.SpState("auto", 2048, 2)
-    assert not s.use_sp(4096) and s.wants_measurement(2048) and not s.wants_measurement(1024)
+    assert not s.use_sp(4096) and s.wants_measurement()
     s.t_star = 256
-    assert s.use_sp(256) and not s.use_sp(255) and not s.wants_measurement(2048)
+    assert s.use_sp(256) and not s.use_sp(255) and not s.wants_measurement()
     f = gp.SpState("force", 2048, 2)
-    assert f.use_sp(2) and not f.use_sp(1) and not f.wants_measurement(2048)
+    assert f.use_sp(2) and not f.use_sp(1) and not f.wants_measurement()
+    # SP is armed only by a completed pass, and never under capture.
+    assert not f.begin_pass(8, capturing=False) and not f.ready  # pass 1: never SP
+    assert f.begin_pass(8, capturing=False) and f.ready          # pass 2
+    assert not f.begin_pass(8, capturing=True)                   # a capture: stock sequence
 
 
 # --------------------------------------------------------------- two-rank stand-in
