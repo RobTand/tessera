@@ -467,9 +467,9 @@ def test_glm_mtp_nightly_draft_without_mapper_resolves_ignored_shared_linear(mon
     assert type(config.get_quant_method(_layer(), actual)).__name__ == "UnquantizedLinearMethod"
     # The body table stays public; the draft view is the adopted second one.
     assert "language_model.model.layers.8.mlp.shared_experts.gate_up_proj" in config.ignore
-    assert len(config._mapped_views) == 2
+    assert len(config._mapped_views) == 3  # checkpoint, body, adopted draft
     config.get_quant_method(_layer(), actual)
-    assert len(calls) == 1, "adopted once, not re-resolved per layer"
+    assert len(calls) == 1 and len(config._mapped_views) == 3, "adopted once, not per layer"
 
 
 def test_glm_mtp_nightly_draft_without_mapper_resolves_declared_expert(monkeypatch):
@@ -501,7 +501,7 @@ def test_glm_mtp_unrecognized_draft_without_mapper_still_refuses(monkeypatch):
     _nightly_draft_rename(monkeypatch, rename=None)
     with pytest.raises(ValueError, match="declares no wire"):
         config.get_quant_method(_layer(), actual)
-    assert len(config._mapped_views) == 1
+    assert len(config._mapped_views) == 2  # checkpoint and body only
 
 
 @pytest.mark.parametrize("context", ["none", "wrong_architecture", "wrong_method"])
@@ -520,7 +520,7 @@ def test_glm_mtp_draft_rename_is_not_adopted_outside_a_glm_mtp_serve(monkeypatch
     calls = _nightly_draft_rename(monkeypatch)
     with pytest.raises(ValueError, match="declares no wire"):
         config.get_quant_method(_layer(), "model.layers.8.mlp.shared_experts.gate_up_proj")
-    assert not calls and len(config._mapped_views) == 1
+    assert not calls and len(config._mapped_views) == 2
 
 
 def test_glm_mtp_draft_rename_waits_for_the_body_view(monkeypatch):

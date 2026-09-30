@@ -218,6 +218,7 @@ class TesseraConfig(QuantizationConfig):
         self._mapped_views: list[tuple[dict[str, dict], tuple[str, ...]]] = [
             (self.target_scheme, self.ignore)]
         self._mapper_applied = False
+        self._draft_rename_resolved = False
         # Resolve the residency HERE, at config parse, so an unset or misspelt
         # mode is one clear message before any weight is touched.
         self._mode = serve_mode()
@@ -442,6 +443,9 @@ class TesseraConfig(QuantizationConfig):
         from .mtp_draft_lifetime import draft_load_rename
         from .weights_mapper import PrefixRename
 
+        # Resolved once per config: a declined interface stays declined, and an
+        # adopted view is not appended twice.
+        self._draft_rename_resolved = True
         rename = draft_load_rename()
         if rename is not None:
             self.apply_vllm_mapper(PrefixRename(*rename))
@@ -465,7 +469,7 @@ class TesseraConfig(QuantizationConfig):
         under the same guards, and only one spelling may be declared.
         """
         blocked = ".mtp_block." in prefix
-        if len(self._mapped_views) < 2 and self._mapper_applied:
+        if self._mapper_applied and not self._draft_rename_resolved:
             self._adopt_draft_load_rename()
         if not blocked and (prefix in self.target_scheme or prefix in self.ignore
                             or len(self._mapped_views) < 2):
