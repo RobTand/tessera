@@ -776,36 +776,36 @@ def _decode_exact(family, q256, build):
     _one_hot_exact(fused, stacks, family, f"q256={q256}", EXPERTS)
 
 
-def _one_hot_exact(fused, stacks, family, tag, experts):
+def _one_hot_exact(fused, stacks, family, tag, experts, *, hidden=HIDDEN, inter=INTER):
     """Both launches on one-hot inputs against ``fb.one_hot_expected`` of
-    each role's ground truth (``gate``/``up`` ``[INTER, HIDDEN]``, ``down``
-    ``[HIDDEN, INTER]``), bitwise.  A role is anything with the fields
+    each role's ground truth (``gate``/``up`` ``[inter, hidden]``, ``down``
+    ``[hidden, inter]``), bitwise.  A role is anything with the fields
     ``fused_bound.decoded_weight`` reads."""
     gate, up, down = stacks
-    # gate/up: HIDDEN one-hot tokens, every one routed to every expert
-    _x, xq, a, hot = fb.one_hot_inputs(family, HIDDEN, _quant)
-    ids = torch.arange(experts, device="cuda", dtype=torch.int32).expand(HIDDEN, experts).contiguous()
-    rw = torch.ones(HIDDEN, experts, device="cuda")
+    # gate/up: hidden one-hot tokens, every one routed to every expert
+    _x, xq, a, hot = fb.one_hot_inputs(family, hidden, _quant)
+    ids = torch.arange(experts, device="cuda", dtype=torch.int32).expand(hidden, experts).contiguous()
+    rw = torch.ones(hidden, experts, device="cuda")
     gu = fused.gate_up(xq, ids, rw, a_scale=a, preserve=True)
-    assert gu.shape == (HIDDEN, experts, 2 * INTER)
+    assert gu.shape == (hidden, experts, 2 * inter)
     for e in range(experts):
-        for name, stack, half in (("gate", gate, gu[:, e, :INTER]), ("up", up, gu[:, e, INTER:])):
+        for name, stack, half in (("gate", gate, gu[:, e, :inter]), ("up", up, gu[:, e, inter:])):
             want = fb.one_hot_expected(stack[e], family, hot, a)
             bad = half != want
             assert not bool(bad.any()), (
                 f"{family} {tag} {name} expert {e}: {int(bad.sum())} of {bad.numel()} "
                 f"one-hot products differ; first at {bad.nonzero()[0].tolist()} (column, row)")
-    # down: INTER one-hot routes per expert, top_k = 1, unit weight
-    _x, xq, a, hot = fb.one_hot_inputs(family, INTER, _quant)
+    # down: inter one-hot routes per expert, top_k = 1, unit weight
+    _x, xq, a, hot = fb.one_hot_inputs(family, inter, _quant)
     xq_all = xq.repeat(experts, 1).contiguous()
     a_all = a.repeat(experts).contiguous() if a is not None else None
-    ids = torch.arange(experts, device="cuda", dtype=torch.int32).repeat_interleave(INTER).reshape(-1, 1)
-    rw = torch.ones(experts * INTER, 1, device="cuda")
+    ids = torch.arange(experts, device="cuda", dtype=torch.int32).repeat_interleave(inter).reshape(-1, 1)
+    rw = torch.ones(experts * inter, 1, device="cuda")
     out = fused.down_routes(xq_all, ids, rw, a_scale=a_all, route_input=True, round_routes=True)
-    assert out.shape == (experts * INTER, HIDDEN)
+    assert out.shape == (experts * inter, hidden)
     for e in range(experts):
         want = fb.one_hot_expected(down[e], family, hot, a)
-        got = out[e * INTER:(e + 1) * INTER]
+        got = out[e * inter:(e + 1) * inter]
         bad = got != want
         assert not bool(bad.any()), (
             f"{family} {tag} down expert {e}: {int(bad.sum())} of {bad.numel()} one-hot "
@@ -817,6 +817,12 @@ def _one_hot_exact(fused, stacks, family, tag, experts):
 #: Experts per rank-1 stack: two distinct encodes per role, so an expert
 #: index error cannot hide behind identical units.
 TP2_EXPERTS = 2
+#: Rank 1's intermediate width.  The parent is ``2 * TP2_INTER`` wide, so the
+#: gate/up row cut starts at row 768, inside the second 512-row tile, and the
+#: down column cut at column 768, a multiple of the 256-column period a
+#: two-rate unit's schedule repeats on (the loader refuses a column cut off
+#: that period by name; GLM-5.3's TP2 cut, 1024 of 2048, is on it).
+TP2_INTER = 768
 
 
 @functools.lru_cache(maxsize=None)
@@ -829,7 +835,7 @@ def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis):
     ``serving.sharding.plan_shard``'s, and the unit is
     ``compact_prep.prepare_window_compact``'s cut -- the loader path whose
     start state tessera#729 corrupted.  ``axis="row"`` is the column-parallel
-    gate/up cut: rank 1 starts mid-stream (and mid-tile at row 576), so its
+    gate/up cut: rank 1 starts mid-stream (and mid-tile at row 768), so its
     first ``ceil(L / rate) - 1`` rows decode through the cut's
     ``initial_state``.  ``axis="column"`` is the row-parallel down cut.
 
@@ -886,14 +892,14 @@ def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis):
 
 
 def _tp2_rank1_stacks(grid_family, q256):
-    """``(units, truths)``: gate, up (rank 1's rows of ``[2 * INTER,
-    HIDDEN]``) and down (rank 1's columns of ``[HIDDEN, 2 * INTER]``) per
+    """``(units, truths)``: gate, up (rank 1's rows of ``[2 * TP2_INTER,
+    HIDDEN]``) and down (rank 1's columns of ``[HIDDEN, 2 * TP2_INTER]``) per
     expert, each from its own encode."""
     roles = [[_tp2_rank1_role(grid_family, *shape, q256, 7000 + 10 * e + i, axis)
               for e in range(TP2_EXPERTS)]
-             for i, (shape, axis) in enumerate((((2 * INTER, HIDDEN), "row"),
-                                                ((2 * INTER, HIDDEN), "row"),
-                                                ((HIDDEN, 2 * INTER), "column")))]
+             for i, (shape, axis) in enumerate((((2 * TP2_INTER, HIDDEN), "row"),
+                                                ((2 * TP2_INTER, HIDDEN), "row"),
+                                                ((HIDDEN, 2 * TP2_INTER), "column")))]
     units = tuple([r[0] for r in stack] for stack in roles)
     truths = tuple([r[1] for r in stack] for stack in roles)
     rates = tuple(r[2] for r in (roles[0][0], roles[2][0]))
@@ -959,7 +965,8 @@ def test_tp2_rank1_cut_through_the_fused_lane_is_the_whole_units_rows(family, q2
         perm = units[0][0].rep.perm.cpu()
         assert not torch.equal(perm, torch.arange(perm.numel(), dtype=perm.dtype)), q256
     fused = _fused(_tp2_rank1_bundles(family, units, build))
-    _one_hot_exact(fused, truths, family, f"q256={q256} tp2-rank1 {build}", TP2_EXPERTS)
+    _one_hot_exact(fused, truths, family, f"q256={q256} tp2-rank1 {build}", TP2_EXPERTS,
+                   inter=TP2_INTER)
 
 
 @cuda
