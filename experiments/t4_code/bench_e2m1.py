@@ -5,7 +5,11 @@
 
 Shapes are GLM-5.3-Flash per rank at TP2.  Routed: 288 experts, top 8,
 hidden 4096, intermediate 1024 (gate/up rows and down columns are the rank's
-half of 2048).  Dense: the per-rank shapes of the #750 dense list.
+half of 2048).  Dense: the per-rank shapes of the #750 dense list.  The
+default leaves out the whole TP2 ``lm_head`` (77,440 rows): its window encode
+does not fit a 40 GB budget, so it is timed at an eighth and a quarter of its
+rows (``lm_head_r8``, ``lm_head_r4``).  Every encode's seconds and CUDA
+allocator peak are recorded (``encodes``).
 
 Legs, each over the same activations and routing:
 
@@ -76,7 +80,14 @@ DENSE = {
     "idx_wqb": (4096, 1536), "idx_wk": (128, 4096), "idx_wproj": (32, 4096),
     "lm_head": (77440, 4096),
     "vis_qkv": (1536, 1024), "vis_proj": (1024, 512), "vis_gate_up": (4096, 1024), "vis_down": (1024, 2048),
+    # lm_head's rows cut to a multiple of 32: an eighth (9696) and a quarter
+    # (19360).  The whole unit's window encode does not fit a 40 GB budget
+    # (PB 613dcd70, memory_budget_exceeded), so it is not a default shape.
+    "lm_head_r8": (9696, 4096), "lm_head_r4": (19360, 4096),
 }
+DEFAULT_SHAPES = [s for s in DENSE if s != "lm_head"]
+#: Per encode: seconds and the CUDA allocator's peak, keyed "body rows x cols q".
+ENCODES = {}
 
 
 def emit(rec):
@@ -114,24 +125,41 @@ def time_call(call, warmup, iters, graph=True):
 
 # --------------------------------------------------------------------- wires
 
-@functools.lru_cache(maxsize=None)   # bytes on the host: both passes see one encode
-def window_wire(rows, cols, q256, seed, dev):
+def encode_key(label, rows, cols, q256):
+    return f"{label} {rows}x{cols} q{q256}"
+
+
+def _encode(label, rows, cols, q256, seed, dev, **kw):
+    """One E2M1x2 encode, its seconds and allocator peak recorded in ENCODES."""
     from tessera.alphabet import E2M1_GRID, tuple_grid
     from tessera.export import encode_linear
-    from tessera.manifest import BodyKind, ScalePlaneKind
+    from tessera.manifest import ScalePlaneKind
 
-    return encode_linear(gaussian(rows, cols, seed, dev), grid=tuple_grid(E2M1_GRID, 2), q256=q256,
-                         body=BodyKind.WINDOW, scale_plane=ScalePlaneKind.LUT, window_bits=L).blob
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    base = torch.cuda.memory_allocated()
+    t0 = time.time()
+    blob = encode_linear(gaussian(rows, cols, seed, dev), grid=tuple_grid(E2M1_GRID, 2), q256=q256,
+                         scale_plane=ScalePlaneKind.LUT, **kw).blob
+    torch.cuda.synchronize()
+    ENCODES[encode_key(label, rows, cols, q256)] = {
+        "secs": round(time.time() - t0, 3), "peak_bytes_above_base": torch.cuda.max_memory_allocated() - base,
+        "weights": rows * cols}
+    return blob
+
+
+@functools.lru_cache(maxsize=None)   # bytes on the host: both passes see one encode
+def window_wire(rows, cols, q256, seed, dev):
+    from tessera.manifest import BodyKind
+
+    return _encode("window", rows, cols, q256, seed, dev, body=BodyKind.WINDOW, window_bits=L)
 
 
 @functools.lru_cache(maxsize=None)
 def tcq_wire(rows, cols, q256, seed, dev):
-    from tessera.alphabet import E2M1_GRID, tuple_grid
-    from tessera.export import encode_linear
-    from tessera.manifest import BodyKind, ScalePlaneKind
+    from tessera.manifest import BodyKind
 
-    return encode_linear(gaussian(rows, cols, seed, dev), grid=tuple_grid(E2M1_GRID, 2), q256=q256,
-                         body=BodyKind.TCQ, span=2, scale_plane=ScalePlaneKind.LUT).blob
+    return _encode("tcq", rows, cols, q256, seed, dev, body=BodyKind.TCQ, span=2)
 
 
 def window_unit(blob, dev):
@@ -386,6 +414,7 @@ class Dense:
             return head, None, None
         role = re2.prepare_dense_role(unit, self.gs)
         head["split_cap"] = re2.dense_split_max(cols)
+        head["encode"] = ENCODES.get(encode_key("window", rows, cols, q256))
 
         def make(m, split):
             x = self.x(m, cols)
@@ -407,6 +436,7 @@ class Dense:
             head["refused"] = repr(exc)[:300]
             return head, None, None
         epi = unit.epilogue_for(self.gs)
+        head["encode"] = ENCODES.get(encode_key("tcq", rows, cols, A4_Q256))
 
         def make(m, _split):
             x = self.x(m, cols)
@@ -541,7 +571,7 @@ def summary(groups):
     out = {}
     for g in groups.values():
         kind = g.get("kind")
-        label = g.get("leg", "?") + (f" q{g['q256']}" if g.get("leg") == "e2m1" else "")
+        label = g.get("leg", "?") + (f" q{g.get('q256')}" if g.get("leg") == "e2m1" else "")
         if kind == "dense":
             label = f"{g.get('shape')} {label}"
         for c in g.get("cells", {}).values():
@@ -560,7 +590,7 @@ def main():
     ap.add_argument("--ms", default="1,64,512,2048,8192")
     ap.add_argument("--rungs", default="448,704,960")
     ap.add_argument("--legs", default="e2m1,a4,vllm")
-    ap.add_argument("--shapes", default=",".join(DENSE))
+    ap.add_argument("--shapes", default=",".join(DEFAULT_SHAPES))
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--prof-reps", type=int, default=3)
@@ -581,7 +611,8 @@ def main():
     path = os.path.join(args.out, f"bench_e2m1_{args.part}.json")
 
     def save():
-        json.dump({"meta": meta, "summary": summary(b.groups), "groups": b.groups}, open(path, "w"), indent=1)
+        json.dump({"meta": meta, "summary": summary(b.groups), "groups": b.groups, "encodes": ENCODES},
+                  open(path, "w"), indent=1)
     b.run(save)
     meta["end_unix"] = time.time()
     save()
