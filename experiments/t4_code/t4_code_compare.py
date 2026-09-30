@@ -27,8 +27,10 @@ Every arm is the production encoder (``encode_linear``) -> bytes ->
            vLLM's own ``scaled_fp4_quant`` -- the served contract
            ``e2m1_group16_ue4m3_static``;
 * ``a4d``  the same with a DYNAMIC per-token global (capacity/amax of the
-           token), through a torch reference quantiser that is checked bitwise
-           against ``scaled_fp4_quant`` at the static global before it is used.
+           token), through a torch reference quantiser whose agreement with
+           ``scaled_fp4_quant`` at the static global is recorded per tensor;
+* ``a4s_ref`` the static global through that same reference, so static and
+           dynamic are compared on one quantiser (``a4s_ref`` vs ``a4d``).
 
 No PrismaQuant import: the a4 legs use vLLM's operator and a local reference.
 
@@ -240,6 +242,7 @@ def a_side(x_fit, x_ev):
     amax_tok = x32.abs().amax(-1, keepdim=True).clamp_min(1e-30)
     gs_tok = CAPACITY / amax_tok
     deq_d, _codes_d, sf_d = nvfp4_qdq_ref(xb, gs_tok)
+    a_side.static_ref = deq_r
     blocks = x32.reshape(x32.shape[0], -1, 16).abs().amax(-1)
     live = blocks > 0
 
@@ -323,13 +326,14 @@ def main():
             x_ev = x[n_fit:].to(dev).float()
             rec_t["activation"] = label
             aside, xq_s, xq_d = a_side(x_fit, x_ev)
+            xq_r = a_side.static_ref
             rec_t["a_side"] = aside
             y = x_ev @ w.T
             ny = y.norm()
             del x, x_fit
         else:
             rec_t["activation"] = "none: weight-only (no capture of this module's input)"
-            x_ev = xq_s = xq_d = y = ny = None
+            x_ev = xq_s = xq_d = xq_r = y = ny = None
         nw = w.norm()
         log(f"\n== {tag} {tuple(w.shape)}  act: {rec_t['activation']}")
         if acts is not None:
@@ -344,6 +348,7 @@ def main():
                 r["out"] = float((x_ev @ hat.T - y).norm() / ny)
                 r["a4s"] = float((xq_s @ hat.T - y).norm() / ny)
                 r["a4d"] = float((xq_d @ hat.T - y).norm() / ny)
+                r["a4s_ref"] = float((xq_r @ hat.T - y).norm() / ny)
             rec_t["arms"][arm] = r
             fmt = lambda k: f"{r[k]:8.5f}" if k in r else "       -"  # noqa: E731
             log(f"   {arm:<14} {bpp:6.3f} {r['wt']:8.5f} {fmt('out')} {fmt('a4s')} {fmt('a4d')} "
@@ -373,7 +378,7 @@ def main():
         out["tensors"][tag] = rec_t
         out_path.write_text(json.dumps(out, indent=1))
         out_path.with_suffix(".log").write_text("\n".join(lines) + "\n")
-        del w, x_ev, xq_s, xq_d, y
+        del w, x_ev, xq_s, xq_d, xq_r, y
         torch.cuda.empty_cache()
 
     out["end_unix"] = time.time()
