@@ -174,6 +174,18 @@ constexpr int DRING_STAGES = 4;
 constexpr int BM_WIDE = 128;
 // The A region: STAGES tiles of ``bmt`` rows.
 __host__ __device__ constexpr int a_region_bytes(int bmt) { return STAGES * bmt * BK * ELEM_BYTES; }
+// The activation ring (the E4M3 instruction's library): each chunk's A bytes,
+// ``bmt`` rows of BK E4M3 bytes, arrive by ``cp.async`` in the word stages'
+// own groups, two chunks ahead, in WORD_STAGES slots.  The register path loads
+// the row one chunk ahead (``load_a``), and the chunk loop's last register
+// move waits for that load: NCU put the wait on the producers' critical path
+// at M = 1, 512 and 2048 (the staging warps stall on it and every other
+// producer waits for them at the producer barrier).  A thread reads back only
+// the bytes it copied, so its own ``cp.async.wait_group`` orders them.  The
+// 16-bit libraries convert or stage A through registers and keep that path;
+// their layout and SASS do not change.
+constexpr bool A_RING = FAMILY_MMA8;
+__host__ __device__ constexpr int a_ring_bytes(int bmt) { return A_RING ? WORD_STAGES * bmt * BK : 0; }
 static_assert(a_region_bytes(BM) == STAGES * A_STAGE_BYTES, "the 64-route layout is the published one");
 template <int MODE, int BMT = BM> struct Layout {
     static constexpr int TABLES = (MODE == 2) ? 1 : 2;
@@ -186,8 +198,11 @@ template <int MODE, int BMT = BM> struct Layout {
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
     static constexpr int OFF_DRING = OFF_CLAIM + 16;
-    // 91,600 (two tables) / 58,640 (one); 46,544 / 29,968 on the E4M3 instruction
-    static constexpr int OFF_W = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    static constexpr int OFF_ARING = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    // 91,600 (two tables) / 58,640 (one); 52,688 / 36,112 on the E4M3
+    // instruction, whose activation ring is 6,144 of them
+    static constexpr int OFF_W = OFF_ARING + a_ring_bytes(BMT);
+    static_assert(OFF_ARING % 16 == 0, "the activation ring takes 16-byte copies");
     static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
     static_assert(OFF_DRING % 16 == 0, "the descriptor ring takes 16-byte copies");
 };
@@ -199,7 +214,8 @@ __host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
 // The same at ``bmt``-route superblocks: the published figure at BM, the
 // larger A region at BM_WIDE.
 __host__ __device__ constexpr int smem_bytes_at(int mode, int slot_words, int bmt) {
-    return smem_bytes(mode, slot_words) + a_region_bytes(bmt) - a_region_bytes(BM);
+    return smem_bytes(mode, slot_words) + a_region_bytes(bmt) - a_region_bytes(BM)
+           + a_ring_bytes(bmt) - a_ring_bytes(BM);
 }
 // The slot one column at ``rate`` needs: its 2 * rate words, plus two at an
 // odd rate -- a 64-row half at an odd rate is 8 * rate bytes at an
@@ -620,6 +636,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     TabT* tab = reinterpret_cast<TabT*>(smem + L::OFF_TABLES);
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
+    uint8_t* Ar = smem + L::OFF_ARING;    // the activation ring (A_RING)
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
     int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
@@ -829,8 +846,22 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         prefetch_l1(reinterpret_cast<const uint16_t*>(p.x) + arow * p.K + kc * BK + (tid & 3) * 8);
                 }
             };
-            auto store_a = [&](int stage, const uint4& a) {
+            // Chunk kc's A bytes into the activation ring (A_RING): the same
+            // 16 bytes ``load_a`` would load, from the thread that stages them.
+            auto issue_a = [&](int kc) {
+                if constexpr (A_RING) {
+                    if (arow >= 0)
+                        cp_async16(Ar + (kc % WORD_STAGES) * (BMT * BK) + (tid >> 1) * BK + (tid & 1) * 16,
+                                   reinterpret_cast<const uint8_t*>(p.x) + arow * p.K + kc * BK + (tid & 1) * 16);
+                }
+            };
+            auto store_a = [&](int stage, int kc, uint4 a) {
                 uint8_t* A = As + stage * A_STAGE;
+                if constexpr (A_RING) {
+                    if (arow >= 0)
+                        a = *reinterpret_cast<const uint4*>(Ar + (kc % WORD_STAGES) * (BMT * BK) + (tid >> 1) * BK
+                                                            + (tid & 1) * 16);
+                }
                 if constexpr (FAMILY_MMA8) {
                     // E4M3 bytes as they are, in the MMA's k order (see E4M3
                     // MMA LAYOUT): word q of the 16-byte half holds physical k
@@ -986,9 +1017,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                 }
                 issue_words(kc0, false);
+                issue_a(kc0);
                 if (nkc > 2) issue_desc(kc0 + 2);
                 cp_async_commit();                     // group 0
-                if (nkc > 1) issue_words(kc0 + 1, false);
+                if (nkc > 1) { issue_words(kc0 + 1, false); issue_a(kc0 + 1); }
                 if (nkc > 3) issue_desc(kc0 + 3);
                 cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
@@ -996,8 +1028,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 ColMap cm_cur[2], cm_nxt[2];
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
-                load_a(kc0, a_cur);
-                if constexpr (A_PREFETCH > 0) {
+                if constexpr (!A_RING) load_a(kc0, a_cur);
+                if constexpr (A_PREFETCH > 0 && !A_RING) {
                     #pragma unroll
                     for (int d = 2; d < A_PREFETCH; ++d)
                         if (d < nkc) prefetch_a(kc0 + d);
@@ -1025,22 +1057,24 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     const int kc = kc0 + ic;
                     // The two orders are the measured ones: a one-run loop that
                     // issues the activation chunk first waits longer at M = 1.
-                    if constexpr (TWO) {
+                    if constexpr (A_RING) {
+                        if (ic + 1 < nkc) load_prev(kc + 1, prev_nxt, cm_nxt, TWO);
+                    } else if constexpr (TWO) {
                         if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
                     } else {
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
-                    if constexpr (A_PREFETCH > 0) {
+                    if constexpr (A_PREFETCH > 0 && !A_RING) {
                         if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                    if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                    if (ic + 2 < nkc) { issue_words(kc + 2, TWO); issue_a(kc + 2); }
                     if (ic + 4 < nkc) issue_desc(kc + 4);
                     cp_async_commit();
                     const int stage = gc & 1;
                     if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
-                    store_a(stage, a_cur);
+                    store_a(stage, kc, a_cur);
                     const int32_t* W = Ws + (kc % WORD_STAGES) * W_STAGE;
                     uint8_t* B = Bs + stage * B_STAGE_BYTES;
                     const int32_t* Wc[2];
@@ -1083,7 +1117,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     bar_arrive(BAR_FULL0 + stage, THREADS);
                     prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
-                    a_cur = a_nxt;
+                    if constexpr (!A_RING) a_cur = a_nxt;
                 }
             };
             // Every item of a launch carries the kernel's pair (one run table

@@ -174,8 +174,9 @@ WORD_STAGES = 3
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
 #: The same fixed part on the E4M3 instruction: 16 KB byte tables and 8-bit
-#: A and B stages.  The word stages are the same bytes.
-SMEM_FIXED_MMA8 = {0: 46_544, 1: 46_544, 2: 29_968}
+#: A and B stages, plus the activation ring (``a_ring_bytes``: WORD_STAGES
+#: chunks of BM rows x BK bytes, 6,144 B).  The word stages are the same bytes.
+SMEM_FIXED_MMA8 = {0: 52_688, 1: 52_688, 2: 36_112}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -242,10 +243,18 @@ def a_region_bytes(bm: int, *, mma8: bool = False) -> int:
     return 2 * int(bm) * BK * (1 if mma8 else 2)
 
 
+def a_ring_bytes(bm: int, *, mma8: bool = False) -> int:
+    """The activation ring (``A_RING`` in the kernel; the E4M3 instruction's
+    library only): WORD_STAGES chunks of ``bm`` rows x BK bytes."""
+    return WORD_STAGES * int(bm) * BK if mma8 else 0
+
+
 def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM) -> int:
     """The dynamic shared memory the launch takes at ``bm``-route
-    superblocks: :func:`smem_bytes` with the A region at ``bm`` rows."""
-    return smem_bytes(mode, slot_words, mma8=mma8) + a_region_bytes(bm, mma8=mma8) - a_region_bytes(BM, mma8=mma8)
+    superblocks: :func:`smem_bytes` with the A region and the activation ring
+    at ``bm`` rows."""
+    return (smem_bytes(mode, slot_words, mma8=mma8) + a_region_bytes(bm, mma8=mma8) - a_region_bytes(BM, mma8=mma8)
+            + a_ring_bytes(bm, mma8=mma8) - a_ring_bytes(BM, mma8=mma8))
 
 
 def has_width(library: str, mode: int, bm: int) -> bool:

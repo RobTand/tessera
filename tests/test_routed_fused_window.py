@@ -856,11 +856,14 @@ def test_the_e4m3_instructions_layout_and_rates():
     from tessera.serving import ext
 
     # one byte less per table entry and per operand element: 16 KB per table,
-    # and the two operand stages' B (BK x BN) and A (BM x BK) tiles
+    # and the two operand stages' B (BK x BN) and A (BM x BK) tiles; the
+    # activation ring (WORD_STAGES chunks of BM x BK bytes) comes back in
     stages = 2 * (rf.BK * rf.BN + rf.BM * rf.BK)
-    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages
-    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages
-    assert rf.smem_bytes(0, 16, mma8=True) == 58_832 <= rf.SM121_MAX_DYNAMIC_SMEM
+    ring = rf.a_ring_bytes(rf.BM, mma8=True)
+    assert ring == rf.WORD_STAGES * rf.BM * rf.BK == 6_144 and rf.a_ring_bytes(rf.BM) == 0
+    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages - ring
+    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages - ring
+    assert rf.smem_bytes(0, 16, mma8=True) == 64_976 <= rf.SM121_MAX_DYNAMIC_SMEM
     assert rf.routed_lane_rates("e4m3mma") == rf.RATES
     assert rf.routed_lane_rates("e4m3") == rf.routed_lane_rates("value") == rf.ROUTED_LANE_RATES
     assert ext.ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES["column_rates_routed_moe"] \
@@ -999,6 +1002,7 @@ def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
         mma8 = rf.library_mma8(library)
         extra = rf.BM * rf.BK * 2 * (1 if mma8 else 2)
         assert rf.a_region_bytes(rf.BM_WIDE, mma8=mma8) - rf.a_region_bytes(rf.BM, mma8=mma8) == extra
+        extra += rf.a_ring_bytes(rf.BM_WIDE, mma8=mma8) - rf.a_ring_bytes(rf.BM, mma8=mma8)
         for mode in modes:
             rates = rf.RATES if mode == 2 else rf.routed_lane_rates(library)
             for sw in sorted({rf._round_up_4(max(rf.slot_words_for_rate(r), 4)) for r in rates}):
