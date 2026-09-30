@@ -111,14 +111,18 @@ Triton window GEMM (`TESSERA_DENSE_FUSED=0`):
 
 - **Numerics** (`--mode oracle`): each lane against an exact fp64 reference
   with a dtype-derived bound, at TP 1 and both ranks of TP 2, M 1 to 8192.
-  PB `91c215a8` (T16D1) and `1b70a80a` (T16D2).
+  PB `f810690b` (T16D1) and `be0e22b5` (T16D2).
 - **Timing** (`--mode profile`, a PrismaBuild measurement row on whichever
   GB10 passes PrismaBuild's idle gate, exclusive): fused against Triton on the
   same resident bundles at M 1, 8, 64, 512 and 8192, with CUDA-event wall time,
   a `torch.profiler` kernel table, an NVML power window per leg and UTC bounds
-  for the Netdata series. PB `283c8f62` (T16D2) and `8861d338` (T16D1). They
-  replace `0ee62e85` and `accaf093`, withdrawn from the queue unrun when host
-  tags were dropped from timing rows.
+  for the Netdata series. PB `45709a00` (T16D2) and `3360a1c4` (T16D1).
+- The first submissions of both (`91c215a8`, `1b70a80a`, `0ee62e85`,
+  `accaf093`, and the untagged resubmissions `283c8f62`, `8861d338`) did not
+  measure anything. `experiments/dense_fused_oracle.sh` mounted the census
+  stub but did not pass it to the driver, which read stub B's path: `91c215a8`
+  failed on it in 20 s, and the rest were withdrawn unrun. The wrapper now
+  passes `--stub` for the path it mounts.
   Before contract v51 the Triton window GEMM was the only dense lane at rates 9
   to 14, so T16D2's profile is the before-and-after for those rates.
 
