@@ -159,8 +159,8 @@ def main():
     dev = "cuda"
     ext = build_ext(out)
     src = Source()
-    # Real routed-expert units: gate [2048, 6144] and down [6144, 2048] at L20,
-    # and a gate cut to 1664 rows (832 tuples: a partial second tile, zero-code
+    # Real routed-expert units: gate [2048, 4096] and down [4096, 2048] at L20,
+    # and an up cut to 1664 rows (832 tuples: a partial second tile, zero-code
     # padding) -- the fused lane's shapes and its padding case.
     tensors = [("L20.e0.gate_proj", f"{P}20.mlp.experts.0.gate_proj.weight", None),
                ("L20.e0.down_proj", f"{P}20.mlp.experts.0.down_proj.weight", None),
@@ -185,6 +185,7 @@ def main():
         w = w.contiguous().to(dev).float()
         for L, q in grid:
             cases = []
+            torch.cuda.reset_peak_memory_stats()
             try:
                 exported = encode_linear(w, grid=GRID, q256=q, body=BodyKind.WINDOW,
                                          scale_plane=ScalePlaneKind.LUT, window_bits=L)
@@ -201,8 +202,9 @@ def main():
                         cases.append({"cut": list(cut) if cut else None, "error": repr(exc)[:800]})
             except Exception as exc:  # noqa: BLE001
                 cases.append({"error": "encode: " + repr(exc)[:800]})
+            peak = round(torch.cuda.max_memory_allocated() / 2**30, 2)   # sizes the PB memory demand
             for r in cases:
-                r.update(tensor=tag, q256=q, L=L)
+                r.update(tensor=tag, q256=q, L=L, peak_gib=peak)
                 r.setdefault("ok", False)
                 report["cases"].append(r)
                 failures += 0 if r["ok"] else 1
