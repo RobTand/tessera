@@ -79,6 +79,7 @@ class ReuseAuthority(Protocol):
         when the roster holds no such binding.  A ``False`` answer refuses in
         strict mode and becomes a recorded warning in permissive mode.
         """
+        ...
 
     def served_activations(self, policy, adoptions: dict, units: dict) -> dict:
         """The served activations a bound policy requires of these adoptions.
@@ -86,6 +87,7 @@ class ReuseAuthority(Protocol):
         Returns ``{unit: {"group": key, "input_global_scale": value}}``, which
         the bundle's ``served_activations`` must equal exactly.
         """
+        ...
 
 
 def _json_copy(value):
@@ -153,14 +155,34 @@ def encoder_source_sha256() -> str:
     refuses reuse across edits outside its finite witnesses as well. It may
     reject a harmless source edit, but never relabels the encoder fixture.
     """
-    root = Path(__file__).resolve().parent
-    digest = hashlib.sha256()
-    for path in sorted(p for p in root.rglob("*")
-                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}):
-        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    return digest.hexdigest()
+    from .source_profiles import ENCODER_SOURCE_V1
+
+    return _encoder_source_profiles(Path(__file__).resolve().parent)[ENCODER_SOURCE_V1]
+
+
+def _encoder_source_profiles(root: Path) -> dict[str, str]:
+    from .source_profiles import ENCODER_SOURCE_V1, source_profiles
+
+    return source_profiles(
+        ((path.relative_to(root).as_posix(), path.read_bytes())
+         for path in sorted(p for p in root.rglob("*")
+                            if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"})),
+        legacy_profile=ENCODER_SOURCE_V1)
+
+
+def encoder_source_profiles() -> dict[str, str]:
+    """Add labelled v2 metadata without changing cached wire identities.
+
+    The old scalar API and its cache remain byte-for-byte the legacy recipe.
+    A package edited after that cached seal cannot be reported as the same
+    encoder: this optional metadata call refuses that mixed snapshot.
+    """
+    from .source_profiles import ENCODER_SOURCE_V1
+
+    profiles = _encoder_source_profiles(Path(__file__).resolve().parent)
+    if profiles[ENCODER_SOURCE_V1] != encoder_source_sha256():
+        raise ValueError("encoder source changed after its cached source seal")
+    return profiles
 
 
 def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
