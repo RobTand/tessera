@@ -4,6 +4,8 @@
 # supplies only the harness), timed interleaved in forward then reverse order
 # so no arm always runs first on a cold GPU.  The first arm is the reference.
 # Usage: ab_arms.sh <out_root> <arm> <arm> [<arm> ...]
+# Each arm's libraries must be prebuilt at <out_root>/ext-<arm> (build_ext.sh);
+# AB_ALLOW_BUILD=1 lets the action compile a missing one.
 # Steps, each recorded with its rc and the host load and GPU power at start:
 #   r<i>/r<i>b  routed bench per arm (R1024 L10, R1088 L11, R832 L42; M 1..2048;
 #               outputs hashed for the bitwise A/B), forward then reverse
@@ -18,6 +20,9 @@ ARMS=("$@")
 (( ${#ARMS[@]} >= 2 )) || { echo "need at least two arms" >&2; exit 2; }
 for arm in "${ARMS[@]}"; do
   [[ -f "$OUT/src-$arm/src/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "missing snapshot: $OUT/src-$arm" >&2; exit 2; }
+  # the libraries are built off the measurement host (build_ext.sh, a separate
+  # non-measurement row); this action only loads them
+  [[ -d "$OUT/ext-$arm" || ${AB_ALLOW_BUILD:-0} == 1 ]] || { echo "REFUSED: $OUT/ext-$arm is missing; build it off the measurement host first (build_ext.sh)" >&2; exit 2; }
 done
 sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
 ROUTED=experts.R1024.L10,experts.R1088.L11,experts.R832.L42
