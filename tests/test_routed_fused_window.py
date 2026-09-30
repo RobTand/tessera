@@ -836,7 +836,8 @@ MMA8_ONLY_Q256 = [1792, 1920, 2048]
 
 def test_library_for_reads_the_instruction_choice(monkeypatch):
     monkeypatch.delenv(rf.ENV_E4M3_MMA, raising=False)
-    assert rf.library_for("e4m3") == "e4m3" and rf.library_for("value") == "value"
+    # The E4M3 instruction is the default: unset reads as ``e4m3``.
+    assert rf.library_for("e4m3") == "e4m3mma" and rf.library_for("value") == "value"
     monkeypatch.setenv(rf.ENV_E4M3_MMA, "f16")
     assert rf.library_for("e4m3") == "e4m3"
     monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
@@ -964,3 +965,163 @@ def test_the_two_e4m3_instructions_differ_by_accumulation_order_only(q256, monke
                                           f"{what}: down mma8 vs f16", scale=2.0)
     ratios["down equal"] = float((dn["mma8"] == dn["f16"]).double().mean())
     print(f"E4M3-MMA-PAIR {what} " + " ".join(f"{k.replace(' ', '_')}={v:.4f}" for k, v in ratios.items()))
+
+
+# --- the wide superblock (tessera#741) ------------------------------------------
+
+def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
+    """``superblock_rows`` reads host integers and the environment only (so a
+    captured forward records the width with its shapes).  128 routes exist on
+    the E4M3 family's one-table launch in both libraries and on its gate/up
+    launch on the E4M3 instruction; ``auto`` takes them from
+    ``WIDE_MIN_ROWS`` routed tokens on the E4M3 instruction and from
+    ``WIDE_UNMEASURED`` elsewhere (dense rows, the f16 instruction), ``1``
+    always, ``0`` never.  The wide A region is one
+    more A tile per stage (8 KB on 16-bit tiles, 4 KB on 8-bit ones), which
+    every launch that has the width holds at every slot it decodes; the
+    published formula and the lanes' rates do not move."""
+    wide_modes = {"value": (), "e4m3": (2,), "e4m3mma": (0, 1, 2)}
+    monkeypatch.delenv(rf.ENV_WIDE, raising=False)
+    for library, modes in wide_modes.items():
+        for mode in (0, 1, 2):
+            has = mode in modes
+            assert rf.has_width(library, mode, rf.BM) and rf.has_width(library, mode, rf.BM_WIDE) == has
+            assert not rf.has_width(library, mode, 96)
+            floor = rf.WIDE_MIN_ROWS if rf.library_mma8(library) else rf.WIDE_UNMEASURED
+            assert rf.superblock_rows(library, mode, floor) == (rf.BM_WIDE if has else rf.BM)
+            assert rf.superblock_rows(library, mode, floor - 1) == rf.BM
+            assert rf.superblock_rows(library, mode, rf.WIDE_UNMEASURED - 1, dense=True) == rf.BM
+            assert rf.superblock_rows(library, mode, rf.WIDE_UNMEASURED, dense=True) \
+                == (rf.BM_WIDE if has else rf.BM)
+    monkeypatch.setenv(rf.ENV_WIDE, "1")
+    for library, modes in wide_modes.items():
+        assert [rf.superblock_rows(library, mode, 1) for mode in (0, 1, 2)] \
+            == [rf.BM_WIDE if mode in modes else rf.BM for mode in (0, 1, 2)], library
+    monkeypatch.setenv(rf.ENV_WIDE, "0")
+    assert rf.superblock_rows("e4m3mma", 0, rf.WIDE_UNMEASURED) == rf.BM
+    monkeypatch.setenv(rf.ENV_WIDE, "yes")
+    with pytest.raises(GrammarError, match=rf.ENV_WIDE):
+        rf.superblock_rows("e4m3", 2, 1)
+    for library, modes in wide_modes.items():
+        mma8 = rf.library_mma8(library)
+        extra = rf.BM * rf.BK * 2 * (1 if mma8 else 2)
+        assert rf.a_region_bytes(rf.BM_WIDE, mma8=mma8) - rf.a_region_bytes(rf.BM, mma8=mma8) == extra
+        for mode in modes:
+            rates = rf.RATES if mode == 2 else rf.routed_lane_rates(library)
+            for sw in sorted({rf._round_up_4(max(rf.slot_words_for_rate(r), 4)) for r in rates}):
+                narrow = rf.launch_smem_bytes(mode, sw, mma8=mma8)
+                wide = rf.launch_smem_bytes(mode, sw, mma8=mma8, bm=rf.BM_WIDE)
+                assert wide == narrow + extra <= rf.SM121_MAX_DYNAMIC_SMEM, (library, mode, sw)
+    # the 16-bit gate/up layout cannot hold it even at the smallest slot
+    assert rf.smem_bytes(0, 4) + 8192 > rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.smem_bytes(2, 16) == 70_928
+    assert rf.ROUTED_LANE_RATES == (1, 2, 3, 4, 5, 6)
+
+
+def _skewed(ids):
+    """Two thirds of the routes onto expert 0: superblocks of every fill."""
+    return torch.where(ids < 3, torch.zeros_like(ids), ids)
+
+
+#: (library id, q256): the GLM rungs on both E4M3 libraries -- rate 4 and the
+#: two-run 3/4 and 4/5 tables -- and the E4M3 instruction's gate/up-only rates
+#: 7 and 8, where its wide gate/up launch runs the largest slot.
+WIDE_CASES = ([(lib, q) for lib in ("e4m3", "e4m3mma") for q in (1024, 832, 1088)]
+              + [("e4m3mma", q) for q in MMA8_ONLY_Q256])
+
+
+@cuda
+@pytest.mark.parametrize("family,q256", WIDE_CASES, indirect=["family"])
+def test_wide_superblocks_are_bitwise_the_64_route_launch(family, q256, monkeypatch):
+    """At 128-route superblocks every route's row sees the same MMAs in the
+    same K order as at 64, and its own epilogue, so the forward (gate/up then
+    down) and the teacher-forced ``gate_up`` and ``down_routes`` stages are
+    the 64-route launch's bits: from one route to superblocks past 128 routes
+    (300 x 3 routes, two thirds on one expert), so the last wide superblock
+    of an expert holds fewer than 64 routes in some cases and more in
+    others.  A forward captured at 128 replays to the eager
+    64-route answer.  The oracle and bound tests hold the 64-route launch, so
+    this carries them over."""
+    stacks = _stacks(family, q256=q256)
+    fused = _fused(_bundles(family, stacks))
+    fills = set()
+    for t, skew in ((1, False), (40, False), (71, True), (150, False), (300, True)):
+        x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+        ids, rw = _routes(t, TOP_K, 4100 + t)
+        if skew:
+            ids = _skewed(ids)
+        fills |= {c % rf.BM_WIDE or rf.BM_WIDE for c in torch.bincount(ids.reshape(-1).long()).tolist() if c}
+        act = torch.randn(t * TOP_K, INTER, device="cuda").bfloat16()
+        got = {}
+        for setting in ("0", "1"):
+            monkeypatch.setenv(rf.ENV_WIDE, setting)
+            got[setting] = (fused(x, ids, rw), fused.gate_up(x, ids, rw, preserve=True),
+                            fused.down_routes(act, ids, rw))
+        for name, narrow, wide in zip(("forward", "gate_up", "down_routes"), got["0"], got["1"]):
+            assert torch.equal(wide, narrow), (family, q256, t, skew, name)
+    assert min(fills) < rf.BM < max(fills), fills
+    t = 300
+    x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+    ids, rw = _routes(t, TOP_K, 4500)
+    ids = _skewed(ids)
+    monkeypatch.setenv(rf.ENV_WIDE, "0")
+    eager = fused(x, ids, rw)
+    monkeypatch.setenv(rf.ENV_WIDE, "1")
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            fused(x, ids, rw)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = fused(x, ids, rw)
+    for _ in range(2):
+        captured.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(captured, eager), (family, q256)
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_the_routed_width_reaches_the_launches_that_have_it(family, monkeypatch):
+    """The ``bm`` each launch receives under ``TESSERA_ROUTED_FUSED_WIDE``:
+    128 under ``1`` on the launches ``has_width`` names (down in the E4M3
+    family, gate/up too on the E4M3 instruction), 64 everywhere else and
+    under ``0``; and the ``item_off`` a launch receives counts superblocks of
+    that width."""
+    fused = _fused(_bundles(family, _stacks(family, cut=False)))
+    lib = rf._ext(fused.library)
+    seen = []
+
+    class Spy:
+        def __getattr__(self, name):
+            return getattr(lib, name)
+
+        def routed_fused_forward(self, *args):
+            mode, item_off, bm = int(args[0]), args[-9], int(args[-1])
+            seen.append((mode, bm, [int(v) for v in item_off.tolist()]))
+            return lib.routed_fused_forward(*args)
+
+    monkeypatch.setattr(rf, "_ext", lambda _library, spy=Spy(): spy)
+    t = 300
+    x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+    ids, rw = _routes(t, TOP_K, 4600)
+    ids = _skewed(ids)
+    counts = torch.bincount(ids.reshape(-1).long(), minlength=EXPERTS).tolist()
+
+    def off(bm):
+        out = [0]
+        for c in counts:
+            out.append(out[-1] + -(-c // bm))
+        return out
+
+    for setting in ("1", "0"):
+        monkeypatch.setenv(rf.ENV_WIDE, setting)
+        want = [(mode, bm, off(bm)) for mode in (0, 2)
+                for bm in [rf.BM_WIDE if setting == "1" and rf.has_width(fused.library, mode, rf.BM_WIDE)
+                           else rf.BM]]
+        seen.clear()
+        fused(x, ids, rw)
+        assert seen == want, (fused.library, setting)

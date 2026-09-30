@@ -207,9 +207,10 @@ ROUTED_FUSED_E4M3_MODULE_NAME = "tessera_routed_fused_e4m3"
 ROUTED_FUSED_VALUE_MODULE_NAME = "tessera_routed_fused_value"
 #: The third library of the same source: the E4M3 family on its own
 #: tensor-core instruction (``-DTESSERA_ROUTED_FUSED_MMA8=1``,
-#: ``mma.sync.m16n8k32.e4m3.e4m3.f32``; 8-bit tables and tiles), taken where
-#: ``TESSERA_FUSED_E4M3_MMA=e4m3``.  Named so that no other entry's glob
-#: matches its file (``tessera_routed_fused_e4m3*`` would).
+#: ``mma.sync.m16n8k32.e4m3.e4m3.f32``; 8-bit tables and tiles), the E4M3
+#: family's default (``TESSERA_FUSED_E4M3_MMA=f16`` takes the 16-bit one).
+#: Named so that no other entry's glob matches its file
+#: (``tessera_routed_fused_e4m3*`` would).
 ROUTED_FUSED_MMA_E4M3_MODULE_NAME = "tessera_routed_fused_mma_e4m3"
 ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
 

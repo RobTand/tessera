@@ -117,6 +117,27 @@ constexpr int WINDOW_BITS = 14;
 constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 constexpr int STAGES = 2;
 constexpr int WORD_STAGES = 3;
+// The activation prefetch distance, in chunks (0: none).  Each chunk's A row
+// is loaded into registers one chunk ahead (``load_a``), and the chunk loop's
+// last register move waits for it.  NCU on the routed launch (M = 1, 512 and
+// 2048) put that wait on the producers' critical path: the warps that stage A
+// rows stalled on it, and every other producer waited for them at the
+// producers' barrier.  A ``prefetch.global.L1`` of the row A_PREFETCH chunks
+// ahead brings the line in while earlier chunks decode.
+//
+// Measured on the E4M3 instruction's routed launches only (recorded prefill
+// routing, drift-symmetric, output bitwise equal; pf4one-ab-20260930T*): at
+// distance 4 the one-run R1024 launch ran at 0.847 (M 512) and 0.861
+// (M 2048) of no prefetch, where removing the A load altogether bounds it at
+// 0.82-0.83; on the two-run R1088 launch the same prefetch cost 2.7-4.2%,
+// and gated off there it measured 1.000/0.998.  So the kernel prefetches on
+// the launches that measurement covers -- the E4M3 instruction's routed
+// one-run pairs (``PREFETCH_A``) -- and nowhere else.
+#ifndef TESSERA_ROUTED_FUSED_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_A_PREFETCH 4
+#endif
+constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
+static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
 
 // One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
 // E4M3 instruction.
@@ -147,14 +168,30 @@ constexpr int DESC_INTS = 2 * 8;
 // that global latency sat on the chunk loop's critical path.  A one-run
 // unit's map is computed, so it never touches the ring.
 constexpr int DRING_STAGES = 4;
-template <int MODE> struct Layout {
+// The wide superblock (tessera#741): 128 routes per item instead of BM = 64,
+// so one decoded B tile feeds twice the rows.  Its A region is twice the
+// size (``a_region_bytes``), which fits the one-table down/dense launch at
+// every rate in both E4M3 libraries and the two-table gate/up launch at every
+// rate on the E4M3 instruction, whose 8-bit tiles leave the room; the 16-bit
+// gate/up layout fits it at none (``has_width``).  The consumers skip every
+// 16-row MMA block that lies wholly past the item's routes (``mb``), at either
+// width, so a wide item whose routes fit 64 rows issues the MMAs a 64-route
+// item would.  Each output row keeps its own K order and its own epilogue, so
+// the output is bitwise the 64-route launch's; the host picks the width per
+// launch (``routed_fused.superblock_rows``).  The value family stages four
+// threads per A row, so it keeps BM.
+constexpr int BM_WIDE = 128;
+// The A region: STAGES tiles of ``bmt`` rows.
+__host__ __device__ constexpr int a_region_bytes(int bmt) { return STAGES * bmt * BK * ELEM_BYTES; }
+static_assert(a_region_bytes(BM) == STAGES * A_STAGE_BYTES, "the 64-route layout is the published one");
+template <int MODE, int BMT = BM> struct Layout {
     static constexpr int TABLES = (MODE == 2) ? 1 : 2;
     static constexpr int PROJ = (MODE == 2) ? 1 : 2;             // projections per item
     static constexpr int DRING_STAGE = PROJ * BDESC_INTS;        // int32 per ring slot
     static constexpr int OFF_TABLES = 0;
     static constexpr int OFF_B = OFF_TABLES + TABLES * TABLE_BYTES;
     static constexpr int OFF_A = OFF_B + STAGES * B_STAGE_BYTES;
-    static constexpr int OFF_WSCALE = OFF_A + STAGES * A_STAGE_BYTES;
+    static constexpr int OFF_WSCALE = OFF_A + a_region_bytes(BMT);
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
     static constexpr int OFF_DRING = OFF_CLAIM + 16;
@@ -167,6 +204,11 @@ constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // 16: the rate-
 __host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK * slot_words; }
 __host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
     return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + WORD_STAGES * w_stage_ints(slot_words) * 4;
+}
+// The same at ``bmt``-route superblocks: the published figure at BM, the
+// larger A region at BM_WIDE.
+__host__ __device__ constexpr int smem_bytes_at(int mode, int slot_words, int bmt) {
+    return smem_bytes(mode, slot_words) + a_region_bytes(bmt) - a_region_bytes(BM);
 }
 // The slot one column at ``rate`` needs: its 2 * rate words, plus two at an
 // odd rate -- a 64-row half at an odd rate is 8 * rate bytes at an
@@ -192,6 +234,19 @@ __host__ __device__ constexpr int pair_slot_words(int r_lo, bool two) {
 // launch is checked against the live device's own limit (``check_slot``), and
 // ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the same figure.
 constexpr int SM121_SMEM_OPTIN = 101376;
+// The dynamic shared memory a launch at ``slot_words``-word slots and
+// ``bmt``-route superblocks takes.
+__host__ __device__ constexpr int launch_smem_bytes(int mode, int slot_words, int bmt = BM) {
+    return smem_bytes_at(mode, slot_words, bmt);
+}
+// Whether the launch of ``mode`` exists at ``bmt``-route superblocks in a
+// library of the family (``fp8``) and instruction (``mma8``): BM everywhere;
+// BM_WIDE in the E4M3 family for the one-table launch, and for gate/up too on
+// the E4M3 instruction.  Where it exists it fits every rate the launch
+// decodes (the kernel asserts it per pair).
+__host__ __device__ constexpr bool has_width(bool fp8, bool mma8, int mode, int bmt) {
+    return bmt == BM || (bmt == BM_WIDE && fp8 && (mode == 2 || mma8));
+}
 // Whether the launch of ``mode`` decodes the pair (``r_lo``; ``two``: a second
 // run at ``r_lo + 1``): rates in 1..8, and the pair's slot fits the target's
 // block.  The two-table gate/up launch reaches rates 1..6 (one run) and pairs
@@ -244,6 +299,9 @@ __device__ __forceinline__ void cp_async16(void* smem, const void* gmem) {
 __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;" :: "r"(s), "l"(gmem) : "memory");
+}
+__device__ __forceinline__ void prefetch_l1(const void* gmem) {
+    asm volatile("prefetch.global.L1 [%0];" :: "l"(gmem));
 }
 __device__ __forceinline__ void cp_async_commit() {
     asm volatile("cp.async.commit_group;" ::: "memory");
@@ -549,12 +607,25 @@ struct Params {
 
 // ``RL``, ``TWO``: the launch's run pair (``pair_of``) -- the low (or only)
 // rate, and whether a second run at ``RL + 1`` exists.
-template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
     static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
-    using L = Layout<MODE>;
+    static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
+                  "wide superblocks: the launches ``has_width`` names, unsplit");
+    static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
+                  "the pair fits the target's block at this width");
+    using L = Layout<MODE, BMT>;
+    constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
+    // One A tile of BMT rows, and the consumers' rows: two warp rows of
+    // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
+    // tile, two per row.
+    constexpr int A_STAGE = BMT * BK * ELEM_BYTES;
+    constexpr int WROWS = BMT / 2;
+    constexpr int MI = WROWS / 16;
+    static_assert(!FP8 || 2 * BMT <= PRODUCER_THREADS, "two producers per E4M3 A row");
+    static_assert(FP8 || BMT == BM, "the value family stages 64 routes");
     extern __shared__ __align__(128) uint8_t smem[];
     TabT* tab = reinterpret_cast<TabT*>(smem + L::OFF_TABLES);
     uint8_t* Bs = smem + L::OFF_B;
@@ -567,7 +638,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     const int tid = threadIdx.x;
     const int lane = tid & 31;
     const int nk = p.K / BK;
-    const int dense_nsb = (p.rows_x + BM - 1) / BM;      // DENSE: superblocks of x
+    const int dense_nsb = (p.rows_x + BMT - 1) / BMT;    // DENSE: superblocks of x
     const int total_items = DENSE ? dense_nsb * p.k_split * p.n_blocks
                                   : p.item_off[p.E] * p.n_blocks;
     unsigned gc = 0;          // global chunk counter: the stage is gc & 1
@@ -604,8 +675,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 sb = rem / p.k_split;
                 ks = rem - sb * p.k_split;
                 e = 0;
-                pos0 = sb * BM;
-                mb = min(BM, p.rows_x - pos0);
+                pos0 = sb * BMT;
+                mb = min(BMT, p.rows_x - pos0);
                 kc0 = (int)(((long)ks * nk) / p.k_split);
                 nkc = (int)(((long)(ks + 1) * nk) / p.k_split) - kc0;
             } else {
@@ -622,8 +693,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 sb = local - nb * nsb;
                 const int start = p.offsets[e];
                 const int end = p.offsets[e + 1];
-                pos0 = start + sb * BM;
-                mb = min(BM, end - pos0);
+                pos0 = start + sb * BMT;           // item_off counts BMT-route superblocks
+                mb = min(BMT, end - pos0);
                 kc0 = 0;
                 nkc = nk;
                 ks = 0;
@@ -728,10 +799,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int n_lo = rp_h[0].n_lo;
             const int w_hi = rp_h[0].w_hi;
             // The A row this thread stages (-1: a zero row past the superblock).
+            // E4M3: threads 0 .. 2 * BMT - 1, two per row; value family: every
+            // producer, four per row.
             long arow = -1;
             {
                 const int r = FP8 ? (tid >> 1) : (tid >> 2);
-                if ((!FP8 || tid < 128) && r < mb) {
+                if ((!FP8 || tid < 2 * BMT) && r < mb) {
                     const int pos = pos0 + r;
                     if constexpr (DENSE) {
                         arow = pos;                       // row m of x is route m
@@ -758,13 +831,21 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                 }
             };
+            auto prefetch_a = [&](int kc) {
+                if (arow >= 0) {
+                    if constexpr (FP8)
+                        prefetch_l1(reinterpret_cast<const uint8_t*>(p.x) + arow * p.K + kc * BK + (tid & 1) * 16);
+                    else
+                        prefetch_l1(reinterpret_cast<const uint16_t*>(p.x) + arow * p.K + kc * BK + (tid & 3) * 8);
+                }
+            };
             auto store_a = [&](int stage, const uint4& a) {
-                uint8_t* A = As + stage * A_STAGE_BYTES;
+                uint8_t* A = As + stage * A_STAGE;
                 if constexpr (FAMILY_MMA8) {
                     // E4M3 bytes as they are, in the MMA's k order (see E4M3
                     // MMA LAYOUT): word q of the 16-byte half holds physical k
                     // (2q, 2q + 1, 2q + 8, 2q + 9).
-                    if (tid >= 128) return;
+                    if (tid >= 2 * BMT) return;
                     const int row = tid >> 1;
                     const int c16 = tid & 1;
                     uint4 v = make_uint4(0, 0, 0, 0);
@@ -774,7 +855,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                     *reinterpret_cast<uint4*>(A + row * BK + ((c16 ^ ((row >> 2) & 1)) << 4)) = v;
                 } else if constexpr (FP8) {
-                    if (tid >= 128) return;
+                    if (tid >= 2 * BMT) return;
                     const int row = tid >> 1;
                     const int c16 = tid & 1;
                     uint4 lo, hi;
@@ -926,6 +1007,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
                 load_a(kc0, a_cur);
+                if constexpr (PREFETCH_A) {
+                    #pragma unroll
+                    for (int d = 2; d < A_PREFETCH; ++d)
+                        if (d < nkc) prefetch_a(kc0 + d);
+                }
                 // Settle the first chunk's loads here, before the chunk loop.
                 // They land in the registers the loop carries (``prev_cur``,
                 // ``a_cur``), so without a use here ptxas guards those
@@ -953,6 +1039,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
                     } else {
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
+                    }
+                    if constexpr (PREFETCH_A) {
+                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
                     cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
@@ -1015,7 +1104,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     } else {
         // ------------------------------------------------------------ consumers
         const int cw = (tid - PRODUCER_THREADS) >> 5;
-        const int mw = cw >> 2;      // 32 rows
+        const int mw = cw >> 2;      // WROWS rows
         const int nw = cw & 3;       // 32 B columns
         for (;;) {
             const int slot = item_idx & 1;
@@ -1028,9 +1117,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int mb = desc[slot * 8 + 4];
             const int nkc = desc[slot * 8 + 6];
             const int ks = desc[slot * 8 + 7];
-            float acc[2][4][4];
+            // This warp's 16-row blocks that hold a route.  On the wide
+            // superblock a block wholly past ``mb`` is padding: its rows are
+            // never written (the epilogue's ``r >= mb``), so its fragment
+            // loads and MMAs are skipped.  ``mb`` is the item's, so the branch
+            // is warp-uniform around ``mma.sync``, and a live row's
+            // accumulator sees the same MMAs in the same order either way.
+            // The 64-route launch keeps its published code (every block live).
+            const int live = (BMT == BM) ? MI : min(MI, max(0, (mb - WROWS * mw + 15) >> 4));
+            float acc[MI][4][4];
             #pragma unroll
-            for (int mi = 0; mi < 2; ++mi)
+            for (int mi = 0; mi < MI; ++mi)
                 #pragma unroll
                 for (int nt = 0; nt < 4; ++nt)
                     #pragma unroll
@@ -1038,15 +1135,16 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             for (int ic = 0; ic < nkc; ++ic, ++gc) {
                 stage = gc & 1;
                 if (ic > 0) bar_sync(BAR_FULL0 + stage, THREADS);
-                const uint8_t* A = As + stage * A_STAGE_BYTES;
+                const uint8_t* A = As + stage * A_STAGE;
                 const uint8_t* B = Bs + stage * B_STAGE_BYTES;
                 if constexpr (FAMILY_MMA8) {
                     // One k32 step (see E4M3 MMA LAYOUT).  acc[mi][2G + parity]:
                     // column group G's even-n (0) and odd-n (1) MMA.
-                    uint32_t a[2][4];
+                    uint32_t a[MI][4];
                     #pragma unroll
-                    for (int mi = 0; mi < 2; ++mi) {
-                        const int row = 32 * mw + 16 * mi + 8 * ((lane >> 3) & 1) + (lane & 7);
+                    for (int mi = 0; mi < MI; ++mi) {
+                        if (mi >= live) break;
+                        const int row = WROWS * mw + 16 * mi + 8 * ((lane >> 3) & 1) + (lane & 7);
                         ldmatrix_x4(a[mi], A + row * BK + (((lane >> 4) ^ ((row >> 2) & 1)) << 4));
                     }
                     #pragma unroll
@@ -1057,7 +1155,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const uint32_t be[2] = {__byte_perm(X[0], X[1], 0x6420), __byte_perm(X[2], X[3], 0x6420)};
                         const uint32_t bo[2] = {__byte_perm(X[0], X[1], 0x7531), __byte_perm(X[2], X[3], 0x7531)};
                         #pragma unroll
-                        for (int mi = 0; mi < 2; ++mi) {
+                        for (int mi = 0; mi < MI; ++mi) {
+                            if (mi >= live) break;
                             mma16832_e4m3(acc[mi][2 * G], a[mi], be);
                             mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo);
                         }
@@ -1065,11 +1164,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 } else {
                 #pragma unroll
                 for (int s = 0; s < BK / 16; ++s) {
-                    uint32_t a[2][4];
+                    uint32_t a[MI][4];
                     const int q = lane >> 3;
                     #pragma unroll
-                    for (int mi = 0; mi < 2; ++mi) {
-                        const int row = 32 * mw + 16 * mi + 8 * (q & 1) + (lane & 7);
+                    for (int mi = 0; mi < MI; ++mi) {
+                        if (mi >= live) break;
+                        const int row = WROWS * mw + 16 * mi + 8 * (q & 1) + (lane & 7);
                         const int kch = 2 * s + (q >> 1);
                         ldmatrix_x4(a[mi], A + row * (BK * 2) + (aswz(kch, row) << 4));
                     }
@@ -1084,9 +1184,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         b[2 * pair + 1][0] = r[2]; b[2 * pair + 1][1] = r[3];
                     }
                     #pragma unroll
-                    for (int mi = 0; mi < 2; ++mi)
+                    for (int mi = 0; mi < MI; ++mi) {
+                        if (mi >= live) break;
                         #pragma unroll
                         for (int nt = 0; nt < 4; ++nt) mma16816<FP8>(acc[mi][nt], a[mi], b[nt]);
+                    }
                 }
                 }
                 bar_arrive(BAR_EMPTY0 + stage, THREADS);
@@ -1117,10 +1219,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int n0 = (MODE == 2) ? nb * BN : nb * HALF;
             uint16_t* out = reinterpret_cast<uint16_t*>(p.out);
             #pragma unroll
-            for (int mi = 0; mi < 2; ++mi) {
+            for (int mi = 0; mi < MI; ++mi) {
                 #pragma unroll
                 for (int hr = 0; hr < 2; ++hr) {
-                    const int r = 32 * mw + 16 * mi + 8 * hr + (lane >> 2);
+                    const int r = WROWS * mw + 16 * mi + 8 * hr + (lane >> 2);
                     if (r >= mb) continue;
                     const int pos = pos0 + r;
                     const int flat = DENSE ? pos : p.flat_sorted[pos];
@@ -1243,16 +1345,16 @@ int max_dynamic_smem_bytes(int device) {
     return v;
 }
 
-template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
 void launch_pair(const Params& p, int grid, cudaStream_t stream) {
-    const int smem = smem_bytes(MODE, p.slot_words);
+    const int smem = launch_smem_bytes(MODE, p.slot_words, BMT);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
     if (smem > attributed) {
-        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>,
+        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT>,
                                             cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
         attributed = smem;
     }
-    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO><<<grid, THREADS, smem, stream>>>(p);
+    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT><<<grid, THREADS, smem, stream>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -1261,14 +1363,14 @@ void launch_pair(const Params& p, int grid, cudaStream_t stream) {
 // (``launch_decodes``) is refused here, before any launch; the Python owner
 // refuses it first (``fused_routed_window_supported``: the device's shared
 // memory; ``run_pair``: adjacency).
-template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false>
+template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false, int BMT = BM>
 void launch(const Params& p, int grid, cudaStream_t stream) {
     const PairKey k = pair_of(p.tile_words, p.K);
     switch (k.two ? RATE_MAX + k.r_lo : k.r_lo) {
 #define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
         case (T ? RATE_MAX : 0) + R:                                                           \
             if constexpr (launch_decodes(MODE, R, T)) {                                        \
-                launch_pair<FP8, MODE, DENSE, SPLIT, R, T>(p, grid, stream);                   \
+                launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT>(p, grid, stream);              \
                 return;                                                                        \
             }                                                                                  \
             break;
@@ -1298,13 +1400,14 @@ void check_words(const torch::Tensor& words, const char* name) {
     TORCH_CHECK(words.size(1) % 4 == 0, name, ": words_stride must be a multiple of 4 words");
 }
 // The slot and shared-memory checks both host entries make.
-void check_slot(int mode, int64_t slot_words, const torch::Tensor& on) {
+void check_slot(int mode, int64_t slot_words, const torch::Tensor& on, int bmt) {
     TORCH_CHECK(slot_words % 4 == 0 && slot_words >= 4 && slot_words <= SLOT_WORDS_MAX,
                 "slot_words must be a multiple of 4 in [4, ", SLOT_WORDS_MAX, "]");
-    const int need = smem_bytes(mode, (int)slot_words);
+    const int need = launch_smem_bytes(mode, (int)slot_words, bmt);
     const int have = max_dynamic_smem_bytes(on.device().index());
     TORCH_CHECK(need <= have, "the ", (mode == 2 ? "down/dense" : "gate/up"), " launch at ", slot_words,
-                "-word slots needs ", need, " bytes of dynamic shared memory per block; device ",
+                "-word slots and ", bmt, "-route superblocks needs ", need,
+                " bytes of dynamic shared memory per block; device ",
                 (int)on.device().index(), " allows ", have);
 }
 
@@ -1378,8 +1481,13 @@ void routed_fused_forward(
     torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
     torch::Tensor item_off, torch::Tensor counter,
     int64_t top_k, int64_t a_row_mode, bool mul_weight, double limit,
-    torch::Tensor out, int64_t grid) {
+    torch::Tensor out, int64_t grid, int64_t bm) {
     TORCH_CHECK(mode >= 0 && mode <= 2, "mode must be 0, 1 or 2");
+    // ``bm``: the routes per superblock ``item_off`` counts (the prefix sum of
+    // ceil(routes_e / bm)); BM_WIDE only where the library has that launch.
+    TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, (int)mode, (int)bm), "bm ", bm, " has no ",
+                (mode == 2 ? "down" : "gate/up"), " launch in this library (", BM, " everywhere; ", BM_WIDE,
+                " for the E4M3 family's down/dense launch, and its gate/up launch on the E4M3 instruction)");
     TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be a contiguous 2-D CUDA tensor");
     const int64_t K = x.size(1);
     TORCH_CHECK(K % BK == 0 && K >= 4 * BK, "K must be a multiple of ", BK, " and at least ", 4 * BK);
@@ -1463,7 +1571,7 @@ void routed_fused_forward(
     if (two) check_words(words1, "words1");
     p.words_stride = words0.size(1);
     p.tile_words = (int)tile_words;
-    check_slot((int)mode, slot_words, x);
+    check_slot((int)mode, slot_words, x, (int)bm);
     p.slot_words = (int)slot_words;
     p.K = (int)K;
     p.N = (int)N;
@@ -1490,9 +1598,19 @@ void routed_fused_forward(
     const int g = (int)grid;
     TORCH_CHECK(fp8 == FAMILY_FP8, "this library serves the ", FAMILY_FP8 ? "E4M3" : "value",
                 " family only; the other family's library is a separate native extension");
-    if (mode == 0) launch<FAMILY_FP8, 0>(p, g, stream);
-    else if (mode == 1) launch<FAMILY_FP8, 1>(p, g, stream);
-    else launch<FAMILY_FP8, 2>(p, g, stream);
+    if (bm == BM) {
+        if (mode == 0) launch<FAMILY_FP8, 0>(p, g, stream);
+        else if (mode == 1) launch<FAMILY_FP8, 1>(p, g, stream);
+        else launch<FAMILY_FP8, 2>(p, g, stream);
+    } else if (mode == 2) {
+        if constexpr (has_width(FAMILY_FP8, FAMILY_MMA8, 2, BM_WIDE))
+            launch<FAMILY_FP8, 2, false, false, BM_WIDE>(p, g, stream);
+    } else {
+        if constexpr (has_width(FAMILY_FP8, FAMILY_MMA8, 0, BM_WIDE)) {
+            if (mode == 0) launch<FAMILY_FP8, 0, false, false, BM_WIDE>(p, g, stream);
+            else launch<FAMILY_FP8, 1, false, false, BM_WIDE>(p, g, stream);
+        }
+    }
 }
 
 // The dense launch: one role of a dense Linear (E = 1, route m = row m, no
@@ -1504,7 +1622,8 @@ void dense_forward(
     bool fp8, torch::Tensor x, torch::Tensor a_scale,
     torch::Tensor words, torch::Tensor table, torch::Tensor init, torch::Tensor has_init,
     torch::Tensor wscale, torch::Tensor runs, torch::Tensor bdesc, int64_t tile_words,
-    int64_t slot_words, torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid) {
+    int64_t slot_words, torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid,
+    int64_t bm) {
     TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be a contiguous 2-D CUDA tensor");
     const int64_t M = x.size(0);
     const int64_t K = x.size(1);
@@ -1538,6 +1657,9 @@ void dense_forward(
                 "out must be a bf16 [M, N] view with unit column stride and an even row stride");
     const int nk = (int)(K / BK);
     TORCH_CHECK(k_split >= 1 && k_split <= nk, "k_split must be in [1, K / ", BK, "]");
+    TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, 2, (int)bm) && (bm == BM || k_split == 1), "bm ", bm,
+                ": the dense launch takes ", BM, "-row superblocks, or ", BM_WIDE,
+                " unsplit in the E4M3 family's library");
     if (k_split > 1) {
         TORCH_CHECK(partial.is_cuda() && partial.scalar_type() == torch::kFloat32 && partial.is_contiguous()
                     && partial.numel() == k_split * M * N, "partial must be contiguous fp32 [S, M, N]");
@@ -1570,7 +1692,7 @@ void dense_forward(
     check_words(words, "words");
     p.words_stride = words.size(1);
     p.tile_words = (int)tile_words;
-    check_slot(2, slot_words, x);
+    check_slot(2, slot_words, x, (int)bm);
     p.slot_words = (int)slot_words;
     p.K = (int)K;
     p.N = (int)N;
@@ -1604,8 +1726,10 @@ void dense_forward(
             p.partial, p.a_scale, p.wscale0, reinterpret_cast<uint16_t*>(p.out), p.out_stride,
             (int)k_split, M, N);
         C10_CUDA_KERNEL_LAUNCH_CHECK();
-    } else {
+    } else if (bm == BM) {
         launch<FAMILY_FP8, 2, true, false>(p, g, stream);
+    } else if constexpr (has_width(FAMILY_FP8, FAMILY_MMA8, 2, BM_WIDE)) {
+        launch<FAMILY_FP8, 2, true, false, BM_WIDE>(p, g, stream);
     }
 }
 
@@ -1645,6 +1769,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
+    m.attr("BM_WIDE") = BM_WIDE;
+    m.attr("HAS_WIDE_GATE_UP") = has_width(FAMILY_FP8, FAMILY_MMA8, 0, BM_WIDE);
+    m.attr("HAS_WIDE_DOWN") = has_width(FAMILY_FP8, FAMILY_MMA8, 2, BM_WIDE);
+    m.attr("A_REGION_BYTES_WIDE") = a_region_bytes(BM_WIDE);
+    m.def("launch_smem_bytes", [](int64_t mode, int64_t slot_words, int64_t bm) {
+              return (int64_t)launch_smem_bytes((int)mode, (int)slot_words, (int)bm); },
+          "dynamic shared memory the launch of ``mode`` takes at ``slot_words``-word slots and ``bm``-route superblocks");
     m.attr("BDESC_INTS") = BDESC_INTS;
     m.attr("WINDOW_BITS") = WINDOW_BITS;
     m.def("smem_bytes", [](int64_t mode, int64_t slot_words) { return (int64_t)smem_bytes((int)mode, (int)slot_words); },

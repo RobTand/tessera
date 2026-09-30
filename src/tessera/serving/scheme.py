@@ -774,8 +774,9 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: ROUTED_FUSED_WINDOW_E4M3MMA)`` and ``(FUSED_WINDOW_DENSE_SYMBOL,
 #: _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)`` (library
 #: ``tessera_routed_fused_mma_e4m3``, ``mma.sync.m16n8k32.e4m3.e4m3.f32``).
-#: ``TESSERA_FUSED_E4M3_MMA=e4m3`` makes them the dispatch; they leave this
-#: set when a served census earns them cells.
+#: They are the E4M3 family's default dispatch (``TESSERA_FUSED_E4M3_MMA``
+#: unset or ``e4m3``); they leave this set when a served census earns them
+#: cells.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA),
     (FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA),

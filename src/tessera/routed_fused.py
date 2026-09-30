@@ -76,6 +76,7 @@ __all__ = [
     "ENV_TOGGLE",
     "ENV_E4M3_MMA",
     "ENV_TOGGLE_DENSE",
+    "ENV_WIDE",
     "LIBRARIES",
     "FusedDenseWindowRole",
     "FusedRoutedWindowMoE",
@@ -96,6 +97,7 @@ __all__ = [
     "fused_routed_window_enabled",
     "library_for",
     "prepare_dense_role",
+    "superblock_rows",
     "words_by_expert",
 ]
 
@@ -124,20 +126,31 @@ LIBRARIES = {
     "e4m3mma": (MODULE_NAME_E4M3MMA, "e4m3", True),
 }
 #: Which tensor-core instruction the E4M3 family's fused launches (routed and
-#: dense) take in this process: ``f16`` widens each E4M3 byte to f16 for
-#: ``mma.sync.m16n8k16`` (``tessera_routed_fused_e4m3``), ``e4m3`` runs
-#: ``mma.sync.m16n8k32.e4m3`` on the bytes (``tessera_routed_fused_mma_e4m3``).
-#: Read when an adapter or role is prepared; the prepared object carries its
-#: library and stamps that library's decoder.
+#: dense) take in this process: ``e4m3`` (the default) runs
+#: ``mma.sync.m16n8k32.e4m3`` on the bytes (``tessera_routed_fused_mma_e4m3``),
+#: ``f16`` widens each E4M3 byte to f16 for ``mma.sync.m16n8k16``
+#: (``tessera_routed_fused_e4m3``).  The two compute the same exact products
+#: and differ only in fp32 summation order, and the E4M3 instruction does twice
+#: the work per instruction on half the shared-memory bytes, so it is the
+#: default; ``f16`` stays selectable for A/Bs.  Read when an adapter or role is
+#: prepared; the prepared object carries its library and stamps that library's
+#: decoder.
 ENV_E4M3_MMA = "TESSERA_FUSED_E4M3_MMA"
 E4M3_MMA_CHOICES = ("f16", "e4m3")
-E4M3_MMA_DEFAULT = "f16"
+E4M3_MMA_DEFAULT = "e4m3"
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
 # The kernel's geometry, restated for the support predicate (the library's
 # attributes of the same names are checked against these at load).
 BM = 64
+#: The wide superblock (``BM_WIDE`` in the kernel, tessera#741): 128 routes
+#: per item, so one decoded B tile feeds twice the rows.  The E4M3 family's
+#: one-table launch (routed down, dense) has it in both libraries, and its
+#: gate/up launch on the E4M3 instruction (:func:`has_width`).
+#: :func:`superblock_rows` picks the width per launch; either width gives the
+#: same output bits.
+BM_WIDE = 128
 HALF = 64
 BN = 128
 BK = 32
@@ -212,9 +225,9 @@ def library_for(family: str) -> str:
     """The library key the family's fused launches take in this process.
 
     The value family has one library.  The E4M3 family takes
-    ``tessera_routed_fused_mma_e4m3`` when ``TESSERA_FUSED_E4M3_MMA=e4m3`` and
-    ``tessera_routed_fused_e4m3`` otherwise; any other value is refused by
-    name rather than read as the default.
+    ``tessera_routed_fused_e4m3`` when ``TESSERA_FUSED_E4M3_MMA=f16`` and
+    ``tessera_routed_fused_mma_e4m3`` otherwise (unset or ``e4m3``); any other
+    value is refused by name rather than read as the default.
     """
     if family != "e4m3":
         return family
@@ -226,6 +239,67 @@ def library_for(family: str) -> str:
 
 def library_mma8(library: str) -> bool:
     return LIBRARIES[library][2]
+
+
+def a_region_bytes(bm: int, *, mma8: bool = False) -> int:
+    """The A region (two tiles of ``bm`` rows) of the kernel's layout."""
+    return 2 * int(bm) * BK * (1 if mma8 else 2)
+
+
+def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM) -> int:
+    """The dynamic shared memory the launch takes at ``bm``-route
+    superblocks: :func:`smem_bytes` with the A region at ``bm`` rows."""
+    return smem_bytes(mode, slot_words, mma8=mma8) + a_region_bytes(bm, mma8=mma8) - a_region_bytes(BM, mma8=mma8)
+
+
+def has_width(library: str, mode: int, bm: int) -> bool:
+    """Whether the launch of ``mode`` exists at ``bm``-route superblocks in
+    ``library`` (``has_width`` in the kernel): ``BM`` everywhere; ``BM_WIDE``
+    in the E4M3 family for the one-table launch, and for gate/up too on the
+    E4M3 instruction, whose 8-bit tiles leave the room.  Where the width
+    exists it fits every rate the launch decodes on sm_121 (the kernel
+    asserts it per pair)."""
+    _module, family, mma8 = LIBRARIES[library]
+    return int(bm) == BM or (int(bm) == BM_WIDE and family == "e4m3" and (int(mode) == 2 or mma8))
+
+
+#: ``TESSERA_ROUTED_FUSED_WIDE``: ``auto`` (unset) lets :func:`superblock_rows`
+#: pick the width from the launch's rows; ``0`` keeps 64-route superblocks and
+#: ``1`` takes 128 wherever the launch has them -- for measuring the two widths
+#: against each other, which give the same output bits.
+ENV_WIDE = "TESSERA_ROUTED_FUSED_WIDE"
+#: The smallest routed step, in tokens, that ``auto`` runs at 128-route
+#: superblocks on the E4M3 instruction's library.  Measured over the T8R
+#: release's three routed rungs with recorded prefill routing
+#: (afetch-ab-20260930T063741Z, tessera#741): 128 routes took 7-17% off the
+#: kernel at 2048 tokens on every rung and was within 2.5% of 64 at 512, so
+#: 2048 is the smallest measured step where it wins.
+WIDE_MIN_ROWS = 2048
+#: The threshold where no A/B has measured the width -- a dense role's rows of
+#: ``x`` on either library, and the f16 instruction's routed down launch -- so
+#: ``auto`` never takes it there.
+WIDE_UNMEASURED = 1 << 30
+
+
+def superblock_rows(library: str, mode: int, rows: int, *, dense: bool = False) -> int:
+    """The routes per superblock of one launch: ``BM`` or ``BM_WIDE``.
+
+    ``mode`` is the kernel mode (0/1 gate/up, 2 routed down or dense) and
+    ``rows`` the step's tokens (routed) or, with ``dense``, rows of ``x``.  A
+    pure function of host-visible integers and the environment -- no device
+    read -- so a captured forward records the width with its shapes.
+    """
+    if not has_width(library, mode, BM_WIDE):
+        return BM
+    want = os.environ.get(ENV_WIDE, "auto")
+    if want == "0":
+        return BM
+    if want == "1":
+        return BM_WIDE
+    if want != "auto":
+        raise GrammarError(f"{ENV_WIDE}={want!r}: expected auto, 0 or 1")
+    floor = WIDE_MIN_ROWS if library_mma8(library) and not dense else WIDE_UNMEASURED
+    return BM_WIDE if int(rows) >= floor else BM
 
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
@@ -432,6 +506,9 @@ def _ext(library: str):
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
+                       ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
+                       ("HAS_WIDE_GATE_UP", has_width(library, 0, BM_WIDE)),
+                       ("HAS_WIDE_DOWN", has_width(library, 2, BM_WIDE)),
                        # the gate/up rates the library instantiates ARE the ones the host admits
                        ("GATE_UP_RATE_MAX", max(routed_lane_rates(library)))):
         if getattr(lib, name) != want:
@@ -724,13 +801,31 @@ class _Routing:
     offsets: torch.Tensor      # [E + 1] int32
     flat_sorted: torch.Tensor  # [P] int32
     rw_sorted: torch.Tensor    # [P] fp32
-    item_off: torch.Tensor     # [E + 1] int32
+    item_off: torch.Tensor     # [E + 1] int32: prefix sum of ceil(routes_e / BM)
     tokens: int
     top_k: int
+    #: The same at ``BM_WIDE``-route superblocks, built only when a launch of
+    #: the step takes that width (:func:`superblock_rows`).
+    item_off_wide: "torch.Tensor | None" = None
 
     @property
     def routes(self) -> int:
         return self.tokens * self.top_k
+
+    def superblocks(self, bm: int) -> torch.Tensor:
+        """``item_off`` for ``bm``-route superblocks: [E + 1] int32."""
+        if int(bm) == BM:
+            return self.item_off
+        if int(bm) != BM_WIDE or self.item_off_wide is None:
+            raise GrammarError(f"no {bm}-route superblock offsets for this step")
+        return self.item_off_wide
+
+
+def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
+    """The prefix sum of ``ceil(counts_e / bm)``: [E + 1] int32."""
+    item_off = torch.zeros(counts.numel() + 1, dtype=torch.int32, device=counts.device)
+    item_off[1:] = torch.cumsum((counts + (bm - 1)) // bm, 0, dtype=torch.int32)
+    return item_off
 
 
 @functools.lru_cache(maxsize=None)
@@ -872,11 +967,10 @@ class FusedRoutedWindowMoE:
         order = torch.argsort(ids, stable=True)
         flat_sorted = order.to(torch.int32).contiguous()
         rw_sorted = routing_weights.reshape(-1).to(torch.float32)[order].contiguous()
-        superblocks = (counts + (BM - 1)) // BM
-        item_off = torch.zeros(e + 1, dtype=torch.int32, device=self.device)
-        item_off[1:] = torch.cumsum(superblocks, 0, dtype=torch.int32)
+        wide = any(superblock_rows(self.library, mode, tokens) == BM_WIDE for mode in (0, 2))
         return _Routing(offsets=offsets, flat_sorted=flat_sorted, rw_sorted=rw_sorted,
-                        item_off=item_off, tokens=tokens, top_k=top_k)
+                        item_off=_item_off(counts, BM), tokens=tokens, top_k=top_k,
+                        item_off_wide=_item_off(counts, BM_WIDE) if wide else None)
 
     def _launch(self, mode: int, x: torch.Tensor, a_scale: "torch.Tensor | None",
                 routing: _Routing, *, a_row_mode: int, mul_weight: bool, limit: float,
@@ -896,6 +990,7 @@ class FusedRoutedWindowMoE:
             r0, r1 = self.runs_gate, self.runs_up
             d0, d1 = self.bdesc_gate, self.bdesc_up
             tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
+        bm = superblock_rows(self.library, mode, routing.tokens)
         empty = self.counters.new_zeros(0, dtype=torch.float32)
         slot = self.counters[counter:counter + 1]
         slot.zero_()   # in-stream: a captured forward replays with a fresh work list
@@ -908,10 +1003,10 @@ class FusedRoutedWindowMoE:
             b0.scale_all, b1.scale_all,
             r0, r1, d0, d1,
             int(tile_words), int(slot_words),
-            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
-            out, _sm_count(index))
+            out, _sm_count(index), int(bm))
 
     def _quantized(self, x: torch.Tensor, a_scale: "torch.Tensor | None", rows: int):
         """The A operand the family's kernel reads: bf16 as is, or e4m3 + scale."""
@@ -1247,7 +1342,11 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
     slot = counter if counter.numel() == 1 else counter[:1]
     if not zeroed:
         slot.zero_()
+    # The wide superblock only where K is not split (``dense_k_split`` is the
+    # 64-route model, and a split launch has idle SMs to fill, not rows).
+    bm = superblock_rows(role.library, 2, m, dense=True) if s == 1 else BM
     lib.dense_forward(
         bool(role.fp8), x, a_scale if a_scale is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,
-        role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms)
+        role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms,
+        int(bm))
