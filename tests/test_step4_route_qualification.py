@@ -309,7 +309,10 @@ def test_every_family_holding_qualifies_and_says_what_it_does_not_claim():
     assert fp8["expected"] == {
         "launches": [{"symbol": WINDOW_GEMM_SYMBOL, "decoder": NATIVE_WINDOW_GEMM_DECODER},
                      {"symbol": "tessera::fused_window_dense",
-                      "decoder": "native_fused_window_dense"}],
+                      "decoder": "native_fused_window_dense"},
+                     # contract v46: the E4M3 instruction library's dense identity
+                     {"symbol": "tessera::fused_window_dense",
+                      "decoder": "native_fused_window_dense_e4m3mma"}],
         "modules": 2, "names_checked": True}
     assert fp8["observed"]["symbol"] == WINDOW_GEMM_SYMBOL
     assert fp8["observed"]["decoder"] == NATIVE_WINDOW_GEMM_DECODER

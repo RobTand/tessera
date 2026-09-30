@@ -104,9 +104,12 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
     assert all(bucket["modules"] == 1 for bucket in moe["observed"]["by_launch"].values())
     # Two pairs observed: no single symbol/decoder is claimed for the kind.
     assert "symbol" not in moe["observed"] and "symbol" not in moe["expected"]
+    # Contract v46 adds the E4M3 instruction library's routed pair to what the
+    # FP8 routed kind admits (experimental; TESSERA_FUSED_E4M3_MMA=e4m3).
     assert [(e["symbol"], e["decoder"]) for e in moe["expected"]["launches"]] == [
         ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window")]
+        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window"),
+        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window_e4m3mma")]
     # The dense kind observed one pair, named outright; since contract v43
     # (tessera#692) its expectation admits two -- the Triton window GEMM and
     # the fused kernel's dense identity -- so it lists launches like the routed
@@ -116,7 +119,8 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
     assert "symbol" not in dense["expected"]
     assert [(e["symbol"], e["decoder"]) for e in dense["expected"]["launches"]] == [
         ("tessera::window_gemm_dense", "native_window_gemm"),
-        ("tessera::fused_window_dense", "native_fused_window_dense")]
+        ("tessera::fused_window_dense", "native_fused_window_dense"),
+        ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma")]
 
 
 @pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_folded_on_fp8", "count_ignores_second_pair"])
