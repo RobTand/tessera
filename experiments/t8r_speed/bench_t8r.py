@@ -305,6 +305,7 @@ def build_routed(store, module):
     per_expert_rank = wire_total / EXPERTS / TP_SIZE
     info = {"family": scheme["family"], "q256": {g: v["q256"] for g, v in scheme["groups"].items()},
             "adapter": type(native).__name__,
+            "library": repr(getattr(native, "library", None)),
             "adapter_attrs": sorted(a for a in vars(native) if not a.startswith("__"))[:40]
             if hasattr(native, "__dict__") else None,
             "resident_bytes": int(packed.resident_bytes()) if hasattr(packed, "resident_bytes") else None,
@@ -451,6 +452,9 @@ def main():
             "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
             "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
             "routed_fused_wide": os.environ.get("TESSERA_ROUTED_FUSED_WIDE"),
+            # the dispatch-selecting variables as the process saw them
+            "env": {k: os.environ.get(k) for k in ("TESSERA_FUSED_E4M3_MMA", "TESSERA_ROUTED_FUSED",
+                                                   "TESSERA_ROUTED_FUSED_WIDE", "TESSERA_SERVE_MODE")},
             "start_unix": time.time()}
     recorded = routing_files(args.routing, ms) if args.routing else {}
     if args.routing and not any(recorded.values()):

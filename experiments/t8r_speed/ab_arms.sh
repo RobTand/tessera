@@ -83,8 +83,9 @@ def cells(name):
     if not p.exists():
         return {}, None
     d = json.load(open(p))
+    envs[name] = d["meta"].get("env")
     return {(r["group"], m): c for r in d["results"] for m, c in r.get("cells", {}).items()}, d["meta"].get("kernel_sha")
-data, shas = {}, {}
+data, shas, envs = {}, {}, {}
 for fam in ("routed", "dense"):
     for a in arms:
         for p in ("", "b"):
@@ -122,6 +123,12 @@ for fam in ("routed", "dense"):
 verdict = {"rows": len(rows), "bitwise_all_arms": sum(r["bitwise"] for r in rows),
            "missing_rows": sum(bool(r["missing"]) for r in rows)}
 for a in arms:
+    # the arm's env file must be what each of its bench processes saw
+    f = root / f"src-{a}" / "env"
+    want = dict(l.strip().split("=", 1) for l in open(f) if "=" in l) if f.exists() else {}
+    seen = [v for n, v in envs.items() if n.startswith(f"{a}-")]
+    verdict[f"{a}_env_seen"] = bool(seen) and all(
+        v is not None and all(v.get(k) == w for k, w in want.items()) for v in seen)
     verdict[f"{a}_self_equal"] = sum(r[f"{a}_self_equal"] for r in rows)
     verdict[f"{a}_eq_ref"] = sum(r[f"{a}_eq_ref"] for r in rows)
 json.dump({"ref": ref, "arms": arms, "kernel_sha": shas, "verdict": verdict, "rows": rows},
