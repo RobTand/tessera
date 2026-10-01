@@ -35,7 +35,8 @@ Three parts, each on the pinned serving image's own vLLM code:
 ``mhcsplit`` The ``mhc`` split invariance with the pre-norm GEMM's split-k forced
            to one value for the full call and its chunks (the full call's split,
            the chunk's split, and 1), to test whether the token-count-dependent
-           split is the only cause of the mismatch.  Numerics only.
+           split is the only cause of the mismatch; with timing, the T/2-token call at
+           the full batch's split against its own (the price of an exact SP rank).
 
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
@@ -358,7 +359,8 @@ def part_mhcsplit(args, model_dir: Path) -> dict:
     call's actual split is recorded from the patched function, so a forced value
     that never reached the GEMM shows as a mismatch, not a pass.  If the outputs
     are bitwise equal at every forced S, the split is the whole cause, and an SP
-    rank that passes the full batch's split would be exact.  Numerics only."""
+    rank that passes the full batch's split would be exact.  Off --numerics-only it
+    also times that rank's T/2-token call at the full batch's split against its own."""
     import vllm.model_executor.kernels.mhc.tilelang_kernels as tk
     from vllm.utils.deep_gemm import is_deep_gemm_supported
 
@@ -418,6 +420,30 @@ def part_mhcsplit(args, model_dir: Path) -> dict:
                         out["cases"].append(rec)
                         log("mhcsplit", which, t, parts, label, f"splits full {sf} chunks {sc}",
                             f"bitwise {rec['bitwise']}", f"post max_abs {rec['post_mix']['max_abs']:.3g}")
+                if not args.numerics_only:  # timing: only on a box this row has to itself
+                    # The price of exactness on an SP rank: its T/2-token call at the full batch's split
+                    # against the same call at its own stock split.  The patch is live through capture.
+                    half = tuple(v[: t // 2].contiguous() for v in (x, res, post, comb))
+                    s_full = stock(64, HC * HIDDEN, math.ceil(t / 64))
+                    k = copies_for(mhc_bytes(t // 2)["floor"])
+                    cell = {"which": which, "tokens": t, "half_tokens": t // 2, "s_full": s_full,
+                            "s_half_stock": stock(64, HC * HIDDEN, math.ceil(t // 2 / 64)), "copies": k}
+                    for label, force in (("half_stock", None), ("half_at_s_full", s_full)):
+                        ins = [tuple(v.clone() for v in half) for _ in range(k)]
+                        calls = [(lambda a=a: call(*a)) for a in ins]
+
+                        def forced(block_k, kk, grid_size, force=force):
+                            return stock(block_k, kk, grid_size) if force is None else force
+                        tk.compute_num_split = forced
+                        try:
+                            cell[label] = {"ms_per_call": graph_ms(calls, args.reps), "mode": graph_ms.last_mode}
+                        finally:
+                            tk.compute_num_split = stock
+                        del ins, calls
+                    cell["exact_cost_ms_per_call"] = cell["half_at_s_full"]["ms_per_call"] - cell["half_stock"]["ms_per_call"]
+                    out.setdefault("timing", []).append(cell)
+                    log("mhcsplit-time", which, t, json.dumps({kk: cell[kk] for kk in ("s_full", "s_half_stock",
+                                                                                     "half_stock", "half_at_s_full")}))
                 del x, res, post, comb
     finally:
         tk.compute_num_split = stock
