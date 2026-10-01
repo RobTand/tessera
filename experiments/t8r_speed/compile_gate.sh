@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One PB CPU action (x86, ubuntu:24.04, no GPU): compile routed_fused_window.cu's device code
-# for sm_121 from source snapshots under the production library flags, then compare the SASS
-# and resource usage per kernel (sass_cmp.py).
+# One PB CPU action (x86, no GPU): compile routed_fused_window.cu's device code for sm_121
+# from source snapshots under the production library flags, then compare the SASS and
+# resource usage per kernel (sass_cmp.py).
 #
 # The toolchain is the Spark image's, rebuilt off the Sparks:
 # - nvcc and ptxas 13.0.88, the ptxas of the image's library builds (their .note.nv.tkinfo);
@@ -12,36 +12,57 @@
 # here) is what licenses the rest.
 #
 # Usage: compile_gate.sh <gate_root>
+#   Runs itself in GATE_IMAGE (the PB-declared ubuntu:24.04 image) under the action's CPU
+#   affinity: apt installs g++-13 and the Python 3.12 headers as the image's root, then the
+#   gate runs as the calling user, so everything under <gate_root> stays that user's.
 #   <gate_root>/src/<variant>/routed_fused_window.cu  source snapshots, one per variant
 #   <gate_root>/builds.txt  "<build> <variant> <library> [-D...]" per line; <library> is a
 #                           routed_fused.LIBRARIES key (value, e4m3, e4m3mma) or e2m1
 #   <gate_root>/bins.txt    "<name> <path>" per line: binaries built elsewhere (optional)
 #   <gate_root>/pairs.txt   "<label> <ref> <cand> <expect>" per line (see sass_cmp.py)
-# Env: GATE_NVCC, GATE_CUOBJDUMP, GATE_HDR (holds torch/include and nvidia/cu13/include),
-#      GATE_JOBS (parallel compiles; default nproc).
+# Env: GATE_IMAGE, GATE_NVCC, GATE_CUOBJDUMP, GATE_HDR (holds torch/include and
+#      nvidia/cu13/include), GATE_RO (read-only mounts: the toolchain, headers and bins.txt
+#      paths; default /mnt/shared/tessera-measurements), GATE_JOBS (parallel compiles;
+#      default: the CPUs the action holds).
 # Output under <gate_root>/out: <build>.cubin, <build>.nvcc.log, <build>.rc, spec.json,
-# gate.json and gate.txt.  Exit status: sass_cmp.py's (0 = every verdict passed), or 2
-# when a compile failed.
+# gate.json and gate.txt.  Exit status: sass_cmp.py's (0 = every verdict passed), 2 when a
+# compile failed, 3 when apt failed.
 set -uo pipefail
-ROOT=${1:?gate_root}
 HERE=$(cd "$(dirname "$0")" && pwd)
+case ${1:-} in
+--in-image)   # the image's root: the toolchain packages, then the gate as the caller
+  { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+      g++-13 python3.12-dev; } > /var/log/gate-apt.log 2>&1 || { echo "apt failed"; tail -20 /var/log/gate-apt.log; exit 3; }
+  echo "apt ok"
+  exec setpriv --reuid="$GATE_UID" --regid="$GATE_GID" --clear-groups -- bash "$0" --as-user "$2" ;;
+--as-user) ROOT=$2 ;;
+*)
+  ROOT=$(realpath "${1:?gate_root}")
+  IMAGE_REF=${GATE_IMAGE:?set GATE_IMAGE to the PB-declared ubuntu:24.04 image}
+  CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
+  NCPU=$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')
+  RO=${GATE_RO:-/mnt/shared/tessera-measurements}
+  mkdir -p "$ROOT/out/home" "$ROOT/out/tmp"
+  echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF start=$(date -u +%FT%TZ)"
+  docker run --rm --network=host --cpuset-cpus "$CPUS" \
+    -v "$RO":"$RO":ro -v "$ROOT":"$ROOT" -v "$HERE":"$HERE":ro \
+    -e GATE_UID="$(id -u)" -e GATE_GID="$(id -g)" -e GATE_NVCC="${GATE_NVCC:?}" \
+    -e GATE_CUOBJDUMP="${GATE_CUOBJDUMP:?}" -e GATE_HDR="${GATE_HDR:?}" -e GATE_JOBS="${GATE_JOBS:-$NCPU}" \
+    -e HOME="$ROOT/out/home" -e TMPDIR="$ROOT/out/tmp" -e PYTHONUNBUFFERED=1 \
+    --entrypoint bash "$IMAGE_REF" "$HERE/compile_gate.sh" --in-image "$ROOT"
+  rc=$?
+  echo "end=$(date -u +%FT%TZ) rc=$rc"
+  exit $rc ;;
+esac
 NVCC=${GATE_NVCC:?GATE_NVCC}
 CUOBJDUMP=${GATE_CUOBJDUMP:?GATE_CUOBJDUMP}
 HDR=${GATE_HDR:?GATE_HDR}
 JOBS=${GATE_JOBS:-$(nproc)}
 OUT=$ROOT/out
 mkdir -p "$OUT"
-export TMPDIR=$OUT/tmp
-mkdir -p "$TMPDIR"
-echo "start $(date -u +%FT%TZ) host=$(hostname) arch=$(uname -m) nproc=$(nproc) jobs=$JOBS"
+echo "start $(date -u +%FT%TZ) arch=$(uname -m) uid=$(id -u) nproc=$(nproc) jobs=$JOBS"
 sha256sum "$0" "$HERE/sass_cmp.py" "$ROOT"/builds.txt "$ROOT"/pairs.txt "$ROOT"/src/*/routed_fused_window.cu
 [[ -f $ROOT/bins.txt ]] && sha256sum "$ROOT/bins.txt"
-if ! command -v g++-13 > /dev/null || [[ ! -f /usr/include/python3.12/Python.h ]]; then
-  t0=$SECONDS
-  { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
-      g++-13 python3.12-dev; } > "$OUT/apt.log" 2>&1 || { echo "apt failed"; tail -20 "$OUT/apt.log"; exit 3; }
-  echo "apt ok $((SECONDS - t0))s"
-fi
 dpkg-query -W g++-13 libpython3.12-dev 2>/dev/null
 "$NVCC" --version | tail -2
 "$CUOBJDUMP" --version | tail -2
