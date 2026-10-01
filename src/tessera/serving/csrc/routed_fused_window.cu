@@ -55,9 +55,9 @@
 // planes its own tensors (``DenseRoles``) -- and the split is reduced in the
 // kernel: the last split of a tile to arrive (a per-tile arrival count) sums
 // the partials in the same fixed order and applies the same epilogue, so the
-// output is bitwise the two-launch one.  A split keeps at least STAGES + 1 K
-// chunks per item, which is what keeps an item's descriptor and row-scale
-// slot live until its consumers are done with it.
+// output is bitwise the two-launch one.  A split reduced in the kernel keeps
+// at least STAGES + 1 K chunks per item, which is what keeps an item's
+// descriptor and row-scale slot live until its fixup is done with it.
 // The dense identity is ``tessera::fused_window_dense`` (``serving.native_
 // window``), decoders ``native_fused_window_dense`` / ``..._folded``.
 //
@@ -2926,12 +2926,15 @@ void dense_launch(
                 "out must be a bf16 [M, sum of the roles' rows] view with unit column stride and an even row stride");
     const int nk = (int)(K / BK);
     TORCH_CHECK(k_split >= 1 && k_split <= nk, "k_split must be in [1, K / ", BK, "]");
-    // Every item of a split launch keeps at least STAGES + 1 chunks: the
-    // producers run at most STAGES chunks ahead of the consumers, so a slot
-    // two items back (its descriptor, its row scales) is never rewritten
-    // before the consumers have finished with it.
-    TORCH_CHECK(k_split == 1 || k_split <= nk / (STAGES + 1), "k_split ", k_split, " leaves a split fewer than ",
-                STAGES + 1, " of the ", nk, " K chunks; at most ", nk / (STAGES + 1));
+    // Every item of a split the kernel reduces itself keeps at least
+    // STAGES + 1 chunks: the producers run at most STAGES chunks ahead of the
+    // consumers, so a slot two items back (its descriptor, its row scales) is
+    // never rewritten before the fixup has finished with it.  A split reduced
+    // after the launch (``fixup`` false: the one-role entry) keeps the range it
+    // has always had, [1, K / BK]; its own short-item window is tessera#805.
+    TORCH_CHECK(k_split == 1 || !fixup || k_split <= nk / (STAGES + 1), "k_split ", k_split,
+                " leaves a split fewer than ", STAGES + 1, " of the ", nk,
+                " K chunks; the in-kernel fixup takes at most ", nk / (STAGES + 1));
     TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, 2, (int)bm) && (bm == BM || k_split == 1), "bm ", bm,
                 ": the dense launch takes ", BM, "-row superblocks, or ", BM_WIDE,
                 " unsplit in the E4M3 family's library");

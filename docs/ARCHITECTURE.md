@@ -1,5 +1,32 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for the dense module launch as an opt-in setting
+(tessera#778, Refs #750). `TESSERA_DENSE_MODULE_LAUNCH` (`routed_fused.
+ENV_DENSE_MODULE`) selects the dense identity's launch shape and K split
+model, read per call:
+- **Unset or `0` (the default).** One launch per role, with
+  `dense_k_split_bandwidth`. This is the model and range from before
+  tessera#778, up to `K / 32`, with the split reduced by `dense_reduce_kernel`.
+  It is the per-role path that ran before, on both families.
+- **`1`.** On the E4M3 libraries, one `dense_forward_roles` launch per
+  module, with the split reduced in the kernel. Every dense launch is priced
+  with `dense_k_split_makespan`, whose range ends at `dense_split_max`.
+
+Any other value is refused by name.
+
+The two settings split K differently at decode (M <= 192 on the GLM-5.3 MLP
+shapes) and so give different bits there. The default holds until #778's
+decode measurement on the served artifact clears the module launch.
+
+The `STAGES + 1` chunk floor binds only the in-kernel fixup (its library
+check, and `dense_forward_roles`). The one-role launch keeps its old range.
+The window that range leaves, items of two K chunks or fewer for roles of at
+most 128 rows at small M, is tracked in tessera#805.
+
+`routed_fused.dense_k_split` is the dispatcher every launch asks, so a forced
+split still binds. No route, rung, cell, served byte or contract field
+changes.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -42,14 +69,16 @@ Re-stamped 2026-09-30 for one dense launch per module on the E4M3 libraries
 Linear's roles at once and reduces a K split in the kernel, bitwise the
 two-launch result (`MULTI = DENSE && FP8` in `routed_fused_window.cu`; the value
 family and every routed launch keep their code, and their SASS differs from
-before by at most one commuted `IADD3`). A dense K split now keeps every item
-at least `STAGES + 1` K chunks long (`dense_split_max`), which closes a window
-in which the producers could rewrite the descriptor and row-scale slot of an
-item still in its epilogue. No route, rung, cell, served byte or contract
-field changes.
+before by at most one commuted `IADD3`). A split the kernel reduces itself
+keeps every item at least `STAGES + 1` K chunks long (`dense_split_max`), which
+keeps the producers from rewriting the descriptor and row-scale slot of an
+item still in its fixup. The module launch is opt-in
+(`TESSERA_DENSE_MODULE_LAUNCH=1`, the 2026-10-01 stamp below). No route, rung,
+cell, served byte or contract field changes.
 
 Re-stamped 2026-09-30 for the dense K split's makespan model (tessera#750
-WP2). `routed_fused.dense_k_split` now prices the wave count: `S * items`
+WP2), opt-in under `TESSERA_DENSE_MODULE_LAUNCH=1` (the 2026-10-01 stamp
+below). `routed_fused.dense_k_split_makespan` prices the wave count: `S * items`
 equal items on `sms` SMs end when an SM with `ceil(S * items / sms)` of them
 finishes, and each item pays a measured fixed cost
 (`DENSE_ITEM_FIXED_BYTES`). A 4096-row role at decode (32 items) splits three
@@ -428,9 +457,9 @@ v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
 default: the same persistent CUDA kernel in its `DENSE` instantiation (E = 1,
 identity routing, no epilogue activation; `tessera.routed_fused.dense_forward`),
-which splits K into fp32 partials that a fixed-order reduce sums when the
-work items leave SMs idle (`dense_k_split`, a makespan model in the SM count,
-the byte counts and one measured per-item cost, S = 1 in prefill) and rounds once to bf16
+which splits K into fp32 partials that a fixed-order reduce sums when fewer
+work items than SMs exist (`dense_k_split`, a bandwidth model in the SM count
+and the byte counts, S = 1 in prefill) and rounds once to bf16
 (`tessera::fused_window_dense`, decoders `native_fused_window_dense` /
 `native_fused_window_dense_folded`). The integration is per Linear, not per
 MLP: vLLM applies the activation between the two Linears it owns, so each
@@ -3891,18 +3920,33 @@ rows of the module, so a 4096 x 2048 down projection at M = 1 is 32 items on
 each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
 S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
-one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
-of the launch's makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) /
-nk + c) + 2 S M N 4` over `1 .. min(dense_split_max(K), sms)`, where
-`dense_split_max(K) = (K / 32) / (STAGES + 1)`: every item keeps at least three
-K chunks, because the producers run at most `STAGES` = 2 chunks ahead and write
-an item's descriptor and row-scale slot (two slots, alternating) when they claim
-it, so a shorter item two back could still be in its epilogue; the library
-refuses a larger split (`item` the wire bytes of one
-128-row block over K, `c = DENSE_ITEM_FIXED_BYTES` the measured per-item cost;
-tessera#750: the last wave's idle SMs cost a whole wave, so 32 items split
-three ways, not two). Prefill shapes, whose items fill whole waves or whose
-partials outweigh the idle tail, run the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+one bf16 rounding. `dense_k_split(m, rows, cols, sms)` is the split every
+launch asks for. It dispatches on `TESSERA_DENSE_MODULE_LAUNCH`, read per call:
+- **Unset or `0` (the default).** `dense_k_split_bandwidth`: the integer
+  minimiser of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 ..
+  min(K/32, ceil(sms/items))`, which returns 1 as soon as every SM has an item.
+  This is the model from before tessera#778.
+- **`1`.** `dense_k_split_makespan`: the integer minimiser of the launch's
+  makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) / nk + c) +
+  2 S M N 4` over `1 .. min(dense_split_max(K), sms)`.
+  - `item` is the wire bytes of one 128-row block over K, and `c =
+    DENSE_ITEM_FIXED_BYTES` is the measured per-item cost.
+  - tessera#750: the last wave's idle SMs cost a whole wave, so 32 items split
+    three ways, not two.
+
+`dense_split_max(K) = (K / 32) / (STAGES + 1)` is the range of a split the
+kernel reduces itself. Every such item keeps at least three K chunks, because
+the producers run at most `STAGES` = 2 chunks ahead and write an item's
+descriptor and row-scale slot (two slots, alternating) when they claim it, so a
+shorter item two back could still be in its fixup. The library refuses a larger
+split there.
+
+The one-role launch, reduced by `dense_reduce_kernel`, takes the earlier range
+up to `K / 32`. Its short-item window, which the bandwidth model reaches for
+roles of at most 128 rows at small M, is tessera#805.
+
+Prefill shapes, whose items fill whole waves or whose partials outweigh the
+idle tail, run the unsplit kernel under either model. Two runs are bitwise equal in both regimes and a captured
 forward replays (the work counter is zeroed inside the region; the partial is
 a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not
@@ -3910,15 +3954,16 @@ own, so an MLP-level fusion would have saved one bf16 round trip (about 1% at
 M = 2048) for a model-forward patch and a changed census module count; instead
 `native_window.PreparedDenseNativeModule` runs the module as one op
 (`tessera::fused_window_dense`, a custom op like `window_gemm_dense`) into one
-`[M, rows]` output, each role in its column slice. On the E4M3 libraries one
-launch takes the module's roles (at most `MAX_ROLES` = 8 per launch,
+`[M, rows]` output, each role in its column slice. By default it launches each
+role, and its reduce when split. Under `TESSERA_DENSE_MODULE_LAUNCH=1`, one
+launch on the E4M3 libraries takes the module's roles (at most `MAX_ROLES` = 8 per launch,
 `routed_fused.dense_forward_roles`): their 128-row blocks are one item list that
 `dense_k_split(..., blocks=)` prices as a whole, and a K split is reduced in the
 kernel -- the last split of a tile to arrive (a per-tile arrival count) sums the
 S partials in split order and applies the epilogue, bitwise the reduce launch's
-result. The GLM KDA input module is therefore two launches (the counter fill
-and the kernel) instead of 13. The value library launches each role, and its
-reduce when split. The lane is decided once per module at weight
+result. The GLM KDA input module is then two launches (the counter fill and
+the kernel) instead of 13. The value library launches each role, and its
+reduce when split, under either setting. The lane is decided once per module at weight
 load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
 column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
 multiple of 4 (`DENSE_ROW_QUANTUM`; a multiple of 128 before the N-tail,

@@ -53,9 +53,10 @@ N-tail) is served by that kernel's dense case instead:
 the functional custom op ``tessera::fused_window_dense`` launches
 ``routed_fused_kernel<FP8, 2, DENSE>`` into each role's column slice of one
 ``[M, rows]`` output (no concatenation), splitting K at decode shapes so
-every SM has an item -- on the E4M3 libraries once per module, every role and
-the split's reduction in one launch (tessera#750 WP2), on the value library
-once per role with a reduce launch after a split -- and stamps
+every SM has an item -- once per role with a reduce launch after a split by
+default, and under ``TESSERA_DENSE_MODULE_LAUNCH=1`` on the E4M3 libraries
+once per module, every role and the split's reduction in one launch
+(tessera#750 WP2; ``routed_fused.ENV_DENSE_MODULE``) -- and stamps
 ``native_fused_window_dense`` /
 ``native_fused_window_dense_folded``.  The lane is decided ONCE at
 preparation for the whole module -- a module stamps one decoder -- and the
@@ -229,9 +230,11 @@ def _fused_window_dense(
         init=inits[i], has_init=has_inits[i], wscale=wscales[i],
         runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
         for i, rows in enumerate(role_rows)]
-    if family == "e4m3":
+    if family == "e4m3" and rf.dense_module_launch_enabled():
         # The E4M3 libraries take the module's roles in one launch and reduce
         # a K split in-kernel (tessera#750 WP2): one fill and one kernel.
+        # Opt-in until tessera#778's decode measurement: read per call, so a
+        # captured forward keeps the launch it was captured with.
         rf.dense_forward_roles(roles, x, a_scale, out)
         return out
     # One in-stream fill zeroes every role's slot, so the launches add none
