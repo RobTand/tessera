@@ -22,6 +22,15 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 ART=${BENCH_ARTIFACT:-/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported}
 [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
+# BENCH_EXT_DIR: a torch-extension build directory shared by several runs of
+# ONE source arm (the JIT key covers the sources, so a run of another arm
+# rebuilds rather than reuses); default: this run's own, under <out_dir>.
+EXT=${BENCH_EXT_DIR:-$OUT/home/torch_extensions}
+EXT_MOUNT=()
+if [[ -n "${BENCH_EXT_DIR:-}" ]]; then
+  mkdir -p "$EXT"
+  EXT_MOUNT=(-v "$EXT":"$EXT")
+fi
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)}
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
@@ -69,10 +78,10 @@ fi
 rc=0
 docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
-  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
+  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" "${EXT_MOUNT[@]}" \
   -e KERNEL_SHA="$KERNEL_SHA" -e BENCH_ARTIFACT="$ART" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
-  -e TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions" \
+  -e TORCH_EXTENSIONS_DIR="$EXT" \
   -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \

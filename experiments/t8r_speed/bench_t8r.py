@@ -123,6 +123,13 @@ TESSERA_GROUPS = [
     ("dense_gate_up.R1024.L2", "dense_col", P + "2.mlp.gate_up_proj"),
     ("dense_down.R832.L1", "dense_row", P + "1.mlp.down_proj"),
 ]
+# A named dense group's family -> (kind, module leaf under the layer).
+DENSE_NAMES = {
+    "shared_gate_up": ("dense_col", ".mlp.shared_experts.gate_up_proj"),
+    "shared_down": ("dense_row", ".mlp.shared_experts.down_proj"),
+    "dense_gate_up": ("dense_col", ".mlp.gate_up_proj"),
+    "dense_down": ("dense_row", ".mlp.down_proj"),
+}
 # (group id, out_features, in_features) per TP2 rank; merged where vLLM merges.
 # KDA (34 layers): q/k/v column-parallel 8192 -> 4096 each (merged here as one
 # 12288-row GEMM and also timed as three), o_proj row-parallel 8192 -> 4096 in,
@@ -425,6 +432,9 @@ def main():
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
     ap.add_argument("--ncu", action="store_true",
                     help="one call per (group, M) between cudaProfilerStart/Stop; no timing")
+    ap.add_argument("--hash-only", action="store_true",
+                    help="correctness cells: each cell's output bytes twice and its launched "
+                         "kernels (one profiled call); no timing, graph or power")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
@@ -466,6 +476,13 @@ def main():
         hit = re.fullmatch(r"experts\.R(\d+)\.L(\d+)", gid)
         if hit and gid not in known:
             plan.append((gid, "routed", P + hit.group(2) + ".mlp.experts"))
+            continue
+        # And any other artifact's dense or shared-expert Linear, named
+        # <family>.R<q256>.L<layer>; the rate is checked the same way.
+        hit = re.fullmatch(r"(shared_gate_up|shared_down|dense_gate_up|dense_down)\.R(\d+)\.L(\d+)", gid)
+        if hit and gid not in known:
+            kind, leaf = DENSE_NAMES[hit.group(1)]
+            plan.append((gid, kind, P + hit.group(3) + leaf))
     for gid, kind, module in plan:
         if wanted is not None and gid not in wanted and gid.split(".")[0] not in wanted:
             continue
@@ -484,6 +501,9 @@ def main():
                     fn, width, info, holder, bytes_for = build_bf16(*module)
                 else:
                     fn, width, info, holder, bytes_for = build_dense(store, module, kind)
+                    named = re.fullmatch(r"[a-z_]+\.R(\d+)\.L\d+", gid)
+                    if named and int(named.group(1)) != int(info["q256"]):
+                        raise ValueError(f"{gid}: artifact rate is {info['q256']}")
                 rec["info"] = info
                 rec["load_s"] = time.time() - t0
                 rec["cells"] = {}
@@ -528,6 +548,22 @@ def main():
                         y.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
                     cell["out_shape"] = list(y.shape)
                     del y
+                    if args.hash_only:
+                        # A correctness cell: a second call's bytes (an arm
+                        # that disagrees with itself cannot be compared with
+                        # another) and the kernels it launched, no timing.
+                        y = call()
+                        torch.cuda.synchronize()
+                        cell["out_sha256_repeat"] = hashlib.sha256(
+                            y.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
+                        del y
+                        cell["profile"] = kernel_profile(call, reps=1)
+                        rec["cells"][key] = cell
+                        print(json.dumps({"group": gid, "M": key, "sha": cell["out_sha256"][:12],
+                                          "self_equal": cell["out_sha256"] == cell["out_sha256_repeat"]}),
+                              flush=True)
+                        del x, xa
+                        continue
                     ts = time.time()
                     cell["wall"] = summarize(time_events(call, args.warmup, args.iters))
                     cell["wall_window_unix"] = [ts, time.time()]

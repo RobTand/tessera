@@ -29,7 +29,10 @@ for arm in "${ARMS[@]}"; do
 done
 sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
 ROUTED=${AB_ROUTED:-experts.R1024.L10,experts.R1088.L11,experts.R832.L42}
-DENSE=shared_gate_up,shared_down,dense_gate_up,dense_down
+DENSE=${AB_DENSE:-shared_gate_up,shared_down,dense_gate_up,dense_down}
+# AB_BENCH_ARGS: extra bench_t8r.py words for the routed and dense benches
+# (e.g. "--hash-only" for a correctness row).
+read -r -a BENCH_ARGS <<< "${AB_BENCH_ARGS:-}"
 MS=${AB_MS:-1,2,4,8,512,2048}
 NCU_MS=${AB_NCU_MS:-1,512}
 ROUTING=()
@@ -52,7 +55,8 @@ H=experiments/t8r_speed/bench_t8r.sh
 bench() {   # step-name arm family suffix groups [bench args...]
   local name=$1 arm=$2 fam=$3 sfx=$4 groups=$5; shift 5
   # shellcheck disable=SC2046
-  step "$name-$arm-$fam$sfx" env $(armenv "$arm") BENCH_SRC="$OUT/src-$arm/src" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS "$@"
+  step "$name-$arm-$fam$sfx" env $(armenv "$arm") BENCH_SRC="$OUT/src-$arm/src" BENCH_EXT_DIR="$OUT/ext-$arm" \
+    bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS "${BENCH_ARGS[@]}" "$@"
 }
 N=${#ARMS[@]}
 if [[ $STEPS == *" routed "* ]]; then
@@ -100,12 +104,29 @@ for fam in ("routed", "dense"):
                 sha[f"{a}{p}"] = c.get("out_sha256")
         r["bitwise"] = None not in sha.values() and len(set(sha.values())) == 1
         r["missing"] = sorted(n for n, v in sha.items() if v is None)
+        # each arm against the reference arm's forward pass, and each arm
+        # against itself (forward, reverse, and a --hash-only repeat call)
+        r["sha"] = {n: (v[:16] if v else None) for n, v in sha.items()}
+        for a in arms:
+            mine = [sha[f"{a}{p}"] for p in ("", "b")]
+            mine += [(data[(fam, a, p)].get(k) or {}).get("out_sha256_repeat") for p in ("", "b")]
+            mine = [v for v in mine if v]
+            r[f"{a}_self_equal"] = bool(mine) and len(set(mine)) == 1
+            r[f"{a}_eq_ref"] = (sha[f"{a}"] is not None and sha[f"{a}"] == sha[f"{ref}"]
+                                and sha[f"{a}b"] == sha[f"{ref}b"])
         for a in arms[1:]:
             for p in ("", "b"):
                 b, x = r[f"{ref}{p}_us"], r[f"{a}{p}_us"]
                 r[f"{a}{p}_ratio"] = round(x / b, 4) if b and x else None
         rows.append(r)
-json.dump({"ref": ref, "arms": arms, "kernel_sha": shas, "rows": rows}, open(root / "ab_summary.json", "w"), indent=1)
+verdict = {"rows": len(rows), "bitwise_all_arms": sum(r["bitwise"] for r in rows),
+           "missing_rows": sum(bool(r["missing"]) for r in rows)}
+for a in arms:
+    verdict[f"{a}_self_equal"] = sum(r[f"{a}_self_equal"] for r in rows)
+    verdict[f"{a}_eq_ref"] = sum(r[f"{a}_eq_ref"] for r in rows)
+json.dump({"ref": ref, "arms": arms, "kernel_sha": shas, "verdict": verdict, "rows": rows},
+          open(root / "ab_summary.json", "w"), indent=1)
+print("VERDICT", json.dumps(verdict))
 print(json.dumps(shas))
 for r in rows:
     print(json.dumps({k: v for k, v in r.items() if not k.endswith("_W")}))
