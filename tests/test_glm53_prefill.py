@@ -580,3 +580,161 @@ def test_measurement_picks_and_agrees_on_t_star(monkeypatch):
     assert not errors, errors
     assert [len(s.table) for s in states] == [2, 2]
     assert states[0].t_star == states[1].t_star == 16
+
+
+# ------------------------------------------------------------------ KDA conv per slice
+
+
+def _ref_conv(x, weight, bias, activation="silu", conv_states=None, has_initial_state=None,
+              cache_indices=None, query_start_loc=None, metadata=None):
+    """vLLM's causal_conv1d_fn contract on CPU: x (dim, T) channel-last, varlen, conv_states
+    (cache, dim, width-1) updated in place, output allocated with empty_like(x)."""
+    assert x.stride(0) == 1 and x.stride(1) > 1, "channel-last only, like the kernel's wrapper"
+    out = torch.empty_like(x)
+    width = weight.shape[1]
+    for b in range(query_start_loc.numel() - 1):
+        s, e = int(query_start_loc[b]), int(query_start_loc[b + 1])
+        ci = int(cache_indices[b])
+        hist = conv_states[ci].clone() if bool(has_initial_state[b]) else \
+            torch.zeros(x.shape[0], width - 1, dtype=x.dtype)
+        xs = torch.cat([hist, x[:, s:e]], dim=1)
+        for t in range(e - s):
+            acc = torch.zeros(x.shape[0], dtype=torch.float32)
+            for k in range(width):
+                acc = acc + weight[:, k].float() * xs[:, t + k].float()
+            if bias is not None:
+                acc = acc + bias.float()
+            out[:, s + t] = torch.nn.functional.silu(acc).to(x.dtype)
+        conv_states[ci].copy_(xs[:, -(width - 1):])
+    return out
+
+
+def _conv_inputs(p=8, width=4, lens=(5, 2, 9), seed=0):
+    g = torch.Generator().manual_seed(seed)
+    t = sum(lens)
+    qkv = torch.randn(t, 3 * p, generator=g).to(torch.bfloat16)
+    weight = torch.randn(3 * p, width, generator=g).to(torch.bfloat16)
+    states = torch.randn(4, 3 * p, width - 1, generator=g).to(torch.bfloat16)
+    qsl = torch.tensor([0, *torch.tensor(lens).cumsum(0).tolist()], dtype=torch.int32)
+    has = torch.tensor([True, False, True][:len(lens)])
+    idx = torch.tensor([2, 0, 3][:len(lens)], dtype=torch.int32)
+    return qkv, weight, states, has, idx, qsl
+
+
+def test_kda_conv_split_equals_the_merged_conv_and_is_dense():
+    p = 8
+    qkv, weight, states, has, idx, qsl = _conv_inputs(p=p, lens=(5, 2, 9))  # one sequence shorter than width
+    s_stock, s_split = states.clone(), states.clone()
+    merged = _ref_conv(qkv.transpose(0, 1), weight, None, conv_states=s_stock, has_initial_state=has,
+                       cache_indices=idx, query_start_loc=qsl).transpose(0, 1)
+    q0, k0, v0 = merged.split(p, dim=-1)
+    q, k, v = gp.conv_split(_ref_conv, qkv, weight, None, s_split, has, idx, qsl, None, p)
+    for a, b in ((q, q0), (k, k0), (v, v0)):
+        assert torch.equal(a, b)
+        assert a.is_contiguous()  # FlashKDA's .contiguous() is then a no-op
+    assert not q0.is_contiguous()  # the stock split is row-strided: what FlashKDA copies
+    assert torch.equal(s_split, s_stock)
+
+
+def test_kda_conv_split_keeps_the_merged_call_with_a_bias():
+    p = 8
+    qkv, weight, states, has, idx, qsl = _conv_inputs(p=p)
+    bias = torch.randn(3 * p).to(torch.bfloat16)
+    calls = []
+
+    def conv(x, *a, **kw):
+        calls.append(tuple(x.shape))
+        return _ref_conv(x, *a, **kw)
+
+    q, k, v = gp.conv_split(conv, qkv, weight, bias, states, has, idx, qsl, None, p)
+    assert calls == [(3 * p, qkv.shape[0])]
+    assert not q.is_contiguous()
+
+
+_KDA_SRC = '''
+def eager_break_during_capture(fn):
+    fn._decorated = True
+    return fn
+
+
+class Glm5NextLinearAttention:
+    @eager_break_during_capture
+    def _forward(self, qkv_ns, conv_weights, conv_bias, conv_state, has_initial_state,
+                 non_spec_state_indices_tensor, non_spec_query_start_loc, attn_metadata_narrowed):
+        if True:
+%s
+        return q_ns, k_ns, v_ns
+'''
+
+
+def _kda_module(tmp_path, body, name="kda_fake"):
+    import importlib.util
+    f = tmp_path / f"{name}.py"
+    f.write_text(_KDA_SRC % body)
+    spec = importlib.util.spec_from_file_location(name, f)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.causal_conv1d_fn = _ref_conv
+    return mod
+
+
+def test_kda_recompiled_forward_takes_the_split_and_keeps_the_decorator(tmp_path):
+    mod = _kda_module(tmp_path, gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"))
+    stock = mod.Glm5NextLinearAttention._forward
+    new, why = gp.recompile_kda_forward(mod)
+    assert new is not None, why
+    assert getattr(new, "_decorated", False) and new._tessera_kda_conv_split
+    assert "_tessera_glm53_conv_split" in new.__code__.co_names
+    assert "_tessera_glm53_conv_split" not in vars(mod)  # vLLM's namespace untouched
+    p = 8
+    qkv, weight, states, has, idx, qsl = _conv_inputs(p=p)
+    self_ = NS(local_projection_size=p)
+    s1, s2 = states.clone(), states.clone()
+    want = stock(self_, qkv, weight, None, s1, has, idx, qsl, None)
+    got = new(self_, qkv, weight, None, s2, has, idx, qsl, None)
+    assert all(torch.equal(a, b) for a, b in zip(got, want))
+    assert all(t.is_contiguous() for t in got) and torch.equal(s1, s2)
+
+
+@pytest.mark.parametrize("body, needle", [
+    ("            q_ns = k_ns = v_ns = None", "occurs 0 times"),
+    (gp.KDA_STOCK_CONV_BLOCK.rstrip("\n") + "\n" + gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"), "occurs 2 times"),
+])
+def test_kda_recompile_declines_unless_the_block_occurs_once(tmp_path, body, needle):
+    new, why = gp.recompile_kda_forward(_kda_module(tmp_path, body))
+    assert new is None and needle in why
+
+
+def test_kda_recompile_declines_on_other_decorators(tmp_path):
+    mod = _kda_module(tmp_path, gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"))
+    src = (tmp_path / "kda_fake.py").read_text().replace("    @eager_break_during_capture\n", "")
+    (tmp_path / "kda_fake.py").write_text(src)
+    new, why = gp.recompile_kda_forward(mod)
+    assert new is None and "decorators" in why
+
+
+def test_kda_install_off_by_default_and_declines_on_digest_mismatch(monkeypatch, tmp_path):
+    monkeypatch.delenv("TESSERA_GLM53_KDA_CONV_SPLIT", raising=False)
+    assert gp.kda_conv_split_mode() == "off" and gp.install_kda_conv_split(_config()) is False
+    monkeypatch.setenv("TESSERA_GLM53_KDA_CONV_SPLIT", "sometimes")
+    with pytest.raises(ValueError):
+        gp.kda_conv_split_mode()
+    monkeypatch.setenv("TESSERA_GLM53_KDA_CONV_SPLIT", "on")
+    mod = _kda_module(tmp_path, gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"))
+    conv = NS(__name__=gp.KDA_MODULES[1], __file__=str(tmp_path / "kda_fake.py"))
+    monkeypatch.setattr(gp, "_import_all", lambda names=gp.SP_MODULES: ((mod, conv), ""))
+    stock = mod.Glm5NextLinearAttention._forward
+    assert gp._install_kda_conv_split(_config()) is False  # digests are not the inspected ones
+    assert mod.Glm5NextLinearAttention._forward is stock
+    digest = hashlib.sha256((tmp_path / "kda_fake.py").read_bytes()).hexdigest()
+    monkeypatch.setattr(gp, "_KDA_INTERFACES", (gp._Interface("test", (digest, digest)),))
+    assert gp._install_kda_conv_split(_config()) is True
+    assert mod.Glm5NextLinearAttention._forward._tessera_kda_conv_split
+    assert gp._install_kda_conv_split(_config()) is True  # idempotent
+    assert gp._install_kda_conv_split(_config(architectures=["Other"])) is False
+
+
+def test_kda_pinned_interface_names_every_module():
+    for interface in gp._KDA_INTERFACES:
+        assert len(interface.digests) == len(gp.KDA_MODULES)
+        assert all(len(d) == 64 for d in interface.digests)
