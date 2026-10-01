@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 import struct
+import sys
+from types import ModuleType
 
 import pytest
 
@@ -13,17 +15,28 @@ from tessera import source_digest_cache
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _producer_stubs() -> tuple[ModuleType, ModuleType]:
+    """Separate geometry and plan reading from real source-seal/cache behavior."""
+    geometry = ModuleType("export_tessera_serving")
+    geometry.__dict__.update(
+        quantizable=lambda src: ([], {}, {}, {}),
+        project_expert_plan=lambda *args: {"projection": "control"},
+    )
+    manifest = ModuleType("tessera.cached_unit")
+    manifest.__dict__["read_manifest"] = lambda path: {}
+    return geometry, manifest
+
+
 @pytest.fixture
 def producer(monkeypatch):
-    monkeypatch.syspath_prepend(str(ROOT / "experiments"))
+    # Both mocked dependencies must be isolated before any CLI import executes.
+    for dependency in _producer_stubs():
+        monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
     spec = importlib.util.spec_from_file_location(
         "producer_plan_cache_cli", ROOT / "experiments" / "tessera_producer_plan.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    monkeypatch.setattr(module, "quantizable", lambda src: ([], {}, {}, {}))
-    monkeypatch.setattr(module, "read_manifest", lambda path: {})
-    monkeypatch.setattr(module, "project_expert_plan", lambda *args: {"projection": "control"})
     return module
 
 
