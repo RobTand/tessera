@@ -50,6 +50,11 @@ def _glm_members(shape):
             for expert in range(roster["experts"]) for role in ("w1", "w3", "w2")]
 
 
+def _members_with_shapes(members, shapes):
+    """Frame a roster from the geometry owner chosen by the caller."""
+    return [{**member, "shape": list(shapes[member["role"]])} for member in members]
+
+
 def _glm_routing(**overrides):
     routing = {"activation": "silu", "scoring_func": "sigmoid", "renormalize": True,
                "routed_scaling_factor": 2.5, "apply_router_weight_on_input": False,
@@ -353,7 +358,7 @@ def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(
     # source width, so the keys that mean the same thing must be the ones
     # compared.
     producer_view = moe._roster_shape(producer_shape)
-    rank_local = 2048 // tp
+    rank_local = shape["intermediate_size"] // tp
     assert producer_view["intermediate_size"] == view["rank_local_intermediate"] == rank_local
     # ...and PQ's declared geometry is untouched by its own derived view: the
     # full source width is still declared, and stripping the view's derived
@@ -367,24 +372,27 @@ def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(
     assert pq.geometry_only(view) == declared
     assert pq.geometry_family(pq.geometry_only(view)) == "glm53_next_routed_stack_v1"
 
-    # The rank-local width is not a statement about the values: it must reach
-    # the actual member tensor shapes both sides expect. The producer's member
-    # geometry and PQ's member geometry are read from their real helpers, and
-    # PQ's roster check is driven with members carrying exactly those shapes.
+    # The render is rank-local on both sides. Compare the helpers that own
+    # that cut, not the whole-container roster validator.
     member_shapes = {role: moe._member_shape(producer_shape, role) for role in moe.ROLE_ORDER}
-    member_roster = [{**m, "shape": list(member_shapes[m["role"]])} for m in members]
-    assert pq._member_roster(GLM_UNIT, member_roster, shape) == member_roster
+    assert member_shapes == {role: pq.rank_local_member_shape(shape, role)
+                             for role in moe.ROLE_ORDER}
     for role in ("w1", "w3"):
-        assert member_shapes[role] == [rank_local, 4096]
-    assert member_shapes["w2"] == [4096, rank_local]
-    # A w1 carrying a width the rank does not declare is refused -- otherwise
-    # the keys above could agree while the actual member shapes did not. The
-    # negative has to be built from THIS rank's own width: for TP1 the full
-    # 2048 IS the rank-local width, so a full-width w1 is valid there and only
-    # the TP2 case is a mismatch.
-    planted = 2048 if tp == 2 else rank_local + 1
-    wrong = [{**m, "shape": [planted, 4096]} if m["role"] == "w1"
-             else {**m, "shape": list(member_shapes[m["role"]])} for m in members]
+        assert member_shapes[role] == [rank_local, shape["hidden_size"]]
+    assert member_shapes["w2"] == [shape["hidden_size"], rank_local]
+
+    # The wire identity frames whole containers, independently of which rank
+    # renders a cut. Read their shapes from the owner of that roster contract.
+    container_shapes = {role: pq.container_member_shape(shape, role)
+                        for role in moe.ROLE_ORDER}
+    member_roster = _members_with_shapes(members, container_shapes)
+    assert pq._member_roster(GLM_UNIT, member_roster, shape) == member_roster
+    # A rank-local w1 must not masquerade as a TP2 container. At TP1 the two
+    # widths coincide, so plant an oversized container instead.
+    whole_w1 = container_shapes["w1"]
+    planted = rank_local if tp == 2 else whole_w1[0] + 1
+    wrong = _members_with_shapes(members,
+                                {**container_shapes, "w1": [planted, whole_w1[1]]})
     with pytest.raises(ValueError):
         pq._member_roster(GLM_UNIT, wrong, shape)
 
