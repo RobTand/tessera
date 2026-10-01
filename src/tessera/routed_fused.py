@@ -196,6 +196,15 @@ MIN_COLS = 4 * BK
 #: decode instead of two.
 WORD_STAGES = 3
 WORD_STAGES_MIN = 2
+#: Deep word staging (``WORD_STAGES_ONE_RUN`` in ``routed_fused_window.cu``):
+#: the word stages the E4M3 instruction's single-rate launches ask for.  Unset,
+#: they take WORD_STAGES, the three-stage kernel.  ``n`` > WORD_STAGES builds
+#: that library with ``n`` (its own build directory), and each single-rate pair
+#: then cycles through min(``n``, the most deep stages its slot fits in sm_121's
+#: block at the widest superblock) stages (:func:`deep_word_stages`), each
+#: carrying its chunk's staged stream history.  The output is bitwise the
+#: three-stage kernel's; only how far ahead a chunk's words are issued changes.
+ENV_WORD_STAGES = "TESSERA_ROUTED_FUSED_WORD_STAGES"
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
 #: The staged stream history on the E4M3 instruction: one int32 per (half,
@@ -252,19 +261,72 @@ def _smem_bytes_at_stages(mode: int, slot_words: int, stages: int, *, mma8: bool
     return fixed[int(mode)] + int(stages) * 2 * BK * int(slot_words) * 4
 
 
-def word_stages(mode: int, slot_words: int, *, mma8: bool = False) -> int:
+def one_run_word_stages() -> int:
+    """The word stages the E4M3 instruction's single-rate launches ask for in
+    this process (:data:`ENV_WORD_STAGES`): WORD_STAGES when unset, else an
+    integer of at least WORD_STAGES; any other value is refused by name."""
+    raw = os.environ.get(ENV_WORD_STAGES, "")
+    if raw == "":
+        return WORD_STAGES
+    try:
+        stages = int(raw)
+    except ValueError:
+        stages = None
+    if stages is None or stages < WORD_STAGES:
+        raise GrammarError(f"{ENV_WORD_STAGES}={raw!r}: expected an integer of at least {WORD_STAGES}")
+    return stages
+
+
+def _deep_stage_bytes(slot_words: int) -> int:
+    """One deep word stage: the chunk's words, then its staged stream history
+    (``deep_stage_ints`` in the kernel)."""
+    return (2 * BK * int(slot_words) + 2 * BK) * 4
+
+
+def deep_word_stages(mode: int, slot_words: int) -> int:
+    """The deep stages a single-rate launch of ``mode`` on the E4M3 instruction
+    takes at ``slot_words``-word slots (``deep_word_stages`` in the kernel):
+    :func:`one_run_word_stages`, or as many as sm_121's block holds at the
+    widest superblock.  At most WORD_STAGES means the launch is not deep."""
+    fixed = SMEM_FIXED_MMA8[int(mode)] + a_region_bytes(BM_WIDE, mma8=True) - a_region_bytes(BM, mma8=True)
+    stages = one_run_word_stages()
+    while stages > WORD_STAGES and fixed + stages * _deep_stage_bytes(slot_words) > SM121_MAX_DYNAMIC_SMEM:
+        stages -= 1
+    return stages
+
+
+def deep_words(mode: int, slot_words: int, *, mma8: bool, two: bool) -> bool:
+    """Whether the launch stages deep (``deep_words`` in the kernel): a
+    single-rate launch (``two`` false) of the E4M3 instruction's library
+    (``mma8``, the one that stages the stream history) that fits more than
+    WORD_STAGES deep stages."""
+    return bool(mma8) and not two and deep_word_stages(mode, slot_words) > WORD_STAGES
+
+
+def word_stages(mode: int, slot_words: int, *, mma8: bool = False, two: bool) -> int:
     """The word stages the launch of ``mode`` cycles through at
-    ``slot_words``-word slots (``word_stages`` in the kernel): WORD_STAGES
-    where they fit sm_121's opt-in block, else WORD_STAGES_MIN.  The library
-    publishes both constants and is checked against them at load."""
+    ``slot_words``-word slots (``word_stages`` in the kernel; ``two``: the run
+    pair has a second run): its :func:`deep_word_stages` where it stages deep
+    (:func:`deep_words`), else WORD_STAGES where they fit sm_121's opt-in
+    block, else WORD_STAGES_MIN.  The library publishes the constants and is
+    checked against them at load."""
+    if deep_words(mode, slot_words, mma8=mma8, two=two):
+        return deep_word_stages(mode, slot_words)
     fits = _smem_bytes_at_stages(mode, slot_words, WORD_STAGES, mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM
     return WORD_STAGES if fits else WORD_STAGES_MIN
 
 
-def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False) -> int:
+def smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, two: bool) -> int:
     """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word
     slots, at its :func:`word_stages`."""
-    return _smem_bytes_at_stages(mode, slot_words, word_stages(mode, slot_words, mma8=mma8), mma8=mma8)
+    if deep_words(mode, slot_words, mma8=mma8, two=two):
+        return SMEM_FIXED_MMA8[int(mode)] + deep_word_stages(mode, slot_words) * _deep_stage_bytes(slot_words)
+    return _smem_bytes_at_stages(mode, slot_words, word_stages(mode, slot_words, mma8=mma8, two=two), mma8=mma8)
+
+
+def pair_has_two_runs(pair: torch.Tensor) -> bool:
+    """Whether a :func:`run_pair` pair has a second run (``two`` in the kernel)."""
+    return int(pair.reshape(8)[6]) > 0
 
 
 def library_for(family: str) -> str:
@@ -292,10 +354,11 @@ def a_region_bytes(bm: int, *, mma8: bool = False) -> int:
     return 2 * int(bm) * BK * (1 if mma8 else 2)
 
 
-def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM) -> int:
+def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM, two: bool) -> int:
     """The dynamic shared memory the launch takes at ``bm``-route
     superblocks: :func:`smem_bytes` with the A region at ``bm`` rows."""
-    return smem_bytes(mode, slot_words, mma8=mma8) + a_region_bytes(bm, mma8=mma8) - a_region_bytes(BM, mma8=mma8)
+    return (smem_bytes(mode, slot_words, mma8=mma8, two=two)
+            + a_region_bytes(bm, mma8=mma8) - a_region_bytes(BM, mma8=mma8))
 
 
 def has_width(library: str, mode: int, bm: int) -> bool:
@@ -361,7 +424,7 @@ def superblock_rows(library: str, mode: int, rows: int, *, dense: bool = False) 
 #: the JSON follows.
 ROUTED_LANE_RATES = tuple(
     r for r in RATES
-    if smem_bytes(0, _round_up_4(slot_words_for_rate(r))) <= SM121_MAX_DYNAMIC_SMEM)
+    if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), two=False) <= SM121_MAX_DYNAMIC_SMEM)
 
 
 def routed_lane_rates(library: str) -> "tuple[int, ...]":
@@ -370,23 +433,29 @@ def routed_lane_rates(library: str) -> "tuple[int, ...]":
     rate-8 slot), on the 16-bit libraries at two for rates 7 and 8."""
     mma8 = library_mma8(library)
     return tuple(r for r in RATES
-                 if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), mma8=mma8) <= SM121_MAX_DYNAMIC_SMEM)
+                 if smem_bytes(0, _round_up_4(slot_words_for_rate(r)), mma8=mma8, two=False)
+                 <= SM121_MAX_DYNAMIC_SMEM)
 
 
-def smem_reason(mode: int, slot_words: int, device: torch.device, library: str) -> "str | None":
+def smem_reason(mode: int, slot_words: int, device: torch.device, library: str, *,
+                two: bool) -> "str | None":
     """Why the launch does not fit the device's opt-in shared-memory limit, or ``None``.
 
     The limit is read from the built library (``cudaDevAttrMaxSharedMemoryPer
     BlockOptin``; torch publishes no such property).  A library that cannot be
     built answers ``None`` here: the build failure is the caller's, reported
-    where the adapter is constructed, not a lane refusal.
+    where the adapter is constructed, not a lane refusal.  A bad
+    :data:`ENV_WORD_STAGES` is a refusal, by name, before any build.
     """
+    try:
+        need = smem_bytes(mode, slot_words, mma8=library_mma8(library), two=two)
+    except GrammarError as exc:
+        return str(exc)
     try:
         lib = _ext(library)
     except Exception:  # noqa: BLE001 -- the build's failure is reported by from_bundles
         return None
     index = device.index if device.index is not None else torch.cuda.current_device()
-    need = smem_bytes(mode, slot_words, mma8=library_mma8(library))
     have = int(lib.max_dynamic_smem_bytes(index))
     if need <= have:
         return None
@@ -442,9 +511,10 @@ def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: 
         return f"{part} run table: {why}"
     mode = 2 if part == "down" else 0
     slot = slot_words_for_pair(pair)
-    if smem_bytes(mode, slot) > SM121_MAX_DYNAMIC_SMEM:
+    need = smem_bytes(mode, slot, two=pair_has_two_runs(pair))
+    if need > SM121_MAX_DYNAMIC_SMEM:
         what = "down" if mode == 2 else "gate/up"
-        return (f"the {what} launch at {slot}-word slots needs {smem_bytes(mode, slot)} bytes of "
+        return (f"the {what} launch at {slot}-word slots needs {need} bytes of "
                 f"shared memory per block; sm_121 allows {SM121_MAX_DYNAMIC_SMEM}")
     rows = int(rows)
     if part == "down":
@@ -459,17 +529,21 @@ def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
-def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> list:
+def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False, *,
+            word_stages: int = WORD_STAGES) -> list:
     """A library's compile flags.  ``fp4`` is the E2M1 family's library
     (``tessera.routed_fused_e2m1``): its define, and the architecture-specific
-    target its block-scaled FP4 instruction exists on.  The other libraries'
-    flags do not move."""
+    target its block-scaled FP4 instruction exists on.  ``word_stages`` other
+    than WORD_STAGES is deep word staging (:data:`ENV_WORD_STAGES`); at
+    WORD_STAGES the flags are the three-stage library's, unchanged."""
     from .serving.backend import offload_flags
 
     return ["-O3", "-lineinfo", "-std=c++17",
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
             *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
+            *([f"-DTESSERA_ROUTED_FUSED_WORD_STAGES_ONE_RUN={int(word_stages)}"]
+              if int(word_stages) != WORD_STAGES else []),
             *offload_flags(token, arch_specific=fp4)]
 
 
@@ -485,10 +559,12 @@ def _built_library(build: str, module: str) -> "str | None":
     return found[0] if found else None
 
 
-def build_library(module: str, source_module: str, compile_fn):
+def build_library(module: str, source_module: str, compile_fn, *, variant: str = ""):
     """Build and load one library of :data:`SOURCE` on this process's platform.
 
-    ``module`` names the build directory and the library; ``source_module``
+    ``module`` names the build directory and the library (``variant``, when
+    given, suffixes the directory: a build under other flags of the same
+    module keeps its own workspace); ``source_module``
     is the published extension whose source is compiled (#134: the path the
     contract publishes IS the file compiled); ``compile_fn(src, build, token,
     verbose)`` makes the ``cpp_extension.load`` call, whose module name is a
@@ -517,7 +593,7 @@ def build_library(module: str, source_module: str, compile_fn):
             "process's torch is not a CUDA build")
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-routed-fused")
     token = platform_token(torch=torch)
-    build = os.path.join(root, f"{module}_{token}") + GUARDED_BUILD_SUFFIX
+    build = os.path.join(root, f"{module}_{token}{variant}") + GUARDED_BUILD_SUFFIX
     os.makedirs(build, exist_ok=True)
     pin_build_arch(token, torch)
     verbose = bool(os.environ.get("TESSERA_ROUTED_FUSED_VERBOSE"))
@@ -542,14 +618,19 @@ def build_library(module: str, source_module: str, compile_fn):
     return lib
 
 
-@functools.lru_cache(maxsize=None)
 def _ext(library: str):
     """The library (a :data:`LIBRARIES` key; a family names its 16-bit
-    library), built on first use (the window GEMV's loader shape)."""
-    from torch.utils.cpp_extension import load
-
+    library), built on first use (the window GEMV's loader shape), at this
+    process's :func:`one_run_word_stages` for the E4M3 instruction's."""
     if library not in LIBRARIES:
         raise GrammarError(f"the fused routed lane builds the libraries {sorted(LIBRARIES)}, got {library!r}")
+    return _built_ext(library, one_run_word_stages() if library_mma8(library) else WORD_STAGES)
+
+
+@functools.lru_cache(maxsize=None)
+def _built_ext(library: str, word_stages: int):
+    from torch.utils.cpp_extension import load
+
     module, family, mma8 = LIBRARIES[library]
     fp8 = family == "e4m3"
 
@@ -558,7 +639,7 @@ def _ext(library: str):
             return load(
                 name="tessera_routed_fused_mma_e4m3",  # literal: the contract scanner reads it
                 sources=[src], build_directory=build,
-                extra_cuda_cflags=_cflags(token, True, True), verbose=verbose)
+                extra_cuda_cflags=_cflags(token, True, True, word_stages=word_stages), verbose=verbose)
         if fp8:
             return load(
                 name="tessera_routed_fused_e4m3",   # literal: the contract scanner reads it
@@ -569,7 +650,8 @@ def _ext(library: str):
             sources=[src], build_directory=build,
             extra_cuda_cflags=_cflags(token, False), verbose=verbose)
 
-    lib = build_library(module, module, compile_fn)
+    lib = build_library(module, module, compile_fn,
+                        variant="" if word_stages == WORD_STAGES else f"_ws{word_stages}")
     dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
                        ("DENSE_ROW_QUANTUM", DENSE_ROW_QUANTUM),
@@ -577,7 +659,7 @@ def _ext(library: str):
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
-                       ("WORD_STAGES_MIN", WORD_STAGES_MIN),
+                       ("WORD_STAGES_MIN", WORD_STAGES_MIN), ("WORD_STAGES_ONE_RUN", word_stages),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
@@ -856,8 +938,9 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     except GrammarError as exc:
         return str(exc)
     for mode, bs in ((0, (gate, up)), (2, (down,))):
-        slot = max(slot_words_for_pair(run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)[0]) for b in bs)
-        why = smem_reason(mode, slot, down.device, library)
+        pairs = [run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)[0] for b in bs]
+        slot = max(slot_words_for_pair(pair) for pair in pairs)
+        why = smem_reason(mode, slot, down.device, library, two=any(pair_has_two_runs(pair) for pair in pairs))
         if why is not None:
             return why
     return None
@@ -1272,7 +1355,7 @@ def fused_dense_window_supported(bundle) -> "str | None":
         library = library_for(fam)
     except GrammarError as exc:
         return str(exc)
-    why = smem_reason(2, slot_words_for_pair(pair), bundle.device, library)
+    why = smem_reason(2, slot_words_for_pair(pair), bundle.device, library, two=pair_has_two_runs(pair))
     if why is not None:
         return why
     if bundle.init_perm.dtype != torch.int32 or bundle.init_perm.numel() != cols:

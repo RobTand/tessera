@@ -75,13 +75,16 @@ def geometry(rf, r_lo, frac, mode, mma8):
     pair = torch.tensor((r_lo, 0, 1, 0, rates[-1] if frac else 0, 1, 1 if frac else 0, 16 * r_lo),
                         dtype=torch.int32)
     slot = rf.slot_words_for_pair(pair)
+    # A tree with deep word staging (tessera#807) sizes a launch by whether its
+    # pair has a second run.
+    two = {"two": rf.pair_has_two_runs(pair)} if hasattr(rf, "pair_has_two_runs") else {}
     return {"runs": len(rates), "rates": rates,
             "lane_bits": [8 * r for r in rates],
             "lane_ends_on_word": [(8 * r) % 32 == 0 for r in rates],
             "half_bytes": [8 * r for r in rates],
             "half_copy": ["16B" if (8 * r) % 16 == 0 else "8B tail" for r in rates],
-            "slot_words": slot, "smem_bytes": rf.smem_bytes(mode, slot, mma8=mma8),
-            "word_stages": (rf.word_stages(mode, slot, mma8=mma8) if hasattr(rf, "word_stages")
+            "slot_words": slot, "smem_bytes": rf.smem_bytes(mode, slot, mma8=mma8, **two),
+            "word_stages": (rf.word_stages(mode, slot, mma8=mma8, **two) if hasattr(rf, "word_stages")
                             else getattr(rf, "WORD_STAGES", None))}
 
 

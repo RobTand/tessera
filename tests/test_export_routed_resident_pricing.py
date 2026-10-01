@@ -298,7 +298,7 @@ def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables(monkeypatch):
     high = _stack_layouts((7,) * 128, (7,) * 128)
     _units, stack = export.routed_stack_resident_bytes("TESSERA_BF16", EXPERTS, high)
     assert stack == part_bytes + fused_bytes
-    monkeypatch.setattr(routed_fused, "SM121_MAX_DYNAMIC_SMEM", routed_fused.smem_bytes(0, 8))
+    monkeypatch.setattr(routed_fused, "SM121_MAX_DYNAMIC_SMEM", routed_fused.smem_bytes(0, 8, two=False))
     _units, stack = export.routed_stack_resident_bytes("TESSERA_BF16", EXPERTS, high)
     assert stack == part_bytes
 

@@ -155,6 +155,31 @@ constexpr int STAGES = 2;
 // rate-7 or rate-8 run (``word_stages``).
 constexpr int WORD_STAGES = 3;
 constexpr int WORD_STAGES_MIN = 2;
+// DEEP WORD STAGING (tessera#807).  The single-rate launches of the E4M3
+// instruction's library may cycle through more word stages:
+// WORD_STAGES_ONE_RUN, built in from ``TESSERA_ROUTED_FUSED_WORD_STAGES``
+// (``routed_fused.ENV_WORD_STAGES``).  The default, 3, is the three-stage
+// kernel.  At three stages a chunk's words are issued two chunks ahead of its
+// decode, so the chunk period cannot fall below half the loaded memory
+// latency, and on the R1024 gate/up launch at M = 512 that is where it sits:
+// 7.62 ms under NCU's 2.15 GHz SM clock and 7.58 ms at 2.42-2.48 GHz, so 14%
+// more clock bought 0.5%.  A deep launch issues a chunk's words WS - 1 chunks
+// ahead instead.  The copies, the decode and the MMAs are the three-stage
+// kernel's, in its order; only the issue distance and the stage count change,
+// so the output is bitwise the three-stage launch's.  Each deep stage carries
+// its chunk's staged stream history at its tail (``deep_stage_ints``), so the
+// history needs no region sized per stage count; the three-stage region
+// (OFF_PREV) stays laid out, unused.  A pair takes as many stages as
+// WORD_STAGES_ONE_RUN asks and the target's block holds
+// (``deep_word_stages``), and the three-stage kernel where that is no more than
+// three.  Two-run launches keep three stages: their word issue also carries the
+// block-descriptor ring, which is sized for issue two chunks ahead
+// (DRING_STAGES).
+#ifndef TESSERA_ROUTED_FUSED_WORD_STAGES_ONE_RUN
+#define TESSERA_ROUTED_FUSED_WORD_STAGES_ONE_RUN 3
+#endif
+constexpr int WORD_STAGES_ONE_RUN = TESSERA_ROUTED_FUSED_WORD_STAGES_ONE_RUN;
+static_assert(WORD_STAGES_ONE_RUN >= WORD_STAGES, "deep staging asks for more stages than WORD_STAGES, or none");
 // The activation prefetch distance, in chunks (0: none).  Each chunk's A row
 // is loaded into registers one chunk ahead (``load_a``), and the chunk loop's
 // last register move waits for it.  NCU on the routed launch (M = 1, 512 and
@@ -283,20 +308,45 @@ __host__ __device__ constexpr int smem_bytes_ws(int mode, int slot_words, int wo
 // limit (``check_slot``), and ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the
 // same figure.
 constexpr int SM121_SMEM_OPTIN = 101376;
-// The word stages a launch of ``mode`` at ``slot_words``-word slots takes:
-// WORD_STAGES where they fit the target's block, else WORD_STAGES_MIN.  A
-// pure function of the two, so the host sizes the block the kernel lays out
-// (``routed_fused.word_stages``).
-__host__ __device__ constexpr int word_stages(int mode, int slot_words) {
-    return smem_bytes_ws(mode, slot_words, WORD_STAGES) <= SM121_SMEM_OPTIN ? WORD_STAGES : WORD_STAGES_MIN;
+// A deep word stage (DEEP WORD STAGING): the chunk's words, then its staged
+// stream history, one int32 per (half, column).
+__host__ __device__ constexpr int deep_stage_ints(int slot_words) {
+    return w_stage_ints(slot_words) + PREV_STAGE_INTS;
 }
-__host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
-    return smem_bytes_ws(mode, slot_words, word_stages(mode, slot_words));
+// The deep stages a single-rate launch of ``mode`` at ``slot_words``-word
+// slots takes: WORD_STAGES_ONE_RUN, or as many as the target's block holds at
+// the widest superblock (BM_WIDE), so both widths of a pair cycle through the
+// same stages.  At most WORD_STAGES means the launch is not deep.
+__host__ __device__ constexpr int deep_word_stages(int mode, int slot_words) {
+    const int fixed = smem_bytes_ws(mode, slot_words, 0) + a_region_bytes(BM_WIDE) - a_region_bytes(BM);
+    int ws = WORD_STAGES_ONE_RUN;
+    while (ws > WORD_STAGES && fixed + ws * deep_stage_ints(slot_words) * 4 > SM121_SMEM_OPTIN) --ws;
+    return ws;
+}
+// Whether the launch of ``mode`` at ``slot_words``-word slots stages deep: a
+// single-rate launch (``two`` false) that stages its stream history (the
+// E4M3 instruction, PREV_STAGED) and fits more than WORD_STAGES deep stages.
+__host__ __device__ constexpr bool deep_words(int mode, int slot_words, bool two) {
+    return PREV_STAGED && !two && deep_word_stages(mode, slot_words) > WORD_STAGES;
+}
+// The word stages a launch of ``mode`` at ``slot_words``-word slots takes
+// (``two``: the pair has a second run): its deep stages where it stages deep,
+// else WORD_STAGES where they fit the target's block, else WORD_STAGES_MIN.
+// A pure function of the three, so the host sizes the block the kernel lays
+// out (``routed_fused.word_stages``).
+__host__ __device__ constexpr int word_stages(int mode, int slot_words, bool two) {
+    return deep_words(mode, slot_words, two) ? deep_word_stages(mode, slot_words)
+         : smem_bytes_ws(mode, slot_words, WORD_STAGES) <= SM121_SMEM_OPTIN ? WORD_STAGES : WORD_STAGES_MIN;
+}
+__host__ __device__ constexpr int smem_bytes(int mode, int slot_words, bool two) {
+    return deep_words(mode, slot_words, two)
+        ? smem_bytes_ws(mode, slot_words, 0) + word_stages(mode, slot_words, two) * deep_stage_ints(slot_words) * 4
+        : smem_bytes_ws(mode, slot_words, word_stages(mode, slot_words, two));
 }
 // The same at ``bmt``-route superblocks: the published figure at BM, the
 // larger A region at BM_WIDE.
-__host__ __device__ constexpr int smem_bytes_at(int mode, int slot_words, int bmt) {
-    return smem_bytes(mode, slot_words) + a_region_bytes(bmt) - a_region_bytes(BM);
+__host__ __device__ constexpr int smem_bytes_at(int mode, int slot_words, int bmt, bool two) {
+    return smem_bytes(mode, slot_words, two) + a_region_bytes(bmt) - a_region_bytes(BM);
 }
 // The slot one column at ``rate`` needs: its 2 * rate words, plus two at an
 // odd rate -- a 64-row half at an odd rate is 8 * rate bytes at an
@@ -318,9 +368,9 @@ __host__ __device__ constexpr int pair_slot_words(int r_lo, bool two) {
     return (need + 3) / 4 * 4;
 }
 // The dynamic shared memory a launch at ``slot_words``-word slots and
-// ``bmt``-route superblocks takes.
-__host__ __device__ constexpr int launch_smem_bytes(int mode, int slot_words, int bmt = BM) {
-    return smem_bytes_at(mode, slot_words, bmt);
+// ``bmt``-route superblocks takes (``two``: the pair has a second run).
+__host__ __device__ constexpr int launch_smem_bytes(int mode, int slot_words, int bmt, bool two) {
+    return smem_bytes_at(mode, slot_words, bmt, two);
 }
 // Whether the launch of ``mode`` exists at ``bmt``-route superblocks in a
 // library of the family (``fp8``) and instruction (``mma8``): BM everywhere;
@@ -342,7 +392,7 @@ __host__ __device__ constexpr bool has_width(bool fp8, bool mma8, int mode, int 
 // ``fused_dense_window_supported`` do first.
 __host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two, bool dense = false) {
     return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= (dense ? RATE_MAX : ROUTED_RATE_MAX)
-        && smem_bytes(mode, pair_slot_words(r_lo, two)) <= SM121_SMEM_OPTIN;
+        && smem_bytes(mode, pair_slot_words(r_lo, two), two) <= SM121_SMEM_OPTIN;
 }
 // The run pair a launch's ``tile_words`` fixes.  A 512-row tile holds 16 words
 // per unit of column rate, so ``tile_words / 16`` is the sum of the column
@@ -740,7 +790,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
                   "wide superblocks: the launches ``has_width`` names, unsplit");
-    static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
+    static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT, TWO) <= SM121_SMEM_OPTIN,
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT>;
     constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
@@ -1037,11 +1087,19 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 constexpr int SW = pair_slot_words(RL, TWO);
                 constexpr int W_STAGE = w_stage_ints(SW);
                 // The word stages this pair's launch cycles through
-                // (``word_stages``): at WORD_STAGES a chunk's words are
-                // issued two chunks ahead of its decode, at WORD_STAGES_MIN
-                // one.
-                constexpr int WS = word_stages(MODE, SW);
-                static_assert(WS == WORD_STAGES || WS == WORD_STAGES_MIN, "two or three word stages");
+                // (``word_stages``): a chunk's words are issued AHEAD chunks
+                // ahead of its decode -- two at WORD_STAGES, one at
+                // WORD_STAGES_MIN, WS - 1 on a deep launch (``deep_words``),
+                // whose stages carry their chunk's staged stream history at
+                // their tail instead of in the history region (OFF_PREV).
+                constexpr bool DEEP = deep_words(MODE, SW, TWO);
+                constexpr int WS = word_stages(MODE, SW, TWO);
+                static_assert(DEEP ? (WS > WORD_STAGES && STAGE_PREV) : (WS == WORD_STAGES || WS == WORD_STAGES_MIN),
+                              "two or three word stages, or more on a single-rate launch that stages its history");
+                constexpr int AHEAD = WS - 1;
+                constexpr int W_STRIDE = DEEP ? deep_stage_ints(SW) : W_STAGE;     // int32 per word stage
+                constexpr int P_STRIDE = DEEP ? W_STRIDE : PREV_STAGE_INTS;        // ... per history slot
+                [[maybe_unused]] int32_t* const Ph = DEEP ? Ws + W_STAGE : Ps;     // stage 0's history slot
                 // Chunk kc's block descriptor for half h: the expert's, in
                 // global memory (``ring`` false: the first chunks, before the
                 // ring's copies land), or its copy in the descriptor ring (see
@@ -1076,7 +1134,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int q = tid & 1;
                         const ColMap c = col_map<RL, TWO>(blk_of(kc, ih, ring), n_lo, w_hi, kc, mm);
                         const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
-                        int32_t* dst = Ws + (kc % WS) * W_STAGE + (ih * BK + mm) * SW;
+                        int32_t* dst = Ws + (kc % WS) * W_STRIDE + (ih * BK + mm) * SW;
                         if constexpr (TWO) {
                             if (c.lo) copy_half<RL>(dst, src, t64_i, q);
                             else copy_half<RH>(dst, src, t64_i, q);
@@ -1088,7 +1146,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         // PREV_STAGED and ``load_prev``, whose cases these are).
                         if constexpr (STAGE_PREV) {
                             if (q == 1) {
-                                int32_t* pd = Ps + (kc % WS) * PREV_STAGE_INTS + ih * BK + mm;
+                                int32_t* pd = Ph + (kc % WS) * P_STRIDE + ih * BK + mm;
                                 const int wr0 = 2 * c.rate * t64_i;
                                 const int32_t* wcol = tbase_i + c.cw0;
                                 if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
@@ -1170,14 +1228,25 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                     *reinterpret_cast<const int4*>(src + c * BDESC_INTS);
                     }
                 }
-                issue_words(kc0, false);
-                if (nkc > 2) issue_desc(kc0 + 2);
-                cp_async_commit();                     // group 0
-                if constexpr (WS == WORD_STAGES) {
-                    if (nkc > 1) issue_words(kc0 + 1, false);
+                if constexpr (DEEP) {
+                    // Group d: chunk kc0 + d's words (group 0: and the
+                    // tables).  A single-rate unit maps its columns, so no
+                    // descriptors ride.
+                    #pragma unroll
+                    for (int d = 0; d < AHEAD; ++d) {
+                        if (d < nkc) issue_words(kc0 + d, false);
+                        cp_async_commit();
+                    }
+                } else {
+                    issue_words(kc0, false);
+                    if (nkc > 2) issue_desc(kc0 + 2);
+                    cp_async_commit();                     // group 0
+                    if constexpr (WS == WORD_STAGES) {
+                        if (nkc > 1) issue_words(kc0 + 1, false);
+                    }
+                    if (nkc > 3) issue_desc(kc0 + 3);
+                    cp_async_commit();                     // group 1
                 }
-                if (nkc > 3) issue_desc(kc0 + 3);
-                cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
                 int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
                 ColMap cm_cur[2], cm_nxt[2];
@@ -1220,21 +1289,18 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     if constexpr (PREFETCH_A) {
                         if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
                     }
-                    // Chunk kc's words (and the tables) have landed ...
-                    if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
-                    else cp_async_wait<0>();
+                    // Chunk kc's words (and the tables) have landed: of the
+                    // AHEAD + ic groups committed so far, the last AHEAD - 1
+                    // carry later chunks ...
+                    cp_async_wait<AHEAD - 1>();
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                    if constexpr (WS == WORD_STAGES) {
-                        if (ic + 2 < nkc) issue_words(kc + 2, TWO);
-                    } else {
-                        if (ic + 1 < nkc) issue_words(kc + 1, TWO);
-                    }
+                    if (ic + AHEAD < nkc) issue_words(kc + AHEAD, TWO);
                     if (ic + 4 < nkc) issue_desc(kc + 4);
                     cp_async_commit();
                     const int stage = gc & 1;
                     if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
                     store_a(stage, a_cur);
-                    const int32_t* W = Ws + (kc % WS) * W_STAGE;
+                    const int32_t* W = Ws + (kc % WS) * W_STRIDE;
                     uint8_t* B = Bs + stage * B_STAGE_BYTES;
                     const int32_t* Wc[2];
                     const float* ws[2];
@@ -1253,7 +1319,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
                         if constexpr (STAGE_PREV)
-                            pv[h] = (8 * j * cm_cur[h].rate < 32) ? Ps[(kc % WS) * PREV_STAGE_INTS + h * BK + m] : 0;
+                            pv[h] = (8 * j * cm_cur[h].rate < 32) ? Ph[(kc % WS) * P_STRIDE + h * BK + m] : 0;
                         else
                             pv[h] = prev_cur[h];
                     }
@@ -1551,7 +1617,13 @@ int max_dynamic_smem_bytes(int device) {
 
 template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
 void launch_pair(const Params& p, int grid, cudaStream_t stream) {
-    const int smem = launch_smem_bytes(MODE, p.slot_words, BMT);
+    // The kernel lays its word stages out at the pair's own slot, so the block
+    // is sized from it, and a launch must name that slot (``check_slot``
+    // checked the device limit at it).
+    constexpr int SW = pair_slot_words(RL, TWO);
+    TORCH_CHECK(p.slot_words == SW, "slot_words ", p.slot_words, " is not the run pair's slot, ", SW,
+                " (routed_fused.slot_words_for_pair)");
+    const int smem = launch_smem_bytes(MODE, SW, BMT, TWO);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
     if (smem > attributed) {
         C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT>,
@@ -1613,11 +1685,12 @@ void check_words(const torch::Tensor& words, const char* name) {
     TORCH_CHECK(reinterpret_cast<uintptr_t>(words.data_ptr()) % 16 == 0, name, " must be 16-byte aligned");
     TORCH_CHECK(words.size(1) % 4 == 0, name, ": words_stride must be a multiple of 4 words");
 }
-// The slot and shared-memory checks both host entries make.
-void check_slot(int mode, int64_t slot_words, const torch::Tensor& on, int bmt) {
+// The slot and shared-memory checks both host entries make (``two``: the
+// launch's run pair has a second run, ``pair_of``).
+void check_slot(int mode, int64_t slot_words, const torch::Tensor& on, int bmt, bool two) {
     TORCH_CHECK(slot_words % 4 == 0 && slot_words >= 4 && slot_words <= SLOT_WORDS_MAX,
                 "slot_words must be a multiple of 4 in [4, ", SLOT_WORDS_MAX, "]");
-    const int need = launch_smem_bytes(mode, (int)slot_words, bmt);
+    const int need = launch_smem_bytes(mode, (int)slot_words, bmt, two);
     const int have = max_dynamic_smem_bytes(on.device().index());
     TORCH_CHECK(need <= have, "the ", (mode == 2 ? "down/dense" : "gate/up"), " launch at ", slot_words,
                 "-word slots and ", bmt, "-route superblocks needs ", need,
@@ -2673,7 +2746,7 @@ void routed_fused_forward(
     if (two) check_words(words1, "words1");
     p.words_stride = words0.size(1);
     p.tile_words = (int)tile_words;
-    check_slot((int)mode, slot_words, x, (int)bm);
+    check_slot((int)mode, slot_words, x, (int)bm, pair_of((int)tile_words, (int)K).two);
     p.slot_words = (int)slot_words;
     p.K = (int)K;
     p.N = (int)N;
@@ -2798,7 +2871,7 @@ void dense_forward(
     check_words(words, "words");
     p.words_stride = words.size(1);
     p.tile_words = (int)tile_words;
-    check_slot(2, slot_words, x, (int)bm);
+    check_slot(2, slot_words, x, (int)bm, pair_of((int)tile_words, (int)K).two);
     p.slot_words = (int)slot_words;
     p.K = (int)K;
     p.N = (int)N;
@@ -3088,6 +3161,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
+    m.attr("WORD_STAGES_ONE_RUN") = WORD_STAGES_ONE_RUN;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
@@ -3095,15 +3169,20 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("HAS_WIDE_GATE_UP") = has_width(FAMILY_FP8, FAMILY_MMA8, 0, BM_WIDE);
     m.attr("HAS_WIDE_DOWN") = has_width(FAMILY_FP8, FAMILY_MMA8, 2, BM_WIDE);
     m.attr("A_REGION_BYTES_WIDE") = a_region_bytes(BM_WIDE);
-    m.def("launch_smem_bytes", [](int64_t mode, int64_t slot_words, int64_t bm) {
-              return (int64_t)launch_smem_bytes((int)mode, (int)slot_words, (int)bm); },
-          "dynamic shared memory the launch of ``mode`` takes at ``slot_words``-word slots and ``bm``-route superblocks");
+    m.def("launch_smem_bytes", [](int64_t mode, int64_t slot_words, int64_t bm, bool two) {
+              return (int64_t)launch_smem_bytes((int)mode, (int)slot_words, (int)bm, two); },
+          "dynamic shared memory the launch of ``mode`` takes at ``slot_words``-word slots and ``bm``-route "
+          "superblocks (``two``: the run pair has a second run)");
     m.attr("BDESC_INTS") = BDESC_INTS;
     m.attr("WINDOW_BITS") = WINDOW_BITS;
-    m.def("smem_bytes", [](int64_t mode, int64_t slot_words) { return (int64_t)smem_bytes((int)mode, (int)slot_words); },
-          "dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots");
-    m.def("word_stages", [](int64_t mode, int64_t slot_words) { return (int64_t)word_stages((int)mode, (int)slot_words); },
-          "word stages the launch of ``mode`` cycles through at ``slot_words``-word slots");
+    m.def("smem_bytes", [](int64_t mode, int64_t slot_words, bool two) {
+              return (int64_t)smem_bytes((int)mode, (int)slot_words, two); },
+          "dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots (``two``: the "
+          "run pair has a second run)");
+    m.def("word_stages", [](int64_t mode, int64_t slot_words, bool two) {
+              return (int64_t)word_stages((int)mode, (int)slot_words, two); },
+          "word stages the launch of ``mode`` cycles through at ``slot_words``-word slots (``two``: the run "
+          "pair has a second run)");
     m.def("max_dynamic_smem_bytes", [](int64_t device) { return (int64_t)max_dynamic_smem_bytes((int)device); },
           "cudaDevAttrMaxSharedMemoryPerBlockOptin of the device");
     m.attr("THREADS") = THREADS;

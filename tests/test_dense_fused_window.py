@@ -1170,3 +1170,27 @@ def test_dense_random_mixes_inside_every_pair_decode_exactly(family, r):
             graph.replay()
             torch.cuda.synchronize()
             assert torch.equal(out, eager), (family, q256)
+
+
+@cuda
+@pytest.mark.parametrize("q256", [256 * r for r in range(1, 9)])
+def test_dense_deep_word_stages_are_bitwise_the_three_stage_launch(q256, monkeypatch):
+    """Deep word staging (``routed_fused.ENV_WORD_STAGES``) on the E4M3
+    instruction's single-rate dense launch, at every rate: both K-split
+    regimes and both superblock widths are the three-stage library's bits."""
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
+    asked = rf.one_run_word_stages()
+    deep = asked if asked > rf.WORD_STAGES else 5
+    _expert, bundle = _role("e4m3", rates=_sched(COLS, q256))
+    role = rf.prepare_dense_role(bundle)
+    for m in (1, 200, 1536):
+        _x, xq, a = _inputs("e4m3", m, COLS, 31 + m)
+        got = {}
+        for stages in (rf.WORD_STAGES, deep):
+            monkeypatch.setenv(rf.ENV_WORD_STAGES, str(stages))
+            for wide in ("0", "1"):
+                monkeypatch.setenv(rf.ENV_WIDE, wide)
+                got[stages, wide] = _fused(role, xq, a)
+        ref = got[rf.WORD_STAGES, "0"]
+        for key, out in got.items():
+            assert torch.equal(out, ref), (q256, m, key)

@@ -543,7 +543,7 @@ def test_support_predicate_honours_the_opt_out_and_the_device(monkeypatch):
     assert "cpu" in rf.fused_routed_window_supported(B, B, B)
 
 
-def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
+def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout(monkeypatch):
     """The host restates the kernel's shared-memory layout (tessera#694): a
     column's slot is its ``2 * rate`` words, plus the two words the odd-rate
     copies start early by (an odd rate's half is 8-byte aligned at odd half
@@ -552,7 +552,9 @@ def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
     4; the word stages sit after the fixed part (two tables for gate/up, one
     for down/dense) and their size follows the slot -- three stages where
     they fit sm_121's block, two where they do not (the 16-bit gate/up
-    launch at the 16-word slot of rates 7 and 8)."""
+    launch at the 16-word slot of rates 7 and 8).  The three-stage layout:
+    deep word staging is :func:`test_deep_word_stages_fit_every_single_rate_slot`'s."""
+    monkeypatch.delenv(rf.ENV_WORD_STAGES, raising=False)
     assert [rf.slot_words_for_rate(r) for r in rf.RATES] == [4, 4, 8, 8, 12, 12, 16, 16]
 
     def pair(r_lo, r_hi=0, n_hi=0):
@@ -563,17 +565,19 @@ def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
     assert rf.slot_words_for_pair(pair(1, 8, 32)) == 16
     # a pair whose high run is empty is the low rate's slot alone
     assert rf.slot_words_for_pair(pair(3, 8, 0)) == 8
-    assert rf.smem_bytes(0, 8) == rf.smem_bytes(1, 8) == 91_600 + 3 * 2 * rf.BK * 8 * 4 == 97_744
-    assert rf.smem_bytes(0, 12) == 100_816          # rates 5 and 6: 560 B under sm_121's 101,376
+    assert rf.smem_bytes(0, 8, two=False) == rf.smem_bytes(1, 8, two=True) == 91_600 + 3 * 2 * rf.BK * 8 * 4 == 97_744
+    assert rf.smem_bytes(0, 12, two=False) == 100_816   # rates 5 and 6: 560 B under sm_121's 101,376
     # three stages of the 16-word slot would take 103,888 B, over sm_121's
     # 101,376: the 16-bit gate/up launch runs rates 7 and 8 at two
     assert rf.SMEM_FIXED[0] + rf.WORD_STAGES * 2 * rf.BK * 16 * 4 == 103_888 > rf.SM121_MAX_DYNAMIC_SMEM
-    assert [rf.word_stages(0, sw) for sw in (4, 8, 12, 16)] == [3, 3, 3, 2] == \
-        [rf.word_stages(1, sw) for sw in (4, 8, 12, 16)]
-    assert rf.smem_bytes(0, 16) == rf.smem_bytes(1, 16) == 91_600 + 2 * 2 * rf.BK * 16 * 4 == 99_792
-    assert rf.smem_bytes(2, 16) == 70_928           # the one-table down/dense launch: three stages at every rate
-    assert all(rf.word_stages(2, sw) == rf.WORD_STAGES for sw in (4, 8, 12, 16))
-    assert all(rf.word_stages(m, 16, mma8=True) == rf.WORD_STAGES for m in (0, 1, 2))
+    for two in (False, True):
+        assert [rf.word_stages(0, sw, two=two) for sw in (4, 8, 12, 16)] == [3, 3, 3, 2] == \
+            [rf.word_stages(1, sw, two=two) for sw in (4, 8, 12, 16)]
+        assert rf.smem_bytes(0, 16, two=two) == rf.smem_bytes(1, 16, two=two) \
+            == 91_600 + 2 * 2 * rf.BK * 16 * 4 == 99_792
+        assert rf.smem_bytes(2, 16, two=two) == 70_928   # the one-table down/dense launch: three stages at every rate
+        assert all(rf.word_stages(2, sw, two=two) == rf.WORD_STAGES for sw in (4, 8, 12, 16))
+        assert all(rf.word_stages(m, 16, mma8=True, two=two) == rf.WORD_STAGES for m in (0, 1, 2))
     assert rf.WORD_STAGES_MIN == 2 < rf.WORD_STAGES == 3
     # the fixed parts differ by a table and the gate/up launch's second
     # projection in the descriptor ring: 4 chunks x 12 int32 x 4 B
@@ -606,12 +610,13 @@ def test_support_predicate_admits_the_gate_up_slots_the_device_holds(monkeypatch
     lib = rf._ext("value")
     have = int(lib.max_dynamic_smem_bytes(torch.cuda.current_device()))
     for mode, sw in ((0, 12), (0, 16), (2, 16)):
-        assert int(lib.smem_bytes(mode, sw)) == rf.smem_bytes(mode, sw)
-        assert int(lib.word_stages(mode, sw)) == rf.word_stages(mode, sw)
+        for two in (False, True):
+            assert int(lib.smem_bytes(mode, sw, two)) == rf.smem_bytes(mode, sw, two=two)
+            assert int(lib.word_stages(mode, sw, two)) == rf.word_stages(mode, sw, two=two)
     # predicate == loader on the target: the rates whose one-rate gate/up slot
     # this device holds are exactly the published column_rates_routed_moe
     admitted = tuple(r for r in rf.RATES
-                     if rf.smem_bytes(0, rf._round_up_4(rf.slot_words_for_rate(r))) <= have)
+                     if rf.smem_bytes(0, rf._round_up_4(rf.slot_words_for_rate(r)), two=False) <= have)
     if have == rf.SM121_MAX_DYNAMIC_SMEM:
         assert admitted == rf.ROUTED_LANE_RATES == rf.RATES
     else:  # another device: the published set is sm_121's, and this test says which device it ran on
@@ -619,18 +624,18 @@ def test_support_predicate_admits_the_gate_up_slots_the_device_holds(monkeypatch
     stacks = {q256: _bundles("value", _stacks("value", q256=q256, cut=False)) for q256 in (1792, 1536, 1024)}
     for q256, b in stacks.items():
         slot = rf.slot_words_for_rate(q256 // 256)
-        if rf.smem_bytes(0, slot) <= have:
+        if rf.smem_bytes(0, slot, two=False) <= have:
             assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None, q256
     # a device with the 8-word slot's three stages and no more: rates 5..8
     # refused by name, rate 4 admitted
-    small = rf.smem_bytes(0, 8)
+    small = rf.smem_bytes(0, 8, two=False)
     real = rf._ext
     monkeypatch.setattr(rf, "_ext", lambda library, *a, **k: _SmallerDevice(real(library, *a, **k), small))
     for q256, slot in ((1792, 16), (1536, 12)):
         b = stacks[q256]
         reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
         assert reason is not None and "shared memory" in reason and "gate/up" in reason \
-            and str(rf.smem_bytes(0, slot)) in reason and str(small) in reason, reason
+            and str(rf.smem_bytes(0, slot, two=False)) in reason and str(small) in reason, reason
     b = stacks[1024]
     assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None
 
@@ -752,20 +757,20 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
     # the geometry behind the split: the one-table dense launch holds the
     # rate-14 slot (28 words) at three word stages; the two-table gate/up
     # launch cannot hold rate 9's 20-word slot even at two
-    assert all(rf.word_stages(2, rf._round_up_4(rf.slot_words_for_rate(r))) == rf.WORD_STAGES
+    assert all(rf.word_stages(2, rf._round_up_4(rf.slot_words_for_rate(r)), two=False) == rf.WORD_STAGES
                for r in rf.dense_rates("value"))
-    assert rf.smem_bytes(2, rf.slot_words_for_rate(14)) == 80_144 <= rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.smem_bytes(2, rf.slot_words_for_rate(14), two=False) == 80_144 <= rf.SM121_MAX_DYNAMIC_SMEM
     assert rf.slot_words_for_rate(9) == 20
-    assert rf.smem_bytes(0, 20) == 91_600 + 2 * 2 * rf.BK * 20 * 4 == 101_840 > rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.smem_bytes(0, 20, two=False) == 91_600 + 2 * 2 * rf.BK * 20 * 4 == 101_840 > rf.SM121_MAX_DYNAMIC_SMEM
     # the routed-expert launch's set is DERIVED from the kernel's shared-memory
     # layout at the target's opt-in limit, and published equal to it
     assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES) \
         == list(range(1, 9))
     assert rf.ROUTED_LANE_RATES == tuple(
         r for r in rf.RATES
-        if rf.smem_bytes(0, rf.slot_words_for_pair(torch.tensor([r, 0, 64, 0, 0, 64, 0, 0], dtype=torch.int32)))
+        if rf.smem_bytes(0, rf.slot_words_for_pair(torch.tensor([r, 0, 64, 0, 0, 64, 0, 0], dtype=torch.int32)), two=False)
         <= rf.SM121_MAX_DYNAMIC_SMEM)
-    assert all(rf.smem_bytes(2, rf.slot_words_for_rate(r)) <= rf.SM121_MAX_DYNAMIC_SMEM for r in rf.RATES)
+    assert all(rf.smem_bytes(2, rf.slot_words_for_rate(r), two=False) <= rf.SM121_MAX_DYNAMIC_SMEM for r in rf.RATES)
     assert ext.ROUTED_FUSED_LANE_REQUIRES["window_bits"] == [rf.WINDOW_BITS]
     assert "start_state" not in ext.ROUTED_FUSED_LANE_REQUIRES   # reads a cut and a whole alike
     assert ext.ROUTED_FUSED_E4M3_MODULE_NAME == rf.MODULE_NAME_E4M3
@@ -1115,7 +1120,7 @@ def test_library_for_reads_the_instruction_choice(monkeypatch):
     assert rf.library_for("value") == "value"      # the value family has one library
 
 
-def test_the_e4m3_instructions_layout_and_rates():
+def test_the_e4m3_instructions_layout_and_rates(monkeypatch):
     """The E4M3 instruction's library halves the table and operand-tile bytes:
     two 16 KB tables for gate/up where the 16-bit libraries hold 32 KB, and
     8-bit A and B stages.  Its gate/up launch therefore fits every rate, and
@@ -1123,6 +1128,7 @@ def test_the_e4m3_instructions_layout_and_rates():
     derived from that layout like the 16-bit entries' is."""
     from tessera.serving import ext
 
+    monkeypatch.delenv(rf.ENV_WORD_STAGES, raising=False)       # the three-stage layout
     # one byte less per table entry and per operand element: 16 KB per table,
     # and the two operand stages' B (BK x BN) and A (BM x BK) tiles
     stages = 2 * (rf.BK * rf.BN + rf.BM * rf.BK)
@@ -1130,7 +1136,7 @@ def test_the_e4m3_instructions_layout_and_rates():
     assert rf.PREV_REGION_BYTES_MMA8 == 3 * 2 * rf.BK * 4 == 768
     assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages - rf.PREV_REGION_BYTES_MMA8
     assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages - rf.PREV_REGION_BYTES_MMA8
-    assert rf.smem_bytes(0, 16, mma8=True) == 59_600 <= rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.smem_bytes(0, 16, mma8=True, two=False) == 59_600 <= rf.SM121_MAX_DYNAMIC_SMEM
     assert rf.routed_lane_rates("e4m3mma") == rf.RATES
     assert rf.routed_lane_rates("e4m3") == rf.routed_lane_rates("value") == rf.ROUTED_LANE_RATES
     assert ext.ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES["column_rates_routed_moe"] \
@@ -1166,11 +1172,14 @@ def test_every_library_serves_gate_up_at_rates_7_and_8(q256, monkeypatch):
         assert fused.library == library
         mma8 = rf.library_mma8(library)
         lib = rf._ext(library)
-        stages = int(lib.word_stages(0, fused.slot_words_gate_up))
-        assert stages == rf.word_stages(0, fused.slot_words_gate_up, mma8=mma8) \
-            == (rf.WORD_STAGES if mma8 else rf.WORD_STAGES_MIN), library
-        assert int(lib.launch_smem_bytes(0, fused.slot_words_gate_up, rf.BM)) \
-            == rf.launch_smem_bytes(0, fused.slot_words_gate_up, mma8=mma8) <= rf.SM121_MAX_DYNAMIC_SMEM
+        sw, two = fused.slot_words_gate_up, q256 % 256 != 0
+        stages = int(lib.word_stages(0, sw, two))
+        assert stages == rf.word_stages(0, sw, mma8=mma8, two=two), library
+        if not rf.deep_words(0, sw, mma8=mma8, two=two):
+            assert stages == (rf.WORD_STAGES if mma8 else rf.WORD_STAGES_MIN), library
+        for bm in (rf.BM, rf.BM_WIDE):
+            assert int(lib.launch_smem_bytes(0, sw, bm, two)) \
+                == rf.launch_smem_bytes(0, sw, mma8=mma8, bm=bm, two=two) <= rf.SM121_MAX_DYNAMIC_SMEM
 
 
 @cuda
@@ -1266,12 +1275,12 @@ def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
         for mode in modes:
             rates = rf.RATES if mode == 2 else rf.routed_lane_rates(library)
             for sw in sorted({rf._round_up_4(max(rf.slot_words_for_rate(r), 4)) for r in rates}):
-                narrow = rf.launch_smem_bytes(mode, sw, mma8=mma8)
-                wide = rf.launch_smem_bytes(mode, sw, mma8=mma8, bm=rf.BM_WIDE)
+                narrow = rf.launch_smem_bytes(mode, sw, mma8=mma8, two=False)
+                wide = rf.launch_smem_bytes(mode, sw, mma8=mma8, bm=rf.BM_WIDE, two=False)
                 assert wide == narrow + extra <= rf.SM121_MAX_DYNAMIC_SMEM, (library, mode, sw)
     # the 16-bit gate/up layout cannot hold it even at the smallest slot
-    assert rf.smem_bytes(0, 4) + 8192 > rf.SM121_MAX_DYNAMIC_SMEM
-    assert rf.smem_bytes(2, 16) == 70_928
+    assert rf.smem_bytes(0, 4, two=False) + 8192 > rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.smem_bytes(2, 16, two=False) == 70_928
     assert rf.ROUTED_LANE_RATES == rf.RATES
 
 
@@ -1280,11 +1289,11 @@ def _skewed(ids):
     return torch.where(ids < 3, torch.zeros_like(ids), ids)
 
 
-#: (library id, q256): the GLM rungs on both E4M3 libraries -- rate 4 and the
-#: two-run 3/4 and 4/5 tables -- and rates 7 and 8 on the E4M3 instruction,
-#: whose wide gate/up launch runs the largest slot.
-WIDE_CASES = ([(lib, q) for lib in ("e4m3", "e4m3mma") for q in (1024, 832, 1088)]
-              + [("e4m3mma", q) for q in SLOT16_Q256])
+#: (library id, q256): every one-run rate 1..8 and every adjacent pair
+#: (``Q256_CASES``) on both E4M3 libraries -- the E4M3 instruction's wide
+#: gate/up launch runs every slot, the 16-bit one's down launch does -- so the
+#: wide launch of each (pair, launch) instantiation meets the 64-route one.
+WIDE_CASES = [(lib, q) for lib in ("e4m3", "e4m3mma") for q in Q256_CASES]
 
 
 @cuda
@@ -1474,3 +1483,106 @@ def test_random_mixes_inside_every_pair_decode_exactly(family, r):
             _decode_exact(family, q256, build, place=place)
         _rate_bound(family, q256, place=place)
         _replays(_fused(_bundles(family, stacks)), seed=7600 + q256)
+
+
+# -- deep word staging (D3 (1): ``routed_fused.ENV_WORD_STAGES``) ------------------
+
+
+def _deep_stages():
+    """The deep word stages the A/B against three stages reads: this process's
+    ``ENV_WORD_STAGES`` when it asks for more than three, else 5."""
+    asked = rf.one_run_word_stages()
+    return asked if asked > rf.WORD_STAGES else 5
+
+
+def test_deep_word_stages_fit_every_single_rate_slot(monkeypatch):
+    """The E4M3 instruction's single-rate launches take the stages
+    ``ENV_WORD_STAGES`` asks for, each stage its words plus its chunk's staged
+    stream history, clamped to what sm_121's block holds at the widest
+    superblock; two-run launches and the 16-bit libraries keep their stages.
+    Unset is the three-stage kernel, and a bad value is refused by name."""
+    slots = (4, 8, 12, 16)
+    monkeypatch.delenv(rf.ENV_WORD_STAGES, raising=False)
+    assert rf.one_run_word_stages() == rf.WORD_STAGES
+    three = {(m, sw, two): rf.smem_bytes(m, sw, mma8=True, two=two)
+             for m in (0, 1, 2) for sw in slots for two in (False, True)}
+    for asked in (5, 8):
+        monkeypatch.setenv(rf.ENV_WORD_STAGES, str(asked))
+        assert rf.one_run_word_stages() == asked
+        for mode in (0, 1, 2):
+            for sw in slots:
+                assert rf.word_stages(mode, sw, mma8=True, two=False) == asked
+                assert rf.smem_bytes(mode, sw, mma8=True, two=False) \
+                    == rf.SMEM_FIXED_MMA8[mode] + asked * (2 * rf.BK * sw + 2 * rf.BK) * 4
+                assert rf.launch_smem_bytes(mode, sw, mma8=True, bm=rf.BM_WIDE, two=False) \
+                    <= rf.SM121_MAX_DYNAMIC_SMEM
+                # two-run launches and the 16-bit libraries do not move
+                assert rf.smem_bytes(mode, sw, mma8=True, two=True) == three[mode, sw, True]
+                for two in (False, True):
+                    assert rf.word_stages(mode, sw, two=two) == rf.word_stages(mode, sw, two=True)
+    # rate 4 (slot 8), gate/up, 128-route superblocks: five stages take 62,928 B
+    monkeypatch.setenv(rf.ENV_WORD_STAGES, "5")
+    assert rf.launch_smem_bytes(0, 8, mma8=True, bm=rf.BM_WIDE, two=False) == 62_928
+    # asked for more than fits: the block's room decides, per slot and mode
+    monkeypatch.setenv(rf.ENV_WORD_STAGES, "64")
+    assert [rf.word_stages(0, sw, mma8=True, two=False) for sw in slots] == [39, 21, 15, 11]
+    assert [rf.word_stages(2, sw, mma8=True, two=False) for sw in slots] == [51, 28, 19, 15]
+    for bad in ("2", "0", "-4", "five", "3.5"):
+        monkeypatch.setenv(rf.ENV_WORD_STAGES, bad)
+        with pytest.raises(GrammarError, match=rf.ENV_WORD_STAGES):
+            rf.one_run_word_stages()
+
+
+def test_deep_word_stages_build_the_e4m3_instruction_library_apart():
+    """Only the deep build carries the define, so the three-stage library's
+    flags (and its build) are unchanged."""
+    base = rf._cflags("sm_121", True, True)
+    assert not any("WORD_STAGES" in flag for flag in base)
+    assert rf._cflags("sm_121", True, True, word_stages=rf.WORD_STAGES) == base
+    deep = rf._cflags("sm_121", True, True, word_stages=5)
+    assert [flag for flag in deep if flag not in base] == ["-DTESSERA_ROUTED_FUSED_WORD_STAGES_ONE_RUN=5"]
+
+
+def test_a_bad_word_stage_count_refuses_the_lane_by_name(monkeypatch):
+    """A bad ``ENV_WORD_STAGES`` is a support-predicate refusal naming the
+    variable, never an admission that fails at launch."""
+    monkeypatch.setenv(rf.ENV_WORD_STAGES, "deep")
+    reason = rf.smem_reason(0, 8, torch.device("cpu"), "e4m3mma", two=False)
+    assert reason is not None and rf.ENV_WORD_STAGES in reason
+
+
+#: The single-rate rungs, one per rate, that deep word staging changes.
+ONE_RUN_Q256 = [256 * r for r in rf.RATES]
+
+
+@cuda
+@pytest.mark.parametrize("q256", ONE_RUN_Q256)
+def test_deep_word_stages_are_bitwise_the_three_stage_launch(q256, monkeypatch):
+    """Deep word staging changes how far ahead a chunk's words are issued and
+    nothing else: at every single-rate rung, at both superblock widths, the
+    forward and the teacher-forced ``gate_up`` and ``down_routes`` stages are
+    the three-stage library's bits.  One process builds both libraries
+    (``_ext`` keys its cache on the stage count).  The routes include an
+    expert past 128 routes, so wide superblocks run full and partial."""
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
+    deep = _deep_stages()
+    fused = _fused(_bundles("e4m3", _stacks("e4m3", q256=q256)))
+    assert fused.library == "e4m3mma"
+    for t, skew in ((1, False), (71, True), (300, True)):
+        x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+        ids, rw = _routes(t, TOP_K, 8100 + t)
+        if skew:
+            ids = _skewed(ids)
+        act = torch.randn(t * TOP_K, INTER, device="cuda").bfloat16()
+        got = {}
+        for stages in (rf.WORD_STAGES, deep):
+            monkeypatch.setenv(rf.ENV_WORD_STAGES, str(stages))
+            assert int(rf._ext("e4m3mma").WORD_STAGES_ONE_RUN) == stages
+            for wide in ("0", "1"):
+                monkeypatch.setenv(rf.ENV_WIDE, wide)
+                got[stages, wide] = (fused(x, ids, rw), fused.gate_up(x, ids, rw, preserve=True),
+                                     fused.down_routes(act, ids, rw))
+        ref = got[rf.WORD_STAGES, "0"]
+        for key, outs in got.items():
+            for name, a, b in zip(("forward", "gate_up", "down_routes"), outs, ref):
+                assert torch.equal(a, b), (q256, t, skew, key, name)
