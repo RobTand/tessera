@@ -208,6 +208,16 @@ def run_gate(report_path=None) -> dict:
     return report
 
 
+def test_native_a4_serving_gate():
+    """Collect the existing gate without certifying unavailable CUDA fixtures."""
+    import pytest
+
+    if not torch.cuda.is_available():
+        pytest.skip("native A4 serving gate requires CUDA")
+    box_artifacts.skip_now("a4_wires", "a4-config.json")
+    assert run_gate()["ok"]
+
+
 if __name__ == "__main__":
     import argparse
 
