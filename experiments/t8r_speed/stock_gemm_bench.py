@@ -20,6 +20,19 @@ stock output, the largest difference, and GPU power and SM clock over a
 sustained loop.  Nothing here edits vLLM; it says which form a plugin override
 should use and what it would save.
 
+The serve's weight strides.  ``kv_b_proj`` is BF16 in the traced artifact
+(it is in the A8 checkpoint's ``ignore`` list), so ``get_and_maybe_dequant_
+weights`` returns the (N * (P + V), L) row-major parameter itself and MLA's
+``.T`` makes ``W_UK_T = W_UK.permute(1, 2, 0)`` an (N, P, L) view with strides
+((P + V) L, L, 1) and ``W_UV = W_UV.transpose(0, 1)`` an (N, L, V) view with
+strides ((P + V) L, 1, L).  Layout ``serve`` builds exactly those views;
+``contig`` is their ``.contiguous()`` copy; ``lnp`` is the (L, N, P)-contiguous
+permute this bench first assumed (kept as a control).  GLM-5.3 is NoPE
+(``qk_rope_head_dim`` 0), so the query's nope part is the whole query.  The
+stock form of each layout records whether it dispatches the kernel the serve
+trace shows (``serve_kernel_match``): that, not the stride argument above, is
+what says the bench reproduces the serve.
+
 Usage: stock_gemm_bench.py --out DIR [--tokens 512,2048]
 """
 from __future__ import annotations
@@ -36,7 +49,11 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sustained_peaks import Sampler  # noqa: E402
 
-N, P, R, L, V = 32, 256, 64, 512, 256      # heads per rank (TP 2), nope, rope, kv_lora, v
+N, P, R, L, V = 32, 256, 0, 512, 256       # heads per rank (TP 2), nope, rope (NoPE: 0), kv_lora, v
+# The kernels the A8SE-SH rank-0 serve trace dispatches for the stock calls.
+SERVE_KERNEL = {"mla_k_up": "cutlass_80_wmma_tensorop_bf16_s161616gemm",
+                "mla_v_up": "cutlass_80_tensorop_bf16_s16816gemm",
+                "indexer_gate_fp32": "cutlass_80_simt_sgemm"}
 HIDDEN, IDX_HEADS = 4096, 32
 LOOP_S = float(os.environ.get("LOOP_S", "1.5"))
 
@@ -88,8 +105,9 @@ def compare(ref, got):
             "mismatch_frac": (d > 0).float().mean().item()}
 
 
-def run_case(group, B, flops, forms, sampler, results):
+def run_case(group, B, flops, forms, sampler, results, strides=None):
     ref_out = None
+    want = SERVE_KERNEL.get(group.split("/")[0])
     for name, call, result in forms:
         try:
             call(); torch.cuda.synchronize()
@@ -98,9 +116,14 @@ def run_case(group, B, flops, forms, sampler, results):
             rec = {"group": group, "tokens": B, "form": name, "ms": ms,
                    "tflops": flops / (ms * 1e-3) / 1e12, "kernels": kernels(call),
                    "sampler": sustained(call, sampler)}
+            if strides:
+                rec["strides"] = strides
             if ref_out is None:
                 ref_out = out
                 rec["vs_stock"] = {"bitwise": True, "max_abs": 0.0}
+                if want:
+                    rec["serve_kernel"] = want
+                    rec["serve_kernel_match"] = any(want in k["kernel"] for k in rec["kernels"])
             else:
                 rec["vs_stock"] = compare(ref_out, out)
         except Exception as e:  # noqa: BLE001  a form the build lacks is a result, not a failure
@@ -109,14 +132,29 @@ def run_case(group, B, flops, forms, sampler, results):
         results.append(rec)
 
 
+def mla_weights(g, layout):
+    """(W_UK_T, W_UV) as MLA's ``process_weights_after_loading`` builds them
+    from a BF16 ``kv_b_proj`` (``serve``), their contiguous copies
+    (``contig``), or the (L, N, *)-contiguous control (``lnp``)."""
+    if layout == "lnp":
+        w_uk = torch.randn(L, N, P, device="cuda", dtype=torch.bfloat16, generator=g) * 0.05
+        w_uv = torch.randn(L, N, V, device="cuda", dtype=torch.bfloat16, generator=g) * 0.05
+        return w_uk.permute(1, 2, 0), w_uv.transpose(0, 1)
+    weight = torch.randn(N * (P + V), L, device="cuda", dtype=torch.bfloat16, generator=g) * 0.05
+    kvb = weight.T.view(L, N, P + V)                            # get_and_maybe_dequant_weights(...).T
+    w_uk, w_uv = kvb.split([P, V], dim=-1)
+    uk_t, uv = w_uk.permute(1, 2, 0), w_uv.transpose(0, 1)
+    assert uk_t.stride() == ((P + V) * L, L, 1) and uv.stride() == ((P + V) * L, 1, L)
+    if layout == "contig":
+        return uk_t.contiguous(), uv.contiguous()
+    return uk_t, uv
+
+
 def mla_k_up(B, sampler, results, w_layout):
     g = torch.Generator(device="cuda").manual_seed(1)
     q = torch.randn(B, N, P + R, device="cuda", dtype=torch.bfloat16, generator=g)
     q_nope = q[..., :P].transpose(0, 1)                         # (N, B, P), the serve's view
-    w_lnp = torch.randn(L, N, P, device="cuda", dtype=torch.bfloat16, generator=g) * 0.05
-    W = w_lnp.permute(1, 2, 0)                                  # (N, P, L): W_UK.permute(1, 2, 0)
-    if w_layout == "contig":
-        W = W.contiguous()
+    W = mla_weights(g, w_layout)[0]                             # (N, P, L) W_UK_T
     out = torch.empty(B, N, L, device="cuda", dtype=torch.bfloat16)
     tmp = torch.empty(N, B, L, device="cuda", dtype=torch.bfloat16)
     qc = torch.empty(N, B, P, device="cuda", dtype=torch.bfloat16)
@@ -149,17 +187,15 @@ def mla_k_up(B, sampler, results, w_layout):
     forms = [("stock", stock, lambda: out), ("contig_out", contig_out, lambda: out),
              ("contig_in", contig_in, lambda: out), ("contig_both", contig_both, lambda: out),
              ("per_head_mm", per_head, lambda: out), ("einsum", einsum, lambda: out)]
-    run_case(f"mla_k_up/W_{w_layout}", B, flops, forms, sampler, results)
+    run_case(f"mla_k_up/W_{w_layout}", B, flops, forms, sampler, results,
+             strides={"q_nope": list(q_nope.stride()), "W": list(W.stride())})
 
 
 def mla_v_up(B, sampler, results, w_layout):
     g = torch.Generator(device="cuda").manual_seed(2)
     x_bnl = torch.randn(B, N, L, device="cuda", dtype=torch.bfloat16, generator=g)
     x = x_bnl.transpose(0, 1)                                   # (N, B, L), the serve's view
-    w_lnv = torch.randn(L, N, V, device="cuda", dtype=torch.bfloat16, generator=g) * 0.05
-    W = w_lnv.transpose(0, 1)                                   # (N, L, V): W_UV.transpose(0, 1)
-    if w_layout == "contig":
-        W = W.contiguous()
+    W = mla_weights(g, w_layout)[1]                             # (N, L, V) W_UV
     out = torch.empty(B, N * V, device="cuda", dtype=torch.bfloat16)
     tmp = torch.empty(N, B, V, device="cuda", dtype=torch.bfloat16)
     xc = torch.empty(N, B, L, device="cuda", dtype=torch.bfloat16)
@@ -192,7 +228,8 @@ def mla_v_up(B, sampler, results, w_layout):
     forms = [("stock", stock, lambda: out), ("contig_out", contig_out, lambda: out),
              ("contig_in", contig_in, lambda: out), ("contig_both", contig_both, lambda: out),
              ("per_head_mm", per_head, lambda: out), ("einsum", einsum, lambda: out)]
-    run_case(f"mla_v_up/W_{w_layout}", B, flops, forms, sampler, results)
+    run_case(f"mla_v_up/W_{w_layout}", B, flops, forms, sampler, results,
+             strides={"x": list(x.stride()), "W": list(W.stride())})
 
 
 def indexer_gate(B, sampler, results):
@@ -243,7 +280,7 @@ def main():
             "loop_s": LOOP_S}
     results = []
     for B in [int(t) for t in a.tokens.split(",")]:
-        for lay in ("perm", "contig"):
+        for lay in ("serve", "contig", "lnp"):
             mla_k_up(B, sampler, results, lay)
             mla_v_up(B, sampler, results, lay)
         indexer_gate(B, sampler, results)
