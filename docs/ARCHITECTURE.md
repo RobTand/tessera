@@ -3537,6 +3537,15 @@ without importing the serving runtime or restating its expert grammar. Source
 tensor names retain their actual suffix; logical tensors include `.weight`,
 and allocation/cache keys remove exactly that suffix via `ActivationSource`.
 
+The producer tool hashes source shard bodies by default. Its optional
+`--source-digest-cache DIRECTORY` passes an existing trusted `SourceDigestCache`
+to `source_identity` and writes that cache's receipt under `source_digest_cache`
+in the projection JSON. Without the flag, the output is unchanged. The cache
+library owns directory, fingerprint, quiescence, mutation and corrupt-entry
+checks; config, auxiliaries and complete header coverage are still read.
+A reuse receipt names previously fenced shard digests, not a fresh body read
+by this process, and confers no serving or campaign qualification.
+
 `tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
 per-unit Hessian plus capture identity and full activation settings, resolved
 recipe, encoder behavior/source identities, and the whole blob digest.
