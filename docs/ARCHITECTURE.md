@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
+`routed_fused_window.cu` gains a fourth library, `tessera_routed_fused_e2m1`,
+on the block-scaled FP4 instruction (sm_121a). It is producer-side until a
+route admits the E2M1x2 window body: no contract version, `native_extensions`
+entry, launch row or cell changes, and the three existing libraries' SASS is
+instruction-identical to master's (value 101/101, E4M3-f16 107/107,
+E4M3-instruction 137/137; PB `0ab25e95` against `ac4fb3e4`). See the fused
+lane's section.
+
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
 `TESSERA_BF16_K1` at one rung of every run table: `t16d1` covers [1] to [8] and
@@ -3782,6 +3791,36 @@ one the code makes. The oracle, profile, NCU, census and bench receipts are
 recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
 not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
 path; that gap is measured in the same document.
+
+**The E2M1 family (not a serving lane yet, Refs #750).** A fourth library of
+the same source, `tessera_routed_fused_e2m1` (`-DTESSERA_ROUTED_FUSED_FP4=1`,
+built for the architecture-specific `sm_121a` only), runs the Tessera-4 wire
+-- the E2M1x2 window body over the LUT16 plane -- on the block-scaled FP4
+instruction `mma.sync ... kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64
+.e2m1.e2m1.f32.ue4m3`. The producers decode each 64-column chunk's tuple codes
+into a packed E2M1 B tile and its LUT16 nibbles into the instruction's UE4M3
+group scales; the activation is the NVFP4 routes' own `scaled_fp4_quant` at the
+layer's static global `gs`, staged unconverted; the epilogue is one fp32
+multiply by `global / gs` before the bf16 boundary. That is the activation
+contract the NVFP4 routes already execute (`e2m1_group16_ue4m3_static`),
+unchanged. An item is 256 output rows (gate/up: 128 of each), so the
+intermediate size must be a multiple of 128 and the hidden size of 256. A
+dense projection's rows need only be a multiple of 32: the last block is
+decoded whole from the wire's padded 1024-row tile and written only below its
+rows, so GLM-5.3's DSA indexer `wk` (128) and `weights_proj` (32) and a TP2
+`lm_head` (77,440) are in. Every
+rate 1..8 and every adjacent two-run table is instantiated at three word
+stages (gate/up at rate 8 needs 93,648 B). The dense identity's K split keeps
+two chunks per item (`routed_fused_e2m1.dense_split_max`, refused by name
+past it), because the producers rewrite an item's descriptor slot two items
+later. Adding the family leaves the three existing libraries' SASS
+instruction-identical. It is NOT in `native_extensions`, `ROUTE_LAUNCHES` or
+any cell: `ROUTES["TESSERA_NVFP4"]` admits the TCQ span-2 body only, so no
+route can hold a window-body E2M1 stack, and `tessera.routed_fused_e2m1` is
+kept out of the import graph of `tessera.serving` (the contract scanner holds
+reachability to the published table). The route change that admits the window
+body adds the entry, the launch rows and the census. Oracle:
+`tests/test_routed_fused_e2m1.py`.
 
 **The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
 unweighted case of the routed lane, and since v43 the same kernel serves the
