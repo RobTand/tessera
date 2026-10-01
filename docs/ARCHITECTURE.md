@@ -6929,6 +6929,27 @@ What this does not establish:
 
 Receipt: [the release serve's mode NONE](measurements/2026-10-01-glm-release-serve-mode-none.md).
 
+### 5.1.3 Opt-in: skip the zero-width RoPE query cat (tessera#796)
+
+GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
+`FlashInferMLASparseSM120Impl.forward_mqa` still joins `(q_nope, q_pe)` with
+`torch.cat`, which copies all of `q_nope`: 11 copies of 67 MB per 2048-token
+prefill chunk at TP 2, about 6.4 ms.
+
+With `TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1`, `TesseraConfig.get_quant_method`
+rebinds that method (`serving.glm53_empty_rope`). The rebind passes `q_nope`
+itself when the cat would only copy it: a 2-tuple, a zero-wide second part,
+matching leading shape, dtype and device, and a contiguous, 512-byte-aligned
+`q_nope`. The kernel then reads the same bytes, shape, strides and alignment.
+Every other query reaches the stock code unchanged.
+
+The rebind installs only on a stock source whose sha256 is in the inspected
+set (image `5be13705`); any other source keeps the stock method. Each process
+logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
+whether the first tuple query skipped the cat.
+
+The flag is off by default. No route, contract or artifact changes.
+
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in
