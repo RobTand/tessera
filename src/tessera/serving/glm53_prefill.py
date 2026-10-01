@@ -26,7 +26,17 @@ state on this rank's half of the tokens: it all-gathers the layer input before
 attention and before the MLP, and reduce-scatters their outputs where stock
 all-reduces them.  On two ranks a reduce-scatter plus an all-gather moves the
 bytes one all-reduce moves, and a two-operand sum is exact in either, so the
-attention and MLP inputs are the stock values; the mHC work per rank halves.
+collectives change no value; the mHC work per rank halves.
+
+SP is NOT bit-identical to stock.  The pinned mHC kernels are not invariant to
+the token count of a call: two 1024-token calls differ from one 2048-token
+call over the same tokens (post and comb mixes at about 1e-5, the layer input
+by up to 2 bf16 ulps of its row max), while a 2048-token call matches its
+slice of an 8192-token call.  The token-count-dependent split of the pre-norm
+GEMM is one cause; 256- against 512-token calls differ at an equal split, so
+it is not the only one (``experiments/mhc/mhc_probe.py`` ``mhc`` split
+invariance).  The served TR3 panel moved from 0.027886 to 0.028144 (one run,
+window u4-R1-20261001T0058Z).  Hence the default ``off``.
 The attention ``o_proj`` and the MLP's final reduction are switched off on
 each layer's first forward, and below ``T*`` the rebound forward performs those
 two all-reduces itself with the op the modules call.  A forward under graph
@@ -44,6 +54,10 @@ all-reduce, twice per layer), each the median of CUDA-event timings on this
 serve's TP group.  ``T*`` is the smallest grid count from which the saving
 exceeds the cost at every larger grid count, agreed across ranks by a MAX
 reduction, and logged with the table.  No threshold is a constant here.
+The measurement is known to be wrong at small ``T``: isolated medians read the
+all-gather plus reduce-scatter as cheaper than the all-reduce from 32 to 1024
+tokens and chose ``T*`` 32, while the same serve's profile at 512 tokens
+showed SP 10 ms per step slower than stock (window u4-R1-20261001T0058Z).
 
 **The KDA prefill conv, per q/k/v slice.**  The pinned KDA layer runs one
 short causal conv over the merged q|k|v channels and splits its token-major
