@@ -1,0 +1,137 @@
+{
+ "L0.gate_up": {
+  "table": [
+   1
+  ],
+  "q256": 256
+ },
+ "L0.down": {
+  "table": [
+   1,
+   2
+  ],
+  "q256": 384
+ },
+ "L1.gate_up": {
+  "table": [
+   2
+  ],
+  "q256": 512
+ },
+ "L1.down": {
+  "table": [
+   2,
+   3
+  ],
+  "q256": 640
+ },
+ "L2.gate_up": {
+  "table": [
+   3
+  ],
+  "q256": 768
+ },
+ "L2.down": {
+  "table": [
+   5
+  ],
+  "q256": 1280
+ },
+ "L3.shared.gate_up": {
+  "table": [
+   5,
+   6
+  ],
+  "q256": 1408
+ },
+ "L3.shared.down": {
+  "table": [
+   6
+  ],
+  "q256": 1536
+ },
+ "L4.shared.gate_up": {
+  "table": [
+   6,
+   7
+  ],
+  "q256": 1664
+ },
+ "L4.shared.down": {
+  "table": [
+   7
+  ],
+  "q256": 1792
+ },
+ "L5.shared.gate_up": {
+  "table": [
+   7,
+   8
+  ],
+  "q256": 1920
+ },
+ "L5.shared.down": {
+  "table": [
+   8
+  ],
+  "q256": 2048
+ },
+ "L6.shared.gate_up": {
+  "table": [
+   4
+  ],
+  "q256": 1024
+ },
+ "L6.shared.down": {
+  "table": [
+   3,
+   4
+  ],
+  "q256": 896
+ },
+ "L7.shared.gate_up": {
+  "table": [
+   4,
+   5
+  ],
+  "q256": 1152
+ },
+ "L7.shared.down": {
+  "table": [
+   8
+  ],
+  "q256": 2048
+ },
+ "L3.routed": {
+  "table": [
+   7,
+   8
+  ],
+  "q256": 1920
+ },
+ "L4.routed": {
+  "table": [
+   8
+  ],
+  "q256": 2048
+ },
+ "L5.routed": {
+  "table": [
+   2,
+   3
+  ],
+  "q256": 640
+ },
+ "L6.routed": {
+  "table": [
+   3
+  ],
+  "q256": 768
+ },
+ "L7.routed": {
+  "table": [
+   2
+  ],
+  "q256": 512
+ }
+}
