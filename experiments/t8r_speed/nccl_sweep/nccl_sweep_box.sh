@@ -15,6 +15,7 @@ NAME=nccl-sweep-$(basename "$OUT")-rank$RANK
 mkdir -p "$OUT/rank$RANK" "$OUT/tmp"
 docker rm -f "$NAME" >/dev/null 2>&1 || true
 docker run -d --name "$NAME" --network host --ipc host --device /dev/infiniband --gpus all \
+  --user "$(id -u):$(id -g)" -e HOME="$OUT/tmp" \
   --label org.prismaquant.campaign=pact-u4 --label org.prismaquant.phase=nccl-sweep \
   --ulimit memlock=-1:-1 --ulimit stack=67108864 --cap-add IPC_LOCK --shm-size 4g \
   -v /mnt/shared:/mnt/shared:ro -v "$OUT":"$OUT" \
