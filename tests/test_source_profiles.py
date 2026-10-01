@@ -101,8 +101,21 @@ def test_cached_encoder_profiles_preserve_the_legacy_api():
     assert cached_unit.encoder_source_profiles()[V2] != '0' * 64
 
 
+def test_missing_install_is_a_named_precondition(monkeypatch):
+    def absent_distribution(name):
+        raise metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(metadata, 'distribution', absent_distribution)
+    with pytest.raises(pytest.skip.Exception,
+                       match='requires a noneditable Git package'):
+        test_actual_installed_git_package_keeps_legacy_bytes()
+
+
 def test_actual_installed_git_package_keeps_legacy_bytes():
-    dist = metadata.distribution('tessera-quant')
+    try:
+        dist = metadata.distribution('tessera-quant')
+    except metadata.PackageNotFoundError:
+        pytest.skip('the installed-source control requires a noneditable Git package')
     direct_url = dist.read_text('direct_url.json')
     if direct_url is None:
         pytest.skip('the installed-source control requires a Git-provenanced package')

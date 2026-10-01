@@ -156,6 +156,12 @@ BM_WIDE = 128
 HALF = 64
 BN = 128
 BK = 32
+#: The dense identity's row quantum: a role's last ``BN`` block may be partial
+#: (the N-tail, tessera#750 WP2), and the epilogue stores at most four columns
+#: at a time, so a role's rows are a multiple of 4.  The wire is padded to
+#: whole 512-row tiles, so the partial block's pad rows read words the repack
+#: wrote (zeros) and are never stored.
+DENSE_ROW_QUANTUM = 4
 #: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
 #: every rate of the window grammar up to 8, so a stack's one- or two-rate run
 #: table (the two rates bracketing its root) is read as the wire lays it out.
@@ -192,9 +198,12 @@ WORD_STAGES = 3
 WORD_STAGES_MIN = 2
 DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
-#: The same fixed part on the E4M3 instruction: 16 KB byte tables and 8-bit
-#: A and B stages.  The word stages are the same bytes.
-SMEM_FIXED_MMA8 = {0: 46_544, 1: 46_544, 2: 29_968}
+#: The staged stream history on the E4M3 instruction: one int32 per (half,
+#: column) per word stage (``PREV_STAGED`` in ``routed_fused_window.cu``).
+PREV_REGION_BYTES_MMA8 = WORD_STAGES * 2 * BK * 4
+#: The same fixed part on the E4M3 instruction: 16 KB byte tables, 8-bit A and
+#: B stages, and the staged stream history.  The word stages are the same bytes.
+SMEM_FIXED_MMA8 = {0: 47_312, 1: 47_312, 2: 30_736}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -448,13 +457,18 @@ def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
-def _cflags(token: str, fp8: bool, mma8: bool = False) -> list:
+def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> list:
+    """A library's compile flags.  ``fp4`` is the E2M1 family's library
+    (``tessera.routed_fused_e2m1``): its define, and the architecture-specific
+    target its block-scaled FP4 instruction exists on.  The other libraries'
+    flags do not move."""
     from .serving.backend import offload_flags
 
     return ["-O3", "-lineinfo", "-std=c++17",
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
-            *offload_flags(token)]
+            *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
+            *offload_flags(token, arch_specific=fp4)]
 
 
 def _probed_or_none(probe):
@@ -469,12 +483,17 @@ def _built_library(build: str, module: str) -> "str | None":
     return found[0] if found else None
 
 
-@functools.lru_cache(maxsize=None)
-def _ext(library: str):
-    """The library (a :data:`LIBRARIES` key; a family names its 16-bit
-    library), built on first use (the window GEMV's loader shape)."""
-    from torch.utils.cpp_extension import load
+def build_library(module: str, source_module: str, compile_fn):
+    """Build and load one library of :data:`SOURCE` on this process's platform.
 
+    ``module`` names the build directory and the library; ``source_module``
+    is the published extension whose source is compiled (#134: the path the
+    contract publishes IS the file compiled); ``compile_fn(src, build, token,
+    verbose)`` makes the ``cpp_extension.load`` call, whose module name is a
+    literal at the call site so the contract scanner reads it.  A library
+    built for a platform token this process's device does not probe as is
+    refused as a serving path.
+    """
     from tessera.serving import ext as serving_ext
     from tessera.serving.backend import (
         PLATFORM_TOKEN_ENV,
@@ -488,13 +507,8 @@ def _ext(library: str):
 
     from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
 
-    if library not in LIBRARIES:
-        raise GrammarError(f"the fused routed lane builds the libraries {sorted(LIBRARIES)}, got {library!r}")
-    module, family, mma8 = LIBRARIES[library]
-    fp8 = family == "e4m3"
     ensure_toolchain_on_path(torch)
-    # The path the contract publishes IS the file compiled here (#134).
-    src = serving_ext.native_source_path(module)
+    src = serving_ext.native_source_path(source_module)
     if detect_backend(torch) != "cuda":
         raise PlatformMismatchError(
             "the fused routed window kernel is CUDA (mma.sync, ldmatrix, cp.async); this "
@@ -507,21 +521,7 @@ def _ext(library: str):
     verbose = bool(os.environ.get("TESSERA_ROUTED_FUSED_VERBOSE"))
     try:
         with jit_build_lock(build):
-            if mma8:
-                lib = load(
-                    name="tessera_routed_fused_mma_e4m3",  # literal: the contract scanner reads it
-                    sources=[src], build_directory=build,
-                    extra_cuda_cflags=_cflags(token, True, True), verbose=verbose)
-            elif fp8:
-                lib = load(
-                    name="tessera_routed_fused_e4m3",   # literal: the contract scanner reads it
-                    sources=[src], build_directory=build,
-                    extra_cuda_cflags=_cflags(token, True), verbose=verbose)
-            else:
-                lib = load(
-                    name="tessera_routed_fused_value",  # literal: the contract scanner reads it
-                    sources=[src], build_directory=build,
-                    extra_cuda_cflags=_cflags(token, False), verbose=verbose)
+            lib = compile_fn(src, build, token, verbose)
     except Exception as exc:
         probed = _probed_or_none(probed_platform_token)
         if token == probed or not _built_library(build, module):
@@ -537,8 +537,40 @@ def _ext(library: str):
             f"the fused routed window extension was built for {token} ({PLATFORM_TOKEN_ENV}) and "
             f"this process's device is {probed}; the library under {build} is a compile-gate "
             "artifact and is refused as a serving path.")
+    return lib
+
+
+@functools.lru_cache(maxsize=None)
+def _ext(library: str):
+    """The library (a :data:`LIBRARIES` key; a family names its 16-bit
+    library), built on first use (the window GEMV's loader shape)."""
+    from torch.utils.cpp_extension import load
+
+    if library not in LIBRARIES:
+        raise GrammarError(f"the fused routed lane builds the libraries {sorted(LIBRARIES)}, got {library!r}")
+    module, family, mma8 = LIBRARIES[library]
+    fp8 = family == "e4m3"
+
+    def compile_fn(src, build, token, verbose):
+        if mma8:
+            return load(
+                name="tessera_routed_fused_mma_e4m3",  # literal: the contract scanner reads it
+                sources=[src], build_directory=build,
+                extra_cuda_cflags=_cflags(token, True, True), verbose=verbose)
+        if fp8:
+            return load(
+                name="tessera_routed_fused_e4m3",   # literal: the contract scanner reads it
+                sources=[src], build_directory=build,
+                extra_cuda_cflags=_cflags(token, True), verbose=verbose)
+        return load(
+            name="tessera_routed_fused_value",  # literal: the contract scanner reads it
+            sources=[src], build_directory=build,
+            extra_cuda_cflags=_cflags(token, False), verbose=verbose)
+
+    lib = build_library(module, module, compile_fn)
     dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
+                       ("DENSE_ROW_QUANTUM", DENSE_ROW_QUANTUM),
                        ("RATE_MIN", RATE_MIN), ("ROUTED_RATE_MAX", RATE_MAX),
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
@@ -721,6 +753,49 @@ def block_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     return desc.to(torch.int32).contiguous()
 
 
+def _run_stack_reason(name: str, b, e: int) -> "str | None":
+    """The wire checks every fused window lane makes on one projection's
+    stack: words by expert, one run table for the stack that is the kernel's
+    run pair, the packer's column order, the tile stride and the start
+    states.  ``None`` when the stack is read as the wire lays it out."""
+    try:
+        words_by_expert(b)
+    except GrammarError as exc:
+        return f"{name}: {exc}"
+    if b.words_all.dtype != torch.int32:
+        return f"{name} words must be int32"
+    # One run table for the stack: every expert carries the same one or two
+    # runs (run_off == 0, R, 2R, ...), and it is the kernel's run pair.
+    runs = b.runs_all.reshape(-1, 4)
+    n_runs = int(runs.shape[0])
+    if n_runs % e != 0 or (n_runs // e) not in (1, 2):
+        return f"{name} carries {n_runs} runs for {e} experts; the lane reads one or two runs per expert"
+    per = n_runs // e
+    want_off = torch.arange(e + 1, dtype=b.run_off.dtype, device=b.run_off.device) * per
+    if not bool((b.run_off == want_off).all()):
+        return f"{name} experts do not all carry {per} run(s)"
+    runs_e = runs.reshape(e, per, 4)
+    if not bool((runs_e == runs_e[:1]).all()):
+        return f"{name} experts disagree on their run tables; the lane reads one schedule per stack"
+    pair, why = run_pair(runs_e[0], b.cols)
+    if pair is None:
+        return f"{name} {why}"
+    n_lo = int(pair[2])
+    if tuple(b.perm_all.shape) != (e, b.cols):
+        return f"{name} perm_all is not [E, cols]"
+    why = perm_reason(b.perm_all, n_lo, b.cols)
+    if why is not None:
+        return f"{name} {why}; the lane reads the packer's column order"
+    want_tile = pair_tile_words(pair)
+    if not bool((b.tile_words == want_tile).all()):
+        return f"{name} tile_words is not {want_tile} (from its run table) for every expert"
+    if tuple(b.init_all.shape) != (e, b.cols) or b.init_all.dtype != torch.int32:
+        return f"{name} init_all must be int32 [E, cols]"
+    if b.has_init.dtype != torch.int32 or b.has_init.numel() != e:
+        return f"{name} has_init must be int32 [E]"
+    return None
+
+
 def fused_routed_window_supported(gate, up, down) -> "str | None":
     """Why this lane refuses a stack, or ``None`` when it serves it.
 
@@ -757,41 +832,9 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name} was prepared without the native activation quantizer"
         if b.cols % BK != 0 or b.cols < MIN_COLS:
             return f"{name} has {b.cols} columns; the lane needs a multiple of {BK} and at least {MIN_COLS}"
-        try:
-            words_by_expert(b)
-        except GrammarError as exc:
-            return f"{name}: {exc}"
-        if b.words_all.dtype != torch.int32:
-            return f"{name} words must be int32"
-        # One run table for the stack: every expert carries the same one or two
-        # runs (run_off == 0, R, 2R, ...), and it is the kernel's run pair.
-        runs = b.runs_all.reshape(-1, 4)
-        n_runs = int(runs.shape[0])
-        if n_runs % e != 0 or (n_runs // e) not in (1, 2):
-            return f"{name} carries {n_runs} runs for {e} experts; the lane reads one or two runs per expert"
-        per = n_runs // e
-        want_off = torch.arange(e + 1, dtype=b.run_off.dtype, device=b.run_off.device) * per
-        if not bool((b.run_off == want_off).all()):
-            return f"{name} experts do not all carry {per} run(s)"
-        runs_e = runs.reshape(e, per, 4)
-        if not bool((runs_e == runs_e[:1]).all()):
-            return f"{name} experts disagree on their run tables; the lane reads one schedule per stack"
-        pair, why = run_pair(runs_e[0], b.cols)
-        if pair is None:
-            return f"{name} {why}"
-        n_lo = int(pair[2])
-        if tuple(b.perm_all.shape) != (e, b.cols):
-            return f"{name} perm_all is not [E, cols]"
-        why = perm_reason(b.perm_all, n_lo, b.cols)
+        why = _run_stack_reason(name, b, e)
         if why is not None:
-            return f"{name} {why}; the lane reads the packer's column order"
-        want_tile = pair_tile_words(pair)
-        if not bool((b.tile_words == want_tile).all()):
-            return f"{name} tile_words is not {want_tile} (from its run table) for every expert"
-        if tuple(b.init_all.shape) != (e, b.cols) or b.init_all.dtype != torch.int32:
-            return f"{name} init_all must be int32 [E, cols]"
-        if b.has_init.dtype != torch.int32 or b.has_init.numel() != e:
-            return f"{name} has_init must be int32 [E]"
+            return why
         if b.scale_all.dtype != torch.float32 or tuple(b.scale_all.shape) != (e, b.rows):
             return f"{name} scale_all must be fp32 [E, rows]"
     if gate.rows != up.rows or gate.rows != down.cols:
@@ -870,6 +913,33 @@ def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
     item_off = torch.zeros(counts.numel() + 1, dtype=torch.int32, device=counts.device)
     item_off[1:] = torch.cumsum((counts + (bm - 1)) // bm, 0, dtype=torch.int32)
     return item_off
+
+
+def _routing_tables(expert_ids: torch.Tensor, routing_weights: torch.Tensor, experts: int,
+                    device: torch.device, library: "str | None") -> _Routing:
+    """The step's routing in the order the fused launches read it: routes
+    sorted by expert (stable), their weights, and the superblock offsets at
+    each width a launch of ``library`` takes this step (``None``: a library
+    with the one width, ``BM``)."""
+    if expert_ids.dim() != 2 or routing_weights.shape != expert_ids.shape:
+        raise GrammarError("expert_ids and routing_weights must share [T, top_k]")
+    if expert_ids.device != device or routing_weights.device != device:
+        raise GrammarError("routing tensors must live on the compute device")
+    if expert_ids.dtype not in (torch.int32, torch.int64):
+        raise GrammarError("expert_ids must be int32 or int64")
+    tokens, top_k = (int(v) for v in expert_ids.shape)
+    ids = expert_ids.reshape(-1).to(torch.int64)
+    counts = torch.zeros(experts, dtype=torch.int32, device=device)
+    counts.scatter_add_(0, ids, torch.ones_like(ids, dtype=torch.int32))
+    offsets = torch.zeros(experts + 1, dtype=torch.int32, device=device)
+    offsets[1:] = torch.cumsum(counts, 0, dtype=torch.int32)
+    order = torch.argsort(ids, stable=True)
+    flat_sorted = order.to(torch.int32).contiguous()
+    rw_sorted = routing_weights.reshape(-1).to(torch.float32)[order].contiguous()
+    wide = library is not None and any(superblock_rows(library, mode, tokens) == BM_WIDE for mode in (0, 2))
+    return _Routing(offsets=offsets, flat_sorted=flat_sorted, rw_sorted=rw_sorted,
+                    item_off=_item_off(counts, BM), tokens=tokens, top_k=top_k,
+                    item_off_wide=_item_off(counts, BM_WIDE) if wide else None)
 
 
 @functools.lru_cache(maxsize=None)
@@ -995,26 +1065,7 @@ class FusedRoutedWindowMoE:
 
     # -- routing ------------------------------------------------------------
     def _routing(self, expert_ids: torch.Tensor, routing_weights: torch.Tensor) -> _Routing:
-        if expert_ids.dim() != 2 or routing_weights.shape != expert_ids.shape:
-            raise GrammarError("expert_ids and routing_weights must share [T, top_k]")
-        if expert_ids.device != self.device or routing_weights.device != self.device:
-            raise GrammarError("routing tensors must live on the compute device")
-        if expert_ids.dtype not in (torch.int32, torch.int64):
-            raise GrammarError("expert_ids must be int32 or int64")
-        tokens, top_k = (int(v) for v in expert_ids.shape)
-        ids = expert_ids.reshape(-1).to(torch.int64)
-        e = self.experts
-        counts = torch.zeros(e, dtype=torch.int32, device=self.device)
-        counts.scatter_add_(0, ids, torch.ones_like(ids, dtype=torch.int32))
-        offsets = torch.zeros(e + 1, dtype=torch.int32, device=self.device)
-        offsets[1:] = torch.cumsum(counts, 0, dtype=torch.int32)
-        order = torch.argsort(ids, stable=True)
-        flat_sorted = order.to(torch.int32).contiguous()
-        rw_sorted = routing_weights.reshape(-1).to(torch.float32)[order].contiguous()
-        wide = any(superblock_rows(self.library, mode, tokens) == BM_WIDE for mode in (0, 2))
-        return _Routing(offsets=offsets, flat_sorted=flat_sorted, rw_sorted=rw_sorted,
-                        item_off=_item_off(counts, BM), tokens=tokens, top_k=top_k,
-                        item_off_wide=_item_off(counts, BM_WIDE) if wide else None)
+        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, self.library)
 
     def _launch(self, mode: int, x: torch.Tensor, a_scale: "torch.Tensor | None",
                 routing: _Routing, *, a_row_mode: int, mul_weight: bool, limit: float,
@@ -1180,7 +1231,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
     the family's :data:`DENSE_RATE_MAX`: 14 on the value family, 8 on E4M3),
     window bits 14, the packer's column order, the family's published
     arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
-    rows a multiple of 128 (one 128-column B block per item) and columns a
+    rows a multiple of ``DENSE_ROW_QUANTUM`` (one 128-column B block per item,
+    the last one partial when 128 does not divide the rows) and columns a
     multiple of 32 and at least 128.  A role outside it keeps
     ``tessera::window_gemm_dense``, and the reason is the string returned
     here so a load log can say which.
@@ -1202,8 +1254,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
     cols, rows = int(bundle.cols), int(bundle.rows)
     if cols % BK != 0 or cols < MIN_COLS:
         return f"{cols} columns; the kernel needs a multiple of {BK} and at least {MIN_COLS}"
-    if rows % BN != 0:
-        return f"{rows} rows; the dense identity needs a multiple of {BN}"
+    if rows % DENSE_ROW_QUANTUM != 0:
+        return f"{rows} rows; the dense identity needs a multiple of {DENSE_ROW_QUANTUM}"
     if bundle.words.dtype != torch.int32 or bundle.words.dim() != 1:
         return "words must be a flat int32 stream"
     pair, why = run_pair(bundle.runs, cols, rate_max=DENSE_RATE_MAX[fam])
@@ -1329,7 +1381,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     """How many ways to split K for one role at ``m`` rows: the bandwidth model.
 
     An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
-    ceil(m / 64) * rows / 128``.  When ``items0 >= sms`` every SM has work and
+    ceil(m / 64) * ceil(rows / 128)`` (the last block partial on an N-tail).  When ``items0 >= sms`` every SM has work and
     the answer is 1 (prefill is untouched).  Below that, each split adds items
     and costs an fp32 partial written and read back; the time model is the
     wire bytes served by ``min(S * items0, sms)`` SMs at the per-SM share of
@@ -1343,7 +1395,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
     SM count and the byte counts, nothing else.
     """
-    items0 = -(-m // BM) * (rows // BN)
+    items0 = -(-m // BM) * -(-rows // BN)
     nk = cols // BK
     if items0 >= sms or m <= 0:
         return 1

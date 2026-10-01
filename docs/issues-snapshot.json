@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-30T15:48:11Z",
+ "generated": "2026-10-01T01:06:52Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -3576,7 +3576,7 @@
     "title": "[P2] Restore and qualify PB CPU test dependency coverage"
    },
    "1802": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Add bounded deferred checkpoint incoming CPU prerequisite"
    },
    "1803": {
@@ -3656,7 +3656,7 @@
     "title": "Measure #87 BF16 boundary instrument A/B with frozen-source receipts"
    },
    "1820": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Charge opt-in compilation caches separately from replay scratch"
    },
    "1821": {
@@ -3668,32 +3668,172 @@
     "title": "[P1] Share assignment metadata hashing without changing serialized bindings"
    },
    "1823": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Own timed profiler lifetime independently of anchor execution"
    },
    "1824": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Declare separately charged container compilation caches"
    },
    "1825": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Separate timed observer lifetime from anchor execution"
+   },
+   "1826": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate workspace receipt byte hashing onto the shared owner"
+   },
+   "1827": {
+    "state": "CLOSED",
+    "title": "[P2] Bind immutable calibration artifacts in Tessera campaign intake"
+   },
+   "1828": {
+    "state": "CLOSED",
+    "title": "[P3] Bind rendered-weight publication to the shared admitted-owner adapter"
+   },
+   "1829": {
+    "state": "CLOSED",
+    "title": "[P1] Share workspace receipt hashing without changing published bytes"
    },
    "183": {
     "state": "CLOSED",
     "title": "Tessera campaign omits live packed experts; packed MoE capture/export projection remains unsupported"
    },
+   "1830": {
+    "state": "CLOSED",
+    "title": "[P2] Add CPU research checkpoint incoming contract"
+   },
+   "1831": {
+    "state": "CLOSED",
+    "title": "[P2] Bind immutable Tessera calibration input and real corpus"
+   },
+   "1832": {
+    "state": "CLOSED",
+    "title": "[P3] Bind render publications to admitted PB owners"
+   },
+   "1833": {
+    "state": "CLOSED",
+    "title": "[P2] Classify incoming data guard and refresh reader-bound references"
+   },
+   "1834": {
+    "state": "CLOSED",
+    "title": "[P2] Deliver bounded PWC sealed-load CPU slice"
+   },
+   "1835": {
+    "state": "CLOSED",
+    "title": "[P3] Plan charged render destinations before preparing tensors"
+   },
+   "1836": {
+    "state": "CLOSED",
+    "title": "[P2] Classify incoming data guard and refresh reader-bound references"
+   },
+   "1837": {
+    "state": "CLOSED",
+    "title": "[P1] glm5_next: declare the attention fused groups the construction runtime loads (prerequisite for pricing attention units)"
+   },
+   "1838": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate bound-read byte hashing onto the shared owner"
+   },
+   "1839": {
+    "state": "CLOSED",
+    "title": "[P2] Reuse sealed IO for bounded PWC loads"
+   },
    "184": {
     "state": "CLOSED",
     "title": "run-pipeline accepts COST_PATH_OVERRIDE for Tessera but never consumes the prepriced file"
+   },
+   "1840": {
+    "state": "CLOSED",
+    "title": "glm5_next: declare the attention fused groups the construction runtime loads"
+   },
+   "1841": {
+    "state": "OPEN",
+    "title": "[P2] Hosted CPU CI lacks cache-charge test prerequisites"
+   },
+   "1842": {
+    "state": "OPEN",
+    "title": "[P1] Price GLM-5.3 attention Linears as allocator units (scoped roster, H capture, encodes, catalog extension v4, Stage B)"
+   },
+   "1843": {
+    "state": "CLOSED",
+    "title": "[P1] Tessera census: admit a scoped roster of profile-pinned Linears (--allow-pinned, --pinned-roster-only)"
+   },
+   "1844": {
+    "state": "CLOSED",
+    "title": "[P1] Share bound-read byte hashing without changing custody contracts"
+   },
+   "1845": {
+    "state": "CLOSED",
+    "title": "Tessera census admits a scoped roster of pinned Linears (--allow-pinned, --pinned-roster-only)"
+   },
+   "1846": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate generic IO and residency-map raw byte digests"
+   },
+   "1847": {
+    "state": "CLOSED",
+    "title": "[P1] Share generic IO and residency-map byte digest owners"
+   },
+   "1848": {
+    "state": "CLOSED",
+    "title": "[P3] Plan admitted render prewrites and align CPU CI fixtures"
+   },
+   "1849": {
+    "state": "CLOSED",
+    "title": "[P1] tessera_tensor_payload_breakdown refuses 128-column units that Tessera encodes; attention census crashed on KDA f_b_proj/g_b_proj"
    },
    "185": {
     "state": "CLOSED",
     "title": "Thread explicit Tessera runtime scope through campaign, allocator and export"
    },
+   "1850": {
+    "state": "CLOSED",
+    "title": "[P1] Share preparation byte hashing across staged reads and publication"
+   },
+   "1851": {
+    "state": "OPEN",
+    "title": "[P2] Use non-overlay container roots in charged-cache CI fixtures"
+   },
+   "1852": {
+    "state": "CLOSED",
+    "title": "[P2] Preserve complete streamed proof coverage for single-file checkpoints"
+   },
+   "1853": {
+    "state": "CLOSED",
+    "title": "Price a trailing partial superblock instead of refusing it (#1849)"
+   },
+   "1854": {
+    "state": "CLOSED",
+    "title": "[P2] Deliver sealed retained-render qualifier CPU slice"
+   },
+   "1855": {
+    "state": "CLOSED",
+    "title": "[P2] Decode retained-render qualifier inputs through sealed buffers"
+   },
+   "1856": {
+    "state": "CLOSED",
+    "title": "[P1] Share preparation byte hashing without changing staged publication contracts"
+   },
+   "1857": {
+    "state": "CLOSED",
+    "title": "[P2] Complete single-file streamed source proof maps"
+   },
+   "1858": {
+    "state": "OPEN",
+    "title": "[P1] Share generic Stage A/B text hashing without changing identity bytes"
+   },
+   "1859": {
+    "state": "OPEN",
+    "title": "[P0] Reject aliased destinations in rendered-cache identities"
+   },
    "186": {
     "state": "CLOSED",
     "title": "Tessera campaign resume admits anchors without source/calibration/recipe identity"
+   },
+   "1860": {
+    "state": "OPEN",
+    "title": "[P2] Keep charged-cache argv fixtures independent of host overlay paths"
    },
    "187": {
     "state": "CLOSED",
@@ -9698,7 +9838,7 @@
     "title": "[P1] Dense native bench runs only at TP1, so PACT's TP2 table refuses every dense row"
    },
    "638": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Compiled dense census expectations still include retired GEMV/materialized pairs"
    },
    "639": {
@@ -10213,13 +10353,93 @@
     "state": "OPEN",
     "title": "[P2] test_serving_name_mapping does not run on the nightly image: get_unstacked_mapper became get_rename_mapper (drops None renames)"
    },
+   "754": {
+    "state": "CLOSED",
+    "title": "Fused routed T-16 gate/up at rates 7 and 8 (two word stages; contract v49)"
+   },
+   "755": {
+    "state": "CLOSED",
+    "title": "contract v48: GLM cells on the vLLM nightly image (eager; graphs blocked by vLLM, #702)"
+   },
+   "756": {
+    "state": "CLOSED",
+    "title": "tests: the step-kernel spy restores the whole Viterbi kernel cache"
+   },
+   "757": {
+    "state": "CLOSED",
+    "title": "Contract v50: allowable Tessera-8 rungs are a rule over run tables (lane schema v11, #750)"
+   },
+   "758": {
+    "state": "CLOSED",
+    "title": "Dense value launch reads rates 9-14; Tessera-16 allowable_rungs rule (contract v51)"
+   },
+   "759": {
+    "state": "OPEN",
+    "title": "Dense fused identity: a role's last 128-row block may be partial (#750 WP2)"
+   },
    "76": {
     "state": "CLOSED",
     "title": "_fit_lut's re-fitted table is taken on 16 of 72 passes, 12 of them on one unit; the amax table ships"
    },
+   "760": {
+    "state": "CLOSED",
+    "title": "docs: the controlled pair confirms the GLM indexer capture branch (#702)"
+   },
+   "761": {
+    "state": "CLOSED",
+    "title": "Contract v52: the T-16 dense census covers every BF16 rung (#750)"
+   },
+   "762": {
+    "state": "OPEN",
+    "title": "[P3] tests/test_native_a4_serving.py has no test functions, so every full-suite pbtest exits 1"
+   },
+   "763": {
+    "state": "CLOSED",
+    "title": "routed_fused: stage the stream history word with the word copies (E4M3 instruction)"
+   },
+   "764": {
+    "state": "CLOSED",
+    "title": "[P2] Witness dense census against prepared GPU dispatch"
+   },
+   "765": {
+    "state": "CLOSED",
+    "title": "The fused window kernel's E2M1 family: routed and dense launches on the block-scaled FP4 instruction (T-4, #750)"
+   },
+   "766": {
+    "state": "OPEN",
+    "title": "[P2] test_source_profiles fails in the GPU test runner: tessera-quant is not installed there"
+   },
+   "767": {
+    "state": "CLOSED",
+    "title": "experiments: the digest hook's finders stop recursing; a hold file for the stub drive (#695)"
+   },
+   "768": {
+    "state": "OPEN",
+    "title": "[P3] test_shared_candidate_pricing real-replay case depends on earlier tests' replay-table state"
+   },
+   "769": {
+    "state": "OPEN",
+    "title": "[P1] Draft-route census refuses the nightly stack's stock Glm5NextMTP (module moved; no hf_to_vllm_mapper) (P1)"
+   },
    "77": {
     "state": "CLOSED",
     "title": "encoder_profile_id does not bind window_sigma or channel_sigma, so equal profile ids do not mean equal bytes"
+   },
+   "770": {
+    "state": "OPEN",
+    "title": "Serve a declared LM head on the Tessera dense route (#750 WP3)"
+   },
+   "771": {
+    "state": "OPEN",
+    "title": "[P2] Repair mapper, installed-package and replay-pricing test setup"
+   },
+   "772": {
+    "state": "OPEN",
+    "title": "Contract v53: the E4M3 dense cells cover every rung of the rule (T-8 dense census, #750)"
+   },
+   "773": {
+    "state": "OPEN",
+    "title": "census: accept the nightly's stock Glm5NextMTP through its recognized interface (#769)"
    },
    "78": {
     "state": "CLOSED",

@@ -1,5 +1,78 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
+(tessera#774). The T-8 release serve passes
+`--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
+with breakable CUDA graphs off, so its custom ops and IR norms resolve as
+eager's do (graph cause 1, tessera#702). Served at TP 2 on image `5be13705`:
+L8192 c1 prefill 1558.5 to 1657.8 tok/s (+6.4%), and the per-rank chunk's
+elementwise kernels 97.3 to 29.0 ms. The eager TR3 panel is bit-identical
+(0.027885896312391557), and decode under graphs past `max_model_len` 2048
+remains outside eager equivalence (cause 2). No route, launch, rung, cell or
+schema changes. See §5.1.2 and
+[the receipt](measurements/2026-10-01-glm-release-serve-mode-none.md).
+
+Re-stamped 2026-10-01 for the T-8 dense census (contract v53, Refs #750). One
+census stub of u1 stub B's source, `t8d1`, carries its 16 dense modules as
+`TESSERA_E4M3_K1` at one rung of every run table the rule admits, [1] to [8]
+and the pairs between them. It served on the GLM image at TP 1, eager,
+resident, with every dense module on the fused dense pair on the E4M3
+instruction in both phases. The two GLM-image E4M3 dense cells gain the census
+rungs, so their derived run tables are all 15 tables the rule admits, and they
+cover every rung of 256..2048. No `executes` list, route or routed cell moves.
+Receipt: [the T-8 dense census](measurements/2026-10-01-t8-dense-census.md).
+
+Re-stamped 2026-09-30 for the LM head as a Tessera route (tessera#750 WP3).
+`TesseraConfig.get_quant_method` now hands a `ParallelLMHead` its family's
+dense method when the checkpoint declares the head (`serving.head_route`). A
+checkpoint that declares no head gets `None` as before, and vLLM serves the
+head BF16. vLLM calls the dense method on the head as it does on a Linear:
+`create_weights` receives the layer's TP coordinates, one output partition of
+`num_embeddings_per_partition` rows and `num_embeddings_padded` as the output
+size, so the shard plan cuts each rank's vocabulary rows. Before any weight
+exists, the route refuses a family no test has served as a head (only
+`TESSERA_FP8` today), a structure other than dense, a padded or extended
+vocabulary, and a tie. It also binds the head's prefix so the route trace can
+name it. `serving.mtp_draft_lifetime` accepts a prepared Tessera head as the
+target head the fd4a15126 draft shares. The exporter does not write a head
+yet, and no contract field changes, so no shipped artifact changes.
+
+Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
+`routed_fused_window.cu` gains a fourth library, `tessera_routed_fused_e2m1`,
+on the block-scaled FP4 instruction (sm_121a). It is producer-side until a
+route admits the E2M1x2 window body: no contract version, `native_extensions`
+entry, launch row or cell changes, and the three existing libraries' SASS is
+instruction-identical to master's (value 101/101, E4M3-f16 107/107,
+E4M3-instruction 137/137; PB `0ab25e95` against `ac4fb3e4`). See the fused
+lane's section.
+
+Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
+census stubs of u1 stub B's source carry their 16 dense modules as
+`TESSERA_BF16_K1` at one rung of every run table: `t16d1` covers [1] to [8] and
+the pairs between them, and `t16d2` covers [8,9] to [14]. Both served on the GLM
+image at TP 1, eager, resident, with every dense module on the fused dense pair
+in both phases. The two GLM-image BF16 dense cells gain the census rungs, so
+their derived run tables are all 27 tables the rule admits, and they cover every
+rung of 256..3584. No `executes` list, route or routed cell moves; routed T-16
+stays at `[4]`. Receipt: [the T-16 dense
+census](measurements/2026-09-30-t16-dense-census.md).
+
+Re-stamped 2026-09-30 for the staged stream history on the E4M3 instruction
+(Refs #750). In `routed_fused_window.cu`, each half's decode needs the 32
+stream bits before its first word. On the E4M3 instruction's library
+(`PREV_STAGED`), that word now rides the word stages' own copies into a
+768 B per-stage shared-memory slot. It no longer rides a global load into a
+register one chunk ahead, where the loop's last move waited one global
+latency per chunk. `SMEM_FIXED_MMA8` becomes 47,312 B for gate/up and
+30,736 B for down and dense, and the rate-8 gate/up launch takes 59,600 B.
+The value and E4M3-on-`f16` libraries keep the register path; their SASS
+holds master's instructions up to operand and instruction order. No
+contract, rung, route or `executes` entry changes, and every timed output
+is bitwise master's. On the A8S release artifact's R1024 routed stack, the
+routed launches take 10.4% less time per call at M = 512 on recorded L512
+routing, and 8.5% less at M = 2048 on recorded L8192 chunks. Receipt: [the
+staged stream history](measurements/2026-09-30-staged-stream-history.md).
+
 Re-stamped 2026-09-30 for the value library's dense launch at rates 9 to 14
 (contract v51, Refs #750 item 4). `routed_fused_window.cu`'s `RATE_MAX` is 14
 on the value library and 8 on the E4M3 ones, and it now bounds the dense
@@ -344,7 +417,8 @@ MLP: vLLM applies the activation between the two Linears it owns, so each
 module's roles run as one op into column slices of one output and the census
 module count is unchanged. `native_window.prepare_dense_native_module` decides
 the lane once per module (`routed_fused.fused_dense_window_supported`: rate 4
-in every column, rows a multiple of 128, columns a multiple of 32 and at
+in every column, rows a multiple of 4 -- a role's last 128-row block may be
+partial since the N-tail, tessera#750 WP2 -- columns a multiple of 32 and at
 least 128, the family's arithmetic, the attested native quantiser) and keeps
 the Triton window GEMM otherwise or under `TESSERA_DENSE_FUSED=0`; the module
 answers its own `launch_pair`, which `fp8_route` and `bf16_route` stamp
@@ -3755,6 +3829,36 @@ recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
 not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
 path; that gap is measured in the same document.
 
+**The E2M1 family (not a serving lane yet, Refs #750).** A fourth library of
+the same source, `tessera_routed_fused_e2m1` (`-DTESSERA_ROUTED_FUSED_FP4=1`,
+built for the architecture-specific `sm_121a` only), runs the Tessera-4 wire
+-- the E2M1x2 window body over the LUT16 plane -- on the block-scaled FP4
+instruction `mma.sync ... kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64
+.e2m1.e2m1.f32.ue4m3`. The producers decode each 64-column chunk's tuple codes
+into a packed E2M1 B tile and its LUT16 nibbles into the instruction's UE4M3
+group scales; the activation is the NVFP4 routes' own `scaled_fp4_quant` at the
+layer's static global `gs`, staged unconverted; the epilogue is one fp32
+multiply by `global / gs` before the bf16 boundary. That is the activation
+contract the NVFP4 routes already execute (`e2m1_group16_ue4m3_static`),
+unchanged. An item is 256 output rows (gate/up: 128 of each), so the
+intermediate size must be a multiple of 128 and the hidden size of 256. A
+dense projection's rows need only be a multiple of 32: the last block is
+decoded whole from the wire's padded 1024-row tile and written only below its
+rows, so GLM-5.3's DSA indexer `wk` (128) and `weights_proj` (32) and a TP2
+`lm_head` (77,440) are in. Every
+rate 1..8 and every adjacent two-run table is instantiated at three word
+stages (gate/up at rate 8 needs 93,648 B). The dense identity's K split keeps
+two chunks per item (`routed_fused_e2m1.dense_split_max`, refused by name
+past it), because the producers rewrite an item's descriptor slot two items
+later. Adding the family leaves the three existing libraries' SASS
+instruction-identical. It is NOT in `native_extensions`, `ROUTE_LAUNCHES` or
+any cell: `ROUTES["TESSERA_NVFP4"]` admits the TCQ span-2 body only, so no
+route can hold a window-body E2M1 stack, and `tessera.routed_fused_e2m1` is
+kept out of the import graph of `tessera.serving` (the contract scanner holds
+reachability to the published table). The route change that admits the window
+body adds the entry, the launch rows and the census. Oracle:
+`tests/test_routed_fused_e2m1.py`.
+
 **The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
 unweighted case of the routed lane, and since v43 the same kernel serves the
 q256 1024 dense and shared-expert window modules of both families through a
@@ -3781,7 +3885,9 @@ column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
 op like `window_gemm_dense`). The lane is decided once per module at weight
 load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
 column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
-multiple of 128, columns a multiple of 32 and at least 128, window 14, the
+multiple of 4 (`DENSE_ROW_QUANTUM`; a multiple of 128 before the N-tail,
+tessera#750 WP2, so the GLM KDA input module's 32- and 64-row roles kept the
+whole module on the Triton lane), columns a multiple of 32 and at least 128, window 14, the
 identity column order, the family's arithmetic -- `epilogue` for E4M3, `folded`
 for value -- a bundle prepared with the attested native quantiser, and a
 word-stage slot the device's shared memory holds); a refusal names its reason
@@ -3893,7 +3999,12 @@ launches read it from global memory in both places: a dependent global load
 on the producer's chunk loop whose wait sat ahead of the next copy or the
 decode (`docs/measurements/2026-09-29-two-run-column-map.md`,
 `docs/measurements/2026-09-30-descriptor-ring.md`). The host checks that each
-descriptor tensor is 16-byte aligned. Two rates of a
+descriptor tensor is 16-byte aligned. The E4M3 instruction's
+library no longer carries the previous window word in a register either: the
+word rides the word stages' copies into a per-stage shared-memory slot
+(`PREV_STAGED`, 768 B), because the loop's last move waited one global
+latency per chunk on its load
+(`docs/measurements/2026-09-30-staged-stream-history.md`). Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
@@ -6784,6 +6895,35 @@ FP32 scales. The check records the selected variant and separately reports
 deviation from unquantized BF16 queries. `--heads 32 --repeat 13 --padded` covers
 the TP2-shaped prefill kernel and hybrid page strides. This does not
 measure full-model quality or qualify routed MoE, TP2, or a runtime contract cell.
+
+### 5.1.2 The GLM-5.3 release serve's compilation config
+
+The GLM-5.3 release serve uses CUDA graphs for decode only, in compilation
+mode NONE:
+
+```bash
+VLLM_USE_BREAKABLE_CUDAGRAPH=0 vllm serve <artifact> \
+  --compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}' ...
+```
+
+Without `"mode":"NONE"`, vLLM keeps `VLLM_COMPILE` on a model it never
+compiles. That mode resolves `custom_ops` to `none` and the norm IR ops to
+`native`, so every custom op in the served prefill runs its eager fallback.
+Mode NONE resolves them as an eager serve does, which the eager TR3 scorer
+measures. Breakable graphs stay off, as in every graph serve the receipts
+below measured; no GLM-5.3 serve with them on has a receipt.
+
+What this does not establish:
+
+- The graph serve's own prefill logits are unscored. The receipts are the
+  stub's sbG3/sbG4 arms (cause 1 is the operator resolution alone) and the
+  unchanged eager TR3 panel.
+- Decode replays FULL graphs captured at `max_seq_len = max_model_len`. On
+  image `5be13705` that is eager-equivalent only at `max_model_len <= 2048`
+  (cause 2, tessera#702), and the release serve runs 8448.
+- The MTP drafter under graphs has no receipt (tessera#695).
+
+Receipt: [the release serve's mode NONE](measurements/2026-10-01-glm-release-serve-mode-none.md).
 
 ### 5.2 What the wheel ships besides Python
 

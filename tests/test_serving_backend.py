@@ -166,6 +166,19 @@ def test_the_cuda_flags_are_the_gencode_pair_this_tree_has_always_passed():
         "-gencode=arch=compute_121,code=sm_121"]
 
 
+def test_an_arch_specific_build_is_the_a_suffixed_pair_on_request_only():
+    """The block-scaled FP4 MMA (``mma.sync ... kind::mxf4nvf4``) is an
+    architecture-specific instruction: ptxas refuses it for ``compute_121``.
+    A library that emits it asks for the ``a`` pair by name; every other
+    build keeps the generic pair (the test above), byte for byte."""
+    assert backend_module.offload_flags("sm_121", arch_specific=True) == [
+        "-gencode", "arch=compute_121a,code=sm_121a"]
+    assert backend_module.offload_flags("sm_121", arch_specific=True, joined=True) == [
+        "-gencode=arch=compute_121a,code=sm_121a"]
+    with pytest.raises(backend_module.PlatformTokenError, match="architecture-specific"):
+        backend_module.offload_flags("gfx1151", arch_specific=True)
+
+
 def test_the_hip_flags_are_one_explicit_offload_arch():
     """Explicit, because torch's default is every architecture in the wheel.
 

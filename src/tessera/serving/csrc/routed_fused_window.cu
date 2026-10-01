@@ -91,6 +91,19 @@ constexpr bool FAMILY_FP8 = TESSERA_ROUTED_FUSED_FP8 != 0;
 #endif
 constexpr bool FAMILY_MMA8 = TESSERA_ROUTED_FUSED_MMA8 != 0;
 static_assert(!FAMILY_MMA8 || FAMILY_FP8, "the E4M3 instruction serves the E4M3 family only");
+// The E2M1 family (``tessera_routed_fused_e2m1``, -DTESSERA_ROUTED_FUSED_FP4=1
+// with FP8=0): the E2M1x2 window wire over its LUT16 group-scale plane, on the
+// block-scaled FP4 instruction (see THE E2M1 FAMILY below).  Its kernel, its
+// host entries and its module attributes are compiled only into its own
+// library, which is built for the architecture-specific target
+// (``backend.offload_flags(token, arch_specific=True)``: ptxas refuses the
+// instruction for the generic one); the other three libraries compile none of
+// it, and none of theirs is compiled into it.
+#ifndef TESSERA_ROUTED_FUSED_FP4
+#define TESSERA_ROUTED_FUSED_FP4 0
+#endif
+constexpr bool FAMILY_FP4 = TESSERA_ROUTED_FUSED_FP4 != 0;
+static_assert(!FAMILY_FP4 || (!FAMILY_FP8 && !FAMILY_MMA8), "the E2M1 family is its own library");
 
 constexpr int THREADS = 512;
 constexpr int PRODUCER_THREADS = 256;
@@ -98,6 +111,11 @@ constexpr int BM = 64;                              // routes per superblock
 constexpr int BN = 128;                             // B columns per item (two halves)
 constexpr int HALF = 64;
 constexpr int BK = 32;                              // k columns per chunk
+// The dense identity's row quantum (N-tail): a role's last BN block may be
+// partial.  The epilogue stores SEGW <= 4 columns at a time and the split
+// reduce four, so a role's rows are a multiple of 4 and each store is wholly
+// inside the role or wholly past it.
+constexpr int DENSE_ROW_QUANTUM = 4;
 // Column rates the decode reads (bits per code): a column's 512-row chunk is
 // ``16 * rate`` int32 words, a 64-row half of it ``2 * rate`` words.  Rates 4
 // and 8 put a lane's eight rows on word boundaries; every other rate re-aligns
@@ -116,8 +134,9 @@ constexpr int RATE_MIN = 1;
 // window is WINDOW_BITS = 14 bits, so the value family's BF16 grid reads rates
 // 1..14 (tessera#750 item 4: rates 15 and 16 widen the window to 15 and 16
 // bits, whose 64 KB and 128 KB tables leave the one-table block one word
-// stage and none).  The E4M3 grids' codes are 8 bits.
-constexpr int RATE_MAX = FAMILY_FP8 ? 8 : 14;
+// stage and none).  The E4M3 grids' codes are 8 bits, and so are the E2M1
+// family's (a code is two E2M1 nibbles).
+constexpr int RATE_MAX = (FAMILY_FP8 || FAMILY_FP4) ? 8 : 14;
 // The routed-expert launches (gate/up and down) read 1..8 in every family.
 // The two-table gate/up launch has no room for a slot above rate 8 even at two
 // word stages (101,840 B at rate 9 against sm_121's 101,376 B), and the down
@@ -188,6 +207,25 @@ constexpr int DESC_INTS = 2 * 8;
 // that global latency sat on the chunk loop's critical path.  A one-run
 // unit's map is computed, so it never touches the ring.
 constexpr int DRING_STAGES = 4;
+// THE STAGED STREAM HISTORY (tessera#750).  A half's decode needs the 32
+// stream bits before its first word (``load_prev``).  That word sits outside
+// the half's copied words, so the chunk loop loaded it from global memory one
+// chunk ahead, into a register the loop's last move waited on.  NCU on the
+// R1024 gate/up launch at M = 512 (E4M3 instruction): that register move
+// (``MOV R66, R72``, the half-1 word) was the kernel's hottest instruction, 7.5%
+// of all warp samples, all long scoreboard, and the producers' barrier behind
+// it another 10.2%: each chunk waited one global latency, whatever the number
+// of producer warps (sixteen measured no faster).  On the E4M3 instruction the
+// word therefore rides the word stages' own copies instead: ``issue_words``
+// copies it (4 bytes, ``cp_async4``) into a per-stage slot two chunks ahead,
+// the chunk's ``cp_async_wait`` and producers' barrier cover it, and the
+// decode reads it from shared memory.  It costs WORD_STAGES * 2 * BK int32
+// (768 B) of shared memory, which the 16-bit libraries' two-table gate/up
+// layout cannot spare at rates 5 and 6 (560 B of headroom), so the value
+// family and the 16-bit E4M3 library keep the register path.
+constexpr bool PREV_STAGED = FAMILY_MMA8;
+constexpr int PREV_STAGE_INTS = 2 * BK;             // one word per (half, column)
+constexpr int PREV_REGION_BYTES = PREV_STAGED ? WORD_STAGES * PREV_STAGE_INTS * 4 : 0;
 // The wide superblock (tessera#741): 128 routes per item instead of BM = 64,
 // so one decoded B tile feeds twice the rows.  Its A region is twice the
 // size (``a_region_bytes``), which fits the one-table down/dense launch at
@@ -215,8 +253,10 @@ template <int MODE, int BMT = BM> struct Layout {
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
     static constexpr int OFF_DRING = OFF_CLAIM + 16;
-    // 91,600 (two tables) / 58,640 (one); 46,544 / 29,968 on the E4M3 instruction
-    static constexpr int OFF_W = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    // The staged stream history (PREV_STAGED; empty on the 16-bit libraries).
+    static constexpr int OFF_PREV = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    // 91,600 (two tables) / 58,640 (one); 47,312 / 30,736 on the E4M3 instruction
+    static constexpr int OFF_W = OFF_PREV + PREV_REGION_BYTES;
     static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
     static_assert(OFF_DRING % 16 == 0, "the descriptor ring takes 16-byte copies");
 };
@@ -334,6 +374,11 @@ __device__ __forceinline__ void cp_async16(void* smem, const void* gmem) {
 __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;" :: "r"(s), "l"(gmem) : "memory");
+}
+// The 4-byte copy is the staged stream history's word (PREV_STAGED).
+__device__ __forceinline__ void cp_async4(void* smem, const void* gmem) {
+    const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+    asm volatile("cp.async.ca.shared.global [%0], [%1], 4;" :: "r"(s), "l"(gmem) : "memory");
 }
 __device__ __forceinline__ void prefetch_l1(const void* gmem) {
     asm volatile("prefetch.global.L1 [%0];" :: "l"(gmem));
@@ -700,6 +745,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
+    int32_t* Ps = reinterpret_cast<int32_t*>(smem + L::OFF_PREV);   // PREV_STAGED only
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
     int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
     int32_t* claim = reinterpret_cast<int32_t*>(smem + L::OFF_CLAIM);
@@ -784,7 +830,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const int c = tid;
                 float v;
                 if (MODE == 2) {
-                    v = p.wscale0[(long)e * p.N + n0 + c];
+                    if constexpr (DENSE) {
+                        // N-tail: a role's last block may hold fewer than BN
+                        // rows; the columns past N are never stored.
+                        v = (n0 + c < p.N) ? p.wscale0[(long)e * p.N + n0 + c] : 0.f;
+                    } else {
+                        v = p.wscale0[(long)e * p.N + n0 + c];
+                    }
                 } else {
                     const int q = c >> 5, r = c & 31;
                     const int h = r >> 4;
@@ -889,6 +941,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int ih = (tid >> 6) & 1;
             const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
             const int t64_i = ih ? t64_h[1] : t64_h[0];
+            // ... and where its stream history comes from (PREV_STAGED).
+            const int g_i = ih ? g_h[1] : g_h[0];
+            const int32_t* init_i = ih ? init_h[1] : init_h[0];
+            const int hasinit_i = ih ? hasinit_h[1] : hasinit_h[0];
             auto load_a = [&](int kc, uint4& a) {
                 if (arow >= 0) {
                     if constexpr (FP8) {
@@ -1012,6 +1068,20 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         } else {
                             copy_half<RL>(dst, src, t64_i, q);
                         }
+                        // The staged stream history: the 32 bits before the
+                        // half, in the same commit group as its words (see
+                        // PREV_STAGED and ``load_prev``, whose cases these are).
+                        if constexpr (PREV_STAGED) {
+                            if (q == 1) {
+                                int32_t* pd = Ps + (kc % WS) * PREV_STAGE_INTS + ih * BK + mm;
+                                const int wr0 = 2 * c.rate * t64_i;
+                                const int32_t* wcol = tbase_i + c.cw0;
+                                if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
+                                else if (g_i > 0) cp_async4(pd, wcol + 16 * c.rate - 1 - p.tile_words);
+                                else if (hasinit_i) cp_async4(pd, init_i + c.p);
+                                else *pd = 0;
+                            }
+                        }
                     }
                 };
                 // The 32 stream bits before the half's first word, for every row
@@ -1025,13 +1095,16 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // reads it instead of mapping the column again.  A two-run
                 // chunk maps from the descriptor ring (``ring``; see its
                 // schedule below).
+                // With PREV_STAGED the word comes from its stage instead
+                // (``issue_words``; read in the chunk body) and this maps the
+                // columns only.
                 auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2], bool ring) {
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
                         // MODE 2 reads one projection: both halves map alike.
                         cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
-                        if (8 * j * c.rate >= 32) continue;
+                        if (PREV_STAGED || 8 * j * c.rate >= 32) continue;
                         const int wr0 = 2 * c.rate * t64_h[h];
                         const int32_t* wcol = tbase_h[h] + c.cw0;
                         int32_t v;
@@ -1116,7 +1189,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // loop's scoreboard waits on a toolchain change.
                 {
                     const int32_t zero = p.K >> 31;
-                    prev_cur[0] ^= zero; prev_cur[1] ^= zero;
+                    if constexpr (!PREV_STAGED) { prev_cur[0] ^= zero; prev_cur[1] ^= zero; }
                     a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
                     a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
                 }
@@ -1158,22 +1231,33 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         chunk[h] = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
                         ws[h] = wsc + slot * BN + chunk[h] * 8;
                     }
+                    // The chunk's stream history: from its stage (PREV_STAGED;
+                    // zero for the row groups ``load_prev`` skips, as the
+                    // carried registers held), or carried from ``load_prev``.
+                    int32_t pv[2];
+                    #pragma unroll
+                    for (int h = 0; h < 2; ++h) {
+                        if constexpr (PREV_STAGED)
+                            pv[h] = (8 * j * cm_cur[h].rate < 32) ? Ps[(kc % WS) * PREV_STAGE_INTS + h * BK + m] : 0;
+                        else
+                            pv[h] = prev_cur[h];
+                    }
                     const TabT* T0 = tab;
                     const TabT* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
                     uint32_t packed[2][4];
                     if constexpr (!TWO) {
-                        decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
                     } else if constexpr (MODE == 2) {
                         // one column in both halves: one rate
-                        if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RH>(Wc, pv, j, T0, T1, ws, packed);
                     } else {
                         // gate and up share the pair, not the column order
                         const bool lo0 = cm_cur[0].lo, lo1 = cm_cur[1].lo;
-                        if (lo0 && lo1) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else if (lo0) decode_two<FP8, RL, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
-                        else decode_two<FP8, RH, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        if (lo0 && lo1) decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
+                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH>(Wc, pv, j, T0, T1, ws, packed);
+                        else if (lo0) decode_two<FP8, RL, RH>(Wc, pv, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RL>(Wc, pv, j, T0, T1, ws, packed);
                     }
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
@@ -1186,7 +1270,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                 make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
                     }
                     bar_arrive(BAR_FULL0 + stage, THREADS);
-                    prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
+                    if constexpr (!PREV_STAGED) { prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1]; }
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
                     a_cur = a_nxt;
                 }
@@ -1297,6 +1381,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // segments are gate columns, the rest the up columns 16 on.
             constexpr int NSEG = FAMILY_MMA8 ? 2 : 4;
             constexpr int SEGW = FAMILY_MMA8 ? 4 : 2;
+            static_assert(!DENSE || DENSE_ROW_QUANTUM % SEGW == 0,
+                          "a dense store segment lies wholly inside the role or wholly past it");
             constexpr int SEGSTRIDE = FAMILY_MMA8 ? 16 : 8;
             const int q4 = lane & 3;
             auto accv = [&](int mi, int sg, int c, int hr) -> float {
@@ -1336,6 +1422,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         #pragma unroll
                         for (int sg = 0; sg < NSEG; ++sg) {
                             const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            // N-tail (SPLIT is dense-only): N % SEGW == 0, so a
+                            // segment is wholly inside the role or wholly past it.
+                            if (n0 + cb >= p.N) continue;
                             if constexpr (SEGW == 4)
                                 *reinterpret_cast<float4*>(part + cb) = make_float4(
                                     accv(mi, sg, 0, hr), accv(mi, sg, 1, hr), accv(mi, sg, 2, hr), accv(mi, sg, 3, hr));
@@ -1387,6 +1476,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         #pragma unroll
                         for (int sg = 0; sg < NSEG; ++sg) {
                             const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            if constexpr (DENSE) {
+                                // N-tail: N % SEGW == 0, so a segment is
+                                // wholly inside the role or wholly past it.
+                                if (n0 + cb >= p.N) continue;
+                            }
                             uint32_t w[SEGW / 2] = {};
                             #pragma unroll
                             for (int c = 0; c < SEGW; ++c) {
@@ -1567,8 +1661,896 @@ void check_run_tables(const torch::Tensor& runs, const torch::Tensor& bdesc, int
     TORCH_CHECK(reinterpret_cast<uintptr_t>(bdesc.data_ptr()) % 16 == 0, bdesc_name, " must be 16-byte aligned");
 }
 
+#if TESSERA_ROUTED_FUSED_FP4
+// ============================================================================
+// THE E2M1 FAMILY
+// ============================================================================
+//
+// WHAT IT COMPUTES.  The E2M1x2 window wire: each column k's MSB-first bit
+// stream runs over TUPLES (tuple s is weight rows 2s and 2s + 1), ``rate``
+// bits per tuple (the run table's one rate, or two adjacent rates, 1..8);
+// the 14-bit window state of tuple s is the last 14 bits of the column's
+// stream ending after it, and the unit's code table (``codes``, one byte per
+// state) gives the tuple's two E2M1 codes, row 2s in the high nibble.  Weight
+// (n, k) is ``e2m1(code) * ue4m3(lut[plane[n, k / 16]]) * global``: the LUT16
+// scale plane holds one 4-bit index per (row, 16-column group) into the unit's
+// 16-entry UE4M3 table.  The activation is vLLM's ``scaled_fp4_quant`` output
+// at the layer's static global ``gs`` (E2M1 codes plus one UE4M3 scale per 16
+// columns, linear layout), so the block-scaled FP4 instruction
+//   mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64
+// forms sum_k e2m1(a) sfa e2m1(w) sfb exactly per 16-column group and
+// accumulates in fp32, and the epilogue multiplies by the per-(expert, part)
+// ``ratio = global / gs`` once in fp32 before the family's bf16 boundary.
+//
+// GEOMETRY.  A chunk is BK = 64 columns, one instruction's K.  A half is 64
+// tuples (128 weight rows), 2 * rate words per column -- the other families'
+// word geometry (``copy_half``, ``slot_words_for_rate``, ``pair_of``) at
+// tuple granularity -- and an item is two halves: 128 gate rows plus the same
+// 128 up rows (gate/up), or 256 rows (down, dense).  A producer thread decodes
+// two tuples (four rows) at the 16 columns of one scale group, in ORIGINAL
+// column order: one 32-bit window read per column serves both tuples, and the
+// FP4 B fragment wants eight consecutive k of one row per register, which the
+// thread assembles from its own bytes (``rows2``).  In a two-run table the 16
+// columns can carry both rates, so the rate is read per column there; in a
+// one-run table it is a compile-time constant.
+//
+// STREAM HISTORY.  Every word the chunk loop decodes from is in shared memory
+// before its decode: the column's 32 stream bits before the half (the
+// previous half's last word, the previous tile's last word of the column, the
+// cut's start state, or zero) are staged by ``cp.async`` into the word before
+// the half's slot, in the same commit group as the half's words, so no chunk
+// waits on a global load of its history.
+namespace fp4 {
+
+constexpr int BK = 64;                          // columns per chunk: one m16n8k64 step
+constexpr int HALF_T = 64;                      // tuples per half
+constexpr int HALF_ROWS = 2 * HALF_T;           // weight rows per half
+constexpr int BN = 2 * HALF_ROWS;               // B rows per item
+constexpr int TILE_TUPLES = TILE_ROWS;          // the wire's tile: 512 tuples, 16 * rate words per column
+constexpr int TILE_WROWS = 2 * TILE_TUPLES;     // 1024 weight rows
+constexpr int TABLE_BYTES = TABLE_ENTRIES;      // one code byte per window state
+constexpr int B_ROW = BK / 2;                   // 32 bytes: one row's 64 E2M1 codes
+constexpr int B_STAGE = BN * B_ROW;             // 8192
+constexpr int SFB_STAGE = BN * 4;               // one UE4M3 scale per (row, 16 columns)
+constexpr int A_ROW = BK / 2;
+constexpr int A_SF = BK / 16;
+// The A operand is copied (cp.async) two chunks ahead of its use into a ring
+// of four slots: chunk c's slot is (c & 3), written only once the consumers
+// have released chunk c - 4's B stage (``issue_a`` below).
+constexpr int A_SLOTS = 4;
+constexpr int A_SLOT = BM * (A_ROW + A_SF);     // 2304: 64 rows of codes, then their scales
+constexpr int PLANE_STAGE = 4 * 2 * (HALF_ROWS / 2);   // 4 groups x 2 halves x 64 nibble bytes
+constexpr int DESC_WORDS = 4;                   // per chunk per projection (``col_map4``)
+// A column's word slot: SLOT_PAD words, the last of them the staged history
+// word, then the half's words (16-byte aligned).  Sixteen columns (one scale
+// group) share a group of slots followed by GROUP_PAD words, so the four
+// groups a producer warp reads at once start eight banks apart.
+constexpr int SLOT_PAD = 4;
+constexpr int GROUP_PAD = 8;
+constexpr int WSTAGES = WORD_STAGES;
+__host__ __device__ constexpr int slot_stride(int sw) { return sw + SLOT_PAD; }
+__host__ __device__ constexpr int group_ints(int sw) { return 16 * slot_stride(sw) + GROUP_PAD; }
+__host__ __device__ constexpr int w_stage_ints(int sw) { return 2 * (BK / 16) * group_ints(sw); }
+
+template <int MODE> struct Layout {
+    static constexpr int TABLES = (MODE == 2) ? 1 : 2;
+    static constexpr int PROJ = TABLES;
+    static constexpr int OFF_TABLES = 0;
+    static constexpr int OFF_B = OFF_TABLES + TABLES * TABLE_BYTES;
+    static constexpr int OFF_SFB = OFF_B + STAGES * B_STAGE;
+    static constexpr int OFF_A = OFF_SFB + STAGES * SFB_STAGE;
+    static constexpr int OFF_DESC = OFF_A + A_SLOTS * A_SLOT;
+    static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
+    static constexpr int OFF_DRING = OFF_CLAIM + 16;
+    static constexpr int DRING_STAGE = PROJ * DESC_WORDS;         // int32 per ring slot
+    static constexpr int OFF_PLANE = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
+    static constexpr int OFF_W = OFF_PLANE + WSTAGES * PLANE_STAGE;  // 62,160 (two tables) / 45,712 (one)
+    static_assert(OFF_A % 16 == 0 && OFF_DRING % 16 == 0 && OFF_PLANE % 16 == 0 && OFF_W % 16 == 0,
+                  "the staged regions take 16-byte copies");
+};
+__host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
+    return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + WSTAGES * w_stage_ints(slot_words) * 4;
+}
+// Every pair of rates 1..8 fits sm_121's block at three word stages
+// (93,648 B for gate/up at the 16-word slot of rates 7 and 8).
+__host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two) {
+    return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= RATE_MAX
+        && smem_bytes(mode, pair_slot_words(r_lo, two)) <= SM121_SMEM_OPTIN;
+}
+static_assert(launch_decodes(0, RATE_MAX, false) && launch_decodes(0, RATE_MAX - 1, true),
+              "the gate/up launch reaches every rate");
+
+__device__ __forceinline__ void cp_async4(void* smem, const void* gmem) {
+    const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+    asm volatile("cp.async.ca.shared.global [%0], [%1], 4;" :: "r"(s), "l"(gmem) : "memory");
+}
+// The block-scaled FP4 instruction, its operand layouts pinned bit-exact by
+// experiments/t4_code/fp4_mma_layout.cu (lane = 4g + t):
+//   A  a[r] nibble i: row g + 8 (r & 1), k = 8t + 32 (r >> 1) + i
+//   B  b[r] nibble i: col g,              k = 8t + 32 r + i
+//   D  d[j]:          row g + 8 (j >> 1), col 2t + (j & 1)
+//   SFA byte b of lane (g, 0): row g, group b; of lane (g, 1): row g + 8
+//   SFB byte b of lane (g, 0): col g, group b
+__device__ __forceinline__ void mma_fp4(float (&d)[4], const uint32_t (&a)[4], const uint32_t (&b)[2],
+                                        uint32_t sfa, uint32_t sfb) {
+    const uint16_t z = 0;
+    asm volatile(
+        "mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64.row.col.f32.e2m1.e2m1.f32.ue4m3 "
+        "{%0,%1,%2,%3},{%4,%5,%6,%7},{%8,%9},{%0,%1,%2,%3},{%10},{%11,%12},{%13},{%14,%15};"
+        : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]),
+          "r"(sfa), "h"(z), "h"(z), "r"(sfb), "h"(z), "h"(z));
+}
+// The B tile: row n (one weight row's 64 codes, k in nibble order, k even in
+// the low nibble) is 32 bytes.  Rows sit four to a 128-byte line; a row's
+// place in its line and its two 16-byte units are XOR-swizzled by the line,
+// so the transposing-free ldmatrix over eight consecutive rows reads eight
+// distinct bank quads, and a producer warp's 8-byte stores (eight rows four
+// apart, each thread one quarter of a row) take the two wavefronts 256 bytes
+// need.
+__device__ __forceinline__ int b_row_off(int n) {
+    const int line = n >> 2;
+    return (line << 7) | ((((n & 3) ^ (line & 3))) << 5);
+}
+__device__ __forceinline__ int b_unit(int n, int kh) {
+    return (kh ^ ((n >> 2) & 1)) << 4;
+}
+// The unit's 16-entry UE4M3 table in four registers (entry i in byte i & 3 of
+// lut[i >> 2]); nibble -> its byte.
+__device__ __forceinline__ uint32_t lut_byte(const uint4& lut, uint32_t nib) {
+    const uint32_t lo = __byte_perm(lut.x, lut.y, nib & 7u);
+    const uint32_t hi = __byte_perm(lut.z, lut.w, nib & 7u);
+    return ((nib & 8u) ? hi : lo) & 0xFFu;
+}
+// Eight tuple bytes at k0 + i -> the B words of the tuple's two rows (row 2s:
+// the high nibbles, row 2s + 1: the low ones), k0 + i in nibble i.
+__device__ __forceinline__ void rows2(const uint32_t* b, uint32_t& row0, uint32_t& row1) {
+    const uint32_t x = pack4(b[0], b[2], b[4], b[6]);   // byte j: k0 + 2j
+    const uint32_t y = pack4(b[1], b[3], b[5], b[7]);   // byte j: k0 + 2j + 1
+    row0 = ((x >> 4) & 0x0F0F0F0Fu) | (y & 0xF0F0F0F0u);
+    row1 = (x & 0x0F0F0F0Fu) | ((y << 4) & 0xF0F0F0F0u);
+}
+
+// The per-chunk column map of the E2M1 family.  ``desc`` is int32 [E, K / 64,
+// 4] per projection: (hi_mask[0..31], hi_mask[32..63], lo_before, 0) -- bit c
+// of the 64-bit mask set when original column c of the chunk is in the high-
+// rate run, and the low-rate column count of the chunks before.  Column c's
+// rank within its run is its count of same-rate columns before it; a one-run
+// unit's map is computed and never reads the descriptor.
+struct ColMap4 { int rate; int p; int cw0; };
+template <int RL, bool TWO>
+__device__ __forceinline__ ColMap4 col_map4(const int32_t* d, int n_lo, int w_hi, int kc, int c) {
+    ColMap4 m;
+    if constexpr (!TWO) {
+        m.rate = RL;
+        m.p = kc * BK + c;
+        m.cw0 = m.p * 16 * RL;
+    } else {
+        const uint32_t m0 = (uint32_t)d[0], m1 = (uint32_t)d[1];
+        const int lo_before = d[2];
+        const int cc = c & 31;
+        const uint32_t word = (c < 32) ? m0 : m1;
+        const int hi_in = __popc(word & ((1u << cc) - 1u)) + ((c < 32) ? 0 : __popc(m0));
+        if ((word >> cc) & 1u) {
+            const int rank = (kc * BK - lo_before) + hi_in;
+            m.rate = RL + 1;
+            m.p = n_lo + rank;
+            m.cw0 = w_hi + rank * 16 * (RL + 1);
+        } else {
+            const int rank = lo_before + (c - hi_in);
+            m.rate = RL;
+            m.p = rank;
+            m.cw0 = rank * 16 * RL;
+        }
+    }
+    return m;
+}
+
+struct Params {
+    const uint8_t* x;              // [rows_x, K / 2] E2M1 codes (scaled_fp4_quant), k even low
+    const uint8_t* sfa;            // [rows_x, K / 16] UE4M3 group scales, linear
+    const int32_t* words0;         // [E, words_stride] gate (mode 0/1) or down (mode 2)
+    const int32_t* words1;         // [E, words_stride] up (mode 0/1) or nullptr
+    const uint8_t* codes0;         // [E, 16384] tuple code bytes
+    const uint8_t* codes1;
+    const int32_t* init0;          // [E, K] start states in the run table's column order
+    const int32_t* init1;
+    const int32_t* has_init0;      // [E]
+    const int32_t* has_init1;
+    const uint8_t* plane0;         // [E, plane_stride] LUT16 nibble plane [K / 16][N], even row high
+    const uint8_t* plane1;
+    const uint8_t* lut0;           // [E, 16] UE4M3 entries
+    const uint8_t* lut1;
+    const float* ratio0;           // [E] unit global / activation global
+    const float* ratio1;
+    const int32_t* runs0;          // [E, 8] run pairs (see RunPair)
+    const int32_t* runs1;
+    const int32_t* desc0;          // [E, K / 64, 4] chunk descriptors (see col_map4)
+    const int32_t* desc1;
+    long words_stride;
+    long plane_stride;
+    int tile_words;
+    int slot_words;
+    int K;
+    int N;                         // rows per projection
+    int E;
+    const int32_t* offsets;        // [E + 1]
+    const int32_t* flat_sorted;    // [P]
+    const float* rw_sorted;        // [P]
+    const int32_t* item_off;       // [E + 1] cumulative 64-route superblocks
+    int32_t* counter;
+    int n_blocks;                  // items per superblock
+    int top_k;
+    int a_row_mode;                // 0 token = flat / top_k, 1 sorted position, 2 flat
+    int mul_weight;
+    float limit;
+    void* out;                     // bf16
+    long out_stride;
+    int inter;                     // I (mode 1: the up half's column offset)
+    int rows_x;                    // DENSE: M
+    int k_split;                   // DENSE: S
+    float* partial;                // DENSE && SPLIT: fp32 [S, M, N]
+};
+
+template <int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
+__global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Params p) {
+    static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
+    static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
+    static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
+    using L = Layout<MODE>;
+    constexpr int SW = pair_slot_words(RL, TWO);
+    constexpr int SS = slot_stride(SW);
+    constexpr int GI = group_ints(SW);
+    constexpr int W_STAGE = w_stage_ints(SW);
+    constexpr int WROWS = BM / 2;                  // rows per consumer warp row
+    constexpr int MI = WROWS / 16;
+    extern __shared__ __align__(128) uint8_t smem[];
+    uint8_t* Bs = smem + L::OFF_B;
+    uint8_t* Sfb = smem + L::OFF_SFB;
+    uint8_t* As = smem + L::OFF_A;
+    int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
+    uint8_t* Pl = smem + L::OFF_PLANE;
+    int32_t* ring = reinterpret_cast<int32_t*>(smem + L::OFF_DRING);
+    int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
+    int32_t* claim = reinterpret_cast<int32_t*>(smem + L::OFF_CLAIM);
+
+    const int tid = threadIdx.x;
+    const int lane = tid & 31;
+    const int nk = p.K / BK;
+    const int dense_nsb = (p.rows_x + BM - 1) / BM;
+    const int total_items = DENSE ? dense_nsb * p.k_split * p.n_blocks : p.item_off[p.E] * p.n_blocks;
+    unsigned gc = 0;          // global chunk counter: the B stage is gc & 1, the A slot gc & 3
+    unsigned item_idx = 0;    // the descriptor slot is item_idx & 1
+
+    if (tid < PRODUCER_THREADS) {
+        // ------------------------------------------------------------ producers
+        // Decode role: warp w decodes half dh = w >> 2, tuple pairs s2 =
+        // 8 (w & 3) .. + 7 (lane & 7), at the 16 columns of scale group kg =
+        // lane >> 3.  Copy role: thread (ih, icol, iq) issues column icol's
+        // half-ih words (two threads per column) and, for iq = 1, its history.
+        const int w = tid >> 5;
+        const int dh = w >> 2;
+        const int kg = lane >> 3;
+        const int s2 = 8 * (w & 3) + (lane & 7);
+        const int ih = tid >> 7;
+        const int icol = (tid >> 1) & (BK - 1);
+        const int iq = tid & 1;
+        int last_e = -1;
+        for (;;) {
+            bar_sync(BAR_PROD, PRODUCER_THREADS);   // every producer is done with the last item's smem
+            if (tid == 0) claim[0] = atomicAdd(p.counter, 1);
+            bar_sync(BAR_PROD, PRODUCER_THREADS);
+            const int item = claim[0];
+            const int slot = item_idx & 1;
+            if (item >= total_items) {
+                if (tid == 0) desc[slot * 8 + 0] = -1;
+                __threadfence_block();
+                bar_arrive(BAR_FULL0 + (gc & 1), THREADS);
+                return;
+            }
+            int e, nb, sb, pos0, mb, kc0, nkc, ks;
+            if constexpr (DENSE) {
+                const int per_nb = dense_nsb * p.k_split;
+                nb = item / per_nb;
+                const int rem = item - nb * per_nb;
+                sb = rem / p.k_split;
+                ks = rem - sb * p.k_split;
+                e = 0;
+                pos0 = sb * BM;
+                mb = min(BM, p.rows_x - pos0);
+                kc0 = (int)(((long)ks * nk) / p.k_split);
+                nkc = (int)(((long)(ks + 1) * nk) / p.k_split) - kc0;
+            } else {
+                const int sbg = item / p.n_blocks;
+                int lo = 0, hi = p.E;
+                while (hi - lo > 1) {
+                    const int mid = (lo + hi) >> 1;
+                    if (p.item_off[mid] <= sbg) lo = mid; else hi = mid;
+                }
+                e = lo;
+                const int nsb = p.item_off[e + 1] - p.item_off[e];
+                const int local = item - p.item_off[e] * p.n_blocks;
+                nb = local / nsb;
+                sb = local - nb * nsb;
+                pos0 = p.offsets[e] + sb * BM;
+                mb = min(BM, p.offsets[e + 1] - pos0);
+                kc0 = 0;
+                nkc = nk;
+                ks = 0;
+            }
+            if (tid == 0) {
+                desc[slot * 8 + 0] = e;
+                desc[slot * 8 + 1] = nb;
+                desc[slot * 8 + 2] = sb;
+                desc[slot * 8 + 3] = pos0;
+                desc[slot * 8 + 4] = mb;
+                desc[slot * 8 + 5] = kc0;
+                desc[slot * 8 + 6] = nkc;
+                desc[slot * 8 + 7] = ks;
+            }
+            // The expert's code table(s), 16 KB each, unless shared memory holds them.
+            if (e != last_e) {
+                const uint8_t* t0 = p.codes0 + (long)e * TABLE_BYTES;
+                for (int i = tid; i < TABLE_BYTES / 16; i += PRODUCER_THREADS)
+                    cp_async16(smem + L::OFF_TABLES + 16 * i, t0 + 16 * i);
+                if (MODE != 2) {
+                    const uint8_t* t1 = p.codes1 + (long)e * TABLE_BYTES;
+                    for (int i = tid; i < TABLE_BYTES / 16; i += PRODUCER_THREADS)
+                        cp_async16(smem + L::OFF_TABLES + TABLE_BYTES + 16 * i, t1 + 16 * i);
+                }
+                last_e = e;
+            }
+            // Half h reads rows nh0 .. nh0 + 127 of its projection (down: the
+            // two halves of one 256-row block; gate/up: the same 128 rows of
+            // two projections): tile g, 64-tuple index t64 within it.
+            const int n0 = (MODE == 2) ? nb * BN : nb * HALF_ROWS;
+            const int32_t* tbase_h[2];
+            int g_h[2], t64_h[2];
+            const int32_t* init_h[2];
+            int hasinit_h[2];
+            RunPair rp_h[2];
+            const int32_t* desc_h[2];
+            const uint8_t* plane_h[2];
+            #pragma unroll
+            for (int h = 0; h < 2; ++h) {
+                const int nh0 = (MODE == 2) ? n0 + HALF_ROWS * h : n0;
+                const bool second = (MODE != 2) && h == 1;
+                const int g = nh0 / TILE_WROWS;
+                g_h[h] = g;
+                t64_h[h] = (nh0 - g * TILE_WROWS) / HALF_ROWS;
+                tbase_h[h] = (second ? p.words1 : p.words0) + (long)e * p.words_stride + (long)g * p.tile_words;
+                init_h[h] = (second ? p.init1 : p.init0) + (long)e * p.K;
+                hasinit_h[h] = (second ? p.has_init1 : p.has_init0)[e];
+                rp_h[h] = load_runs(second ? p.runs1 : p.runs0, e);
+                desc_h[h] = (second ? p.desc1 : p.desc0) + (long)e * nk * DESC_WORDS;
+                plane_h[h] = (second ? p.plane1 : p.plane0) + (long)e * p.plane_stride + (nh0 >> 1);
+            }
+            // The run pair must tile K and tile_words, its rates adjacent, and
+            // gate and up must carry one pair -- the instantiation's (see the
+            // other families' check; ``pair_of``).  A mismatch would address
+            // outside the expert's words, so it traps rather than reads.
+            if (tid == 0) {
+                #pragma unroll
+                for (int h = 0; h < 2; ++h) {
+                    const RunPair& rp = rp_h[h];
+                    if (rp.r_lo != RL || (rp.n_hi > 0) != TWO
+                        || rp.n_lo + rp.n_hi != p.K
+                        || 16 * (rp.n_lo * rp.r_lo + rp.n_hi * rp.r_hi) != p.tile_words
+                        || rp.r_lo < RATE_MIN || rp.r_lo > RATE_MAX
+                        || slot_words_for_rate(rp.r_lo) > SW
+                        || (rp.n_hi > 0 && (rp.r_hi != rp.r_lo + 1 || rp.r_hi > RATE_MAX
+                                            || rp.w_hi != 16 * rp.n_lo * rp.r_lo
+                                            || slot_words_for_rate(rp.r_hi) > SW)))
+                        __trap();
+                }
+                if (rp_h[1].r_lo != rp_h[0].r_lo || rp_h[1].n_lo != rp_h[0].n_lo || rp_h[1].n_hi != rp_h[0].n_hi)
+                    __trap();
+            }
+            const int n_lo = rp_h[0].n_lo;
+            const int w_hi = rp_h[0].w_hi;
+            // The A rows this thread copies: threads 0..127 one 16-byte half of
+            // row tid >> 1's codes, threads 128..191 row tid - 128's scales.
+            // A row past the superblock is not copied: its accumulator row is
+            // never stored, and rows of the instruction are independent.
+            long arow = -1;
+            {
+                const int r = (tid < 128) ? (tid >> 1) : (tid - 128);
+                if (tid < 192 && r < mb) {
+                    const int pos = pos0 + r;
+                    if constexpr (DENSE) {
+                        arow = pos;
+                    } else {
+                        const int flat = p.flat_sorted[pos];
+                        arow = (p.a_row_mode == 1) ? pos : (p.a_row_mode == 0 ? flat / p.top_k : flat);
+                    }
+                }
+            }
+            // The copy role's half, selected once so the per-half values stay
+            // in registers.
+            const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
+            const int t64_i = ih ? t64_h[1] : t64_h[0];
+            const int g_i = ih ? g_h[1] : g_h[0];
+            const int32_t* init_i = ih ? init_h[1] : init_h[0];
+            const int hasinit_i = ih ? hasinit_h[1] : hasinit_h[0];
+            // The decode role's half: its table, its LUT (16 bytes, once per
+            // item) and its odd-rate slot offsets.
+            const int t64_d = dh ? t64_h[1] : t64_h[0];
+            const uint4 lut = *reinterpret_cast<const uint4*>(
+                ((MODE != 2 && dh) ? p.lut1 : p.lut0) + (long)e * 16);
+            // The plane copies (threads 0..31): group tid >> 3, half
+            // (tid >> 2) & 1, 16-byte part tid & 3 of that half's 64 bytes.
+            const uint8_t* plane_src = nullptr;
+            if (tid < 32) {
+                const int grp = tid >> 3, hh = (tid >> 2) & 1;
+                plane_src = (hh ? plane_h[1] : plane_h[0]) + (long)grp * (p.N >> 1) + 16 * (tid & 3);
+                // A dense projection's rows may end inside the item's block
+                // (the host admits N % 32 == 0).  A 16-byte part holds 32 rows;
+                // one wholly past N is not read (the last group's would run
+                // off the plane), so those B rows keep a stale scale, and no
+                // output row reads them: the epilogue writes rows below N only.
+                if (DENSE && n0 + HALF_ROWS * hh + 32 * (tid & 3) >= p.N) plane_src = nullptr;
+            }
+
+            auto run = [&]() {
+                auto dsc_of = [&](int kc, int h, bool from_ring) -> const int32_t* {
+                    if (from_ring)
+                        return ring + (kc % DRING_STAGES) * L::DRING_STAGE + ((MODE == 2) ? 0 : h) * DESC_WORDS;
+                    return ((MODE != 2 && h) ? desc_h[1] : desc_h[0]) + (long)kc * DESC_WORDS;
+                };
+                // Chunk kc's descriptors into the ring (two-run units only).
+                auto issue_desc = [&](int kc) {
+                    if constexpr (TWO) {
+                        const int t = tid - 32;
+                        if (t >= 0 && t < L::PROJ)
+                            cp_async16(ring + (kc % DRING_STAGES) * L::DRING_STAGE + t * DESC_WORDS,
+                                       (t ? desc_h[1] : desc_h[0]) + (long)kc * DESC_WORDS);
+                    }
+                };
+                // Chunk kc's words, stream history and scale-plane nibbles into
+                // word stage kc % WSTAGES.
+                auto issue_words = [&](int kc, bool from_ring) {
+                    const ColMap4 c = col_map4<RL, TWO>(dsc_of(kc, ih, from_ring), n_lo, w_hi, kc, icol);
+                    const int32_t* col = tbase_i + c.cw0;
+                    int32_t* slotp = Ws + (kc % WSTAGES) * W_STAGE + (ih * (BK / 16) + (icol >> 4)) * GI
+                                     + (icol & 15) * SS;
+                    const int wr0 = 2 * c.rate * t64_i;
+                    if constexpr (TWO) {
+                        if (c.rate == RL) copy_half<RL>(slotp + SLOT_PAD, col + wr0, t64_i, iq);
+                        else copy_half<RL + 1>(slotp + SLOT_PAD, col + wr0, t64_i, iq);
+                    } else {
+                        copy_half<RL>(slotp + SLOT_PAD, col + wr0, t64_i, iq);
+                    }
+                    if (iq) {
+                        const int32_t* hs = nullptr;
+                        if (wr0 > 0) hs = col + wr0 - 1;
+                        else if (g_i > 0) hs = col + 16 * c.rate - 1 - p.tile_words;
+                        else if (hasinit_i) hs = init_i + c.p;
+                        if (hs) cp_async4(slotp + SLOT_PAD - 1, hs);
+                        else slotp[SLOT_PAD - 1] = 0;
+                    }
+                    if (tid < 32 && (!DENSE || plane_src != nullptr))
+                        cp_async16(Pl + (kc % WSTAGES) * PLANE_STAGE + 16 * tid, plane_src + (long)kc * 2 * p.N);
+                };
+                // Chunk kc's A codes and scales into A slot ``aslot``.
+                auto issue_a = [&](int kc, int aslot) {
+                    if (arow < 0) return;
+                    uint8_t* A = As + aslot * A_SLOT;
+                    if (tid < 128) {
+                        const int row = tid >> 1, part = tid & 1;
+                        cp_async16(A + row * A_ROW + ((part ^ ((row >> 2) & 1)) << 4),
+                                   p.x + arow * (long)(p.K >> 1) + kc * A_ROW + 16 * part);
+                    } else {
+                        cp_async4(A + BM * A_ROW + (tid - 128) * A_SF, p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
+                    }
+                };
+                // Chunk kc's decode into B stage ``stage``: two tuples (rows
+                // 4 s2 .. + 3 of half dh) at the 16 columns of group kg, from
+                // table ``TOFF`` (a compile-time offset: the lookups address
+                // shared memory with an immediate).
+                auto decode = [&](auto toff, int kc, int stage, uint32_t m16) {
+                    constexpr int TOFF = decltype(toff)::value;
+                    const uint8_t* T = smem + L::OFF_TABLES + TOFF;
+                    const int32_t* area = Ws + (kc % WSTAGES) * W_STAGE + (dh * (BK / 16) + kg) * GI + SLOT_PAD;
+                    uint32_t bt[2][16];
+                    if constexpr (!TWO) {
+                        // A one-run stack: the window's word and shift are this
+                        // thread's constants (see ``states2`` in the oracle's
+                        // header): tuples 2 s2 and 2 s2 + 1 end at stream bits
+                        // (2 s2 + 1) R and (2 s2 + 2) R of the half, so one
+                        // 32-bit read from bit (2 s2 + 1) R - 14 serves both.
+                        // At the half's last pair (s2 = 31) the read's low
+                        // 32 - 14 - R bits reach one word past the half:
+                        // a word this chunk's copy did not write (the
+                        // slot's spare words, the next slot's pad or the
+                        // group's), inside the stage, and its bits are
+                        // shifted out.
+                        constexpr int SH1 = 32 - WINDOW_BITS - RL;
+                        const int oo = ((RL & 1) & (t64_d & 1)) << 1;       // see copy_half
+                        const int x0 = (2 * s2 + 1) * RL + 32 - WINDOW_BITS;
+                        const int32_t* Wt = area + oo + (x0 >> 5);
+                        const int sh = x0 & 31;
+                        #pragma unroll
+                        for (int cc = 0; cc < 16; ++cc) {
+                            const uint32_t z = __funnelshift_l((uint32_t)Wt[cc * SS], (uint32_t)Wt[cc * SS - 1], sh);
+                            bt[0][cc] = T[z >> (32 - WINDOW_BITS)];
+                            bt[1][cc] = T[(z >> SH1) & (TABLE_ENTRIES - 1)];
+                        }
+                    } else {
+                        const int t_odd = t64_d & 1;
+                        #pragma unroll
+                        for (int cc = 0; cc < 16; ++cc) {
+                            const int hi = (m16 >> cc) & 1;
+                            const int rate = RL + hi;
+                            const int oo = ((rate & 1) & t_odd) << 1;
+                            const int x0 = (2 * s2 + 1) * rate + 32 - WINDOW_BITS + 32 * oo;
+                            const int32_t* W = area + cc * SS + (x0 >> 5);
+                            const uint32_t z = __funnelshift_l((uint32_t)W[0], (uint32_t)W[-1], x0 & 31);
+                            bt[0][cc] = T[z >> (32 - WINDOW_BITS)];
+                            bt[1][cc] = T[(z >> (32 - WINDOW_BITS - rate)) & (TABLE_ENTRIES - 1)];
+                        }
+                    }
+                    uint8_t* B = Bs + stage * B_STAGE;
+                    uint8_t* SF = Sfb + stage * SFB_STAGE;
+                    // The rows' B-tile positions: gate/up interleaves gate and
+                    // up by 32 rows, so each consumer warp's 64 B rows hold 32
+                    // gate rows and the same 32 up rows (the SwiGLU pairs them
+                    // in registers); down/dense keeps row order.
+                    auto brow_of = [&](int nl) -> int {
+                        return (MODE == 2) ? HALF_ROWS * dh + nl : 64 * (nl >> 5) + 32 * dh + (nl & 31);
+                    };
+                    const int kh = kg >> 1;
+                    #pragma unroll
+                    for (int u = 0; u < 2; ++u) {
+                        uint32_t r0[2], r1[2];
+                        rows2(&bt[u][0], r0[0], r1[0]);
+                        rows2(&bt[u][8], r0[1], r1[1]);
+                        const int n_a = brow_of(4 * s2 + 2 * u);
+                        const int n_b = brow_of(4 * s2 + 2 * u + 1);
+                        *reinterpret_cast<uint2*>(B + b_row_off(n_a) + b_unit(n_a, kh) + 8 * (kg & 1)) =
+                            make_uint2(r0[0], r0[1]);
+                        *reinterpret_cast<uint2*>(B + b_row_off(n_b) + b_unit(n_b, kh) + 8 * (kg & 1)) =
+                            make_uint2(r1[0], r1[1]);
+                    }
+                    // The four rows' scales: nibbles of the plane's group kg
+                    // (row 4 s2 in the high nibble of the first byte), through
+                    // the unit's UE4M3 table.
+                    const uint32_t pn = *reinterpret_cast<const uint16_t*>(
+                        Pl + (kc % WSTAGES) * PLANE_STAGE + (kg * 2 + dh) * (HALF_ROWS / 2) + 2 * s2);
+                    SF[brow_of(4 * s2 + 0) * 4 + kg] = (uint8_t)lut_byte(lut, (pn >> 4) & 15u);
+                    SF[brow_of(4 * s2 + 1) * 4 + kg] = (uint8_t)lut_byte(lut, pn & 15u);
+                    SF[brow_of(4 * s2 + 2) * 4 + kg] = (uint8_t)lut_byte(lut, (pn >> 12) & 15u);
+                    SF[brow_of(4 * s2 + 3) * 4 + kg] = (uint8_t)lut_byte(lut, (pn >> 8) & 15u);
+                };
+                auto decode_chunk = [&](int kc, int stage, uint32_t m16) {
+                    if (MODE != 2 && dh)
+                        decode(std::integral_constant<int, TABLE_BYTES>{}, kc, stage, m16);
+                    else
+                        decode(std::integral_constant<int, 0>{}, kc, stage, m16);
+                };
+                // The decode's 16 columns' high-rate bits (two-run units): the
+                // decode half's projection's mask, group kg.
+                auto mask_of = [&](int kc) -> uint32_t {
+                    if constexpr (TWO) {
+                        const int32_t* d = dsc_of(kc, dh, true);
+                        return ((uint32_t)d[kg >> 1] >> (16 * (kg & 1))) & 0xFFFFu;
+                    } else {
+                        return 0u;
+                    }
+                };
+
+                // The schedule (the other families' descriptor-ring schedule,
+                // at three word stages): chunks kc0 and kc0 + 1's descriptors
+                // are stored directly and their words map from the global
+                // descriptors; group 0 carries chunk kc0's words, history,
+                // plane and A and chunk kc0 + 2's descriptors, group 1 chunk
+                // kc0 + 1's and kc0 + 3's, and the group iteration kc commits
+                // carries chunk kc + 2's and kc + 4's.  The A slots of chunks
+                // kc0 and kc0 + 1 are those of chunks gc - 4 and gc - 3, which
+                // the consumers released before the producers' last EMPTY wait.
+                if constexpr (TWO) {
+                    const int t = tid - 32;
+                    if (t >= 0 && t < L::PROJ) {
+                        const int32_t* src = (t ? desc_h[1] : desc_h[0]) + (long)kc0 * DESC_WORDS;
+                        #pragma unroll
+                        for (int c = 0; c < 2; ++c)
+                            if (c < nkc)
+                                *reinterpret_cast<int4*>(ring + ((kc0 + c) % DRING_STAGES) * L::DRING_STAGE
+                                                         + t * DESC_WORDS) =
+                                    *reinterpret_cast<const int4*>(src + c * DESC_WORDS);
+                    }
+                }
+                issue_words(kc0, false);
+                issue_a(kc0, gc & 3);
+                if (nkc > 2) issue_desc(kc0 + 2);
+                cp_async_commit();                     // group 0
+                if (nkc > 1) { issue_words(kc0 + 1, false); issue_a(kc0 + 1, (gc + 1) & 3); }
+                if (nkc > 3) issue_desc(kc0 + 3);
+                cp_async_commit();                     // group 1
+                if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
+                uint32_t m_cur = mask_of(kc0), m_nxt = 0;
+                for (int ic = 0; ic < nkc; ++ic, ++gc) {
+                    const int kc = kc0 + ic;
+                    if (ic + 1 < nkc) m_nxt = mask_of(kc + 1);
+                    cp_async_wait<1>();                // chunk kc's group has landed ...
+                    bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; stage (kc - 1) is free
+                    if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                    if (ic + 4 < nkc) issue_desc(kc + 4);
+                    const int stage = gc & 1;
+                    if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);   // chunk gc - 2 consumed
+                    if (ic + 2 < nkc) issue_a(kc + 2, (gc + 2) & 3);     // chunk gc - 2's A slot
+                    cp_async_commit();
+                    decode_chunk(kc, stage, m_cur);
+                    bar_arrive(BAR_FULL0 + stage, THREADS);
+                    m_cur = m_nxt;
+                }
+            };
+            run();
+            ++item_idx;
+        }
+    } else {
+        // ------------------------------------------------------------ consumers
+        // Warp (mw, nw): routes 32 mw .. + 31 of the superblock, B rows 64 nw
+        // .. + 63 of the item (gate/up: 32 gate rows then the same 32 up rows).
+        const int cw = (tid - PRODUCER_THREADS) >> 5;
+        const int mw = cw >> 2;
+        const int nw = cw & 3;
+        for (;;) {
+            const int slot = item_idx & 1;
+            int stage = gc & 1;
+            bar_sync(BAR_FULL0 + stage, THREADS);
+            const int e = desc[slot * 8 + 0];
+            if (e < 0) return;
+            const int nb = desc[slot * 8 + 1];
+            const int pos0 = desc[slot * 8 + 3];
+            const int mb = desc[slot * 8 + 4];
+            const int nkc = desc[slot * 8 + 6];
+            const int ks = desc[slot * 8 + 7];
+            // This warp's 16-row blocks that hold a route; a block wholly past
+            // ``mb`` is never stored, so its loads and MMAs are skipped (the
+            // branch is warp-uniform, and a live row sees the same MMAs).
+            const int live = min(MI, max(0, (mb - WROWS * mw + 15) >> 4));
+            float acc[MI][8][4];
+            #pragma unroll
+            for (int mi = 0; mi < MI; ++mi)
+                #pragma unroll
+                for (int t = 0; t < 8; ++t)
+                    #pragma unroll
+                    for (int i = 0; i < 4; ++i) acc[mi][t][i] = 0.f;
+            for (int ic = 0; ic < nkc; ++ic, ++gc) {
+                stage = gc & 1;
+                if (ic > 0) bar_sync(BAR_FULL0 + stage, THREADS);
+                if (live > 0) {
+                    const uint8_t* A = As + (gc & 3) * A_SLOT;
+                    const uint8_t* B = Bs + stage * B_STAGE;
+                    const uint8_t* SF = Sfb + stage * SFB_STAGE;
+                    uint32_t a[MI][4], sfa[MI];
+                    #pragma unroll
+                    for (int mi = 0; mi < MI; ++mi) {
+                        if (mi >= live) break;
+                        const int row = WROWS * mw + 16 * mi + 8 * ((lane >> 3) & 1) + (lane & 7);
+                        ldmatrix_x4(a[mi], A + row * A_ROW + (((lane >> 4) ^ ((row >> 2) & 1)) << 4));
+                        sfa[mi] = *reinterpret_cast<const uint32_t*>(
+                            A + BM * A_ROW + (WROWS * mw + 16 * mi + (lane >> 2) + 8 * (lane & 1)) * A_SF);
+                    }
+                    #pragma unroll
+                    for (int tp = 0; tp < 4; ++tp) {
+                        // rows 64 nw + 16 tp .. + 15: matrices (rows 0-7, k 0-31),
+                        // (0-7, 32-63), (8-15, 0-31), (8-15, 32-63)
+                        const int mt = lane >> 3;
+                        const int n = 64 * nw + 16 * tp + (lane & 7) + 8 * (mt >> 1);
+                        uint32_t r[4];
+                        ldmatrix_x4(r, B + b_row_off(n) + b_unit(n, mt & 1));
+                        const uint32_t s0 = *reinterpret_cast<const uint32_t*>(SF + (64 * nw + 16 * tp + (lane >> 2)) * 4);
+                        const uint32_t s1 = *reinterpret_cast<const uint32_t*>(SF + (64 * nw + 16 * tp + 8 + (lane >> 2)) * 4);
+                        const uint32_t b0[2] = {r[0], r[1]};
+                        const uint32_t b1[2] = {r[2], r[3]};
+                        #pragma unroll
+                        for (int mi = 0; mi < MI; ++mi) {
+                            if (mi >= live) break;
+                            mma_fp4(acc[mi][2 * tp], a[mi], b0, sfa[mi], s0);
+                            mma_fp4(acc[mi][2 * tp + 1], a[mi], b1, sfa[mi], s1);
+                        }
+                    }
+                }
+                bar_arrive(BAR_EMPTY0 + stage, THREADS);
+            }
+            // ------------------------------------------------------ epilogue
+            // acc[mi][t][2 hr + c]: route row 32 mw + 16 mi + 8 hr + (lane >> 2),
+            // B row 64 nw + 8 t + 2 (lane & 3) + c.  Gate/up: tile t < 4 is gate
+            // row 32 nw + 8 t + ..., tile t + 4 the same up row.
+            const int q4 = lane & 3;
+            const float rat0 = p.ratio0[e];
+            const float rat1 = (MODE == 2) ? rat0 : p.ratio1[e];
+            uint16_t* out = reinterpret_cast<uint16_t*>(p.out);
+            #pragma unroll
+            for (int mi = 0; mi < MI; ++mi) {
+                #pragma unroll
+                for (int hr = 0; hr < 2; ++hr) {
+                    const int r = WROWS * mw + 16 * mi + 8 * hr + (lane >> 2);
+                    if (r >= mb) continue;
+                    const int pos = pos0 + r;
+                    const int flat = DENSE ? pos : p.flat_sorted[pos];
+                    if constexpr (SPLIT) {
+                        float* part = p.partial + ((long)ks * p.rows_x + pos) * p.N + nb * BN;
+                        #pragma unroll
+                        for (int t = 0; t < 8; ++t) {
+                            if (nb * BN + 64 * nw + 8 * t >= p.N) continue;   // past a dense N % 256
+                            *reinterpret_cast<float2*>(part + 64 * nw + 8 * t + 2 * q4) =
+                                make_float2(acc[mi][t][2 * hr], acc[mi][t][2 * hr + 1]);
+                        }
+                    } else if constexpr (MODE == 0) {
+                        #pragma unroll
+                        for (int t = 0; t < 4; ++t) {
+                            uint32_t wv = 0;
+                            #pragma unroll
+                            for (int c = 0; c < 2; ++c) {
+                                const float g = __fmul_rn(acc[mi][t][2 * hr + c], rat0);
+                                const float u = __fmul_rn(acc[mi][t + 4][2 * hr + c], rat1);
+                                float gf = bf16_bits_to_f32(bf16_bits_rn(g));
+                                float uf = bf16_bits_to_f32(bf16_bits_rn(u));
+                                gf = fminf(gf, p.limit);
+                                uf = fmaxf(fminf(uf, p.limit), -p.limit);
+                                const float act = __fmul_rn(gf / (1.0f + expf(-gf)), uf);
+                                wv |= (uint32_t)bf16_bits_rn(act) << (16 * c);
+                            }
+                            const long col = (long)nb * HALF_ROWS + 32 * nw + 8 * t + 2 * q4;
+                            *reinterpret_cast<uint32_t*>(out + (long)pos * p.out_stride + col) = wv;
+                        }
+                    } else if constexpr (MODE == 1) {
+                        #pragma unroll
+                        for (int t = 0; t < 8; ++t) {
+                            const float rat = (t < 4) ? rat0 : rat1;
+                            uint32_t wv = 0;
+                            #pragma unroll
+                            for (int c = 0; c < 2; ++c)
+                                wv |= (uint32_t)bf16_bits_rn(__fmul_rn(acc[mi][t][2 * hr + c], rat)) << (16 * c);
+                            const long col = (long)(t >> 2) * p.inter + (long)nb * HALF_ROWS + 32 * nw
+                                             + 8 * (t & 3) + 2 * q4;
+                            *reinterpret_cast<uint32_t*>(out + (long)flat * p.out_stride + col) = wv;
+                        }
+                    } else {
+                        const float rw = (!DENSE && p.mul_weight) ? p.rw_sorted[pos] : 1.f;
+                        #pragma unroll
+                        for (int t = 0; t < 8; ++t) {
+                            uint32_t wv = 0;
+                            #pragma unroll
+                            for (int c = 0; c < 2; ++c) {
+                                float y = __fmul_rn(acc[mi][t][2 * hr + c], rat0);
+                                if (!DENSE && p.mul_weight) y = __fmul_rn(y, rw);
+                                wv |= (uint32_t)bf16_bits_rn(y) << (16 * c);
+                            }
+                            const long col = (long)nb * BN + 64 * nw + 8 * t + 2 * q4;
+                            if (DENSE && col >= p.N) continue;                // past a dense N % 256
+                            *reinterpret_cast<uint32_t*>(out + (long)flat * p.out_stride + col) = wv;
+                        }
+                    }
+                }
+            }
+            ++item_idx;
+        }
+    }
+}
+
+// DENSE && SPLIT: out[m, n] = bf16( (sum_{s < S} partial[s, m, n]) * ratio ),
+// the sum in fixed split order in fp32, then the unsplit epilogue's one fp32
+// multiply and one rounding.
+__global__ void dense_reduce_fp4_kernel(const float* __restrict__ partial, const float* __restrict__ ratio,
+                                        uint16_t* __restrict__ out, long out_stride, int S, long M, long N) {
+    const long quad = (long)blockIdx.x * blockDim.x + threadIdx.x;
+    const long quads_per_row = N / 4;
+    if (quad >= M * quads_per_row) return;
+    const long m = quad / quads_per_row;
+    const long n = (quad - m * quads_per_row) * 4;
+    float4 acc = make_float4(0.f, 0.f, 0.f, 0.f);
+    for (int s = 0; s < S; ++s) {
+        const float4 v = *reinterpret_cast<const float4*>(partial + ((long)s * M + m) * N + n);
+        acc.x += v.x; acc.y += v.y; acc.z += v.z; acc.w += v.w;
+    }
+    const float r = ratio[0];
+    uint2 o;
+    o.x = bf16_bits_rn(__fmul_rn(acc.x, r)) | ((uint32_t)bf16_bits_rn(__fmul_rn(acc.y, r)) << 16);
+    o.y = bf16_bits_rn(__fmul_rn(acc.z, r)) | ((uint32_t)bf16_bits_rn(__fmul_rn(acc.w, r)) << 16);
+    *reinterpret_cast<uint2*>(out + m * out_stride + n) = o;
+}
+
+template <int MODE, bool DENSE, bool SPLIT, int RL, bool TWO>
+void launch_pair(const Params& p, int grid, cudaStream_t stream) {
+    const int smem = smem_bytes(MODE, p.slot_words);
+    static int attributed = 0;
+    if (smem > attributed) {
+        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_fp4_kernel<MODE, DENSE, SPLIT, RL, TWO>,
+                                            cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
+        attributed = smem;
+    }
+    routed_fused_fp4_kernel<MODE, DENSE, SPLIT, RL, TWO><<<grid, THREADS, smem, stream>>>(p);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+template <int MODE, bool DENSE = false, bool SPLIT = false>
+void launch(const Params& p, int grid, cudaStream_t stream) {
+    const PairKey k = pair_of(p.tile_words, p.K);
+    switch (k.two ? RATE_MAX + k.r_lo : k.r_lo) {
+#define TESSERA_ROUTED_FUSED_FP4_PAIR(R, T)                                                    \
+        case (T ? RATE_MAX : 0) + R:                                                           \
+            if constexpr (launch_decodes(MODE, R, T)) {                                        \
+                launch_pair<MODE, DENSE, SPLIT, R, T>(p, grid, stream);                        \
+                return;                                                                        \
+            }                                                                                  \
+            break;
+        TESSERA_ROUTED_FUSED_FP4_PAIR(1, false) TESSERA_ROUTED_FUSED_FP4_PAIR(2, false)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(3, false) TESSERA_ROUTED_FUSED_FP4_PAIR(4, false)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(5, false) TESSERA_ROUTED_FUSED_FP4_PAIR(6, false)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(7, false) TESSERA_ROUTED_FUSED_FP4_PAIR(8, false)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(1, true) TESSERA_ROUTED_FUSED_FP4_PAIR(2, true)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(3, true) TESSERA_ROUTED_FUSED_FP4_PAIR(4, true)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(5, true) TESSERA_ROUTED_FUSED_FP4_PAIR(6, true)
+        TESSERA_ROUTED_FUSED_FP4_PAIR(7, true)
+#undef TESSERA_ROUTED_FUSED_FP4_PAIR
+        default: break;
+    }
+    TORCH_CHECK(false, "the E2M1 ", (MODE == 2 ? "down/dense" : "gate/up"), " launch does not decode the run pair (r_lo ",
+                k.r_lo, (k.two ? ", two runs" : ", one run"), ") that tile_words ", p.tile_words, " fixes at K ", p.K);
+}
+
+// The tensors one projection passes, checked by shape, dtype and alignment.
+void check_projection(const torch::Tensor& words, const torch::Tensor& codes, const torch::Tensor& init,
+                      const torch::Tensor& has_init, const torch::Tensor& plane, const torch::Tensor& lut,
+                      const torch::Tensor& ratio, const torch::Tensor& runs, const torch::Tensor& dsc,
+                      int64_t E, int64_t K, int64_t N, const char* name) {
+    check_words(words, name);
+    TORCH_CHECK(words.size(0) == E, name, ": words must be [E, W]");
+    TORCH_CHECK(codes.is_cuda() && codes.dim() == 2 && codes.size(0) == E && codes.size(1) == TABLE_BYTES
+                && codes.scalar_type() == torch::kUInt8 && codes.is_contiguous()
+                && reinterpret_cast<uintptr_t>(codes.data_ptr()) % 16 == 0,
+                name, ": codes must be a 16-byte aligned uint8 [E, ", TABLE_BYTES, "]");
+    TORCH_CHECK(init.dim() == 2 && init.size(0) == E && init.size(1) == K && init.scalar_type() == torch::kInt32
+                && init.is_contiguous(), name, ": init must be int32 [E, K]");
+    TORCH_CHECK(has_init.numel() == E && has_init.scalar_type() == torch::kInt32, name, ": has_init must be int32 [E]");
+    TORCH_CHECK(plane.is_cuda() && plane.dim() == 2 && plane.size(0) == E && plane.scalar_type() == torch::kUInt8
+                && plane.is_contiguous() && plane.size(1) >= N * (K / 16) / 2 && plane.size(1) % 16 == 0
+                && reinterpret_cast<uintptr_t>(plane.data_ptr()) % 16 == 0,
+                name, ": plane must be a 16-byte aligned uint8 [E, S], S >= N * K / 32 and a multiple of 16");
+    TORCH_CHECK(lut.is_cuda() && lut.dim() == 2 && lut.size(0) == E && lut.size(1) == 16
+                && lut.scalar_type() == torch::kUInt8 && lut.is_contiguous()
+                && reinterpret_cast<uintptr_t>(lut.data_ptr()) % 16 == 0, name, ": lut must be uint8 [E, 16]");
+    TORCH_CHECK(ratio.is_cuda() && ratio.numel() == E && ratio.scalar_type() == torch::kFloat32 && ratio.is_contiguous(),
+                name, ": ratio must be fp32 [E]");
+    TORCH_CHECK(runs.is_cuda() && runs.dim() == 2 && runs.size(0) == E && runs.size(1) == 8
+                && runs.scalar_type() == torch::kInt32 && runs.is_contiguous(), name, ": runs must be int32 [E, 8]");
+    TORCH_CHECK(dsc.is_cuda() && dsc.dim() == 3 && dsc.size(0) == E && dsc.size(1) == K / BK
+                && dsc.size(2) == DESC_WORDS && dsc.scalar_type() == torch::kInt32 && dsc.is_contiguous()
+                && reinterpret_cast<uintptr_t>(dsc.data_ptr()) % 16 == 0,
+                name, ": desc must be a 16-byte aligned int32 [E, K / ", BK, ", ", DESC_WORDS, "]");
+}
+// The activation: codes uint8 [rows, K / 2] (16-byte aligned rows) and scales
+// uint8 [rows, K / 16], both contiguous.
+void check_activation(const torch::Tensor& x, const torch::Tensor& sfa) {
+    TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.scalar_type() == torch::kUInt8 && x.is_contiguous()
+                && reinterpret_cast<uintptr_t>(x.data_ptr()) % 16 == 0,
+                "x must be the contiguous, 16-byte aligned uint8 [rows, K / 2] E2M1 codes");
+    const int64_t K = 2 * x.size(1);
+    TORCH_CHECK(K % BK == 0 && K >= 4 * BK, "K must be a multiple of ", BK, " and at least ", 4 * BK);
+    TORCH_CHECK(sfa.is_cuda() && sfa.dim() == 2 && sfa.size(0) == x.size(0) && sfa.size(1) == K / 16
+                && sfa.scalar_type() == torch::kUInt8 && sfa.is_contiguous()
+                && reinterpret_cast<uintptr_t>(sfa.data_ptr()) % 4 == 0,
+                "sfa must be the contiguous uint8 [rows, K / 16] UE4M3 scales (linear layout)");
+}
+void check_fp4_slot(int mode, int64_t slot_words, const torch::Tensor& on) {
+    TORCH_CHECK(slot_words % 4 == 0 && slot_words >= 4 && slot_words <= SLOT_WORDS_MAX,
+                "slot_words must be a multiple of 4 in [4, ", SLOT_WORDS_MAX, "]");
+    const int need = smem_bytes(mode, (int)slot_words);
+    const int have = max_dynamic_smem_bytes(on.device().index());
+    TORCH_CHECK(need <= have, "the E2M1 ", (mode == 2 ? "down/dense" : "gate/up"), " launch at ", slot_words,
+                "-word slots needs ", need, " bytes of dynamic shared memory per block; device ",
+                (int)on.device().index(), " allows ", have);
+}
+
+}  // namespace fp4
+#endif  // TESSERA_ROUTED_FUSED_FP4
+
 }  // namespace
 
+#if !TESSERA_ROUTED_FUSED_FP4
 // One launch of the persistent kernel.  ``mode``: 0 gate/up + SwiGLU (out is
 // the sorted [routes, I] activation), 1 gate/up preserved (out is [T, top_k,
 // 2I] by route), 2 down (out is [routes, H] by route, bf16-rounded, weighted).
@@ -1744,7 +2726,11 @@ void dense_forward(
     TORCH_CHECK(wscale.dim() == 2 && wscale.size(0) == 1 && wscale.scalar_type() == torch::kFloat32
                 && wscale.is_contiguous(), "wscale must be fp32 [1, N]");
     const int64_t N = wscale.size(1);
-    TORCH_CHECK(N % BN == 0 && N > 0, "the role's rows must be a multiple of ", BN);
+    // N-tail: the last block may hold fewer than BN rows.  The epilogue stores
+    // and the split reduce write DENSE_ROW_QUANTUM columns at a time, so N is a
+    // multiple of it and a store is wholly inside the role or wholly past it.
+    TORCH_CHECK(N % DENSE_ROW_QUANTUM == 0 && N > 0, "the role's rows must be a multiple of ",
+                DENSE_ROW_QUANTUM);
     TORCH_CHECK(words.is_cuda() && words.dim() == 2 && words.size(0) == 1
                 && words.scalar_type() == torch::kInt32 && words.is_contiguous(), "words must be int32 [1, W]");
     TORCH_CHECK(table.dim() == 2 && table.size(0) == 1 && table.size(1) == TABLE_ENTRIES
@@ -1807,7 +2793,12 @@ void dense_forward(
     p.rw_sorted = nullptr;
     p.item_off = nullptr;
     p.counter = counter.data_ptr<int32_t>();
-    p.n_blocks = (int)(N / BN);
+    p.n_blocks = (int)((N + BN - 1) / BN);
+    // The wire is padded to whole 512-row tiles, so the last (partial) block's
+    // rows are words the repack wrote; refuse a words tensor that stops short.
+    TORCH_CHECK(words.size(1) >= ((long)p.n_blocks * BN + TILE_ROWS - 1) / TILE_ROWS * tile_words,
+                "words must hold every ", TILE_ROWS, "-row tile the role's ", p.n_blocks,
+                " blocks of ", BN, " rows read");
     p.top_k = 1;
     p.a_row_mode = 2;
     p.mul_weight = 0;
@@ -1837,6 +2828,213 @@ void dense_forward(
         launch<FAMILY_FP8, 2, true, false, BM_WIDE>(p, g, stream);
     }
 }
+#else  // TESSERA_ROUTED_FUSED_FP4
+
+// The E2M1 family's launch (``fp4`` above).  ``mode`` as in the other
+// families; ``x``/``sfa`` the activation's E2M1 codes and UE4M3 group scales
+// (``scaled_fp4_quant`` at the layer's static global); per projection the
+// window words, the code table, the start states, the LUT16 scale plane, its
+// UE4M3 table, the ratio ``unit global / activation global`` and the run and
+// chunk tables; ``N`` the projection's rows (the intermediate size for
+// gate/up, the hidden size for down).
+void routed_fused_forward_fp4(
+    int64_t mode, torch::Tensor x, torch::Tensor sfa,
+    torch::Tensor words0, torch::Tensor words1,
+    torch::Tensor codes0, torch::Tensor codes1,
+    torch::Tensor init0, torch::Tensor init1,
+    torch::Tensor has_init0, torch::Tensor has_init1,
+    torch::Tensor plane0, torch::Tensor plane1,
+    torch::Tensor lut0, torch::Tensor lut1,
+    torch::Tensor ratio0, torch::Tensor ratio1,
+    torch::Tensor runs0, torch::Tensor runs1,
+    torch::Tensor desc0, torch::Tensor desc1,
+    int64_t N, int64_t tile_words, int64_t slot_words,
+    torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
+    torch::Tensor item_off, torch::Tensor counter,
+    int64_t top_k, int64_t a_row_mode, bool mul_weight, double limit,
+    torch::Tensor out, int64_t grid) {
+    TORCH_CHECK(mode >= 0 && mode <= 2, "mode must be 0, 1 or 2");
+    fp4::check_activation(x, sfa);
+    const int64_t K = 2 * x.size(1);
+    const bool two = mode != 2;
+    const int64_t E = words0.size(0);
+    TORCH_CHECK(N > 0 && N % (two ? fp4::HALF_ROWS : fp4::BN) == 0, "the ", (two ? "intermediate" : "down"),
+                " rows must be a positive multiple of ", (two ? fp4::HALF_ROWS : fp4::BN));
+    fp4::check_projection(words0, codes0, init0, has_init0, plane0, lut0, ratio0, runs0, desc0, E, K, N, "projection 0");
+    if (two) {
+        fp4::check_projection(words1, codes1, init1, has_init1, plane1, lut1, ratio1, runs1, desc1, E, K, N,
+                              "projection 1");
+        TORCH_CHECK(words1.sizes() == words0.sizes() && plane1.sizes() == plane0.sizes(),
+                    "gate and up must carry one word and plane layout");
+    }
+    TORCH_CHECK(offsets.numel() == E + 1 && offsets.scalar_type() == torch::kInt32 && offsets.is_contiguous(),
+                "offsets must be int32 [E + 1]");
+    TORCH_CHECK(item_off.numel() == E + 1 && item_off.scalar_type() == torch::kInt32 && item_off.is_contiguous(),
+                "item_off must be int32 [E + 1]");
+    TORCH_CHECK(flat_sorted.scalar_type() == torch::kInt32 && flat_sorted.is_contiguous(), "flat_sorted must be int32");
+    TORCH_CHECK(rw_sorted.scalar_type() == torch::kFloat32 && rw_sorted.is_contiguous()
+                && rw_sorted.numel() == flat_sorted.numel(), "rw_sorted must be fp32 [P]");
+    TORCH_CHECK(counter.scalar_type() == torch::kInt32 && counter.numel() >= 1, "counter must be int32");
+    TORCH_CHECK(out.is_cuda() && out.scalar_type() == torch::kBFloat16 && out.is_contiguous(), "out must be contiguous bf16");
+    const int64_t P = flat_sorted.numel();
+    if (mode == 0) {
+        TORCH_CHECK(out.dim() == 2 && out.size(0) == P && out.size(1) == N, "mode 0 out must be [P, I]");
+    } else if (mode == 1) {
+        TORCH_CHECK(out.dim() == 3 && out.size(0) * out.size(1) == P && out.size(1) == top_k && out.size(2) == 2 * N,
+                    "mode 1 out must be [T, top_k, 2I]");
+    } else {
+        TORCH_CHECK(out.dim() == 2 && out.size(0) == P && out.size(1) == N, "mode 2 out must be [P, H]");
+    }
+    TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
+                "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
+    TORCH_CHECK(grid >= 1, "grid must be positive");
+    fp4::check_fp4_slot((int)mode, slot_words, x);
+
+    fp4::Params p{};
+    p.x = x.data_ptr<uint8_t>();
+    p.sfa = sfa.data_ptr<uint8_t>();
+    p.words0 = i32_ptr(words0);
+    p.words1 = two ? i32_ptr(words1) : nullptr;
+    p.codes0 = codes0.data_ptr<uint8_t>();
+    p.codes1 = two ? codes1.data_ptr<uint8_t>() : nullptr;
+    p.init0 = i32_ptr(init0);
+    p.init1 = two ? i32_ptr(init1) : nullptr;
+    p.has_init0 = i32_ptr(has_init0);
+    p.has_init1 = two ? i32_ptr(has_init1) : nullptr;
+    p.plane0 = plane0.data_ptr<uint8_t>();
+    p.plane1 = two ? plane1.data_ptr<uint8_t>() : nullptr;
+    p.lut0 = lut0.data_ptr<uint8_t>();
+    p.lut1 = two ? lut1.data_ptr<uint8_t>() : nullptr;
+    p.ratio0 = f32_ptr(ratio0);
+    p.ratio1 = two ? f32_ptr(ratio1) : nullptr;
+    p.runs0 = i32_ptr(runs0);
+    p.runs1 = two ? i32_ptr(runs1) : nullptr;
+    p.desc0 = i32_ptr(desc0);
+    p.desc1 = two ? i32_ptr(desc1) : nullptr;
+    p.words_stride = words0.size(1);
+    p.plane_stride = plane0.size(1);
+    p.tile_words = (int)tile_words;
+    p.slot_words = (int)slot_words;
+    p.K = (int)K;
+    p.N = (int)N;
+    p.E = (int)E;
+    p.offsets = i32_ptr(offsets);
+    p.flat_sorted = i32_ptr(flat_sorted);
+    p.rw_sorted = f32_ptr(rw_sorted);
+    p.item_off = i32_ptr(item_off);
+    p.counter = counter.data_ptr<int32_t>();
+    p.n_blocks = (int)(two ? N / fp4::HALF_ROWS : N / fp4::BN);
+    p.top_k = (int)top_k;
+    p.a_row_mode = (int)a_row_mode;
+    p.mul_weight = mul_weight ? 1 : 0;
+    p.limit = std::isfinite(limit) ? (float)limit : std::numeric_limits<float>::infinity();
+    p.out = out.data_ptr();
+    p.out_stride = out.size(-1);
+    p.inter = (int)N;
+    p.rows_x = (int)x.size(0);
+    p.k_split = 1;
+    p.partial = nullptr;
+
+    const c10::cuda::CUDAGuard guard(x.device());
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const int g = (int)grid;
+    if (mode == 0) fp4::launch<0>(p, g, stream);
+    else if (mode == 1) fp4::launch<1>(p, g, stream);
+    else fp4::launch<2>(p, g, stream);
+}
+
+// The E2M1 family's dense launch: one role of a dense Linear (E = 1, route m
+// = row m, no weight), as ``dense_forward`` in the other families, with the
+// activation's codes and scales and the unit's ratio in place of the scale
+// vectors.
+void dense_forward_fp4(
+    torch::Tensor x, torch::Tensor sfa,
+    torch::Tensor words, torch::Tensor codes, torch::Tensor init, torch::Tensor has_init,
+    torch::Tensor plane, torch::Tensor lut, torch::Tensor ratio, torch::Tensor runs, torch::Tensor dsc,
+    int64_t N, int64_t tile_words, int64_t slot_words, torch::Tensor counter, int64_t k_split,
+    torch::Tensor partial, torch::Tensor out, int64_t grid) {
+    fp4::check_activation(x, sfa);
+    const int64_t M = x.size(0);
+    const int64_t K = 2 * x.size(1);
+    // Rows need not fill the last 256-row block: the launch decodes the whole
+    // block from the wire's padded tile and writes rows below N only.  A
+    // multiple of 32 keeps the plane's 16-byte parts whole.
+    TORCH_CHECK(N > 0 && N % 32 == 0, "the role's rows must be a positive multiple of 32");
+    fp4::check_projection(words, codes, init, has_init, plane, lut, ratio, runs, dsc, 1, K, N, "the role");
+    TORCH_CHECK(words.size(1) >= (N + fp4::TILE_WROWS - 1) / fp4::TILE_WROWS * tile_words,
+                "the role's words must hold whole ", fp4::TILE_WROWS, "-row tiles: the last block reads its padding");
+    TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
+                "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
+    TORCH_CHECK(counter.scalar_type() == torch::kInt32 && counter.numel() >= 1, "counter must be int32");
+    TORCH_CHECK(out.is_cuda() && out.dim() == 2 && out.scalar_type() == torch::kBFloat16
+                && out.size(0) == M && out.size(1) == N && out.stride(1) == 1 && out.stride(0) >= N
+                && (out.stride(0) % 2) == 0,
+                "out must be a bf16 [M, N] view with unit column stride and an even row stride");
+    const int nk = (int)(K / fp4::BK);
+    // The producers write item i + 2's descriptor into item i's slot once
+    // item i + 1's last chunk has waited EMPTY on the chunk two before it;
+    // the consumers read item i's slot before they release its first chunk.
+    // Items i and i + 1 of three chunks or more between them order the two,
+    // so every item keeps two chunks: floor(nk / S) >= 2.
+    TORCH_CHECK(k_split >= 1 && k_split <= nk / 2, "k_split must be in [1, K / ", 2 * fp4::BK,
+                "]: every split item keeps two K chunks, so no descriptor slot is rewritten before it is read");
+    if (k_split > 1) {
+        TORCH_CHECK(partial.is_cuda() && partial.scalar_type() == torch::kFloat32 && partial.is_contiguous()
+                    && partial.numel() == k_split * M * N, "partial must be contiguous fp32 [S, M, N]");
+        TORCH_CHECK((out.stride(0) % 4) == 0,
+                    "a split-K launch needs out's row stride to be a multiple of 4 elements");
+    }
+    TORCH_CHECK(grid >= 1, "grid must be positive");
+    fp4::check_fp4_slot(2, slot_words, x);
+
+    fp4::Params p{};
+    p.x = x.data_ptr<uint8_t>();
+    p.sfa = sfa.data_ptr<uint8_t>();
+    p.words0 = i32_ptr(words);
+    p.codes0 = codes.data_ptr<uint8_t>();
+    p.init0 = i32_ptr(init);
+    p.has_init0 = i32_ptr(has_init);
+    p.plane0 = plane.data_ptr<uint8_t>();
+    p.lut0 = lut.data_ptr<uint8_t>();
+    p.ratio0 = f32_ptr(ratio);
+    p.runs0 = i32_ptr(runs);
+    p.desc0 = i32_ptr(dsc);
+    p.words_stride = words.size(1);
+    p.plane_stride = plane.size(1);
+    p.tile_words = (int)tile_words;
+    p.slot_words = (int)slot_words;
+    p.K = (int)K;
+    p.N = (int)N;
+    p.E = 1;
+    p.counter = counter.data_ptr<int32_t>();
+    p.n_blocks = (int)((N + fp4::BN - 1) / fp4::BN);
+    p.top_k = 1;
+    p.a_row_mode = 2;
+    p.mul_weight = 0;
+    p.limit = std::numeric_limits<float>::infinity();
+    p.out = out.data_ptr();
+    p.out_stride = out.stride(0);
+    p.inter = (int)N;
+    p.rows_x = (int)M;
+    p.k_split = (int)k_split;
+    p.partial = k_split > 1 ? partial.data_ptr<float>() : nullptr;
+
+    const c10::cuda::CUDAGuard guard(x.device());
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const int g = (int)grid;
+    if (k_split > 1) {
+        fp4::launch<2, true, true>(p, g, stream);
+        const long quads = M * (N / 4);
+        const int threads = 256;
+        const long blocks = (quads + threads - 1) / threads;
+        fp4::dense_reduce_fp4_kernel<<<(unsigned)blocks, threads, 0, stream>>>(
+            p.partial, p.ratio0, reinterpret_cast<uint16_t*>(p.out), p.out_stride, (int)k_split, M, N);
+        C10_CUDA_KERNEL_LAUNCH_CHECK();
+    } else {
+        fp4::launch<2, true, false>(p, g, stream);
+    }
+}
+#endif  // TESSERA_ROUTED_FUSED_FP4
 
 void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
     TORCH_CHECK(routed.is_cuda() && routed.dim() == 2 && routed.scalar_type() == torch::kBFloat16
@@ -1860,13 +3058,15 @@ void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.def("token_sum", &token_sum);
+#if !TESSERA_ROUTED_FUSED_FP4
     m.def("routed_fused_forward", &routed_fused_forward);
     m.def("dense_forward", &dense_forward);
-    m.def("token_sum", &token_sum);
     m.attr("BM") = BM;
     m.attr("BN") = BN;
     m.attr("HALF") = HALF;
     m.attr("BK") = BK;
+    m.attr("DENSE_ROW_QUANTUM") = DENSE_ROW_QUANTUM;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("ROUTED_RATE_MAX") = ROUTED_RATE_MAX;
@@ -1894,4 +3094,33 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("THREADS") = THREADS;
     m.attr("FAMILY_FP8") = FAMILY_FP8;
     m.attr("FAMILY_MMA8") = FAMILY_MMA8;
+#else
+    // The E2M1 family's library: its own entries and geometry.
+    m.def("routed_fused_forward_fp4", &routed_fused_forward_fp4);
+    m.def("dense_forward_fp4", &dense_forward_fp4);
+    m.attr("BM") = BM;
+    m.attr("BN") = fp4::BN;
+    m.attr("HALF_ROWS") = fp4::HALF_ROWS;
+    m.attr("BK") = fp4::BK;
+    m.attr("RATE_MIN") = RATE_MIN;
+    m.attr("RATE_MAX") = RATE_MAX;
+    m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
+    m.attr("WORD_STAGES") = fp4::WSTAGES;
+    m.attr("DESC_WORDS") = fp4::DESC_WORDS;
+    m.attr("WINDOW_BITS") = WINDOW_BITS;
+    m.attr("SMEM_FIXED_GATE_UP") = fp4::Layout<0>::OFF_W;
+    m.attr("SMEM_FIXED_DOWN") = fp4::Layout<2>::OFF_W;
+    m.def("smem_bytes", [](int64_t mode, int64_t slot_words) {
+              return (int64_t)fp4::smem_bytes((int)mode, (int)slot_words); },
+          "dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots");
+    m.def("launch_decodes", [](int64_t mode, int64_t r_lo, bool two) {
+              return fp4::launch_decodes((int)mode, (int)r_lo, two); },
+          "whether the launch of ``mode`` instantiates the run pair (r_lo; two: a second run at r_lo + 1)");
+    m.def("max_dynamic_smem_bytes", [](int64_t device) { return (int64_t)max_dynamic_smem_bytes((int)device); },
+          "cudaDevAttrMaxSharedMemoryPerBlockOptin of the device");
+    m.attr("THREADS") = THREADS;
+    m.attr("FAMILY_FP8") = FAMILY_FP8;
+    m.attr("FAMILY_MMA8") = FAMILY_MMA8;
+    m.attr("FAMILY_FP4") = FAMILY_FP4;
+#endif
 }

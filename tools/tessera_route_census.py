@@ -129,6 +129,7 @@ import re
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 
 
 #: The regimes this tool can actually drive, in the contract's vocabulary: one
@@ -255,22 +256,52 @@ def declared_in_module_space(model, targets):
     return out
 
 
+# The stock draft's module on the eugr image (Tessera's fd4a15126 interface),
+# accepted by name as before. Any other module must be the one a source-digest
+# recognized interface names (tessera.serving.mtp_draft_lifetime).
+_EUGR_DRAFT_MODULE = "vllm.models.glm5next.nvidia.mtp"
+
+
+def _recognized_draft_interface():
+    """``(class module, in-code rename or None)`` of the GLM MTP draft interface
+    the running vLLM matches by source digest, or None (tessera#769).
+
+    Imported only when the draft is not the eugr class: the lifetime module
+    imports torch, and the pure CI has none.
+    """
+    from tessera.serving import mtp_draft_lifetime
+
+    return mtp_draft_lifetime.recognized_draft_interface()
+
+
 def draft_declared_in_module_space(model, targets):
     """Resolve original GLM MTP declarations against the actual draft tree.
 
     The stock draft's ``hf_to_vllm_mapper`` strips the multimodal source
     prefix, and its model class inserts ``mtp_block`` below its speculative
-    layer. Reuse Tessera's one model-owned namespace rule, then require each
+    layer. A draft that applies that rename inside ``load_weights`` instead
+    (the nightly-20260929 class) is accepted only through the interface
+    recognized by source digest, whose rename is replayed here. Reuse Tessera's one model-owned namespace rule, then require each
     selected target to exist in this draft's ``named_modules``. Body targets
     are deliberately absent from this separate model, not missing routes.
     """
     cls = type(model)
-    if (cls.__module__ != "vllm.models.glm5next.nvidia.mtp"
-            or cls.__name__ != "Glm5NextMTP"):
+    recognized = None
+    if cls.__name__ == "Glm5NextMTP" and cls.__module__ != _EUGR_DRAFT_MODULE:
+        recognized = _recognized_draft_interface()
+    if (cls.__name__ != "Glm5NextMTP"
+            or (cls.__module__ != _EUGR_DRAFT_MODULE
+                and (recognized is None or cls.__module__ != recognized[0]))):
         raise ValueError("draft census requires the stock Glm5NextMTP model class")
-    from tessera.serving.weights_mapper import glm5next_mtp_module_prefix
+    from tessera.serving.weights_mapper import PrefixRename, glm5next_mtp_module_prefix
 
     mapped = declared_in_module_space(model, targets)
+    if mapped is None and recognized is not None and recognized[1] is not None:
+        # The class renames in its own load_weights and declares no mapper
+        # (tessera#749); the recognized interface names that rule, the one the
+        # serving config adopts for the same draft.
+        mapped = declared_in_module_space(
+            SimpleNamespace(hf_to_vllm_mapper=PrefixRename(*recognized[1])), targets)
     if mapped is None:
         raise ValueError("Glm5NextMTP exposes no source-name mapper")
     config = model.config

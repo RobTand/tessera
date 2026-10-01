@@ -269,9 +269,23 @@ class WindowUnitAxis:
     model's packed weights are never held twice (the intake's memory rule).
     Layouts that differ between experts are refused by name rather than
     silently re-strided.
+
+    Three families.  ``value`` (BF16) and ``e4m3`` take a
+    ``kernel_window_gemv.WindowGemvUnit``: one fp32 scale per row and the
+    family's state table.  ``e2m1`` takes a ``compact_prep.WindowLutUnit``
+    (the E2M1x2 window body over the LUT16 plane): its ``2^L`` table holds
+    tuple CODE bytes, and its scale is the unit's group-16 nibble plane,
+    16-entry UE4M3 table and fp32 global, per expert, in place of the row
+    scale.  The body words are the same tile-word layout over tuples, so
+    ``words``/``runs``/``perm``/``init`` mean what they mean for the other
+    two families and the fused lane's column map reads them unchanged.
     """
 
+    FAMILIES = ("value", "e4m3", "e2m1")
+
     def __init__(self, experts: int, parts: Sequence[str], *, family: str):
+        if family not in self.FAMILIES:
+            raise GrammarError(f"window unit axis families are {self.FAMILIES}, got {family!r}")
         self.experts = int(experts)
         self.parts = tuple(str(p) for p in parts)
         self.family = family
@@ -280,45 +294,66 @@ class WindowUnitAxis:
         self._filled: dict = {}
         self._meta: dict = {}
 
-    def _alloc(self, part: str, unit: WindowGemvUnit) -> dict:
+    def _signature(self, unit) -> tuple:
+        """What one grouped stack needs every expert of a part to share."""
+        rep = unit.rep
+        if self.family == "e2m1":
+            state = (int(unit.codes.numel()), int(unit.scale_plane.numel()),
+                     int(unit.arity), int(unit.half))
+        else:
+            state = (int(unit.table.numel()), int(unit.scale.numel()))
+        return (self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
+                int(rep.words.numel()), int(rep.runs.shape[0]),
+                tuple(int(r) for r in rep.rates), *state,
+                int(rep.tile_words), int(rep.n_tiles))
+
+    def _alloc(self, part: str, unit) -> dict:
         e = self.experts
         rep = unit.rep
         words = rep.words
         runs = rep.runs
         rows, cols, L = int(unit.rows), int(unit.cols), int(unit.window_bits)
         device = words.device
+        e2m1 = self.family == "e2m1"
         slot = {
             "words": torch.empty((e, words.numel()), dtype=torch.int32, device=device),
             "runs": torch.empty((e, int(runs.shape[0]), 4), dtype=torch.int32, device=device),
-            "scale": torch.empty((e, rows), dtype=torch.float32, device=device),
+            "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
+                      else torch.empty((e, rows), dtype=torch.float32, device=device)),
             "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
             "init": torch.empty((e, cols), dtype=torch.int32, device=device),
         }
+        empty_u8 = torch.zeros(0, dtype=torch.uint8, device=device)
         if self.family == "value":
             slot["table"] = torch.empty((e, unit.table.numel()), dtype=torch.bfloat16, device=device)
-            slot["codes"] = torch.zeros(0, dtype=torch.uint8, device=device)
-            slot["native"] = torch.zeros(0, dtype=torch.uint8, device=device)
-        else:
+            slot["codes"] = empty_u8
+            slot["native"] = empty_u8
+        elif self.family == "e4m3":
             slot["table"] = torch.zeros(0, dtype=torch.bfloat16, device=device)
             slot["codes"] = torch.empty((e, unit.codes_of_state.numel()), dtype=torch.uint8,
                                         device=device)
             slot["native"] = torch.empty((e, unit.native.numel()), dtype=torch.uint8,
                                          device=device)
+        else:
+            slot["table"] = torch.zeros(0, dtype=torch.bfloat16, device=device)
+            slot["codes"] = torch.empty((e, unit.codes.numel()), dtype=torch.uint8, device=device)
+            slot["native"] = empty_u8
+            slot["scale_plane"] = torch.empty((e, unit.scale_plane.numel()), dtype=torch.uint8,
+                                              device=device)
+            slot["scale_lut"] = torch.empty((e, 16), dtype=torch.uint8, device=device)
+            slot["global_scale"] = torch.empty(e, dtype=torch.float32, device=device)
         slot["tile_words"] = torch.empty(e, dtype=torch.int32, device=device)
         slot["total_words"] = torch.empty(e, dtype=torch.int32, device=device)
         slot["has_init"] = torch.empty(e, dtype=torch.int32, device=device)
-        signature = (
-            self.family, rows, cols, L, int(words.numel()), int(runs.shape[0]),
-            tuple(int(r) for r in rep.rates), int(unit.table.numel()),
-            int(unit.scale.numel()), int(rep.tile_words), int(rep.n_tiles),
-        )
         self._slots[part] = slot
-        self._layout[part] = signature
+        self._layout[part] = self._signature(unit)
         self._filled[part] = set()
         self._meta[part] = (rows, cols, L)
         return slot
 
-    def put(self, part: str, expert: int, unit: WindowGemvUnit) -> None:
+    def put(self, part: str, expert: int, unit) -> None:
+        """Place ``unit`` (a ``WindowGemvUnit``, or a ``WindowLutUnit`` on the
+        ``e2m1`` family) in ``expert``'s slot of ``part``."""
         part = str(part)
         expert = int(expert)
         if not 0 <= expert < self.experts:
@@ -326,21 +361,26 @@ class WindowUnitAxis:
         if part in self._slots and expert in self._filled[part]:
             raise GrammarError(f"expert {expert} of {part!r} already placed; a second put "
                                "would overwrite packed weights")
+        lut_unit = hasattr(unit, "scale_plane")
+        if lut_unit != (self.family == "e2m1"):
+            raise GrammarError(
+                f"{part!r} expert {expert}: the {self.family} axis takes "
+                f"{'a LUT-plane window unit' if self.family == 'e2m1' else 'a window GEMV unit'}, "
+                f"got {type(unit).__name__}")
         slot = self._slots.get(part) or self._alloc(part, unit)
         rep = unit.rep
-        signature = (
-            self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
-            int(rep.words.numel()), int(rep.runs.shape[0]),
-            tuple(int(r) for r in rep.rates), int(unit.table.numel()),
-            int(unit.scale.numel()), int(rep.tile_words), int(rep.n_tiles),
-        )
-        if signature != self._layout[part]:
+        if self._signature(unit) != self._layout[part]:
             raise GrammarError(
                 f"{part!r} expert {expert}: packed layout differs from the first expert's; "
                 "one grouped stack needs one layout per projection")
         slot["words"][expert] = rep.words
         slot["runs"][expert] = rep.runs
-        slot["scale"][expert] = unit.scale
+        if self.family == "e2m1":
+            slot["scale_plane"][expert] = unit.scale_plane.reshape(-1)
+            slot["scale_lut"][expert] = unit.scale_lut.reshape(-1).view(torch.uint8)
+            slot["global_scale"][expert] = float(unit.global_scale)
+        else:
+            slot["scale"][expert] = unit.scale
         slot["perm"][expert] = rep.perm
         # Both kernels read the start state at the REPACKED column (the fused
         # lane's ``init[p]``, the grouped GEMM's ``init_all[e, kglob]``), as
@@ -357,9 +397,11 @@ class WindowUnitAxis:
             slot["has_init"][expert] = 1
         if self.family == "value":
             slot["table"][expert] = unit.table.to(torch.bfloat16)
-        else:
+        elif self.family == "e4m3":
             slot["codes"][expert] = unit.codes_of_state
             slot["native"][expert] = unit.native
+        else:
+            slot["codes"][expert] = unit.codes
         slot["tile_words"][expert] = int(rep.tile_words)
         slot["total_words"][expert] = int(rep.words.numel())
         self._filled[part].add(expert)

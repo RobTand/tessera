@@ -597,14 +597,15 @@ def test_a_module_the_predicate_refuses_keeps_the_triton_lane_and_says_why(famil
     from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
 
     monkeypatch.delenv(rf.ENV_TOGGLE_DENSE, raising=False)
-    blob, scheme, ref_w = _encode_module(family, [("weight", 192)], cols=256, seed=9)
+    blob, scheme, ref_w = _encode_module(family, [("weight", 190)], cols=256, seed=9)
     module = _module(blob, scheme)
     assert module.lane == LANE_TRITON
-    assert module.lane_reason == "role 'weight': 192 rows; the dense identity needs a multiple of 128"
+    assert module.lane_reason == (
+        f"role 'weight': 190 rows; the dense identity needs a multiple of {rf.DENSE_ROW_QUANTUM}")
     assert module.launch_pair[0] == WINDOW_GEMM_SYMBOL
     x, xq, a = _inputs(family, 7, 256, 61)
     _within(_served(module, family, xq, x, a), _module_bound(family, ref_w, xq, x, a),
-            f"{family} 192-row module on the Triton lane")
+            f"{family} 190-row module on the Triton lane")
 
 
 # --- the predicate ---------------------------------------------------------------
@@ -615,9 +616,12 @@ def test_the_predicate_refuses_by_name():
     assert rf.fused_dense_window_supported(ok) is None
     _e, ok8 = _role("e4m3")
     assert rf.fused_dense_window_supported(ok8) is None
-    _e, short = _role("value", rows=192)
+    _e, short = _role("value", rows=190)
     assert rf.fused_dense_window_supported(short) == \
-        "192 rows; the dense identity needs a multiple of 128"
+        f"190 rows; the dense identity needs a multiple of {rf.DENSE_ROW_QUANTUM}"
+    # an N-tail (the last 128-row block partial) is admitted since tessera#750 WP2
+    _e, tail = _role("value", rows=160)
+    assert rf.fused_dense_window_supported(tail) is None
     _e, narrow = _role("value", cols=64)
     assert rf.fused_dense_window_supported(narrow) == \
         f"64 columns; the kernel needs a multiple of {rf.BK} and at least {rf.MIN_COLS}"
@@ -852,6 +856,130 @@ def test_a_row_stride_that_is_only_even_takes_the_unsplit_path(family):
                           role.words, role.table16, role.init, role.has_init, role.wscale,
                           role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), counter, s,
                           partial, view, sms, rf.BM)
+
+
+# --- the N-tail: a role whose last 128-row block is partial (tessera#750 WP2) ------
+
+#: Role heights with a partial last block: the quantum itself (4), the GLM KDA
+#: input module's small roles at TP2 (``b_proj`` 32, ``f_a_proj``/``g_a_proj``
+#: 64), a tail after whole blocks (160 = 128 + 32, 300 = 2 * 128 + 44) and a
+#: tail past a 512-row wire tile (548 = 512 + 36).
+TAIL_ROWS = [4, 32, 64, 160, 300, 548]
+
+
+def _sentinel_out(m, rows, *, even_only):
+    """A ``[m, rows]`` view into a wider bf16 buffer filled with a sentinel, 8
+    columns of it on the left and 8 (or 10) on the right: a row stride that is
+    a multiple of 4 lets the split path run, one that is 2 mod 4 forces the
+    one-pass path (``dense_forward``)."""
+    right = 10 if even_only else 8
+    wide = torch.full((m, 8 + rows + right), 7.0, dtype=torch.bfloat16, device="cuda")
+    view = wide[:, 8:8 + rows]
+    assert (view.stride(0) % 4 == 2) == even_only
+    return wide, view
+
+
+def _untouched(wide, rows):
+    return bool((wide[:, :8] == 7).all()) and bool((wide[:, 8 + rows:] == 7).all())
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("rows", TAIL_ROWS)
+def test_an_n_tail_role_decodes_exactly_and_stores_only_its_rows(family, rows):
+    """One-hot rows through the real kernel at a role height 128 does not
+    divide, one run (q256 1024) and two runs (1088), with and without a start
+    state, on the split path and the one-pass path: every stored element is
+    the definition BITWISE, and not one sentinel column beside the role's
+    slice moves -- the partial block's pad rows are decoded and never
+    stored."""
+    for q256 in (1024, 1088):
+        rates = _sched(COLS, q256)
+        for init in (None, _init(COLS, 7600 + rows)):
+            expert, bundle = _role(family, rows=rows, rates=rates, seed=7700 + rows + q256, init=init)
+            assert rf.fused_dense_window_supported(bundle) is None, (family, rows, q256)
+            role = rf.prepare_dense_role(bundle)
+            _x, xq, a, hot = fb.one_hot_inputs(family, COLS, _quant)
+            want = fb.one_hot_expected(expert, family, hot, a)
+            m = int(xq.shape[0])
+            for even_only in (False, True):
+                wide, view = _sentinel_out(m, rows, even_only=even_only)
+                rf.dense_forward(role, xq, a, view, torch.zeros(1, dtype=torch.int32, device="cuda"))
+                what = (f"{family} rows={rows} q256={q256} init={init is not None} "
+                        f"{'one-pass' if even_only else 'split'}")
+                bad = view != want
+                assert not bool(bad.any()), (
+                    f"{what}: {int(bad.sum())} of {bad.numel()} one-hot products differ; first at "
+                    f"{bad.nonzero()[0].tolist()}")
+                assert _untouched(wide, rows), f"{what}: a store left the role's column slice"
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("rows", [32, 300])
+def test_an_n_tail_role_is_within_the_bound_deterministic_and_replays(family, rows):
+    """Random inputs at a tail height: within the derived bound of the fp64
+    reference and of the Triton lane in the split and one-pass regimes,
+    bitwise equal across runs, and a captured forward replays to the eager
+    answer."""
+    expert, bundle = _role(family, rows=rows, rates=_sched(COLS, 1088), seed=7800 + rows)
+    role = rf.prepare_dense_role(bundle)
+    sms = rf._sm_count(torch.cuda.current_device())
+    one_pass_m = rf.BM * -(-sms // -(-rows // rf.BN))
+    assert rf.dense_k_split(one_pass_m, rows, COLS, sms, tile_words=role.tile_words) == 1
+    assert rf.dense_k_split(1, rows, COLS, sms, tile_words=role.tile_words) > 1
+    for m in (1, 64, 200, one_pass_m):
+        _x, xq, a = _inputs(family, m, COLS, 7900 + m + rows)
+        fused = _fused(role, xq, a)
+        s = _split(role, m)
+        _within(fused, _bound(expert, family, xq, a, s), f"{family} rows={rows} M={m} S={s}",
+                triton=_triton(bundle, xq, a))
+        for _ in range(2):
+            assert torch.equal(_fused(role, xq, a), fused), (family, rows, m)
+    m = 40
+    _x, xq, a = _inputs(family, m, COLS, 31)
+    eager = _fused(role, xq, a)
+    out = torch.empty_like(eager)
+    counter = torch.zeros(1, dtype=torch.int32, device="cuda")
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            _fused(role, xq, a, out, counter)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        _fused(role, xq, a, out, counter)
+    out.zero_()
+    graph.replay()
+    torch.cuda.synchronize()
+    assert torch.equal(out, eager)
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_the_kda_input_module_takes_the_fused_lane(family, monkeypatch):
+    """The GLM KDA input module at TP2 is q, k, v, b, f_a and g_a (12448 rows
+    per rank: 3 x 4096 + 32 + 64 + 64).  Its small roles used to keep the
+    whole module on the Triton lane; with the N-tail every role is served by
+    the fused identity into its column slice.  Scaled here to K = 256 and
+    256-row q/k/v, with the tail roles between and after the whole ones, so a
+    stray store from any role lands in a neighbour the bound check reads."""
+    from tessera.serving.native_window import LANE_FUSED
+
+    monkeypatch.delenv(rf.ENV_TOGGLE_DENSE, raising=False)
+    roles = [("q_proj", 256), ("b_proj", 32), ("k_proj", 256), ("f_a_proj", 64),
+             ("v_proj", 256), ("g_a_proj", 64)]
+    blob, scheme, ref_w = _encode_module(family, roles, cols=256, seed=13)
+    module = _module(blob, scheme)
+    assert module.lane == LANE_FUSED and module.lane_reason is None
+    rows = sum(r for _, r in roles)
+    for m in (1, 5, 64, 129):
+        x, xq, a = _inputs(family, m, 256, 800 + m)
+        got = _served(module, family, xq, x, a)
+        assert got.shape == (m, rows)
+        _within(got, _module_bound(family, ref_w, xq, x, a),
+                f"{family} KDA-shaped module M={m} vs the materialised reference")
 
 
 def test_the_run_pair_and_block_descriptor_are_the_packers_layout():

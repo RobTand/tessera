@@ -303,25 +303,37 @@ if _T695_GC or _T695_DRAFT_LOG:
     class _T695Finder(importlib.abc.MetaPathFinder):
         """Patch the MTP speculator and the V2 runner right after their modules execute."""
 
+        # Another patching finder (``_GAFinder``) delegates down the same
+        # meta path, so without a guard the two call each other for a module
+        # both patch (the V2 runner) until the recursion limit.  A re-entered
+        # finder steps aside; the outer call still wraps the spec it returns.
+        # Per instance, so a second instance never sees the first one's names.
+        def __init__(self):
+            self._busy = set()
+
         def find_spec(self, name, path, target=None):
             patch = _T695_PATCHES.get(name)
-            if patch is None:
+            if patch is None or name in self._busy:
                 return None
-            for finder in sys.meta_path:
-                if finder is self or not hasattr(finder, "find_spec"):
-                    continue
-                spec = finder.find_spec(name, path, target)
-                if spec is None or spec.loader is None:
-                    continue
-                run = spec.loader.exec_module
+            self._busy.add(name)
+            try:
+                for finder in sys.meta_path:
+                    if finder is self or not hasattr(finder, "find_spec"):
+                        continue
+                    spec = finder.find_spec(name, path, target)
+                    if spec is None or spec.loader is None:
+                        continue
+                    run = spec.loader.exec_module
 
-                def exec_module(module, _run=run, _patch=patch):
-                    _run(module)
-                    _patch(module)
+                    def exec_module(module, _run=run, _patch=patch):
+                        _run(module)
+                        _patch(module)
 
-                spec.loader.exec_module = exec_module
-                return spec
-            return None
+                    spec.loader.exec_module = exec_module
+                    return spec
+                return None
+            finally:
+                self._busy.discard(name)
 
     sys.meta_path.insert(0, _T695Finder())
 
@@ -834,24 +846,33 @@ if _GA_DISPATCH_LOG:
     }
 
     class _GAFinder(_ga_abc.MetaPathFinder):
+        # Re-entrancy guard, per instance: see ``_T695Finder``; both patch
+        # the V2 runner.
+        def __init__(self):
+            self._busy = set()
+
         def find_spec(self, name, path, target=None):
             patch = _GA_PATCHES.get(name)
-            if patch is None:
+            if patch is None or name in self._busy:
                 return None
-            for finder in _ga_sys.meta_path:
-                if finder is self or not hasattr(finder, "find_spec"):
-                    continue
-                spec = finder.find_spec(name, path, target)
-                if spec is None or spec.loader is None:
-                    continue
-                run = spec.loader.exec_module
+            self._busy.add(name)
+            try:
+                for finder in _ga_sys.meta_path:
+                    if finder is self or not hasattr(finder, "find_spec"):
+                        continue
+                    spec = finder.find_spec(name, path, target)
+                    if spec is None or spec.loader is None:
+                        continue
+                    run = spec.loader.exec_module
 
-                def exec_module(module, _run=run, _patch=patch):
-                    _run(module)
-                    _patch(module)
+                    def exec_module(module, _run=run, _patch=patch):
+                        _run(module)
+                        _patch(module)
 
-                spec.loader.exec_module = exec_module
-                return spec
-            return None
+                    spec.loader.exec_module = exec_module
+                    return spec
+                return None
+            finally:
+                self._busy.discard(name)
 
     _ga_sys.meta_path.insert(0, _GAFinder())
