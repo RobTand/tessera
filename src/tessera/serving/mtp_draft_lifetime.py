@@ -360,6 +360,17 @@ def _wrap_load(original: Any, *, returns_draft: bool, draft_heads: bool):
     return load
 
 
+def recognized_draft_interface() -> tuple[str, tuple[str, str] | None] | None:
+    """The recognized GLM MTP draft interface: its class module and in-code rename.
+
+    None when the running vLLM matches no inspected interface. The route census
+    uses it to accept a stock draft class outside the eugr module (tessera#769).
+    """
+    with _INSTALL_LOCK:
+        match = _supported_interface()
+    return None if match is None else (match[0].glm_module, match[0].draft_load_rename)
+
+
 def draft_load_rename() -> tuple[str, str] | None:
     """The recognized GLM MTP draft's in-code checkpoint rename, if it has one.
 
