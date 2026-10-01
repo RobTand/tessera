@@ -111,6 +111,14 @@ def test_mode_off_installs_nothing(monkeypatch):
     assert gp.install_sp_mhc(_config()) is False
 
 
+def test_sp_mode_defaults_off(monkeypatch):
+    # SP is not bit-identical to stock (the mHC kernels are not token-count
+    # invariant), so a serve that does not ask for it runs the stock forward.
+    monkeypatch.delenv("TESSERA_GLM53_SP_MHC", raising=False)
+    assert gp.sp_mode() == "off"
+    assert gp.install_sp_mhc(_config()) is False
+
+
 # ------------------------------------------------------------------- source identity
 
 
