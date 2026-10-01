@@ -35,9 +35,10 @@ unweighted case of the down projection, and the same kernel serves it: one
 launch per role of a merged Linear (``routed_fused_kernel<FP8, 2, DENSE>``),
 row ``m`` of ``x`` as route ``m``, the role's rows written into their column
 slice of the module's output, and -- when ``ceil(M / 64) * rows / 128`` items
-would leave SMs idle, which is every decode shape -- the K range split ``S``
-ways into an fp32 workspace that a fixed-order reduce sums before the one
-epilogue (:func:`dense_k_split` states the model that picks ``S``).  It is
+would leave SMs idle, in the only or the last wave, which is every decode
+shape -- the K range split ``S`` ways into an fp32 workspace that a
+fixed-order reduce sums before the one epilogue (:func:`dense_k_split` states
+the model that picks ``S``).  It is
 its own launch identity, ``tessera::fused_window_dense`` (the functional
 custom op in ``serving.native_window``) with the decoders
 ``native_fused_window_dense`` (E4M3, epilogue) and
@@ -76,6 +77,7 @@ __all__ = [
     "ENV_TOGGLE",
     "ENV_E4M3_MMA",
     "ENV_TOGGLE_DENSE",
+    "ENV_DENSE_MODULE",
     "ENV_WIDE",
     "DENSE_RATE_MAX",
     "LIBRARIES",
@@ -91,8 +93,13 @@ __all__ = [
     "compose_table16",
     "compose_table8",
     "dense_forward",
+    "dense_forward_roles",
     "dense_k_split",
+    "dense_k_split_bandwidth",
+    "dense_k_split_makespan",
+    "dense_module_launch_enabled",
     "dense_rates",
+    "dense_split_max",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
     "fused_routed_window_supported",
@@ -115,6 +122,19 @@ ENV_TOGGLE = "TESSERA_ROUTED_FUSED"
 #: toggle so the two identities can be measured against their predecessors
 #: independently.
 ENV_TOGGLE_DENSE = "TESSERA_DENSE_FUSED"
+#: ``TESSERA_DENSE_MODULE_LAUNCH=1`` launches an E4M3 module's roles together
+#: (:func:`dense_forward_roles`: one launch, a K split reduced in the kernel)
+#: and prices every dense K split with :func:`dense_k_split_makespan`.  Unset
+#: or ``0`` -- the default -- keeps one launch per role and
+#: :func:`dense_k_split_bandwidth` on both families, the dense identity as it
+#: ran before tessera#778, until that PR's decode measurement clears the
+#: other.  The two models pick different splits at decode (M <= 192 on the
+#: GLM-5.3 MLP shapes) and a different split is a different K order, so the two
+#: settings give different bits there; at a split they share, the module
+#: launch is bitwise the per-role one.  Read per call by
+#: :func:`dense_k_split` and the module op, so a captured forward records it
+#: with its shapes.
+ENV_DENSE_MODULE = "TESSERA_DENSE_MODULE_LAUNCH"
 #: The three JIT module names.  Literals: the contract's native-extension
 #: scanner reads the ``load(name=...)`` sites statically.
 MODULE_NAME_VALUE = "tessera_routed_fused_value"
@@ -162,6 +182,24 @@ BK = 32
 #: whole 512-row tiles, so the partial block's pad rows read words the repack
 #: wrote (zeros) and are never stored.
 DENSE_ROW_QUANTUM = 4
+#: The dense launch's fixed cost per item, as the wire bytes one SM streams in
+#: that time at its share of the read rate (:func:`dense_k_split`): the
+#: item's claim (one atomic), its first K chunk's latency and its epilogue.
+#: Measured on GB10: at 32 items of a 4096 x 4096 role, forced splits of equal
+#: share (S = 3, 6, 12: two, four and eight waves) cost c = 1.5 us more per
+#: wave, which at 232.2 GB/s / 48 SMs is 7.3 KB (PENDING the sparklina
+#: receipt).
+DENSE_ITEM_FIXED_BYTES = 7300
+#: The kernel's A/B stages (``STAGES`` in the source; the library publishes it).
+#: The producers run at most this many K chunks ahead of the consumers, so an
+#: item of at least ``STAGES + 1`` chunks guarantees that the descriptor and
+#: row-scale slot two items back is free before it is rewritten; a split the
+#: kernel reduces itself may not cut an item shorter (:func:`dense_split_max`).
+#: The one-role launch keeps its earlier range, up to ``K / 32`` (tessera#805).
+STAGES = 2
+#: The most roles one dense launch takes (``MAX_ROLES`` in the source): a
+#: module with more is launched in groups of at most this many.
+MAX_ROLES = 8
 #: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
 #: every rate of the window grammar up to 8, so a stack's one- or two-rate run
 #: table (the two rates bracketing its root) is read as the wire lays it out.
@@ -457,6 +495,15 @@ def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
+def dense_module_launch_enabled() -> bool:
+    """:data:`ENV_DENSE_MODULE` as set now: ``1``, or ``0`` / unset (the
+    default); any other value is refused by name rather than read as either."""
+    want = os.environ.get(ENV_DENSE_MODULE, "0")
+    if want not in ("0", "1"):
+        raise GrammarError(f"{ENV_DENSE_MODULE}={want!r}: expected 0 or 1")
+    return want == "1"
+
+
 def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> list:
     """A library's compile flags.  ``fp4`` is the E2M1 family's library
     (``tessera.routed_fused_e2m1``): its define, and the architecture-specific
@@ -575,7 +622,7 @@ def _ext(library: str):
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
-                       ("WORD_STAGES_MIN", WORD_STAGES_MIN),
+                       ("WORD_STAGES_MIN", WORD_STAGES_MIN), ("STAGES", STAGES), ("MAX_ROLES", MAX_ROLES),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
                        ("BM_WIDE", BM_WIDE), ("A_REGION_BYTES_WIDE", a_region_bytes(BM_WIDE, mma8=mma8)),
@@ -1377,32 +1424,118 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
         tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
-def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
-    """How many ways to split K for one role at ``m`` rows: the bandwidth model.
+def dense_split_max(cols: int) -> int:
+    """The largest K split a launch that reduces the split in the kernel
+    (:func:`dense_forward_roles`, ``fixup``) takes at ``cols`` columns: every
+    split keeps at least ``STAGES + 1`` of the ``cols / 32`` K chunks
+    (:data:`STAGES`), and the library refuses a larger one there.  It is also
+    :func:`dense_k_split_makespan`'s range.  The one-role launch, whose split
+    a reduce launch sums afterwards, takes up to ``K / 32`` as it did before
+    tessera#778."""
+    return max(1, (int(cols) // BK) // (STAGES + 1))
 
-    An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
-    ceil(m / 64) * ceil(rows / 128)`` (the last block partial on an N-tail).  When ``items0 >= sms`` every SM has work and
-    the answer is 1 (prefill is untouched).  Below that, each split adds items
-    and costs an fp32 partial written and read back; the time model is the
-    wire bytes served by ``min(S * items0, sms)`` SMs at the per-SM share of
-    the bandwidth, plus the partial traffic at full bandwidth:
+
+def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None,
+                  blocks: "int | None" = None) -> int:
+    """The K split a dense launch runs at ``m`` rows: :func:`dense_k_split_makespan`
+    under ``TESSERA_DENSE_MODULE_LAUNCH=1``, :func:`dense_k_split_bandwidth`
+    otherwise (:data:`ENV_DENSE_MODULE`).  Every launch asks this name, so a
+    test or bench that forces a split replaces it here."""
+    model = dense_k_split_makespan if dense_module_launch_enabled() else dense_k_split_bandwidth
+    return model(m, rows, cols, sms, tile_words=tile_words, blocks=blocks)
+
+
+def dense_k_split_bandwidth(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None,
+                            blocks: "int | None" = None) -> int:
+    """How many ways to split K for one launch at ``m`` rows: the bandwidth
+    model, the default (:data:`ENV_DENSE_MODULE`).
+
+    An item is 64 rows of ``x`` by 128 rows of a role, so ``items0 =
+    ceil(m / 64) * blocks`` with ``blocks = ceil(rows / 128)`` for one role
+    (the last block partial on an N-tail; a launch of several roles passes
+    their summed rows and blocks).  When ``items0 >= sms`` every SM has work
+    and the answer is 1 (prefill is untouched).  Below that, each split adds
+    items and costs an fp32 partial written and read back; the time model is
+    the wire bytes served by ``min(S * items0, sms)`` SMs at the per-SM share
+    of the bandwidth, plus the partial traffic at full bandwidth:
 
         t(S) = wire * sms / min(S * items0, sms) + 2 * S * m * rows * 4
 
-    with ``wire = rows * tile_words * 4 / 512`` -- the role's wire bytes, from
-    its words per 512-row tile (``rows * cols / 2`` at rate 4, the default
-    when ``tile_words`` is not given).  The minimiser over the integers
-    ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
-    SM count and the byte counts, nothing else.
+    with ``wire = rows * tile_words * 4 / 512`` -- the wire bytes, from the
+    words per 512-row tile (``rows * cols / 2`` at rate 4, the default when
+    ``tile_words`` is not given).  The minimiser over the integers ``1 ..
+    min(K / 32, ceil(sms / items0))`` is returned, the smaller ``S`` on a
+    tie; the constants are the SM count and the byte counts, nothing else.
+
+    This is the model and the range the dense identity ran before
+    tessera#778, unchanged, so a default launch takes the split it took then.
+    The range is not cut at :func:`dense_split_max`: the one-role launch
+    reduces a split after the kernel and takes ``S`` up to ``K / 32`` as it
+    always did.  Where this minimiser lies above ``K / 32 / (STAGES + 1)`` --
+    on GB10's 48 SMs, a role of at most 128 rows on K = 4096 at M <= 6 (S = 48)
+    and K = 128 at M <= 3 (S = 2) -- an item is two K chunks or fewer, the
+    short-item window :data:`STAGES` describes; that window is tessera#805's
+    fix, not this model's.
     """
-    items0 = -(-m // BM) * -(-rows // BN)
+    if m <= 0:
+        return 1
+    items0 = -(-m // BM) * (-(-rows // BN) if blocks is None else int(blocks))
     nk = cols // BK
-    if items0 >= sms or m <= 0:
+    if items0 >= sms:
         return 1
     wire = rows * cols // 2 if tile_words is None else rows * int(tile_words) * 4 // 512
     best_s, best_t = 1, None
     for s in range(1, min(nk, -(-sms // items0)) + 1):
         t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
+        if best_t is None or t < best_t:
+            best_s, best_t = s, t
+    return best_s
+
+
+def dense_k_split_makespan(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None,
+                           blocks: "int | None" = None) -> int:
+    """How many ways to split K for one launch at ``m`` rows: the makespan
+    model, under ``TESSERA_DENSE_MODULE_LAUNCH=1`` (:data:`ENV_DENSE_MODULE`).
+
+    An item is 64 rows of ``x`` by 128 rows of a role, so ``items0 =
+    ceil(m / 64) * blocks``, with ``blocks = ceil(rows / 128)`` for one role
+    (the last block partial on an N-tail).  A launch of several roles
+    (:func:`dense_forward_roles`) passes ``rows`` summed over them and
+    ``blocks`` summed over their own ``ceil(rows_r / 128)``.
+    A split ``S`` makes ``S * items0`` items of ``ceil(K / 32 / S)`` K chunks at
+    most (the kernel's ``kc0 = ks * nk / S``), and the persistent grid hands
+    them to ``sms`` SMs, so the launch ends when an SM that got
+    ``ceil(S * items0 / sms)`` items finishes them.  Each item streams its
+    chunks' wire bytes at one SM's share of the read rate and pays
+    :data:`DENSE_ITEM_FIXED_BYTES` besides; each split adds an fp32 partial
+    written and read back at the full rate:
+
+        t(S) = ceil(S * items0 / sms) * sms * (item * ceil(nk / S) / nk + c)
+               + [S > 1] * 2 * S * m * rows * 4
+
+    with ``item = 128 * tile_words * 4 / 512``, the wire bytes of one 128-row
+    block over all of K (``tile_words`` the role's words per 512-row tile;
+    ``64 * cols``, rate 4, when not given), ``nk = K / 32`` and ``c =``
+    :data:`DENSE_ITEM_FIXED_BYTES`.  The integer minimiser over ``1 ..
+    min(dense_split_max(K), sms)`` is returned, the smaller ``S`` on a tie.  The wave count is
+    the point: a split that leaves the last wave partly idle costs a whole
+    wave (tessera#750: at 32 items, ``S = 2`` is 64 items, two waves of half
+    an item, no faster than ``S = 1``; ``S = 3`` is two full waves of a
+    third).  The partial term prices the workspace at the read rate even
+    where it stays in L2, so it errs toward fewer splits.
+    """
+    if m <= 0:
+        return 1
+    items0 = -(-m // BM) * (-(-rows // BN) if blocks is None else int(blocks))
+    nk = cols // BK
+    words = 64 * cols if tile_words is None else int(tile_words)
+    item = BN * words * 4 / 512
+    best_s, best_t = 1, None
+    for s in range(1, max(1, min(dense_split_max(cols), sms)) + 1):
+        waves = -(-(s * items0) // sms)
+        t = waves * sms * (item * -(-nk // s) / nk + DENSE_ITEM_FIXED_BYTES)
+        if s > 1:
+            t += 2.0 * s * m * rows * 4
         if best_t is None or t < best_t:
             best_s, best_t = s, t
     return best_s
@@ -1447,3 +1580,64 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
         role.words, role.table16, role.init, role.has_init, role.wscale,
         role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms,
         int(bm))
+
+
+def dense_forward_roles(roles: "list[FusedDenseWindowRole]", x: torch.Tensor, a_scale: torch.Tensor,
+                        out: torch.Tensor, *, fixup: bool = True) -> None:
+    """A merged Linear's roles into ``out`` (``[M, sum(rows)]``, unit column
+    stride), each role at its column offset in order: one launch per
+    :data:`MAX_ROLES` roles (tessera#750 WP2).  The E4M3 libraries only.
+
+    The roles share ``cols``, the run pair, ``tile_words`` and ``slot_words``
+    (a module is one rung), so their 128-row blocks form one item list and
+    :func:`dense_k_split` prices the launch over all of them.  ``fixup``
+    reduces a K split in-kernel: the last split of a tile to arrive sums the
+    ``S`` partials in split order and applies the epilogue, bitwise the
+    reduce kernel's result.  The fixup stores four bytes at a time, so an
+    output view needs only an even row stride; ``fixup=False`` takes the
+    reduce kernel (uint2 stores: a row stride of 2 mod 4 runs unsplit) and one
+    role per call (the oracle).  The work counter and the per-tile arrival
+    counts are one int32 buffer zeroed in-stream here, and the workspace is
+    the caching allocator's, so a captured forward replays.
+    """
+    if not roles:
+        return
+    lib = _ext(roles[0].library)
+    first = roles[0]
+    for role in roles:
+        if not role.fp8 or role.library != first.library:
+            raise ValueError("dense_forward_roles takes roles of one E4M3 library")
+        if (role.cols, role.tile_words, role.slot_words) != (first.cols, first.tile_words, first.slot_words):
+            raise ValueError("the roles of one launch share cols, tile_words and slot_words (one rung)")
+    m = int(x.shape[0])
+    if m == 0:
+        return
+    index = x.device.index if x.device.index is not None else torch.cuda.current_device()
+    sms = _sm_count(index)
+    offset = 0
+    for g0 in range(0, len(roles), MAX_ROLES):
+        group = roles[g0:g0 + MAX_ROLES]
+        rows = sum(r.rows for r in group)
+        blocks = sum(-(-r.rows // BN) for r in group)
+        s = dense_k_split(m, rows, first.cols, sms, tile_words=first.tile_words, blocks=blocks)
+        if fixup:
+            # The in-kernel fixup's range (the library refuses past it).  The
+            # makespan model never leaves it; the bandwidth model can, for a
+            # caller that takes this launch under the default setting.
+            s = min(s, dense_split_max(first.cols))
+        if not fixup and len(group) > 1:
+            raise ValueError("a split reduced after the launch takes one role per call")
+        if s > 1 and not fixup and out.stride(0) % 4 != 0:
+            s = 1                     # the reduce kernel stores uint2 at 4-aligned columns
+        bm = superblock_rows(first.library, 2, m, dense=True) if s == 1 else BM
+        nsb = -(-m // bm)
+        counter = torch.zeros(1 + (blocks * nsb if s > 1 and fixup else 0), dtype=torch.int32, device=x.device)
+        partial = (torch.empty((s, m, rows), dtype=torch.float32, device=x.device) if s > 1
+                   else x.new_empty(0, dtype=torch.float32))
+        lib.dense_forward_roles(
+            True, x, a_scale,
+            [r.words for r in group], [r.table16 for r in group], [r.init for r in group],
+            [r.has_init for r in group], [r.wscale for r in group], [r.runs for r in group],
+            [r.bdesc for r in group], int(first.tile_words), int(first.slot_words), counter, int(s), partial,
+            out.narrow(1, offset, rows), sms, int(bm), bool(fixup))
+        offset += rows

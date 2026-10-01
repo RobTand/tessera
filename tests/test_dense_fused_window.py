@@ -9,7 +9,7 @@ the grouped and fused routed tests use (``test_window_gemm_grouped.Expert``)
 and against the Triton window GEMM the module keeps as its other lane:
 
 * parity for both window families at M = 1, 3, 64, 65, 200 and 1536, and at
-  the first M the bandwidth model runs in one pass, so both the split-K regime
+  the first M the split model runs in one pass, so both the split-K regime
   (S > 1) and the one-pass regime (S = 1) are measured;
 * a TP row cut's start state (``has_init``);
 * the real GLM dense role shapes (down 4096x6144, gate/up 12288x4096 and
@@ -131,7 +131,8 @@ def _bound(expert, family, xq, a, s):
 
 
 def _split(role, m):
-    """The K split the kernel runs at ``m`` rows (the bandwidth model)."""
+    """The K split the kernel runs at ``m`` rows (``dense_k_split``: the model
+    ``TESSERA_DENSE_MODULE_LAUNCH`` selects, the bandwidth model by default)."""
     sms = rf._sm_count(torch.cuda.current_device())
     return rf.dense_k_split(m, role.rows, role.cols, sms, tile_words=role.tile_words)
 
@@ -187,14 +188,19 @@ def test_dense_forward_matches_the_definition_and_the_triton_lane(family, m):
 
 @cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
-def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
-    """``dense_k_split`` splits K when fewer items than SMs exist (decode) and
-    runs one pass once every SM has an item (prefill); parity holds in both,
-    at the first one-pass M this device reaches rather than a fixed M."""
+@pytest.mark.parametrize("module_launch", ["0", "1"])
+def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family, module_launch, monkeypatch):
+    """``dense_k_split`` splits K when the items leave SMs idle (decode) and
+    runs one pass once they fill whole waves (prefill); parity holds in both,
+    at the first one-pass M this device reaches rather than a fixed M, under
+    either model (``TESSERA_DENSE_MODULE_LAUNCH``): the bandwidth model's range
+    runs to ``K / 32``, the makespan model's to ``dense_split_max``."""
+    monkeypatch.setenv(rf.ENV_DENSE_MODULE, module_launch)
     sms = rf._sm_count(torch.cuda.current_device())
     n_blocks = ROWS // rf.BN
     split = rf.dense_k_split(1, ROWS, COLS, sms)
-    assert 1 < split <= COLS // rf.BK, (split, sms)
+    most = rf.dense_split_max(COLS) if module_launch == "1" else COLS // rf.BK
+    assert 1 < split <= most, (split, sms, module_launch)
     one_pass_m = rf.BM * -(-sms // n_blocks)
     assert -(-one_pass_m // rf.BM) * n_blocks >= sms
     assert rf.dense_k_split(one_pass_m, ROWS, COLS, sms) == 1
@@ -480,10 +486,11 @@ def _served(module, family, xq, x, a):
 
 def _module_bound(family, ref_w, xq, x, a):
     """``(r, bound)`` for a served module over the fp64 weight ``ref_w``: each
-    role's rows run as one dense launch whose K split is at most
-    ``cols // BK`` (``dense_k_split``'s range), so ``S = cols // BK`` bounds
-    every role on the fused lane, and the Triton lane's one pass (``S = 1``)
-    with it."""
+    role's rows run with a K split of at most ``cols // BK`` (the default
+    bandwidth model's range; the makespan model's, ``dense_split_max(cols)``,
+    is inside it), and the bound grows with ``S``, so that split bounds every
+    role on the fused lane under either setting, and the Triton lane's one
+    pass (``S = 1``) with it."""
     cols = int(ref_w.shape[1])
     a64 = _a64(family, xq, a) if family == "e4m3" else x.double()
     return fb.dense_bound(family, a64, ref_w, cols, cols // rf.BK)
@@ -667,39 +674,181 @@ def test_the_opt_out_is_read_before_any_role_fact(monkeypatch):
     assert rf.fused_dense_window_enabled() is True
 
 
-def test_the_k_split_model_is_the_bandwidth_model():
-    """Pure arithmetic: one pass once every SM has an item; otherwise the
+def test_the_default_k_split_is_the_bandwidth_model(monkeypatch):
+    """Pure arithmetic: by default (``TESSERA_DENSE_MODULE_LAUNCH`` unset or
+    ``0``) ``dense_k_split`` is the bandwidth model the dense identity ran
+    before tessera#778 -- one pass once every SM has an item; otherwise the
     integer minimiser of ``wire * sms / min(S * items0, sms) + 2 S M N 4``
-    over ``1 .. min(K / 32, ceil(sms / items0))``, restated here."""
+    over ``1 .. min(K / 32, ceil(sms / items0))``, restated here -- with no
+    ``dense_split_max`` cut, so its split is the earlier one at every M,
+    including where that leaves an item two K chunks or fewer (tessera#805)."""
+    monkeypatch.delenv(rf.ENV_DENSE_MODULE, raising=False)
     sms = 48
 
-    def restated(m, rows, cols):
-        items0 = -(-m // rf.BM) * (rows // rf.BN)
+    def restated(m, rows, cols, words=None, blocks=None):
+        items0 = -(-m // rf.BM) * (-(-rows // rf.BN) if blocks is None else blocks)
         if m <= 0 or items0 >= sms:
             return 1
-        wire = rows * cols // 2
+        wire = rows * cols // 2 if words is None else rows * words * 4 // 512
         return min(range(1, min(cols // rf.BK, -(-sms // items0)) + 1),
-                   key=lambda s: wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4)
+                   key=lambda s: (wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4, s))
 
-    assert rf.dense_k_split(0, 256, 4096, sms) == 1
-    assert rf.dense_k_split(8192, 256, 4096, sms) == 1
-    assert rf.dense_k_split(1, 6144, 4096, sms) == 1          # 48 blocks: every SM busy
-    for m, rows, cols in ((1, 256, 4096), (1, 4096, 2048), (8, 4096, 4096), (64, 2048, 4096),
-                          (200, 4096, 6144), (1, 12288, 4096), (3, 128, 128)):
-        got = rf.dense_k_split(m, rows, cols, sms)
-        assert got == restated(m, rows, cols), (m, rows, cols, got)
-        assert 1 <= got <= cols // rf.BK
-        # the wire is the role's own words per tile: rate 4 restates the default
-        assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
+    for model in (rf.dense_k_split, rf.dense_k_split_bandwidth):
+        assert model(0, 256, 4096, sms) == 1
+        assert model(8192, 256, 4096, sms) == 1
+        assert model(1, 6144, 4096, sms) == 1          # 48 blocks: every SM busy
+    # The GLM-5.3 dense roles per TP2 rank (the four MLP shapes, the KDA
+    # input module's roles, f_b) and the shapes the earlier test restated.
+    shapes = ((256, 4096), (4096, 2048), (4096, 4096), (2048, 4096), (4096, 6144), (12288, 4096),
+              (128, 128), (6144, 4096), (1024, 4096), (4096, 1024), (32, 4096), (64, 4096), (4096, 128))
+    for rows, cols in shapes:
+        for m in (*range(1, 257), 512, 2048, 2049, 8192):
+            got = rf.dense_k_split(m, rows, cols, sms)
+            assert got == rf.dense_k_split_bandwidth(m, rows, cols, sms) == restated(m, rows, cols), (m, rows, cols)
+            assert 1 <= got <= cols // rf.BK
+            # the wire is the role's own words per tile: rate 4 restates the default
+            assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
+    # No dense_split_max cut: the earlier answers past K / 32 / (STAGES + 1).
+    assert rf.dense_k_split(1, 32, 4096, sms) == 48 > rf.dense_split_max(4096)
+    assert rf.dense_k_split(6, 64, 4096, sms) == 48
+    assert rf.dense_k_split(1, 4096, 128, sms) == 2 > rf.dense_split_max(128)
+    # The MLP shapes' largest decode splits, inside dense_split_max.
+    assert [max(rf.dense_k_split(m, r, c, sms) for m in range(1, 257))
+            for r, c in ((6144, 4096), (4096, 6144), (1024, 4096), (4096, 1024))] == [1, 2, 6, 2]
     assert rf.dense_k_split(1, 256, 4096, sms) > 1
-    # the wire's bytes move the optimum where the split is not capped by
-    # ceil(sms / items0): at M = 32 x 256 x 4096 (2 items, cap 24) rate 1
-    # (16 words per column per tile), rate 4 and rate 8 pick three splits
     light = rf.dense_k_split(32, 256, 4096, sms, tile_words=16 * 4096)
     heavy = rf.dense_k_split(32, 256, 4096, sms, tile_words=128 * 4096)
     assert light < rf.dense_k_split(32, 256, 4096, sms) < heavy, (light, heavy)
-    # More rows means more items and never a larger split at the same M.
     assert rf.dense_k_split(1, 2048, 4096, sms) <= rf.dense_k_split(1, 256, 4096, sms)
+    # Several roles priced as one item list (``blocks=``), for a caller of
+    # ``dense_forward_roles`` under the default setting.
+    kda_rows, kda_blocks = 3 * 4096 + 32 + 64 + 64, 3 * 32 + 3
+    for m in (1, 4, 16, 64, 512):
+        got = rf.dense_k_split(m, kda_rows, 4096, sms, blocks=kda_blocks)
+        assert got == restated(m, kda_rows, 4096, blocks=kda_blocks), (m, got)
+
+
+def test_the_module_launch_setting_selects_the_model_and_is_read_per_call(monkeypatch):
+    """``TESSERA_DENSE_MODULE_LAUNCH``: unset and ``0`` are the bandwidth
+    model, ``1`` the makespan model, read on every call; any other value is
+    refused by name."""
+    sms = 48
+    cases = [(m, rows, cols) for m in (1, 2, 6, 31, 64, 128, 192, 512)
+             for rows, cols in ((4096, 6144), (1024, 4096), (4096, 1024), (4096, 4096))]
+    assert any(rf.dense_k_split_bandwidth(*c, sms) != rf.dense_k_split_makespan(*c, sms) for c in cases)
+    for value, model in ((None, rf.dense_k_split_bandwidth), ("0", rf.dense_k_split_bandwidth),
+                         ("1", rf.dense_k_split_makespan)):
+        if value is None:
+            monkeypatch.delenv(rf.ENV_DENSE_MODULE, raising=False)
+        else:
+            monkeypatch.setenv(rf.ENV_DENSE_MODULE, value)
+        assert rf.dense_module_launch_enabled() is (value == "1")
+        for m, rows, cols in cases:
+            assert rf.dense_k_split(m, rows, cols, sms) == model(m, rows, cols, sms), (value, m, rows, cols)
+    for bad in ("2", "yes", "true", ""):
+        monkeypatch.setenv(rf.ENV_DENSE_MODULE, bad)
+        with pytest.raises(GrammarError, match="TESSERA_DENSE_MODULE_LAUNCH"):
+            rf.dense_k_split(1, 4096, 4096, sms)
+
+
+def test_the_module_op_launches_per_role_unless_the_module_launch_is_set(monkeypatch):
+    """``tessera::fused_window_dense`` on the E4M3 family: one
+    ``dense_forward`` per role by default, as before tessera#778, and one
+    ``dense_forward_roles`` for the module under
+    ``TESSERA_DENSE_MODULE_LAUNCH=1``.  The value family is per role under
+    either.  The launches are replaced by recorders, so this runs on CPU."""
+    from tessera.serving import native_window as nw
+
+    calls = []
+    monkeypatch.setattr(rf, "dense_forward", lambda role, x, a, out, counter, **kw: calls.append(("role", role.rows)))
+    monkeypatch.setattr(rf, "dense_forward_roles",
+                        lambda roles, x, a, out, **kw: calls.append(("module", tuple(r.rows for r in roles))))
+    rows, cols = [256, 32, 64], 256
+    i32 = lambda *shape: torch.zeros(*shape, dtype=torch.int32)
+    lists = dict(words=[i32(1, 8) for _ in rows], tables=[torch.zeros(1, 4, dtype=torch.int16) for _ in rows],
+                 inits=[i32(1, cols) for _ in rows], has_inits=[i32(1) for _ in rows],
+                 wscales=[torch.ones(1, r) for r in rows], runs=[i32(1, 8) for _ in rows],
+                 bdescs=[i32(1, cols // rf.BK, rf.BDESC_INTS) for _ in rows])
+    x = torch.zeros(3, cols, dtype=torch.float8_e4m3fn)
+    a = torch.ones(3)
+    for family_e4m3, value, want in ((True, None, [("role", 256), ("role", 32), ("role", 64)]),
+                                     (True, "0", [("role", 256), ("role", 32), ("role", 64)]),
+                                     (True, "1", [("module", (256, 32, 64))]),
+                                     (False, "1", [("role", 256), ("role", 32), ("role", 64)])):
+        if value is None:
+            monkeypatch.delenv(rf.ENV_DENSE_MODULE, raising=False)
+        else:
+            monkeypatch.setenv(rf.ENV_DENSE_MODULE, value)
+        calls.clear()
+        out = nw._fused_window_dense(x if family_e4m3 else x.to(torch.bfloat16), a if family_e4m3 else None,
+                                     role_rows=rows, tile_words=[64] * 3, slot_words=[8] * 3, cols=cols,
+                                     family_e4m3=family_e4m3, folded=not family_e4m3, **lists)
+        assert out.shape == (3, sum(rows))
+        assert calls == want, (family_e4m3, value, calls)
+
+
+def test_the_k_split_model_is_the_makespan_model():
+    """Pure arithmetic: the integer minimiser, smaller ``S`` on a tie, of
+    ``ceil(S items0 / sms) sms (item ceil(nk / S) / nk + c) + [S > 1] 2 S M N 4``
+    over ``1 .. min(nk / (STAGES + 1), sms)``, restated here (``item`` the wire
+    bytes of one 128-row block over all of K, ``c`` the measured per-item
+    cost, ``items0`` over the launch's blocks: one role's, or the sum of a
+    module's roles' when they share a launch)."""
+    sms = 48
+    assert rf.STAGES == 2
+    for cols, most in ((4096, 42), (1536, 16), (512, 5), (256, 2), (128, 1), (6144, 64)):
+        assert rf.dense_split_max(cols) == most
+
+    def restated(m, rows, cols, words=None, blocks=None):
+        if m <= 0:
+            return 1
+        items0 = -(-m // rf.BM) * (-(-rows // rf.BN) if blocks is None else blocks)
+        nk = cols // rf.BK
+        item = rf.BN * (64 * cols if words is None else words) * 4 / 512
+
+        def t(s):
+            waves = -(-(s * items0) // sms)
+            return (waves * sms * (item * -(-nk // s) / nk + rf.DENSE_ITEM_FIXED_BYTES)
+                    + (2.0 * s * m * rows * 4 if s > 1 else 0.0))
+
+        return min(range(1, max(1, min(nk // (rf.STAGES + 1), sms)) + 1), key=lambda s: (t(s), s))
+
+    assert rf.dense_k_split_makespan(0, 256, 4096, sms) == 1
+    assert rf.dense_k_split_makespan(8192, 256, 4096, sms) == 1
+    assert rf.dense_k_split_makespan(1, 6144, 4096, sms) == 1          # 48 items: one full wave
+    for m, rows, cols in ((1, 256, 4096), (1, 4096, 2048), (8, 4096, 4096), (64, 2048, 4096),
+                          (200, 4096, 6144), (1, 12288, 4096), (3, 128, 128), (1, 8192, 1536),
+                          (1, 512, 4096), (1, 32, 4096), (1, 4096, 128)):
+        got = rf.dense_k_split_makespan(m, rows, cols, sms)
+        assert got == restated(m, rows, cols), (m, rows, cols, got)
+        assert 1 <= got <= rf.dense_split_max(cols)
+        # the wire is the role's own words per tile: rate 4 restates the default
+        assert rf.dense_k_split_makespan(m, rows, cols, sms, tile_words=64 * cols) == got
+    for words in (16 * 4096, 128 * 4096):
+        assert rf.dense_k_split_makespan(32, 256, 4096, sms, tile_words=words) == restated(32, 256, 4096, words)
+    assert rf.dense_k_split_makespan(1, 256, 4096, sms) > 1
+    # The wave count decides: 32 items (a 4096-row role at decode) split
+    # three ways fill two waves exactly, where two ways leave the second wave
+    # a third full and cost as much as one pass (tessera#750).
+    assert rf.dense_k_split_makespan(1, 4096, 4096, sms) == 3
+    # 64 items (q_b, 8192 rows) are two waves at S = 1 for 1.33 waves of work.
+    assert rf.dense_k_split_makespan(1, 8192, 1536, sms) == 3
+    # the wire's bytes move the optimum: at M = 32 x 256 x 4096 (2 items)
+    # rate 1 (16 words per column per tile), rate 4 and rate 8 pick three
+    # splits, heavier wire for more
+    light = rf.dense_k_split_makespan(32, 256, 4096, sms, tile_words=16 * 4096)
+    heavy = rf.dense_k_split_makespan(32, 256, 4096, sms, tile_words=128 * 4096)
+    assert light < rf.dense_k_split_makespan(32, 256, 4096, sms) < heavy, (light, heavy)
+    # More rows means more items and never a larger split at the same M.
+    assert rf.dense_k_split_makespan(1, 2048, 4096, sms) <= rf.dense_k_split_makespan(1, 256, 4096, sms)
+    # A module's roles in one launch: their blocks are one item list.  The
+    # GLM KDA input module at TP2 (q, k, v 4096 rows each, b 32, f_a 64,
+    # g_a 64: 99 blocks) splits four ways at decode.
+    kda_rows, kda_blocks = 3 * 4096 + 32 + 64 + 64, 3 * 32 + 3
+    for m in (1, 4, 16, 64, 512):
+        got = rf.dense_k_split_makespan(m, kda_rows, 4096, sms, blocks=kda_blocks)
+        assert got == restated(m, kda_rows, 4096, blocks=kda_blocks), (m, got)
+    assert rf.dense_k_split_makespan(1, kda_rows, 4096, sms, blocks=kda_blocks) == 4
 
 
 # --- the launch identity is published -------------------------------------------
@@ -748,7 +897,7 @@ def test_dense_forward_decodes_every_rate_exactly(family, q256):
     torch restatement of that arithmetic BITWISE at every (row, column) --
     which catches a wrong column map, run offset, or field position at any
     rate, in either run, with and without a start state.  ``S`` is whatever
-    the bandwidth model picks for ``M = cols`` rows, so the split path's
+    the makespan model picks for ``M = cols`` rows, so the split path's
     partials and reduce are read too (a split adds exact zeros only)."""
     _one_hot_exact(family, q256)
 
@@ -1170,3 +1319,212 @@ def test_dense_random_mixes_inside_every_pair_decode_exactly(family, r):
             graph.replay()
             torch.cuda.synchronize()
             assert torch.equal(out, eager), (family, q256)
+
+
+# --- one launch per module, the split reduced in-kernel (tessera#750 WP2) ----------
+
+#: The E4M3 libraries: their dense launch takes a module's roles and reduces a
+#: K split in-kernel (``dense_forward_roles``).  The value library keeps one
+#: launch per role and the reduce launch.
+E4M3_LIBRARY_IDS = ["e4m3", "e4m3mma"]
+#: 512 columns: 16 K chunks, so a split may be 1 .. 5 (``dense_split_max``),
+#: and S = 5 leaves items of three chunks, the fewest the pipeline allows.
+WIDE_COLS = 512
+
+
+def _force_split(monkeypatch, s):
+    """Every launch after this runs at ``s`` (``dense_k_split`` is read per call)."""
+    monkeypatch.setattr(rf, "dense_k_split", lambda *args, **kw: s)
+
+
+def _roles_out(roles, xq, a, *, fixup=True):
+    out = torch.empty(int(xq.shape[0]), sum(r.rows for r in roles), dtype=torch.bfloat16, device="cuda")
+    rf.dense_forward_roles(roles, xq, a, out, fixup=fixup)
+    return out
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("rows", [256, 160, 32, 12, 4])
+def test_the_in_kernel_fixup_is_the_reduce_kernel_bitwise(family, rows, monkeypatch):
+    """The same partials reduced two ways -- in the kernel by the last split
+    of each tile to arrive, and by ``dense_reduce_kernel`` after the launch --
+    agree BITWISE at every split the launch takes (2 .. 5, the last at three K
+    chunks per item), at one superblock (M = 1, 40, 64) and several (65, 200),
+    for whole blocks and N-tails down to the row quantum (4).  Both sum in
+    split order from 0.f, so the arrival order the fixup sees does not reach
+    the output."""
+    _expert, bundle = _role(family, rows=rows, cols=WIDE_COLS, rates=_sched(WIDE_COLS, 1088),
+                            seed=9100 + rows)
+    role = rf.prepare_dense_role(bundle)
+    assert rf.dense_split_max(WIDE_COLS) == 5
+    for m in (1, 40, 64, 65, 200):
+        _x, xq, a = _inputs(family, m, WIDE_COLS, 9200 + m)
+        for s in range(2, rf.dense_split_max(WIDE_COLS) + 1):
+            _force_split(monkeypatch, s)
+            reduced = _fused(role, xq, a)                     # one role, the reduce launch
+            fixed = _roles_out([role], xq, a)                 # the in-kernel fixup
+            assert torch.equal(fixed, reduced), (family, rows, m, s)
+            assert torch.equal(_roles_out([role], xq, a, fixup=False), reduced)
+
+
+#: Modules in miniature with role boundaries everywhere: whole blocks, N-tails
+#: (32, 64, 160 rows: the KDA input module's small roles and a tail after a
+#: whole block), two roles of the same height apart, and roles of 4 and 12
+#: rows ahead of others, so a role's first column is 4-aligned but not
+#: 32-aligned (the row quantum, ``DENSE_ROW_QUANTUM``).
+MODULE_ROWS = [256, 32, 64, 160, 256]
+MODULE_ROW_SETS = [MODULE_ROWS, [4, 256, 12, 32, 160]]
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("module_rows", MODULE_ROW_SETS, ids=["blocks-and-tails", "quantum-offsets"])
+def test_one_launch_of_a_modules_roles_is_each_role_alone_bitwise(family, module_rows, monkeypatch):
+    """One launch of five roles against each role launched alone at the same
+    split: every role's columns BITWISE equal at its column offset, at S = 1
+    (including the wide superblock at M = 200) and in the split regime.  With
+    ``test_the_in_kernel_fixup_is_the_reduce_kernel_bitwise`` this ties the
+    module launch to the one-role launch the definition-bound tests read."""
+    rates = _sched(WIDE_COLS, 832)
+    roles = [rf.prepare_dense_role(_role(family, rows=r, cols=WIDE_COLS, rates=rates, seed=9300 + i)[1])
+             for i, r in enumerate(module_rows)]
+    for m in (1, 40, 200):
+        _x, xq, a = _inputs(family, m, WIDE_COLS, 9400 + m)
+        for s in (1, 2, rf.dense_split_max(WIDE_COLS)):
+            _force_split(monkeypatch, s)
+            together = _roles_out(roles, xq, a)
+            offset = 0
+            for role in roles:
+                alone = _roles_out([role], xq, a)
+                assert torch.equal(together[:, offset:offset + role.rows], alone), (family, m, s, role.rows)
+                offset += role.rows
+    # Past MAX_ROLES the module is launched in groups; the answer does not move.
+    many = [rf.prepare_dense_role(_role(family, rows=32, cols=WIDE_COLS, rates=rates, seed=9500 + i)[1])
+            for i in range(rf.MAX_ROLES + 1)]
+    _x, xq, a = _inputs(family, 1, WIDE_COLS, 9600)
+    _force_split(monkeypatch, 3)
+    together = _roles_out(many, xq, a)
+    for i, role in enumerate(many):
+        assert torch.equal(together[:, 32 * i:32 * (i + 1)], _roles_out([role], xq, a))
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+def test_the_fixup_serves_a_row_stride_that_is_only_even(family, monkeypatch):
+    """The fixup stores through the epilogue's four-byte ``store_seg``, which
+    needs only an even row stride, and reads the fp32 workspace, which is
+    contiguous.  So unlike the reduce launch (uint2 stores) it keeps its split
+    for a ``[M, rows]`` view whose row stride is 2 mod 4, gives the answer of
+    a contiguous output, and leaves the columns past the view untouched."""
+    rows = 160
+    role = rf.prepare_dense_role(_role(family, rows=rows, cols=WIDE_COLS, rates=_sched(WIDE_COLS, 1088),
+                                       seed=9650)[1])
+    for m in (1, 40):
+        _x, xq, a = _inputs(family, m, WIDE_COLS, 9660 + m)
+        _force_split(monkeypatch, 3)
+        wide = torch.zeros(m, rows + 2, dtype=torch.bfloat16, device="cuda")
+        view = wide[:, :rows]
+        assert view.stride(0) % 4 == 2
+        rf.dense_forward_roles([role], xq, a, view)
+        assert torch.equal(view, _roles_out([role], xq, a)), (family, m)
+        assert torch.equal(wide[:, rows:], torch.zeros_like(wide[:, rows:]))
+
+
+@cuda
+@pytest.mark.parametrize("family", E4M3_LIBRARY_IDS, indirect=True)
+def test_a_module_launch_captures_and_replays_against_eager(family, monkeypatch):
+    """The work counter and the arrival counts are zeroed inside the captured
+    region and the workspace is a graph-pool allocation, so two replays equal
+    the eager module launch bitwise, and new inputs replay to the new answer."""
+    rates = _sched(WIDE_COLS, 1088)
+    roles = [rf.prepare_dense_role(_role(family, rows=r, cols=WIDE_COLS, rates=rates, seed=9700 + i)[1])
+             for i, r in enumerate(MODULE_ROWS)]
+    _force_split(monkeypatch, 3)
+    m = 40
+    _x, xq, a = _inputs(family, m, WIDE_COLS, 9800)
+    eager = _roles_out(roles, xq, a)
+    out = torch.empty_like(eager)
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            rf.dense_forward_roles(roles, xq, a, out)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        rf.dense_forward_roles(roles, xq, a, out)
+    for _ in range(2):
+        out.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(out, eager)
+    _x2, xq2, a2 = _inputs(family, m, WIDE_COLS, 9801)
+    xq.copy_(xq2)
+    a.copy_(a2)
+    graph.replay()
+    torch.cuda.synchronize()
+    assert torch.equal(out, _roles_out(roles, xq2, a2))
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_dense_forward_roles_takes_one_rung_of_one_e4m3_library(family):
+    """A launch's roles share the rung (cols, tile_words, slot_words) and the
+    library; the value family's roles take ``dense_forward``."""
+    _expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    _x, xq, a = _inputs(family, 1, COLS, 9950)
+    if family == "value":
+        with pytest.raises(ValueError, match="one E4M3 library"):
+            _roles_out([role], xq, a)
+        return
+    other = rf.prepare_dense_role(_role(family, cols=WIDE_COLS, seed=9951)[1])
+    with pytest.raises(ValueError, match="share cols"):
+        rf.dense_forward_roles([role, other], xq, a,
+                               torch.empty(1, 2 * ROWS, dtype=torch.bfloat16, device="cuda"))
+
+
+# --- a split the kernel reduces keeps every item at least STAGES + 1 chunks ----------------
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_a_split_that_leaves_an_item_fewer_than_three_chunks_is_refused_by_the_fixup_only(family, monkeypatch):
+    """The producers run at most ``STAGES`` K chunks ahead of the consumers,
+    so an item of fewer than ``STAGES + 1`` chunks could let them rewrite the
+    descriptor and row-scale slot of the item two back while it is still
+    read.  The in-kernel fixup (``dense_forward_roles``, the E4M3 libraries)
+    refuses such a split by name, and ``dense_forward_roles`` keeps a forced
+    one inside its range: past it, the launch is the one at the range's end,
+    bitwise.  The one-role entry keeps the range it has always had, up to
+    ``K / 32``, on every library (its own window is tessera#805)."""
+    expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    lib = rf._ext(role.library)
+    assert lib.STAGES == rf.STAGES and rf.dense_split_max(COLS) == 2
+    m = 1
+    sms = rf._sm_count(torch.cuda.current_device())
+    _x, xq, a = _inputs(family, m, COLS, 9900)
+    s = rf.dense_split_max(COLS) + 1
+    empty = xq.new_empty(0, dtype=torch.float32)
+    a_or_empty = a if a is not None else empty
+    # The one-role entry: every split up to K / 32, within the bound.
+    for k in (s, COLS // rf.BK):
+        _force_split(monkeypatch, k)
+        _within(_fused(role, xq, a), _bound(expert, family, xq, a, k), f"{family} one-role S={k}")
+    if family == "value":
+        return
+    blocks = -(-ROWS // rf.BN)
+    nsb = -(-m // rf.BM)
+    partial = torch.empty((s, m, ROWS), dtype=torch.float32, device="cuda")
+    out = torch.empty(m, ROWS, dtype=torch.bfloat16, device="cuda")
+    with pytest.raises(RuntimeError, match="fewer than 3"):
+        lib.dense_forward_roles(True, xq, a_or_empty, [role.words], [role.table16], [role.init],
+                                [role.has_init], [role.wscale], [role.runs], [role.bdesc],
+                                int(role.tile_words), int(role.slot_words),
+                                torch.zeros(1 + blocks * nsb, dtype=torch.int32, device="cuda"), s, partial,
+                                out, sms, rf.BM, True)
+    _force_split(monkeypatch, s)
+    past = _roles_out([role], xq, a)
+    _force_split(monkeypatch, s - 1)
+    assert torch.equal(past, _roles_out([role], xq, a)), family
