@@ -262,7 +262,7 @@ def _compilation_reason() -> str | None:
     mode = getattr(getattr(config, "compilation_config", None), "mode", None)
     name = getattr(mode, "name", None)
     if name != "NONE":
-        return (f"compilation mode is {name or mode!r}, not NONE; a traced runner forward "
+        return (f"compilation mode is {name or repr(mode)}, not NONE; a traced runner forward "
                 "would not see the routed call's hand-off")
     return None
 

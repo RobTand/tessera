@@ -7,8 +7,8 @@ add). With ``TESSERA_GLM53_FOLD_SHARED_ADD=1`` one kernel,
 ``token_sum_shared``, stores both (``tessera.serving.glm53_shared_fold``).
 
 1. **Bitwise.** On each library the routed lane builds (value, e4m3,
-   e4m3mma), at the GLM-5.3 TP2 shape (H 4096, top-k 8), for prefill
-   (T 2048) and the captured decode sizes (T 1, 2 and 4):
+   e4m3mma), at the GLM-5.3 TP2 shape (H 4096, top-k 8), for T 1 to 8
+   (decode), 512, 2048 (the served chunk) and 2049:
    - served-scale normal data;
    - ``tests/shared_fold_data.adversarial``, whose targeted columns must also
      store their known answers.
@@ -44,6 +44,9 @@ HIDDEN, TOP_K = 4096, 8
 LIBRARIES = ("value", "e4m3", "e4m3mma")
 #: Every library built from routed_fused_window.cu, the E2M1 one included.
 SASS_LIBRARIES = LIBRARIES + ("e2m1",)
+#: Decode 1-8 (the captured sizes are 1, 2 and 4), a short prefill, the
+#: served 2048-token chunk and one token past it.
+TOKENS = (1, 2, 3, 4, 5, 6, 7, 8, 512, 2048, 2049)
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 
@@ -175,7 +178,7 @@ def main():
             results.append(dict(library=lib, bitwise=False, error=f"build {type(exc).__name__}: {exc}"))
             continue
         for data in ("served_scale", "adversarial"):
-            for i, tokens in enumerate((1, 2, 4, 2048)):
+            for i, tokens in enumerate(TOKENS):
                 try:
                     results.append(check_case(lib, exts[lib], data, tokens, 100 * i + len(results)))
                 except Exception as exc:
