@@ -392,7 +392,8 @@ MLP: vLLM applies the activation between the two Linears it owns, so each
 module's roles run as one op into column slices of one output and the census
 module count is unchanged. `native_window.prepare_dense_native_module` decides
 the lane once per module (`routed_fused.fused_dense_window_supported`: rate 4
-in every column, rows a multiple of 128, columns a multiple of 32 and at
+in every column, rows a multiple of 4 -- a role's last 128-row block may be
+partial since the N-tail, tessera#750 WP2 -- columns a multiple of 32 and at
 least 128, the family's arithmetic, the attested native quantiser) and keeps
 the Triton window GEMM otherwise or under `TESSERA_DENSE_FUSED=0`; the module
 answers its own `launch_pair`, which `fp8_route` and `bf16_route` stamp
@@ -3859,7 +3860,9 @@ column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
 op like `window_gemm_dense`). The lane is decided once per module at weight
 load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
 column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
-multiple of 128, columns a multiple of 32 and at least 128, window 14, the
+multiple of 4 (`DENSE_ROW_QUANTUM`; a multiple of 128 before the N-tail,
+tessera#750 WP2, so the GLM KDA input module's 32- and 64-row roles kept the
+whole module on the Triton lane), columns a multiple of 32 and at least 128, window 14, the
 identity column order, the family's arithmetic -- `epilogue` for E4M3, `folded`
 for value -- a bundle prepared with the attested native quantiser, and a
 word-stage slot the device's shared memory holds); a refusal names its reason
