@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for the dense split launch's legality bound
+(tessera#805). The E4M3 and value dense launch now refuses a K split that
+leaves an item fewer than two K chunks, and `dense_k_split` searches only up
+to that bound (`dense_split_max`, `K / 64`). This is the bound the E2M1
+launch already enforces on the same producer/consumer protocol. Two
+consecutive one-chunk items in one CTA let the producers rewrite a
+descriptor slot before the consumers read it, which leaves a partial
+unwritten. On GB10 no GLM-5.3 role's split reaches the bound, at any M or
+rate, so no GLM-5.3 launch changes. Few-row, small-K roles take a smaller
+split; for example, 128 x 256 at M = 1 now takes 4 splits where it took 8.
+No route, cell, rung or schema changes. See §3.3 (the dense identity).
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -3876,9 +3888,16 @@ each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
 S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
-of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/32,
+of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/64,
 ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
-the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+the unsplit kernel. `K/64` is `dense_split_max`, the launch's legality bound,
+not a tuning choice: the producers write an item's descriptor slot when they
+claim it, two items ahead of the consumers at most, and the consumers read the
+slot once, at item start. So every split item keeps two K chunks
+(`floor(nk / S) >= 2`), and the library refuses a larger split by name. This
+is the E2M1 launch's bound on the same protocol (tessera#805). It binds on
+few-row, small-K roles only, and on no GLM-5.3 role on GB10. Two runs are
+bitwise equal in both regimes and a captured
 forward replays (the work counter is zeroed inside the region; the partial is
 a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not

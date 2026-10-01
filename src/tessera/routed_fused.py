@@ -92,6 +92,7 @@ __all__ = [
     "compose_table8",
     "dense_forward",
     "dense_k_split",
+    "dense_split_max",
     "dense_rates",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
@@ -1377,6 +1378,23 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
         tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
+def dense_split_max(cols: int) -> int:
+    """The largest K split the dense launch takes at ``cols`` columns.
+
+    The producers write item ``i + 2``'s descriptor into item ``i``'s slot
+    once item ``i + 1``'s last chunk has waited for the chunk two before it
+    to be consumed; the consumers read item ``i``'s slot before they release
+    its first chunk.  Items ``i`` and ``i + 1`` of three chunks or more
+    between them order the two, so every split item keeps two chunks:
+    ``floor(nk / S) >= 2``, ``nk = cols / 32``.  The split launch's epilogue
+    writes the raw partial from registers and reads no slot, so this is the
+    whole bound.  The library refuses a larger split by name (tessera#805; the
+    E2M1 launch's :func:`tessera.routed_fused_e2m1.dense_split_max` is the
+    same bound on the same protocol).
+    """
+    return int(cols) // BK // 2
+
+
 def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
     """How many ways to split K for one role at ``m`` rows: the bandwidth model.
 
@@ -1392,16 +1410,17 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     with ``wire = rows * tile_words * 4 / 512`` -- the role's wire bytes, from
     its words per 512-row tile (``rows * cols / 2`` at rate 4, the default
     when ``tile_words`` is not given).  The minimiser over the integers
-    ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
-    SM count and the byte counts, nothing else.
+    ``1 .. min(dense_split_max(K), ceil(sms / items0))`` is returned; the
+    constants are the SM count and the byte counts, nothing else.  The upper
+    end is the launch's legality bound (:func:`dense_split_max`), not a
+    tuning choice: the library refuses a larger split.
     """
     items0 = -(-m // BM) * -(-rows // BN)
-    nk = cols // BK
     if items0 >= sms or m <= 0:
         return 1
     wire = rows * cols // 2 if tile_words is None else rows * int(tile_words) * 4 // 512
     best_s, best_t = 1, None
-    for s in range(1, min(nk, -(-sms // items0)) + 1):
+    for s in range(1, min(dense_split_max(cols), -(-sms // items0)) + 1):
         t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
         if best_t is None or t < best_t:
             best_s, best_t = s, t
