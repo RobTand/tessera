@@ -38,35 +38,38 @@ fetch https://github.com/NVIDIA/cutlass.git $CUTLASS_SHA "$OUT/src/FlashKDA/cutl
 S=$OUT/src/FlashKDA
 
 "$CU/bin/nvcc" --version | tail -2
-g++ --version | head -1
 
-# vLLM af5b4857 flashkda.cmake: VLLM_GPU_FLAGS (torch common flags with the
-# half/bf16 no-conversion defines stripped, plus -DENABLE_FP8), gencode for
-# 12.0f, TORCH_TARGET_VERSION, USE_CUDA, and the FlashKDA CUDA options
-# -UPy_LIMITED_API --expt-relaxed-constexpr --expt-extended-lambda
-# --use_fast_math -O3. Host-side -g/-O2 from the build type does not reach
-# ptxas (the image's tkinfo note records ptxas options "-arch sm_120f -m 64").
+# The host side needs glibc < 2.41: CUDA 13.0's crt/math_functions.h
+# conflicts with the C23 rsqrt/rsqrtf declarations in newer glibc
+# (dl380g10 runs Ubuntu 26.04). The image built FlashKDA with
+# "GCC: (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0" (its .comment section), so the
+# compile runs in ubuntu:24.04 with that g++-13. Only the compile runs in the
+# container; fetch and comparison stay on the host.
 FLAGS=(-cubin -gencode arch=compute_120f,code=sm_120f -std=c++17
   -DNDEBUG -DENABLE_FP8 -DUSE_CUDA -UPy_LIMITED_API
   -DTORCH_TARGET_VERSION=0x020B000000000000ULL
   --expt-relaxed-constexpr --expt-extended-lambda --use_fast_math -O3
   -I"$S/csrc" -I"$S/cutlass/include" -I"$S/cutlass/examples/common"
   -I"$S/cutlass/tools/util/include")
-build() {  # build TAG EXTRA...
-  local tag=$1; shift
-  local t0=$(date +%s)
-  if "$CU/bin/nvcc" "${FLAGS[@]}" "$@" -o "$OUT/rebuilt-$tag.cubin" \
-      "$S/csrc/smxx/fwd_launch.cu" > "$OUT/nvcc-$tag.log" 2>&1; then
-    echo "build $tag ok $(( $(date +%s) - t0 ))s"
-  else
-    echo "build $tag FAILED rc=$?"; tail -20 "$OUT/nvcc-$tag.log"; return 1
-  fi
-}
-# g++ 15 is the only host C++ toolchain on dl380g10; the image used GCC 13.3.
-# Host compiler identity reaches device code only through preprocessor
-# macros, so it is recorded, and the comparison decides whether it matters.
-build gxx15 || build gxx15-unsupported -allow-unsupported-compiler
-CUBIN=$(ls -1 "$OUT"/rebuilt-*.cubin | head -1)
+GXX_VERSION=${REBUILD_GXX_VERSION:-13.3.0-6ubuntu2~24.04.1}
+CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
+printf '%q ' "$CU/bin/nvcc" -ccbin g++-13 "${FLAGS[@]}" \
+  -o "$OUT/rebuilt-gxx13.cubin" "$S/csrc/smxx/fwd_launch.cu" > "$OUT/nvcc.cmd"
+t0=$(date +%s)
+if docker run --rm --network=host --cpuset-cpus "$CPUS" \
+    -v "$TC":"$TC":ro -v "$OUT":"$OUT" -e TMPDIR="$OUT/tmp" \
+    "${REBUILD_IMAGE:?set REBUILD_IMAGE to the PB-declared ubuntu:24.04 image}" \
+    bash -c "set -e; apt-get update -qq >/dev/null; \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+        g++-13=$GXX_VERSION gcc-13=$GXX_VERSION cpp-13=$GXX_VERSION >/dev/null; \
+      g++-13 --version | head -1; dpkg-query -W g++-13 gcc-13 libstdc++-13-dev libc6-dev || true; \
+      rc=0; bash $OUT/nvcc.cmd > $OUT/nvcc-gxx13.log 2>&1 || rc=\$?; \
+      chown -R $(id -u):$(id -g) $OUT; exit \$rc"; then
+  echo "build gxx13 ok $(( $(date +%s) - t0 ))s"
+else
+  echo "build gxx13 FAILED rc=$?"; tail -20 "$OUT/nvcc-gxx13.log"; exit 1
+fi
+CUBIN=$OUT/rebuilt-gxx13.cubin
 sha256sum "$CUBIN"
 
 python3 "$HERE/cubin_cmp.py" "$IMG_CUBIN" "$CUBIN" --out "$OUT/cubin_cmp.json" \
