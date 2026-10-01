@@ -32,8 +32,12 @@ Pending: an `ab_arms.sh` row, master against this change, on the same
 artifact and groups as `8a5a23e0`. Acceptance:
 
 - R1024 routed and the R1024 dense and shared-expert groups: 1.00 in both
-  passes.
-- R832 and R1088 routed at M = 2048: at or below about 0.94 of master.
-- Two-run launches at M = 1: at or below about 0.98 of master.
-- Two-run dense and shared-expert groups: at or below about 0.98 of master.
-- Every row bitwise in both passes.
+  passes (within 0.02).
+- Every two-run row restores its time from before #763: this change's
+  ratio times #763's ratio in `8a5a23e0`, each the mean of two passes, is
+  within 0.02 of 1. For R832 and R1088 routed at M = 2048 that is about
+  0.92-0.94 of master.
+- Every row bitwise in both passes, with no missing case.
+
+The check is `analysis/ab_stageprev_accept.py AB_DIR --old AB_DIR_8a5a23e0`
+in the measurement tree.
