@@ -59,7 +59,9 @@ CMD=("$PY" experiments/export_tessera_serving.py "$SRC" "$OUT"
   --hessian "$U/hessian_capture.references.json"
   --source-digest-cache "$R/stubs/source-digests" --allow-unserveable
   --partition "$INDEX/$COUNT" --partition-runtime-image "$IMAGE")
-export PYTHONPATH=src:experiments TMPDIR=$R/stubs/tmp
+# The image's own torch, never the host's: PB mounts HOME, and a user site
+# under it holds a CPU-only torch that shadowed the image's CUDA build.
+export PYTHONPATH=src:experiments TMPDIR=$R/stubs/tmp PYTHONNOUSERSITE=1
 T0=$(date +%s)
 if [ "${PROFILE:-0}" = 1 ]; then
   PROF=$PARTS/prof-$INDEX-$TS; mkdir -p "$PROF"
