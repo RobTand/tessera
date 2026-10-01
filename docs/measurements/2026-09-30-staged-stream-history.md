@@ -187,12 +187,58 @@ producers remain latency-bound.
 this change's source, on a GB10 (sparky), PrismaBuild row `799e1d30`: 666
 passed, 0 failed, 0 errors, 0 skipped, return code 0.
 
-### Not yet measured
+### Two-run, dense and shared-expert launches: slower (row `8a5a23e0`)
 
-The two-run stacks (R1088, R832) and the E4M3 dense and shared-expert
-launches also change (Static check). Their A/B, master against this change
-on the T8R release artifact, is PrismaBuild row `8a5a23e0`. Its results are
-added to this page when they land.
+The staged history is a gain only on single-rate launches. Every two-run
+launch (R832, R960 and R1088: `TWO` is true) ran slower with it, routed and
+dense alike. All 88 rows are bitwise in both passes. PrismaBuild row
+`8a5a23e0`, sparklina, image `5be13705`, the T8R release artifact
+(`pact-e4m3-accuracy-20260928/release-t8`), master `910e621e` against this
+change's `5535b53f`. The forward pass ran master first; the reverse pass ran
+this change first.
+
+This change's kernel time over master's, forward / reverse:
+
+| Group | Run pair | M = 1 | M = 8 | M = 512 | M = 2048 |
+|---|---|---|---|---|---|
+| Routed R1024 L10 | single | 0.879 / 0.850 | 0.894 / 0.888 | 0.902 / 0.906 | 0.930 / 0.911 |
+| Routed R1088 L11 | two | 1.007 / 0.977 | 0.995 / 0.984 | 1.013 / 1.010 | 1.068 / 1.062 |
+| Routed R832 L42 | two | 1.003 / 1.027 | 1.020 / 1.028 | 1.048 / 1.040 | 1.094 / 1.072 |
+| Dense gate/up R1024 L2 | single | 0.996 / 0.990 | 1.010 / 0.975 | 0.977 / 0.960 | 0.969 / 0.994 |
+| Dense gate/up R960 L0 | two | 1.036 / 1.034 | 1.041 / 1.028 | 1.030 / 1.048 | 1.013 / 1.034 |
+| Dense down R1088 L0, R832 L1 | two | 1.01-1.03 | 1.02-1.03 | 1.03-1.05 | 1.03-1.05 |
+| Shared expert, R1024 | single | 0.99-1.01 | 0.99-1.01 | 1.00-1.01 | 0.95-1.03 |
+| Shared expert, R1088, R960, R832 | two | 1.00-1.03 | 1.01-1.03 | 1.02-1.03 | 1.01-1.05 |
+
+Power was 52-61 W at M = 1 and 79-85 W at M = 2048 on the routed groups, of
+the 140 W envelope.
+
+**Why (NCU, clock-controlled, gate/up at M = 512).**
+
+| Launch | Arm | Duration | Instructions | Barrier stall per issue | Long scoreboard per issue |
+|---|---|---|---|---|---|
+| R1024 (single) | master | 8.854 ms | 895 M | 8.38 | 1.32 |
+| R1024 (single) | this change | 7.624 ms | 853 M | 7.42 | 0.48 |
+| R1088 (two) | master | 10.415 ms | 1,455 M | 5.93 | 0.25 |
+| R1088 (two) | this change | 10.818 ms | 1,320 M | 7.56 | 0.25 |
+| R832 (two) | master | 9.863 ms | 1,452 M | 5.35 | 0.14 |
+| R832 (two) | this change | 10.643 ms | 1,340 M | 7.21 | 0.25 |
+
+- On a single-rate launch the change removes the wait it targets: long
+  scoreboard falls from 1.32 to 0.48 per issue.
+- A two-run launch had no such wait: long scoreboard is 0.14-0.25 per issue
+  on master. Staging only adds work. The two-run launch issues 7-9% fewer
+  instructions and still runs 4-8% longer.
+- On R832, this change has 75.6 k more warp samples than master (+7.6%,
+  against +7.9% duration). The branch after the full-block barrier that ends
+  the word issue holds 116 k barrier samples against master's 36 k. The
+  regression is that one wait. The samples do not say which part of the new
+  path makes the last warp late (the 4-byte copy issue on `q == 1` lanes,
+  the copy wait, or the consumer's shared read).
+
+The follow-up stages the history on single-rate launches only
+(`STAGE_PREV` in `routed_fused_window.cu`); see
+[its receipt](2026-10-01-staged-history-single-rate.md).
 
 ## Receipts
 

@@ -200,6 +200,8 @@ DRING_STAGES = 4
 SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
 #: The staged stream history on the E4M3 instruction: one int32 per (half,
 #: column) per word stage (``PREV_STAGED`` in ``routed_fused_window.cu``).
+#: Every launch of that library lays the region out; only single-rate launches
+#: stage into it (``STAGE_PREV``), so the sizing is one number.
 PREV_REGION_BYTES_MMA8 = WORD_STAGES * 2 * BK * 4
 #: The same fixed part on the E4M3 instruction: 16 KB byte tables, 8-bit A and
 #: B stages, and the staged stream history.  The word stages are the same bytes.

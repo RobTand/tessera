@@ -4004,11 +4004,14 @@ on the producer's chunk loop whose wait sat ahead of the next copy or the
 decode (`docs/measurements/2026-09-29-two-run-column-map.md`,
 `docs/measurements/2026-09-30-descriptor-ring.md`). The host checks that each
 descriptor tensor is 16-byte aligned. The E4M3 instruction's
-library no longer carries the previous window word in a register either: the
-word rides the word stages' copies into a per-stage shared-memory slot
-(`PREV_STAGED`, 768 B), because the loop's last move waited one global
+single-rate launches no longer carry the previous window word in a register
+either: the word rides the word stages' copies into a per-stage shared-memory
+slot (`STAGE_PREV`; the 768 B region, `PREV_STAGED`, is laid out on every
+launch of that library), because the loop's last move waited one global
 latency per chunk on its load
-(`docs/measurements/2026-09-30-staged-stream-history.md`). Two rates of a
+(`docs/measurements/2026-09-30-staged-stream-history.md`). Two-run launches
+keep the register path: they had no such wait, and staging made them 1-9%
+slower (`docs/measurements/2026-10-01-staged-history-single-rate.md`). Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
