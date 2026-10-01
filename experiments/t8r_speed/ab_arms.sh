@@ -7,7 +7,8 @@
 # Steps, each recorded with its rc and the host load and GPU power at start:
 #   r<i>/r<i>b  routed bench per arm (AB_ROUTED; default R1024 L10, R1088 L11, R832 L42; M 1..2048;
 #               outputs hashed for the bitwise A/B), forward then reverse
-#   n<i>        NCU of the routed launches at M 1 and 512, per arm
+#   n<i>        NCU of the routed launches at M 1 and 512, per arm (the arm's
+#               prebuilt <out_root>/ext-<arm> when it exists)
 #   d<i>/d<i>b  the Tessera dense and shared-expert groups, forward then reverse
 # ab_summary.json: per (family, group, M) each arm's kernel time and power per
 # pass, the bitwise verdict over every arm and pass, and each arm's time over
@@ -66,8 +67,12 @@ fi
 if [[ $STEPS == *" ncu "* ]]; then
   for ((i = 0; i < N; i++)); do
     # shellcheck disable=SC2046
+    # The arm's prebuilt extension when it has one (the build flags carry -lineinfo
+    # either way), so the profiled step does not rebuild on the GPU's time.
+    ncu_ext=()
+    [[ -d "$OUT/ext-${ARMS[i]}" ]] && ncu_ext=(BENCH_EXT_DIR="$OUT/ext-${ARMS[i]}")
     step "n$i-${ARMS[i]}-ncu" env $(armenv "${ARMS[i]}") BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 \
-      BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms $NCU_MS
+      "${ncu_ext[@]}" BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms $NCU_MS
   done
 fi
 if [[ $STEPS == *" dense "* ]]; then
