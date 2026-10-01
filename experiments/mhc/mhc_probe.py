@@ -163,8 +163,11 @@ def part_onorm(args, model_dir: Path, sampler) -> dict:
             scale = torch.exp2(torch.randint(-2, 3, (1, 1, heads, 1), device="cuda", generator=gen).float())
             x = (torch.randn(1, t, heads, HEAD_DIM, device="cuda", generator=gen) * scale).bfloat16()
             g = (torch.randn(t, heads, HEAD_DIM, device="cuda", generator=gen) * 2.0).bfloat16()
-            yn, yc = native(x, g), cuda(x, g)
-            yc2 = cuda(x, g)
+            # forward_cuda writes y into x in place (layer_norm_gated_fwd: y = x when
+            # out_dtype is None), so every CUDA call gets its own copy of x, and x
+            # stays the input the reference is computed from.
+            yn = native(x, g)
+            yc, yc2 = cuda(x.clone(), g), cuda(x.clone(), g)
             x64, g64, w64 = x.double(), g.double(), weight.double()
             ref = x64 * torch.rsqrt(x64.pow(2).mean(-1, keepdim=True) + ONORM_EPS) * w64 * torch.sigmoid(g64)
             ref = ref.reshape(-1, HEAD_DIM)
