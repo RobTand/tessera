@@ -46,6 +46,11 @@ from tessera.grammar import bresenham_rate_schedule       # noqa: E402
 import fused_bound as fb                                  # noqa: E402
 from test_window_gemm_grouped import Expert, _quant  # noqa: E402
 
+# FAIL-BEFORE scratch for tessera#805 (never merged): the fix's tests on master's code.
+# Master has no dense_split_max; the bound the tests expect is restated here, not fixed.
+if not hasattr(rf, "dense_split_max"):
+    rf.dense_split_max = lambda cols: int(cols) // rf.BK // 2
+
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
 #: The three libraries every kernel test runs on (see
@@ -194,7 +199,7 @@ def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
     sms = rf._sm_count(torch.cuda.current_device())
     n_blocks = ROWS // rf.BN
     split = rf.dense_k_split(1, ROWS, COLS, sms)
-    assert 1 < split <= COLS // rf.BK, (split, sms)
+    assert 1 < split <= rf.dense_split_max(COLS), (split, sms)
     one_pass_m = rf.BM * -(-sms // n_blocks)
     assert -(-one_pass_m // rf.BM) * n_blocks >= sms
     assert rf.dense_k_split(one_pass_m, ROWS, COLS, sms) == 1
@@ -481,12 +486,12 @@ def _served(module, family, xq, x, a):
 def _module_bound(family, ref_w, xq, x, a):
     """``(r, bound)`` for a served module over the fp64 weight ``ref_w``: each
     role's rows run as one dense launch whose K split is at most
-    ``cols // BK`` (``dense_k_split``'s range), so ``S = cols // BK`` bounds
+    ``dense_split_max(cols)`` (``dense_k_split``'s range), so that ``S`` bounds
     every role on the fused lane, and the Triton lane's one pass (``S = 1``)
     with it."""
     cols = int(ref_w.shape[1])
     a64 = _a64(family, xq, a) if family == "e4m3" else x.double()
-    return fb.dense_bound(family, a64, ref_w, cols, cols // rf.BK)
+    return fb.dense_bound(family, a64, ref_w, cols, rf.dense_split_max(cols))
 
 
 @cuda
@@ -670,7 +675,7 @@ def test_the_opt_out_is_read_before_any_role_fact(monkeypatch):
 def test_the_k_split_model_is_the_bandwidth_model():
     """Pure arithmetic: one pass once every SM has an item; otherwise the
     integer minimiser of ``wire * sms / min(S * items0, sms) + 2 S M N 4``
-    over ``1 .. min(K / 32, ceil(sms / items0))``, restated here."""
+    over ``1 .. min(K / 64, ceil(sms / items0))``, restated here."""
     sms = 48
 
     def restated(m, rows, cols):
@@ -678,7 +683,7 @@ def test_the_k_split_model_is_the_bandwidth_model():
         if m <= 0 or items0 >= sms:
             return 1
         wire = rows * cols // 2
-        return min(range(1, min(cols // rf.BK, -(-sms // items0)) + 1),
+        return min(range(1, min(cols // rf.BK // 2, -(-sms // items0)) + 1),
                    key=lambda s: wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4)
 
     assert rf.dense_k_split(0, 256, 4096, sms) == 1
@@ -688,7 +693,7 @@ def test_the_k_split_model_is_the_bandwidth_model():
                           (200, 4096, 6144), (1, 12288, 4096), (3, 128, 128)):
         got = rf.dense_k_split(m, rows, cols, sms)
         assert got == restated(m, rows, cols), (m, rows, cols, got)
-        assert 1 <= got <= cols // rf.BK
+        assert 1 <= got <= rf.dense_split_max(cols)
         # the wire is the role's own words per tile: rate 4 restates the default
         assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
     assert rf.dense_k_split(1, 256, 4096, sms) > 1
@@ -700,6 +705,105 @@ def test_the_k_split_model_is_the_bandwidth_model():
     assert light < rf.dense_k_split(32, 256, 4096, sms) < heavy, (light, heavy)
     # More rows means more items and never a larger split at the same M.
     assert rf.dense_k_split(1, 2048, 4096, sms) <= rf.dense_k_split(1, 256, 4096, sms)
+
+
+#: GLM-5.3's dense roles as one rank's dense launch sees them (rows x K): the
+#: KDA, MLA and indexer projections, the LM head's TP2 vocab cut, the dense MLP
+#: and shared expert at TP2, and the whole and TP2 shapes above.
+#: ``g_b_proj`` (K = 64) is absent: the launch refuses K < 128.
+GLM_DENSE_ROLES = {
+    "kda_qkv_o": (4096, 4096), "b_proj": (32, 4096), "f_a_g_a_proj": (64, 4096),
+    "f_b_proj": (4096, 128), "q_a_proj": (1536, 4096), "kv_a_proj_with_mqa": (512, 4096),
+    "q_b_proj": (8192, 1536), "indexer_wq_b": (4096, 1536), "lm_head_tp2": (77440, 4096),
+    "mlp_gate_up_tp2": (6144, 4096), "mlp_down_tp2": (4096, 6144),
+    "shared_gate_up_tp2": (1024, 4096), "shared_down_tp2": (4096, 1024),
+    "dense_down": (4096, 6144), "dense_gate_up": (12288, 4096), "dense_down_tp2_cut": (4096, 3072),
+}
+
+
+def test_every_split_the_model_picks_keeps_two_chunks_per_item():
+    """tessera#805: the producers rewrite an item's descriptor slot two items
+    after claiming it, so the split launch is legal only while every item keeps
+    two K chunks (``floor(nk / S) >= 2``), and ``dense_k_split`` searches no
+    further.  Swept over few-row and small-K roles, where ``ceil(sms /
+    items0)`` would pass ``nk / 2``, and over three SM counts."""
+    for sms in (48, 132, 188):
+        for rows in (4, 32, 64, 128, 256, 512, 4096):
+            for cols in (128, 160, 256, 512, 1024, 4096):
+                cap = rf.dense_split_max(cols)
+                assert cap == cols // rf.BK // 2 >= 2
+                for m in (1, 2, 3, 6, 16, 64, 65, 200):
+                    for tile_words in (None, 16 * cols, 128 * cols):
+                        s = rf.dense_k_split(m, rows, cols, sms, tile_words=tile_words)
+                        assert 1 <= s <= cap, (sms, rows, cols, m, tile_words, s)
+                        assert (cols // rf.BK) // s >= 2
+    # where the bound binds: a 128 x 256 role at M = 1 asked for S = 8 (= nk,
+    # one chunk per item) before the bound, and takes 4 now
+    assert rf.dense_k_split(1, 128, 256, 48) == 4
+
+
+def test_the_split_bound_moves_no_glm_role_on_gb10():
+    """The bound changes no launch on GLM-5.3 on GB10 (48 SMs).  The model's
+    search ceiling before the bound was ``min(nk, ceil(sms / ceil(rows /
+    128)))`` for every M and every rate (``items0 >= ceil(rows / 128)``), and
+    no GLM role's ceiling passes ``nk / 2``, so the bound never binds there.
+    Cross-checked by the unbounded model restated, at every rate 1..16 up to
+    M = 128 and at rates 4 and 16 up to M = 8192."""
+    sms = 48
+
+    def unbounded(m, rows, cols, tile_words):
+        items0 = -(-m // rf.BM) * -(-rows // rf.BN)
+        if m <= 0 or items0 >= sms:
+            return 1
+        wire = rows * tile_words * 4 // 512
+        best_s, best_t = 1, None
+        for s in range(1, min(cols // rf.BK, -(-sms // items0)) + 1):
+            t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
+            if best_t is None or t < best_t:
+                best_s, best_t = s, t
+        return best_s
+
+    for name, (rows, cols) in GLM_DENSE_ROLES.items():
+        nk = cols // rf.BK
+        ceiling = min(nk, -(-sms // -(-rows // rf.BN)))
+        assert ceiling <= rf.dense_split_max(cols), (name, rows, cols, ceiling)
+        for rate in range(1, 17):
+            tile_words = 16 * cols * rate
+            for m in range(1, 8193 if rate in (4, 16) else 129):
+                want = unbounded(m, rows, cols, tile_words)
+                assert rf.dense_k_split(m, rows, cols, sms, tile_words=tile_words) == want, \
+                    (name, rate, m, want)
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+def test_a_split_that_leaves_an_item_one_chunk_is_refused_by_name(family):
+    """tessera#805: the library refuses ``k_split > dense_split_max(K)`` by
+    name, as the E2M1 launch does, and takes the bound itself."""
+    expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    lib = rf._ext(role.library)
+    sms = rf._sm_count(torch.cuda.current_device())
+    m = 3
+    _x, xq, a = _inputs(family, m, COLS, 8051)
+    empty = xq.new_empty(0, dtype=torch.float32)
+    cap = rf.dense_split_max(COLS)
+
+    def native(s):
+        out = torch.empty(m, ROWS, dtype=torch.bfloat16, device="cuda")
+        partial = torch.empty((s, m, ROWS), dtype=torch.float32, device="cuda")
+        counter = torch.zeros(1, dtype=torch.int32, device="cuda")
+        lib.dense_forward(bool(role.fp8), xq, a if a is not None else empty,
+                          role.words, role.table16, role.init, role.has_init, role.wscale,
+                          role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), counter, s,
+                          partial, out, sms, rf.BM)
+        return out
+
+    with pytest.raises(RuntimeError, match="two K chunks"):
+        native(cap + 1)
+    with pytest.raises(RuntimeError, match="two K chunks"):
+        native(COLS // rf.BK)
+    _within(native(cap), _bound(expert, family, xq, a, cap), f"{family} M={m} S={cap} (the bound)")
 
 
 # --- the launch identity is published -------------------------------------------
