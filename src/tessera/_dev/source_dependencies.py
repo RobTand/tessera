@@ -499,17 +499,8 @@ def _values(node, scope, root, visiting=frozenset(), refused=None, links=None):
     return None
 
 
-def file_imports(tree, path, root):
-    """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
-
-    The third value is the one #338 exists for.  ``unknown`` says this module
-    may import Python it cannot name; ``unplaced`` says it reads a file it
-    named exactly and this resolver refused to place -- an outside spelling
-    that an alias directory can carry back into the tree.  A caller that
-    collapsed the two either lost the dependency (a plain reader is not an
-    unknown importer, so it recorded nothing at all) or lost #148 (an
-    unnameable read is not "every module in the tree").
-    """
+def _file_consumer_scan(tree, path):
+    """Lexical facts and recognition aliases; neither classifies dependencies."""
     scanner = _Scanner(path)
     scanner.visit(tree)
     aliases = {name: {name} for name in _KINDS}
@@ -521,14 +512,15 @@ def file_imports(tree, path, root):
                     aliases.setdefault(alias.asname or alias.name, set()).add(alias.name)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             assignments.append(node)
+
     def kind(expression):
         if isinstance(expression, ast.Attribute) and expression.attr in _KINDS:
             return {expression.attr}
         if isinstance(expression, ast.Name):
             return aliases.get(expression.id, set())
         return set()
-    # Aliases are an over-approximation for recognition only. Lexical value
-    # resolution below still refuses parameter/reassignment uncertainty.
+
+    # Aliases recognize possible consumers; lexical resolution proves targets.
     while True:
         before = {name: set(kinds) for name, kinds in aliases.items()}
         for assignment in assignments:
@@ -540,6 +532,21 @@ def file_imports(tree, path, root):
                         aliases.setdefault(target.id, set()).update(loader)
         if aliases == before:
             break
+    return scanner, kind
+
+
+def file_imports(tree, path, root):
+    """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
+
+    The third value is the one #338 exists for.  ``unknown`` says this module
+    may import Python it cannot name; ``unplaced`` says it reads a file it
+    named exactly and this resolver refused to place -- an outside spelling
+    that an alias directory can carry back into the tree.  A caller that
+    collapsed the two either lost the dependency (a plain reader is not an
+    unknown importer, so it recorded nothing at all) or lost #148 (an
+    unnameable read is not "every module in the tree").
+    """
+    scanner, kind = _file_consumer_scan(tree, path)
     executes = _executes_python_source(tree)
 
     def wildcard(reading):
