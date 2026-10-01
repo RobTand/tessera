@@ -1,7 +1,7 @@
 # GLM on the vLLM nightly: eager cells, and why no graph serve is eager's
 
-Status: measured 2026-09-30 on sparky (GB10, sm_121), TP 1. Refs tessera#702,
-tessera#695.
+Status: measured 2026-09-30 on sparky (GB10, sm_121), TP 1; the drafter's TP 2
+acceptance on both Sparks. Refs tessera#702, tessera#695.
 
 This page records two results on the image the GLM-5.3 release serves on:
 
@@ -216,10 +216,71 @@ around.
 
 ### Drafter (MTP) under graphs
 
-Not yet run. The drafter arms (tessera#695: stub with MTP, eager against
-FULL_DECODE_ONLY graphs, capture sizes up to `max_num_seqs * (1 + k)`) are
-queued behind the arms above. TP 2 drafter arms need both Sparks and are not
-scheduled.
+Method: stub B with its MTP layer (`stub-B-mtp1`, draft checkpoint
+`stub-B-mtp1-draft`), speculative config
+`{"method":"mtp","num_speculative_tokens":1,"moe_backend":"triton"}`, the same
+image, flags and equality suite as the arms above, TP 1. Tessera at
+`f8fb860450`, whose `src/` is identical to tessera#752's head (`3bd3c8f6da`,
+merged as `7d5ea711cb`). Arms ran from
+`experiments/graph_attest_nightly/plan-mtp-smoke.txt` through `drive.sh`.
+
+| Arm | Execution | `compilation_config` | Graphs captured (target and draft) | Members | Changed | Worst | First departure |
+|---|---|---|---|---|---|---|---|
+| mtE1 | `--enforce-eager` | none | none | 48 | 0 | 0 | none |
+| mtE2 | `--enforce-eager` | none | none | 48 | 0 | 0 | none |
+| mtG1 | graphs | `{"cudagraph_mode":"FULL_DECODE_ONLY"}` | 2, 4, 8, 16 | 0 | 33 | 0.768 | step 0 |
+| mtG3 | graphs | `{"mode":"NONE"}`, FULL_DECODE_ONLY, sizes 1..16 | 2, 4, ..., 16 | 0 | 24 | 0.570 | step 1, context 5 |
+
+mtE1 and mtE2 are judged against each other, the graph arms against both.
+Each arm in the table ran the suite twice, and both passes agree in every
+column.
+
+Not yet run: the drafter's discriminating pair at `max_model_len 2048` (mtE6
+eager, mtG6 `mode NONE` graphs), the MTP counterpart of sbE6 and sbG6. Both
+are in `plan-mtp-smoke.txt` and wait for a sparky slot.
+
+- **Speculative decoding does not stop vLLM from capturing.** The runner
+  captured two managers, `ModelCudaGraphManager` (target) and
+  `SpeculatorCudaGraphManager` (draft), at the same sizes, and replayed both at
+  every captured size with equal counts (mtG3: size 2 794 replays, sizes 4 to
+  16 40 to 50 each). With `k = 1` each decode request carries two tokens, so
+  only even sizes are captured: mtG3 asked for 1..16 and got 2..16.
+- **The drafter adds no third cause.** mtG1 changes prefill tokens, as sbG1
+  does (cause 1). mtG3 keeps every prefill token and first departs at context
+  5, as sbG3 does (cause 2). Greedy speculative decoding emits the target's
+  tokens, so the departures are the target's arithmetic.
+- **Acceptance on the stub is not a quality signal.** mtE1 accepted 56 of 2362
+  drafts; mtG1 60 of 2356; mtG3 50 of 2368. A drafter on the 8-layer stub is
+  not expected to predict the stub's tokens, so these counts only show that
+  the drafter ran.
+
+**Draft vocabulary interception, measured at stub scope.** A hook in the arm
+(`usercustomize.py`, `[t695] drafter load peak`) logs the torch allocator's
+peak across the draft model's load. mtE1 (interception on) goes from
+21.457 GiB to a peak of 25.316 GiB. mtN1 is mtE1's tree with
+`install_for_current_config` returning at entry (the draft rename kept); it
+peaks at 26.498 GiB. The difference, 1.182 GiB, is the draft embedding the
+interception avoids (154880 x 4096 bf16 = 1.18 GiB). The
+[vocabulary lifetime page](mtp-draft-vocabulary-lifetime-2026-09-30.md) found
+no difference in vLLM's own load figures, which cannot see this transient;
+the allocator peak does. mtN1 is 48/48 against mtE1 and mtE2, so the
+interception changes no output. The TP 2 full-model load peak is not
+measured.
+
+**TP 2, the release artifact.** Window `u4-A8SE752-20260930T2257Z` served the
+A8S release artifact on both Sparks, TP 2, eager, Tessera `7d5ea711cb`, with
+MTP `k = 1`:
+
+- MTP acceptance (a screen, not the ship metric): 1665 of 2023 drafts
+  accepted, rate 0.823, mean accepted length 1.823, 64 prompts.
+- The draft route census was refused by the census tool itself: `draft census
+  requires the stock Glm5NextMTP model class`. The tool admitted only the eugr
+  image's draft class module; the nightly's stock class lives in another
+  module and carries no source-name mapper. tessera#769 records it;
+  tessera#773 admits the nightly's class through its digest-recognized
+  interface and in-code rename.
+- No graph serve with MTP ran at TP 2. Graph-vs-eager decode speed and TTFT
+  with MTP are not measured.
 
 ## What this blocks
 
@@ -243,22 +304,35 @@ change the eager baseline every cell and KL receipt was measured on.
 
 ## Newer nightly
 
-Not yet run. A load smoke of
-`eugr/spark-vllm@sha256:e813795a...` is queued. The sources behind cause 2
-are byte-identical to the pinned image's (see [The image](#the-image)), so
-moving the U4 stack to it would not remove that cause; nothing on this page
-was measured on it.
+Not yet run. The load smoke of
+`eugr/spark-vllm@sha256:e813795a...` (smE1 eager, smG3 `mode NONE` graphs at
+`max_model_len 4096`, stub B, TP 1) is in `plan-mtp-smoke.txt` and waits for a
+sparky slot. The sources behind cause 2 are byte-identical to the pinned
+image's (see [The image](#the-image)), so moving the U4 stack to it would not
+remove that cause; nothing on this page was measured on it.
 
 ## Measured and not measured
 
-Measured: the eager census; equality of the arms in the table; the replayed
-graph sizes; the causes above, from the engine logs and the cited sources.
+Measured: the eager census; equality of the arms in both tables; the replayed
+graph sizes, for the target and the draft; the causes above, from the engine
+logs and the cited sources; the drafter load peak with and without the
+vocabulary interception at stub scope; MTP acceptance of the A8S release
+artifact at TP 2, eager.
 
-Not measured: the drafter
-arms; the newer nightly's load smoke; graph-vs-eager speed on this stack (not taken while no graph
-configuration is eager-equivalent); CUDA-graph capture time and pool memory at
-the release's `max_num_seqs` and TP 2; any TP 2 arm (both Sparks are needed,
-and no window was requested); quality (KL) of a graph serve against BF16.
+Not measured:
+
+- the drafter's `max_model_len 2048` pair (mtE6, mtG6);
+- the newer nightly's load smoke (smE1, smG3);
+- graph-vs-eager speed on this stack, with or without MTP (not taken while no
+  graph configuration is eager-equivalent; the TP 2 graphs+MTP latency leg did
+  not run);
+- CUDA-graph capture time and pool memory at the release's `max_num_seqs` and
+  TP 2;
+- any TP 2 graph arm;
+- the TP 2 draft route census on the nightly (refused by the tool; tessera#773
+  fixes the tool, and no served census has run with it);
+- the TP 2 full-model drafter load peak;
+- quality (KL) of a graph serve against BF16.
 
 ## Receipts
 
@@ -268,5 +342,10 @@ and `.log`; the scripts under `experiments/graph_attest_nightly/`.
 Raw, with `SHA256SUMS`, under
 `/mnt/shared/tessera-measurements/graph-attest-20260930/`: `stub-B/` (every
 arm's serve receipts, dispatch logs, engine logs, `summary-*.json`),
-`census/` (eager and compiled censuses) and `vllm-sources/` (the cited
-files).
+`census/` (eager and compiled censuses), `vllm-sources/` (the cited
+files) and `mtp/` (the drafter arms' receipts and engine logs,
+`summary-mtE1.json`, the plan and the drive log).
+
+The TP 2 window's evidence (`mtp-acceptance.json`, `census.log`,
+`census-wrapper.json`, `run-summary.json`) is under
+`/mnt/shared/tessera-measurements/glm-pact-u4-20260927/results/A8SE752-2c-nightly-20260930-r2/run/2c-evidence/`.
