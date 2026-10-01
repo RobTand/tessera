@@ -98,7 +98,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_source import measured_source  # noqa: E402
 from tessera._dev.source_dependencies import (  # noqa: E402
-    DATA_WILDCARD, WILDCARD, file_imports)
+    DATA_WILDCARD, WILDCARD, file_imports, source_execution_modules)
 
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.
@@ -176,6 +176,9 @@ def _imports(
     root: Path,
     unreadable: dict[str, str] | None = None,
     nodes: dict[Path, str] | None = None,
+    *,
+    tree: ast.Module | None = None,
+    executes_source: bool | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
     """What this file depends on, split by how the dependency was established.
 
@@ -192,7 +195,8 @@ def _imports(
     would attribute the edge to the wrong one.
     """
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        if tree is None:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (SyntaxError, OSError) as exc:
         # Three sets, like every other return here: answering with one made
         # the caller's unpack raise, and a selector that raises selects
@@ -235,7 +239,8 @@ def _imports(
             # "from x import y" may name a submodule rather than an attribute;
             # both readings are recorded because only the graph can tell.
             found.update(f"{prefix}.{alias.name}" for alias in node.names)
-    paths, unknown, unplaced = file_imports(tree, path, root)
+    paths, unknown, unplaced = file_imports(
+        tree, path, root, executes_source=executes_source)
     loaded, data = set(), set()
     for target in paths:
         held = nodes.get(target) if nodes is not None else None
@@ -360,12 +365,26 @@ def import_graph(
             resolved.append(name)
         return tuple(resolved)
 
+    # Helper capability is graph knowledge, not a file-local execution guess.
+    # Parse once for readable files; the existing refusal path still diagnoses
+    # files that cannot be read and supplies their wildcard dependencies.
+    trees = {}
+    for path in by_name.values():
+        try:
+            trees[path] = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, OSError):
+            pass
+    executing = source_execution_modules(
+        trees, {path: module_of[node] for node, path in by_name.items()},
+        lambda spelling: tuple(by_name[node] for node in _targets(spelling)),
+    )
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
     unreadable: dict[str, str] = {}
     for node, path in by_name.items():
         statements, loaded, data = _imports(
-            path, module_of[node], root, unreadable, nodes)
+            path, module_of[node], root, unreadable, nodes,
+            tree=trees.get(path), executes_source=path in executing)
         for target in statements:
             if target == WILDCARD:
                 importers[WILDCARD].add(node)

@@ -1614,3 +1614,63 @@ def test_repointing_a_tracked_data_link_selects_transitive_readers(tmp_path, dir
     result = _selector(repo, f"{base}...HEAD")
     assert result["verdict"] == "narrowed"
     assert "tests/test_reader.py" in result["tests"]
+
+
+@pytest.mark.parametrize("read", [
+    "path.read_text()", "path.read_bytes()", "open(path).read()",
+])
+@pytest.mark.parametrize("binding, call", [
+    ("from support.compiler import execute", "execute(text)"),
+    ("from support.compiler import execute as rebuild", "rebuild(text)"),
+    ("import support.compiler as compiler", "compiler.execute(text)"),
+])
+def test_split_source_reader_keeps_unknown_execution_edges(tmp_path, read, binding, call):
+    """#808: moving exec to a helper must not erase the reader's uncertainty."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/reader.py": f'''
+            {binding}
+            def consume(path):
+                text = {read}
+                return {call}
+        ''',
+        "support/compiler.py": '''
+            def execute(text):
+                exec(text, {})
+        ''',
+        "tests/conftest.py": "from support.reader import consume\n",
+    })
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source an unknown reader can execute changed")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "full", result
+    assert result["unresolved_file_loaders"] == ["support/reader.py"]
+
+
+@pytest.mark.parametrize("expression", [
+    "Path(stock.__file__).read_text()",
+    "Path(stock.__file__).read_bytes()",
+    "open(stock.__file__).read()",
+])
+def test_imported_external_source_read_does_not_force_the_tree(tmp_path, expression):
+    """#808: a declared external import is not an unnameable in-tree loader."""
+    repo, base = _dynamic_repo(tmp_path, '''
+        from tools.driver import VALUE
+        def test_dynamic(): assert VALUE
+    ''', {
+        "support/reader.py": f'''
+            from pathlib import Path
+            import foreign_runtime as stock
+            def consume():
+                text = {expression}
+                exec(text, {{}})
+        ''',
+        "tests/conftest.py": "from support.reader import consume\n",
+    })
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "leaf change cannot alter external package source")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed", result
+    assert result["tests"] == ["tests/test_dynamic.py"]
+    assert result["unresolved_file_loaders"] == []

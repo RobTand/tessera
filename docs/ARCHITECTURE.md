@@ -2255,7 +2255,15 @@ also create edges, including aliased readers, and for a resolved path this is
 independent of what the reader does with the bytes. Runtime-selected or shadowed
 paths remain conservative unknown edges and propagate to downstream tests when
 the reader can execute Python; a parameterized filename in a source-executing
-module is not silently treated as no dependency. What this misses is a source
+module is not silently treated as no dependency. Recognized calls to imported
+source-executing helpers now propagate that capability to their callers via a
+fixed point over top-level helper summaries, preserving relative imports,
+re-exports and ambiguous module spellings. Importing a helper without calling
+it does not promote a reader. This capability proves no external origin: a
+generic module parameter and an import missing from the graph remain unknown.
+The #808 draft therefore conservatively forces full for the shared conftest's
+GLM53 reader and is blocked on the unchanged selectivity ratchets; it is not a
+completed external-origin contract. What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
 A conftest **reached** -- changed, or importing anything changed -- reaches its
@@ -6954,7 +6962,7 @@ raises.
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
 | `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
-| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file, so `tools/impacted_tests.py` does not class the module the shared conftest reaches as able to import anything. |
+| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 draft selector follows that helper call, so the generic source parameter conservatively makes the shared conftest's dependency unknown; the read/compile split alone no longer establishes selectivity. |
 
 The module docstring records the decline rules and the exactness argument.
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served

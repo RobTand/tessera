@@ -13,9 +13,11 @@ that never does is reading data, and calling its unnameable path "any module
 in the tree" made the whole tree depend on the whole tree.  ``_SOURCE_*`` is
 the recognition set for that -- the standard library's source-execution API,
 which this repository does not own and cannot derive from its own code, and
-which is deliberately matched by resolved symbol rather than by bare
-attribute name (``re.compile`` and ``model.eval()`` are not source
-execution).  What it misses is a source read this module never sees at all,
+which qualifies common attribute names (``re.compile`` and ``model.eval()``
+are not source execution). The selector also propagates this capability over
+recognized calls to imported source-executing helpers; import presence alone
+is not execution, and helper capability never proves a read's external origin.
+What it misses is a source read this module never sees at all,
 ``subprocess.run([sys.executable, path])`` above all; that was never an edge
 here and this does not change it.
 
@@ -69,10 +71,13 @@ class _Scope:
 
 
 class _Scanner(ast.NodeVisitor):
-    def __init__(self, path):
+    def __init__(self, path, module=None):
+        self.module = module
+        self.path_is_package = path.name == "__init__.py"
         self.scope = _Scope()
         self.scope.bindings["__file__"].append(ast.Constant(str(path)))
         self.calls = []
+        self.functions = defaultdict(list)
 
     def visit_Import(self, node):
         for alias in node.names:
@@ -80,9 +85,17 @@ class _Scanner(ast.NodeVisitor):
                 ("symbol", alias.name if alias.asname else alias.name.split(".")[0]))
 
     def visit_ImportFrom(self, node):
+        prefix = node.module
+        if node.level and self.module is not None:
+            package = self.module if self.path_is_package else self.module.rpartition(".")[0]
+            parts = package.split(".") if package else []
+            climb = node.level - 1
+            parts = parts[:len(parts) - climb] if climb else parts
+            prefix = ".".join(parts + ([node.module] if node.module else []))
         for alias in node.names:
             self.scope.bindings[alias.asname or alias.name].append(
-                ("symbol", f"{node.module}.{alias.name}") if not node.level else None)
+                ("symbol", f"{prefix}.{alias.name}")
+                if prefix and (not node.level or self.module is not None) else None)
 
     def visit_Assign(self, node):
         for target in node.targets:
@@ -103,26 +116,28 @@ class _Scanner(ast.NodeVisitor):
         self.scope.bind(node.target, node.value)
         self.visit(node.value)
 
-    def visit_For(self, node):
+    def visit_For(self, node: ast.For | ast.AsyncFor):
         self.scope.bind(node.target, node.iter if isinstance(node.target, ast.Name) else None)
         self.generic_visit(node)
 
-    visit_AsyncFor = visit_For
+    def visit_AsyncFor(self, node):
+        self.visit_For(node)
 
-    def visit_With(self, node):
+    def visit_With(self, node: ast.With | ast.AsyncWith):
         for item in node.items:
             if item.optional_vars:
                 self.scope.bind(item.optional_vars, None)
         self.generic_visit(node)
 
-    visit_AsyncWith = visit_With
+    def visit_AsyncWith(self, node):
+        self.visit_With(node)
 
     def visit_ExceptHandler(self, node):
         if node.name:
             self.scope.bindings[node.name].append(None)
         self.generic_visit(node)
 
-    def visit_Global(self, node):
+    def visit_Global(self, node: ast.Global | ast.Nonlocal):
         for name in node.names:
             self.scope.bindings[name].append(None)
             parent = self.scope.parent
@@ -131,7 +146,8 @@ class _Scanner(ast.NodeVisitor):
                     parent.bindings[name].append(None)
                 parent = parent.parent
 
-    visit_Nonlocal = visit_Global
+    def visit_Nonlocal(self, node):
+        self.visit_Global(node)
 
     def visit_Delete(self, node):
         for target in node.targets:
@@ -175,8 +191,13 @@ class _Scanner(ast.NodeVisitor):
             self.visit(expression)
         for keyword in getattr(node, "keywords", []):
             self.visit(keyword.value)
+        if (self.module is not None and prior.parent is None
+                and isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))):
+            self.functions[node.name].append(node)
         if hasattr(node, "name"):
-            prior.bindings[node.name].append(None)
+            prior.bindings[node.name].append(
+                ("symbol", f"{self.module}.{node.name}")
+                if self.module is not None and prior.parent is None else None)
         parent = prior.parent if prior.class_body and not class_body else prior
         self.scope = _Scope(parent, class_body=class_body)
         if hasattr(node, "args"):
@@ -191,8 +212,11 @@ class _Scanner(ast.NodeVisitor):
     def visit_FunctionDef(self, node):
         self._nested(node)
 
-    visit_AsyncFunctionDef = visit_FunctionDef
-    visit_Lambda = visit_FunctionDef
+    def visit_AsyncFunctionDef(self, node):
+        self._nested(node)
+
+    def visit_Lambda(self, node):
+        self._nested(node)
 
     def visit_ClassDef(self, node):
         self._nested(node, class_body=True)
@@ -201,7 +225,7 @@ class _Scanner(ast.NodeVisitor):
         self.calls.append((node, self.scope))
         self.generic_visit(node)
 
-    def visit_ListComp(self, node):
+    def visit_ListComp(self, node: ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp):
         prior = self.scope
         self.scope = _Scope(prior)
         for generator in node.generators:
@@ -209,9 +233,14 @@ class _Scanner(ast.NodeVisitor):
         self.generic_visit(node)
         self.scope = prior
 
-    visit_SetComp = visit_ListComp
-    visit_DictComp = visit_ListComp
-    visit_GeneratorExp = visit_ListComp
+    def visit_SetComp(self, node):
+        self.visit_ListComp(node)
+
+    def visit_DictComp(self, node):
+        self.visit_ListComp(node)
+
+    def visit_GeneratorExp(self, node):
+        self.visit_ListComp(node)
 
 
 #: Calls that turn bytes into running Python.  Bare names only for the
@@ -535,7 +564,101 @@ def _file_consumer_scan(tree, path):
     return scanner, kind
 
 
-def file_imports(tree, path, root):
+def _possible_symbols(expression, scope, visiting=frozenset()):
+    """Recognition only: union aliases, including shadowed alternatives.
+
+    This never proves a callable or an external file origin. An unresolved
+    replacement for a known source executor cannot prove that execution ceased.
+    """
+    if isinstance(expression, tuple) and expression[0] == "symbol":
+        return {expression[1]}
+    if isinstance(expression, ast.Attribute):
+        return {symbol + "." + expression.attr
+                for symbol in _possible_symbols(expression.value, scope, visiting)}
+    if not isinstance(expression, ast.Name):
+        return set()
+    result = set()
+    here = scope
+    while here is not None:
+        key = (id(here), expression.id)
+        if key not in visiting:
+            for value in here.bindings.get(expression.id, ()):
+                result.update(_possible_symbols(value, here, visiting | {key}))
+        here = here.parent
+    return result
+
+
+def source_execution_modules(trees, modules, targets):
+    """Files that call a source executor, including known imported helpers.
+
+    ``targets`` is the selector's authoritative, ambiguity-preserving module
+    spelling resolver. Only top-level functions are exported summaries. Their
+    source-execution capability grows to a fixed point over helper calls; it
+    never depends on import presence alone and never proves read provenance.
+    Unknown external origins and generic read parameters remain unknown.
+    """
+    functions = {}
+    scopes = {}
+    calls = {}
+    for path, tree in trees.items():
+        scanner = _Scanner(path, modules[path])
+        scanner.visit(tree)
+        functions[path] = scanner.functions
+        scopes[path] = scanner.scope
+        calls[path] = {
+            call: _possible_symbols(call.func, scope)
+            for call, scope in scanner.calls
+        }
+
+    def helpers(symbols):
+        pending, seen = set(symbols), set()
+        while pending:
+            symbol = pending.pop()
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            module, _, name = symbol.rpartition(".")
+            for path in targets(module):
+                if name in functions.get(path, {}):
+                    yield path, name
+                if path in scopes:
+                    pending.update(_possible_symbols(ast.Name(id=name), scopes[path]) - seen)
+
+    source_symbols = {
+        module + "." + name for module, names in _SOURCE_QUALIFIED.items()
+        for name in names
+    }
+    capable = {
+        (path, name) for path, defined in functions.items()
+        for name, alternatives in defined.items()
+        if any(_executes_python_source(function) or any(
+            calls[path].get(node, set()) & source_symbols
+            for node in ast.walk(function) if isinstance(node, ast.Call))
+            for function in alternatives)
+    }
+    edges = {
+        (path, name): {
+            helper for function in alternatives
+            for node in ast.walk(function) if isinstance(node, ast.Call)
+            for helper in helpers(calls[path].get(node, ()))
+        }
+        for path, defined in functions.items() for name, alternatives in defined.items()
+    }
+    while True:
+        expanded = capable | {key for key, dependencies in edges.items()
+                              if dependencies & capable}
+        if expanded == capable:
+            break
+        capable = expanded
+    return {
+        path for path, tree in trees.items()
+        if _executes_python_source(tree) or any(
+            helper in capable for symbols in calls[path].values()
+            for helper in helpers(symbols))
+    }
+
+
+def file_imports(tree, path, root, *, executes_source=None):
     """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
 
     The third value is the one #338 exists for.  ``unknown`` says this module
@@ -547,7 +670,8 @@ def file_imports(tree, path, root):
     unnameable read is not "every module in the tree").
     """
     scanner, kind = _file_consumer_scan(tree, path)
-    executes = _executes_python_source(tree)
+    executes = (_executes_python_source(tree) if executes_source is None
+                else executes_source)
 
     def wildcard(reading):
         """An unnameable target is an unknown *module* only if it can run."""
