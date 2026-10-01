@@ -442,9 +442,21 @@ def _run(ranks, forward, t, passes=1, stacks=None):
     return out, stacks
 
 
-def _ops(ranks, exact=lambda t, hidden, n: True):
+def _ops(ranks, exact=lambda t, hidden, n: True, tile=None, tile_exact=lambda t, hidden, n: True,
+         tiled=None):
     """The forward's ops on the two-rank stand-in.  ``full_split`` records, per rank,
-    the token count it forces while it is open (``ranks.local.forced``)."""
+    the token count it forces while it is open (``ranks.local.forced``).  ``tiled_post_pre``
+    runs the layer's per-token ``hc_fused_post_pre`` on ``tile``-token slices and joins
+    them, and appends ``(rank, call tokens, forced)`` to ``tiled``."""
+
+    def tiled_post_pre(layer, x, residual, post, comb, fn, scale, base, norm_weight, norm_eps):
+        if tiled is not None:
+            tiled.append((ranks.rank, x.shape[0], getattr(ranks.local, "forced", None)))
+        parts = [layer.hc_fused_post_pre(x[a:a + tile], residual[a:a + tile], post[a:a + tile],
+                                         comb[a:a + tile], fn, scale, base,
+                                         norm_weight=norm_weight, norm_eps=norm_eps)
+                 for a in range(0, x.shape[0], tile)]
+        return tuple(torch.cat([p[j] for p in parts], 0) for j in range(4))
 
     @contextlib.contextmanager
     def full_split(tokens):
@@ -458,7 +470,8 @@ def _ops(ranks, exact=lambda t, hidden, n: True):
     return NS(sp_shard=ranks.sp_shard, sp_all_gather=ranks.sp_all_gather,
               sp_reduce_scatter=ranks.sp_reduce_scatter, all_reduce=ranks.all_reduce,
               hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp,
-              sp_exact=exact, full_split=full_split)
+              sp_exact=exact, full_split=full_split, tile_exact=tile_exact,
+              tiled_post_pre=tiled_post_pre)
 
 
 class _NoCuda:
@@ -974,3 +987,211 @@ def test_kda_pinned_interface_names_every_module():
     for interface in gp._KDA_INTERFACES:
         assert len(interface.digests) == len(gp.KDA_MODULES)
         assert all(len(d) == 64 for d in interface.digests)
+
+
+# ------------------------------------------------------------------- mHC token tiles
+
+
+def test_mhc_tile_env(monkeypatch):
+    for off in ("", "off", "OFF", "0"):
+        monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", off)
+        assert gp.mhc_tile() is None
+    monkeypatch.delenv("TESSERA_GLM53_MHC_TILE")
+    assert gp.mhc_tile() is None
+    monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", " 512 ")
+    assert gp.mhc_tile() == 512
+    for bad in ("-128", "abc", "1.5"):
+        monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", bad)
+        with pytest.raises(ValueError, match="TESSERA_GLM53_MHC_TILE"):
+            gp.mhc_tile()
+
+
+def test_tile_only_installs_the_rebind_with_sp_off(monkeypatch):
+    monkeypatch.setenv("TESSERA_GLM53_SP_MHC", "off")
+    monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", "512")
+    seen = []
+    monkeypatch.setattr(gp, "_install_sp_mhc", lambda cfg, mode, tile=None: seen.append((mode, tile)) or True)
+    monkeypatch.setattr(gp, "_INSTALLED", {})
+    assert gp.install_sp_mhc(_config()) and seen == [("off", 512)]
+    monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", "off")
+    monkeypatch.setattr(gp, "_INSTALLED", {})
+    assert not gp.install_sp_mhc(_config()) and seen == [("off", 512)]
+
+
+def test_state_tile_decisions():
+    s = gp.SpState("off", 2048, 2, tile=4)
+    assert not s.sp_on
+    assert not s.begin_pass(8, capturing=False, exact=True, tile_exact=True) and s.pass_tile
+    s.begin_pass(8, capturing=True, exact=True, tile_exact=True)
+    assert not s.pass_tile                               # a capture: stock sequence
+    s.begin_pass(8, capturing=False, exact=True, tile_exact=False)
+    assert not s.pass_tile                               # full batch off the split-k path
+    s.begin_pass(4, capturing=False, exact=True, tile_exact=True)
+    assert not s.pass_tile                               # one tile: nothing to split
+    assert not s.pass_sp
+    f = gp.SpState("force", 2048, 2, tile=4)
+    assert f.sp_on
+    f.begin_pass(10, capturing=False, exact=True, tile_exact=True)
+    assert not f.pass_sp and f.pass_tile                 # pass 1: not SP, the 10-token call tiles
+    assert f.begin_pass(10, capturing=False, exact=True, tile_exact=True) and f.pass_tile  # shard 5
+    assert f.begin_pass(8, capturing=False, exact=True, tile_exact=True) and not f.pass_tile  # shard 4
+    assert not gp.SpState("off", 2048, 2).begin_pass(8, False, exact=True, tile_exact=True)
+    assert not gp.SpState("force", 2048, 2).pass_tile
+
+
+@pytest.mark.parametrize("tokens", [8, 7])
+def test_tiled_pass_equals_stock_and_keeps_the_module_reductions(tokens):
+    ref_ranks = TwoRanks()
+    ref, _ = _run(ref_ranks, stock_forward, tokens)
+    ranks = TwoRanks()
+    tiled = []
+    states = [gp.SpState("off", 2048, 2, tile=3) for _ in range(2)]
+    ops = _ops(ranks, tile=3, tiled=tiled)
+    fwds = [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states]
+    got, stacks = _run(ranks, fwds, tokens, passes=2)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r]), (tokens, r, (got[r] - ref[r]).abs().max())
+    n_layers = len(stacks[0])
+    # No SP: the modules reduce, as stock does, twice per layer per pass.
+    assert ranks.calls == {"all_reduce": 2 * 2 * n_layers, "all_gather": 0, "reduce_scatter": 0}
+    for layer in stacks[0]:
+        assert "_tessera_sp_ready" not in layer.__dict__
+        assert layer.self_attn.o_proj.reduce_results is True
+    # Every hc_fused_post_pre call tiles (layer 0's first site is hc_pre), at the full batch's split.
+    assert len(tiled) == 2 * 2 * (2 * n_layers - 1)
+    assert set(tiled) == {(0, tokens, tokens), (1, tokens, tokens)}
+    assert all(s.pass_tile and not s.pass_sp for s in states)
+
+
+def test_tiles_off_the_split_k_path_run_stock():
+    ref, _ = _run(TwoRanks(), stock_forward, 8)
+    ranks = TwoRanks()
+    tiled = []
+    states = [gp.SpState("off", 2048, 2, tile=3) for _ in range(2)]
+    ops = _ops(ranks, tile=3, tiled=tiled, tile_exact=lambda t, hidden, n: False)
+    got, _ = _run(ranks, [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states], 8,
+                  passes=2)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r])
+    assert tiled == [] and not any(s.pass_tile for s in states)
+
+
+@pytest.mark.parametrize("tokens", [8, 7])
+def test_sp_and_tiles_compose(tokens):
+    ref, _ = _run(TwoRanks(), stock_forward, tokens)
+    ranks = TwoRanks()
+    tiled = []
+    states = [gp.SpState("force", 2048, 2, tile=2) for _ in range(2)]
+    ops = _ops(ranks, tile=2, tiled=tiled)
+    got, stacks = _run(ranks, [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states],
+                       tokens, passes=2)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r]), (tokens, r)
+    n_layers = len(stacks[0])
+    per_pass = 2 * (2 * n_layers - 1)
+    shard = -(-tokens // 2)
+    # Pass 1 (never SP) tiles the whole batch; pass 2 (SP) tiles each rank's shard, both at the
+    # full batch's split.
+    assert sorted(tiled[:0]) == []
+    assert sorted(set(tiled)) == sorted({(0, tokens, tokens), (1, tokens, tokens),
+                                         (0, shard, tokens), (1, shard, tokens)})
+    assert len(tiled) == 2 * per_pass
+    assert all(s.pass_sp and s.pass_tile for s in states)
+
+
+class _TileKernels:
+    """Per-token CPU stand-ins with the stock kernels' call signatures, which record each call."""
+
+    def __init__(self):
+        self.calls = []
+        self.torch = torch
+
+    def post(self, comb, residual, post_mix, x, out, hc_mult, hidden):
+        self.calls.append(("post", residual.shape[0], out.data_ptr(), out.is_contiguous()))
+        out.copy_((torch.einsum("tij,tjh->tih", comb, residual.float())
+                   + post_mix.unsqueeze(-1) * x.float().unsqueeze(1)).to(out.dtype))
+
+    def gemm(self, x2d, fn, *, hidden_size, hc_mult):
+        self.calls.append(("gemm", x2d.shape[0], x2d.data_ptr(), x2d.is_contiguous()))
+        xf = x2d.float()
+        return (xf @ fn.T).unsqueeze(0), xf.square().sum(-1).unsqueeze(0)
+
+    def pre(self, mul, sqrsum, scale, base, residual, post_mix, comb_mix, layer_input, rms_eps,
+            hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat, *, norm_weight,
+            norm_eps):
+        self.calls.append(("pre", residual.shape[0], layer_input.data_ptr(), post_mix.is_contiguous()))
+        rms = torch.rsqrt(sqrsum[0] / mul.shape[-1] + rms_eps).unsqueeze(-1)
+        mix = mul.sum(0) * rms * scale[0] + base
+        n = residual.shape[1]
+        post_mix.copy_(torch.sigmoid(mix[:, :n]) * hc_post_mult_value)
+        comb_mix.copy_(torch.softmax(mix[:, 2 * n:], -1))
+        li = (torch.sigmoid(mix[:, n:2 * n]).unsqueeze(-1) * residual.float()).sum(1)
+        li = li * torch.rsqrt(li.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight.float()
+        layer_input.copy_(li.to(layer_input.dtype))
+
+
+def _tile_inputs(t, n=4, h=8, seed=3):
+    g = torch.Generator().manual_seed(seed)
+    mix = n * (n + 2)
+    return dict(x=torch.randn(t, h, generator=g).bfloat16(),
+                residual=torch.randn(t, n, h, generator=g).bfloat16(),
+                post_layer_mix=torch.rand(t, n, 1, generator=g),
+                comb_res_mix=torch.softmax(torch.randn(t, n, n, generator=g), -1),
+                fn=torch.randn(mix, n * h, generator=g), hc_scale=torch.rand(3, generator=g),
+                hc_base=torch.randn(mix, generator=g), rms_eps=1e-5, hc_pre_eps=1e-6,
+                hc_sinkhorn_eps=1e-6, hc_post_mult_value=2.0, sinkhorn_repeat=20,
+                norm_weight=(1 + torch.randn(h, generator=g)).float(), norm_eps=1e-5)
+
+
+@pytest.mark.parametrize("t, tile", [(8, 3), (7, 2), (8, 8), (5, 64)])
+def test_tiled_body_equals_one_call_and_writes_in_place(t, tile):
+    inp = _tile_inputs(t)
+    one = gp.tiled_fused_post_pre(_TileKernels(), t, **inp)
+    k = _TileKernels()
+    got = gp.tiled_fused_post_pre(k, tile, **inp)
+    for a, b in zip(got, one):
+        assert a.dtype == b.dtype and a.shape == b.shape and torch.equal(a, b)
+    assert [o.shape for o in got] == [(t, 4, 8), (t, 4, 1), (t, 4, 4), (t, 8)]
+    sizes = [min(tile, t - a) for a in range(0, t, tile)]
+    assert [c[:2] for c in k.calls] == [(kind, n) for n in sizes for kind in ("post", "gemm", "pre")]
+    # Each tile's post writes, and its GEMM reads, the tile's slice of the one residual output;
+    # its pre writes the tile's slice of the one layer input.  Nothing is joined afterwards.
+    res, li = got[0], got[3]
+    starts = [a for a in range(0, t, tile)]
+    posts = [c for c in k.calls if c[0] == "post"]
+    gemms = [c for c in k.calls if c[0] == "gemm"]
+    pres = [c for c in k.calls if c[0] == "pre"]
+    assert [c[2] for c in posts] == [res[a:].data_ptr() for a in starts] == [c[2] for c in gemms]
+    assert [c[2] for c in pres] == [li[a:].data_ptr() for a in starts]
+    assert all(c[3] for c in k.calls)
+
+
+def test_tiled_body_converts_the_norm_weight_as_stock_does():
+    inp = _tile_inputs(6)
+    k = _TileKernels()
+    seen = []
+    pre = k.pre
+
+    def spy(*a, norm_weight, norm_eps):
+        seen.append((norm_weight.dtype, norm_weight.is_contiguous()))
+        return pre(*a, norm_weight=norm_weight, norm_eps=norm_eps)
+    k.pre = spy
+    inp["norm_weight"] = torch.randn(16).float()[::2]  # float32 and strided
+    gp.tiled_fused_post_pre(k, 4, **inp)
+    assert seen == [(torch.bfloat16, True)] * 2
+
+
+def test_dispatches_cuda_reads_the_resolved_forward():
+    class Op:
+        def forward_cuda(self):
+            pass
+
+        def forward_native(self):
+            pass
+
+    op = Op()
+    assert not gp._dispatches_cuda(op)
+    op._forward_method = op.forward_native
+    assert not gp._dispatches_cuda(op)
+    op._forward_method = op.forward_cuda
+    assert gp._dispatches_cuda(op)

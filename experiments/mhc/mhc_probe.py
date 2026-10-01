@@ -38,6 +38,14 @@ Three parts, each on the pinned serving image's own vLLM code:
            split is the only cause of the mismatch; with timing, the T/2-token call at
            the full batch's split against its own (the price of an exact SP rank).
 
+``mhctile`` Token tiles at the full batch's split (#783): the serve's own tiled
+           body (``tessera.serving.glm53_prefill.tiled_fused_post_pre``) on the
+           stock kernels, per case ``T`` or ``T/FULL`` (a ``T``-token call of a
+           ``FULL``-token batch, as an SP rank's shard), against the untiled
+           stock call at the same forced split: bitwise outputs, the splits the
+           GEMM actually took, and (off --numerics-only) the site time per tile
+           size under graph replay, per-kernel device time and power.
+
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
 
@@ -450,6 +458,105 @@ def part_mhcsplit(args, model_dir: Path) -> dict:
     return out
 
 
+def _tile_case(spec: str) -> tuple[int, int]:
+    t, _, full = spec.partition("/")
+    return int(t), int(full or t)
+
+
+def part_mhctile(args, model_dir: Path, sampler) -> dict:
+    """Tiled mHC sites at the full batch's split: exactness and time (see module doc)."""
+    import vllm.model_executor.kernels.mhc.tilelang as tl
+    import vllm.model_executor.kernels.mhc.tilelang_kernels as tk
+    from vllm.utils.deep_gemm import is_deep_gemm_supported
+    from tessera.serving import glm53_prefill as gp
+
+    forcer = gp.install_split_forcer(tk)
+    kern = gp.tile_kernels(tk, tl, torch)
+    out = {"deep_gemm_supported": bool(is_deep_gemm_supported()),
+           "sm_count": torch.cuda.get_device_properties(0).multi_processor_count,
+           "tiles": args.tiles, "cases": []}
+    try:  # the serve tiles a layer only when its fused op resolved to forward_cuda
+        from vllm.model_executor.layers.mhc import MHCFusedPostPreOp
+        out["dispatches_cuda"] = gp._dispatches_cuda(MHCFusedPostPreOp())
+    except Exception as exc:  # noqa: BLE001
+        out["dispatches_cuda"] = f"{type(exc).__name__}: {exc}"[:300]
+    log("mhctile dispatches_cuda", out["dispatches_cuda"])
+
+    def splits_of(fn, ins, full):
+        seen: list[int] = []
+
+        def rec(block_k, k, grid_size):
+            s = forcer(block_k, k, grid_size)
+            seen.append(s)
+            return s
+        tk.compute_num_split = rec
+        try:
+            with forcer.full_batch(full):
+                res = fn(*ins)
+        finally:
+            tk.compute_num_split = forcer
+        return res, seen
+
+    for which in ("attn", "ffn"):
+        prm = mhc_params(model_dir, which)
+        stock = mhc_call(prm)
+
+        def tiled(tile, prm=prm):
+            def call(x, residual, post, comb):
+                return gp.tiled_fused_post_pre(kern, tile, x, residual, post, comb, prm["fn"], prm["scale"],
+                                               prm["base"], RMS_EPS, HC_EPS, HC_EPS, POST_MULT, SINKHORN,
+                                               norm_weight=prm["norm"], norm_eps=RMS_EPS)
+            return call
+
+        gen = torch.Generator(device="cuda").manual_seed(1)
+        for spec in args.tile_cases:
+            t, full = _tile_case(spec)
+            x, res, post, comb = mhc_inputs(t, gen, stock)
+            ins = (x, res, post, comb)
+            ref, ref_splits = splits_of(stock, ins, full)
+            again, _ = splits_of(stock, ins, full)
+            by = mhc_bytes(t)
+            case = {"which": which, "tokens": t, "full_batch": full, "stock_splits": ref_splits,
+                    "deterministic": all(torch.equal(a, b) for a, b in zip(ref, again)),
+                    "floor_ms_at_peak": by["floor"] / PEAK_DRAM_GBS / 1e6, "arms": []}
+            k = copies_for(by["floor"])
+            copies = None if args.numerics_only else [tuple(v.clone() for v in ins) for _ in range(k)]
+            for tile in [None] + [tl_ for tl_ in args.tiles if tl_ < t]:
+                fn = stock if tile is None else tiled(tile)
+                arm = {"tile": tile}
+                if tile is not None:
+                    got, sp = splits_of(fn, ins, full)
+                    arm["splits"] = sorted(set(sp))
+                    arm["gemm_calls"] = len(sp)
+                    names = ("residual_cur", "post_mix", "comb_mix", "layer_input")
+                    arm.update({n: compare(g, r) for n, g, r in zip(names, got, ref)})
+                    arm["bitwise"] = all(arm[n]["equal"] for n in names)
+                if copies is not None:
+                    calls = [(lambda a=a: fn(*a)) for a in copies]
+                    with forcer.full_batch(full):
+                        t0 = time.time()
+                        ms = graph_ms(calls, args.reps)
+                        t1 = time.time()
+                        kern_us = kernel_device_us(lambda: [c() for c in calls], 2)
+                    roles: dict[str, float] = {}
+                    for name, v in kern_us.items():
+                        role = classify_mhc_kernel(name)
+                        if role:
+                            roles[role] = roles.get(role, 0.0) + v["mean_us"] * v["calls"] / (2 * k)
+                    arm.update({"ms_per_site": ms, "timing_mode": graph_ms.last_mode, "copies": k,
+                                "per_token_us": ms * 1e3 / t, "floor_fraction": case["floor_ms_at_peak"] / ms,
+                                "kernel_us_per_site": roles, "power": sampler.window(t0, t1)})
+                    del calls
+                case["arms"].append(arm)
+                log("mhctile", which, spec, f"tile {tile}", f"bitwise {arm.get('bitwise', '-')}",
+                    f"splits {arm.get('splits', ref_splits)}",
+                    f"{arm['ms_per_site'] * 1e3:.1f} us/site" if "ms_per_site" in arm else "",
+                    " ".join(f"{r}={u:.1f}" for r, u in arm.get("kernel_us_per_site", {}).items()))
+            out["cases"].append(case)
+            del copies, x, res, post, comb, ref, again
+    return out
+
+
 #: TP2 local KDA projection (64 heads x 128 / 2) and the short-conv width
 #: (``linear_attn_config.short_conv_kernel_size``).
 KDA_P = 4096
@@ -609,6 +716,9 @@ def main() -> int:
     ap.add_argument("--tokens", type=int, nargs="+",
                     default=[1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192])
     ap.add_argument("--split-tokens", type=int, nargs="+", default=[512, 1024, 2048, 8192])
+    ap.add_argument("--tile-cases", nargs="+", default=["512", "1024", "2048", "1024/2048", "256/512"],
+                    help="mhctile cases: T, or T/FULL for a T-token call of a FULL-token batch")
+    ap.add_argument("--tiles", type=int, nargs="+", default=[64, 128, 256, 512, 1024])
     ap.add_argument("--onorm-heads", type=int, nargs="+", default=[32, 64])
     ap.add_argument("--l2-sizes", type=int, nargs="+",
                     default=[1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 40, 48, 64, 128, 256])
@@ -653,6 +763,8 @@ def main() -> int:
             res["kdaconv"] = part_kdaconv(args, sampler)
         elif part == "mhcsplit":
             res["mhcsplit"] = part_mhcsplit(args, model_dir)
+        elif part == "mhctile":
+            res["mhctile"] = part_mhctile(args, model_dir, sampler)
         else:
             raise SystemExit(f"unknown part {part}")
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
