@@ -27,7 +27,10 @@ Per (library, shape, M, S, grid) cell, ``--reps`` launches are counted for:
 
 ``S`` takes master's own pick (``dense_k_split``) and the forced splits
 ``nk // 2`` (every item two chunks or more), ``nk // 2 + 1`` and ``nk`` (every
-item one chunk).  Grids below the SM count put more items on each CTA in
+item one chunk).  The kind ``model`` is the arm's own pick even at ``S = 1``,
+launched at the public path's superblock width: with ``--no-bound`` and two
+arms (``ab_805.sh``), it is the bitwise A/B of the arms' served launches on
+poisoned workspaces.  Grids below the SM count put more items on each CTA in
 sequence, which is the race's precondition.  The output is one JSON line per
 cell, plus a summary.
 """
@@ -63,11 +66,13 @@ def _prebuild(libraries):
 
 
 def _launch(lib, role, xq, a, out, counter, s, partial, grid, empty):
+    # the public path's width: the wide superblock only where K is not split
+    bm = rf.superblock_rows(role.library, 2, int(xq.shape[0]), dense=True) if s == 1 else rf.BM
     lib.dense_forward(
         bool(role.fp8), xq, a if a is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,
         role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), counter, int(s),
-        partial if s > 1 else empty, out, int(grid), int(rf.BM))
+        partial if s > 1 else empty, out, int(grid), int(bm))
 
 
 def _sha(t):
@@ -77,11 +82,11 @@ def _sha(t):
 def _splits(kinds, m, rows, cols, sms, tile_words):
     nk = cols // rf.BK
     master = rf.dense_k_split(m, rows, cols, sms, tile_words=tile_words)
-    named = {"master": master, "half": nk // 2, "half+1": nk // 2 + 1, "full": nk}
+    named = {"master": master, "model": master, "half": nk // 2, "half+1": nk // 2 + 1, "full": nk}
     seen, out = set(), []
     for kind in kinds:
         s = named[kind]
-        if 1 < s <= nk and s not in seen:
+        if (1 < s or kind == "model") and s <= nk and s not in seen:
             seen.add(s)
             out.append((kind, s))
     return master, out
@@ -97,6 +102,8 @@ def main():
     ap.add_argument("--splits", default="master,half,half+1,full")
     ap.add_argument("--grids", default="1,2,4,8,16,0", help="0 = the SM count (master's grid)")
     ap.add_argument("--reps", type=int, default=200)
+    ap.add_argument("--no-bound", action="store_true",
+                    help="skip the fp64 reference (large shapes; the A/B reads the hashes)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     libraries = args.libraries.split(",")
@@ -125,10 +132,10 @@ def main():
             expert, bundle = _role(family, rows=rows, cols=cols, seed=805 + rows // 32 + cols // 32)
             role = rf.prepare_dense_role(bundle)
             assert role.library == library, (role.library, library)
-            w64 = fb.fp64_weight(expert, family)
+            w64 = None if args.no_bound else fb.fp64_weight(expert, family)
             for m in (int(v) for v in args.ms.split(",")):
                 _x, xq, a = _inputs(family, m, cols, 8050 + m)
-                a64 = _a64(family, xq, a)
+                a64 = None if args.no_bound else _a64(family, xq, a)
                 empty = xq.new_empty(0, dtype=torch.float32)
                 # The public path at master's split, unpoisoned: the launch the
                 # native calls below must reproduce at (master's S, grid = sms).
@@ -136,10 +143,11 @@ def main():
                 rf.dense_forward(role, xq, a, api, torch.zeros(1, dtype=torch.int32, device="cuda"))
                 master_s, splits = _splits(args.splits.split(","), m, rows, cols, sms, role.tile_words)
                 for kind, s in splits:
-                    r, bound = fb.dense_bound(family, a64, w64, cols, s)
+                    r, bound = (None, None) if args.no_bound else fb.dense_bound(family, a64, w64, cols, s)
                     for grid in grids:
                         out = torch.empty(m, rows, dtype=torch.bfloat16, device="cuda")
-                        partial = torch.empty(s * m * rows, dtype=torch.float32, device="cuda")
+                        partial = (torch.empty(s * m * rows, dtype=torch.float32, device="cuda") if s > 1
+                                   else empty)
                         counter = torch.zeros(1, dtype=torch.int32, device="cuda")
                         nan_l = torch.zeros((), dtype=torch.int64, device="cuda")
                         mis_l = torch.zeros((), dtype=torch.int64, device="cuda")
@@ -155,8 +163,8 @@ def main():
                             else:
                                 mis_l += (out.view(torch.int16) != first.view(torch.int16)).any().long()
                         torch.cuda.synchronize()
-                        d = (first.double() - r).abs()
-                        ratio = float((d / bound).nan_to_num(float("inf")).max())
+                        ratio = (float("nan") if r is None
+                                 else float(((first.double() - r).abs() / bound).nan_to_num(float("inf")).max()))
                         cell = {"arm": args.arm, "library": library, "rows": rows, "cols": cols, "nk": nk,
                                 "m": m, "split_kind": kind, "s": s, "master_s": master_s,
                                 "min_chunks": nk // s, "grid": grid, "reps": args.reps,
