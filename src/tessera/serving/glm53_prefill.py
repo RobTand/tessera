@@ -689,8 +689,8 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
 
     def forward(self, positions, hidden_states, residual=None, post=None, comb=None):
         if not self.mhc or self.is_mtp_layer:
-            if not self.is_mtp_layer:
-                state.block_overlap(f"layer {self.layer_idx} runs without mHC")
+            if state.overlap and not self.is_mtp_layer:
+                state.block_overlap(f"layer {getattr(self, 'layer_idx', '?')} runs without mHC")
             return stock_forward(self, positions, hidden_states, residual, post, comb)
         num_tokens = positions.shape[0]
         if post is None and self.layer_idx == 0:
