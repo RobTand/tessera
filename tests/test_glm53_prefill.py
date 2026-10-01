@@ -43,7 +43,7 @@ def _config(**over):
 
 
 def test_onorm_hook_appends_for_glm5next_only(monkeypatch):
-    monkeypatch.delenv("TESSERA_GLM53_ONORM_CUDA", raising=False)
+    monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", "1")
     cfg = _config()
     assert gp.enable_onorm_cuda(cfg) is True
     assert cfg.compilation_config.custom_ops == ["none", "+fused_rms_norm_gated"]
@@ -57,17 +57,28 @@ def test_onorm_hook_appends_for_glm5next_only(monkeypatch):
 
 @pytest.mark.parametrize("ops", [["none", "-fused_rms_norm_gated"], ["all", "+fused_rms_norm_gated"]])
 def test_onorm_hook_respects_the_serve_either_way(monkeypatch, ops):
-    monkeypatch.delenv("TESSERA_GLM53_ONORM_CUDA", raising=False)
+    monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", "1")
     cfg = _config(custom_ops=list(ops))
     assert gp.enable_onorm_cuda(cfg) is False
     assert cfg.compilation_config.custom_ops == ops
 
 
-def test_onorm_hook_opt_out(monkeypatch):
-    monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", "0")
+@pytest.mark.parametrize("value", [None, "0"])
+def test_onorm_hook_is_off_unless_the_serve_asks(monkeypatch, value):
+    # Off by default: outside mode NONE the hook changes a stock default.
+    if value is None:
+        monkeypatch.delenv("TESSERA_GLM53_ONORM_CUDA", raising=False)
+    else:
+        monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", value)
     cfg = _config()
     assert gp.enable_onorm_cuda(cfg) is False
     assert cfg.compilation_config.custom_ops == ["none"]
+
+
+def test_onorm_flag_refuses_an_unknown_value(monkeypatch):
+    monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", "yes")
+    with pytest.raises(ValueError, match="TESSERA_GLM53_ONORM_CUDA"):
+        gp.enable_onorm_cuda(_config())
 
 
 def test_sp_eligible_config_has_no_decline_reason(monkeypatch):

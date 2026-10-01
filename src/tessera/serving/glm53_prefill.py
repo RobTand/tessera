@@ -13,10 +13,14 @@ compiles it, and every custom op whose name is not enabled runs
 ``forward_native``.  The serve flag ``-cc.mode=none`` is the fix for every op;
 this hook is the backstop for the one that costs most.  For ``FusedRMSNormGated`` that is nine eager kernels per
 KDA layer (the decomposition meant for inductor fusion); ``forward_cuda`` is
-one Triton kernel.  :func:`enable_onorm_cuda` appends ``+fused_rms_norm_gated``
-to the current config's ``custom_ops`` when the model is Glm5Next and the
-serve's own ``custom_ops`` names that op neither way, so a stock serve command
-runs vLLM's own ``forward_cuda``.  Nothing is rebound.
+one Triton kernel.  With ``TESSERA_GLM53_ONORM_CUDA=1``,
+:func:`enable_onorm_cuda` appends ``+fused_rms_norm_gated`` to the current
+config's ``custom_ops`` when the model is Glm5Next and the serve's own
+``custom_ops`` names that op neither way, so a stock serve command runs vLLM's
+own ``forward_cuda``.  Nothing is rebound.  It is off by default: under mode
+``NONE`` (the release serve) ``custom_ops`` is already ``all`` and the hook
+changes nothing, and in any other mode it would change a stock default that
+no served A/B covers.
 
 **Sequence-parallel mHC.**  At TP 2 every rank computes the mHC residual stream
 (4 x 4096 per token) for every token, while attention and the MoE are sharded.
@@ -98,7 +102,8 @@ Environment:
 - ``TESSERA_GLM53_SP_MHC_SPEC=1``: allow SP with speculative decoding (the MTP
   arm).  Without it a serve with a speculative config declines until an MTP
   row shows tolerance and acceptance hold.
-- ``TESSERA_GLM53_ONORM_CUDA=0``: leave ``custom_ops`` as the serve set it.
+- ``TESSERA_GLM53_ONORM_CUDA``: ``1`` appends the op as above; ``0`` (the
+  default) leaves ``custom_ops`` as the serve set it.
 
 Decline (stock behaviour, one warning): a touched module's sha256 is not an
 inspected interface's, or TP != 2, PP > 1, DP > 1, EP, sequence-parallel MoE
@@ -198,6 +203,14 @@ def is_glm5next(config: Any) -> bool:
     return bool(archs & GLM5NEXT_ARCHITECTURES)
 
 
+def onorm_cuda_enabled() -> bool:
+    """``TESSERA_GLM53_ONORM_CUDA``: ``1`` opts in; ``0`` or unset (the default) leaves the serve's ops."""
+    raw = os.environ.get("TESSERA_GLM53_ONORM_CUDA", "0").strip()
+    if raw not in ("", "0", "1"):
+        raise ValueError(f"TESSERA_GLM53_ONORM_CUDA must be 0 or 1; got {raw!r}")
+    return raw == "1"
+
+
 def enable_onorm_cuda(config: Any) -> bool:
     """Append ``+fused_rms_norm_gated`` for a Glm5Next serve that did not name the op.
 
@@ -207,7 +220,7 @@ def enable_onorm_cuda(config: Any) -> bool:
     """
     if config is None or not is_glm5next(config):
         return False
-    if os.environ.get("TESSERA_GLM53_ONORM_CUDA", "1") == "0":
+    if not onorm_cuda_enabled():
         return False
     compilation = getattr(config, "compilation_config", None)
     ops = getattr(compilation, "custom_ops", None)
