@@ -28,15 +28,19 @@ if [[ -n "${BENCH_SRC:-}" ]]; then
 else
   KSRC="$CHECKOUT/src"
 fi
+# TESSERA_ROUTED_FUSED_WORD_STAGES: the E4M3-instruction library's deep word
+# stages (tessera#807), built into its own _ws<n> directory under <ext_dir>.
+STAGES_ENV=()
+[[ -z "${TESSERA_ROUTED_FUSED_WORD_STAGES:-}" ]] || STAGES_ENV=(-e "TESSERA_ROUTED_FUSED_WORD_STAGES=$TESSERA_ROUTED_FUSED_WORD_STAGES")
 mkdir -p "$EXT" "$EXT.work/home" "$EXT.work/tmp"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 NCPU=$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')
-echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT start=$(date -u +%FT%TZ)"
+echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT word_stages=${TESSERA_ROUTED_FUSED_WORD_STAGES:-default} start=$(date -u +%FT%TZ)"
 echo "arm src=$KSRC kernel_sha=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)"
 docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$EXT" -v "$EXT.work":"$EXT.work" \
   -e HOME="$EXT.work/home" -e TMPDIR="$EXT.work/tmp" -e TORCH_EXTENSIONS_DIR="$EXT" \
-  -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
+  -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" "${STAGES_ENV[@]}" \
   -e PYTHONPATH=/work/src -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, os, sys, time
