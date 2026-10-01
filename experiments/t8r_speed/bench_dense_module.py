@@ -32,6 +32,12 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
   rows each over K = 4096; ``shared_down``, its down over K = 1024 (both read
   from layer 7, the first MoE layer a short checkpoint holds).  Each reads its
   layer from :data:`MODULE_SOURCES`, overridable with ``--source-layers``.
+- ``--served PREFIX[,...]`` with ``--artifact DIR``: a module's SERVED bytes,
+  the exported checkpoint's own ``PREFIX.wire_bytes`` under the scheme its
+  ``config.json`` declares, cut as TP rank 0 of ``--served-tp`` loads it
+  (``plan_shard``: an input cut for ``down_proj``/``o_proj``, an output cut
+  otherwise).  Group ``served:PREFIX``; no source weight, so its numerics are
+  fused against Triton only; timed at ``--served-ms`` on ``--served-lanes``.
 
 Weights: ``--model DIR`` encodes the real GLM-5.3 bytes of ``--layer L``'s
 tensors (the TP2 rank-0 shard: the leading rows of a column-parallel role, the
@@ -294,11 +300,12 @@ def numerics(lanes, w_src, cols, ms, seed):
         x = (torch.randn(m, cols, device="cuda", generator=g) * 0.5).bfloat16()
         xq, a = native_fp8_quant(x)
         a = a.reshape(-1).contiguous().float()
-        ref = torch.nn.functional.linear(x.float(), w_src.float())
+        ref = torch.nn.functional.linear(x.float(), w_src.float()) if w_src is not None else None
         got = {k: v.apply(xq, a).float() for k, v in lanes.items()}
         rec = {}
         for k, y in got.items():
-            rec[f"{k}_vs_source_rel_fro"] = float((y - ref).norm() / ref.norm())
+            if ref is not None:
+                rec[f"{k}_vs_source_rel_fro"] = float((y - ref).norm() / ref.norm())
         if "fused" in got and "triton" in got:
             d = got["fused"] - got["triton"]
             rec["fused_vs_triton_rel_fro"] = float(d.norm() / got["triton"].norm())
@@ -310,6 +317,61 @@ def numerics(lanes, w_src, cols, ms, seed):
                                                for k, v in rec.items()}}), flush=True)
     torch.cuda.synchronize()
     return out
+
+
+def served_scheme(artifact, prefix):
+    """The scheme ``config.json`` declares for one module of an exported checkpoint."""
+    cfg = json.load(open(os.path.join(artifact, "config.json")))
+    qc = cfg.get("quantization_config") or cfg.get("text_config", {}).get("quantization_config") or {}
+    for group in (qc.get("config_groups") or {}).values():
+        if prefix in (group.get("targets") or []):
+            return dict(group["scheme"])
+    raise SystemExit(f"{artifact}: no config group targets {prefix}")
+
+
+def served_geometry(artifact, prefix, tp):
+    """(scheme, roles, columns, cut, out_partitions, in_size) of a served module
+    at TP rank 0 of ``tp``: down_proj and o_proj are row-parallel (an input
+    cut), every other dense module column-parallel (an output cut)."""
+    scheme = served_scheme(artifact, prefix)
+    roles = [(str(n), int(r)) for n, r in scheme["roles"]]
+    columns = int(scheme["columns"])
+    cut = "input" if prefix.endswith(("down_proj", "o_proj")) else "output"
+    out_parts = [r // tp for _, r in roles] if cut == "output" else [r for _, r in roles]
+    in_size = columns // tp if cut == "input" else columns
+    return scheme, roles, columns, cut, out_parts, in_size
+
+
+def served_module(artifact, prefix, tp):
+    """The served module: the checkpoint's own container bytes, parsed and
+    prepared as TP rank 0 of ``tp`` loads them.  Returns ``(prepare,
+    blob_bytes, blob_sha256, cut)``."""
+    from safetensors import safe_open
+    from tessera.serving.native_window import prepare_dense_native_module
+    from tessera.serving.scheme import parse_compact_blob_for_scheme, validate_tessera_scheme
+    from tessera.serving.sharding import plan_shard
+
+    scheme, roles, columns, cut, out_parts, in_size = served_geometry(artifact, prefix, tp)
+    declared = validate_tessera_scheme(scheme, prefix)
+    plan = plan_shard(prefix, roles=roles, columns=columns, out_partitions=out_parts, in_size=in_size,
+                      tp_rank=0, tp_size=tp, input_size=columns, output_size=sum(r for _, r in roles))
+    key = f"{prefix}.wire_bytes"
+    index = json.load(open(os.path.join(artifact, "model.safetensors.index.json")))["weight_map"]
+    with safe_open(os.path.join(artifact, index[key]), framework="pt") as fh:
+        blob = fh.get_tensor(key).numpy().tobytes()
+
+    def prepare(fused_lane):
+        prev = os.environ.get("TESSERA_DENSE_FUSED")
+        os.environ["TESSERA_DENSE_FUSED"] = "1" if fused_lane else "0"
+        try:
+            compact = parse_compact_blob_for_scheme(blob, scheme, prefix, device="cuda")
+            return prepare_dense_native_module(compact, plan, family=declared["family"], device="cuda")
+        finally:
+            if prev is None:
+                os.environ.pop("TESSERA_DENSE_FUSED", None)
+            else:
+                os.environ["TESSERA_DENSE_FUSED"] = prev
+    return prepare, len(blob), hashlib.sha256(blob).hexdigest(), cut
 
 
 def floors(wire_bytes, m, rows, cols, out_bytes=2, a_bytes=1):
@@ -340,6 +402,11 @@ def main():
     ap.add_argument("--hash-ms", default="512,2048,8192",
                     help="M values at which each lane's output is hashed on a (module, q256, M)-seeded "
                          "input, for a bitwise comparison across arms")
+    ap.add_argument("--artifact", default=None, help="an exported checkpoint, for --served")
+    ap.add_argument("--served", default="", help="module prefixes of --artifact to time on their served bytes")
+    ap.add_argument("--served-tp", type=int, default=2, help="the TP size --served modules are cut for (rank 0)")
+    ap.add_argument("--served-ms", default="512,2048,8192", help="the M values --served groups are timed at")
+    ap.add_argument("--served-lanes", default="fused", help="the lanes --served groups are timed on")
     ap.add_argument("--source-layers", default="",
                     help="override MODULE_SOURCES' layers: module=layer[,module=layer...]")
     ap.add_argument("--l2", default="warm",
@@ -390,6 +457,13 @@ def main():
         if args.refs:
             groups.append((f"{name}:bf16_linear", ("bf16", name, roles, cols, rows, None)))
             groups.append((f"{name}:scaled_mm", ("fp8", name, roles, cols, rows, None)))
+    for prefix in (v for v in args.served.split(",") if v):
+        if not args.artifact:
+            raise SystemExit("--served needs --artifact")
+        scheme, _roles, _columns, _cut, out_parts, in_size = served_geometry(args.artifact, prefix, args.served_tp)
+        rank_roles = [(n, o) for (n, _r), o in zip(_roles, out_parts)]
+        groups.append((f"served:{prefix}", ("served", prefix, rank_roles, in_size, sum(out_parts),
+                                            int(scheme["q256"]))))
     cells = {}
     path = os.path.join(args.out, "bench_dense_module.json")
 
@@ -405,21 +479,27 @@ def main():
     def build(spec):
         kind, name, roles, cols, rows, q = spec
         g = torch.Generator(device=dev).manual_seed(zlib.crc32(f"{name}:{kind}:{q}".encode()))
-        if kind == "module":
-            template = MODULE_SOURCES[name][0] if name in MODULE_SOURCES else None
-            layer = (source_layers[name] if name in MODULE_SOURCES
-                     else args.mla_layer if name in MLA_MODULES else args.layer)
-            source = ((lambda n, r: source_weight(args.model, layer, n, r, cols, template)) if args.model
-                      else None)
-            prepare, blob_bytes, enc_s, w_src, blob_sha = encode_module(
-                roles, cols, q, zlib.crc32(f"{name}:{q}".encode()), source)
+        if kind in ("module", "served"):
+            served = None
+            if kind == "served":
+                prepare, blob_bytes, blob_sha, cut = served_module(args.artifact, name, args.served_tp)
+                enc_s, w_src, layer = 0.0, None, None
+                served = {"artifact": args.artifact, "tp_size": args.served_tp, "tp_rank": 0, "cut": cut}
+            else:
+                template = MODULE_SOURCES[name][0] if name in MODULE_SOURCES else None
+                layer = (source_layers[name] if name in MODULE_SOURCES
+                         else args.mla_layer if name in MLA_MODULES else args.layer)
+                source = ((lambda n, r: source_weight(args.model, layer, n, r, cols, template)) if args.model
+                          else None)
+                prepare, blob_bytes, enc_s, w_src, blob_sha = encode_module(
+                    roles, cols, q, zlib.crc32(f"{name}:{q}".encode()), source)
             lanes = {}
             for lane in args.lanes.split(","):
                 mod = prepare(lane == "fused")
                 lanes[lane] = mod
             head = {"kind": kind, "module": name, "q256": q, "rows": rows, "cols": cols, "roles": roles,
                     "blob_bytes": blob_bytes, "blob_sha256": blob_sha, "encode_s": enc_s,
-                    "source_layer": layer if args.model else None,
+                    "source_layer": layer if args.model else None, "served": served,
                     "lanes": {k: {"lane": v.lane, "reason": v.lane_reason, "launch_pair": list(v.launch_pair)}
                               for k, v in lanes.items()}}
             head["numerics"] = numerics(lanes, w_src, cols,
@@ -470,6 +550,9 @@ def main():
                     calls.pop("quant_apply")
                 return {"floor": floors(wire, m, rows, cols)}, calls, holder
             extra = [f"fused@S{v}" for v in args.k_splits.split(",") if v] if "fused" in lanes else []
+            if served is not None:
+                return (head, make, [k for k in args.served_lanes.split(",") if k in lanes],
+                        [int(v) for v in args.served_ms.split(",") if v])
             return head, make, list(lanes) + extra
         if kind == "bf16":
             w = (torch.randn(rows, cols, device=dev, generator=g) * 0.02).bfloat16()
@@ -504,8 +587,9 @@ def main():
             if key not in built:
                 built[key] = build(spec)
                 cells[key] = dict(built[key][0], cells={})
-            head, make, lanes = built[key]
-            seq = [(m, lane) for lane in lanes for m in ms]
+            head, make, lanes = built[key][:3]
+            gms = built[key][3] if len(built[key]) > 3 else ms
+            seq = [(m, lane) for lane in lanes for m in gms]
             for m, lane in (seq if pas == "F" else list(reversed(seq))):
                 ckey = f"{lane}:{m}"
                 cell = cells[key]["cells"].setdefault(ckey, {})
