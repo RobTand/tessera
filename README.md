@@ -378,7 +378,7 @@ Links to historical measurements and release documents are pinned to
 index. The current architecture and packaged-contract links are relative to
 this checkout.
 
-**License:** [MIT](https://github.com/RobTand/tessera/blob/v0.1.0/LICENSE).
+**License:** [MIT with Attribution Addendum](LICENSE).
 
 ## License
 
