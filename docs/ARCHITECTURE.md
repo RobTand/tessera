@@ -1,5 +1,19 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for the dense K split's workspace price (tessera#750).
+`routed_fused.dense_k_split` takes the device's L2 size. While a split's fp32
+workspace (`S * M * rows * 4` bytes) fits in it, the model prices the
+workspace at `DENSE_PARTIAL_L2_RATIO` (232.2 GB/s over the 1.1 TB/s L2
+streaming read rate) of the wire's price, and at the wire's price beyond it.
+Priced at the read rate everywhere, the model chose one pass where four
+splits ran 2.4 times faster (`q_a_proj` at rate 1, M = 64). On the PrismaBuild
+`cb5d674f` calibration (108 cells, every forced split timed on real GLM-5.3
+bytes), the mean regret against the best timed split falls from 9.0% to 4.3%.
+The launches and the numerics bounds take their split from
+`dense_launch_split`, `dense_k_split` at the device's SM count and L2 size. No
+route, rung, cell, served byte or contract field changes; the split changes
+only the fp32 summation order, inside the derived bound.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -3893,7 +3907,9 @@ S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
 of the launch's makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) /
-nk + c) + 2 S M N 4` over `1 .. min(dense_split_max(K), sms)`, where
+nk + c) + p 2 S M N 4` over `1 .. min(dense_split_max(K), sms)` (`p` the
+workspace's price: `DENSE_PARTIAL_L2_RATIO` while `S M N 4` bytes fit in the
+device's L2, 1 beyond it), where
 `dense_split_max(K) = (K / 32) / (STAGES + 1)`: every item keeps at least three
 K chunks, because the producers run at most `STAGES` = 2 chunks ahead and write
 an item's descriptor and row-scale slot (two slots, alternating) when they claim

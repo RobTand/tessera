@@ -132,8 +132,8 @@ def _bound(expert, family, xq, a, s):
 
 def _split(role, m):
     """The K split the kernel runs at ``m`` rows (the makespan model)."""
-    sms = rf._sm_count(torch.cuda.current_device())
-    return rf.dense_k_split(m, role.rows, role.cols, sms, tile_words=role.tile_words)
+    return rf.dense_launch_split(m, role.rows, role.cols, torch.cuda.current_device(),
+                                 tile_words=role.tile_words)
 
 
 def _fused(role, xq, a, out=None, counter=None):
@@ -374,7 +374,8 @@ def test_dense_forward_on_the_glm_role_shapes(role_name, rows, cols, row_cut, fa
     w64 = _fp64_weight(expert, family)
     failures = []
     for m in GLM_M_CASES:
-        s = rf.dense_k_split(m, rows, cols, sms)
+        s = rf.dense_launch_split(m, rows, cols, torch.cuda.current_device(),
+                                  tile_words=role.tile_words)
         _x, xq, a = _inputs(family, m, cols, 1300 + m)
         a64 = xq.double() * a.double()[:, None] if family == "e4m3" else xq.double()
         r, bound = _glm_bound(family, a64, w64, cols, s)
@@ -679,7 +680,7 @@ def test_the_k_split_model_is_the_makespan_model():
     for cols, most in ((4096, 42), (1536, 16), (512, 5), (256, 2), (128, 1), (6144, 64)):
         assert rf.dense_split_max(cols) == most
 
-    def restated(m, rows, cols, words=None, blocks=None):
+    def restated(m, rows, cols, words=None, blocks=None, l2=None):
         if m <= 0:
             return 1
         items0 = -(-m // rf.BM) * (-(-rows // rf.BN) if blocks is None else blocks)
@@ -688,8 +689,10 @@ def test_the_k_split_model_is_the_makespan_model():
 
         def t(s):
             waves = -(-(s * items0) // sms)
+            ws = s * m * rows * 4
+            price = rf.DENSE_PARTIAL_L2_RATIO if l2 is not None and ws <= l2 else 1.0
             return (waves * sms * (item * -(-nk // s) / nk + rf.DENSE_ITEM_FIXED_BYTES)
-                    + (2.0 * s * m * rows * 4 if s > 1 else 0.0))
+                    + (price * 2.0 * ws if s > 1 else 0.0))
 
         return min(range(1, max(1, min(nk // (rf.STAGES + 1), sms)) + 1), key=lambda s: (t(s), s))
 
@@ -728,6 +731,70 @@ def test_the_k_split_model_is_the_makespan_model():
     for m in (1, 4, 16, 64, 512):
         got = rf.dense_k_split(m, kda_rows, 4096, sms, blocks=kda_blocks)
         assert got == restated(m, kda_rows, 4096, blocks=kda_blocks), (m, got)
+
+
+
+def test_the_k_split_prices_the_workspace_at_l2_while_it_fits():
+    """With the device's L2 size, the split workspace (``S * M * rows * 4``
+    bytes, written and read back) costs ``DENSE_PARTIAL_L2_RATIO`` of the
+    wire's price while it fits, and the wire's price beyond it.  Priced at the
+    wire's rate everywhere, the model chose one pass where splits ran far
+    faster: PrismaBuild ``cb5d674f`` (GB10, real GLM-5.3 bytes, mean of the
+    forward and reverse graph-replay medians) timed every forced split, and
+    over its 108 cells the model's mean regret against the best timed split
+    falls from 9.0% to 4.3% (tessera#750)."""
+    sms, l2 = 48, 24 * 2**20
+    assert rf.DENSE_PARTIAL_L2_RATIO == pytest.approx(232.2 / 1100.0)
+
+    def restated(m, rows, cols, words, l2_bytes):
+        items0 = -(-m // rf.BM) * -(-rows // rf.BN)
+        nk = cols // rf.BK
+        item = rf.BN * words * 4 / 512
+
+        def t(s):
+            waves = -(-(s * items0) // sms)
+            ws = s * m * rows * 4
+            price = rf.DENSE_PARTIAL_L2_RATIO if l2_bytes is not None and ws <= l2_bytes else 1.0
+            return (waves * sms * (item * -(-nk // s) / nk + rf.DENSE_ITEM_FIXED_BYTES)
+                    + (price * 2.0 * ws if s > 1 else 0.0))
+
+        return min(range(1, max(1, min(rf.dense_split_max(cols), sms)) + 1), key=lambda s: (t(s), s))
+
+    for m, rows, cols, words in ((1, 4096, 4096, 16 * 4096), (16, 4096, 4096, 16 * 4096),
+                                 (64, 1536, 4096, 16 * 4096), (64, 4096, 4096, 64 * 4096),
+                                 (16, 512, 4096, 16 * 4096), (64, 8192, 1536, 64 * 1536),
+                                 (512, 12288, 4096, 64 * 4096), (8192, 4096, 4096, 128 * 4096)):
+        for l2_bytes in (None, l2):
+            got = rf.dense_k_split(m, rows, cols, sms, tile_words=words, l2_bytes=l2_bytes)
+            assert got == restated(m, rows, cols, words, l2_bytes), (m, rows, cols, words, l2_bytes, got)
+        # A cheaper workspace never asks for fewer splits.
+        assert (rf.dense_k_split(m, rows, cols, sms, tile_words=words, l2_bytes=l2)
+                >= rf.dense_k_split(m, rows, cols, sms, tile_words=words))
+    # The cells the calibration measured (warm / cold, microseconds):
+    # q_a_proj at rate 1 (1536 x 4096), M = 64: S 1 ran 73.1 / 82.0, S 4 31.9 / 34.7.
+    assert rf.dense_k_split(64, 1536, 4096, sms, tile_words=16 * 4096) == 1
+    assert rf.dense_k_split(64, 1536, 4096, sms, tile_words=16 * 4096, l2_bytes=l2) == 4
+    # q_proj at rate 1 (4096 x 4096), M = 16: S 1 ran 72.3 / 77.8, S 3 56.7 / 59.4.
+    assert rf.dense_k_split(16, 4096, 4096, sms, tile_words=16 * 4096) == 1
+    assert rf.dense_k_split(16, 4096, 4096, sms, tile_words=16 * 4096, l2_bytes=l2) == 3
+    # q_proj at rate 4, M = 64: S 1 ran 70.9 / 100.4, S 3 62.8 / 77.7.
+    assert rf.dense_k_split(64, 4096, 4096, sms, tile_words=64 * 4096) == 1
+    assert rf.dense_k_split(64, 4096, 4096, sms, tile_words=64 * 4096, l2_bytes=l2) == 3
+    # Past L2 the workspace is priced as before: 2 x 512 x 12288 x 4 is 48 MiB.
+    assert (rf.dense_k_split(512, 12288, 4096, sms, l2_bytes=l2)
+            == rf.dense_k_split(512, 12288, 4096, sms))
+
+
+@cuda
+def test_the_launch_split_reads_the_device():
+    """``dense_launch_split`` is ``dense_k_split`` at the device's SM count and
+    L2 size: the launches and the numerics bounds take their split from it."""
+    dev = torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(dev)
+    for m, rows, cols in ((1, 4096, 4096), (16, 4096, 4096), (64, 1536, 4096), (512, 2048, 4096)):
+        assert rf.dense_launch_split(m, rows, cols, dev, tile_words=16 * cols) == rf.dense_k_split(
+            m, rows, cols, props.multi_processor_count, tile_words=16 * cols,
+            l2_bytes=props.L2_cache_size)
     assert rf.dense_k_split(1, kda_rows, 4096, sms, blocks=kda_blocks) == 4
 
 

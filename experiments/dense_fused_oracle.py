@@ -313,7 +313,8 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
     # cuts each role's rows across ranks, a row-parallel one its columns).
     role_rows = [int(r) // (tp_size if module_kind(module) == "col" else 1)
                  for _n, r in fused_info["roles"]]
-    split = max(rf.dense_k_split(m, rows, cols, sms) for rows in role_rows)
+    l2_bytes = rf._l2_bytes(torch.cuda.current_device())
+    split = max(rf.dense_k_split(m, rows, cols, sms, l2_bytes=l2_bytes) for rows in role_rows)
     case["k_split"] = int(split)
     ref, r, bound = reference_and_bound(fused_info["family"], x, w64, ref_facts["epilogue_mults"],
                                         cols + int(split))

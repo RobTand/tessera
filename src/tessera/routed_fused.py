@@ -170,9 +170,20 @@ DENSE_ROW_QUANTUM = 4
 #: item's claim (one atomic), its first K chunk's latency and its epilogue.
 #: Measured on GB10: at 32 items of a 4096 x 4096 role, forced splits of equal
 #: share (S = 3, 6, 12: two, four and eight waves) cost c = 1.5 us more per
-#: wave, which at 232.2 GB/s / 48 SMs is 7.3 KB (PENDING the sparklina
-#: receipt).
+#: wave, which at 232.2 GB/s / 48 SMs is 7.3 KB.  The sparklina receipt
+#: (PrismaBuild ``cb5d674f``, real GLM-5.3 bytes) reads 1.4-1.7 us per added
+#: wave on the same role, warm: 6.6-8.1 KB.
 DENSE_ITEM_FIXED_BYTES = 7300
+#: The price of the split workspace's bytes, relative to the wire's, while the
+#: workspace fits in L2 (:func:`dense_k_split`): the GB10 read rate over its
+#: L2 streaming read rate, 232.2 GB/s over 1.1 TB/s (the low end of the
+#: 1.1-1.3 TB/s that PrismaBuild ``86920f49`` measured for reads of 20 MB or
+#: less).  A partial is written by one SM and read back by another, an L2
+#: round trip rather than a stream, so this is a derived price, not the
+#: partial's measured cost.  On the ``cb5d674f`` split calibration (108 cells,
+#: L2 warm and cold) it cuts the model's mean regret against the best timed
+#: split from 9.0% (the workspace at the DRAM rate) to 4.3%.
+DENSE_PARTIAL_L2_RATIO = 232.2 / 1100.0
 #: The kernel's A/B stages (``STAGES`` in the source; the library publishes it).
 #: The producers run at most this many K chunks ahead of the consumers, so an
 #: item of at least ``STAGES + 1`` chunks guarantees that the descriptor and
@@ -967,6 +978,10 @@ def _sm_count(device_index: int) -> int:
     return int(torch.cuda.get_device_properties(device_index).multi_processor_count)
 
 
+def _l2_bytes(device_index: int) -> int:
+    return int(torch.cuda.get_device_properties(device_index).L2_cache_size)
+
+
 @dataclasses.dataclass(frozen=True)
 class FusedRoutedWindowMoE:
     """The fused lane over a loader-filled grouped stack.
@@ -1405,7 +1420,7 @@ def dense_split_max(cols: int) -> int:
 
 
 def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None,
-                  blocks: "int | None" = None) -> int:
+                  blocks: "int | None" = None, l2_bytes: "int | None" = None) -> int:
     """How many ways to split K for one launch at ``m`` rows: the makespan model.
 
     An item is 64 rows of ``x`` by 128 rows of a role, so ``items0 =
@@ -1418,22 +1433,27 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     them to ``sms`` SMs, so the launch ends when an SM that got
     ``ceil(S * items0 / sms)`` items finishes them.  Each item streams its
     chunks' wire bytes at one SM's share of the read rate and pays
-    :data:`DENSE_ITEM_FIXED_BYTES` besides; each split adds an fp32 partial
-    written and read back at the full rate:
+    :data:`DENSE_ITEM_FIXED_BYTES` besides; each split adds an fp32 partial,
+    written and read back, at the full rate times ``p``:
 
         t(S) = ceil(S * items0 / sms) * sms * (item * ceil(nk / S) / nk + c)
-               + [S > 1] * 2 * S * m * rows * 4
+               + [S > 1] * p * 2 * S * m * rows * 4
 
     with ``item = 128 * tile_words * 4 / 512``, the wire bytes of one 128-row
     block over all of K (``tile_words`` the role's words per 512-row tile;
     ``64 * cols``, rate 4, when not given), ``nk = K / 32`` and ``c =``
-    :data:`DENSE_ITEM_FIXED_BYTES`.  The integer minimiser over ``1 ..
+    :data:`DENSE_ITEM_FIXED_BYTES` and ``p`` the workspace's price (below).
+    The integer minimiser over ``1 ..
     min(dense_split_max(K), sms)`` is returned, the smaller ``S`` on a tie.  The wave count is
     the point: a split that leaves the last wave partly idle costs a whole
     wave (tessera#750: at 32 items, ``S = 2`` is 64 items, two waves of half
     an item, no faster than ``S = 1``; ``S = 3`` is two full waves of a
-    third).  The partial term prices the workspace at the read rate even
-    where it stays in L2, so it errs toward fewer splits.
+    third).  The partial term prices the workspace (``S * m * rows * 4``
+    bytes) at :data:`DENSE_PARTIAL_L2_RATIO` of the wire's price while it fits
+    in ``l2_bytes`` (the device's L2), and at the wire's price otherwise or
+    when ``l2_bytes`` is not given.  Priced at the read rate everywhere, it
+    chose one pass where four splits ran 2.4 times faster (tessera#750,
+    PrismaBuild ``cb5d674f``: ``q_a_proj`` at rate 1, M = 64).
     """
     if m <= 0:
         return 1
@@ -1446,10 +1466,21 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
         waves = -(-(s * items0) // sms)
         t = waves * sms * (item * -(-nk // s) / nk + DENSE_ITEM_FIXED_BYTES)
         if s > 1:
-            t += 2.0 * s * m * rows * 4
+            workspace = s * m * rows * 4
+            price = DENSE_PARTIAL_L2_RATIO if l2_bytes is not None and workspace <= l2_bytes else 1.0
+            t += price * 2.0 * workspace
         if best_t is None or t < best_t:
             best_s, best_t = s, t
     return best_s
+
+
+def dense_launch_split(m: int, rows: int, cols: int, device_index: int, *,
+                       tile_words: "int | None" = None, blocks: "int | None" = None) -> int:
+    """The K split a dense launch on ``device_index`` takes: :func:`dense_k_split`
+    with that device's SM count and L2 size.  The launches call it, and so
+    should anything that must know their split (a numerics bound)."""
+    return dense_k_split(m, rows, cols, _sm_count(device_index), tile_words=tile_words,
+                         blocks=blocks, l2_bytes=_l2_bytes(device_index))
 
 
 def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.Tensor | None",
@@ -1469,7 +1500,7 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
         return
     index = x.device.index if x.device.index is not None else torch.cuda.current_device()
     sms = _sm_count(index)
-    s = dense_k_split(m, role.rows, role.cols, sms, tile_words=role.tile_words)
+    s = dense_launch_split(m, role.rows, role.cols, index, tile_words=role.tile_words)
     if s > 1 and out.stride(0) % 4 != 0:
         # The split path's reduce stores four bf16 (uint2) per thread at
         # 4-aligned columns; a row stride that is only even would misalign
@@ -1530,7 +1561,8 @@ def dense_forward_roles(roles: "list[FusedDenseWindowRole]", x: torch.Tensor, a_
         group = roles[g0:g0 + MAX_ROLES]
         rows = sum(r.rows for r in group)
         blocks = sum(-(-r.rows // BN) for r in group)
-        s = dense_k_split(m, rows, first.cols, sms, tile_words=first.tile_words, blocks=blocks)
+        s = dense_launch_split(m, rows, first.cols, index, tile_words=first.tile_words,
+                               blocks=blocks)
         if not fixup and len(group) > 1:
             raise ValueError("a split reduced after the launch takes one role per call")
         if s > 1 and not fixup and out.stride(0) % 4 != 0:

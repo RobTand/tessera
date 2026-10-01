@@ -427,7 +427,9 @@ def run_dense(args, rf, lib, library, mma8, dev, sms, power, clock, results):
                 a_scale = torch.rand(m, device=dev, generator=g) * 0.1 + 0.01
                 out = torch.empty((m, rows), dtype=torch.bfloat16, device=dev)
                 counter = torch.zeros(1, dtype=torch.int32, device=dev)
-                s = rf.dense_k_split(m, rows, cols, sms, tile_words=p["tile_words"])
+                s = rf.dense_k_split(m, rows, cols, sms, tile_words=p["tile_words"],
+                                     l2_bytes=rf._l2_bytes(dev.index if dev.index is not None
+                                                           else torch.cuda.current_device()))
                 bm = rf.superblock_rows(library, 2, m, dense=True) if s == 1 else rf.BM
                 if args.bm != "auto" and s == 1:
                     bm = int(args.bm) if rf.has_width(library, 2, int(args.bm)) else rf.BM
