@@ -30,6 +30,12 @@
 # (default 14000 s) so it ends before a 4 h PB timeout.  EXPORTER (a path
 # under the checkout) replaces the exporter, for checking this script alone.
 #
+# ENCODE_BATCH=N (N > 1) joins N same-shape expert encodes per trellis call
+# (export_tessera_serving.py --encode-batch, byte-identical per unit) and
+# BEST_FORM=1 sets TESSERA_WINDOW_BEST_FORM=1 in the container, the window
+# step that keeps a joined call wide.  Both are machine settings: no byte and
+# no identity field moves, and the done marker records them.
+#
 # Every part of one stub must run from one code snapshot and one image: the
 # merge compares code_sha256 (src/**, experiments/*.py, the runtime contract),
 # the encoder identity and every exporter option except locations.
@@ -66,13 +72,16 @@ HEAD=${TESSERA_HEAD:-$(git rev-parse HEAD 2>/dev/null)}
 CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
 NTH=$(awk -F, '{print NF}' <<< "$CPUS")
 apps() { command -v nvidia-smi >/dev/null && nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader 2>&1; }
-echo "[export_routed_part] $NAME part $INDEX/$COUNT host=$(hostname) start=$(date -u +%FT%TZ) head=$HEAD image=$IMAGE cpus=$CPUS profile=${PROFILE:-0}" | tee -a "$LOG"
+echo "[export_routed_part] $NAME part $INDEX/$COUNT host=$(hostname) start=$(date -u +%FT%TZ) head=$HEAD image=$IMAGE cpus=$CPUS profile=${PROFILE:-0} encode_batch=${ENCODE_BATCH:-1} best_form=${BEST_FORM:-unset}" | tee -a "$LOG"
 echo "[export_routed_part] compute apps at start: $(apps | tr '\n' ';')" | tee -a "$LOG"
 CMD=(python3 "${EXPORTER:-experiments/export_tessera_serving.py}" "$SRC" "$OUT"
   --plan-json "$PLAN" --device cuda --producer-authority "$AUTH"
   --hessian "$U/hessian_capture.references.json"
   --source-digest-cache "$R/stubs/source-digests" --allow-unserveable
   --partition "$INDEX/$COUNT" --partition-runtime-image "$IMAGE")
+[ "${ENCODE_BATCH:-1}" -gt 1 ] 2>/dev/null && CMD+=(--encode-batch "$ENCODE_BATCH")
+WINDOW_ENV=()
+[ -n "${BEST_FORM:-}" ] && WINDOW_ENV=(-e "TESSERA_WINDOW_BEST_FORM=$BEST_FORM")
 PROF=
 if [ "${PROFILE:-0}" = 1 ]; then
   PROF=$PARTS/prof-$INDEX-$TS; mkdir -p "$PROF"
@@ -103,7 +112,7 @@ docker run --rm --name "$CNAME" --gpus all --ipc=host --network=host --cpuset-cp
   -e TORCH_EXTENSIONS_DIR=/pbtmp/torch-ext -e PYTHONPATH=/work/src:/work/experiments \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 -e PYTHONNOUSERSITE=1 \
   -e OMP_NUM_THREADS="$NTH" -e MKL_NUM_THREADS="$NTH" -e OPENBLAS_NUM_THREADS="$NTH" \
-  -e TESSERA_GIT="$HEAD" "${IMAGE_ENV[@]}" \
+  -e TESSERA_GIT="$HEAD" "${IMAGE_ENV[@]}" "${WINDOW_ENV[@]}" \
   -w /work --entrypoint timeout "$IMAGE" "${PART_BOUND_S:-14000}" "${CMD[@]}" >> "$LOG" 2>&1
 rc=$?
 [ -n "$SMI" ] && kill "$SMI" 2>/dev/null
@@ -113,11 +122,12 @@ T1=$(date +%s)
 echo "[export_routed_part] compute apps at end: $(apps | tr '\n' ';')" | tee -a "$LOG"
 echo "[export_routed_part] $NAME part $INDEX/$COUNT rc=$rc elapsed=$((T1 - T0))s end=$(date -u +%FT%TZ)" | tee -a "$LOG"
 if [ "$rc" = 0 ]; then
-  python3 - "$MARK" "$NAME" "$INDEX" "$COUNT" "$(hostname)" "$T0" "$T1" "$HEAD" "$IMAGE" "$LOG" "${PROF:-}" <<'PY'
+  python3 - "$MARK" "$NAME" "$INDEX" "$COUNT" "$(hostname)" "$T0" "$T1" "$HEAD" "$IMAGE" "$LOG" "${PROF:-}" "${ENCODE_BATCH:-1}" "${BEST_FORM:-}" <<'PY'
 import json, statistics, sys
-mark, name, index, count, host, t0, t1, head, image, log, prof = sys.argv[1:]
+mark, name, index, count, host, t0, t1, head, image, log, prof, batch, best = sys.argv[1:]
 rec = {"stub": name, "partition": f"{index}/{count}", "host": host, "start_unix": int(t0),
-       "end_unix": int(t1), "elapsed_s": int(t1) - int(t0), "head": head, "image": image, "log": log}
+       "end_unix": int(t1), "elapsed_s": int(t1) - int(t0), "head": head, "image": image, "log": log,
+       "encode_batch": int(batch), "window_best_form": best or None}
 if prof:
     rec["profile_dir"] = prof
     watts = []
