@@ -952,30 +952,29 @@ def test_a_joined_batch_reads_each_tensor_once_and_hands_it_back_to_the_loop():
     assert not joined.staged and not joined.done
 
 
-@pytest.mark.parametrize("batch", ["2", "5"])
-def test_joined_expert_encodes_write_the_one_unit_bytes_and_no_identity(
-        tmp_path, monkeypatch, batch):
+def test_joined_expert_encodes_write_the_one_unit_bytes_and_no_identity(tmp_path, monkeypatch):
     """``--encode-batch`` moves no byte and stamps nothing: the shard is the
-    one-unit export's shard byte for byte, and the part identity's options
-    are the same options.  Both exports are partitioned so the identity is
-    written; gate/up and down are two join keys, so a batch of 5 also leaves a
-    short tail per key."""
-    tensors = _checkpoint(experts=3)
+    one-unit export's shard byte for byte, and the part record -- identity
+    (code, options, encoder fixture) and output digests -- is the same record.
+    Both exports are partitioned so that record is written.  Two experts give
+    gate/up four units and down two, two join keys, so a batch of 3 is a full
+    batch and a short tail on one key and a single short batch on the other."""
+    tensors = _checkpoint(experts=2)
     config = _config()
-    config["text_config"].update(n_routed_experts=3)
+    config["text_config"].update(n_routed_experts=2)
     plan = {STACK: {"grid": "E4M3", "q256": 896}}
     part = ["--partition", "0/1", "--partition-runtime-image", "test/image@sha256:" + "a" * 64]
     outs = {}
-    for label, extra in (("one", []), ("joined", ["--encode-batch", batch])):
+    for label, extra in (("one", []), ("joined", ["--encode-batch", "3"])):
         (tmp_path / label).mkdir()
         outs[label] = _export(tmp_path / label, monkeypatch, tensors, plan,
                               "--device", "cpu", *part, *extra, config=config)
     assert ((outs["one"] / "model.safetensors").read_bytes()
             == (outs["joined"] / "model.safetensors").read_bytes())
-    identity = [json.loads((out / "tessera_serving_manifest.json").read_text())
-                ["export_identity"]["options"] for out in (outs["one"], outs["joined"])]
-    assert identity[0] == identity[1]
-    assert "encode_batch" not in identity[1]
+    records = [json.loads((out / "tessera_serving_manifest.json").read_text())["export_partition"]
+               for out in (outs["one"], outs["joined"])]
+    assert records[0] == records[1]
+    assert "encode_batch" not in records[1]["identity"]["options"]
 
 
 @pytest.mark.parametrize("extra", [["--encode-batch", "0"],
