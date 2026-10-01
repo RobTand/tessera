@@ -1,6 +1,7 @@
 # Native census planning
 
-CPU slice for tessera#689. GPU census acceptance remains held by the coordinator.
+CPU slice for tessera#689. The coordinator/native-serving owner supplies GPU
+census acceptance; the E4M3 census is handed to T-8 in tessera#750.
 
 `tools/plan_native_census.py` builds `tessera.native_census_plan.v1` from an
 explicit JSON array of requested scopes. It never initializes CUDA, loads
@@ -66,5 +67,6 @@ Netdata, observed runtime identity, wire identity, native preparation, and route
 census. Measurements remain null. This is **not**
 `tessera.kernel_timing_receipt.v1`: it contains no medians, IQR, runtime image
 assertion, device execution, or performance result. It performs no submission,
-placement, sharding, or scheduling. The GPU arm is held; its measured 304-row
-panel and the #685 comparison remain outstanding.
+placement, sharding, or scheduling. Native timing acceptance is handed to the
+coordinator/release owner; the measured 304-row panel and the #685 comparison
+remain outstanding. The CPU manifest does not bind or authorize release inputs.
