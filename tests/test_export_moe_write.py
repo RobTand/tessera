@@ -906,3 +906,80 @@ def test_an_nvfp4_stack_missing_one_input_scale_is_refused_by_key(tmp_path, monk
         _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
                 "--allow-unserveable", config=_nvfp4_config())
     assert "--input-scales" in str(caught.value), str(caught.value)
+
+
+# --- joined fresh encodes (--encode-batch, #750) -----------------------------
+
+def test_joined_encodes_take_each_key_in_loop_order():
+    """Each key's units in loop order, ``batch`` at a time; batches ordered by
+    their first member, so the loop always reaches a batch at its first unit."""
+    keys = ["a", "b", "a", "a", "b", "a", "c"]
+    assert export.plan_joined_encodes(keys, 2) == [[0, 2], [1, 4], [3, 5], [6]]
+    assert export.plan_joined_encodes(keys, 1) == [[i] for i in range(len(keys))]
+    assert export.plan_joined_encodes(keys, 9) == [[0, 2, 3, 5], [1, 4], [6]]
+    with pytest.raises(ValueError, match="at least one unit"):
+        export.plan_joined_encodes(keys, 0)
+
+
+def test_a_joined_batch_reads_each_tensor_once_and_hands_it_back_to_the_loop():
+    """A batch reaching ahead reads a later member's tensor once; the loop then
+    takes that same tensor from the stage instead of reading it again, and
+    every unit gets its own result back, in loop order."""
+    reads = []
+
+    class Handle:
+        def get_tensor(self, name):
+            reads.append(name)
+            return f"T:{name}"
+
+    units = [(f"n{i}", {"tensor": f"u{i}", "stack": "s", "rows": 4, "cols": 8})
+             for i in range(5)]
+    # u2 is another shape: it rides alone and the a-key batches skip over it.
+    units[2][1]["rows"] = 8
+    calls = []
+
+    def encode(members):
+        calls.append([unit["tensor"] for unit, _source in members])
+        return [(unit["tensor"], source) for unit, source in members]
+
+    joined = export.JoinedExpertEncode(Handle(), units, 2, encode)
+    got = []
+    for name, unit in units:
+        got.append(joined.take(name, unit, joined.source(name)))
+    assert calls == [["u0", "u1"], ["u2"], ["u3", "u4"]]
+    assert got == [(f"u{i}", f"T:n{i}") for i in range(5)]
+    assert reads == [f"n{i}" for i in range(5)], "each source tensor is read exactly once"
+    assert not joined.staged and not joined.done
+
+
+@pytest.mark.parametrize("batch", ["2", "5"])
+def test_joined_expert_encodes_write_the_one_unit_bytes_and_no_identity(
+        tmp_path, monkeypatch, batch):
+    """``--encode-batch`` moves no byte and stamps nothing: the shard is the
+    one-unit export's shard byte for byte, and the part identity's options
+    are the same options.  Both exports are partitioned so the identity is
+    written; gate/up and down are two join keys, so a batch of 5 also leaves a
+    short tail per key."""
+    tensors = _checkpoint(experts=3)
+    config = _config()
+    config["text_config"].update(n_routed_experts=3)
+    plan = {STACK: {"grid": "E4M3", "q256": 896}}
+    part = ["--partition", "0/1", "--partition-runtime-image", "test/image@sha256:" + "a" * 64]
+    outs = {}
+    for label, extra in (("one", []), ("joined", ["--encode-batch", batch])):
+        (tmp_path / label).mkdir()
+        outs[label] = _export(tmp_path / label, monkeypatch, tensors, plan,
+                              "--device", "cpu", *part, *extra, config=config)
+    assert ((outs["one"] / "model.safetensors").read_bytes()
+            == (outs["joined"] / "model.safetensors").read_bytes())
+    identity = [json.loads((out / "tessera_serving_manifest.json").read_text())
+                ["export_identity"]["options"] for out in (outs["one"], outs["joined"])]
+    assert identity[0] == identity[1]
+    assert "encode_batch" not in identity[1]
+
+
+@pytest.mark.parametrize("extra", [["--encode-batch", "0"],
+                                   ["--encode-batch", "2", "--cached-units", "x.json"]])
+def test_an_encode_batch_the_exporter_cannot_honour_is_refused(tmp_path, monkeypatch, extra):
+    with pytest.raises(SystemExit):
+        _export(tmp_path, monkeypatch, _checkpoint(experts=1), None, "--device", "cpu", *extra)

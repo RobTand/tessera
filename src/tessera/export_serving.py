@@ -178,7 +178,7 @@ from tessera.layout import tp_agnostic_at_minor  # noqa: E402
 from tessera.manifest import body_rate_cap  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
-    ActivationSource, encode_linear_planes, served_recipe)
+    ActivationSource, encode_linear_planes, encode_linears_planes, served_recipe)
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, classify_construction, construction_entry,
@@ -1479,6 +1479,87 @@ def default_intake_threads() -> int:
 DEFAULT_INTAKE_WINDOW_BYTES = 8 << 30
 
 
+def plan_joined_encodes(keys: "list", batch: int) -> "list[list[int]]":
+    """Group one shard's fresh expert encodes into joined calls of ``batch`` units.
+
+    ``keys[i]`` is the ``i``-th unit's join key in the shard loop's order: the
+    units one ``encode_linears_planes`` call may carry together, which is one
+    stack (so one grid, rung and recipe) at one ``[rows, cols]``.  Returns the
+    batches as lists of positions.  Each key's units are taken in loop order,
+    ``batch`` at a time, so a batch's first position is the earliest of its
+    members, and the loop reaches that position before any other member:
+    the batch is encoded when its first unit comes up and every later member
+    finds its bytes waiting.  A batch never reaches back past a unit the loop
+    has already written.
+    """
+    if batch < 1:
+        raise ValueError(f"an encode batch is at least one unit, got {batch}")
+    groups: dict = {}
+    for position, key in enumerate(keys):
+        groups.setdefault(key, []).append(position)
+    batches = [members[i:i + batch] for members in groups.values()
+               for i in range(0, len(members), batch)]
+    return sorted(batches, key=lambda members: members[0])
+
+
+class JoinedExpertEncode:
+    """One shard's fresh routed-expert encodes, ``batch`` same-shape units per call.
+
+    The routed census encodes under LDLQ, and every window-Viterbi call there
+    is one ``ldl_block`` of columns (32): one unit at a time, the step kernels
+    run on 32 columns.  ``encode_linears_planes`` joins ``B`` units' calls
+    along the column axis, and every unit's blob is byte-identical to the blob
+    ``encode_linear_planes`` writes for it alone (``tests/test_batched_encode_
+    identity.py``), so joining is a machine schedule and moves no byte.
+    Whether a joined call stays wide is the window Viterbi's layout: the front
+    form holds two ``2^L`` fronts per column in the L2 budget, which is 32
+    columns at L=14 and cuts a joined call straight back into 32-column
+    batches; the best form (``TESSERA_WINDOW_BEST_FORM=1``) holds ``2^(L-R)``
+    class minima and keeps it wide.  The two levers pay together and neither
+    pays alone (#750); this class is the first, the environment the second.
+
+    ``take`` returns ``(exported, blob, payload, own_global, manifest)`` for
+    one unit, encoding the unit's whole batch when its first member comes up.
+    Members later in the shard are read from ``handle`` once and held in
+    ``staged`` until the loop reaches their tensor, which it then takes from
+    here instead of reading it again.
+    """
+
+    def __init__(self, handle, shard_units, batch, encode):
+        self.handle = handle
+        self.encode = encode
+        self.staged: dict = {}
+        self.done: dict = {}
+        keys = [(unit["stack"], int(unit["rows"]), int(unit["cols"]))
+                for _name, unit in shard_units]
+        self.batch_of: dict = {}
+        for positions in plan_joined_encodes(keys, batch):
+            members = [shard_units[i] for i in positions]
+            for _name, unit in members:
+                self.batch_of[unit["tensor"]] = members
+
+    def source(self, name):
+        """The loop's tensor for ``name``: the staged read if a batch took it, else a fresh one."""
+        tensor = self.staged.pop(name, None)
+        return self.handle.get_tensor(name) if tensor is None else tensor
+
+    def take(self, name, unit, tensor):
+        key = unit["tensor"]
+        if key not in self.done:
+            members = []
+            for member_name, member in self.batch_of[key]:
+                if member_name == name:
+                    held = tensor
+                else:
+                    held = self.staged.get(member_name)
+                    if held is None:
+                        held = self.staged[member_name] = self.handle.get_tensor(member_name)
+                members.append((member, held))
+            for (member, _held), result in zip(members, self.encode(members)):
+                self.done[member["tensor"]] = result
+        return self.done.pop(key)
+
+
 class CachedExpertIntake:
     """Cached expert units read, digested, verified and framed on a thread pool,
     committed on the caller's thread in the order the shard loop writes them.
@@ -1706,6 +1787,12 @@ def main():
                     help="bound on the estimated bytes the cached intake holds ahead of the "
                          "shard loop (source slices plus wires), default 8 GiB")
     ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--encode-batch", type=int, default=1, metavar="UNITS",
+                    help="fresh routed-expert encodes joined UNITS same-shape units per "
+                         "trellis call (encode_linears_planes); every blob is byte-identical "
+                         "to the one-unit encode, so this is a machine setting, never "
+                         "recorded as identity. It widens the window Viterbi only under "
+                         "TESSERA_WINDOW_BEST_FORM=1 (#750). Default 1: one unit per call.")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
                     help="write only whole layers owned by layer %% COUNT == INDEX; "
@@ -1792,6 +1879,10 @@ def main():
         ap.error("historical cached producer package and source SHA256 must be paired")
     if args.cached_producer_package is not None and not (args.cached_units or args.cached_expert_units):
         ap.error("historical cached producer requires cached unit intake")
+    if args.encode_batch < 1:
+        ap.error(f"--encode-batch is at least one unit, got {args.encode_batch}")
+    if args.encode_batch > 1 and (args.cached_units or args.cached_expert_units):
+        ap.error("--encode-batch joins fresh expert encodes; cached unit intake encodes nothing")
     producer_authority = canonical_capture = None
     if args.producer_authority is not None:
         producer_authority, canonical_capture = load_producer_authority(args.producer_authority)
@@ -2343,6 +2434,9 @@ def main():
                                   # fields (hessian_identity below), not identity.
                                   "cached_hessian_identity", "cached_intake_threads",
                                   "cached_intake_window_bytes",
+                                  # How many units share a trellis call changes no
+                                  # byte (encode_linears_planes is identity per unit).
+                                  "encode_batch",
                                   # Where shard digests may be reused from changes no
                                   # stamped digest; the receipt records how each was taken.
                                   "source_digest_cache",
@@ -2588,15 +2682,59 @@ def main():
               f"Hessian identity {cached_identity.established}", flush=True)
         intake.prime()
 
+    def encode_joined(members):
+        """``[(unit, source tensor)]`` of one join key -> each unit's loop results.
+
+        The same per-unit calls the fresh branch below makes -- ``for_unit``,
+        the encode with ``verify``, the manifest off the bytes, the container --
+        with the encode itself one ``encode_linears_planes`` call."""
+        stack_spec = stack_plan[members[0][0]["stack"]]
+        unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
+        unit_recipe = served_recipe(unit_grid, unit_q256, STRUCTURE_ROUTED_MOE)
+        weights = [packed_expert_weight(source, unit).to(args.device, torch.float32).contiguous()
+                   for unit, source in members]
+        per_unit = [({} if activation is None else activation.for_unit(
+                        unit["tensor"], weight.shape[1], args.device,
+                        scale_plane=unit_recipe.scale_plane))
+                    for (unit, _source), weight in zip(members, weights)]
+        encoded = encode_linears_planes(
+            weights, grid=unit_grid, q256=unit_q256, names=[unit["tensor"] for unit, _ in members],
+            per_unit=per_unit, body=unit_recipe.body, verify=not args.no_verify)
+        del weights, per_unit
+        results = []
+        for (unit, _source), (exported, unit_artifact_, _forests) in zip(members, encoded):
+            unit_manifest = parse_unit_artifact(exported.blob, device=args.device).manifest
+            blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
+            payload = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
+            results.append((exported, blob, payload, float(unit_artifact_.scale_global),
+                            unit_manifest))
+        return results
+
+    if args.encode_batch > 1:
+        print(f"joined expert encode: {args.encode_batch} units per trellis call, "
+              f"TESSERA_WINDOW_BEST_FORM={os.environ.get('TESSERA_WINDOW_BEST_FORM', '') or 'unset'}",
+              flush=True)
     pending_modules = dict(modules)
     for shard, names in sorted(shards.items()):
         shard_payload: dict[str, torch.Tensor] = {}
         twin_payload: dict[str, torch.Tensor] = {}
         with safe_open(str(args.src / shard), framework="pt") as handle:
+            joined = None
+            if args.encode_batch > 1 and intake is None and cached_units is None:
+                joined = JoinedExpertEncode(
+                    handle, [(name, unit) for name in names
+                             if name not in plan and name in expert_units
+                             for unit in expert_units[name]],
+                    args.encode_batch, encode_joined)
             for name in names:
                 # The intake reads its own source slices through its shared
                 # handle; the loop does not stage a tensor it never touches.
-                tensor = None if intake is not None and name in expert_units else handle.get_tensor(name)
+                if intake is not None and name in expert_units:
+                    tensor = None
+                elif joined is not None:
+                    tensor = joined.source(name)
+                else:
+                    tensor = handle.get_tensor(name)
                 if name in plan:
                     weights_cache[name] = tensor
                 elif name in expert_units:
@@ -2609,6 +2747,9 @@ def main():
                         if intake is not None:
                             (exported, blob, cache_record, payload, own_global,
                              unit_manifest) = intake.take(shard, name, unit)
+                        elif joined is not None:
+                            (exported, blob, payload, own_global,
+                             unit_manifest) = joined.take(name, unit, tensor)
                         elif cached_units is None:
                             source_weight = packed_expert_weight(tensor, unit)
                             weight = source_weight.to(args.device, torch.float32).contiguous()

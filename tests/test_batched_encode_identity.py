@@ -109,6 +109,47 @@ def test_the_batch_writes_each_units_own_bytes(label, grid, q256):
     assert together[0].blob != together[1].blob
 
 
+WINDOW_FAMILIES = [f for f in FAMILIES if wire_recipe(f[1], f[2]).body is BodyKind.WINDOW]
+
+
+@cuda
+@pytest.mark.parametrize("label,grid,q256", WINDOW_FAMILIES, ids=[f[0] for f in WINDOW_FAMILIES])
+def test_the_batch_under_the_best_form_writes_each_units_own_front_form_bytes(
+        label, grid, q256, monkeypatch):
+    """The routed census's schedule (#750): ``B`` units joined, the window step
+    in its best form, against each unit alone in the front form -- today's
+    exporter.  The pair is the point: the front form cuts a joined call back to
+    the columns two ``2^L`` fronts fit in the L2 budget, so only under the best
+    form does the joined call run wide, and the layout assertion below checks
+    that this case really is the wide one rather than a 32-column call that
+    passes for the old reason."""
+    from tessera import window_viterbi as wv
+
+    recipe = wire_recipe(grid, q256)
+    weights = [_weights(s) for s in (30, 31, 32, 33)]
+    per_unit = _per_unit(_source(4, seed=300), weights, recipe)
+    block = per_unit[0]["ldl_block"]
+    joined_cols = len(weights) * block
+    rate = -(-q256 * grid.arity // 256)
+    device = torch.device("cuda", torch.cuda.current_device())
+    size = 1 << recipe.window_bits
+    front = wv._layout(device, size, joined_cols, 512)[1]
+    best = wv._layout(device, size, joined_cols, 512, size >> rate)[1]
+    assert best > front and best >= joined_cols // 2, (front, best)
+
+    monkeypatch.delenv(wv._BEST_FORM_ENV, raising=False)
+    alone = [encode_linear(w, grid=grid, q256=q256, name=f"u{i}",
+                           scale_refit=DEFAULT_SCALE_REFIT, **kw)
+             for i, (w, kw) in enumerate(zip(weights, per_unit))]
+    monkeypatch.setenv(wv._BEST_FORM_ENV, "1")
+    together = encode_linears(
+        weights, grid=grid, q256=q256, names=[f"u{i}" for i in range(4)],
+        per_unit=per_unit, scale_refit=DEFAULT_SCALE_REFIT)
+    for one, batched in zip(alone, together):
+        assert batched.blob == one.blob
+    assert len({b.blob for b in together}) == 4
+
+
 @cuda
 def test_three_units_at_two_rates_through_the_plane_entry():
     """``encode_linears_planes`` with explicit per-unit sequences, at the
