@@ -71,6 +71,25 @@ all-gather plus reduce-scatter as cheaper than the all-reduce from 32 to 1024
 tokens and chose ``T*`` 32, while the same serve's profile at 512 tokens
 showed SP 10 ms per step slower than stock (window u4-R1-20261001T0058Z).
 
+**mHC token tiles (#783).**  Each mHC site runs three kernels that each stream
+the whole residual (``[T, 4, 4096]`` bf16, 32 KiB per token) through DRAM: the
+post kernel writes the new residual, then the pre-norm GEMM and the pre kernel
+read it back.  At 2048 tokens that is 64 MiB, beyond the GB10's 24 MiB L2, so
+both reads come from DRAM.  :func:`tiled_fused_post_pre` runs the same three
+stock kernels, with the same arguments, over token tiles small enough that the
+tile's new residual is still in L2 when the GEMM and the pre kernel read it.
+It writes each tile's outputs into slices of the full-size outputs, so nothing
+is copied.  Every kernel is per token except the GEMM's split-k, so the tiles
+run inside :meth:`SplitForcer.full_batch` at the full batch's split, which
+makes the result bitwise equal to the stock call
+(``experiments/mhc/mhc_probe.py`` ``mhctile``).  A pass tiles only when the
+full batch is on the split-k path (vLLM's fused small-batch kernel declines
+it), the call is longer than one tile, and the pass is not a graph capture.
+The tile is a measured setting, ``TESSERA_GLM53_MHC_TILE``, not a constant
+here.  Without SP the layer's own reductions are untouched; only the two
+``hc_fused_post_pre`` calls change.  A layer whose fused op does not dispatch
+to ``forward_cuda`` keeps the stock call.
+
 **The KDA prefill conv, per q/k/v slice.**  The pinned KDA layer runs one
 short causal conv over the merged q|k|v channels and splits its token-major
 output, so q, k and v reach FlashKDA as row-strided views, and FlashKDA's
@@ -95,6 +114,9 @@ Environment:
   (measured ``T*``; research, see above), or ``force`` (SP at every token
   count where it is exact; a measurement arm, logged as such).  SP is always
   exact; there is no inexact mode.
+- ``TESSERA_GLM53_MHC_TILE``: ``off`` (default) or a token count: run the
+  ``hc_fused_post_pre`` calls in tiles of that many tokens (bitwise; see
+  above).  Combines with SP: an SP pass tiles its shard.
 - ``TESSERA_GLM53_SP_MHC_SPEC=1``: allow SP with speculative decoding (the MTP
   arm).  Without it a serve with a speculative config declines until an MTP
   row shows tolerance and acceptance hold.
@@ -232,6 +254,20 @@ def sp_mode() -> str:
     return mode
 
 
+def mhc_tile() -> int | None:
+    """The mHC token tile from ``TESSERA_GLM53_MHC_TILE``; None when off."""
+    raw = os.environ.get("TESSERA_GLM53_MHC_TILE", "off").strip().lower()
+    if raw in ("", "off", "0"):
+        return None
+    try:
+        tile = int(raw)
+    except ValueError:
+        tile = 0
+    if tile < 1:
+        raise ValueError(f"TESSERA_GLM53_MHC_TILE must be off or a positive token count; got {raw!r}")
+    return tile
+
+
 def sp_decline_reasons(config: Any) -> list[str]:
     """Why this serve must keep the stock layer forward; empty when eligible."""
     reasons = []
@@ -347,28 +383,39 @@ class SpState:
     declines the whole serve to stock before any activation was sharded.
     """
 
-    def __init__(self, mode: str, max_tokens: int, tp_size: int):
+    def __init__(self, mode: str, max_tokens: int, tp_size: int, tile: int | None = None):
         self.mode = mode
         self.max_tokens = int(max_tokens)
         self.tp_size = int(tp_size)
+        self.tile = tile                  # the mHC token tile (TESSERA_GLM53_MHC_TILE); None: untiled
         self.t_star: float | None = float(tp_size) if mode == "force" else None
         self.table: list[dict] = []
         self.lock = threading.Lock()
         self.declined: str | None = None  # why a layer could not be prepared
         self.ready = False                # a complete pass prepared every layer it ran
         self.pass_sp = False              # the decision for the pass in flight
+        self.pass_tile = False            # ... and whether its hc_fused_post_pre calls run in tiles
+        self._tile_logged = False
         self._pass_open = False
         self._pass_ok = True
+
+    @property
+    def sp_on(self) -> bool:
+        """SP may run on this serve, so its layers are prepared and the forward reduces."""
+        return self.mode != "off"
 
     def use_sp(self, num_tokens: int) -> bool:
         return self.t_star is not None and num_tokens >= self.t_star
 
-    def begin_pass(self, num_tokens: int, capturing: bool, *, exact: bool) -> bool:
+    def begin_pass(self, num_tokens: int, capturing: bool, *, exact: bool,
+                   tile_exact: bool = False) -> bool:
         """At a pass's first layer: settle the previous pass, then decide this one.
 
         ``exact``: the full batch and its shard both reach the split-k path, so
         the shard's mHC calls can run at the full batch's split.  A pass that
-        would not be exact runs stock, whatever ``T*`` is.
+        would not be exact runs stock, whatever ``T*`` is.  ``tile_exact``: the
+        full batch reaches the split-k path, so its calls can run in tiles at
+        its split.  Returns the SP decision; ``pass_tile`` holds the tile one.
         """
         if self._pass_open and self._pass_ok and self.declined is None and not self.ready:
             self.ready = True
@@ -377,6 +424,13 @@ class SpState:
         # A captured graph always holds the stock op sequence, whatever T* is.
         self.pass_sp = (self.ready and self.declined is None and not capturing
                         and exact and self.use_sp(num_tokens))
+        call_tokens = -(-num_tokens // self.tp_size) if self.pass_sp else num_tokens
+        self.pass_tile = (self.tile is not None and not capturing and tile_exact
+                          and call_tokens > self.tile)
+        if self.pass_tile and not self._tile_logged:
+            self._tile_logged = True
+            _log.warning("tessera.glm53_prefill: first tiled mHC pass (%s tokens, %s per call, "
+                         "tile %s, SP %s)", num_tokens, call_tokens, self.tile, self.pass_sp)
         return self.pass_sp
 
     def prepare(self, layer: Any) -> bool:
@@ -507,7 +561,11 @@ def measure_t_star(layer: Any, state: SpState, ops: Any, torch: Any, device: Any
 
 
 def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) -> Callable:
-    """The rebound ``Glm5NextDecoderLayer.forward`` (stock line for line except the collectives)."""
+    """The rebound ``Glm5NextDecoderLayer.forward``.
+
+    Stock line for line except the collectives on an SP serve, and the two
+    ``hc_fused_post_pre`` calls on a tiled pass.
+    """
 
     def forward(self, positions, hidden_states, residual=None, post=None, comb=None):
         if not self.mhc or self.is_mtp_layer:
@@ -520,13 +578,24 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
                     if state.t_star is None:
                         measure_t_star(self, state, ops, torch, hidden_states.device)
             state.begin_pass(num_tokens, capturing,
-                             exact=ops.sp_exact(num_tokens, self.hidden_size, self.n))
-        if not state.prepare(self):
+                             exact=ops.sp_exact(num_tokens, self.hidden_size, self.n),
+                             tile_exact=ops.tile_exact(num_tokens, self.hidden_size, self.n))
+        # Without SP the layers keep their own reductions (tiles change only the mHC calls).
+        if state.sp_on and not state.prepare(self):
             return stock_forward(self, positions, hidden_states, residual, post, comb)
-        sp = state.pass_sp
-        # On an SP pass the shard's mHC calls run at the full batch's pre-norm split (exact SP).
-        # (a factory: a generator context manager is single-use, and a layer enters it twice).
-        split = (lambda: ops.full_split(num_tokens)) if sp else (lambda: _NO_FORCE)
+        sp, tiled = state.pass_sp, state.pass_tile
+        # On an SP pass the shard's mHC calls run at the full batch's pre-norm split (exact SP);
+        # so do a tiled pass's tiles.  (A factory: a generator context manager is single-use,
+        # and a layer enters it twice.)
+        split = (lambda: ops.full_split(num_tokens)) if sp or tiled else (lambda: _NO_FORCE)
+
+        def fused_post_pre(x, residual, post, comb, fn, scale, base, norm):
+            if tiled:
+                return ops.tiled_post_pre(self, x, residual, post, comb, fn, scale, base,
+                                          norm.weight.data, norm.variance_epsilon)
+            return self.hc_fused_post_pre(x, residual, post, comb, fn, scale, base,
+                                          norm_weight=norm.weight.data,
+                                          norm_eps=norm.variance_epsilon)
 
         x = hidden_states
         if post is None:
@@ -542,26 +611,30 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
                     norm_eps=self.input_layernorm.variance_epsilon)
         else:
             with split():
-                residual, post, comb, x = self.hc_fused_post_pre(
+                residual, post, comb, x = fused_post_pre(
                     x, residual, post, comb, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base,
-                    norm_weight=self.input_layernorm.weight.data,
-                    norm_eps=self.input_layernorm.variance_epsilon)
+                    self.input_layernorm)
 
         if sp:
             x = ops.sp_all_gather(x)[:num_tokens]
         x = self.self_attn(hidden_states=x, positions=positions)
-        x = ops.sp_reduce_scatter(x) if sp else ops.all_reduce(x)
+        if sp:
+            x = ops.sp_reduce_scatter(x)
+        elif state.sp_on:
+            x = ops.all_reduce(x)
 
         with split():
-            residual, post, comb, x = self.hc_fused_post_pre(
+            residual, post, comb, x = fused_post_pre(
                 x, residual, post, comb, self.hc_ffn_fn, self.hc_ffn_scale, self.hc_ffn_base,
-                norm_weight=self.post_attention_layernorm.weight.data,
-                norm_eps=self.post_attention_layernorm.variance_epsilon)
+                self.post_attention_layernorm)
 
         if sp:
             x = ops.sp_all_gather(x)[:num_tokens]
         x = self.mlp(x)
-        x = ops.sp_reduce_scatter(x) if sp else ops.all_reduce(x)
+        if sp:
+            x = ops.sp_reduce_scatter(x)
+        elif state.sp_on:
+            x = ops.all_reduce(x)
 
         if self.layer_idx == self.num_hidden_layers - 1:
             x = self.hc_post(x, residual, post, comb)
@@ -605,16 +678,101 @@ def shard_split_exact(kernels: Any, deep_gemm: Any, tp_size: int, num_tokens: in
                for t in (num_tokens, shard))
 
 
-def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
-    model, _runner, _linear, seqpar, comm, kernels, _tilelang, _mhc_ops, deep_gemm = modules
+def tile_kernels(kernels: Any, tilelang: Any, torch: Any) -> Any:
+    """The three kernels of ``mhc_fused_post_pre_tilelang``'s split-k branch, as it calls them."""
+    return SimpleNamespace(post=kernels._MHC_POST_TILELANG_KERNEL,
+                           gemm=tilelang._hc_prenorm_gemm_outputs,
+                           pre=kernels._MHC_PRE_BIG_FUSE_TILELANG_KERNEL, torch=torch)
+
+
+def tiled_fused_post_pre(k: Any, tile: int, x: Any, residual: Any, post_layer_mix: Any,
+                         comb_res_mix: Any, fn: Any, hc_scale: Any, hc_base: Any, rms_eps: float,
+                         hc_pre_eps: float, hc_sinkhorn_eps: float, hc_post_mult_value: float,
+                         sinkhorn_repeat: int, norm_weight: Any = None,
+                         norm_eps: float = 1e-6) -> tuple[Any, Any, Any, Any]:
+    """``mhc_fused_post_pre_tilelang``'s split-k branch, ``tile`` tokens at a time.
+
+    The same kernels with the same arguments as the pinned stock body, each on
+    one token tile, writing into that tile's slice of the full-size outputs.
+    Run it inside :meth:`SplitForcer.full_batch` for the full batch: the GEMM's
+    split-k is the only part of the three that depends on the call's token
+    count, so the result is then bitwise the stock call's.  ``k`` is
+    :func:`tile_kernels`.
+    """
+    torch = k.torch
+    assert residual.dtype == torch.bfloat16 and x.dtype == torch.bfloat16
+    assert post_layer_mix.dtype == torch.float32 and comb_res_mix.dtype == torch.float32
+    assert fn.dtype == torch.float32 and hc_scale.dtype == torch.float32
+    assert hc_base.dtype == torch.float32
+    hc_mult, hidden_size = residual.shape[-2], residual.shape[-1]
+    outer_shape = residual.shape[:-2]
+    if norm_weight is not None:
+        if norm_weight.dtype != torch.bfloat16:
+            norm_weight = norm_weight.to(torch.bfloat16)
+        if not norm_weight.is_contiguous():
+            norm_weight = norm_weight.contiguous()
+    residual_flat = residual.view(-1, hc_mult, hidden_size)
+    num_tokens = residual_flat.shape[0]
+    x_flat = x.view(num_tokens, hidden_size)
+    post_flat = post_layer_mix.view(num_tokens, hc_mult)
+    comb_flat = comb_res_mix.view(num_tokens, hc_mult, hc_mult)
+    device = residual.device
+    post_mix_cur = torch.empty(num_tokens, hc_mult, dtype=torch.float32, device=device)
+    comb_mix_cur = torch.empty(num_tokens, hc_mult * hc_mult, dtype=torch.float32, device=device)
+    layer_input_cur = torch.empty(num_tokens, hidden_size, dtype=torch.bfloat16, device=device)
+    residual_cur = torch.empty_like(residual_flat)
+    for a in range(0, num_tokens, tile):
+        b = min(num_tokens, a + tile)
+        res = residual_cur[a:b]
+        k.post(comb_flat[a:b], residual_flat[a:b], post_flat[a:b], x_flat[a:b], res,
+               hc_mult, hidden_size)
+        mul, sqrsum = k.gemm(res.view(b - a, hc_mult * hidden_size), fn,
+                             hidden_size=hidden_size, hc_mult=hc_mult)
+        k.pre(mul, sqrsum, hc_scale, hc_base, res, post_mix_cur[a:b], comb_mix_cur[a:b],
+              layer_input_cur[a:b], rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value,
+              sinkhorn_repeat, norm_weight=norm_weight, norm_eps=norm_eps)
+    return (residual_cur.view(*outer_shape, hc_mult, hidden_size),
+            post_mix_cur.view(*outer_shape, hc_mult, 1),
+            comb_mix_cur.view(*outer_shape, hc_mult, hc_mult),
+            layer_input_cur.view(*outer_shape, hidden_size))
+
+
+def _dispatches_cuda(op: Any) -> bool:
+    """The layer's fused mHC op resolved to its ``forward_cuda`` (the stock body tiles mirror)."""
+    method = getattr(op, "_forward_method", None)
+    return method is not None and method == getattr(op, "forward_cuda", None)
+
+
+def _vllm_ops(modules: tuple[Any, ...], tp_size: int, tile: int | None = None) -> Any:
+    model, _runner, _linear, seqpar, comm, kernels, tilelang, _mhc_ops, deep_gemm = modules
     import torch
 
     from vllm.distributed import get_tp_group
 
     forcer = install_split_forcer(kernels)
+    kern = tile_kernels(kernels, tilelang, torch)
 
     def sp_exact(num_tokens: int, hidden: int, n: int) -> bool:
         return shard_split_exact(kernels, deep_gemm, tp_size, num_tokens, hidden, n)
+
+    def tile_exact(num_tokens: int, hidden: int, n: int) -> bool:
+        return shard_split_exact(kernels, deep_gemm, 1, num_tokens, hidden, n)
+
+    def tiled_post_pre(layer: Any, x: Any, residual: Any, post: Any, comb: Any, fn: Any,
+                       scale: Any, base: Any, norm_weight: Any, norm_eps: float) -> Any:
+        ok = layer.__dict__.get("_tessera_tile_ok")
+        if ok is None:
+            ok = layer.__dict__["_tessera_tile_ok"] = _dispatches_cuda(layer.mhc_fused_post_pre_op)
+            if not ok:
+                _log.warning("tessera.glm53_prefill: layer %s fused mHC op does not dispatch to "
+                             "forward_cuda; its calls stay untiled", layer.layer_idx)
+        if not ok:
+            return layer.hc_fused_post_pre(x, residual, post, comb, fn, scale, base,
+                                           norm_weight=norm_weight, norm_eps=norm_eps)
+        return tiled_fused_post_pre(kern, tile, x, residual, post, comb, fn, scale, base,
+                                    layer.rms_norm_eps, layer.hc_eps, layer.hc_eps,
+                                    layer.mhc_post_mult_value, layer.mhc_sinkhorn_iterations,
+                                    norm_weight=norm_weight, norm_eps=norm_eps)
 
     def max_across_tp(value: float) -> float:
         group = get_tp_group()
@@ -630,7 +788,8 @@ def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
         sp_reduce_scatter=seqpar.sp_reduce_scatter,
         all_reduce=comm.tensor_model_parallel_all_reduce,
         hc_expand=model.hc_expand, hc_contract=model.hc_contract,
-        max_across_tp=max_across_tp, sp_exact=sp_exact, full_split=forcer.full_batch)
+        max_across_tp=max_across_tp, sp_exact=sp_exact, full_split=forcer.full_batch,
+        tile_exact=tile_exact, tiled_post_pre=tiled_post_pre)
 
 
 _INSTALLED: dict[str, Any] = {}
@@ -638,18 +797,18 @@ _INSTALLED: dict[str, Any] = {}
 
 def install_sp_mhc(config: Any) -> bool:
     """Rebind the layer forward when this serve is the inspected one; True when active."""
-    mode = sp_mode()
-    if mode == "off":
+    mode, tile = sp_mode(), mhc_tile()
+    if mode == "off" and tile is None:
         return False
     decided = _INSTALLED.get(("decided", id(config)))
     if decided is not None:
         return decided
-    active = _install_sp_mhc(config, mode)
+    active = _install_sp_mhc(config, mode, tile)
     _INSTALLED[("decided", id(config))] = active
     return active
 
 
-def _install_sp_mhc(config: Any, mode: str) -> bool:
+def _install_sp_mhc(config: Any, mode: str, tile: int | None = None) -> bool:
     reasons = sp_decline_reasons(config)
     if not reasons:
         modules, why = _import_all()
@@ -671,12 +830,13 @@ def _install_sp_mhc(config: Any, mode: str) -> bool:
 
     sched = getattr(config, "scheduler_config", None)
     state = SpState(mode, getattr(sched, "max_num_batched_tokens", T_GRID[-1]),
-                    config.parallel_config.tensor_parallel_size)
-    layer_cls.forward = make_forward(layer_cls.forward, _vllm_ops(modules, state.tp_size), state, torch)
+                    config.parallel_config.tensor_parallel_size, tile)
+    layer_cls.forward = make_forward(layer_cls.forward, _vllm_ops(modules, state.tp_size, tile),
+                                     state, torch)
     _INSTALLED["state"] = state
-    _log.warning("tessera.glm53_prefill: SP mHC installed (interface %s, mode %s, "
-                 "max_num_batched_tokens %s; exact: the shard's mHC runs at the full batch's "
-                 "pre-norm split)", interface.name, mode, state.max_tokens)
+    _log.warning("tessera.glm53_prefill: SP mHC installed (interface %s, mode %s, mHC tile %s, "
+                 "max_num_batched_tokens %s; exact: the shard's mHC, and every tile, runs at the "
+                 "full batch's pre-norm split)", interface.name, mode, tile or "off", state.max_tokens)
     return True
 
 
