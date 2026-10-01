@@ -1,0 +1,188 @@
+{
+ "model.language_model.layers.0.mlp.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 384
+ },
+ "model.language_model.layers.0.mlp.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 256
+ },
+ "model.language_model.layers.0.mlp.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 256
+ },
+ "model.language_model.layers.0.self_attn.b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.f_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.f_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.g_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.g_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.k_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.q_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.0.self_attn.v_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.mlp.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 640
+ },
+ "model.language_model.layers.1.mlp.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 512
+ },
+ "model.language_model.layers.1.mlp.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 512
+ },
+ "model.language_model.layers.1.self_attn.b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.f_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.f_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.g_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.g_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.k_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.q_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.1.self_attn.v_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.mlp.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1280
+ },
+ "model.language_model.layers.2.mlp.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 768
+ },
+ "model.language_model.layers.2.mlp.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 768
+ },
+ "model.language_model.layers.2.self_attn.b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.f_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.f_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.g_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.g_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.k_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.q_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.2.self_attn.v_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.mlp.experts": {
+  "grid": "E4M3",
+  "q256": 1280
+ },
+ "model.language_model.layers.3.mlp.shared_experts.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1536
+ },
+ "model.language_model.layers.3.mlp.shared_experts.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1408
+ },
+ "model.language_model.layers.3.mlp.shared_experts.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1408
+ },
+ "model.language_model.layers.3.self_attn.indexer.weights_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.indexer.wk.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.indexer.wq_b.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.kv_a_proj_with_mqa.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.kv_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.q_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.3.self_attn.q_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.mlp.experts": {
+  "grid": "E4M3",
+  "q256": 1408
+ },
+ "model.language_model.layers.4.mlp.shared_experts.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1792
+ },
+ "model.language_model.layers.4.mlp.shared_experts.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1664
+ },
+ "model.language_model.layers.4.mlp.shared_experts.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1664
+ },
+ "model.language_model.layers.4.self_attn.b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.f_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.f_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.g_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.g_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.k_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.q_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.4.self_attn.v_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.mlp.experts": {
+  "grid": "E4M3",
+  "q256": 1536
+ },
+ "model.language_model.layers.5.mlp.shared_experts.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 2048
+ },
+ "model.language_model.layers.5.mlp.shared_experts.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1920
+ },
+ "model.language_model.layers.5.mlp.shared_experts.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1920
+ },
+ "model.language_model.layers.5.self_attn.b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.f_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.f_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.g_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.g_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.k_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.q_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.5.self_attn.v_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.mlp.experts": {
+  "grid": "E4M3",
+  "q256": 1664
+ },
+ "model.language_model.layers.6.mlp.shared_experts.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 896
+ },
+ "model.language_model.layers.6.mlp.shared_experts.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1024
+ },
+ "model.language_model.layers.6.mlp.shared_experts.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1024
+ },
+ "model.language_model.layers.6.self_attn.b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.f_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.f_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.g_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.g_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.k_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.q_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.6.self_attn.v_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.mlp.experts": {
+  "grid": "E4M3",
+  "q256": 1792
+ },
+ "model.language_model.layers.7.mlp.shared_experts.down_proj.weight": {
+  "grid": "E4M3",
+  "q256": 2048
+ },
+ "model.language_model.layers.7.mlp.shared_experts.gate_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1152
+ },
+ "model.language_model.layers.7.mlp.shared_experts.up_proj.weight": {
+  "grid": "E4M3",
+  "q256": 1152
+ },
+ "model.language_model.layers.7.self_attn.indexer.weights_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.indexer.wk.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.indexer.wq_b.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.kv_a_proj_with_mqa.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.kv_b_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.o_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.q_a_proj.weight": "PASSTHROUGH",
+ "model.language_model.layers.7.self_attn.q_b_proj.weight": "PASSTHROUGH"
+}
