@@ -370,7 +370,6 @@ def test_dense_forward_on_the_glm_role_shapes(role_name, rows, cols, row_cut, fa
     assert rf.fused_dense_window_supported(bundle) is None
     role = rf.prepare_dense_role(bundle)
     assert (role.rows, role.cols, int(role.has_init.item())) == (rows, cols, int(row_cut))
-    sms = rf._sm_count(torch.cuda.current_device())
     w64 = _fp64_weight(expert, family)
     failures = []
     for m in GLM_M_CASES:
