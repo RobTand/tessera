@@ -113,16 +113,10 @@ SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
 # Extensions that cannot change behaviour and never force a full run.
 INERT = {".md", ".txt", ".rst"}
 
-# An explicit interface decision, not a guess at pytest collection. Keep these
-# modules in the graph so changes still select their pytest consumers. This
-# gate runs only through its manual __main__ entry point; selecting it would
-# assert pytest coverage for a file that produces no items.
-MANUAL_GATES = {
-    "tests/test_native_a4_serving.py": (
-        "standalone manual CUDA gate (run_gate under __main__); "
-        "no pytest items; not executed by this selection"
-    ),
-}
+# Explicit manual-only interfaces, not a guess at pytest collection. Keep
+# excluded modules in the graph so their pytest consumers are still selected.
+# The A4 gate now has a pytest entry point and is not a manual-only interface.
+MANUAL_GATES: dict[str, str] = {}
 
 # This grammar only identifies metadata that needs verification. It never
 # proves ownership or grants an exclusion: the sealed action does that.
