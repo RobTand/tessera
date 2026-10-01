@@ -530,7 +530,7 @@ def _dense_native_window_launch(decoder: str, fused_decoder: str, lane: str) -> 
     needs no extension lane, carries no ``lane`` and is not a
     ``when_lane_absent`` fallback: it still runs beside the fused identity,
     for every module ``routed_fused.fused_dense_window_supported`` refuses
-    (mixed rates, rows not a multiple of 128, a permuted column order), for a
+    (more than two rates, rows not a multiple of 4, a permuted column order), for a
     box whose toolchain cannot build the library, and for
     ``TESSERA_DENSE_FUSED=0``.  The fused window kernel's dense identity
     (``FUSED_WINDOW_DENSE_SYMBOL``) is the dispatch for every module the
