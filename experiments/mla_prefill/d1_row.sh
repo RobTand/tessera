@@ -8,7 +8,7 @@
 # Legs, each with its UTC window printed for the Netdata series:
 #   timing_pools   CUDA events + kernel-only profiler times + power, kpool indices
 #   timing_random  the same with uniform-random causal indices
-#   ncu_pools      Nsight Compute --set full, one launch per context
+#   ncu_pools      Nsight Compute --set full, one launch per shape
 # Exit status: 1 if any leg failed (all legs always run), 2 on a launch error.
 set -uo pipefail
 OUT=$(realpath -m "${1:?out_dir}")

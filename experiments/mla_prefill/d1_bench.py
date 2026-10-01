@@ -7,8 +7,11 @@ image 5be13705): query ``[T, 1, 32, 512]`` bf16, packed ``fp8_ds_mla`` cache
 ``[blocks, 1, 64, 656]`` uint8, physical indices ``[T, 1, 2176]`` int32,
 ``seq_lens=None``, ``bmm1_scale=1/16``, ``kv_scale_format="arbitrary_fp32"``.
 
-One chunk of an L8192 request is T=2048 queries at context end E in
-{2048, 4096, 6144, 8192}. Index rows follow the kpool indexer
+A shape is T queries whose last query sits at context end E (``T@E``). The
+default set is the four 2048-query chunks of an L8192 request (E = 2048, 4096,
+6144, 8192), the TR3 exactness-gate prefill (2049@2049: one 2049-token prefill,
+chunked prefill off, top-k width above the context) and an L512 request
+(512@512). Index rows follow the kpool indexer
 (``vllm/models/glm5next/nvidia/ops/kpool_compress.py:846``): 16 pools of 128
 contiguous tokens, then the trailing incomplete pool, padded with -1 to 2176.
 
@@ -29,7 +32,6 @@ import time
 
 import torch
 
-T = 2048
 HEADS = 32
 D_LATENT = 512
 ROW_BYTES = 656
@@ -39,7 +41,7 @@ N_POOLS = 16
 TOPK = N_POOLS * POOL  # 2048
 WIDTH = 2176  # TOPK + POOL - 1 = 2175, rounded to whole 64-entry tiles
 SM_SCALE = 1.0 / 16.0  # (qk_nope 256 + qk_rope 0) ** -0.5
-CONTEXTS = (2048, 4096, 6144, 8192)
+SHAPES = "2048@2048,2048@4096,2048@6144,2048@8192,2049@2049,512@512"
 
 
 def utc() -> str:
@@ -59,7 +61,7 @@ def make_cache(n_tokens: int, gen: torch.Generator, device) -> torch.Tensor:
     return cache.view(blocks, PAGE, ROW_BYTES)
 
 
-def make_indices(context_end: int, gen: torch.Generator, device, mode: str) -> torch.Tensor:
+def make_indices(context_end: int, T: int, gen: torch.Generator, device, mode: str) -> torch.Tensor:
     """[T, 2176] int32 flat row ids (identity block table) for one prefill chunk."""
     seq = torch.arange(context_end - T + 1, context_end + 1, device=device, dtype=torch.int64)
     out = torch.full((T, WIDTH), -1, dtype=torch.int64, device=device)
@@ -181,7 +183,7 @@ def main() -> int:
     ap.add_argument("--index-mode", default="pools", choices=["pools", "random"])
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--sustain-s", type=float, default=8.0)
-    ap.add_argument("--contexts", default=",".join(map(str, CONTEXTS)))
+    ap.add_argument("--shapes", default=SHAPES, help="comma-separated T@E (queries @ context end)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     dev = torch.device("cuda")
@@ -189,24 +191,26 @@ def main() -> int:
     # The exact import vLLM uses (vllm/utils/flashinfer.py:303-307).
     from flashinfer.decode import trtllm_batch_decode_with_kv_cache_mla as fi_mla
 
-    contexts = [int(c) for c in args.contexts.split(",")]
+    shapes = [tuple(int(v) for v in item.split("@")) for item in args.shapes.split(",")]
     rec = {"schema": "mla_d1_bench.v1", "start_utc": utc(), "host": os.environ.get("HOST_NAME"),
            "flashinfer": flashinfer.__version__, "torch": torch.__version__,
            "device": torch.cuda.get_device_name(), "index_mode": args.index_mode,
            "ncu": args.ncu, "shapes": []}
     ws = torch.zeros(128 * 1024 * 1024, dtype=torch.uint8, device=dev)
-    for ctx in contexts:
+    for T, ctx in shapes:
         gen = torch.Generator(device=dev)
-        gen.manual_seed(1000 + ctx)
+        gen.manual_seed(1000 + ctx + 100000 * T)
         kv = make_cache(ctx, gen, dev)
-        idx = make_indices(ctx, gen, dev, args.index_mode)
+        idx = make_indices(ctx, T, gen, dev, args.index_mode)
         q = (torch.randn(T, HEADS, D_LATENT, generator=gen, device=dev) * 2.0).to(torch.bfloat16)
         out = torch.empty(T, HEADS, D_LATENT, dtype=torch.bfloat16, device=dev)
         valid = (idx >= 0).sum().item()
         fn = lambda: call(fi_mla, q, kv, idx, out, ws)  # noqa: E731
         fn()
         torch.cuda.synchronize()
-        shape = {"context_end": ctx, "valid_index_fraction": valid / idx.numel(),
+        masked_tiles = int((idx.view(T, WIDTH // 64, 64) < 0).all(-1).sum().item())
+        shape = {"queries": T, "context_end": ctx, "valid_index_fraction": valid / idx.numel(),
+                 "fully_masked_tile_fraction": masked_tiles / (T * (WIDTH // 64)),
                  "distinct_rows": int(torch.unique(idx[idx >= 0]).numel())}
         if args.ncu:
             torch.cuda.cudart().cudaProfilerStart()
@@ -225,11 +229,11 @@ def main() -> int:
             outs.append(out.clone())
         shape["determinism_bitwise"] = all(torch.equal(outs[0].view(torch.int16), o.view(torch.int16)) for o in outs[1:])
         shape["out_sha256"] = sha(outs[0])
-        # Split invariance: rows [0,1024) alone against the full batch.
+        # Split invariance: rows [0, T//2) alone against the full batch.
         half = torch.empty(T // 2, HEADS, D_LATENT, dtype=torch.bfloat16, device=dev)
         call(fi_mla, q[: T // 2], kv, idx[: T // 2], half, ws)
         torch.cuda.synchronize()
-        shape["split_1024_bitwise"] = bool(torch.equal(half.view(torch.int16), outs[0][: T // 2].view(torch.int16)))
+        shape["split_half_bitwise"] = bool(torch.equal(half.view(torch.int16), outs[0][: T // 2].view(torch.int16)))
         # CUDA-event timing, one event pair per call.
         ts = []
         for _ in range(args.iters):
@@ -263,8 +267,8 @@ def main() -> int:
         shape["sustain_ms_per_call"] = a.elapsed_time(b) / n
         shape["power"] = ps.summary()
         rec["shapes"].append(shape)
-        print(json.dumps({k: shape[k] for k in ("context_end", "call_ms_median", "sustain_ms_per_call",
-                                                 "determinism_bitwise", "split_1024_bitwise")}),
+        print(json.dumps({k: shape[k] for k in ("queries", "context_end", "call_ms_median", "sustain_ms_per_call",
+                                                 "determinism_bitwise", "split_half_bitwise")}),
               flush=True)
     rec["end_utc"] = utc()
     name = "d1_ncu_marks.json" if args.ncu else f"d1_timing_{args.index_mode}.json"
