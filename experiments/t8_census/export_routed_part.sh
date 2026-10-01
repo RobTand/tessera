@@ -19,9 +19,10 @@
 #           it aside, because the exporter refuses an existing output.
 #   PROFILE=1 adds a py-spy record of the whole export (py-spy is the parent:
 #           ptrace_scope is 1 on the GB10 hosts) and a 1 s nvidia-smi power
-#           series, both under $R/stubs/parts-NAME/prof-INDEX-<ts>.  The power
-#           series is box-wide: the compute-apps lists at start and end say who
-#           else held the GPU.
+#           series and a 5 s memory series (exporter RSS, box MemAvailable),
+#           all under $R/stubs/parts-NAME/prof-INDEX-<ts>.  Power and
+#           MemAvailable are box-wide: the compute-apps lists at start and end
+#           say who else held the GPU.
 #
 # Every part of one stub must run from one code snapshot and one image: the
 # merge compares code_sha256 (src/**, experiments/*.py, the runtime contract),
@@ -68,11 +69,19 @@ if [ "${PROFILE:-0}" = 1 ]; then
     nvidia-smi --query-gpu=timestamp,power.draw,utilization.gpu,clocks.sm,temperature.gpu \
       --format=csv,noheader,nounits -l 1 > "$PROF/power.csv" 2>&1 & SMI=$!
   fi
+  # Memory every 5 s: the exporter's resident set and the box's MemAvailable
+  # (GB10 memory is one pool, so CUDA allocations show in MemAvailable only).
+  ( while :; do
+      rss=$(ps -eo rss=,args= | awk -v o="$OUT" '$2 ~ /python/ && index($0, o) {s += $1} END {print s + 0}')
+      avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
+      echo "$(date +%s),$rss,$avail"; sleep 5
+    done > "$PROF/mem.csv" ) & MEM=$!
   # py-spy's own exit code is not the export's: the child writes its rc.
   py-spy record --subprocesses --idle --nonblocking --rate "${PYSPY_RATE:-10}" --format speedscope \
     -o "$PROF/pyspy.speedscope.json" -- bash -c '"$@"; echo $? > "$RCF"' _ "${CMD[@]}" >> "$LOG" 2>&1
   SPY=$?
   [ -n "$SMI" ] && kill "$SMI" 2>/dev/null
+  kill "$MEM" 2>/dev/null
   rc=$(cat "$RCF" 2>/dev/null || echo 99)
   echo "[export_routed_part] py-spy rc=$SPY profile=$PROF" | tee -a "$LOG"
 else
@@ -98,6 +107,20 @@ if prof:
                 pass
     except OSError:
         pass
+    rss, avail = [], []
+    try:
+        for line in open(f"{prof}/mem.csv"):
+            try:
+                _, r, a = line.strip().split(",")
+                rss.append(int(r)); avail.append(int(a))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    if rss:
+        rec["memory_gib"] = {"samples": len(rss), "export_rss_max": round(max(rss) / 2**20, 2),
+                             "mem_available_min": round(min(avail) / 2**20, 2),
+                             "mem_available_start": round(avail[0] / 2**20, 2)}
     if watts:
         watts.sort()
         rec["gpu_power_w"] = {"samples": len(watts), "mean": round(statistics.fmean(watts), 2),
