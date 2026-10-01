@@ -25,6 +25,13 @@ Three parts, each on the pinned serving image's own vLLM code:
            buffer sizes 1 to 256 MB, which locates the L2 knee and the DRAM
            plateau on this box.
 
+``kdaconv`` The KDA prefill conv once per q/k/v slice (``TESSERA_GLM53_KDA_CONV_SPLIT``)
+           against the stock merged conv on the image's Triton
+           ``causal_conv1d_fn``: bitwise q/k/v and conv state on varlen batches
+           (both conv-state layouts, with and without spec columns, sequences
+           shorter than the conv width), then the per-layer time of the conv
+           plus the dense copies FlashKDA's input contract forces, on both paths.
+
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
 
@@ -335,6 +342,120 @@ def part_mhc(args, model_dir: Path, sampler) -> dict:
     return out
 
 
+#: TP2 local KDA projection (64 heads x 128 / 2) and the short-conv width
+#: (``linear_attn_config.short_conv_kernel_size``).
+KDA_P = 4096
+KDA_HEADS = 32
+KDA_WIDTH = 4
+
+
+def kda_conv_case(lens, has, p: int, state_len: int, layout: str, gen) -> dict:
+    """One varlen prefill batch for the KDA conv: merged q|k|v input, the serve's fp32 merged
+    weight, a bf16 conv-state cache in ``layout`` (``SD`` stores (state_len, dim) and the layer
+    transposes it, ``DS`` stores (dim, state_len)), and the precomputed conv metadata."""
+    from vllm.v1.attention.backends.utils import compute_causal_conv1d_metadata
+
+    t, n = sum(lens), len(lens) + 2
+    qkv = torch.randn(t, 3 * p, device="cuda", generator=gen).bfloat16()
+    weight = torch.randn(3 * p, KDA_WIDTH, device="cuda", generator=gen) * 0.5
+    if layout == "SD":
+        store = torch.randn(n, state_len, 3 * p, device="cuda", generator=gen).bfloat16()
+    else:
+        store = torch.randn(n, 3 * p, state_len, device="cuda", generator=gen).bfloat16()
+    qsl = torch.tensor([0] + list(torch.tensor(lens).cumsum(0).tolist()), dtype=torch.int32)
+    nums, batch_ptr, offs = compute_causal_conv1d_metadata(qsl, device=torch.device("cuda"))
+    return {"qkv": qkv, "weight": weight, "store": store, "layout": layout,
+            "idx": torch.tensor(list(range(n))[::-1][: len(lens)], dtype=torch.int32, device="cuda"),
+            "has": torch.tensor(has, dtype=torch.bool, device="cuda"), "qsl": qsl.cuda(),
+            "md": SimpleNamespace(nums_dict=nums, batch_ptr=batch_ptr, token_chunk_offset_ptr=offs)}
+
+
+def kda_state_view(c: dict, store: torch.Tensor) -> torch.Tensor:
+    return store.transpose(-1, -2) if c["layout"] == "SD" else store
+
+
+def kda_stock(conv_fn, c: dict, store: torch.Tensor, p: int):
+    """The stock layer: one merged conv over q|k|v, then a split into strided views."""
+    out = conv_fn(c["qkv"].transpose(0, 1), c["weight"], None, activation="silu",
+                  conv_states=kda_state_view(c, store), has_initial_state=c["has"], cache_indices=c["idx"],
+                  query_start_loc=c["qsl"], metadata=c["md"]).transpose(0, 1)
+    return out.split(p, dim=-1)
+
+
+def kda_split(gp, conv_fn, c: dict, store: torch.Tensor, p: int):
+    return gp.conv_split(conv_fn, c["qkv"], c["weight"], None, kda_state_view(c, store), c["has"], c["idx"],
+                         c["qsl"], c["md"], p)
+
+
+def kda_flashkda_inputs(q, k, v):
+    """What ``_flashkda_prefill`` hands FlashKDA: ``_rearr`` then ``.contiguous()``."""
+    return [x.reshape(1, -1, KDA_HEADS, HEAD_DIM).contiguous() for x in (q, k, v)]
+
+
+def part_kdaconv(args, sampler) -> dict:
+    """The KDA prefill conv per q/k/v slice (``TESSERA_GLM53_KDA_CONV_SPLIT``) against the stock
+    merged conv: bitwise q/k/v and conv state on varlen batches, then the per-layer time of
+    conv plus FlashKDA's dense-input copies on both paths."""
+    from vllm.model_executor.layers.mamba.ops.causal_conv1d import causal_conv1d_fn
+
+    from tessera.serving import glm53_prefill as gp
+
+    p = KDA_P
+    out = {"p": p, "width": KDA_WIDTH, "heads": KDA_HEADS, "numerics": [], "cells": []}
+    gen = torch.Generator(device="cuda").manual_seed(3)
+    cases = [((5, 2, 9, 700), (True, False, True, False)), ((2, 1, 3), (False, True, True)),
+             ((2048,), (True,)), ((512, 512, 512, 512), (False, True, False, True)), ((1,), (True,))]
+    for layout in ("SD", "DS"):
+        for state_len in (KDA_WIDTH - 1, KDA_WIDTH - 1 + 3):
+            for lens, has in cases:
+                c = kda_conv_case(lens, has, p, state_len, layout, gen)
+                sa, sb = c["store"].clone(), c["store"].clone()
+                ref = kda_stock(causal_conv1d_fn, c, sa, p)
+                got = kda_split(gp, causal_conv1d_fn, c, sb, p)
+                torch.cuda.synchronize()
+                row = {"layout": layout, "state_len": state_len, "lens": list(lens), "has": list(has),
+                       "q": compare(got[0], ref[0]), "k": compare(got[1], ref[1]), "v": compare(got[2], ref[2]),
+                       "state": compare(sb, sa), "state_changed": not torch.equal(sa, c["store"]),
+                       "split_dense": [bool(x.is_contiguous()) for x in got],
+                       "split_rearr_dense": [bool(x.reshape(1, -1, KDA_HEADS, HEAD_DIM).is_contiguous()) for x in got],
+                       "stock_rearr_dense": [bool(x.reshape(1, -1, KDA_HEADS, HEAD_DIM).is_contiguous()) for x in ref]}
+                row["bitwise"] = all(row[r]["equal"] for r in ("q", "k", "v", "state"))
+                out["numerics"].append(row)
+                log("kdaconv", layout, state_len, lens, "bitwise" if row["bitwise"] else "DIFFERS",
+                    row["split_dense"], row["stock_rearr_dense"])
+    out["bitwise_all"] = all(r["bitwise"] for r in out["numerics"])
+    if args.numerics_only:
+        return out
+    for t in args.kda_tokens:
+        c = kda_conv_case((t,), (True,), p, KDA_WIDTH - 1, "SD", gen)
+        io = 3 * p * t * 2  # one pass over the merged q|k|v activations, bf16
+        model = {"stock": 4 * io, "split": 2 * io}  # conv read+write, plus the copies' read+write
+        k = copies_for(model["split"])
+        ins = [(c["qkv"].clone(), c["store"].clone()) for _ in range(k)]
+        arms = {
+            "stock": lambda a: kda_flashkda_inputs(*kda_stock(causal_conv1d_fn, dict(c, qkv=a[0]), a[1], p)),
+            "split": lambda a: kda_flashkda_inputs(*kda_split(gp, causal_conv1d_fn, dict(c, qkv=a[0]), a[1], p)),
+        }
+        cell = {"tokens": t, "copies": k, "bytes_model": model}
+        for name, fn in arms.items():
+            calls = [(lambda a=a, fn=fn: fn(a)) for a in ins]
+            t0 = time.time()
+            ms = graph_ms(calls, args.reps)
+            t1 = time.time()
+            kern = kernel_device_us(lambda calls=calls: [cl() for cl in calls], 2)
+            gbs = model[name] / (ms * 1e6)
+            cell[name] = {"ms_per_layer": ms, "timing_mode": graph_ms.last_mode, "gbs": gbs,
+                          "fraction_of_peak": gbs / PEAK_DRAM_GBS,
+                          "floor_ms_at_peak": model[name] / PEAK_DRAM_GBS / 1e6,
+                          "ms_per_step_34_layers": 34 * ms, "power": sampler.window(t0, t1),
+                          "kernels": {n[:120]: v for n, v in kern.items()}}
+            log("kdaconv", t, name, f"{ms * 1e3:.1f} us/layer", f"{gbs:.1f} GB/s", graph_ms.last_mode)
+        cell["saved_ms_per_step_34_layers"] = 34 * (cell["stock"]["ms_per_layer"] - cell["split"]["ms_per_layer"])
+        out["cells"].append(cell)
+        del ins
+    return out
+
+
 def part_l2(args, sampler) -> dict:
     props = torch.cuda.get_device_properties(0)
     out = {"l2_cache_bytes": getattr(props, "L2_cache_size", None), "sms": props.multi_processor_count,
@@ -384,6 +505,7 @@ def main() -> int:
     ap.add_argument("--l2-sizes", type=int, nargs="+",
                     default=[1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 40, 48, 64, 128, 256])
     ap.add_argument("--ncu-tokens", type=int, nargs="+", default=[1024, 2048])
+    ap.add_argument("--kda-tokens", type=int, nargs="+", default=[2048, 8192])
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--ncu", action="store_true")
     ap.add_argument("--numerics-only", action="store_true",
@@ -419,6 +541,8 @@ def main() -> int:
             res["onorm"] = part_onorm(args, model_dir, sampler)
         elif part == "mhc":
             res["mhc"] = part_mhc(args, model_dir, sampler)
+        elif part == "kdaconv":
+            res["kdaconv"] = part_kdaconv(args, sampler)
         else:
             raise SystemExit(f"unknown part {part}")
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
