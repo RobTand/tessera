@@ -156,6 +156,12 @@ BM_WIDE = 128
 HALF = 64
 BN = 128
 BK = 32
+#: The dense identity's row quantum: a role's last ``BN`` block may be partial
+#: (the N-tail, tessera#750 WP2), and the epilogue stores at most four columns
+#: at a time, so a role's rows are a multiple of 4.  The wire is padded to
+#: whole 512-row tiles, so the partial block's pad rows read words the repack
+#: wrote (zeros) and are never stored.
+DENSE_ROW_QUANTUM = 4
 #: The column rates the ROUTED-EXPERT launches (gate/up and down) decode:
 #: every rate of the window grammar up to 8, so a stack's one- or two-rate run
 #: table (the two rates bracketing its root) is read as the wire lays it out.
@@ -564,6 +570,7 @@ def _ext(library: str):
     lib = build_library(module, module, compile_fn)
     dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
+                       ("DENSE_ROW_QUANTUM", DENSE_ROW_QUANTUM),
                        ("RATE_MIN", RATE_MIN), ("ROUTED_RATE_MAX", RATE_MAX),
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
@@ -1224,7 +1231,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
     the family's :data:`DENSE_RATE_MAX`: 14 on the value family, 8 on E4M3),
     window bits 14, the packer's column order, the family's published
     arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
-    rows a multiple of 128 (one 128-column B block per item) and columns a
+    rows a multiple of ``DENSE_ROW_QUANTUM`` (one 128-column B block per item,
+    the last one partial when 128 does not divide the rows) and columns a
     multiple of 32 and at least 128.  A role outside it keeps
     ``tessera::window_gemm_dense``, and the reason is the string returned
     here so a load log can say which.
@@ -1246,8 +1254,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
     cols, rows = int(bundle.cols), int(bundle.rows)
     if cols % BK != 0 or cols < MIN_COLS:
         return f"{cols} columns; the kernel needs a multiple of {BK} and at least {MIN_COLS}"
-    if rows % BN != 0:
-        return f"{rows} rows; the dense identity needs a multiple of {BN}"
+    if rows % DENSE_ROW_QUANTUM != 0:
+        return f"{rows} rows; the dense identity needs a multiple of {DENSE_ROW_QUANTUM}"
     if bundle.words.dtype != torch.int32 or bundle.words.dim() != 1:
         return "words must be a flat int32 stream"
     pair, why = run_pair(bundle.runs, cols, rate_max=DENSE_RATE_MAX[fam])
@@ -1373,7 +1381,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     """How many ways to split K for one role at ``m`` rows: the bandwidth model.
 
     An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
-    ceil(m / 64) * rows / 128``.  When ``items0 >= sms`` every SM has work and
+    ceil(m / 64) * ceil(rows / 128)`` (the last block partial on an N-tail).  When ``items0 >= sms`` every SM has work and
     the answer is 1 (prefill is untouched).  Below that, each split adds items
     and costs an fp32 partial written and read back; the time model is the
     wire bytes served by ``min(S * items0, sms)`` SMs at the per-SM share of
@@ -1387,7 +1395,7 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
     SM count and the byte counts, nothing else.
     """
-    items0 = -(-m // BM) * (rows // BN)
+    items0 = -(-m // BM) * -(-rows // BN)
     nk = cols // BK
     if items0 >= sms or m <= 0:
         return 1
