@@ -260,7 +260,61 @@ def _sha256(t):
     return hashlib.sha256(t.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
 
 
-def bitwise(lanes, cols, ms, name, q256):
+class _wide_env:
+    """``TESSERA_ROUTED_FUSED_WIDE=1`` for the block when ``on``: ``superblock_rows``
+    reads it per call, so a launch made (or captured) inside takes 128-row
+    superblocks wherever the library has them; restored on exit."""
+
+    KEY = "TESSERA_ROUTED_FUSED_WIDE"
+
+    def __init__(self, on):
+        self.on = bool(on)
+
+    def __enter__(self):
+        self.prev = os.environ.get(self.KEY)
+        if self.on:
+            os.environ[self.KEY] = "1"
+        return self
+
+    def __exit__(self, *exc):
+        if self.on:
+            if self.prev is None:
+                os.environ.pop(self.KEY, None)
+            else:
+                os.environ[self.KEY] = self.prev
+        return False
+
+
+class _launch_spy:
+    """Records, per dense role launch inside the block, the K split
+    ``dense_k_split`` returned and the superblock rows the launch took (``BM``
+    when split, since ``dense_forward`` asks :func:`superblock_rows` only for an
+    unsplit launch).  Host-side wrappers around the two pure functions; the
+    launches themselves are unchanged."""
+
+    def __enter__(self):
+        from tessera import routed_fused as rf
+        self.rf, self.k, self.sb, self.log = rf, rf.dense_k_split, rf.superblock_rows, []
+
+        def k(m, rows, cols, sms, **kw):
+            v = self.k(m, rows, cols, sms, **kw)
+            self.log.append({"rows": int(rows), "cols": int(cols), "s": int(v), "bm": int(rf.BM)})
+            return v
+
+        def sb(library, mode, rows, **kw):
+            v = self.sb(library, mode, rows, **kw)
+            if kw.get("dense") and self.log:
+                self.log[-1]["bm"] = int(v)
+            return v
+        rf.dense_k_split, rf.superblock_rows = k, sb
+        return self
+
+    def __exit__(self, *exc):
+        self.rf.dense_k_split, self.rf.superblock_rows = self.k, self.sb
+        return False
+
+
+def bitwise(lanes, cols, ms, name, q256, wide=False):
     """Each lane's output hash at each M, on an input seeded by (module, q256, M)
     alone -- not by the group generator, which the cells consume in pass order
     -- so two arms (two source snapshots) hash the same activation and can be
@@ -282,6 +336,27 @@ def bitwise(lanes, cols, ms, name, q256):
             torch.cuda.synchronize()
             rec[f"{k}_sha256"] = _sha256(y1)
             rec[f"{k}_repeat_equal"] = bool(torch.equal(y1, y2))
+            if wide and k == "fused":
+                # The same prepared module at 128-row superblocks, in this
+                # process, against the default launch's output itself.  The
+                # spy records each role launch's effective K split and width:
+                # the wide superblock exists only on an unsplit launch, so at
+                # a split M the two lanes run one launch and the hash pair is
+                # trivially equal (``fused_launches`` says which case a cell is).
+                with _launch_spy() as spy:
+                    mod.apply(xq, a)
+                rec["fused_launches"] = spy.log
+                with _wide_env(True):
+                    w1 = mod.apply(xq, a)
+                    w2 = mod.apply(xq, a)
+                    with _launch_spy() as spy:
+                        mod.apply(xq, a)
+                torch.cuda.synchronize()
+                rec["fused@W_launches"] = spy.log
+                rec["fused@W_sha256"] = _sha256(w1)
+                rec["fused@W_repeat_equal"] = bool(torch.equal(w1, w2))
+                rec["fused@W_equals_fused"] = bool(torch.equal(w1, y1))
+                del w1, w2
             del y1, y2
         out[str(m)] = rec
         print(json.dumps({"bitwise_m": m, "module": name, "q256": q256,
@@ -407,6 +482,9 @@ def main():
     ap.add_argument("--served-tp", type=int, default=2, help="the TP size --served modules are cut for (rank 0)")
     ap.add_argument("--served-ms", default="512,2048,8192", help="the M values --served groups are timed at")
     ap.add_argument("--served-lanes", default="fused", help="the lanes --served groups are timed on")
+    ap.add_argument("--wide-lane", action="store_true",
+                    help="also time and hash lane fused@W: the fused lane under TESSERA_ROUTED_FUSED_WIDE=1 "
+                         "(128-row superblocks where the launch has them)")
     ap.add_argument("--source-layers", default="",
                     help="override MODULE_SOURCES' layers: module=layer[,module=layer...]")
     ap.add_argument("--l2", default="warm",
@@ -442,6 +520,8 @@ def main():
             "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": power.source,
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "dense_row_quantum": getattr(rf, "DENSE_ROW_QUANTUM", None),
+            # the ``fused`` lane runs at this (``None`` = auto); ``fused@W`` sets 1 per call
+            "env_routed_fused_wide": os.environ.get("TESSERA_ROUTED_FUSED_WIDE"),
             "weights": ({"model": args.model, "layer": args.layer, "mla_layer": args.mla_layer,
                          "source_layers": source_layers, "shard": "TP2 rank 0"} if args.model
                         else "seeded Gaussian"),
@@ -505,13 +585,16 @@ def main():
             head["numerics"] = numerics(lanes, w_src, cols,
                                         [int(v) for v in args.numerics_ms.split(",") if v],
                                         zlib.crc32(f"num:{name}:{q}".encode()))
-            head["bitwise"] = bitwise(lanes, cols, [int(v) for v in args.hash_ms.split(",") if v], name, q)
+            head["bitwise"] = bitwise(lanes, cols, [int(v) for v in args.hash_ms.split(",") if v], name, q,
+                                      wide=args.wide_lane)
             del w_src
             wire = sum(r * cols * q // 256 // 8 + 4 * r for _, r in roles)
             head["wire_bytes"] = wire
 
             def make(m, lane):
-                base, _, forced = lane.partition("@S")
+                base, _, opt = lane.partition("@")
+                forced = opt[1:] if opt.startswith("S") else ""
+                wide = opt == "W"
                 mod = lanes[base]
                 x = (torch.randn(m, cols, device=dev, generator=g) * 0.5).bfloat16()
                 xq, a = native_fp8_quant(x)
@@ -519,19 +602,21 @@ def main():
                 holder = {}
 
                 def split(fn):
-                    if not forced:
+                    if not forced and not wide:
                         return fn
 
                     def at_split():
-                        # the split is read at capture; replay runs what was captured
+                        # the split and the width are read at capture; replay runs what was captured
                         model = rf.dense_k_split
-                        # capped where the library caps it (``dense_split_max``)
-                        rf.dense_k_split = lambda m_, rows_, cols_, sms_, **kw: min(
-                            int(forced), rf.dense_split_max(cols_))
-                        try:
-                            fn()
-                        finally:
-                            rf.dense_k_split = model
+                        if forced:
+                            # capped where the library caps it (``dense_split_max``)
+                            rf.dense_k_split = lambda m_, rows_, cols_, sms_, **kw: min(
+                                int(forced), rf.dense_split_max(cols_))
+                        with _wide_env(wide):
+                            try:
+                                fn()
+                            finally:
+                                rf.dense_k_split = model
                     return at_split
 
                 @split
@@ -550,9 +635,13 @@ def main():
                     calls.pop("quant_apply")
                 return {"floor": floors(wire, m, rows, cols)}, calls, holder
             extra = [f"fused@S{v}" for v in args.k_splits.split(",") if v] if "fused" in lanes else []
+            if args.wide_lane and "fused" in lanes:
+                extra.append("fused@W")
             if served is not None:
-                return (head, make, [k for k in args.served_lanes.split(",") if k in lanes],
-                        [int(v) for v in args.served_ms.split(",") if v])
+                timed = [k for k in args.served_lanes.split(",") if k.partition("@")[0] in lanes]
+                if args.wide_lane and "fused" in lanes and "fused@W" not in timed:
+                    timed.append("fused@W")
+                return (head, make, timed, [int(v) for v in args.served_ms.split(",") if v])
             return head, make, list(lanes) + extra
         if kind == "bf16":
             w = (torch.randn(rows, cols, device=dev, generator=g) * 0.02).bfloat16()
