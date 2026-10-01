@@ -25,6 +25,13 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
   ``--mla-layer``.
 - ``idx_wq_b``: the DSA indexer's ``wq_b`` (4096 x 1536, replicated), from the
   same ``--mla-layer``.
+- The MLPs a prefill chunk runs on the dense lane (tessera#750 package 3):
+  ``mlp_gate_up``, the dense MLP's gate and up at 6144 rows each over K = 4096
+  (layers 0-2; read from layer 2); ``mlp_down``, its down over K = 6144 (read
+  from layer 0); ``shared_gate_up``, the shared expert's gate and up at 1024
+  rows each over K = 4096; ``shared_down``, its down over K = 1024 (both read
+  from layer 7, the first MoE layer a short checkpoint holds).  Each reads its
+  layer from :data:`MODULE_SOURCES`, overridable with ``--source-layers``.
 
 Weights: ``--model DIR`` encodes the real GLM-5.3 bytes of ``--layer L``'s
 tensors (the TP2 rank-0 shard: the leading rows of a column-parallel role, the
@@ -59,6 +66,7 @@ Usage: bench_dense_module.py --out DIR [--modules kda_in,o_proj] [--q256 1024,10
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import statistics
@@ -95,18 +103,36 @@ MODULES = {
     "idx_wq_b": ([("indexer.wq_b", 4096)], 1536),
     # The LM head (``ParallelLMHead``): the vocab split across TP2.
     "lm_head": ([("lm_head", 77440)], 4096),
+    # The MLPs (tessera#750 package 3): a dense MLP (``intermediate_size``
+    # 12288) and the shared expert (``moe_intermediate_size`` 2048), TP2 per
+    # rank.  Gate and up are column-parallel, down row-parallel.
+    "mlp_gate_up": ([("gate_proj", 6144), ("up_proj", 6144)], 4096),
+    "mlp_down": ([("down_proj", 4096)], 6144),
+    "shared_gate_up": ([("gate_proj", 1024), ("up_proj", 1024)], 4096),
+    "shared_down": ([("down_proj", 4096)], 1024),
 }
 MLA_MODULES = {"q_a_proj", "kv_a_proj_with_mqa", "q_b_proj", "fused_qkv_a", "idx_wq_b"}
 SOURCE_PREFIX = "model.language_model.layers.{layer}.self_attn.{name}.weight"
 #: Roles whose source tensor is not under a layer's ``self_attn``.
 SOURCE_KEYS = {"lm_head": "lm_head.weight"}
+#: Modules read from outside ``self_attn``: (key template, default layer).  The
+#: defaults are the GLM-5.3 layers whose module the A8S re-solve keeps on the
+#: dense E4M3 lane at q256 1024 (layer 2's gate_up, layer 0's down), and for
+#: the shared expert layer 7, the first MoE layer an 8-layer checkpoint holds
+#: (its down is served on that lane at layers 32 and 36: same geometry).
+MODULE_SOURCES = {
+    "mlp_gate_up": ("model.language_model.layers.{layer}.mlp.{name}.weight", 2),
+    "mlp_down": ("model.language_model.layers.{layer}.mlp.{name}.weight", 0),
+    "shared_gate_up": ("model.language_model.layers.{layer}.mlp.shared_experts.{name}.weight", 7),
+    "shared_down": ("model.language_model.layers.{layer}.mlp.shared_experts.{name}.weight", 7),
+}
 
 
-def source_weight(model, layer, name, rows, cols):
+def source_weight(model, layer, name, rows, cols, template=None):
     """The TP2 rank-0 shard of one real source tensor, bf16 on the GPU."""
     from safetensors import safe_open
 
-    key = SOURCE_KEYS.get(name) or SOURCE_PREFIX.format(layer=layer, name=name)
+    key = SOURCE_KEYS.get(name) or (template or SOURCE_PREFIX).format(layer=layer, name=name)
     index = json.load(open(os.path.join(model, "model.safetensors.index.json")))["weight_map"]
     with safe_open(os.path.join(model, index[key]), framework="pt", device="cuda") as fh:
         w = fh.get_tensor(key)
@@ -200,6 +226,7 @@ def encode_module(roles, cols, q256, seed, source=None):
         weights.append(w.bfloat16())
         del w
     blob = fused.pack_fused(blobs)
+    blob_sha256 = hashlib.sha256(bytes(blob)).hexdigest()
     rows = sum(r for _, r in roles)
     scheme = {"family": TESSERA_FP8, "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL", "q256": q256,
               "rows": rows, "columns": cols, "wire_bytes": len(blob), "roles": [[n, r] for n, r in roles]}
@@ -219,7 +246,41 @@ def encode_module(roles, cols, q256, seed, source=None):
                 os.environ.pop("TESSERA_DENSE_FUSED", None)
             else:
                 os.environ["TESSERA_DENSE_FUSED"] = prev
-    return prepare, len(blob), time.time() - t0, torch.cat(weights)
+    return prepare, len(blob), time.time() - t0, torch.cat(weights), blob_sha256
+
+
+def _sha256(t):
+    """sha256 of a CUDA tensor's bytes (contiguous, viewed as uint8)."""
+    return hashlib.sha256(t.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
+
+
+def bitwise(lanes, cols, ms, name, q256):
+    """Each lane's output hash at each M, on an input seeded by (module, q256, M)
+    alone -- not by the group generator, which the cells consume in pass order
+    -- so two arms (two source snapshots) hash the same activation and can be
+    compared bitwise.  Each lane runs twice; ``repeat_equal`` is its
+    determinism.  The input's own hashes travel with it: a mismatch with
+    unequal input hashes is the quantiser, not the GEMM."""
+    from tessera.serving.native_ops import native_fp8_quant
+
+    out = {}
+    for m in ms:
+        g = torch.Generator(device="cuda").manual_seed(zlib.crc32(f"hash:{name}:{q256}:{m}".encode()))
+        x = (torch.randn(m, cols, device="cuda", generator=g) * 0.5).bfloat16()
+        xq, a = native_fp8_quant(x)
+        a = a.reshape(-1).contiguous().float()
+        rec = {"x_sha256": _sha256(x), "xq_sha256": _sha256(xq), "a_sha256": _sha256(a)}
+        for k, mod in lanes.items():
+            y1 = mod.apply(xq, a)
+            y2 = mod.apply(xq, a)
+            torch.cuda.synchronize()
+            rec[f"{k}_sha256"] = _sha256(y1)
+            rec[f"{k}_repeat_equal"] = bool(torch.equal(y1, y2))
+            del y1, y2
+        out[str(m)] = rec
+        print(json.dumps({"bitwise_m": m, "module": name, "q256": q256,
+                          **{k: v for k, v in rec.items() if not k.startswith(("x_", "a_"))}}), flush=True)
+    return out
 
 
 def numerics(lanes, w_src, cols, ms, seed):
@@ -276,6 +337,11 @@ def main():
     ap.add_argument("--layer", type=int, default=1, help="the KDA layer read from --model")
     ap.add_argument("--mla-layer", type=int, default=3, help="the MLA layer the MLA modules read")
     ap.add_argument("--numerics-ms", default="1,64,2048")
+    ap.add_argument("--hash-ms", default="512,2048,8192",
+                    help="M values at which each lane's output is hashed on a (module, q256, M)-seeded "
+                         "input, for a bitwise comparison across arms")
+    ap.add_argument("--source-layers", default="",
+                    help="override MODULE_SOURCES' layers: module=layer[,module=layer...]")
     ap.add_argument("--l2", default="warm",
                     help="warm, cold or warm,cold: cold also times apply with L2 cleared before "
                          "each replay (call apply_cold), the state a served forward finds a module in")
@@ -284,6 +350,12 @@ def main():
                          "(lane fused@S<s>; the launch's own model picks S on lane fused)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    source_layers = {k: layer for k, (_t, layer) in MODULE_SOURCES.items()}
+    for item in (v for v in args.source_layers.split(",") if v):
+        k, _, layer = item.partition("=")
+        if k not in MODULE_SOURCES or not layer.isdigit():
+            raise SystemExit(f"--source-layers takes module=layer over {sorted(MODULE_SOURCES)}, not {item!r}")
+        source_layers[k] = int(layer)
     from tessera import routed_fused as rf
     from tessera.serving.native_ops import native_fp8_quant, require_native_fp8_quant
     require_native_fp8_quant("bench_dense_module")
@@ -304,7 +376,7 @@ def main():
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "dense_row_quantum": getattr(rf, "DENSE_ROW_QUANTUM", None),
             "weights": ({"model": args.model, "layer": args.layer, "mla_layer": args.mla_layer,
-                         "shard": "TP2 rank 0"} if args.model
+                         "source_layers": source_layers, "shard": "TP2 rank 0"} if args.model
                         else "seeded Gaussian"),
             "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean",
             "l2": sorted(l2_modes),
@@ -334,21 +406,26 @@ def main():
         kind, name, roles, cols, rows, q = spec
         g = torch.Generator(device=dev).manual_seed(zlib.crc32(f"{name}:{kind}:{q}".encode()))
         if kind == "module":
-            layer = args.mla_layer if name in MLA_MODULES else args.layer
-            source = ((lambda n, r: source_weight(args.model, layer, n, r, cols)) if args.model else None)
-            prepare, blob_bytes, enc_s, w_src = encode_module(roles, cols, q, zlib.crc32(f"{name}:{q}".encode()),
-                                                              source)
+            template = MODULE_SOURCES[name][0] if name in MODULE_SOURCES else None
+            layer = (source_layers[name] if name in MODULE_SOURCES
+                     else args.mla_layer if name in MLA_MODULES else args.layer)
+            source = ((lambda n, r: source_weight(args.model, layer, n, r, cols, template)) if args.model
+                      else None)
+            prepare, blob_bytes, enc_s, w_src, blob_sha = encode_module(
+                roles, cols, q, zlib.crc32(f"{name}:{q}".encode()), source)
             lanes = {}
             for lane in args.lanes.split(","):
                 mod = prepare(lane == "fused")
                 lanes[lane] = mod
             head = {"kind": kind, "module": name, "q256": q, "rows": rows, "cols": cols, "roles": roles,
-                    "blob_bytes": blob_bytes, "encode_s": enc_s,
+                    "blob_bytes": blob_bytes, "blob_sha256": blob_sha, "encode_s": enc_s,
+                    "source_layer": layer if args.model else None,
                     "lanes": {k: {"lane": v.lane, "reason": v.lane_reason, "launch_pair": list(v.launch_pair)}
                               for k, v in lanes.items()}}
             head["numerics"] = numerics(lanes, w_src, cols,
                                         [int(v) for v in args.numerics_ms.split(",") if v],
                                         zlib.crc32(f"num:{name}:{q}".encode()))
+            head["bitwise"] = bitwise(lanes, cols, [int(v) for v in args.hash_ms.split(",") if v], name, q)
             del w_src
             wire = sum(r * cols * q // 256 // 8 + 4 * r for _, r in roles)
             head["wire_bytes"] = wire
