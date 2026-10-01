@@ -265,29 +265,70 @@ def _target_load(config: Any, target: Any, draft_heads: bool = True) -> _DraftLo
     # contract; a head stock never constructs in the draft is not ours to check.
     checked = ((embed, VocabParallelEmbedding),) + (((head, ParallelLMHead),) if draft_heads else ())
     for module, cls in checked:
-        if type(module) is not cls or type(getattr(module, "quant_method", None)) is not UnquantizedEmbeddingMethod:
-            raise RuntimeError("Tessera MTP vocabulary sharing requires plain unquantized vocab modules")
+        # A head the checkpoint declared is a Tessera module (``head_route``):
+        # stock sharing hands the draft the target's head OBJECT, so what the
+        # placeholder contract needs of it is the same vocabulary geometry,
+        # read off the prepared module instead of a ``weight`` it no longer has.
+        tessera_head = module is head and _is_tessera_head(module)
+        if type(module) is not cls or not (
+                tessera_head
+                or type(getattr(module, "quant_method", None)) is UnquantizedEmbeddingMethod):
+            raise RuntimeError("Tessera MTP vocabulary sharing requires plain unquantized vocab "
+                               "modules or a declared Tessera head")
         weight = getattr(module, "weight", None)
         padding = module.padding_size
         padded = -(-hf.vocab_size // padding) * padding
         if (padded % world or module.num_embeddings != hf.vocab_size
                 or module.org_vocab_size != hf.vocab_size
                 or module.embedding_dim != hf.hidden_size
-                or module.tp_size != world or module.tp_rank != rank
-                or not isinstance(weight, torch.Tensor)
-                or tuple(weight.shape) != (padded // world, hf.hidden_size)):
+                or module.tp_size != world or module.tp_rank != rank):
+            raise RuntimeError("Tessera MTP incompatible target vocabulary shape/TP layout")
+        if tessera_head:
+            if (getattr(module, "tessera_rows", None) != padded // world
+                    or getattr(module, "tessera_columns", None) != hf.hidden_size):
+                raise RuntimeError("Tessera MTP incompatible target vocabulary shape/TP layout")
+            # No dtype check: the target already serves this object at its own
+            # dtype, and sharing hands the draft the same object.
+            if (getattr(module, "bias", None) is not None
+                    or _vocab_device(module).type not in ("cpu", "cuda")):
+                raise RuntimeError("Tessera MTP incompatible target vocabulary dtype/device/layout")
+            continue
+        if not isinstance(weight, torch.Tensor) or tuple(weight.shape) != (padded // world, hf.hidden_size):
             raise RuntimeError("Tessera MTP incompatible target vocabulary shape/TP layout")
         if (weight.layout != torch.strided or not weight.is_contiguous()
                 or weight.dtype != draft.dtype or weight.device.type not in ("cpu", "cuda")
                 or getattr(module, "bias", None) is not None):
             raise RuntimeError("Tessera MTP incompatible target vocabulary dtype/device/layout")
-    if draft_heads and embed.weight.device != head.weight.device:
+    if draft_heads and embed.weight.device != _vocab_device(head):
         raise RuntimeError("Tessera MTP target vocabulary devices disagree")
     if hf.num_nextn_predict_layers <= 0 or hf.num_hidden_layers < 0:
         raise RuntimeError("Tessera MTP invalid draft layer range")
     return _DraftLoad(embed, head, hf.vocab_size, hf.hidden_size,
                       hf.num_hidden_layers, hf.num_nextn_predict_layers, config.quant_config,
                       draft_heads)
+
+
+def _is_tessera_head(module: Any) -> bool:
+    """A head ``head_route`` built and prepared: its family is one the route
+    serves, its method is a Tessera one, and its prepared module exists."""
+    from .head_route import HEAD_FAMILIES
+
+    method = getattr(module, "quant_method", None)
+    return (getattr(module, "tessera_family", None) in HEAD_FAMILIES
+            and type(method).__module__.startswith("tessera.serving.")
+            and getattr(module, "tessera_native", None) is not None)
+
+
+def _vocab_device(module: Any) -> torch.device:
+    """Where a vocabulary module's served bytes live: its ``weight``, or a
+    prepared Tessera head's row scale (the head drops its wire parameter)."""
+    weight = getattr(module, "weight", None)
+    if isinstance(weight, torch.Tensor):
+        return weight.device
+    scale = getattr(module, "scale_b", None)
+    if isinstance(scale, torch.Tensor):
+        return scale.device
+    raise RuntimeError("Tessera MTP target vocabulary has no resident tensor to place")
 
 
 def _constructor(original: Any, *, head: bool) -> Any:

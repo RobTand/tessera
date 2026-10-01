@@ -118,6 +118,15 @@ QUANT_METHOD = "tessera"
 _MOE_SEED_NAMES = ("RoutedExperts", "FusedMoE", "SharedFusedMoE")
 
 
+def _lm_head_class():
+    """vLLM's ``ParallelLMHead``, or ``None`` on a build without the module."""
+    try:
+        from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+    except Exception:  # noqa: BLE001 -- a build without it has no head to route
+        return None
+    return ParallelLMHead if isinstance(ParallelLMHead, type) else None
+
+
 def _moe_layer_classes() -> tuple:
     """vLLM's routed-experts layer classes, derived from the module that owns them.
 
@@ -580,9 +589,22 @@ class TesseraConfig(QuantizationConfig):
                 "looks merely disappointing instead of one that refuses: every Linear a Tessera "
                 "checkpoint contains is either declared in config_groups or named in "
                 "quantization_config.ignore.")
-        # Embeddings, the LM head and attention: vLLM's own unquantized methods.
-        # ``ParallelLMHead`` reaches this branch and takes
-        # ``UnquantizedEmbeddingMethod``; a Tessera lm_head is not a route.
+        # The LM head: a route only when the checkpoint DECLARES it (tessera#750
+        # WP3, ``head_route``).  An undeclared head -- every checkpoint written
+        # before the route -- takes ``None`` below, exactly as before, and vLLM
+        # serves it BF16 with ``UnquantizedEmbeddingMethod``.  The input
+        # embedding is a ``VocabParallelEmbedding`` but never a
+        # ``ParallelLMHead``, so it cannot reach the route.
+        head_class = _lm_head_class()
+        if head_class is not None and isinstance(layer, head_class):
+            scheme = target_scheme.get(lookup_prefix)
+            if scheme is not None:
+                from .head_route import build_tessera_head_method
+
+                self._require_a_cutter(prefix)
+                self._declare_once()
+                return build_tessera_head_method(scheme, prefix, self._mode, layer)
+        # Embeddings, an undeclared LM head and attention: vLLM's own methods.
         return None
 
     def get_cache_scale(self, name: str):  # pragma: no cover - vLLM optional hook

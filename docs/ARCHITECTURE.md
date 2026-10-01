@@ -22,6 +22,21 @@ rungs, so their derived run tables are all 15 tables the rule admits, and they
 cover every rung of 256..2048. No `executes` list, route or routed cell moves.
 Receipt: [the T-8 dense census](measurements/2026-10-01-t8-dense-census.md).
 
+Re-stamped 2026-09-30 for the LM head as a Tessera route (tessera#750 WP3).
+`TesseraConfig.get_quant_method` now hands a `ParallelLMHead` its family's
+dense method when the checkpoint declares the head (`serving.head_route`). A
+checkpoint that declares no head gets `None` as before, and vLLM serves the
+head BF16. vLLM calls the dense method on the head as it does on a Linear:
+`create_weights` receives the layer's TP coordinates, one output partition of
+`num_embeddings_per_partition` rows and `num_embeddings_padded` as the output
+size, so the shard plan cuts each rank's vocabulary rows. Before any weight
+exists, the route refuses a family no test has served as a head (only
+`TESSERA_FP8` today), a structure other than dense, a padded or extended
+vocabulary, and a tie. It also binds the head's prefix so the route trace can
+name it. `serving.mtp_draft_lifetime` accepts a prepared Tessera head as the
+target head the fd4a15126 draft shares. The exporter does not write a head
+yet, and no contract field changes, so no shipped artifact changes.
+
 Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
 `routed_fused_window.cu` gains a fourth library, `tessera_routed_fused_e2m1`,
 on the block-scaled FP4 instruction (sm_121a). It is producer-side until a
@@ -2116,14 +2131,18 @@ that the graph read everything relevant, so where it did not, the answer is
 `full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
-The explicitly standalone `tests/test_native_a4_serving.py` is a manual CUDA
-`run_gate`/`__main__` harness with no pytest items. After all candidate-selection
-paths, the selector removes it from pytest targets and records its path and
-reason in `excluded_tests` (also displayed in the text receipt). It remains in
-the graph so its pytest consumers are still selected. No general absence-of-test
-heuristic drops modules: pytest can collect imported, inherited or generated
-cases. No exclusion weakens uncertainty escalation or PrismaBuild's requirement
-that every assigned pytest file have a collection/outcome record (tessera#647).
+`tests/test_native_a4_serving.py` keeps its manual `run_gate`/`__main__` CUDA
+harness and also exposes a pytest entry point that invokes the same gate. The
+wrapper names its CUDA precondition and resolves `a4-config.json` through
+`box_artifacts`; a CPU skip is not native gate qualification. The selector
+includes this pytest target, so a full-suite PB assignment has a collection and
+outcome record rather than an unexecuted file (tessera#762). Explicit manual-only
+interfaces, when declared, remain in the dependency graph but are removed from
+pytest targets after every selection path, with their path and reason recorded
+in `excluded_tests` and the text receipt (tessera#647). No general
+absence-of-test heuristic drops modules: pytest can collect imported, inherited
+or generated cases. No exclusion weakens uncertainty escalation or PB's
+requirement that every assigned pytest file have a collection/outcome record.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
 A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full

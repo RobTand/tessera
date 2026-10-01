@@ -4,8 +4,8 @@
 ``TesseraConfig.apply_vllm_mapper`` under a stubbed vLLM.  What a stub cannot
 check is that the contract still exists: that vLLM still hands quant configs a
 mapper, still calls it before any layer is built, and that its ``WeightsMapper``
-still exposes ``apply_list``.  Those are claims about another runtime, so they
-are asserted against that runtime or not at all (principle 14).
+still exposes ``apply_list``. These are claims about another runtime, so the
+tests assert them against that runtime or skip them.
 
 This file runs where a real vLLM is importable -- the serving image -- and
 skips elsewhere.  It is the reason the hook cannot silently stop being called:
@@ -25,6 +25,7 @@ from vllm.model_executor.layers.quantization.base_config import (  # noqa: E402
     QuantizationConfig)
 from vllm.model_executor.models.utils import WeightsMapper                # noqa: E402
 
+from tessera.serving import lane as serving_lane                          # noqa: E402
 from tessera.serving.config import TesseraConfig                          # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV                         # noqa: E402
 from tessera.serving.scheme import TESSERA_FP8                            # noqa: E402
@@ -40,6 +41,20 @@ GLM_PREFIXES = {"model.language_model.": "language_model.model.",
 SCHEME = {"family": TESSERA_FP8, "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL",
           "q256": 1024, "rows": 2048, "columns": 4096, "wire_bytes": 1048576,
           "window_bits": 14, "roles": [["weight", 2048]]}
+
+
+@pytest.fixture(autouse=True)
+def _fresh_serve_mode():
+    """Start and end each test with the serve mode unlatched.
+
+    ``_config`` sets ``TESSERA_SERVE_MODE=resident``, and the mode latches on
+    first read (``tessera.serving.flags``).  An earlier test in the same
+    process that served in ``streamed`` mode and left it latched made every
+    ``_config`` here refuse.
+    """
+    serving_lane.reset_for_tests()
+    yield
+    serving_lane.reset_for_tests()
 
 
 def _config(monkeypatch, targets, ignore=()):
@@ -115,7 +130,7 @@ def test_the_stacked_names_this_exporter_writes_survive_the_unstacked_mapper(mon
 
 
 def test_a_mapper_that_changes_nothing_changes_nothing(monkeypatch):
-    """Qwen3-0.6B's class declares no mapper, and every artifact served so far is one."""
+    """An empty mapper preserves declared targets and ignored modules."""
     config = _config(monkeypatch, targets=("model.layers.0.self_attn.qkv_proj",),
                      ignore=("lm_head",))
     before = dict(config.target_scheme), tuple(config.ignore)
@@ -129,9 +144,9 @@ def test_a_mapper_that_changes_nothing_changes_nothing(monkeypatch):
 # ``WeightsMapper._map_name_with_shard``: the one place in this repo that
 # computes what vLLM WOULD do rather than reading what it DID.  The algorithm
 # is code, not a table, so it cannot be derived from the census receipt -- the
-# receipt publishes the table and vLLM keeps the loop.  What principle 14 gets
-# instead is this: the same names through both, inside the pinned image, with
-# any disagreement a failure.  ``tests/test_serving_construction.py`` describes
+# receipt publishes the table and vLLM keeps the loop. This test compares the
+# same names through both implementations inside the pinned image and fails
+# on any disagreement. ``tests/test_serving_construction.py`` describes
 # the semantics; this attests them.
 
 import json  # noqa: E402

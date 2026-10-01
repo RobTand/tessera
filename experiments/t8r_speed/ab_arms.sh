@@ -4,6 +4,8 @@
 # supplies only the harness), timed interleaved in forward then reverse order
 # so no arm always runs first on a cold GPU.  The first arm is the reference.
 # Usage: ab_arms.sh <out_root> <arm> <arm> [<arm> ...]
+# Each arm's libraries must be prebuilt at <out_root>/ext-<arm> (build_ext.sh);
+# AB_ALLOW_BUILD=1 lets the action compile a missing one.
 # Steps, each recorded with its rc and the host load and GPU power at start:
 #   r<i>/r<i>b  routed bench per arm (R1024 L10, R1088 L11, R832 L42; M 1..2048;
 #               outputs hashed for the bitwise A/B), forward then reverse
@@ -12,12 +14,24 @@
 # ab_summary.json: per (family, group, M) each arm's kernel time and power per
 # pass, the bitwise verdict over every arm and pass, and each arm's time over
 # the reference arm's in the same pass.
+# Exit status: every step runs even after an earlier one fails, but the action
+# exits 1 after the summary if ANY step exited non-zero, and 2 before running
+# anything when ORACLE_IMAGE is unset (bench_t8r.sh needs it).  AB_BENCH
+# overrides the per-step harness (tests).
 set -uo pipefail
 OUT=${1:?out_root}; shift
 ARMS=("$@")
 (( ${#ARMS[@]} >= 2 )) || { echo "need at least two arms" >&2; exit 2; }
+if [[ -z "${ORACLE_IMAGE:-}" ]]; then
+  echo "REFUSED: ORACLE_IMAGE is unset; pass the PB-declared measurement image (pbrun --env ORACLE_IMAGE=...)" >&2
+  exit 2
+fi
+FAILED=()
 for arm in "${ARMS[@]}"; do
   [[ -f "$OUT/src-$arm/src/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "missing snapshot: $OUT/src-$arm" >&2; exit 2; }
+  # the libraries are built off the measurement host (build_ext.sh, a separate
+  # non-measurement row); this action only loads them
+  [[ -d "$OUT/ext-$arm" || ${AB_ALLOW_BUILD:-0} == 1 ]] || { echo "REFUSED: $OUT/ext-$arm is missing; build it off the measurement host first (build_ext.sh)" >&2; exit 2; }
 done
 sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
 ROUTED=experts.R1024.L10,experts.R1088.L11,experts.R832.L42
@@ -30,17 +44,24 @@ step() {
   local rc=$?
   echo "== step $name rc=$rc end=$(date -u +%FT%TZ) load=$(cut -d' ' -f1-3 /proc/loadavg)"
   tail -3 "$OUT/$name.log"
+  ((rc == 0)) || FAILED+=("$name:$rc")
 }
-H=experiments/t8r_speed/bench_t8r.sh
+H=${AB_BENCH:-experiments/t8r_speed/bench_t8r.sh}
+# An arm whose <out_root>/ext-<arm> exists (build_ext.sh, run as its own row off
+# the measurement host) loads its libraries from there instead of compiling
+# them inside this action.
+extenv() { [[ -d "$OUT/ext-$1" ]] && echo "BENCH_EXT_DIR=$OUT/ext-$1"; return 0; }
 bench() {   # step-name arm family suffix groups [extra env...]
   local name=$1 arm=$2 fam=$3 sfx=$4 groups=$5; shift 5
-  step "$name-$arm-$fam$sfx" env BENCH_SRC="$OUT/src-$arm/src" "$@" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS
+  # shellcheck disable=SC2046
+  step "$name-$arm-$fam$sfx" env $(extenv "$arm") BENCH_SRC="$OUT/src-$arm/src" "$@" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS
 }
 N=${#ARMS[@]}
 for ((i = 0; i < N; i++)); do bench "r$i" "${ARMS[i]}" routed "" "$ROUTED"; done
 for ((i = N - 1; i >= 0; i--)); do bench "r${i}b" "${ARMS[i]}" routed b "$ROUTED"; done
 for ((i = 0; i < N; i++)); do
-  step "n$i-${ARMS[i]}-ncu" env BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
+  # shellcheck disable=SC2046
+  step "n$i-${ARMS[i]}-ncu" env $(extenv "${ARMS[i]}") BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
     bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms 1,512
 done
 for ((i = 0; i < N; i++)); do bench "d$i" "${ARMS[i]}" dense "" "$DENSE"; done
@@ -84,4 +105,8 @@ print(json.dumps(shas))
 for r in rows:
     print(json.dumps({k: v for k, v in r.items() if not k.endswith("_W")}))
 PY
+if ((${#FAILED[@]})); then
+  echo "FAILED_STEPS ${FAILED[*]} $(date -u +%FT%TZ)" >&2
+  exit 1
+fi
 echo "ALL_DONE $(date -u +%FT%TZ)"

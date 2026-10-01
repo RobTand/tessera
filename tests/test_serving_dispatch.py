@@ -307,6 +307,87 @@ def test_a_non_linear_non_moe_layer_takes_vllms_own_method(monkeypatch):
     assert _resolved().get_quant_method(_lm_head(), "lm_head") is None
 
 
+# --- the LM head (tessera#750 WP3) -------------------------------------------
+
+HEAD = "lm_head"
+HEAD_ROWS = 256
+
+
+def _vocab_head(rows=HEAD_ROWS, *, padded=None, total=None):
+    """A ``ParallelLMHead`` as vLLM has it when it asks for a quant method:
+    the vocabulary geometry is set before ``get_quant_method`` runs."""
+    head = _lm_head()
+    head.org_vocab_size = rows
+    head.num_embeddings = rows if total is None else total
+    head.num_embeddings_padded = rows if padded is None else padded
+    return head
+
+
+def _head_config(scheme=None):
+    return _resolved(_config(extra_groups={"tessera_head": {
+        "format": "TESSERA", "targets": [HEAD],
+        "scheme": _fp8_scheme(rows=HEAD_ROWS, roles=[["lm_head", HEAD_ROWS]])
+        if scheme is None else scheme}}))
+
+
+def test_an_undeclared_head_is_served_by_vllm_even_beside_declared_linears(monkeypatch):
+    """Every checkpoint written before the route declares no head, and each
+    keeps vLLM's own method for it: ``None``."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(
+        extra_groups={"tessera_fp8": {"format": "TESSERA", "targets": [FP8_TARGET],
+                                      "scheme": _fp8_scheme()}}))
+    assert config.get_quant_method(_vocab_head(), HEAD) is None
+
+
+def test_a_declared_head_takes_its_familys_dense_route(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    head = _vocab_head()
+    method = _head_config().get_quant_method(head, HEAD)
+    assert type(method).__name__ == "TesseraFp8LinearMethod"
+    # The route trace names a module by ``layer.prefix``, which vLLM's
+    # embedding classes do not store.
+    assert head.prefix == HEAD
+    with pytest.raises(ValueError, match="ties its LM head"):
+        method.tie_weights(head, object())
+
+
+def test_the_input_embedding_never_reaches_the_head_route(monkeypatch):
+    from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    embedding = object.__new__(VocabParallelEmbedding)
+    assert _head_config().get_quant_method(embedding, HEAD) is None
+
+
+@pytest.mark.parametrize("family_scheme", [_scheme, _bf16_scheme], ids=["nvfp4", "bf16"])
+def test_a_head_at_a_family_no_test_serves_as_a_head_is_refused(monkeypatch, family_scheme):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    scheme = family_scheme(rows=HEAD_ROWS, roles=[["lm_head", HEAD_ROWS]])
+    with pytest.raises(ValueError, match="a head is served only at"):
+        _head_config(scheme).get_quant_method(_vocab_head(), HEAD)
+
+
+@pytest.mark.parametrize("geometry", [
+    {"padded": HEAD_ROWS + 64},                  # vLLM pads the vocabulary
+    {"total": HEAD_ROWS + 64},                   # added (LoRA) vocabulary
+    {"rows": HEAD_ROWS - 64},                    # the declared rows are not the vocabulary
+], ids=["padded", "added", "rows"])
+def test_a_padded_or_mismatched_head_is_refused_before_a_weight(monkeypatch, geometry):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    rows = geometry.pop("rows", HEAD_ROWS)
+    head = _vocab_head(HEAD_ROWS, **geometry)
+    with pytest.raises(ValueError, match="unpadded"):
+        _head_config(_fp8_scheme(rows=rows, roles=[["lm_head", rows]])).get_quant_method(head, HEAD)
+    assert not hasattr(head, "wire_bytes")
+
+
+def test_a_head_without_vocabulary_geometry_is_refused(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match="no vocabulary geometry"):
+        _head_config().get_quant_method(_lm_head(), HEAD)
+
+
 def _glm_mtp_context(monkeypatch, *, architecture="Glm5NextMTPModel", method="mtp",
                      start=45, count=1, text_type="glm5_next_text"):
     """Pinned draft: outer MTP identity, nested text-layer geometry."""
