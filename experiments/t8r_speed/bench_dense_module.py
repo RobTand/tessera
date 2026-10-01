@@ -449,7 +449,7 @@ def main():
             "l2": sorted(l2_modes),
             "cold_scratch_bytes": (scratch.numel() * 4 if scratch is not None else 0)}
     groups = []          # (key, builder) -> builder() returns (head, make) with make(m) -> (meta, call)
-    for name in args.modules.split(","):
+    for name in (v for v in args.modules.split(",") if v):
         roles, cols = MODULES[name]
         rows = sum(r for _, r in roles)
         for q in (int(v) for v in args.q256.split(",")):
