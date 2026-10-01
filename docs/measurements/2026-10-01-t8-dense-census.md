@@ -101,15 +101,38 @@ census head `0f5966ccaf`, on the stub whose config digest the receipt names:
 
 - **Numerics** (`--mode oracle`): each lane against an exact fp64 reference
   with a dtype-derived bound, at TP 1 and both ranks of TP 2, M 1, 3, 16, 64,
-  512, 2048 and 8192. PB `61598582`.
+  512, 2048 and 8192. PB `61598582`. Passed; see below.
 - **Timing** (`--mode profile`, a PrismaBuild measurement row, exclusive, on
   whichever GB10 passes the idle gate): fused against the Triton window GEMM
   on the same resident bundles at M 1, 8, 16, 64, 512 and 8192, with
   CUDA-event wall time, a `torch.profiler` kernel table, an NVML power window
   per leg and UTC bounds for the Netdata series. PB `82099f95`.
 
-Both rows were queued when this was written. Their results go to #750 and to
-the T-8 kernel log when they land. Nothing in contract v53 reads them.
+### Numerics: pass
+
+The oracle row ran on sparky, 2026-10-01 00:52:30Z to 01:01:46Z, from the
+clean checkout at `0f5966ccaf`, on the stub whose config digest the receipt
+names (`acc3c72c...`):
+
+| PB | Cases | Violations, fused / Triton | Worst diff over bound, fused / Triton | Fused against Triton | E4M3 instruction against `f16` |
+|---|---|---|---|---|---|
+| `61598582` | 368 | 0 / 0 | 0.862 / 0.862 | at most 1 bf16 ulp per row | at most 1 bf16 ulp per row, at least 99.98% of rows bitwise |
+
+- The 368 cases are the 16 dense modules at M 1, 3, 16, 64, 512, 2048 and
+  8192, resident, at TP 1 and on each rank of TP 2 (336 cases), plus the same
+  modules streamed at TP 1, M 1 and 8192 (32 cases).
+- Every fused leg recorded `(tessera::fused_window_dense,
+  native_fused_window_dense_e4m3mma)`, so the oracle exercised the decoder the
+  census attests at every rate from 1 to 8.
+- Every leg was deterministic across repeated calls.
+- Receipt:
+  `/mnt/shared/tessera-measurements/t8-coverage-20260930/dense-oracle-t8d1-oracle-20261001T005216Z/oracle.json`.
+
+### Timing
+
+The profile row was still queued when this was written: PrismaBuild
+measurement rows are not being admitted (prismabuild#1399). Its result goes to
+#750 and to the T-8 kernel log when it lands. Nothing in contract v53 reads it.
 
 ## What v53 changes
 
