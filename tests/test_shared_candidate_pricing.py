@@ -1,5 +1,8 @@
 """CPU contracts only: no CUDA allocation, engine admission or served quality."""
 import copy
+from contextlib import contextmanager
+from functools import lru_cache
+from unittest.mock import patch
 
 import pytest
 
@@ -173,6 +176,11 @@ def test_malformed_shared_proof_is_refused(defect):
 
 @pytest.mark.parametrize("distinct", [False, True])
 def test_producer_prices_real_replay_tables_once_without_changing_legacy(distinct):
+    with _isolated_replay_state():
+        _check_real_replay_pricing(distinct)
+
+
+def _check_real_replay_pricing(distinct):
     assert hasattr(decode, "replay_table_spec"), "producer needs exact shared table components"
     assert hasattr(serving_parts, "shared_candidate_pricing"), "producer needs additive shared pricing"
     forest = build_forest(7, grid=tuple_grid(E2M1_GRID, 2))
@@ -196,6 +204,38 @@ def test_producer_prices_real_replay_tables_once_without_changing_legacy(distinc
     with pytest.raises(ValueError, match="shared.candidate.*ambiguous"):
         decode.replay_resident_observation(pricing, device="cpu", rank=0)
     assert held[0].numel() > 0
+
+
+@contextmanager
+def _isolated_replay_state():
+    """Give one test the production memoizer policy and its own weak index."""
+    original = decode._replay_tables
+    fresh = lru_cache(**original.cache_parameters())(original.__wrapped__)
+    with patch.object(decode, '_replay_tables', fresh), \
+            patch.object(decode, '_replay_resident_entries', {}):
+        try:
+            yield
+        finally:
+            fresh.cache_clear()
+
+
+@pytest.mark.parametrize('distinct', [False, True])
+@pytest.mark.parametrize('prior_state', ['missing', 'ambiguous'])
+def test_real_replay_pricing_owns_its_initial_state(distinct, prior_state):
+    with _isolated_replay_state():
+        forests = [build_forest(7, grid=tuple_grid(E2M1_GRID, 2))]
+        if distinct:
+            forests.append(build_forest(6, grid=tuple_grid(E2M1_GRID, 2)))
+        held = [decode._replay_tables(f, DEFAULT_CODE, 'cpu') for f in forests]
+        if prior_state == 'missing':
+            decode._replay_resident_entries.clear()
+        else:
+            decode._replay_tables.cache_clear()
+            held.extend(decode._replay_tables(f, DEFAULT_CODE, 'cpu') for f in forests)
+        # Exercise the existing test under real stale/missing table state.
+        # Its own setup must isolate that state; production still refuses it.
+        test_producer_prices_real_replay_tables_once_without_changing_legacy(distinct)
+        assert all(tables[0].numel() > 0 for tables in held)
 
 
 def test_unknown_candidate_is_not_zero_under_shared_contract():
