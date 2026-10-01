@@ -558,3 +558,18 @@ def test_draft_load_rename_is_the_recognized_interfaces(draft_runtime):
         assert lifetime.draft_load_rename() is None
     else:
         assert lifetime.draft_load_rename() == expected[draft_runtime.interface]
+
+
+@pytest.mark.parametrize("draft_runtime", [{}, NIGHTLY, {"patch_sources": False}], indirect=True,
+                         ids=["fd4a15126", "nightly", "declined"])
+def test_recognized_draft_interface_names_the_class_module_and_rename(draft_runtime):
+    """tessera#769: the route census accepts a stock draft outside the eugr module
+    only through the interface recognized by source digest."""
+    lifetime = importlib.import_module("tessera.serving.mtp_draft_lifetime")
+    expected = {"fd4a15126": ("vllm.models.glm5next.nvidia.mtp", None),
+                "nightly-20260929": ("vllm.models.glm5next.common.mtp",
+                                     ("model.language_model.", "model."))}
+    if lifetime._RESOLVED[1] is None:
+        assert lifetime.recognized_draft_interface() is None
+    else:
+        assert lifetime.recognized_draft_interface() == expected[draft_runtime.interface]
