@@ -731,7 +731,7 @@ def test_the_k_split_model_is_the_makespan_model():
     for m in (1, 4, 16, 64, 512):
         got = rf.dense_k_split(m, kda_rows, 4096, sms, blocks=kda_blocks)
         assert got == restated(m, kda_rows, 4096, blocks=kda_blocks), (m, got)
-
+    assert rf.dense_k_split(1, kda_rows, 4096, sms, blocks=kda_blocks) == 4
 
 
 def test_the_k_split_prices_the_workspace_at_l2_while_it_fits():
@@ -795,7 +795,6 @@ def test_the_launch_split_reads_the_device():
         assert rf.dense_launch_split(m, rows, cols, dev, tile_words=16 * cols) == rf.dense_k_split(
             m, rows, cols, props.multi_processor_count, tile_words=16 * cols,
             l2_bytes=props.L2_cache_size)
-    assert rf.dense_k_split(1, kda_rows, 4096, sms, blocks=kda_blocks) == 4
 
 
 # --- the launch identity is published -------------------------------------------
