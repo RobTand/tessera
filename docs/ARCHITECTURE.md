@@ -6938,6 +6938,30 @@ What this does not establish:
 
 Receipt: [the release serve's mode NONE](measurements/2026-10-01-glm-release-serve-mode-none.md).
 
+### 5.1.3 GLM-5.3 prefill overrides
+
+`src/tessera/serving/glm53_prefill.py` changes the pinned vLLM's stock
+GLM-5.3 (Glm5Next) prefill at serve time. `TesseraConfig.get_quant_method`
+installs it (`src/tessera/serving/config.py`). No vLLM or FlashInfer source
+file is edited. Each change checks the sha256 of every module it reads against
+an inspected interface (`_INTERFACES`: image `5be13705`, vLLM
+`0.30.1rc1.dev336+gaf5b4857e`). On any mismatch, or on a serve shape it was
+not measured on, it declines to the stock code with one warning and never
+raises.
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
+| `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
+| `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
+| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file, so `tools/impacted_tests.py` does not class the module the shared conftest reaches as able to import anything. |
+
+The module docstring records the decline rules and the exactness argument.
+Every flag that rebinds a stock method or changes a stock default stays off by default until a served
+TR3 A/B against stock, on the same pin and in the same window, shows identical
+KL. For SP mHC and the conv
+split that A/B is the VAL787 window (arms VS, VK and VB against V0).
+
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in
