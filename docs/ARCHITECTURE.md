@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
+A new top-level block, `stock_kernel_overrides`, publishes where the plugin,
+behind an opt-in flag, replaces a kernel of the stock runtime with its own,
+and an install path acts only on its own published entry. The block is empty
+at v54, so no override installs and no route, cell or served byte moves. The
+native-load scanner reads both blocks. See §4.5i.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -6002,6 +6009,43 @@ local `glm53-nope-sm121:w7`; the contract names the registry digest, never the
 tag. Until a GLM fp4 route-class cell names this image in its runtime scope,
 the attestation stays unreferenced -- published so the gate has something true
 to read, not as an admission.
+
+### 4.5i What the contract says a serve REPLACES in the stock runtime
+
+`native_extensions` publishes the libraries a Tessera route decodes its wire
+through. Since contract v54 a second top-level block, `stock_kernel_overrides`
+(`ext.STOCK_KERNEL_OVERRIDES`), publishes the other thing the plugin can do to
+a serving process: replace a kernel of the stock runtime, such as an attention
+backend's prefill call or a stock unquantized linear, with its own. Such a
+replacement reads no Tessera wire and belongs to no route. Its claim is that it
+computes the stock kernel's output bit for bit.
+
+Each entry is closed and validated by `contract._validate_stock_kernel_overrides`:
+
+| Field | Value |
+|---|---|
+| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts). |
+| `enabled_by` | The `TESSERA_*` flag that installs it. One flag per entry. |
+| `default` | `off`, the only value. An unset flag installs nothing, so a serve that did not ask is the stock serve. |
+| `loaded_by` | The `tessera.serving` module that installs it. |
+| `library` | The native library it maps, under the `native_extensions` legibility rules (`_validate_library`), or `null`. |
+| `required_identity` | `bitwise_vs_stock`, the only value. |
+| `evidence` | The gates the identity has passed, `{gate, receipt}`. Empty until one has. |
+
+The packaged contract is the install path's permission, not the install
+path's own constants. `contract.stock_kernel_override_refusal` returns `None`
+only when the contract publishes an entry under the flag and the entry names
+the same kind, stock object, loader and library prefix the install is about to
+use. Otherwise it returns the reason, which is the install line's text, and
+nothing installs.
+
+Across both blocks, no published glob may match a library name another entry's
+load path can produce, so a residency fingerprint names one library per mapped
+`.so`. `tests/test_serving_native_extensions.py` scans every native load
+reachable from `tessera.serving` against both blocks, and matches a `CDLL`,
+`LoadLibrary` or `load_library` call by its path's basename. A consumer that
+fingerprints native residency from `native_extensions` alone does not see an
+override's library; it must read this block too.
 
 ### 4.5e Per-operator presence, and the two reasons a quantized route refuses
 

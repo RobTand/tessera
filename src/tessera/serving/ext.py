@@ -55,6 +55,13 @@ __all__ = [
     "FALLBACK_STATUSES",
     "FALLBACK_SUBSTITUTED",
     "MATCH_BASENAME_FNMATCH",
+    "IDENTITY_BITWISE_VS_STOCK",
+    "OVERRIDE_DEFAULT_OFF",
+    "STOCK_KERNEL_EVIDENCE_FIELDS",
+    "STOCK_KERNEL_LIBRARY_FIELDS",
+    "STOCK_KERNEL_OVERRIDES",
+    "STOCK_KERNEL_OVERRIDE_FIELDS",
+    "STOCK_KERNEL_OVERRIDE_KINDS",
     "LANE_FIELDS",
     "LANE_REQUIREMENT_FIELDS",
     "WINDOW_GEMV_LANE",
@@ -421,6 +428,50 @@ def substitutes_when_unavailable(mode: str, module_name_prefix: str) -> bool:
                 f"it declares {sorted(entry['when_unavailable'])}")
         return behaviour["status"] == FALLBACK_SUBSTITUTED
     raise ValueError(f"no native extension is declared with prefix {module_name_prefix!r}")
+
+
+#: THE STOCK-KERNEL OVERRIDES (contract v54).  ``NATIVE_EXTENSIONS`` publishes
+#: the libraries a Tessera ROUTE decodes its wire through.  This table
+#: publishes the other thing the plugin can do to a serving process: replace,
+#: behind an opt-in flag, a kernel of the STOCK runtime -- an attention
+#: backend's prefill call, a stock unquantized linear -- with its own.  Such a
+#: replacement reads no Tessera wire and belongs to no route, and its claim is
+#: of another kind: not "this decoder reads these bytes" but "this kernel
+#: computes the stock kernel's output, bit for bit".  The block exists so a
+#: consumer can tell a serve that ran one from a serve that did not, and so the
+#: install path is held to what was published: an override installs only when
+#: the packaged contract carries its entry and the entry names exactly what the
+#: install is about to replace (``contract.stock_kernel_override_refusal``).
+#:
+#: ``kind`` -> the fields of the entry's ``overrides`` object, which name the
+#: stock object replaced.  Each kind's fields are closed and validated on their
+#: own, because what identifies a stock object depends on what it is: an
+#: attention backend is named by its vLLM ``AttentionBackendEnum`` member and
+#: the stock kernel whose call it intercepts.
+STOCK_KERNEL_OVERRIDE_KINDS = {
+    "attention_backend": ("backend", "kernel"),
+}
+#: The fields of an entry.  ``library`` is the native library the override
+#: maps into the process, with a ``NATIVE_EXTENSIONS`` entry's legibility rules
+#: (prefix, glob, match rule, packaged source), or ``null`` for an override
+#: that maps none -- so the scanner that keeps that table from going short
+#: reads this one too.
+STOCK_KERNEL_OVERRIDE_FIELDS = ("kind", "overrides", "enabled_by", "default", "loaded_by",
+                                "library", "required_identity", "evidence")
+STOCK_KERNEL_LIBRARY_FIELDS = ("module_name_prefix", "filename_glob", "match", "source")
+#: The one identity an override may claim: on every input it intercepts, the
+#: output bytes equal the stock kernel's.  An override that is merely close is
+#: a different numeric object and does not belong behind a stock name.
+IDENTITY_BITWISE_VS_STOCK = "bitwise_vs_stock"
+#: The one default: an unset flag installs nothing, so a serve that did not
+#: ask for an override is the stock serve.
+OVERRIDE_DEFAULT_OFF = "off"
+#: Each entry's ``evidence`` lists the gates its identity has passed,
+#: ``{gate, receipt}``; it is ``[]`` until one has.
+STOCK_KERNEL_EVIDENCE_FIELDS = ("gate", "receipt")
+
+STOCK_KERNEL_OVERRIDES: list[dict] = []
+
 
 def _nvcc_root(nvcc: str) -> str:
     """The toolkit root holding ``bin/nvcc``."""
