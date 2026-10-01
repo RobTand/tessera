@@ -455,17 +455,28 @@ def _run(ranks, forward, t, passes=1, stacks=None):
 
 
 def _ops(ranks, exact=lambda t, hidden, n: True, tile=None, tile_exact=lambda t, hidden, n: True,
-         tiled=None):
+         tiled=None, reduced=None):
     """The forward's ops on the two-rank stand-in.  ``full_split`` records, per rank,
     the token count it forces while it is open (``ranks.local.forced``).  ``tiled_post_pre``
     runs the layer's per-token ``hc_fused_post_pre`` on ``tile``-token slices and joins
-    them, and appends ``(rank, call tokens, forced)`` to ``tiled``."""
+    them, and appends ``(rank, call tokens, forced)`` to ``tiled``.  ``reduced_post_pre``
+    all-reduces each ``tile``-token slice of its input on its own, then runs that tile, and
+    appends ``(rank, call tokens, forced)`` to ``reduced``."""
 
     def tiled_post_pre(layer, x, residual, post, comb, fn, scale, base, norm_weight, norm_eps):
         if tiled is not None:
             tiled.append((ranks.rank, x.shape[0], getattr(ranks.local, "forced", None)))
         parts = [layer.hc_fused_post_pre(x[a:a + tile], residual[a:a + tile], post[a:a + tile],
                                          comb[a:a + tile], fn, scale, base,
+                                         norm_weight=norm_weight, norm_eps=norm_eps)
+                 for a in range(0, x.shape[0], tile)]
+        return tuple(torch.cat([p[j] for p in parts], 0) for j in range(4))
+
+    def reduced_post_pre(layer, x, residual, post, comb, fn, scale, base, norm_weight, norm_eps):
+        if reduced is not None:
+            reduced.append((ranks.rank, x.shape[0], getattr(ranks.local, "forced", None)))
+        parts = [layer.hc_fused_post_pre(ranks.all_reduce(x[a:a + tile]), residual[a:a + tile],
+                                         post[a:a + tile], comb[a:a + tile], fn, scale, base,
                                          norm_weight=norm_weight, norm_eps=norm_eps)
                  for a in range(0, x.shape[0], tile)]
         return tuple(torch.cat([p[j] for p in parts], 0) for j in range(4))
@@ -483,7 +494,7 @@ def _ops(ranks, exact=lambda t, hidden, n: True, tile=None, tile_exact=lambda t,
               sp_reduce_scatter=ranks.sp_reduce_scatter, all_reduce=ranks.all_reduce,
               hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp,
               sp_exact=exact, full_split=full_split, tile_exact=tile_exact,
-              tiled_post_pre=tiled_post_pre)
+              tiled_post_pre=tiled_post_pre, reduced_post_pre=reduced_post_pre)
 
 
 class _NoCuda:
@@ -1022,7 +1033,8 @@ def test_tile_only_installs_the_rebind_with_sp_off(monkeypatch):
     monkeypatch.setenv("TESSERA_GLM53_SP_MHC", "off")
     monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", "512")
     seen = []
-    monkeypatch.setattr(gp, "_install_sp_mhc", lambda cfg, mode, tile=None: seen.append((mode, tile)) or True)
+    monkeypatch.setattr(gp, "_install_sp_mhc",
+                        lambda cfg, mode, tile=None, overlap=False: seen.append((mode, tile)) or True)
     monkeypatch.setattr(gp, "_INSTALLED", {})
     assert gp.install_sp_mhc(_config()) and seen == [("off", 512)]
     monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", "off")
@@ -1207,3 +1219,262 @@ def test_dispatches_cuda_reads_the_resolved_forward():
     assert not gp._dispatches_cuda(op)
     op._forward_method = op.forward_cuda
     assert gp._dispatches_cuda(op)
+
+
+# ------------------------------------------------------------------- all-reduce overlap
+
+
+def test_comm_overlap_env(monkeypatch):
+    monkeypatch.delenv("TESSERA_GLM53_COMM_OVERLAP", raising=False)
+    assert gp.comm_overlap() is False
+    for v, want in (("off", False), ("", False), (" ON ", True), ("on", True)):
+        monkeypatch.setenv("TESSERA_GLM53_COMM_OVERLAP", v)
+        assert gp.comm_overlap() is want
+    monkeypatch.setenv("TESSERA_GLM53_COMM_OVERLAP", "1")
+    with pytest.raises(ValueError, match="TESSERA_GLM53_COMM_OVERLAP"):
+        gp.comm_overlap()
+
+
+def test_overlap_without_a_tile_installs_nothing(monkeypatch, caplog):
+    monkeypatch.setenv("TESSERA_GLM53_SP_MHC", "off")
+    monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", "off")
+    monkeypatch.setenv("TESSERA_GLM53_COMM_OVERLAP", "on")
+    monkeypatch.setattr(gp, "_INSTALLED", {})
+    with caplog.at_level("WARNING"):
+        assert gp.install_sp_mhc(_config()) is False
+    assert "needs TESSERA_GLM53_MHC_TILE" in caplog.text
+    assert gp.SpState("off", 2048, 2, None, overlap=True).overlap is False
+
+
+def test_overlap_passes_the_flag_to_the_install(monkeypatch):
+    monkeypatch.setenv("TESSERA_GLM53_SP_MHC", "off")
+    monkeypatch.setenv("TESSERA_GLM53_MHC_TILE", "512")
+    monkeypatch.setenv("TESSERA_GLM53_COMM_OVERLAP", "on")
+    seen = []
+    monkeypatch.setattr(gp, "_install_sp_mhc",
+                        lambda cfg, mode, tile=None, overlap=False: seen.append((mode, tile, overlap)) or True)
+    monkeypatch.setattr(gp, "_INSTALLED", {})
+    assert gp.install_sp_mhc(_config()) and seen == [("off", 512, True)]
+
+
+def test_pinned_overlap_interface_names_every_module():
+    for interface in gp._OVERLAP_INTERFACES:
+        assert len(interface.digests) == len(gp.OVERLAP_MODULES)
+        assert all(len(d) == 64 for d in interface.digests)
+
+
+def test_state_overlap_decisions():
+    s = gp.SpState("off", 2048, 2, tile=4, overlap=True)
+    assert s.reduces and not s.sp_on and s.overlap
+    s.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    assert s.pass_tile and not s.pass_overlap            # pass 1: layers not yet all prepared
+    s.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    assert s.ready and s.pass_tile and s.pass_overlap
+    s.begin_pass(8, capturing=True, exact=True, tile_exact=True)
+    assert not s.pass_overlap                            # a capture: stock sequence
+    s.begin_pass(4, capturing=False, exact=True, tile_exact=True)
+    assert not s.pass_overlap                            # one tile: nothing to overlap
+    s.begin_pass(8, capturing=False, exact=True, tile_exact=False)
+    assert not s.pass_overlap                            # no tiles off the split-k path
+    f = gp.SpState("force", 2048, 2, tile=2, overlap=True)
+    f.begin_pass(10, capturing=False, exact=True, tile_exact=True)
+    assert f.begin_pass(10, capturing=False, exact=True, tile_exact=True)
+    assert f.pass_tile and not f.pass_overlap            # an SP pass: no all-reduce to overlap
+    d = gp.SpState("off", 2048, 2, tile=4, overlap=True)
+    d.declined = "a layer could not be prepared"
+    d.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    d.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    assert not d.pass_overlap
+    assert not gp.SpState("off", 2048, 2, tile=4).reduces
+
+
+@pytest.mark.parametrize("tokens", [8, 7])
+def test_overlapped_pass_equals_stock(tokens):
+    ref, _ = _run(TwoRanks(), stock_forward, tokens)
+    ranks = TwoRanks()
+    tiled, reduced = [], []
+    states = [gp.SpState("off", 2048, 2, tile=3, overlap=True) for _ in range(2)]
+    ops = _ops(ranks, tile=3, tiled=tiled, reduced=reduced)
+    fwds = [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states]
+    got, stacks = _run(ranks, fwds, tokens, passes=2)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r]), (tokens, r, (got[r] - ref[r]).abs().max())
+    n_layers = len(stacks[0])
+    sites = 2 * n_layers - 1                 # every hc_fused_post_pre site (layer 0's first is hc_pre)
+    chunks = -(-tokens // 3)
+    # Pass 1 (preparing): the forward all-reduces whole outputs, twice per layer, and tiles.
+    # Pass 2 (overlapped): every site all-reduces its input per tile; the last layer's MLP
+    # output is all-reduced whole before hc_post.
+    assert ranks.calls == {"all_reduce": 2 * n_layers + sites * chunks + 1, "all_gather": 0,
+                           "reduce_scatter": 0}
+    assert len(tiled) == 2 * sites and len(reduced) == 2 * sites
+    assert set(reduced) == {(0, tokens, tokens), (1, tokens, tokens)}  # at the full batch's split
+    assert all(s.pass_overlap and not s.pass_sp for s in states)
+    for layer in stacks[0]:
+        assert layer._tessera_sp_ready and layer.self_attn.o_proj.reduce_results is False
+
+
+def test_overlap_with_sp_forced_runs_sp_unoverlapped():
+    ref, _ = _run(TwoRanks(), stock_forward, 8)
+    ranks = TwoRanks()
+    reduced = []
+    states = [gp.SpState("force", 2048, 2, tile=2, overlap=True) for _ in range(2)]
+    ops = _ops(ranks, tile=2, reduced=reduced)
+    got, stacks = _run(ranks, [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states],
+                       8, passes=2)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r])
+    n = len(stacks[0])
+    assert reduced == []
+    assert ranks.calls == {"all_reduce": 2 * n, "all_gather": 2 * n + 1, "reduce_scatter": 2 * n}
+
+
+# ----------------------------------------------------------------- the overlap's CUDA body
+
+
+class _Ev:
+    def __init__(self, log, i):
+        self.log, self.i = log, i
+
+    def record(self, stream):
+        self.log.append(("record", stream.name, self.i))
+
+
+class _Stream:
+    def __init__(self, name, log):
+        self.name, self.log = name, log
+
+    def wait_event(self, ev):
+        self.log.append(("wait", self.name, ev.i))
+
+
+class _LoggingKernels(_TileKernels):
+    def __init__(self, log):
+        super().__init__()
+        self.log = log
+
+    def post(self, comb, residual, post_mix, x, out, hc_mult, hidden):
+        self.log.append(("post", residual.shape[0]))
+        super().post(comb, residual, post_mix, x, out, hc_mult, hidden)
+
+
+def _overlap(log, reduce_into=None):
+    events = []
+
+    def new_event():
+        events.append(_Ev(log, len(events)))
+        return events[-1]
+
+    def into(src, dst, stream):
+        log.append(("reduce", stream.name, src.shape[0]))
+        dst.copy_(src * 2)  # a two-rank sum of equal halves
+
+    compute, side = _Stream("compute", log), _Stream("side", log)
+    kept = []
+    ov = gp.TileOverlap(reduce_into=reduce_into or into, side=side, compute=lambda: compute,
+                        new_event=new_event, keep=lambda t, s: kept.append((t.data_ptr(), s.name)))
+    return ov, events, kept
+
+
+@pytest.mark.parametrize("t, tile", [(8, 3), (7, 2), (6, 6)])
+def test_tile_overlap_orders_each_tile_after_its_reduce_and_equals_reduce_then_tiles(t, tile):
+    inp = _tile_inputs(t)
+    x = inp.pop("x")
+    want = gp.tiled_fused_post_pre(_TileKernels(), tile, x * 2, **inp)
+    log = []
+    ov, events, kept = _overlap(log)
+    got = ov.run(_LoggingKernels(log), tile, x, inp["residual"], inp["post_layer_mix"],
+                 inp["comb_res_mix"], inp["fn"], inp["hc_scale"], inp["hc_base"], inp["rms_eps"],
+                 inp["hc_pre_eps"], inp["hc_sinkhorn_eps"], inp["hc_post_mult_value"],
+                 inp["sinkhorn_repeat"], norm_weight=inp["norm_weight"], norm_eps=inp["norm_eps"])
+    for a, b in zip(got, want):
+        assert torch.equal(a, b)
+    n = -(-t // tile)
+    sizes = [min(tile, t - a) for a in range(0, t, tile)]
+    # The side stream starts after the compute stream's ready mark, then one reduce and one
+    # event per tile; the compute stream waits for tile i's event right before tile i's post.
+    head = [("record", "compute", 0), ("wait", "side", 0)]
+    side = [e for i, size in enumerate(sizes) for e in (("reduce", "side", size), ("record", "side", i + 1))]
+    tail = [e for i, size in enumerate(sizes) for e in (("wait", "compute", i + 1), ("post", size))]
+    assert log == head + side + tail
+    assert kept == [(x.data_ptr(), "side")]
+    assert len(events) == n + 1
+    # Events are reused across calls.
+    log.clear()
+    ov.run(_LoggingKernels(log), tile, x, inp["residual"], inp["post_layer_mix"], inp["comb_res_mix"],
+           inp["fn"], inp["hc_scale"], inp["hc_base"], inp["rms_eps"], inp["hc_pre_eps"],
+           inp["hc_sinkhorn_eps"], inp["hc_post_mult_value"], inp["sinkhorn_repeat"],
+           norm_weight=inp["norm_weight"], norm_eps=inp["norm_eps"])
+    assert len(events) == n + 1 and log == head + side + tail
+
+
+def _dc(**over):
+    no = lambda *a: False  # noqa: E731
+    base = dict(fi_ar_comm=None, pynccl_comm=NS(world_size=2, disabled=False), qr_comm=None,
+                fi_pcie_ipc_ar_comm=None, use_aiter_allreduce=False, aiter_ar_comm=None,
+                ca_comm=None, symm_mem_comm=None)
+    base.update(over)
+    return NS(**base), no
+
+
+def test_nccl_route_decline_mirrors_the_dispatch():
+    x = object()
+    yes = lambda *a: True  # noqa: E731
+    dc, no = _dc()
+    assert gp.nccl_route_decline(dc, x, no) is None
+    assert "symmetric-memory" in gp.nccl_route_decline(dc, x, yes)
+    cases = [
+        (dict(fi_ar_comm=NS(disabled=False, should_use_fi_ar=yes)), "FlashInfer all-reduce"),
+        (dict(qr_comm=NS(disabled=False, should_quick_allreduce=yes)), "quick"),
+        (dict(fi_pcie_ipc_ar_comm=NS(should_use=yes)), "PCIe IPC"),
+        (dict(use_aiter_allreduce=True, aiter_ar_comm=NS(disabled=False, should_custom_ar=yes)), "AITER"),
+        (dict(ca_comm=NS(disabled=False, should_custom_ar=yes)), "custom all-reduce"),
+        (dict(symm_mem_comm=NS(should_use_symm_mem=yes)), "symmetric-memory all-reduce"),
+        (dict(pynccl_comm=None), "no pynccl"),
+        (dict(pynccl_comm=NS(world_size=2, disabled=True)), "no pynccl"),
+    ]
+    for over, needle in cases:
+        dc, no = _dc(**over)
+        assert needle in gp.nccl_route_decline(dc, x, no), over
+    # Present but declining for this input, or disabled: stock still reaches pynccl.
+    for over in (dict(fi_ar_comm=NS(disabled=False, should_use_fi_ar=no)),
+                 dict(fi_ar_comm=NS(disabled=True, should_use_fi_ar=yes)),
+                 dict(ca_comm=NS(disabled=True, should_custom_ar=yes)),
+                 dict(use_aiter_allreduce=False, aiter_ar_comm=NS(disabled=False, should_custom_ar=yes)),
+                 dict(symm_mem_comm=NS(should_use_symm_mem=no))):
+        dc, _ = _dc(**over)
+        assert gp.nccl_route_decline(dc, x, no) is None, over
+
+
+def test_a_layer_without_mhc_blocks_the_overlap():
+    s = gp.SpState("off", 2048, 2, tile=4, overlap=True)
+    s.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    s.block_overlap("layer 3 runs without mHC")
+    s.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    assert s.ready and s.pass_tile and not s.pass_overlap
+    assert s.overlap_blocked == "layer 3 runs without mHC"
+    live = gp.SpState("off", 2048, 2, tile=4, overlap=True)
+    live.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    live.begin_pass(8, capturing=False, exact=True, tile_exact=True)
+    assert live.pass_overlap
+    with pytest.raises(RuntimeError, match="inside an overlapped pass"):
+        live.block_overlap("layer 3 runs without mHC")
+    off = gp.SpState("off", 2048, 2, tile=4)
+    off.block_overlap("layer 3 runs without mHC")      # no overlap configured: nothing to block
+    assert off.overlap_blocked is None
+
+
+def test_non_mhc_layer_in_the_profile_pass_keeps_later_passes_unoverlapped():
+    ranks = TwoRanks()
+    stacks = [_stack(ranks), _stack(ranks)]
+    for st in stacks:
+        st[1].mhc = False  # stock_forward ignores the flag: the toy layer still computes mHC
+    ref, _ = _run(TwoRanks(), stock_forward, 8)
+    reduced = []
+    states = [gp.SpState("off", 2048, 2, tile=3, overlap=True) for _ in range(2)]
+    ops = _ops(ranks, tile=3, reduced=reduced)
+    got, _ = _run(ranks, [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states], 8,
+                  passes=2, stacks=stacks)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r])
+    assert reduced == [] and all(s.overlap_blocked and not s.pass_overlap for s in states)
