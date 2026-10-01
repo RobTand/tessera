@@ -32,6 +32,11 @@ Three parts, each on the pinned serving image's own vLLM code:
            shorter than the conv width), then the per-layer time of the conv
            plus the dense copies FlashKDA's input contract forces, on both paths.
 
+``mhcsplit`` The ``mhc`` split invariance with the pre-norm GEMM's split-k forced
+           to one value for the full call and its chunks (the full call's split,
+           the chunk's split, and 1), to test whether the token-count-dependent
+           split is the only cause of the mismatch.  Numerics only.
+
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
 
@@ -342,6 +347,83 @@ def part_mhc(args, model_dir: Path, sampler) -> dict:
     return out
 
 
+def part_mhcsplit(args, model_dir: Path) -> dict:
+    """Forced split count: is the pre-norm GEMM's token-count-dependent split-k the
+    only reason ``mhc`` split invariance fails?
+
+    Stock ``_hc_prenorm_gemm_outputs`` re-imports ``compute_num_split`` on every
+    call, so patching the module attribute fixes the split for one call.  Each
+    (T, parts) case runs the full call and the chunked calls at one forced split
+    S, for S in {the full call's stock split, the chunk's stock split, 1}; every
+    call's actual split is recorded from the patched function, so a forced value
+    that never reached the GEMM shows as a mismatch, not a pass.  If the outputs
+    are bitwise equal at every forced S, the split is the whole cause, and an SP
+    rank that passes the full batch's split would be exact.  Numerics only."""
+    import vllm.model_executor.kernels.mhc.tilelang_kernels as tk
+    from vllm.utils.deep_gemm import is_deep_gemm_supported
+
+    stock = tk.compute_num_split
+    seen: list[int] = []
+    out = {"deep_gemm_supported": bool(is_deep_gemm_supported()),
+           "sm_count": torch.cuda.get_device_properties(0).multi_processor_count, "cases": []}
+
+    def run(call, ins, force):
+        seen.clear()
+
+        def forced(block_k, k, grid_size):
+            s = stock(block_k, k, grid_size) if force is None else force
+            seen.append(s)
+            return s
+        tk.compute_num_split = forced
+        try:
+            return call(*ins), list(seen)
+        finally:
+            tk.compute_num_split = stock
+
+    try:
+        for which in ("attn", "ffn"):
+            prm = mhc_params(model_dir, which)
+            call = mhc_call(prm)
+            gen = torch.Generator(device="cuda").manual_seed(1)
+            for t in args.split_tokens:
+                x, res, post, comb = mhc_inputs(t, gen, call)
+                for parts in (2, 4):
+                    s_full = stock(64, HC * HIDDEN, math.ceil(t / 64))
+                    s_chunk = stock(64, HC * HIDDEN, math.ceil(t // parts / 64))
+                    for label, force in (("stock", None), ("full_split", s_full), ("chunk_split", s_chunk), ("one", 1)):
+                        rec = {"which": which, "tokens": t, "parts": parts, "force": label, "forced_split": force}
+                        try:
+                            full, sf = run(call, (x, res, post, comb), force)
+                            again, _ = run(call, (x, res, post, comb), force)
+                            chunks, sc = [], []
+                            for i in range(parts):
+                                o, s = run(call, tuple(v.chunk(parts, 0)[i].contiguous() for v in (x, res, post, comb)),
+                                           force)
+                                chunks.append(o)
+                                sc += s
+                        except Exception as exc:  # noqa: BLE001  (a split the GEMM refuses is a result)
+                            rec["error"] = f"{type(exc).__name__}: {exc}"[:300]
+                            out["cases"].append(rec)
+                            log("mhcsplit", which, t, parts, label, rec["error"])
+                            continue
+                        joined = [torch.cat([c[j] for c in chunks], 0) for j in range(4)]
+                        rec.update({
+                            "splits_seen_full": sf, "splits_seen_chunks": sc,
+                            "deterministic": all(torch.equal(a, b) for a, b in zip(full, again)),
+                            "residual_cur": compare(joined[0], full[0]), "post_mix": compare(joined[1], full[1]),
+                            "comb_mix": compare(joined[2], full[2]), "layer_input": compare(joined[3], full[3]),
+                            "layer_input_ulps": rpo.bf16_ulp_stats(joined[3].reshape(-1, HIDDEN),
+                                                                   full[3].reshape(-1, HIDDEN).double())})
+                        rec["bitwise"] = all(rec[k]["equal"] for k in ("residual_cur", "post_mix", "comb_mix", "layer_input"))
+                        out["cases"].append(rec)
+                        log("mhcsplit", which, t, parts, label, f"splits full {sf} chunks {sc}",
+                            f"bitwise {rec['bitwise']}", f"post max_abs {rec['post_mix']['max_abs']:.3g}")
+                del x, res, post, comb
+    finally:
+        tk.compute_num_split = stock
+    return out
+
+
 #: TP2 local KDA projection (64 heads x 128 / 2) and the short-conv width
 #: (``linear_attn_config.short_conv_kernel_size``).
 KDA_P = 4096
@@ -543,6 +625,8 @@ def main() -> int:
             res["mhc"] = part_mhc(args, model_dir, sampler)
         elif part == "kdaconv":
             res["kdaconv"] = part_kdaconv(args, sampler)
+        elif part == "mhcsplit":
+            res["mhcsplit"] = part_mhcsplit(args, model_dir)
         else:
             raise SystemExit(f"unknown part {part}")
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
