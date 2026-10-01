@@ -11,6 +11,7 @@ and an odd token count.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import math
 import threading
@@ -176,9 +177,10 @@ def test_state_decisions():
     f = gp.SpState("force", 2048, 2)
     assert f.use_sp(2) and not f.use_sp(1) and not f.wants_measurement()
     # SP is armed only by a completed pass, and never under capture.
-    assert not f.begin_pass(8, capturing=False) and not f.ready  # pass 1: never SP
-    assert f.begin_pass(8, capturing=False) and f.ready          # pass 2
-    assert not f.begin_pass(8, capturing=True)                   # a capture: stock sequence
+    assert not f.begin_pass(8, capturing=False, exact=True) and not f.ready  # pass 1: never SP
+    assert f.begin_pass(8, capturing=False, exact=True) and f.ready          # pass 2
+    assert not f.begin_pass(8, capturing=True, exact=True)    # a capture: stock sequence
+    assert not f.begin_pass(8, capturing=False, exact=False)  # not exact: stock, whatever T*
 
 
 # --------------------------------------------------------------- two-rank stand-in
@@ -419,10 +421,23 @@ def _run(ranks, forward, t, passes=1, stacks=None):
     return out, stacks
 
 
-def _ops(ranks):
+def _ops(ranks, exact=lambda t, hidden, n: True):
+    """The forward's ops on the two-rank stand-in.  ``full_split`` records, per rank,
+    the token count it forces while it is open (``ranks.local.forced``)."""
+
+    @contextlib.contextmanager
+    def full_split(tokens):
+        previous = getattr(ranks.local, "forced", None)
+        ranks.local.forced = tokens
+        try:
+            yield
+        finally:
+            ranks.local.forced = previous
+
     return NS(sp_shard=ranks.sp_shard, sp_all_gather=ranks.sp_all_gather,
               sp_reduce_scatter=ranks.sp_reduce_scatter, all_reduce=ranks.all_reduce,
-              hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp)
+              hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp,
+              sp_exact=exact, full_split=full_split)
 
 
 class _NoCuda:
@@ -540,6 +555,20 @@ def test_prepare_fails_closed_on_unexpected_objects():
         gp.prepare_layer(layer)
 
 
+class _CpuTorch:
+    """The torch calls ``measure_t_star`` makes, on CPU float64."""
+    bfloat16 = torch.float64
+    float32 = torch.float64
+
+    @staticmethod
+    def randn(*shape, device=None, dtype=None):
+        return torch.zeros(*shape, dtype=torch.float64)
+
+    @staticmethod
+    def full(shape, value, device=None, dtype=None):
+        return torch.full(shape, value, dtype=torch.float64)
+
+
 def test_measurement_picks_and_agrees_on_t_star(monkeypatch):
     """The measurement path on stand-in timings: both ranks end on the MAX."""
     ranks = TwoRanks()
@@ -550,25 +579,13 @@ def test_measurement_picks_and_agrees_on_t_star(monkeypatch):
                 1: [1.0, 0.99, 0.1, 0.1, 0.1, 2.0, 1.0, 0.1, 0.1, 0.1]}  # wins at 16 only
     states, errors = [None, None], []
 
-    class _T:
-        bfloat16 = torch.float64
-        float32 = torch.float64
-
-        @staticmethod
-        def randn(*shape, device=None, dtype=None):
-            return torch.zeros(*shape, dtype=torch.float64)
-
-        @staticmethod
-        def full(shape, value, device=None, dtype=None):
-            return torch.full(shape, value, dtype=torch.float64)
-
     def worker(rank):
         ranks.local.rank = rank
         local_iter = iter(per_rank[rank])
         try:
             state = gp.SpState("auto", 16, 2)
             nonlocal_timings[rank] = local_iter
-            gp.measure_t_star(layer, state, _ops(ranks), _T, "cpu")
+            gp.measure_t_star(layer, state, _ops(ranks), _CpuTorch, "cpu")
             states[rank] = state
         except Exception as exc:  # noqa: BLE001
             errors.append(exc)
@@ -588,6 +605,130 @@ def test_measurement_picks_and_agrees_on_t_star(monkeypatch):
     assert not errors, errors
     assert [len(s.table) for s in states] == [2, 2]
     assert states[0].t_star == states[1].t_star == 16
+
+
+# ------------------------------------------------------------------------ exact SP
+
+
+def _vllm_split_rule(block_k, k, grid_size, n_sms=48):
+    """vLLM's ``compute_num_split`` on a 48-SM device (GB10), for checking real values."""
+    split = n_sms // grid_size
+    if k is not None:
+        split = min(split, (-(-k // block_k)) // 4)
+    return max(split, 1)
+
+
+def test_split_forcer_is_stock_outside_and_the_full_batch_inside():
+    f = gp.SplitForcer(_vllm_split_rule)
+    k = 4 * 4096
+    # The case the probe found: a 1024-token shard of a 2048-token batch splits 3, the batch 1.
+    assert f(64, k, 1024 // 64) == 3
+    with f.full_batch(2048):
+        assert f(64, k, 1024 // 64) == _vllm_split_rule(64, k, 2048 // 64) == 1
+        with f.full_batch(100):  # nested: cdiv(100, 64) = 2
+            assert f(64, k, 1) == _vllm_split_rule(64, k, 2)
+        assert f(64, k, 1024 // 64) == 1
+        other = []
+        th = threading.Thread(target=lambda: other.append(f(64, k, 1024 // 64)))
+        th.start()
+        th.join()
+        assert other == [3]  # another thread keeps the stock rule
+    assert f(64, k, 1024 // 64) == 3
+
+
+def test_install_split_forcer_wraps_the_module_attribute_once():
+    kernels = NS(compute_num_split=_vllm_split_rule)
+    a = gp.install_split_forcer(kernels)
+    b = gp.install_split_forcer(kernels)
+    assert a is b and kernels.compute_num_split is a and a.stock is _vllm_split_rule
+
+
+def test_shard_split_exact_follows_vllm_dispatch():
+    asked = []
+
+    def fused_config(tokens, hidden, n):  # vLLM's rule: the fused kernel up to 32 tokens
+        asked.append((tokens, hidden, n))
+        return None if tokens > 32 else (6, 8, 128)
+
+    kernels = NS(mhc_fused_post_pre_split_config=fused_config)
+    dg = NS(is_deep_gemm_supported=lambda: True)
+    assert gp.shard_split_exact(kernels, dg, 2, 66, 4096, 4)        # shard 33
+    assert asked == [(66, 4096, 4), (33, 4096, 4)]
+    assert gp.shard_split_exact(kernels, dg, 2, 65, 4096, 4)        # padded shard 33
+    assert not gp.shard_split_exact(kernels, dg, 2, 64, 4096, 4)    # shard 32: fused kernel
+    assert not gp.shard_split_exact(kernels, dg, 2, 8, 4096, 4)
+    no_dg = NS(is_deep_gemm_supported=lambda: False)
+    assert not gp.shard_split_exact(kernels, no_dg, 2, 4096, 4096, 4)  # no split-k at all
+
+
+def _record(obj, name, log, ranks, tag):
+    fn = getattr(obj, name)
+
+    def wrapped(*args, **kwargs):
+        log.append((ranks.rank, tag, getattr(ranks.local, "forced", None)))
+        return fn(*args, **kwargs)
+    setattr(obj, name, wrapped)
+
+
+@pytest.mark.parametrize("tokens", [8, 7])
+def test_sp_pass_runs_only_the_mhc_calls_at_the_full_batch_split(tokens):
+    ref, _ = _run(TwoRanks(), stock_forward, tokens)
+    ranks = TwoRanks()
+    stacks = [_stack(ranks), _stack(ranks)]
+    log = []
+    for layers in stacks:
+        for layer in layers:
+            _record(layer, "hc_pre", log, ranks, "mhc")
+            _record(layer, "hc_fused_post_pre", log, ranks, "mhc")
+            _record(layer.self_attn, "forward", log, ranks, "attn")
+            _record(layer.mlp, "forward", log, ranks, "mlp")
+    states = [gp.SpState("force", 2048, 2) for _ in range(2)]
+    fwds = [gp.make_forward(stock_forward, _ops(ranks), st, _NoCuda) for st in states]
+    got, _ = _run(ranks, fwds, tokens, passes=2, stacks=stacks)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r])
+        mine = [(tag, forced) for rank, tag, forced in log if rank == r]
+        first, second = mine[:len(mine) // 2], mine[len(mine) // 2:]
+        assert all(forced is None for _, forced in first)  # pass 1: stock, nothing forced
+        # Pass 2 (SP): every mHC call at the full batch's token count, attention and MLP untouched.
+        assert {(tag, forced) for tag, forced in second} == {("mhc", tokens), ("attn", None),
+                                                            ("mlp", None)}
+        assert sum(tag == "mhc" for tag, _ in second) == 2 * len(stacks[r])
+
+
+def test_a_pass_that_would_not_be_exact_runs_stock():
+    ref, _ = _run(TwoRanks(), stock_forward, 8)
+    ranks = TwoRanks()
+    states = [gp.SpState("force", 2048, 2) for _ in range(2)]
+    ops = _ops(ranks, exact=lambda t, hidden, n: False)
+    fwds = [gp.make_forward(stock_forward, ops, st, _NoCuda) for st in states]
+    got, stacks = _run(ranks, fwds, 8, passes=2)
+    for r in range(2):
+        assert torch.equal(got[r], ref[r])
+    n_layers = len(stacks[0])
+    assert ranks.calls == {"all_reduce": 4 * n_layers, "all_gather": 0, "reduce_scatter": 0}
+    assert all(s.ready and not s.pass_sp for s in states)
+
+
+def test_measurement_skips_inexact_sizes_and_times_the_shard_at_the_full_split(monkeypatch):
+    ranks = TwoRanks()
+    layer = _layer_for_prepare()
+    monkeypatch.setattr(gp, "T_GRID", (8, 16, 32))
+    timed = []
+
+    def fake_median(fn, torch_mod):
+        timed.append(getattr(ranks.local, "forced", None))
+        return 1.0
+
+    monkeypatch.setattr(gp, "_median_ms", fake_median)
+    ranks.local.rank = 0
+    ops = _ops(ranks, exact=lambda t, hidden, n: t >= 16)
+    ops.max_across_tp = lambda v: v
+    state = gp.SpState("auto", 32, 2)
+    gp.measure_t_star(layer, state, ops, _CpuTorch, "cpu")
+    assert [row["tokens"] for row in state.table] == [16, 32]
+    # Per row: mhc(T), mhc(T/2) inside full_split(T), all_reduce, all_gather, reduce_scatter.
+    assert timed == [None, 16, None, None, None, None, 32, None, None, None]
 
 
 # ------------------------------------------------------------------ KDA conv per slice

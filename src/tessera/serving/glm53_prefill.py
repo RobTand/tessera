@@ -25,21 +25,30 @@ the stock forward that, for a batch of at least ``T*`` tokens, keeps the mHC
 state on this rank's half of the tokens: it all-gathers the layer input before
 attention and before the MLP, and reduce-scatters their outputs where stock
 all-reduces them.  On two ranks a reduce-scatter plus an all-gather moves the
-bytes one all-reduce moves, and a two-operand sum is exact in either, so the
-collectives change no value; the mHC work per rank halves.
+bytes one all-reduce moves; the mHC work per rank halves.
 
-SP is NOT bit-identical to stock.  The pinned mHC kernels are not invariant to
-the token count of a call: two 1024-token calls differ from one 2048-token
-call over the same tokens (post and comb mixes at about 1e-5, the layer input
-by up to 2 bf16 ulps of its row max), while a 2048-token call matches its
-slice of an 8192-token call.  The whole cause is the pre-norm GEMM's split-k,
-which ``compute_num_split`` derives from the token count: with the split
+**Exact SP.**  The pinned mHC kernels are not invariant to the token count of
+a call: two 1024-token calls differ from one 2048-token call over the same
+tokens (post and comb mixes at about 1e-5, the layer input by up to 2 bf16
+ulps of its row max).  The whole cause is the pre-norm GEMM's split-k, which
+``compute_num_split`` derives from the call's token count: with the split
 forced to one value for a call and its chunks, every output is bitwise equal
 at 256 to 8192 tokens in 2 and 4 chunks, on both mHC sites
-(``experiments/mhc/mhc_probe.py`` ``mhcsplit``).  An SP rank that ran its
-half at the full batch's split would therefore be exact; this module does not
-do that yet.  The served TR3 panel moved from 0.027886 to 0.028144 (one run,
-window u4-R1-20261001T0058Z).  Hence the default ``off``.
+(``experiments/mhc/mhc_probe.py`` ``mhcsplit``, PrismaBuild row 22f7d4f2).
+So on an SP pass every mHC call on this rank's shard runs at the split the
+full batch's call takes.  :class:`SplitForcer` replaces
+``tilelang_kernels.compute_num_split``, which ``_hc_prenorm_gemm_outputs``
+reads at call time, with a wrapper that returns the stock value except inside
+:meth:`SplitForcer.full_batch`, where it answers for the full batch's grid.
+Only the SP branch's mHC calls run inside it.  A pass takes SP only when the
+full batch and its shard both reach the split-k path: vLLM's own
+``mhc_fused_post_pre_split_config`` returns None for both token counts.  At
+or below its small-batch limit, the fused kernel picks its own split, so SP
+there would not be exact, and the pass runs stock.  The one inexact run
+(window u4-R1-20261001T0058Z, before this) moved the served TR3 panel from
+0.027886 to 0.028144.  The two-operand sums of the collectives are expected
+to match the all-reduce's, but that is an inference, and the served A/B
+against stock is the test: identical KL and logprobs, not "within noise".
 The attention ``o_proj`` and the MLP's final reduction are switched off on
 each layer's first forward, and below ``T*`` the rebound forward performs those
 two all-reduces itself with the op the modules call.  A forward under graph
@@ -50,11 +59,11 @@ not change.
 ``T*`` is measured, per serve, at the first forward that is not a graph
 capture (vLLM's profile run, which runs even with ``kv_cache_memory_bytes``),
 on tensors of its own up to ``max_num_batched_tokens``: per token count on a
-power-of-two grid, the mHC saving (two
-``hc_fused_post_pre`` calls on ``T`` tokens against two on ``T/2``) against the
-extra collective time (an all-gather plus a reduce-scatter against an
-all-reduce, twice per layer), each the median of CUDA-event timings on this
-serve's TP group.  ``T*`` is the smallest grid count from which the saving
+power-of-two grid where SP is exact, the mHC saving (two
+``hc_fused_post_pre`` calls on ``T`` tokens against two on ``T/2`` at the
+``T``-token split) against the extra collective time (an all-gather plus a
+reduce-scatter against an all-reduce, twice per layer), each the median of
+CUDA-event timings on this serve's TP group.  ``T*`` is the smallest grid count from which the saving
 exceeds the cost at every larger grid count, agreed across ranks by a MAX
 reduction, and logged with the table.  No threshold is a constant here.
 The measurement is known to be wrong at small ``T``: isolated medians read the
@@ -84,7 +93,8 @@ Environment:
   served A/B lands).
 - ``TESSERA_GLM53_SP_MHC``: ``off`` (default: the stock forward), ``auto``
   (measured ``T*``; research, see above), or ``force`` (SP at every token
-  count of at least the TP size; a measurement arm, logged as such).
+  count where it is exact; a measurement arm, logged as such).  SP is always
+  exact; there is no inexact mode.
 - ``TESSERA_GLM53_SP_MHC_SPEC=1``: allow SP with speculative decoding (the MTP
   arm).  Without it a serve with a speculative config declines until an MTP
   row shows tolerance and acceptance hold.
@@ -105,6 +115,7 @@ from __future__ import annotations
 # vLLM is optional and absent from the device-less development interpreter.
 # pyright: reportMissingImports=false
 
+import contextlib
 from dataclasses import dataclass
 import hashlib
 import importlib
@@ -128,7 +139,18 @@ SP_MODULES = (
     "vllm.model_executor.layers.linear",
     "vllm.models.common.ops.sequence_parallel",
     "vllm.distributed.communication_op",
+    # Exact SP: the split rule and the dispatch that reads it at call time.
+    "vllm.model_executor.kernels.mhc.tilelang_kernels",
+    "vllm.model_executor.kernels.mhc.tilelang",
+    "vllm.model_executor.layers.mhc",
+    "vllm.utils.deep_gemm",
 )
+
+#: The token tile both pinned ``compute_num_split`` call sites pass as its grid,
+#: ``cdiv(num_tokens, 64)``: ``_hc_prenorm_gemm_outputs`` (``kernels/mhc/tilelang.py``)
+#: and the warmup compile key (``kernels/mhc/tilelang_kernels.py``).  Re-check it
+#: whenever a digest in ``_INTERFACES`` changes.
+PRENORM_BLOCK_M = 64
 
 
 @dataclass(frozen=True)
@@ -147,6 +169,10 @@ _INTERFACES = (
         "7a9b90937865fa35d955ffc2017f23d3997bc4fba954e2667870b1b4854a38e0",
         "699fde98360fc8d604055e2987d93108ee489e87cc5563949d2a3dcd838eb8bd",
         "3c3f8ac60db38ece891d39dc1e2f6f1947ad438685893d2e5777d072320bd1b8",
+        "61a384a091344d8207a04b2b7c74d30a81626eec4c068cf1dd034699cbfc34b5",
+        "204e19209db5b19eb3dd25ea6ae10c84425dee02ef5bc896eca3f83da6149a8e",
+        "433d750a4d669ad468679b1faf0a3f1e846410198fb4a1eeee2d14cfe55e6a55",
+        "3c6652c4fcf2a6aa2e8c95d52056c2d86355a057d1234715b2d4b14c052dfc61",
     )),
 )
 
@@ -279,6 +305,39 @@ def _import_all(names: tuple[str, ...] = SP_MODULES) -> tuple[tuple[Any, ...] | 
 # ------------------------------------------------------------------------ the forward
 
 
+class SplitForcer:
+    """Stand-in for ``tilelang_kernels.compute_num_split``: stock, except inside :meth:`full_batch`.
+
+    Inside ``full_batch(tokens)`` every call on this thread answers for the
+    ``tokens``-token grid (``cdiv(tokens, PRENORM_BLOCK_M)``) instead of the
+    caller's own, so an SP rank's mHC call on its shard runs the pre-norm GEMM
+    at the split the full batch's call takes.  Outside it, and on every other
+    thread, the stock (cached) rule answers unchanged.
+    """
+
+    def __init__(self, stock: Callable[[int, int | None, int], int]):
+        self.stock = stock
+        self._local = threading.local()
+
+    def __call__(self, block_k: int, k: int | None, grid_size: int) -> int:
+        tokens = getattr(self._local, "tokens", None)
+        if tokens is not None:
+            grid_size = -(-tokens // PRENORM_BLOCK_M)
+        return self.stock(block_k, k, grid_size)
+
+    @contextlib.contextmanager
+    def full_batch(self, tokens: int):
+        previous = getattr(self._local, "tokens", None)
+        self._local.tokens = int(tokens)
+        try:
+            yield
+        finally:
+            self._local.tokens = previous
+
+
+_NO_FORCE = contextlib.nullcontext()
+
+
 class SpState:
     """Per-process SP state: the measured threshold, its table, and the per-pass decision.
 
@@ -304,15 +363,20 @@ class SpState:
     def use_sp(self, num_tokens: int) -> bool:
         return self.t_star is not None and num_tokens >= self.t_star
 
-    def begin_pass(self, num_tokens: int, capturing: bool) -> bool:
-        """At a pass's first layer: settle the previous pass, then decide this one."""
+    def begin_pass(self, num_tokens: int, capturing: bool, *, exact: bool) -> bool:
+        """At a pass's first layer: settle the previous pass, then decide this one.
+
+        ``exact``: the full batch and its shard both reach the split-k path, so
+        the shard's mHC calls can run at the full batch's split.  A pass that
+        would not be exact runs stock, whatever ``T*`` is.
+        """
         if self._pass_open and self._pass_ok and self.declined is None and not self.ready:
             self.ready = True
             _log.warning("tessera.glm53_prefill: SP mHC armed (T*=%s, mode %s)", self.t_star, self.mode)
         self._pass_open, self._pass_ok = True, True
         # A captured graph always holds the stock op sequence, whatever T* is.
         self.pass_sp = (self.ready and self.declined is None and not capturing
-                        and self.use_sp(num_tokens))
+                        and exact and self.use_sp(num_tokens))
         return self.pass_sp
 
     def prepare(self, layer: Any) -> bool:
@@ -408,6 +472,8 @@ def measure_t_star(layer: Any, state: SpState, ops: Any, torch: Any, device: Any
     for t in T_GRID:
         if t > state.max_tokens or t < 2 * state.tp_size:
             continue
+        if not ops.sp_exact(t, hidden, n):
+            continue  # no pass of this size takes SP (the shard would take the fused small-batch kernel)
         half = -(-t // state.tp_size)
 
         def mhc(tokens):
@@ -423,7 +489,8 @@ def measure_t_star(layer: Any, state: SpState, ops: Any, torch: Any, device: Any
         full = torch.randn(t, hidden, device=device, dtype=torch.bfloat16)
         shard = full[:half].contiguous()
         m_full = _median_ms(mhc(t), torch)
-        m_half = _median_ms(mhc(half), torch)
+        with ops.full_split(t):  # the shard's call as an SP pass runs it: at the full batch's split
+            m_half = _median_ms(mhc(half), torch)
         ar = _median_ms(lambda: ops.all_reduce(full), torch)
         ag = _median_ms(lambda: ops.sp_all_gather(shard), torch)
         rs = _median_ms(lambda: ops.sp_reduce_scatter(full), torch)
@@ -452,10 +519,14 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
                 with state.lock:
                     if state.t_star is None:
                         measure_t_star(self, state, ops, torch, hidden_states.device)
-            state.begin_pass(num_tokens, capturing)
+            state.begin_pass(num_tokens, capturing,
+                             exact=ops.sp_exact(num_tokens, self.hidden_size, self.n))
         if not state.prepare(self):
             return stock_forward(self, positions, hidden_states, residual, post, comb)
         sp = state.pass_sp
+        # On an SP pass the shard's mHC calls run at the full batch's pre-norm split (exact SP).
+        # (a factory: a generator context manager is single-use, and a layer enters it twice).
+        split = (lambda: ops.full_split(num_tokens)) if sp else (lambda: _NO_FORCE)
 
         x = hidden_states
         if post is None:
@@ -464,25 +535,28 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
                     x = ops.sp_shard(x)
                 x = ops.hc_expand(x, self.n)
             residual = x
-            post, comb, x = self.hc_pre(
-                x, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base,
-                norm_weight=self.input_layernorm.weight.data,
-                norm_eps=self.input_layernorm.variance_epsilon)
+            with split():
+                post, comb, x = self.hc_pre(
+                    x, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base,
+                    norm_weight=self.input_layernorm.weight.data,
+                    norm_eps=self.input_layernorm.variance_epsilon)
         else:
-            residual, post, comb, x = self.hc_fused_post_pre(
-                x, residual, post, comb, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base,
-                norm_weight=self.input_layernorm.weight.data,
-                norm_eps=self.input_layernorm.variance_epsilon)
+            with split():
+                residual, post, comb, x = self.hc_fused_post_pre(
+                    x, residual, post, comb, self.hc_attn_fn, self.hc_attn_scale, self.hc_attn_base,
+                    norm_weight=self.input_layernorm.weight.data,
+                    norm_eps=self.input_layernorm.variance_epsilon)
 
         if sp:
             x = ops.sp_all_gather(x)[:num_tokens]
         x = self.self_attn(hidden_states=x, positions=positions)
         x = ops.sp_reduce_scatter(x) if sp else ops.all_reduce(x)
 
-        residual, post, comb, x = self.hc_fused_post_pre(
-            x, residual, post, comb, self.hc_ffn_fn, self.hc_ffn_scale, self.hc_ffn_base,
-            norm_weight=self.post_attention_layernorm.weight.data,
-            norm_eps=self.post_attention_layernorm.variance_epsilon)
+        with split():
+            residual, post, comb, x = self.hc_fused_post_pre(
+                x, residual, post, comb, self.hc_ffn_fn, self.hc_ffn_scale, self.hc_ffn_base,
+                norm_weight=self.post_attention_layernorm.weight.data,
+                norm_eps=self.post_attention_layernorm.variance_epsilon)
 
         if sp:
             x = ops.sp_all_gather(x)[:num_tokens]
@@ -501,11 +575,46 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
     return forward
 
 
-def _vllm_ops(modules: tuple[Any, ...]) -> Any:
-    model, _runner, _linear, seqpar, comm = modules
+def install_split_forcer(kernels: Any) -> SplitForcer:
+    """Put a :class:`SplitForcer` in place of ``kernels.compute_num_split`` (once per process).
+
+    ``_hc_prenorm_gemm_outputs`` imports the name from the module on every call,
+    so the module attribute is the one every runtime caller reads.
+    """
+    current = kernels.compute_num_split
+    if isinstance(current, SplitForcer):
+        return current
+    forcer = SplitForcer(current)
+    kernels.compute_num_split = forcer
+    return forcer
+
+
+def shard_split_exact(kernels: Any, deep_gemm: Any, tp_size: int, num_tokens: int,
+                      hidden: int, n: int) -> bool:
+    """True when the full batch and this rank's shard both run the split-k pre-norm GEMM.
+
+    That is the DeepGEMM path, with vLLM's fused small-batch kernel declined for
+    both token counts by vLLM's own dispatch rule.  Only there does the split
+    the shard's call takes come from ``compute_num_split``, so only there can
+    :class:`SplitForcer` make it the full batch's.
+    """
+    if not deep_gemm.is_deep_gemm_supported():
+        return False
+    shard = -(-num_tokens // tp_size)
+    return all(kernels.mhc_fused_post_pre_split_config(t, hidden, n) is None
+               for t in (num_tokens, shard))
+
+
+def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
+    model, _runner, _linear, seqpar, comm, kernels, _tilelang, _mhc_ops, deep_gemm = modules
     import torch
 
     from vllm.distributed import get_tp_group
+
+    forcer = install_split_forcer(kernels)
+
+    def sp_exact(num_tokens: int, hidden: int, n: int) -> bool:
+        return shard_split_exact(kernels, deep_gemm, tp_size, num_tokens, hidden, n)
 
     def max_across_tp(value: float) -> float:
         group = get_tp_group()
@@ -521,7 +630,7 @@ def _vllm_ops(modules: tuple[Any, ...]) -> Any:
         sp_reduce_scatter=seqpar.sp_reduce_scatter,
         all_reduce=comm.tensor_model_parallel_all_reduce,
         hc_expand=model.hc_expand, hc_contract=model.hc_contract,
-        max_across_tp=max_across_tp)
+        max_across_tp=max_across_tp, sp_exact=sp_exact, full_split=forcer.full_batch)
 
 
 _INSTALLED: dict[str, Any] = {}
@@ -563,10 +672,11 @@ def _install_sp_mhc(config: Any, mode: str) -> bool:
     sched = getattr(config, "scheduler_config", None)
     state = SpState(mode, getattr(sched, "max_num_batched_tokens", T_GRID[-1]),
                     config.parallel_config.tensor_parallel_size)
-    layer_cls.forward = make_forward(layer_cls.forward, _vllm_ops(modules), state, torch)
+    layer_cls.forward = make_forward(layer_cls.forward, _vllm_ops(modules, state.tp_size), state, torch)
     _INSTALLED["state"] = state
     _log.warning("tessera.glm53_prefill: SP mHC installed (interface %s, mode %s, "
-                 "max_num_batched_tokens %s)", interface.name, mode, state.max_tokens)
+                 "max_num_batched_tokens %s; exact: the shard's mHC runs at the full batch's "
+                 "pre-norm split)", interface.name, mode, state.max_tokens)
     return True
 
 
