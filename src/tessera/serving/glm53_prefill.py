@@ -79,9 +79,9 @@ Environment:
 
 - ``TESSERA_GLM53_KDA_CONV_SPLIT``: ``on`` or ``off`` (default ``off`` until a
   served A/B lands).
-- ``TESSERA_GLM53_SP_MHC``: ``auto`` (default: measured ``T*``), ``off``
-  (stock forward), or ``force`` (SP at every token count of at least the TP
-  size; a measurement arm, logged as such).
+- ``TESSERA_GLM53_SP_MHC``: ``off`` (default: the stock forward), ``auto``
+  (measured ``T*``; research, see above), or ``force`` (SP at every token
+  count of at least the TP size; a measurement arm, logged as such).
 - ``TESSERA_GLM53_SP_MHC_SPEC=1``: allow SP with speculative decoding (the MTP
   arm).  Without it a serve with a speculative config declines until an MTP
   row shows tolerance and acceptance hold.
@@ -197,7 +197,7 @@ def enable_onorm_cuda(config: Any) -> bool:
 
 
 def sp_mode() -> str:
-    mode = os.environ.get("TESSERA_GLM53_SP_MHC", "auto").strip().lower()
+    mode = os.environ.get("TESSERA_GLM53_SP_MHC", "off").strip().lower()
     if mode not in ("auto", "off", "force"):
         raise ValueError(f"TESSERA_GLM53_SP_MHC must be auto, off or force; got {mode!r}")
     return mode
