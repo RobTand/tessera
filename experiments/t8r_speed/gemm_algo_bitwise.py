@@ -1,36 +1,50 @@
 """Which cuBLASLt algorithms reproduce the served BF16 projection GEMMs bit for bit, and how fast are they.
 
-The A8SESHMN prefill chunk (2048 tokens, TP2 rank shapes) spends 171 ms in
-BF16 projection GEMMs that run at 75-93% of a 99 TFLOPS estimate. A faster
-algorithm is a bitwise lever only if every output element is accumulated in the
-same order: the same MMA instruction over K in the same sequence, with no
-split-K or stream-K reduction. That property is checked here, not assumed.
+The A8SESHMN prefill chunk (2048 tokens, TP2 rank shapes) spends ~171 ms in
+BF16 projection GEMMs (the A8S artifact's ignored Linears, served by vLLM's
+``UnquantizedLinearMethod``, so ``torch.nn.functional.linear``). A faster
+algorithm is a bitwise lever only if every output element is accumulated in
+the same order. That is checked here, not assumed (tessera#806).
 
-Per shape (``out[M, N] = x[M, K] @ w[N, K]^T``, bf16 in and out, fp32 accumulate,
-exactly as ``torch.nn.functional.linear`` calls it):
+Per shape (``out[M, N] = x[M, K] @ w[N, K]^T``, bf16 in and out, fp32 compute):
 
-1. ``torch.nn.functional.linear`` gives the reference output, twice (determinism)
-   and once under torch.profiler (its kernel names).
-2. Candidates: cuBLASLt heuristics (up to 64, 64 MiB workspace), plus an exhaustive
-   sweep: every algorithm id x tile x stages x CTA swizzle, with split-K 1, no
-   reduction scheme and custom option 0, kept when ``cublasLtMatmulAlgoCheck``
-   accepts it.
-3. Each candidate runs twice. It is BITWISE when both outputs equal the
-   reference bit for bit (int16 view). Then it is timed: 10 back-to-back calls
-   between CUDA events, after 3 warm-up calls.
-4. Interleaved A/B (reference, best bitwise, best bitwise, reference; 3 rounds)
-   on the fastest bitwise candidate, plus board power over a 2 s loop of each.
+1. At ``M0`` (2048), random-normal input: ``F.linear`` gives the reference,
+   twice (determinism), and its kernel names. Candidates are cuBLASLt's
+   heuristics (up to 64, 64 MiB workspace) plus an exhaustive sweep (every
+   algorithm id x tile x stages x CTA swizzle, with split-K 1, no reduction
+   scheme and custom option 0, kept when ``cublasLtMatmulAlgoCheck`` accepts
+   it). Each runs twice; it is bitwise when both outputs equal the reference
+   (int16 view). Then it is timed: 10 calls between CUDA events after 3 warm-up
+   calls. A non-bitwise candidate records the fraction of elements that differ:
+   this is what a changed accumulation order looks like.
+2. Survivors are the bitwise candidates faster than the reference (up to 8).
+   Each is checked again, at every ``--m``, on every input distribution, against
+   ``F.linear`` at that M and distribution:
+   - ``normal``: x ~ N(0, 1), the step-1 draw;
+   - ``normal2``: an independent draw, x ~ N(0, 3^2);
+   - ``adversarial``: sign * 2^e * (1 + u), e uniform in [-12, 8], mixed signs,
+     finite products and sums;
+   - ``real``: recorded GLM-5.3 activations, where a capture exists for this K
+     (``CAPTURE``). Shapes without one say so (``real: null``).
+   A survivor counts at an M only if it is bitwise on every distribution there.
+3. Per M, the fastest counting survivor gets an interleaved A/B against the
+   reference (reference, pick, pick, reference; 3 rounds) and board power over
+   2 s of each. Timing in a shared gap is a screen [S]; bitwise is the result.
 
-Inputs are random (x ~ N(0, 1), w ~ N(0, 0.02^2)): accumulation order does not
-depend on the values; a faster bitwise candidate found here still needs a check on
-recorded activations before it counts. The reference counts as the serve only
-when this process picks the served kernel (``matches_served_kernel``). Writes
-``<out>/gemm_algo_bitwise.json`` after every shape (``meta.complete`` at the end),
-so a CUDA fault in a late candidate keeps the shapes already done.
+The descriptors are ``pinned_gemm.cpp`` beside this file; a serving lever must
+run that same file (its sha256 is in the output) for this evidence to carry. Writes ``<out>/gemm_algo_bitwise.json`` after every shape and
+``<out>/pinned_gemm_table.json``: the lever's table (schema
+``tessera.glm53_pinned_gemm.v1``), keyed to this process's cuBLASLt version,
+torch version, CUDA runtime and device.
+
+Weights are random (w ~ N(0, 0.02^2)): the accumulation order does not depend
+on the values. The reference counts as the serve only when this process picks
+the served kernel (``matches_served_kernel``).
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -38,169 +52,54 @@ import time
 
 import torch
 
-SHAPES = [  # name, N, K, calls per chunk (A8SESHMN rank 0), served ms per chunk (r0), served kernel
-    ("kda_in_proj", 12576, 4096, 34, 90.08, "nvjet_sm121_tst_mma_128x208x64_2_32x104x64_tmaAB_bz_TNNN"),
-    ("kda_o_proj", 4096, 4096, 34, 27.66, "nvjet_sm121_tst_mma_192x144x64_2_48x72x64_tmaAB_bz_TNNN"),
-    ("mla_o_proj", 4096, 8192, 11, 20.18, "nvjet_sm121_tst_mma_192x144x64_2_48x72x64_tmaAB_bz_TNNN"),
+#: name, N, K, calls per chunk (A8SESHMN rank 0), served ms per chunk (r0), served kernel, capture
+SHAPES = [
+    ("kda_in_proj", 12576, 4096, 34, 90.08, "nvjet_sm121_tst_mma_128x208x64_2_32x104x64_tmaAB_bz_TNNN",
+     "kda_hidden"),
+    ("kda_o_proj", 4096, 4096, 34, 27.66, "nvjet_sm121_tst_mma_192x144x64_2_48x72x64_tmaAB_bz_TNNN", None),
+    ("mla_o_proj", 4096, 8192, 11, 20.18, "nvjet_sm121_tst_mma_192x144x64_2_48x72x64_tmaAB_bz_TNNN", None),
     ("qa_kva_and_shared_gate_up", 2048, 4096, 44, 18.58,
-     "nvjet_sm121_tst_mma_128x176x64_2_32x88x64_tmaAB_bz_TNNN"),
-    ("shared_down", 4096, 1024, 40, 8.80, "cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128"),
-    ("q_b", 8192, 1536, 11, 6.13, "cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x256"),
+     "nvjet_sm121_tst_mma_128x176x64_2_32x88x64_tmaAB_bz_TNNN", "post_attention_hidden"),
+    ("shared_down", 4096, 1024, 40, 8.80, "cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128",
+     "shared_down_input"),
+    ("q_b", 8192, 1536, 11, 6.13, "cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x256", None),
 ]
-M = 2048
+#: Recorded GLM-5.3 BF16 activations (pread probe, 8192 rows each, fp32 of bf16 values).
+CAPTURE = "/mnt/shared/dq-runs/glm53-bf16-pread-capture-1469b9b-20260901/act"
+CAPTURES = {
+    # The fused KDA in_proj_qkvbfg_a reads the attention's hidden_states (vLLM
+    # glm5next/common/kda.py:458), the same tensor its f_a_proj slice reads.
+    "kda_hidden": ("model__language_model__layers__0__self_attn__forget_gate__f_a_proj.pt", None),
+    # A normed K=4096 hidden from another site: the MLA q_a/kv_a input itself is
+    # not captured, so this is the post-attention norm the shared gate reads.
+    "post_attention_hidden": ("model__language_model__layers__10__mlp__shared_experts__gate_proj.pt", None),
+    # Rank 0's row-parallel slice of the shared down input.
+    "shared_down_input": ("model__language_model__layers__10__mlp__shared_experts__down_proj.pt", 1024),
+}
+PINNED_GEMM_SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pinned_gemm.cpp")
+M0 = 2048
 WS_BYTES = 64 << 20
-
-CPP = r"""
-#include <torch/extension.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <cublasLt.h>
-#include <cstring>
-#include <map>
-#include <tuple>
-#include <vector>
-
-#define LT_CHECK(x) do { cublasStatus_t s_ = (x); \
-  TORCH_CHECK(s_ == CUBLAS_STATUS_SUCCESS, #x " failed: status ", (int)s_); } while (0)
-
-namespace {
-cublasLtHandle_t lt() {
-  static cublasLtHandle_t h = [] { cublasLtHandle_t x; LT_CHECK(cublasLtCreate(&x)); return x; }();
-  return h;
-}
-struct Descs { cublasLtMatmulDesc_t op; cublasLtMatrixLayout_t a, b, c; };
-// torch linear: out[M,N] = x[M,K] w[N,K]^T. Column-major view: C(N x M) = op_T(W)(N x K) * X(K x M).
-Descs& descs(int64_t M, int64_t N, int64_t K) {
-  static std::map<std::tuple<int64_t, int64_t, int64_t>, Descs> cache;
-  auto key = std::make_tuple(M, N, K);
-  auto it = cache.find(key);
-  if (it != cache.end()) return it->second;
-  Descs d;
-  LT_CHECK(cublasLtMatmulDescCreate(&d.op, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-  cublasOperation_t ta = CUBLAS_OP_T, tb = CUBLAS_OP_N;
-  LT_CHECK(cublasLtMatmulDescSetAttribute(d.op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta)));
-  LT_CHECK(cublasLtMatmulDescSetAttribute(d.op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb)));
-  LT_CHECK(cublasLtMatrixLayoutCreate(&d.a, CUDA_R_16BF, K, N, K));
-  LT_CHECK(cublasLtMatrixLayoutCreate(&d.b, CUDA_R_16BF, K, M, K));
-  LT_CHECK(cublasLtMatrixLayoutCreate(&d.c, CUDA_R_16BF, N, M, N));
-  return cache.emplace(key, d).first->second;
-}
-torch::Tensor pack(const cublasLtMatmulAlgo_t& algo, size_t ws, float waves, int state) {
-  static_assert(sizeof(cublasLtMatmulAlgo_t) == 64, "algo blob is 8 x uint64");
-  auto t = torch::zeros({11}, torch::kInt64);
-  std::memcpy(t.data_ptr<int64_t>(), &algo, sizeof(algo));
-  t[8] = (int64_t)ws; t[9] = (int64_t)(waves * 1000.0f); t[10] = state;
-  return t;
-}
-cublasLtMatmulAlgo_t unpack(const torch::Tensor& t) {
-  cublasLtMatmulAlgo_t a;
-  std::memcpy(&a, t.contiguous().data_ptr<int64_t>(), sizeof(a));
-  return a;
-}
-std::vector<uint32_t> cap_u32(const cublasLtMatmulAlgo_t& a, cublasLtMatmulAlgoCapAttributes_t attr) {
-  size_t need = 0;
-  if (cublasLtMatmulAlgoCapGetAttribute(&a, attr, nullptr, 0, &need) != CUBLAS_STATUS_SUCCESS || need == 0)
-    return {};
-  std::vector<uint32_t> v((need + 3) / 4);
-  size_t got = 0;
-  if (cublasLtMatmulAlgoCapGetAttribute(&a, attr, v.data(), v.size() * 4, &got) != CUBLAS_STATUS_SUCCESS)
-    return {};
-  v.resize(got / 4);
-  return v;
-}
-}  // namespace
-
-std::vector<torch::Tensor> heuristics(int64_t M, int64_t N, int64_t K, int64_t ws, int64_t max_n) {
-  auto& d = descs(M, N, K);
-  cublasLtMatmulPreference_t pref;
-  LT_CHECK(cublasLtMatmulPreferenceCreate(&pref));
-  uint64_t wsb = (uint64_t)ws;
-  LT_CHECK(cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &wsb, sizeof(wsb)));
-  std::vector<cublasLtMatmulHeuristicResult_t> res((size_t)max_n);
-  int got = 0;
-  LT_CHECK(cublasLtMatmulAlgoGetHeuristic(lt(), d.op, d.a, d.b, d.c, d.c, pref, (int)max_n, res.data(), &got));
-  cublasLtMatmulPreferenceDestroy(pref);
-  std::vector<torch::Tensor> out;
-  for (int i = 0; i < got; ++i)
-    if (res[i].state == CUBLAS_STATUS_SUCCESS)
-      out.push_back(pack(res[i].algo, res[i].workspaceSize, res[i].wavesCount, (int)res[i].state));
-  return out;
-}
-
-std::vector<torch::Tensor> exhaustive(int64_t M, int64_t N, int64_t K, int64_t ws, int64_t max_n) {
-  auto& d = descs(M, N, K);
-  std::vector<int> ids(512);
-  int n_ids = 0;
-  LT_CHECK(cublasLtMatmulAlgoGetIds(lt(), CUBLAS_COMPUTE_32F, CUDA_R_32F, CUDA_R_16BF, CUDA_R_16BF,
-                                    CUDA_R_16BF, CUDA_R_16BF, (int)ids.size(), ids.data(), &n_ids));
-  std::vector<torch::Tensor> out;
-  for (int i = 0; i < n_ids && (int64_t)out.size() < max_n; ++i) {
-    cublasLtMatmulAlgo_t base;
-    if (cublasLtMatmulAlgoInit(lt(), CUBLAS_COMPUTE_32F, CUDA_R_32F, CUDA_R_16BF, CUDA_R_16BF, CUDA_R_16BF,
-                               CUDA_R_16BF, ids[i], &base) != CUBLAS_STATUS_SUCCESS)
-      continue;
-    auto tiles = cap_u32(base, CUBLASLT_ALGO_CAP_TILE_IDS);
-    if (tiles.empty()) tiles.push_back(CUBLASLT_MATMUL_TILE_UNDEFINED);
-    auto stages = cap_u32(base, CUBLASLT_ALGO_CAP_STAGES_IDS);
-    if (stages.empty()) stages.push_back(CUBLASLT_MATMUL_STAGES_UNDEFINED);
-    for (uint32_t tile : tiles) {
-      for (uint32_t stage : stages) {
-        for (uint32_t swz = 0; swz < 2; ++swz) {
-          if ((int64_t)out.size() >= max_n) break;
-          cublasLtMatmulAlgo_t a = base;
-          uint32_t splitk = 1, red = CUBLASLT_REDUCTION_SCHEME_NONE, custom = 0;
-          if (cublasLtMatmulAlgoConfigSetAttribute(&a, CUBLASLT_ALGO_CONFIG_TILE_ID, &tile, sizeof(tile)) ||
-              cublasLtMatmulAlgoConfigSetAttribute(&a, CUBLASLT_ALGO_CONFIG_STAGES_ID, &stage, sizeof(stage)) ||
-              cublasLtMatmulAlgoConfigSetAttribute(&a, CUBLASLT_ALGO_CONFIG_SPLITK_NUM, &splitk, sizeof(splitk)) ||
-              cublasLtMatmulAlgoConfigSetAttribute(&a, CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, &red, sizeof(red)) ||
-              cublasLtMatmulAlgoConfigSetAttribute(&a, CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING, &swz, sizeof(swz)) ||
-              cublasLtMatmulAlgoConfigSetAttribute(&a, CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION, &custom, sizeof(custom)))
-            continue;
-          cublasLtMatmulHeuristicResult_t r;
-          if (cublasLtMatmulAlgoCheck(lt(), d.op, d.a, d.b, d.c, d.c, &a, &r) != CUBLAS_STATUS_SUCCESS) continue;
-          if (r.workspaceSize > (size_t)ws) continue;
-          out.push_back(pack(a, r.workspaceSize, r.wavesCount, (int)r.state));
-        }
-      }
-    }
-  }
-  return out;
-}
-
-std::vector<int64_t> describe(torch::Tensor t) {
-  auto a = unpack(t);
-  const cublasLtMatmulAlgoConfigAttributes_t attrs[] = {
-      CUBLASLT_ALGO_CONFIG_ID, CUBLASLT_ALGO_CONFIG_TILE_ID, CUBLASLT_ALGO_CONFIG_SPLITK_NUM,
-      CUBLASLT_ALGO_CONFIG_REDUCTION_SCHEME, CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING,
-      CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION, CUBLASLT_ALGO_CONFIG_STAGES_ID,
-      CUBLASLT_ALGO_CONFIG_INNER_SHAPE_ID, CUBLASLT_ALGO_CONFIG_CLUSTER_SHAPE_ID};
-  std::vector<int64_t> v;
-  for (auto attr : attrs) {
-    size_t need = 0;
-    if (cublasLtMatmulAlgoConfigGetAttribute(&a, attr, nullptr, 0, &need) != CUBLAS_STATUS_SUCCESS ||
-        need == 0 || need > 8) { v.push_back(-1); continue; }
-    uint64_t buf = 0;
-    size_t got = 0;
-    v.push_back(cublasLtMatmulAlgoConfigGetAttribute(&a, attr, &buf, need, &got) == CUBLAS_STATUS_SUCCESS
-                    ? (int64_t)buf : -1);
-  }
-  return v;
-}
-
-void run(torch::Tensor t, torch::Tensor x, torch::Tensor w, torch::Tensor out, torch::Tensor ws) {
-  const at::cuda::CUDAGuard guard(x.device());
-  const int64_t M = x.size(0), K = x.size(1), N = w.size(0);
-  auto& d = descs(M, N, K);
-  auto a = unpack(t);
-  const float alpha = 1.f, beta = 0.f;
-  LT_CHECK(cublasLtMatmul(lt(), d.op, &alpha, w.data_ptr(), d.a, x.data_ptr(), d.b, &beta, out.data_ptr(), d.c,
-                          out.data_ptr(), d.c, &a, ws.data_ptr(), (size_t)ws.numel(),
-                          at::cuda::getCurrentCUDAStream()));
-}
-"""
-
 CONFIG_FIELDS = ["algo_id", "tile_id", "splitk_num", "reduction_scheme", "cta_swizzling", "custom_option",
                  "stages_id", "inner_shape_id", "cluster_shape_id"]
+DISTRIBUTIONS = ("normal", "normal2", "adversarial", "real")
+
+
+def load_extension():
+    """``pinned_gemm.cpp`` (beside this file), JIT-built against the image's cuBLASLt."""
+    from torch.utils.cpp_extension import load
+    return load(name="tessera_pinned_gemm_sweep", sources=[PINNED_GEMM_SOURCE],
+                extra_ldflags=["-lcublasLt"], with_cuda=True, verbose=False)
+
+
+def cublaslt_version():
+    """``cublasLtGetVersion()`` of the library this process maps."""
+    import ctypes
+    try:
+        lib = ctypes.CDLL("libcublasLt.so.13")
+        lib.cublasLtGetVersion.restype = ctypes.c_size_t
+        return int(lib.cublasLtGetVersion())
+    except Exception as exc:  # noqa: BLE001
+        return repr(exc)
 
 
 def kernel_names(call):
@@ -236,18 +135,55 @@ def power_of(call, seconds, sampler):
         return {"error": repr(exc)}
 
 
+def inputs(capture, rows, k, dev, seed):
+    """Per distribution, an [rows, k] bf16 tensor (``real`` None without a capture)."""
+    g = torch.Generator(device=dev).manual_seed(seed)
+    out = {"normal": torch.randn(rows, k, generator=g, device=dev).to(torch.bfloat16),
+           "normal2": (torch.randn(rows, k, generator=g, device=dev) * 3).to(torch.bfloat16)}
+    e = torch.randint(-12, 9, (rows, k), generator=g, device=dev).float()
+    sign = torch.randint(0, 2, (rows, k), generator=g, device=dev).float() * 2 - 1
+    u = torch.rand(rows, k, generator=g, device=dev)
+    out["adversarial"] = (sign * torch.exp2(e) * (1 + u)).to(torch.bfloat16)
+    out["real"], out["real_source"] = None, None
+    if capture is not None:
+        name, cols = CAPTURES[capture]
+        path = os.path.join(CAPTURE, name)
+        if os.path.exists(path):
+            x = torch.load(path, map_location="cpu", weights_only=False)["inputs"]
+            x = x[:, :cols] if cols else x
+            if x.shape[1] != k or x.shape[0] < rows:
+                out["real_source"] = f"{name}: shape {tuple(x.shape)} does not cover [{rows}, {k}]"
+            else:
+                out["real"] = x[:rows].contiguous().to(torch.bfloat16).to(dev)
+                out["real_source"] = name + (f" (columns 0:{cols})" if cols else "")
+        else:
+            out["real_source"] = f"missing {path}"
+    return out
+
+
+def bitwise(ext, t, x, w, ref, out, ws):
+    out.fill_(0)
+    ext.run(t, x, w, out, ws)
+    first = out.clone()
+    ext.run(t, x, w, out, ws)
+    torch.cuda.synchronize()
+    a, b, r = first.view(torch.int16), out.view(torch.int16), ref.view(torch.int16)
+    return bool(torch.equal(a, r) and torch.equal(b, r)), float((a != r).float().mean())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-exhaustive", type=int, default=1500)
     ap.add_argument("--shapes", default="all")
+    ap.add_argument("--m", default="2048,2049,512", help="the M values checked; the first is the sweep's")
+    ap.add_argument("--survivors", type=int, default=8)
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
-    from torch.utils.cpp_extension import load_inline
+    ms_list = [int(v) for v in args.m.split(",")]
+    m0 = ms_list[0]
     t0 = time.time()
-    ext = load_inline(name="tessera_lt_enum", cpp_sources=[CPP],
-                      functions=["heuristics", "exhaustive", "describe", "run"],
-                      extra_ldflags=["-lcublasLt"], with_cuda=True, verbose=False)
+    ext = load_extension()
     sampler = None
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -255,24 +191,20 @@ def main():
         sampler = PowerSampler()
     except Exception as exc:  # noqa: BLE001
         print("power sampler unavailable:", repr(exc), flush=True)
+    dev = torch.device("cuda")
     meta = dict(host=os.environ.get("HOST_NAME"), image=os.environ.get("ORACLE_IMAGE"),
                 pb_action=os.environ.get("PB_ACTION_KEY"), tessera_head=os.environ.get("TESSERA_HEAD"),
                 torch=torch.__version__, cuda=torch.version.cuda, device=torch.cuda.get_device_name(),
-                cublaslt_version=None, build_s=round(time.time() - t0, 1), m=M, workspace_bytes=WS_BYTES,
+                capability=list(torch.cuda.get_device_capability()), cublaslt_version=cublaslt_version(),
+                build_s=round(time.time() - t0, 1), m=ms_list,
+                pinned_gemm_cpp_sha256=hashlib.sha256(open(PINNED_GEMM_SOURCE, "rb").read()).hexdigest(), workspace_bytes=WS_BYTES,
                 power_source=getattr(sampler, "source", None),
                 started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
-    try:
-        import ctypes
-        lib = ctypes.CDLL("libcublasLt.so.13")
-        lib.cublasLtGetVersion.restype = ctypes.c_size_t
-        meta["cublaslt_version"] = int(lib.cublasLtGetVersion())
-    except Exception as exc:  # noqa: BLE001
-        meta["cublaslt_version"] = repr(exc)
-    dev = torch.device("cuda")
     ws = torch.empty(WS_BYTES, dtype=torch.uint8, device=dev)
-    results = []
+    results, entries = [], []
     wanted = None if args.shapes == "all" else set(args.shapes.split(","))
     path = os.path.join(args.out, "gemm_algo_bitwise.json")
+    table_path = os.path.join(args.out, "pinned_gemm_table.json")
 
     def dump(done):
         meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -281,27 +213,40 @@ def main():
         with open(tmp, "w") as fh:
             json.dump(dict(meta=meta, shapes=results), fh, indent=1)
         os.replace(tmp, path)
+        table = dict(schema="tessera.glm53_pinned_gemm.v1", cublaslt_version=meta["cublaslt_version"],
+                     torch=meta["torch"], cuda=meta["cuda"], device_name=meta["device"],
+                     capability=meta["capability"], image=meta["image"], source_action=meta["pb_action"],
+                     pinned_gemm_cpp_sha256=meta["pinned_gemm_cpp_sha256"],
+                     complete=done, entries=entries)
+        with open(table_path + ".part", "w") as fh:
+            json.dump(table, fh, indent=1)
+        os.replace(table_path + ".part", table_path)
 
-    for name, n, k, calls, served_ms, served_kernel in SHAPES:
+    for name, n, k, calls, served_ms, served_kernel, capture in SHAPES:
         if wanted and name not in wanted:
             continue
         ts = time.time()
         torch.manual_seed(n * 7 + k)
-        x = torch.randn(M, k, device=dev).to(torch.bfloat16)
         w = (torch.randn(n, k, device=dev) * 0.02).to(torch.bfloat16)
-        ref = torch.nn.functional.linear(x, w)
-        ref2 = torch.nn.functional.linear(x, w)
-        torch.cuda.synchronize()
-        ref_call = lambda: torch.nn.functional.linear(x, w)  # noqa: E731
-        rec = dict(shape=name, m=M, n=n, k=k, calls_per_chunk=calls, served_ms_per_chunk_r0=served_ms,
-                   served_kernel=served_kernel, gflop=2 * M * n * k / 1e9,
+        xs = inputs(capture, max(ms_list), k, dev, seed=n + 3 * k)
+        refs = {}
+        for m in ms_list:
+            for dist in DISTRIBUTIONS:
+                if xs[dist] is not None:
+                    refs[(m, dist)] = torch.nn.functional.linear(xs[dist][:m], w)
+        x0, ref0 = xs["normal"][:m0], refs[(m0, "normal")]
+        ref_call = lambda: torch.nn.functional.linear(x0, w)  # noqa: E731
+        rec = dict(shape=name, n=n, k=k, calls_per_chunk=calls, served_ms_per_chunk_r0=served_ms,
+                   served_kernel=served_kernel, gflop_m0=2 * m0 * n * k / 1e9,
+                   real_source=xs["real_source"],
                    reference=dict(kernels=kernel_names(ref_call), ms=time_calls(ref_call),
-                                  deterministic=bool(torch.equal(ref.view(torch.int16), ref2.view(torch.int16)))))
-        # The comparison is against the serve only if this process picks the served kernel.
+                                  deterministic=bool(torch.equal(
+                                      ref0.view(torch.int16),
+                                      torch.nn.functional.linear(x0, w).view(torch.int16)))))
         rec["reference"]["matches_served_kernel"] = any(served_kernel in kn for kn in rec["reference"]["kernels"])
         cands, seen = [], set()
-        for source, algos in (("heuristic", ext.heuristics(M, n, k, WS_BYTES, 64)),
-                              ("exhaustive", ext.exhaustive(M, n, k, WS_BYTES, args.max_exhaustive))):
+        for source, algos in (("heuristic", ext.heuristics(m0, n, k, WS_BYTES, 64)),
+                              ("exhaustive", ext.exhaustive(m0, n, k, WS_BYTES, args.max_exhaustive))):
             for rank, t in enumerate(algos):
                 key = bytes(t[:8].numpy().tobytes())
                 if key in seen:
@@ -309,79 +254,124 @@ def main():
                 seen.add(key)
                 cands.append((source, rank, t))
         rows = []
-        out = torch.empty(M, n, device=dev, dtype=torch.bfloat16)
+        out = torch.empty(m0, n, device=dev, dtype=torch.bfloat16)
         for source, rank, t in cands:
             row = dict(source=source, rank=rank, config=dict(zip(CONFIG_FIELDS, ext.describe(t))),
-                       workspace=int(t[8]), waves=int(t[9]) / 1000.0)
+                       blob=[int(v) for v in t[:8].tolist()], workspace=int(t[8]), waves=int(t[9]) / 1000.0)
             try:
-                out.fill_(0)
-                ext.run(t, x, w, out, ws)
-                o1 = out.clone()
-                ext.run(t, x, w, out, ws)
-                torch.cuda.synchronize()
-                row["bitwise"] = bool(torch.equal(o1.view(torch.int16), ref.view(torch.int16))
-                                      and torch.equal(out.view(torch.int16), ref.view(torch.int16)))
-                row["self_deterministic"] = bool(torch.equal(o1.view(torch.int16), out.view(torch.int16)))
+                row["bitwise"], frac = bitwise(ext, t, x0, w, ref0, out, ws)
                 if not row["bitwise"]:
-                    diff = (o1.float() - ref.float()).abs()
-                    row["max_abs_diff"] = float(diff.max())
-                    row["frac_elems_differ"] = float((o1.view(torch.int16) != ref.view(torch.int16)).float().mean())
-                once = time_calls(lambda: ext.run(t, x, w, out, ws), reps=1, warm=0)
+                    row["frac_elems_differ"] = frac
+                once = time_calls(lambda: ext.run(t, x0, w, out, ws), reps=1, warm=0)
                 if once > 3 * rec["reference"]["ms"]:
                     row["ms"], row["timed_once"] = once, True  # far slower: not worth 13 calls
                 else:
-                    row["ms"] = time_calls(lambda: ext.run(t, x, w, out, ws))
+                    row["ms"] = time_calls(lambda: ext.run(t, x0, w, out, ws))
             except Exception as exc:  # noqa: BLE001
                 row["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
             row["_t"] = t
             rows.append(row)
         ok = [r for r in rows if "ms" in r]
-        bitwise = sorted((r for r in ok if r["bitwise"]), key=lambda r: r["ms"])
+        bitwise_rows = sorted((r for r in ok if r["bitwise"]), key=lambda r: r["ms"])
         anyfast = sorted(ok, key=lambda r: r["ms"])
-        # heuristic rank 0 is cuBLASLt's own pick: if it names the reference's kernel
-        # yet differs bitwise, the layout here (not the algorithm) is wrong.
         first = [r for r in ok if r["source"] == "heuristic" and r["rank"] == 0]
-        for r in first + bitwise[:5] + anyfast[:3]:
+        for r in first + bitwise_rows[:5] + anyfast[:3]:
             if "kernels" not in r:
-                r["kernels"] = kernel_names(lambda t=r["_t"]: ext.run(t, x, w, out, ws))
-        rec["candidates"] = len(rows)
-        rec["ran"] = len(ok)
-        rec["bitwise_count"] = len(bitwise)
-        rec["errors"] = sum(1 for r in rows if "error" in r)
-        best = bitwise[0] if bitwise else None
-        if best is not None:
-            ab = {"reference": [], "best_bitwise": []}
-            bt = best["_t"]
-            for _ in range(3):
-                for arm in ("reference", "best_bitwise", "best_bitwise", "reference"):
-                    call = ref_call if arm == "reference" else (lambda: ext.run(bt, x, w, out, ws))
-                    ab[arm].append(time_calls(call))
-            rec["interleaved_ms"] = ab
-            rec["power"] = {"reference": power_of(ref_call, 2.0, sampler),
-                            "best_bitwise": power_of(lambda: ext.run(bt, x, w, out, ws), 2.0, sampler)}
+                r["kernels"] = kernel_names(lambda t=r["_t"]: ext.run(t, x0, w, out, ws))
+        survivors = [r for r in bitwise_rows if r["ms"] < rec["reference"]["ms"]][:args.survivors]
+        # Every survivor at every M on every distribution, against F.linear there.
+        per_m = {}
+        for m in ms_list:
+            ref_m_call = lambda m=m: torch.nn.functional.linear(xs["normal"][:m], w)  # noqa: E731
+            mrec = dict(reference_ms=time_calls(ref_m_call), reference_kernels=kernel_names(ref_m_call),
+                        candidates=[])
+            out_m = torch.empty(m, n, device=dev, dtype=torch.bfloat16)
+            for r in survivors:
+                t = r["_t"]
+                c = dict(blob=r["blob"], config=r["config"], workspace_needed=int(ext.check(t, m, n, k)))
+                if c["workspace_needed"] < 0 or c["workspace_needed"] > WS_BYTES:
+                    c["valid"] = False
+                    mrec["candidates"].append(c)
+                    continue
+                c["valid"], c["bitwise"] = True, {}
+                try:
+                    for dist in DISTRIBUTIONS:
+                        if xs[dist] is None:
+                            c["bitwise"][dist] = None
+                            continue
+                        same, frac = bitwise(ext, t, xs[dist][:m], w, refs[(m, dist)], out_m, ws)
+                        c["bitwise"][dist] = same
+                        if not same:
+                            c.setdefault("frac_elems_differ", {})[dist] = frac
+                    c["counts"] = all(v is not False for v in c["bitwise"].values()) and \
+                        sum(v is True for v in c["bitwise"].values()) >= 3
+                    xm = xs["normal"][:m]
+                    c["ms"] = time_calls(lambda: ext.run(t, xm, w, out_m, ws))
+                except Exception as exc:  # noqa: BLE001
+                    c["error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+                    c["counts"] = False
+                mrec["candidates"].append(c)
+            counting = sorted((c for c in mrec["candidates"] if c.get("counts") and c["ms"] < mrec["reference_ms"]),
+                              key=lambda c: c["ms"])
+            if counting:
+                best = counting[0]
+                bt = next(r["_t"] for r in survivors if r["blob"] == best["blob"])
+                xm = xs["normal"][:m]
+                ab = {"reference": [], "pick": []}
+                for _ in range(3):
+                    for arm in ("reference", "pick", "pick", "reference"):
+                        call = ref_m_call if arm == "reference" else (lambda: ext.run(bt, xm, w, out_m, ws))
+                        ab[arm].append(time_calls(call))
+                best["interleaved_ms"] = ab
+                best["kernels"] = kernel_names(lambda: ext.run(bt, xm, w, out_m, ws))
+                best["power"] = {"reference": power_of(ref_m_call, 2.0, sampler),
+                                 "pick": power_of(lambda: ext.run(bt, xm, w, out_m, ws), 2.0, sampler)}
+                ref_med = sorted(ab["reference"])[len(ab["reference"]) // 2]
+                pick_med = sorted(ab["pick"])[len(ab["pick"]) // 2]
+                mrec["pick"] = dict(blob=best["blob"], config=best["config"], ms=pick_med,
+                                    reference_ms=ref_med, saving_ms=ref_med - pick_med)
+                if pick_med < ref_med:
+                    entries.append(dict(
+                        m=m, n=n, k=k, dtype="bf16", layout="linear_x_wT", shape=name,
+                        algo_blob=best["blob"], config=best["config"], workspace=best["workspace_needed"],
+                        evidence=dict(bitwise=best["bitwise"], real_source=xs["real_source"],
+                                      reference_kernels=mrec["reference_kernels"], kernels=best["kernels"],
+                                      reference_ms=ref_med, ms=pick_med, label="[S] timing screen")))
+            per_m[str(m)] = mrec
+            del out_m
         for r in rows:
             r.pop("_t", None)
+        rec["candidates"] = len(rows)
+        rec["ran"] = len(ok)
+        rec["bitwise_count"] = len(bitwise_rows)
+        rec["errors"] = sum(1 for r in rows if "error" in r)
+        diffs = [r["frac_elems_differ"] for r in ok if not r["bitwise"]]
+        rec["non_bitwise_frac_elems_differ"] = dict(
+            count=len(diffs), min=min(diffs) if diffs else None,
+            median=sorted(diffs)[len(diffs) // 2] if diffs else None)
         rec["heuristic_rank0"] = first[0] if first else None
-        rec["best_bitwise"] = best
-        rec["fastest_any"] = anyfast[0] if anyfast else None
-        rec["top_bitwise"] = bitwise[:10]
+        rec["survivors_at_m0"] = len(survivors)
+        rec["per_m"] = per_m
+        rec["top_bitwise"] = bitwise_rows[:10]
         rec["top_any"] = anyfast[:10]
         rec["all_rows_summary"] = [dict(source=r["source"], rank=r["rank"], bitwise=r.get("bitwise"),
-                                        ms=r.get("ms"), config=r["config"], error=r.get("error"))
+                                        frac_elems_differ=r.get("frac_elems_differ"), ms=r.get("ms"),
+                                        config=r["config"], error=r.get("error"))
                                    for r in rows]
         rec["seconds"] = round(time.time() - ts, 1)
         results.append(rec)
         dump(False)
-        ref_ms = rec["reference"]["ms"]
-        print(json.dumps(dict(shape=name, ref_ms=round(ref_ms, 4), ref_kernels=rec["reference"]["kernels"][:2],
+        print(json.dumps(dict(shape=name, ref_ms=round(rec["reference"]["ms"], 4),
+                              ref_kernels=rec["reference"]["kernels"][:2],
                               ref_matches_served=rec["reference"]["matches_served_kernel"],
                               rank0_bitwise=first[0].get("bitwise") if first else None,
-                              candidates=len(rows), bitwise=len(bitwise),
-                              best_bitwise_ms=best and round(best["ms"], 4),
-                              best_bitwise_kernels=best and best.get("kernels", [])[:2],
-                              fastest_any_ms=anyfast and round(anyfast[0]["ms"], 4),
-                              fastest_any_bitwise=anyfast and anyfast[0]["bitwise"])), flush=True)
-        del x, w, ref, ref2, out
+                              candidates=len(rows), bitwise=len(bitwise_rows), survivors=len(survivors),
+                              non_bitwise_frac_min=rec["non_bitwise_frac_elems_differ"]["min"],
+                              real=xs["real_source"],
+                              picks={m: per_m[m].get("pick") and round(per_m[m]["pick"]["saving_ms"], 4)
+                                     for m in per_m},
+                              seconds=rec["seconds"])), flush=True)
+        del w, xs, refs, out
         torch.cuda.empty_cache()
     dump(True)
     return 0
