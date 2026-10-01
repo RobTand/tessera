@@ -484,6 +484,70 @@ def test_nightly_leaves_the_target_head_to_stock(draft_runtime):
     assert not getattr(r.deepseek.ParallelLMHead, "_tessera_mtp_constructor", False)
 
 
+class _TesseraHeadMethod:
+    """Stands in for the method ``head_route`` builds: a Tessera route's class."""
+
+
+_TesseraHeadMethod.__module__ = "tessera.serving.fp8_route"
+
+
+def _tessera_head(r, rows=64, cols=8):
+    """The target head as ``head_route`` leaves it after preparation: a Tessera
+    method, a prepared module and a row scale, and no ``weight``."""
+    from tessera.serving.scheme import TESSERA_FP8
+
+    head = r.Head(rows, cols, prefix="target.lm_head")
+    del head.weight
+    head.quant_method = _TesseraHeadMethod()
+    head.tessera_family = TESSERA_FP8
+    head.tessera_native = object()
+    head.tessera_rows = rows // r.world[0]
+    head.tessera_columns = cols
+    head.register_buffer("scale_b", torch.ones(1, rows // r.world[0]), persistent=False)
+    return head
+
+
+@pytest.mark.parametrize("world, rank", [(1, 0), (2, 1)])
+def test_a_declared_tessera_head_is_shared_on_fd4a15126(draft_runtime, world, rank):
+    """tessera#750 WP3: a checkpoint may declare its LM head as a Tessera wire.
+
+    On fd4a15126 the draft builds a per-layer head that stock sharing replaces
+    with the target's head object, so the placeholder contract reads the
+    target head's vocabulary geometry.  A Tessera head has no ``weight``; its
+    prepared rows and columns are the geometry, and the draft still allocates
+    no vocabulary of its own.
+    """
+    r = draft_runtime
+    r.world[0], r.rank[0] = world, rank
+    r.target.model.embed_tokens = r.Vocab(64, 8, prefix="target.embed_tokens")
+    r.target.lm_head = _tessera_head(r)
+    draft = _load(r, "v2")
+    assert r.snapshots[-1] == 0
+    assert draft.lm_head is draft.model.layers["4"].shared_head.head is r.target.lm_head
+    assert draft.model.embed_tokens is r.target.model.embed_tokens
+
+
+@pytest.mark.parametrize("broken", ["rows", "columns", "unprepared", "family", "bias"])
+def test_a_tessera_head_that_does_not_fit_the_vocabulary_is_refused(draft_runtime, broken):
+    r = draft_runtime
+    head = _tessera_head(r)
+    if broken == "rows":
+        head.tessera_rows = 32
+    elif broken == "columns":
+        head.tessera_columns = 16
+    elif broken == "unprepared":
+        head.tessera_native = None
+    elif broken == "family":
+        head.tessera_family = "TESSERA_NVFP4"
+    else:
+        head.bias = torch.nn.Parameter(torch.zeros(64), requires_grad=False)
+    r.target.lm_head = head
+    count = len(r.allocations)
+    with pytest.raises(RuntimeError, match="Tessera MTP"):
+        _load(r, "v2")
+    assert len(r.allocations) == count
+
+
 @pytest.mark.parametrize("draft_runtime", [{"patch_sources": False}, {**NIGHTLY, "patch_sources": False}],
                          indirect=True, ids=["fd4a15126", "nightly"])
 def test_unmatched_sources_decline_to_stock_load(draft_runtime, caplog):

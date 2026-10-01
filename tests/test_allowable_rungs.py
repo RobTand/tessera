@@ -148,6 +148,28 @@ def test_a_cell_covers_its_census_rungs_and_the_allowable_rungs_of_their_run_tab
     assert [q for q in range(256, 2049) if cell_covers_rung(cell, q, None)] == cell["rungs_q256"]
 
 
+def test_the_e4m3_dense_cells_cover_every_rung_of_the_rule(contract):
+    """Contract v53 (#750, the T-8 dense census): stub t8d1 carries one E4M3
+    dense rung of every run table the rule admits, [1]..[8] and the seven
+    pairs between them, so the two GLM-image dense resident cells derive all
+    fifteen tables and cover the rule's whole range, 256..2048, where v52
+    covered 769..1279.  The routed cells stay at stub B's tables, and the
+    dense cells' nightly-runtime twins, which name a runtime this census did
+    not serve, do not move."""
+    row = _row(contract)
+    by_id = {c["id"]: c for c in contract["lane_eligibility"]["cells"]}
+    for regime in ("decode", "batch"):
+        dense = by_id[f"tessera_e4m3_k1_dense_sm121_{regime}_resident"]
+        assert dense["run_tables"] == row["allowable_rungs"]["run_tables"]
+        assert [q for q in range(128, 2561)
+                if cell_covers_rung(dense, q, row)] == list(range(256, 2049))
+        (twin,) = [c for c in contract["lane_eligibility"]["cells"]
+                   if c["id"].startswith(f"tessera_e4m3_k1_dense_sm121_{regime}_resident_runtime_")]
+        assert twin["run_tables"] == [[3, 4], [4], [4, 5]]
+        routed = by_id[f"tessera_e4m3_k1_routed_moe_sm121_{regime}_resident"]
+        assert routed["run_tables"] == [[3, 4], [4], [4, 5]]
+
+
 def test_every_cell_publishes_exactly_its_derived_run_tables(contract):
     rows = {e["family"]: e for e in contract["formats"]}
     for cell in contract["lane_eligibility"]["cells"]:
