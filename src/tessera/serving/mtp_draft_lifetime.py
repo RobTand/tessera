@@ -142,7 +142,9 @@ class _UnallocatedVocabulary(torch.nn.Module):
     """No parameter, quant method or forward; stock sharing must remove it."""
 
 
-def require_source_digest(module: Any, expected: str) -> None:
+def require_source_digest(module: Any, expected: str, purpose: str =
+                          "vocabulary allocation avoidance requires the inspected "
+                          "construction/load/share interface") -> None:
     path = getattr(module, "__file__", None)
     try:
         actual = hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
@@ -151,8 +153,7 @@ def require_source_digest(module: Any, expected: str) -> None:
     if actual != expected:
         raise RuntimeError(
             f"Tessera MTP unsupported source identity for {module.__name__}: "
-            f"expected {expected}, got {actual}; vocabulary allocation avoidance "
-            "requires the inspected construction/load/share interface")
+            f"expected {expected}, got {actual}; {purpose}")
 
 
 def _require_supported_sources(interface: _Interface, *modules: Any) -> None:
@@ -385,6 +386,10 @@ def install_for_current_config() -> None:
             return
         interface, modules = match
         _install(interface, *modules)
+        # tessera#777: the draft reads only its own shards. Its own digests and
+        # flag: a loader mismatch declines the narrowing, never the saving above.
+        from .mtp_draft_shards import install as install_draft_shards
+        install_draft_shards(interface.name, modules[0], interface.draft_load_rename)
 
 
 def _install(interface: _Interface, glm: Any, deepseek: Any, v1: Any, v2: Any, eagle: Any,
