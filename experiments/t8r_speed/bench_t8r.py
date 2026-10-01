@@ -454,7 +454,8 @@ def main():
             "routed_fused_wide": os.environ.get("TESSERA_ROUTED_FUSED_WIDE"),
             # the dispatch-selecting variables as the process saw them
             "env": {k: os.environ.get(k) for k in ("TESSERA_FUSED_E4M3_MMA", "TESSERA_ROUTED_FUSED",
-                                                   "TESSERA_ROUTED_FUSED_WIDE", "TESSERA_SERVE_MODE")},
+                                                   "TESSERA_ROUTED_FUSED_WIDE", "TESSERA_ROUTED_FUSED_WORD_STAGES",
+                                                   "TESSERA_SERVE_MODE")},
             "start_unix": time.time()}
     recorded = routing_files(args.routing, ms) if args.routing else {}
     if args.routing and not any(recorded.values()):

@@ -19,6 +19,7 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ -z "${TESSERA_ROUTED_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED=$TESSERA_ROUTED_FUSED")
 [[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_WIDE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WIDE=$TESSERA_ROUTED_FUSED_WIDE")
+[[ -z "${TESSERA_ROUTED_FUSED_WORD_STAGES:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WORD_STAGES=$TESSERA_ROUTED_FUSED_WORD_STAGES")
 # BENCH_ARTIFACT: another exported Tessera artifact (default: the T8R release).
 ART=${BENCH_ARTIFACT:-/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported}
 [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
