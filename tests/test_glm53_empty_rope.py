@@ -50,7 +50,8 @@ def empty_rope(monkeypatch, tmp_path):
     from tessera.serving import flags, glm53_empty_rope as mod
 
     flags.reset_for_tests(mod.FLAG)
-    monkeypatch.setattr(mod, "_DECLINED", [])
+    monkeypatch.setattr(mod, "_REPORTED", [])
+    monkeypatch.setattr(mod, "_FIRST_QUERY", [])
     calls = []
 
     class FlashInferMLASparseSM120Impl:
@@ -80,11 +81,12 @@ def empty_rope(monkeypatch, tmp_path):
 
 
 def test_the_served_query_form_skips_the_cat_with_identical_bytes():
-    from tessera.serving.glm53_empty_rope import query_without_empty_rope
+    from tessera.serving.glm53_empty_rope import query_without_empty_rope, skip_reason
 
     nope, pe = _served_query()
     joined = torch.cat((nope, pe), dim=-1)
     passed = query_without_empty_rope((nope, pe))
+    assert skip_reason((nope, pe)) is None
     assert passed is nope
     assert passed.shape == joined.shape and passed.stride() == joined.stride()
     assert torch.equal(passed.view(torch.int16), joined.view(torch.int16))
@@ -107,13 +109,24 @@ def test_every_other_query_reaches_stock_unchanged(case):
         "list": lambda: [nope, pe],
         "tensor": lambda: nope,
     }[case]()
+    from tessera.serving.glm53_empty_rope import skip_reason
     assert query_without_empty_rope(q) is q
+    assert skip_reason(q)
 
 
-def test_flag_unset_leaves_the_stock_method(empty_rope, monkeypatch):
+def _lines(caplog, mod):
+    return [r.getMessage() for r in caplog.records if r.name == mod.__name__]
+
+
+def test_flag_unset_leaves_the_stock_method_and_says_off_once(empty_rope, monkeypatch, caplog):
     monkeypatch.delenv(empty_rope.mod.FLAG, raising=False)
-    assert empty_rope.mod.install_for_current_config() is False
+    with caplog.at_level(logging.WARNING, logger=empty_rope.mod.__name__):
+        assert empty_rope.mod.install_for_current_config() is False
+        assert empty_rope.mod.install_for_current_config() is False
     assert empty_rope.impl.forward_mqa is empty_rope.original
+    assert _lines(caplog, empty_rope.mod) == [
+        "tessera.glm53_empty_rope: query cat skip off "
+        "(TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT unset or 0)"]
 
 
 def test_the_production_entry_installs_it_and_q_nope_reaches_stock(
@@ -137,13 +150,34 @@ def test_the_production_entry_installs_it_and_q_nope_reaches_stock(
     assert out is tensor
 
 
-def test_install_is_idempotent(empty_rope, monkeypatch):
+def test_install_is_idempotent_and_says_installed_once(empty_rope, monkeypatch, caplog):
     monkeypatch.setenv(empty_rope.mod.FLAG, "1")
-    assert empty_rope.mod.install_for_current_config() is True
-    first = empty_rope.impl.forward_mqa
-    assert empty_rope.mod.install_for_current_config() is True
+    monkeypatch.setenv("TESSERA_CENSUS_RUNTIME_IMAGE", "localhost/x@sha256:5be13705acaecc7b4aaf")
+    with caplog.at_level(logging.WARNING, logger=empty_rope.mod.__name__):
+        assert empty_rope.mod.install_for_current_config() is True
+        first = empty_rope.impl.forward_mqa
+        assert empty_rope.mod.install_for_current_config() is True
     assert empty_rope.impl.forward_mqa is first
     assert first.__wrapped_stock__ is empty_rope.original
+    digest = hashlib.sha256(empty_rope.source.read_bytes()).hexdigest()[:12]
+    assert _lines(caplog, empty_rope.mod) == [
+        f"tessera.glm53_empty_rope: query cat skip installed (stock source sha256 {digest}, "
+        "image sha 5be13705acae): FlashInferMLASparseSM120Impl.forward_mqa passes a "
+        "zero-width-RoPE query without torch.cat"]
+
+
+def test_the_first_tuple_query_is_reported_once(empty_rope, monkeypatch, caplog):
+    monkeypatch.setenv(empty_rope.mod.FLAG, "1")
+    assert empty_rope.mod.install_for_current_config() is True
+    nope, pe = _served_query()
+    caplog.clear()  # the install line is the other test's subject
+    with caplog.at_level(logging.WARNING, logger=empty_rope.mod.__name__):
+        empty_rope.impl().forward_mqa(_aligned((8, 4, 16)), None, None, None)  # not a tuple
+        empty_rope.impl().forward_mqa((nope, pe), None, None, None)
+        empty_rope.impl().forward_mqa((nope, nope[..., :2].clone()), None, None, None)
+    assert _lines(caplog, empty_rope.mod) == [
+        "tessera.glm53_empty_rope: query cat skip: first tuple query "
+        "[(8, 4, 16), (8, 4, 0)]: cat skipped"]
 
 
 def test_an_uninspected_source_declines_with_one_warning(empty_rope, monkeypatch, caplog):
@@ -153,8 +187,11 @@ def test_an_uninspected_source_declines_with_one_warning(empty_rope, monkeypatch
         assert empty_rope.mod.install_for_current_config() is False
         assert empty_rope.mod.install_for_current_config() is False
     assert empty_rope.impl.forward_mqa is empty_rope.original
-    declined = [r for r in caplog.records if "declined" in r.getMessage()]
-    assert len(declined) == 1 and "not an inspected source" in declined[0].getMessage()
+    lines = _lines(caplog, empty_rope.mod)
+    assert len(lines) == 1
+    assert lines[0].startswith("tessera.glm53_empty_rope: query cat skip declined, stock "
+                               "FlashInferMLASparseSM120Impl.forward_mqa: ")
+    assert "is not an inspected source" in lines[0]
 
 
 def test_a_changed_signature_declines(empty_rope, monkeypatch):

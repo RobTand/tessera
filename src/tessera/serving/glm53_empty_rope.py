@@ -18,8 +18,11 @@ served shapes.
 The change is opt-in: set ``TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1``.
 ``TesseraConfig.get_quant_method`` installs it. If the stock source's sha256
 isn't one this module was inspected against, the serve keeps the stock
-``forward_mqa`` and logs one warning. Any query that is not exactly the
-zero-width form described above goes to the stock code unchanged.
+``forward_mqa``. Each process logs exactly one install line, ``installed``,
+``declined`` (with the reason) or ``off``, and one line for the first tuple
+query it sees (``cat skipped`` or ``cat kept`` with the reason). Any query that
+is not exactly the zero-width form described above goes to the stock code
+unchanged.
 """
 from __future__ import annotations
 
@@ -28,6 +31,7 @@ import hashlib
 import importlib
 import inspect
 import logging
+import os
 from pathlib import Path
 from threading import RLock
 from typing import Any
@@ -36,7 +40,7 @@ import torch
 
 from .flags import latched_bool
 
-__all__ = ["FLAG", "install_for_current_config", "query_without_empty_rope"]
+__all__ = ["FLAG", "install_for_current_config", "query_without_empty_rope", "skip_reason"]
 
 _log = logging.getLogger(__name__)
 
@@ -63,40 +67,67 @@ _ALLOCATOR_ALIGNMENT = 512
 
 _MARK = "_tessera_skip_empty_rope_cat"
 _LOCK = RLock()
-_DECLINED: list[str] = []
+#: The one install line this process logged ("installed", "declined" or "off").
+_REPORTED: list[str] = []
+#: Whether the first tuple query has been reported (one line per process).
+_FIRST_QUERY: list[bool] = []
+
+_LEVER = "tessera.glm53_empty_rope: query cat skip"
+
+
+def skip_reason(q: Any) -> str | None:
+    """None when ``torch.cat(q, dim=-1)`` would only copy ``q[0]``; else why not.
+
+    ``q`` must be a ``(q_nope, q_pe)`` pair of tensors where ``q_pe`` is zero
+    wide in the last dimension, both parts agree on the leading shape, dtype
+    and device, and ``q_nope`` is contiguous and 512-byte aligned.
+    """
+    if not isinstance(q, tuple) or len(q) != 2:
+        return "query is not a 2-tuple"
+    nope, pe = q
+    if not isinstance(nope, torch.Tensor) or not isinstance(pe, torch.Tensor):
+        return "query parts are not tensors"
+    if nope.dim() == 0 or pe.dim() != nope.dim():
+        return f"rank mismatch ({nope.dim()} vs {pe.dim()})"
+    if pe.shape[-1] != 0:
+        return f"RoPE part is {pe.shape[-1]} wide"
+    if pe.shape[:-1] != nope.shape[:-1]:
+        return f"leading shapes differ ({tuple(nope.shape)} vs {tuple(pe.shape)})"
+    if pe.dtype != nope.dtype or pe.device != nope.device:
+        return f"dtype/device differ ({nope.dtype}/{nope.device} vs {pe.dtype}/{pe.device})"
+    if not nope.is_contiguous():
+        return "q_nope is not contiguous"
+    if nope.data_ptr() % _ALLOCATOR_ALIGNMENT:
+        return f"q_nope is not {_ALLOCATOR_ALIGNMENT}-byte aligned"
+    return None
 
 
 def query_without_empty_rope(q: Any) -> Any:
     """Return ``q_nope`` when ``torch.cat(q, dim=-1)`` would only copy it.
 
-    ``q`` must be a ``(q_nope, q_pe)`` pair of tensors where ``q_pe`` is zero
-    wide in the last dimension, both parts agree on the leading shape, dtype
-    and device, and ``q_nope`` is contiguous and 512-byte aligned. Any other
-    ``q`` is returned unchanged, so the caller's stock code handles it.
+    Any other ``q`` is returned unchanged, so the caller's stock code handles
+    it. ``skip_reason`` states the conditions.
     """
-    if not isinstance(q, tuple) or len(q) != 2:
-        return q
-    nope, pe = q
-    if not isinstance(nope, torch.Tensor) or not isinstance(pe, torch.Tensor):
-        return q
-    if nope.dim() == 0 or pe.dim() != nope.dim():
-        return q
-    if pe.shape[-1] != 0 or pe.shape[:-1] != nope.shape[:-1]:
-        return q
-    if pe.dtype != nope.dtype or pe.device != nope.device:
-        return q
-    if not nope.is_contiguous() or nope.data_ptr() % _ALLOCATOR_ALIGNMENT:
-        return q
-    return nope
+    return q[0] if skip_reason(q) is None else q
+
+
+def _report(line: str) -> None:
+    if not _REPORTED:
+        _REPORTED.append(line)
+        _log.warning(line)
+
+
+def _source_digest(module: Any) -> str | None:
+    path = getattr(module, "__file__", None)
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
 
 
 def _decline_reason(module: Any) -> str | None:
-    path = getattr(module, "__file__", None)
-    if not path:
+    digest = _source_digest(module)
+    if digest is None:
         return f"{_MODULE} has no source file to inspect"
-    digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
     if digest not in _INSPECTED_SHA256:
-        return f"{_MODULE} sha256 {digest} is not an inspected source"
+        return f"{_MODULE} sha256 {digest[:12]} is not an inspected source"
     impl = getattr(module, _CLASS, None)
     if impl is None:
         return f"{_MODULE} has no {_CLASS}"
@@ -109,7 +140,13 @@ def _decline_reason(module: Any) -> str | None:
 def _wrap(original: Any) -> Any:
     @functools.wraps(original)
     def forward_mqa(self, q, kv_c_and_k_pe_cache, attn_metadata, layer):
-        return original(self, query_without_empty_rope(q), kv_c_and_k_pe_cache,
+        reason = skip_reason(q)
+        if not _FIRST_QUERY and isinstance(q, tuple):
+            _FIRST_QUERY.append(True)
+            _log.warning("%s: first tuple query %s: %s", _LEVER,
+                         [tuple(t.shape) for t in q if isinstance(t, torch.Tensor)],
+                         "cat skipped" if reason is None else f"cat kept ({reason})")
+        return original(self, q if reason is not None else q[0], kv_c_and_k_pe_cache,
                         attn_metadata, layer)
 
     setattr(forward_mqa, _MARK, True)
@@ -120,10 +157,13 @@ def _wrap(original: Any) -> Any:
 def install_for_current_config() -> bool:
     """Rebind the stock ``forward_mqa`` when the flag is on; True if installed.
 
-    Idempotent. Declines to the stock path, warning once, when the source
-    differs from an inspected one or the module can't be imported.
+    Idempotent. Logs exactly one line per process, at the first call:
+    ``installed (...)``, ``declined, stock ...: reason`` or ``off (...)``.
+    Declines to the stock path when the source differs from an inspected one or
+    the module can't be imported.
     """
     if not latched_bool(FLAG, meaning="skipping the zero-width RoPE query cat"):
+        _report(f"{_LEVER} off ({FLAG} unset or 0)")
         return False
     with _LOCK:
         try:
@@ -137,12 +177,12 @@ def install_for_current_config() -> bool:
                 return True
             reason = _decline_reason(module)
         if reason is not None:
-            if not _DECLINED:
-                _DECLINED.append(reason)
-                _log.warning("%s=1 declined; the stock query cat stays: %s", FLAG, reason)
+            _report(f"{_LEVER} declined, stock {_CLASS}.forward_mqa: {reason}")
             return False
         impl = getattr(module, _CLASS)
         impl.forward_mqa = _wrap(impl.forward_mqa)
-        _log.info("%s=1: %s.forward_mqa passes a zero-width-RoPE query without cat",
-                  FLAG, _CLASS)
+        image = os.environ.get("TESSERA_CENSUS_RUNTIME_IMAGE", "").rpartition("@sha256:")[2][:12]
+        _report(f"{_LEVER} installed (stock source sha256 {_source_digest(module)[:12]}, "
+                f"image sha {image or 'unstated'}): {_CLASS}.forward_mqa passes a "
+                "zero-width-RoPE query without torch.cat")
         return True
