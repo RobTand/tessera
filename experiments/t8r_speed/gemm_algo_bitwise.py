@@ -30,6 +30,11 @@ Per shape (``out[M, N] = x[M, K] @ w[N, K]^T``, bf16 in and out, fp32 compute):
 3. Per M, the fastest counting survivor gets an interleaved A/B against the
    reference (reference, pick, pick, reference; 3 rounds) and board power over
    2 s of each. Timing in a shared gap is a screen [S]; bitwise is the result.
+4. Row tiles (``--row-tiles``): whether ``F.linear`` on ``tm`` rows stores the
+   same bits as those rows of the ``M0`` call, on every distribution, and the
+   same for the three fastest survivors run at ``tm``. A producer split into
+   row tiles (so its all-reduce can start on the first one) is bitwise only
+   where this holds.
 
 The descriptors are ``pinned_gemm.cpp`` beside this file; a serving lever must
 run that same file (its sha256 is in the output) for this evidence to carry. Writes ``<out>/gemm_algo_bitwise.json`` after every shape and
@@ -178,6 +183,8 @@ def main():
     ap.add_argument("--shapes", default="all")
     ap.add_argument("--m", default="2048,2049,512", help="the M values checked; the first is the sweep's")
     ap.add_argument("--survivors", type=int, default=8)
+    ap.add_argument("--row-tiles", type=lambda v: [int(x) for x in v.split(",") if x], default=[128, 256, 512, 1024],
+                    help="tile row counts for the row-tile check (empty to skip)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     ms_list = [int(v) for v in args.m.split(",")]
@@ -279,6 +286,13 @@ def main():
             if "kernels" not in r:
                 r["kernels"] = kernel_names(lambda t=r["_t"]: ext.run(t, x0, w, out, ws))
         survivors = [r for r in bitwise_rows if r["ms"] < rec["reference"]["ms"]][:args.survivors]
+        # A partial record now: a row that times out in the per-M stage still reports the sweep.
+        rec["survivors_at_m0"] = len(survivors)
+        rec["bitwise_count"] = len(bitwise_rows)
+        rec["top_bitwise_partial"] = [{k: v for k, v in r.items() if k != "_t"} for r in bitwise_rows[:10]]
+        results.append(rec)
+        dump(False)
+        results.pop()
         # Every survivor at every M on every distribution, against F.linear there.
         per_m = {}
         for m in ms_list:
@@ -339,6 +353,47 @@ def main():
                                       reference_ms=ref_med, ms=pick_med, label="[S] timing screen")))
             per_m[str(m)] = mrec
             del out_m
+        # Row tiles: is out[s:s+tm] of a tm-row call the same bits as rows s:s+tm of the M0 call?
+        # Stock first (F.linear at tm against F.linear at M0); then the fastest survivors, run at
+        # tm on the row slice, against the same stock M0 rows. A producer tiled by rows (so its
+        # all-reduce can start on the first tile) is bitwise only where this holds.
+        row_tiles = {}
+        for tm in args.row_tiles:
+            if tm >= m0 or m0 % tm:
+                continue
+            trec = dict(stock={}, stock_kernels=kernel_names(
+                lambda tm=tm: torch.nn.functional.linear(xs["normal"][:tm], w)), survivors=[])
+            for dist in DISTRIBUTIONS:
+                if xs[dist] is None:
+                    trec["stock"][dist] = None
+                    continue
+                full = refs[(m0, dist)].view(torch.int16)
+                diff = 0
+                for s0 in range(0, m0, tm):
+                    part = torch.nn.functional.linear(xs[dist][s0:s0 + tm], w)
+                    diff += int((part.view(torch.int16) != full[s0:s0 + tm]).sum())
+                trec["stock"][dist] = diff == 0
+                if diff:
+                    trec.setdefault("stock_frac_elems_differ", {})[dist] = diff / full.numel()
+            out_t = torch.empty(tm, n, device=dev, dtype=torch.bfloat16)
+            for r in survivors[:3]:
+                t = r["_t"]
+                c = dict(blob=r["blob"], config=r["config"], workspace_needed=int(ext.check(t, tm, n, k)), rows={})
+                if 0 <= c["workspace_needed"] <= WS_BYTES:
+                    for dist in DISTRIBUTIONS:
+                        if xs[dist] is None:
+                            c["rows"][dist] = None
+                            continue
+                        full = refs[(m0, dist)].view(torch.int16)
+                        diff = 0
+                        for s0 in range(0, m0, tm):
+                            ext.run(t, xs[dist][s0:s0 + tm], w, out_t, ws)
+                            diff += int((out_t.view(torch.int16) != full[s0:s0 + tm]).sum())
+                        c["rows"][dist] = diff == 0
+                trec["survivors"].append(c)
+            del out_t
+            row_tiles[str(tm)] = trec
+        rec["row_tiles"] = row_tiles
         for r in rows:
             r.pop("_t", None)
         rec["candidates"] = len(rows)
@@ -370,6 +425,7 @@ def main():
                               real=xs["real_source"],
                               picks={m: per_m[m].get("pick") and round(per_m[m]["pick"]["saving_ms"], 4)
                                      for m in per_m},
+                              stock_row_tiles={tm: v["stock"] for tm, v in row_tiles.items()},
                               seconds=rec["seconds"])), flush=True)
         del w, xs, refs, out
         torch.cuda.empty_cache()
