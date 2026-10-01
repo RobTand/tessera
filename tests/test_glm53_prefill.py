@@ -350,23 +350,33 @@ class Layer(torch.nn.Module):
             self.mlp = Dense(rnd(2 * H, H), rnd(H, 2 * H), ranks)
         self._mlp_is_moe = moe
 
-    # Per-token stand-ins with the shapes of the real ops.
+    # Per-token stand-ins with the shapes of the real ops.  Each token is computed on its own
+    # (a CPU matmul or bmm blocks by the row count, so batched rows would depend on how many
+    # tokens share a call), which lets SP shards and mHC tiles be held to bitwise.
+    @staticmethod
+    def _rows(f, *tensors):
+        outs = [f(*(t[i:i + 1] for t in tensors)) for i in range(tensors[0].shape[0])]
+        if isinstance(outs[0], tuple):
+            return tuple(torch.cat([o[j] for o in outs], 0) for j in range(len(outs[0])))
+        return torch.cat(outs, 0)
+
     def _pre(self, residual, fn, scale, base, norm_weight, norm_eps):
-        flat = residual.reshape(residual.shape[0], -1)
-        # A per-row product sum, not a matmul: CPU BLAS blocks by the row count, and a
-        # stand-in whose rows depend on their neighbours could not hold tiles to bitwise.
-        mix = torch.sigmoid((flat[:, None, :] * fn[None]).sum(-1) * scale[0] + base)  # (T, N)
-        comb = torch.softmax(torch.einsum("ti,tj->tij", mix, mix), -1)  # (T, N, N)
-        x = (mix.unsqueeze(-1) * residual).sum(1)
-        x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight
-        return mix.unsqueeze(-1), comb, x
+        def one(res):
+            flat = res.reshape(res.shape[0], -1)
+            mix = torch.sigmoid(flat @ fn.T * scale[0] + base)            # (1, N)
+            comb = torch.softmax(torch.einsum("ti,tj->tij", mix, mix), -1)  # (1, N, N)
+            x = (mix.unsqueeze(-1) * res).sum(1)
+            x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight
+            return mix.unsqueeze(-1), comb, x
+        return self._rows(one, residual)
 
     def hc_pre(self, x, fn, scale, base, norm_weight=None, norm_eps=0.0):
         post, comb, x = self._pre(x, fn, scale, base, norm_weight, norm_eps)
         return post, comb, x
 
     def hc_post(self, x, residual, post, comb):
-        return torch.einsum("tij,tjh->tih", comb, residual) + post * x.unsqueeze(1)
+        return self._rows(lambda x1, r1, p1, c1: torch.einsum("tij,tjh->tih", c1, r1)
+                          + p1 * x1.unsqueeze(1), x, residual, post, comb)
 
     def hc_fused_post_pre(self, x, residual, post, comb, fn, scale, base, norm_weight=None,
                           norm_eps=0.0):
