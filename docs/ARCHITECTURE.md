@@ -2131,14 +2131,18 @@ that the graph read everything relevant, so where it did not, the answer is
 `full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
-The explicitly standalone `tests/test_native_a4_serving.py` is a manual CUDA
-`run_gate`/`__main__` harness with no pytest items. After all candidate-selection
-paths, the selector removes it from pytest targets and records its path and
-reason in `excluded_tests` (also displayed in the text receipt). It remains in
-the graph so its pytest consumers are still selected. No general absence-of-test
-heuristic drops modules: pytest can collect imported, inherited or generated
-cases. No exclusion weakens uncertainty escalation or PrismaBuild's requirement
-that every assigned pytest file have a collection/outcome record (tessera#647).
+`tests/test_native_a4_serving.py` keeps its manual `run_gate`/`__main__` CUDA
+harness and also exposes a pytest entry point that invokes the same gate. The
+wrapper names its CUDA precondition and resolves `a4-config.json` through
+`box_artifacts`; a CPU skip is not native gate qualification. The selector
+includes this pytest target, so a full-suite PB assignment has a collection and
+outcome record rather than an unexecuted file (tessera#762). Explicit manual-only
+interfaces, when declared, remain in the dependency graph but are removed from
+pytest targets after every selection path, with their path and reason recorded
+in `excluded_tests` and the text receipt (tessera#647). No general
+absence-of-test heuristic drops modules: pytest can collect imported, inherited
+or generated cases. No exclusion weakens uncertainty escalation or PB's
+requirement that every assigned pytest file have a collection/outcome record.
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
 A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
