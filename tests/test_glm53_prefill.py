@@ -332,7 +332,9 @@ class Layer(torch.nn.Module):
     # Per-token stand-ins with the shapes of the real ops.
     def _pre(self, residual, fn, scale, base, norm_weight, norm_eps):
         flat = residual.reshape(residual.shape[0], -1)
-        mix = torch.sigmoid(flat @ fn.T * scale[0] + base)            # (T, N)
+        # A per-row product sum, not a matmul: CPU BLAS blocks by the row count, and a
+        # stand-in whose rows depend on their neighbours could not hold tiles to bitwise.
+        mix = torch.sigmoid((flat[:, None, :] * fn[None]).sum(-1) * scale[0] + base)  # (T, N)
         comb = torch.softmax(torch.einsum("ti,tj->tij", mix, mix), -1)  # (T, N, N)
         x = (mix.unsqueeze(-1) * residual).sum(1)
         x = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + norm_eps) * norm_weight
@@ -1027,7 +1029,7 @@ class _TileKernels:
     def gemm(self, x2d, fn, *, hidden_size, hc_mult):
         self.calls.append(("gemm", x2d.shape[0], x2d.data_ptr(), x2d.is_contiguous()))
         xf = x2d.float()
-        return (xf @ fn.T).unsqueeze(0), xf.square().sum(-1).unsqueeze(0)
+        return (xf[:, None, :] * fn[None]).sum(-1).unsqueeze(0), xf.square().sum(-1).unsqueeze(0)
 
     def pre(self, mul, sqrsum, scale, base, residual, post_mix, comb_mix, layer_input, rms_eps,
             hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, sinkhorn_repeat, *, norm_weight,
