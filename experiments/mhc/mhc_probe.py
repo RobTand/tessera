@@ -44,7 +44,8 @@ Three parts, each on the pinned serving image's own vLLM code:
            ``FULL``-token batch, as an SP rank's shard), against the untiled
            stock call at the same forced split: bitwise outputs, the splits the
            GEMM actually took, and (off --numerics-only) the site time per tile
-           size under graph replay, per-kernel device time and power.
+           size under graph replay, per-kernel device time, power and each
+           leg's UTC window (for the Netdata CPU and power series).
 
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
@@ -545,7 +546,8 @@ def part_mhctile(args, model_dir: Path, sampler) -> dict:
                             roles[role] = roles.get(role, 0.0) + v["mean_us"] * v["calls"] / (2 * k)
                     arm.update({"ms_per_site": ms, "timing_mode": graph_ms.last_mode, "copies": k,
                                 "per_token_us": ms * 1e3 / t, "floor_fraction": case["floor_ms_at_peak"] / ms,
-                                "kernel_us_per_site": roles, "power": sampler.window(t0, t1)})
+                                "kernel_us_per_site": roles, "power": sampler.window(t0, t1),
+                                "utc_window": [t0, t1]})
                     del calls
                 case["arms"].append(arm)
                 log("mhctile", which, spec, f"tile {tile}", f"bitwise {arm.get('bitwise', '-')}",
@@ -728,6 +730,8 @@ def main() -> int:
     ap.add_argument("--ncu", action="store_true")
     ap.add_argument("--numerics-only", action="store_true",
                     help="ulp and split-invariance checks only; no timing (a shared-GPU row may run it)")
+    ap.add_argument("--placement", default=None,
+                    help="how the row was placed, recorded in meta (e.g. 'exclusive GPU, ambient CPU')")
     ap.add_argument("--stub", default=None, help=argparse.SUPPRESS)
     args = ap.parse_args()
     out_dir = Path(args.out)
@@ -739,7 +743,7 @@ def main() -> int:
             "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
             "pb_action": os.environ.get("PB_ACTION_KEY"), "torch": torch.__version__, "vllm": vllm.__version__,
             "device": torch.cuda.get_device_name(0), "model": str(model_dir), "argv": sys.argv,
-            "peak_dram_gbs": PEAK_DRAM_GBS, "utc_start": time.time()}
+            "peak_dram_gbs": PEAK_DRAM_GBS, "placement": args.placement, "utc_start": time.time()}
     log("meta", json.dumps(meta))
     if args.ncu:
         res = {"meta": meta, "ncu": part_ncu(args, model_dir)}
