@@ -68,6 +68,8 @@ __all__ = [
     "prepare_span2_compact",
     "prepare_window_compact",
     "DENSE_WINDOW_RATE_MAX",
+    "prepare_window_lut_compact",
+    "WindowLutUnit",
     "WINDOW_GEMM_RATE_MAX",
 ]
 
@@ -342,10 +344,15 @@ def _window_cut_state(metadata: ParsedMetadata, r0: int, c0: int, c1: int,
     ``decode.replay_window``, starting from the parent shard's own state when
     the tail does not fill the window.  A zero tensor is the explicit
     whole-unit start (never a missing-history substitute).
+
+    ``r0`` is a WEIGHT row; the stream holds one code per ``arity`` rows, so
+    the state is the one before code ``r0 // arity``.
     """
     from .decode import replay_window
 
     window_bits = int(metadata.manifest.window_bits)
+    arity = int(metadata.grid.arity)
+    r0 = int(r0) // arity
     cols_local = c1 - c0
     state = torch.zeros(cols_local, dtype=torch.int64, device=device)
     if r0 == 0:
@@ -354,7 +361,7 @@ def _window_cut_state(metadata: ParsedMetadata, r0: int, c0: int, c1: int,
         return metadata.shard_state.reshape(-1)[c0:c1].to(device, torch.int64)
     packed = _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body")
     rates = tuple(int(r) for r in metadata.rates)
-    rows_total = metadata.rows
+    rows_total = metadata.rows // arity
     # The parent's bit prefix before this cut's first column: the packed plane
     # is one bit stream per parent column, so a column cut's offsets start
     # where the columns above it end.
@@ -620,12 +627,18 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     With ``scratch`` the returned ``words`` view the scratch's reusable
     buffer and are valid until the next call with the same scratch
     (:func:`_repack_destination`); the caller copies them out first.
+
+    ``rows`` is the cut in WEIGHT rows.  The stream runs over CODES, one per
+    ``arity`` rows (a tuple at arity 2), so the repack counts codes: the
+    returned ``Repacked.rows`` and its 512-row tiles are code rows.  At
+    arity 1 the two are the same.
     """
     from . import kernel_wire as kw
     from .kernel_window_gemv import Repacked, TILE_ROWS
     from .lane_planes import require_window_geometry
 
-    r0, r1 = rows
+    arity = int(metadata.grid.arity)
+    r0, r1 = (int(r) // arity for r in rows)
     c0, c1 = cols
     rows_local = r1 - r0
     cols_local = c1 - c0
@@ -651,7 +664,7 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
             "integer rate, and the caller's lane bounds the rates it serves "
             "(the CUDA GEMV roster is not this bound)"
         )
-    rows_total = metadata.rows
+    rows_total = metadata.rows // arity
     # The parent's bit prefix before this cut's first column (see
     # ``_window_cut_state``): offsets are into the parent's packed stream.
     cursor = sum(rates_all[c] * rows_total for c in range(c0))
@@ -784,3 +797,109 @@ def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
         codes_of_state=codes_of_state, native=native, family=family,
         initial_state=state, row_offset=r0,
     )
+
+
+# ---------------------------------------------------------------------------
+# window over the LUT plane (E2M1x2): the fused E2M1 lane's unit
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class WindowLutUnit:
+    """A LUT-plane window unit (the E2M1x2 window body), rank-local.
+
+    The fused E2M1 lane's inputs, straight from the packed wire:
+
+    * ``rep`` -- the body in the documented tile-word layout over CODES: one
+      code per ``arity`` weight rows, 512 codes per tile, ``16 * R`` words per
+      column per tile (``_repack_window_compact``);
+    * ``codes`` -- uint8 ``[2^L]``, the tuple code each window state decodes
+      to (high nibble: the tuple's first row, low nibble: its second; an E2M1
+      code is the hardware bit pattern);
+    * ``scale_plane`` -- the LUT refinement nibbles, uint8, in
+      ``lane_planes.pack_scale_nibbles``' layout: ``[cols / half][rows]``
+      nibbles, two rows per byte, the even row high;
+    * ``scale_lut`` -- uint8 ``[16]``, the unit's UE4M3 table;
+    * ``global_scale`` -- the unit's fp32 global.
+
+    A weight is ``e2m1(code nibble) * e4m3(scale_lut[nibble]) *
+    global_scale``, as ``decode.unit_scale_field`` reads it.
+    ``initial_state`` is the window state before local code 0, int32 per
+    column in ORIGINAL order (zeros for a whole unit or rank 0);
+    ``row_offset`` is local row 0 in the parent's weight rows.
+    """
+
+    rep: object
+    codes: torch.Tensor
+    scale_plane: torch.Tensor
+    scale_lut: torch.Tensor
+    global_scale: float
+    window_bits: int
+    rows: int
+    cols: int
+    arity: int
+    half: int
+    initial_state: torch.Tensor
+    row_offset: int
+
+    def permuted_start_state(self) -> "torch.Tensor | None":
+        """The start state in the repack's column order (``rep.perm``), or
+        ``None`` when every column starts from zero."""
+        if not bool((self.initial_state != 0).any()):
+            return None
+        return self.initial_state.index_select(0, self.rep.perm.long())
+
+
+def prepare_window_lut_compact(wire: CompactWire, *, rows=None, cols=None,
+                               device="cuda",
+                               scratch: "dict | None" = None) -> WindowLutUnit:
+    """A LUT-plane window unit (E2M1x2) -> :class:`WindowLutUnit`.
+
+    The cut is validated by :func:`require_compact_cut` (weight rows, whole
+    tuples).  Refused by name: a body other than WINDOW, a plane other than
+    LUT, a grid other than the E2M1 pair grid, a post-decode transform, and
+    any rate or window width the tile-word layout does not express.
+
+    ``scratch`` is the loader's caller-owned transfer dict, as for
+    :func:`prepare_window_compact`: ``rep.words`` then views a reusable buffer
+    that the next call overwrites, so the caller copies the unit out first.
+    """
+    from . import lane_planes as lp
+
+    metadata = wire.metadata
+    if metadata.body is not BodyKind.WINDOW:
+        raise GrammarError(
+            "prepare_window_lut_compact takes a window unit; this one carries a "
+            f"{metadata.body.name} body")
+    plane_kind = metadata.manifest.scale_plane.kind
+    if plane_kind is not ScalePlaneKind.LUT:
+        raise GrammarError(
+            "prepare_window_lut_compact reads the LUT scale plane (a UE4M3 "
+            f"table per unit and a nibble per 16 weights); this unit carries an "
+            f"{plane_kind.name} plane")
+    grid = metadata.grid
+    if not (grid.name.startswith("E2M1") and int(grid.arity) == 2):
+        raise GrammarError(
+            f"the E2M1 window unit is over the E2M1 pair grid (arity 2); this "
+            f"unit is over {grid.name} at arity {grid.arity}")
+    if int(metadata.span) != 1:
+        raise GrammarError(f"a window body is span 1; this unit is span {metadata.span}")
+    lp.require_no_post_decode_transforms(
+        release_positions=metadata.release_positions,
+        diagonals=metadata.has_diagonals, rotation=metadata.rotation)
+    (r0, r1), (c0, c1) = require_compact_cut(wire, rows, cols)
+    half = int(metadata.manifest.geometry.half_weights)
+    if (c1 - c0) % half:
+        raise GrammarError(f"{c1 - c0} columns is not a whole number of {half}-wide scale groups")
+    device = torch.device(device)
+    codes = _window_codes(metadata).to(device=device, dtype=torch.uint8).contiguous()
+    rep = _repack_window_compact(metadata, (r0, r1), (c0, c1), device, scratch)
+    state = _window_cut_state(metadata, r0, c0, c1, device, scratch).to(torch.int32)
+    plane = _compact_scale_nibbles(metadata, r0=r0, r1=r1, c0=c0, c1=c1,
+                                   device=device, scratch=scratch)
+    return WindowLutUnit(
+        rep=rep, codes=codes, scale_plane=plane,
+        scale_lut=lp.lut_scale_bytes(metadata.scale_lut, device),
+        global_scale=float(metadata.manifest.scale_plane.global_scale),
+        window_bits=int(metadata.manifest.window_bits), rows=r1 - r0, cols=c1 - c0,
+        arity=int(grid.arity), half=half, initial_state=state, row_offset=r0)
