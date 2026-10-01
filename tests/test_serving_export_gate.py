@@ -655,14 +655,18 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
         if row["family"] == "TESSERA_E4M3_K1":
             row["attested_rungs_q256"] = sorted(set(row["attested_rungs_q256"]) | {compiled_rung})
             row["candidate_rungs_q256"] = list(row["attested_rungs_q256"])
-            # ``attested_wire`` stamps every attested rung (#55), so the added
+            # ``attested_wire`` stamps every attested rung (#55), so an added
             # rung gets a copy of the shipped stamp.  This fixture is about which
             # CELL a reader counts, not about what a stamp transcribes: the
             # route's body, span and plane are the route's, and
             # ``tests/test_serving_attested_wire.py`` holds the shipped stamps to
-            # the exporter's own output.
-            row["attested_wire"] = [dict(stamp) for stamp in row["attested_wire"]] + [
-                {**row["attested_wire"][0], "q256": compiled_rung}]
+            # the exporter's own output.  Since contract v53 the dense census
+            # attests every q256 multiple of 128, this rung included, so the
+            # family already stamps it; a second stamp would be a duplicate.
+            stamped = {stamp["q256"] for stamp in row["attested_wire"]}
+            row["attested_wire"] = [dict(stamp) for stamp in row["attested_wire"]] + (
+                [] if compiled_rung in stamped
+                else [{**row["attested_wire"][0], "q256": compiled_rung}])
     # The premise is ONE image's decode/batch pair.  Contract v48 publishes the
     # same scope on a second image (the vLLM nightly, tessera#702); that pair is
     # left out of the copy so the refusal below is about the moved rung alone.
