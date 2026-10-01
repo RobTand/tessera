@@ -28,6 +28,12 @@ Three parts, each on the pinned serving image's own vLLM code:
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
 
+``--numerics-only`` keeps only what does not depend on having the box to
+itself: the ``onorm`` ulp comparisons and the ``mhc`` split invariance.  It
+skips every timing path (graph replay, profiler device times, power windows,
+the ``l2`` part) and writes ``mhc_probe_numerics.json``, so a row that shares
+its GPU can gate the overrides' numerics without producing a timing number.
+
 Run inside the serving image through ``experiments/mhc/mhc_probe.sh``.
 """
 from __future__ import annotations
@@ -168,6 +174,13 @@ def part_onorm(args, model_dir: Path, sampler) -> dict:
                     "cuda_vs_fp64": rpo.bf16_ulp_stats(yc_2, ref),
                     "cuda_vs_native": rpo.bf16_ulp_stats(yc_2, yn2.double()),
                     "cuda_deterministic": bool(torch.equal(yc, yc2))}
+            if args.numerics_only:
+                out["cells"].append(cell)
+                log("onorm", heads, t, "numerics only",
+                    f"cuda-vs-native {cell['cuda_vs_native']['max_diff_in_bf16_ulps_of_row_max']:.2f} ulp",
+                    f"native {cell['native_vs_fp64']['max_diff_in_bf16_ulps_of_row_max']:.2f}",
+                    f"cuda {cell['cuda_vs_fp64']['max_diff_in_bf16_ulps_of_row_max']:.2f}")
+                continue
             nbytes = 3 * t * heads * HEAD_DIM * 2
             k = copies_for(nbytes)
             xs = [x.clone() for _ in range(k)]
@@ -269,30 +282,31 @@ def part_mhc(args, model_dir: Path, sampler) -> dict:
         for t in args.tokens:
             x, res, post, comb = mhc_inputs(t, gen, call)
             by = mhc_bytes(t)
-            k = copies_for(by["floor"])
-            ins = [(x.clone(), res.clone(), post.clone(), comb.clone()) for _ in range(k)]
-            calls = [(lambda a=a: call(*a)) for a in ins]
-            t0 = time.time()
-            ms = graph_ms(calls, args.reps)
-            t1 = time.time()
-            kern = kernel_device_us(lambda: [c() for c in calls], 2)
-            per = {}
-            for name, v in kern.items():
-                role = classify_mhc_kernel(name)
-                if role:
-                    per[role] = {"kernel": name[:120], "mean_us": v["mean_us"], "calls": v["calls"]}
-                    if role in by:
-                        gbs = by[role] / (v["mean_us"] * 1e3)
-                        per[role].update(bytes=by[role], gbs=gbs, fraction_of_peak=gbs / PEAK_DRAM_GBS)
-            cell = {"which": which, "tokens": t, "ms_per_call": ms, "timing_mode": graph_ms.last_mode,
-                    "copies": k, "bytes": by, "kernels": per, "power": sampler.window(t0, t1),
-                    "floor_ms_at_peak": by["floor"] / PEAK_DRAM_GBS / 1e6,
-                    "per_token_us": ms * 1e3 / t}
-            out["cells"].append(cell)
-            log("mhc", which, t, f"{ms:.4f} ms/call", f"{cell['per_token_us']:.3f} us/token",
-                " ".join(f"{r}={v['mean_us']:.1f}us" + (f"({v.get('fraction_of_peak', 0):.0%})" if "gbs" in v else "")
-                         for r, v in per.items()))
-            del ins, calls
+            if not args.numerics_only:  # timing: only on a box this row has to itself
+                k = copies_for(by["floor"])
+                ins = [(x.clone(), res.clone(), post.clone(), comb.clone()) for _ in range(k)]
+                calls = [(lambda a=a: call(*a)) for a in ins]
+                t0 = time.time()
+                ms = graph_ms(calls, args.reps)
+                t1 = time.time()
+                kern = kernel_device_us(lambda: [c() for c in calls], 2)
+                per = {}
+                for name, v in kern.items():
+                    role = classify_mhc_kernel(name)
+                    if role:
+                        per[role] = {"kernel": name[:120], "mean_us": v["mean_us"], "calls": v["calls"]}
+                        if role in by:
+                            gbs = by[role] / (v["mean_us"] * 1e3)
+                            per[role].update(bytes=by[role], gbs=gbs, fraction_of_peak=gbs / PEAK_DRAM_GBS)
+                cell = {"which": which, "tokens": t, "ms_per_call": ms, "timing_mode": graph_ms.last_mode,
+                        "copies": k, "bytes": by, "kernels": per, "power": sampler.window(t0, t1),
+                        "floor_ms_at_peak": by["floor"] / PEAK_DRAM_GBS / 1e6,
+                        "per_token_us": ms * 1e3 / t}
+                out["cells"].append(cell)
+                log("mhc", which, t, f"{ms:.4f} ms/call", f"{cell['per_token_us']:.3f} us/token",
+                    " ".join(f"{r}={v['mean_us']:.1f}us" + (f"({v.get('fraction_of_peak', 0):.0%})" if "gbs" in v else "")
+                             for r, v in per.items()))
+                del ins, calls
             # Split invariance: T tokens in one call against the same tokens in 2 and 4 calls.
             if t >= 128 and t in args.split_tokens:
                 full = call(x, res, post, comb)
@@ -369,6 +383,8 @@ def main() -> int:
     ap.add_argument("--ncu-tokens", type=int, nargs="+", default=[1024, 2048])
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--ncu", action="store_true")
+    ap.add_argument("--numerics-only", action="store_true",
+                    help="ulp and split-invariance checks only; no timing (a shared-GPU row may run it)")
     ap.add_argument("--stub", default=None, help=argparse.SUPPRESS)
     args = ap.parse_args()
     out_dir = Path(args.out)
@@ -389,7 +405,11 @@ def main() -> int:
     sampler = rpo.PowerSampler()
     sampler.start()
     res = {"meta": meta}
+    name = "mhc_probe_numerics.json" if args.numerics_only else "mhc_probe.json"
+    meta["numerics_only"] = args.numerics_only
     for part in args.parts.split(","):
+        if part == "l2" and args.numerics_only:
+            raise SystemExit("--numerics-only has no l2 part (the L2 curve is a timing)")
         if part == "l2":
             res["l2"] = part_l2(args, sampler)
         elif part == "onorm":
@@ -398,7 +418,7 @@ def main() -> int:
             res["mhc"] = part_mhc(args, model_dir, sampler)
         else:
             raise SystemExit(f"unknown part {part}")
-        (out_dir / "mhc_probe.json").write_text(json.dumps(res, indent=1) + "\n")
+        (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     sampler.stop_flag = True
     meta["utc_end"] = time.time()
     meta["power_sampler"] = sampler.source
@@ -406,8 +426,8 @@ def main() -> int:
         res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
     except Exception as exc:  # noqa: BLE001
         res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
-    (out_dir / "mhc_probe.json").write_text(json.dumps(res, indent=1) + "\n")
-    log("done", out_dir / "mhc_probe.json")
+    (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
+    log("done", out_dir / name)
     return 0
 
 
