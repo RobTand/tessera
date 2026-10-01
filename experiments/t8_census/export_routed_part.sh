@@ -76,9 +76,7 @@ CMD=(python3 "${EXPORTER:-experiments/export_tessera_serving.py}" "$SRC" "$OUT"
 PROF=
 if [ "${PROFILE:-0}" = 1 ]; then
   PROF=$PARTS/prof-$INDEX-$TS; mkdir -p "$PROF"
-  # py-spy's own exit code is not the export's: the child writes its rc.
-  CMD=(py-spy record --subprocesses --idle --nonblocking --rate "${PYSPY_RATE:-10}" --format speedscope
-       -o "$PROF/pyspy.speedscope.json" -- bash -c '"$@"; echo $? > "$PROF/export.rc"' _ "${CMD[@]}")
+  CMD=(bash experiments/t8_census/profiled_run.sh "$PROF/export.rc" "$PROF/pyspy.speedscope.json" "${CMD[@]}")
 fi
 CNAME=t8census-$NAME-p$INDEX-$TS
 trap 'docker rm -f "$CNAME" >/dev/null 2>&1' EXIT
@@ -105,15 +103,12 @@ docker run --rm --name "$CNAME" --gpus all --ipc=host --network=host --cpuset-cp
   -e TORCH_EXTENSIONS_DIR=/pbtmp/torch-ext -e PYTHONPATH=/work/src:/work/experiments \
   -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 -e PYTHONNOUSERSITE=1 \
   -e OMP_NUM_THREADS="$NTH" -e MKL_NUM_THREADS="$NTH" -e OPENBLAS_NUM_THREADS="$NTH" \
-  -e TESSERA_GIT="$HEAD" -e PROF="$PROF" "${IMAGE_ENV[@]}" \
+  -e TESSERA_GIT="$HEAD" "${IMAGE_ENV[@]}" \
   -w /work --entrypoint timeout "$IMAGE" "${PART_BOUND_S:-14000}" "${CMD[@]}" >> "$LOG" 2>&1
 rc=$?
 [ -n "$SMI" ] && kill "$SMI" 2>/dev/null
 [ -n "$MEM" ] && kill "$MEM" 2>/dev/null
-if [ -n "$PROF" ]; then
-  echo "[export_routed_part] py-spy rc=$rc profile=$PROF" | tee -a "$LOG"
-  rc=$(cat "$PROF/export.rc" 2>/dev/null || echo 99)
-fi
+[ -n "$PROF" ] && echo "[export_routed_part] profile=$PROF" | tee -a "$LOG"
 T1=$(date +%s)
 echo "[export_routed_part] compute apps at end: $(apps | tr '\n' ';')" | tee -a "$LOG"
 echo "[export_routed_part] $NAME part $INDEX/$COUNT rc=$rc elapsed=$((T1 - T0))s end=$(date -u +%FT%TZ)" | tee -a "$LOG"
