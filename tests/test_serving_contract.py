@@ -93,11 +93,17 @@ _CELL_LAWS: dict[str, dict[str, object]] = {}
 #: (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).  Contract v52
 #: adds the BF16 dense rungs the two T-16 census stubs carried, one of every
 #: run table [1]..[14] and the pairs between them
-#: (``docs/measurements/2026-09-30-t16-dense-census.md``).
+#: (``docs/measurements/2026-09-30-t16-dense-census.md``).  Contract v53
+#: adds the E4M3 dense rungs the T-8 census stub carried, one of every run
+#: table [1]..[8] and the pairs between them
+#: (``docs/measurements/2026-10-01-t8-dense-census.md``).
 _T16_RUNGS = sorted({256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
                      1920, 2048} | set(range(2176, 3585, 128)))
+_T8_RUNGS = sorted({256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
+                    1920, 2048})
 _FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896],
-                 "TESSERA_E4M3_K1": [832, 864, 896, 928, 944, 960, 1024, 1088],
+                 "TESSERA_E4M3_K1": sorted({832, 864, 896, 928, 944, 960, 1024, 1088}
+                                           | set(_T8_RUNGS)),
                  "TESSERA_BF16_K1": sorted({832, 864, 880, 896, 928, 960, 1024, 1088, 1792}
                                            | set(_T16_RUNGS))}
 
@@ -137,8 +143,9 @@ _GLM_X_CELLS = (
     # q256 1024 shared-expert modules took the lane
     # (``tests/test_glm_u1_census_cells.py``).
     # Contract v47: the E4M3 cells name the E4M3 instruction's pair too, on a
-    # census of stub B with that library as the dispatch.
-    ("TESSERA_E4M3_K1", "dense", [832, 864, 896, 928, 960, 1024, 1088],
+    # census of stub B with that library as the dispatch.  Contract v53: the
+    # E4M3 dense cells carry the T-8 census stub's rungs.
+    ("TESSERA_E4M3_K1", "dense", sorted({832, 864, 896, 928, 960, 1024, 1088} | set(_T8_RUNGS)),
      "fp8_per_token_dynamic", (("tessera::window_gemm_dense", "native_window_gemm"),
                                ("tessera::fused_window_dense", "native_fused_window_dense"),
                                ("tessera::fused_window_dense",
