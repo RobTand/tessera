@@ -3,9 +3,9 @@
 # exporter's --partition INDEX/COUNT, so one PrismaBuild row encodes one layer
 # (a MoE layer is 288 experts x 3 projections, about 7.25 G parameters) and a
 # lost row costs that layer only.  experiments/merge_tessera_parts.py assembles
-# the parts into $R/stubs/stub-NAME.  Run with cwd = the Tessera checkout,
-# inside the image named by PART_IMAGE (the exporter stamps it into the part
-# identity, and the merge refuses parts that disagree on it).
+# the parts into $R/stubs/stub-NAME.  Run on the host with cwd = the Tessera
+# checkout; the exporter runs in a container of PART_IMAGE, which it stamps into
+# the part identity (the merge refuses parts that disagree on it).
 #
 # usage: PRODUCER_AUTHORITY=/abs/authority.py PART_IMAGE=repo@sha256:... \
 #        [CENSUS_ROOT=/abs/root] [PROFILE=1] export_routed_part.sh NAME INDEX COUNT
@@ -17,12 +17,18 @@
 #           re-run with the marker present exits 0 without encoding; a re-run
 #           that finds an unmarked part directory (an interrupted attempt) moves
 #           it aside, because the exporter refuses an existing output.
-#   PROFILE=1 adds a py-spy record of the whole export (py-spy is the parent:
-#           ptrace_scope is 1 on the GB10 hosts) and a 1 s nvidia-smi power
-#           series and a 5 s memory series (exporter RSS, box MemAvailable),
-#           all under $R/stubs/parts-NAME/prof-INDEX-<ts>.  Power and
-#           MemAvailable are box-wide: the compute-apps lists at start and end
-#           say who else held the GPU.
+#   PROFILE=1 adds a py-spy record of the whole export (py-spy, from the image,
+#           is the exporter's parent: ptrace_scope is 1 on the GB10 hosts), a 1 s
+#           nvidia-smi power series and a 5 s memory series (exporter RSS, box
+#           MemAvailable), all under $R/stubs/parts-NAME/prof-INDEX-<ts>.  Power
+#           and MemAvailable are box-wide: the compute-apps lists at start and
+#           end say who else held the GPU.
+#
+# The container: checkout read-only at /work, /mnt/shared read-only, $R/stubs
+# writable, scratch (TMPDIR, HOME, JIT caches) on a container tmpfs because
+# flock on NFS fails, the PB-assigned CPU set, and a bound of PART_BOUND_S
+# (default 14000 s) so it ends before a 4 h PB timeout.  EXPORTER (a path
+# under the checkout) replaces the exporter, for checking this script alone.
 #
 # Every part of one stub must run from one code snapshot and one image: the
 # merge compares code_sha256 (src/**, experiments/*.py, the runtime contract),
@@ -30,43 +36,56 @@
 set -uo pipefail
 NAME=${1:?NAME}; INDEX=${2:?INDEX}; COUNT=${3:?COUNT}
 AUTH=${PRODUCER_AUTHORITY:?set PRODUCER_AUTHORITY to the producer authority file}
-IMAGE=${PART_IMAGE:?set PART_IMAGE to the exact repo@sha256 image this row runs in}
+IMAGE=${PART_IMAGE:?set PART_IMAGE to the exact repo@sha256 image the exporter runs in}
 R=${CENSUS_ROOT:-/mnt/shared/tessera-measurements/t8-coverage-20260930}
 SRC=/mnt/shared/tessera-runs/moe/u1-stubs-20260926/source-l8
 U=/mnt/shared/tessera-measurements/glm-canonical-census-20260908/activation-runtime-allocation-20260911/union-a4a8a16-01/cache
-PY=${PY:-python3}
 PLAN=experiments/t8_census/plan-$NAME.json
 PARTS=$R/stubs/parts-$NAME
 OUT=$PARTS/part-$INDEX
 MARK=$PARTS/part-$INDEX.done.json
 TS=$(date -u +%Y%m%dT%H%M%SZ)
-mkdir -p "$PARTS" "$R/stubs/logs" "$R/stubs/tmp" "$R/stubs/source-digests" || exit 2
+mkdir -p "$PARTS" "$R/stubs/logs" "$R/stubs/source-digests" || exit 2
 LOG=$R/stubs/logs/export-$NAME-p$INDEX-$TS.log
 [ -f "$PLAN" ] || { echo "no plan $PLAN" | tee "$LOG"; exit 2; }
 if [ -f "$MARK" ]; then
   echo "[export_routed_part] $NAME $INDEX/$COUNT already done: $MARK" | tee "$LOG"; exit 0
 fi
+source experiments/runtime_image.sh
+runtime_image_require "$IMAGE" > "$PARTS/runtime_image-$INDEX-$TS.json" || {
+  echo "[export_routed_part] image $IMAGE refused: $PARTS/runtime_image-$INDEX-$TS.json" | tee "$LOG"; exit 2; }
+IMAGE_ENV=()
+while IFS= read -r line; do
+  [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")
+done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 if [ -e "$OUT" ]; then
   mv "$OUT" "$OUT.incomplete-$TS" || exit 2
   echo "[export_routed_part] moved an unmarked earlier attempt to $OUT.incomplete-$TS" | tee -a "$LOG"
 fi
 HEAD=${TESSERA_HEAD:-$(git rev-parse HEAD 2>/dev/null)}
+CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
+NTH=$(awk -F, '{print NF}' <<< "$CPUS")
 apps() { command -v nvidia-smi >/dev/null && nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader 2>&1; }
-echo "[export_routed_part] $NAME part $INDEX/$COUNT host=$(hostname) start=$(date -u +%FT%TZ) head=$HEAD image=$IMAGE profile=${PROFILE:-0}" | tee -a "$LOG"
+echo "[export_routed_part] $NAME part $INDEX/$COUNT host=$(hostname) start=$(date -u +%FT%TZ) head=$HEAD image=$IMAGE cpus=$CPUS profile=${PROFILE:-0}" | tee -a "$LOG"
 echo "[export_routed_part] compute apps at start: $(apps | tr '\n' ';')" | tee -a "$LOG"
-CMD=("$PY" experiments/export_tessera_serving.py "$SRC" "$OUT"
+CMD=(python3 "${EXPORTER:-experiments/export_tessera_serving.py}" "$SRC" "$OUT"
   --plan-json "$PLAN" --device cuda --producer-authority "$AUTH"
   --hessian "$U/hessian_capture.references.json"
   --source-digest-cache "$R/stubs/source-digests" --allow-unserveable
   --partition "$INDEX/$COUNT" --partition-runtime-image "$IMAGE")
-# The image's own torch, never the host's: PB mounts HOME, and a user site
-# under it holds a CPU-only torch that shadowed the image's CUDA build.
-export PYTHONPATH=src:experiments TMPDIR=$R/stubs/tmp PYTHONNOUSERSITE=1
-T0=$(date +%s)
+PROF=
 if [ "${PROFILE:-0}" = 1 ]; then
   PROF=$PARTS/prof-$INDEX-$TS; mkdir -p "$PROF"
-  export RCF=$PROF/export.rc
-  SMI=
+  # py-spy's own exit code is not the export's: the child writes its rc.
+  CMD=(py-spy record --subprocesses --idle --nonblocking --rate "${PYSPY_RATE:-10}" --format speedscope
+       -o "$PROF/pyspy.speedscope.json" -- bash -c '"$@"; echo $? > "$PROF/export.rc"' _ "${CMD[@]}")
+fi
+CNAME=t8census-$NAME-p$INDEX-$TS
+trap 'docker rm -f "$CNAME" >/dev/null 2>&1' EXIT
+trap 'docker rm -f "$CNAME" >/dev/null 2>&1; exit 143' TERM INT
+T0=$(date +%s)
+SMI=; MEM=
+if [ -n "$PROF" ]; then
   if command -v nvidia-smi >/dev/null; then
     nvidia-smi --query-gpu=timestamp,power.draw,utilization.gpu,clocks.sm,temperature.gpu \
       --format=csv,noheader,nounits -l 1 > "$PROF/power.csv" 2>&1 & SMI=$!
@@ -78,16 +97,22 @@ if [ "${PROFILE:-0}" = 1 ]; then
       avail=$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)
       echo "$(date +%s),$rss,$avail"; sleep 5
     done > "$PROF/mem.csv" ) & MEM=$!
-  # py-spy's own exit code is not the export's: the child writes its rc.
-  py-spy record --subprocesses --idle --nonblocking --rate "${PYSPY_RATE:-10}" --format speedscope \
-    -o "$PROF/pyspy.speedscope.json" -- bash -c '"$@"; echo $? > "$RCF"' _ "${CMD[@]}" >> "$LOG" 2>&1
-  SPY=$?
-  [ -n "$SMI" ] && kill "$SMI" 2>/dev/null
-  kill "$MEM" 2>/dev/null
-  rc=$(cat "$RCF" 2>/dev/null || echo 99)
-  echo "[export_routed_part] py-spy rc=$SPY profile=$PROF" | tee -a "$LOG"
-else
-  "${CMD[@]}" >> "$LOG" 2>&1; rc=$?
+fi
+docker run --rm --name "$CNAME" --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+  --user "$(id -u):$(id -g)" --tmpfs /pbtmp:rw,exec,size=16g \
+  -v "$PWD":/work:ro -v /mnt/shared:/mnt/shared:ro -v "$R/stubs":"$R/stubs" \
+  -e HOME=/pbtmp -e TMPDIR=/pbtmp -e TRITON_CACHE_DIR=/pbtmp/triton \
+  -e TORCH_EXTENSIONS_DIR=/pbtmp/torch-ext -e PYTHONPATH=/work/src:/work/experiments \
+  -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONUNBUFFERED=1 -e PYTHONNOUSERSITE=1 \
+  -e OMP_NUM_THREADS="$NTH" -e MKL_NUM_THREADS="$NTH" -e OPENBLAS_NUM_THREADS="$NTH" \
+  -e TESSERA_GIT="$HEAD" -e PROF="$PROF" "${IMAGE_ENV[@]}" \
+  -w /work --entrypoint timeout "$IMAGE" "${PART_BOUND_S:-14000}" "${CMD[@]}" >> "$LOG" 2>&1
+rc=$?
+[ -n "$SMI" ] && kill "$SMI" 2>/dev/null
+[ -n "$MEM" ] && kill "$MEM" 2>/dev/null
+if [ -n "$PROF" ]; then
+  echo "[export_routed_part] py-spy rc=$rc profile=$PROF" | tee -a "$LOG"
+  rc=$(cat "$PROF/export.rc" 2>/dev/null || echo 99)
 fi
 T1=$(date +%s)
 echo "[export_routed_part] compute apps at end: $(apps | tr '\n' ';')" | tee -a "$LOG"
