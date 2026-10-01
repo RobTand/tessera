@@ -46,6 +46,17 @@ Three parts, each on the pinned serving image's own vLLM code:
            GEMM actually took, and (off --numerics-only) the site time per tile
            size under graph replay, per-kernel device time and power.
 
+``mhcoverlap`` The all-reduce overlap's CUDA body (``TileOverlap``, #783 tiles plus
+           ``TESSERA_GLM53_COMM_OVERLAP``) on the stock kernels, one GPU, no
+           timing: a side-stream stand-in for each tile's all-reduce (a bf16
+           add of a fixed "other rank" part, after a spin of ``--spin-cycles``
+           so a tile that did not wait reads memory not yet written), against
+           the add and then one stock call at the full batch's split.  A
+           mutant whose compute stream ignores its waits, run on a different
+           "other rank" part, must differ (the check bites).  Also records
+           whether this image's ``OVERLAP_MODULES`` match the pinned digests.
+           Real NCCL at TP 2 is not here; the served TR3 A/B is its test.
+
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
 
@@ -60,6 +71,7 @@ Run inside the serving image through ``experiments/mhc/mhc_probe.sh``.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -557,6 +569,83 @@ def part_mhctile(args, model_dir: Path, sampler) -> dict:
     return out
 
 
+def part_mhcoverlap(args, model_dir: Path) -> dict:
+    """The overlap's CUDA body: ordering and exactness on one GPU (see module doc)."""
+    import vllm.model_executor.kernels.mhc.tilelang as tl
+    import vllm.model_executor.kernels.mhc.tilelang_kernels as tk
+    from tessera.serving import glm53_prefill as gp
+
+    out: dict = {"spin_cycles": args.spin_cycles, "cases": []}
+    mods, why = gp._import_all(gp.OVERLAP_MODULES)
+    if mods is not None:
+        matched, why = gp._match(mods, gp.OVERLAP_MODULES, gp._OVERLAP_INTERFACES)
+        out["overlap_interface"] = {"matched": matched.name if matched else None, "why": why}
+    else:
+        out["overlap_interface"] = {"matched": None, "why": why}
+    log("mhcoverlap interface", out["overlap_interface"])
+    forcer = gp.install_split_forcer(tk)
+    kern = gp.tile_kernels(tk, tl, torch)
+    side = torch.cuda.Stream()
+
+    class NoWait(torch.cuda.Stream):  # the mutant's compute stream: its waits do nothing
+        def wait_event(self, event):  # noqa: ARG002
+            return None
+
+    for which in ("attn", "ffn"):
+        prm = mhc_params(model_dir, which)
+        stock = mhc_call(prm)
+        gen = torch.Generator(device="cuda").manual_seed(2)
+        for t in args.overlap_tokens:
+            x, res, post, comb = mhc_inputs(t, gen, stock)
+            peers = [torch.randn(t, HIDDEN, device="cuda", generator=gen).bfloat16() for _ in range(2)]
+            refs = []
+            for peer in peers:
+                with forcer.full_batch(t):
+                    refs.append(stock(x + peer, res, post, comb))
+            row_bytes = x.stride(0) * x.element_size()
+            for tile in [tl_ for tl_ in args.overlap_tiles if tl_ < t]:
+                # Each arm's "other rank" part differs from the arm before it, so a tile that
+                # read ``out`` before its all-reduce wrote it (the caching allocator hands the
+                # previous arm's freed block back) sees the previous arm's sum, not this one.
+                for arm, peer_i, mutant in (("overlap", 1, False), ("overlap", 0, False),
+                                            ("mutant_no_wait", 1, True)):
+                    peer = peers[peer_i]
+
+                    def reduce_into(src, dst, stream, peer=peer):
+                        a = (src.data_ptr() - x.data_ptr()) // row_bytes
+                        with torch.cuda.stream(stream):
+                            if args.spin_cycles:
+                                torch.cuda._sleep(args.spin_cycles)
+                            torch.add(src, peer[a:a + src.shape[0]], out=dst)
+
+                    torch.cuda.synchronize()
+                    compute = NoWait() if mutant else torch.cuda.current_stream()
+                    ov = gp.TileOverlap(reduce_into=reduce_into, side=side, compute=lambda c=compute: c,
+                                        new_event=torch.cuda.Event,
+                                        keep=lambda t_, st: t_.record_stream(st))
+                    ctx = torch.cuda.stream(compute) if mutant else contextlib.nullcontext()
+                    with ctx, forcer.full_batch(t):
+                        got = ov.run(kern, tile, x, res, post, comb, prm["fn"], prm["scale"], prm["base"],
+                                     RMS_EPS, HC_EPS, HC_EPS, POST_MULT, SINKHORN,
+                                     norm_weight=prm["norm"], norm_eps=RMS_EPS)
+                    torch.cuda.synchronize()
+                    names = ("residual_cur", "post_mix", "comb_mix", "layer_input")
+                    cmp = {n: compare(g, r) for n, g, r in zip(names, got, refs[peer_i])}
+                    case = {"which": which, "tokens": t, "tile": tile, "arm": arm, "peer": peer_i,
+                            "bitwise": all(c["equal"] for c in cmp.values()), **cmp}
+                    out["cases"].append(case)
+                    log("mhcoverlap", which, t, f"tile {tile}", arm, f"peer {peer_i}",
+                        f"bitwise {case['bitwise']}")
+                    del got
+            del x, res, post, comb, peers, refs
+    ok = [c for c in out["cases"] if c["arm"] == "overlap"]
+    bad = [c for c in out["cases"] if c["arm"] == "mutant_no_wait"]
+    out["verdict"] = {"overlap_bitwise": f"{sum(c['bitwise'] for c in ok)}/{len(ok)}",
+                      "mutant_differs": f"{sum(not c['bitwise'] for c in bad)}/{len(bad)}"}
+    log("mhcoverlap verdict", out["verdict"])
+    return out
+
+
 #: TP2 local KDA projection (64 heads x 128 / 2) and the short-conv width
 #: (``linear_attn_config.short_conv_kernel_size``).
 KDA_P = 4096
@@ -719,6 +808,10 @@ def main() -> int:
     ap.add_argument("--tile-cases", nargs="+", default=["512", "1024", "2048", "1024/2048", "256/512"],
                     help="mhctile cases: T, or T/FULL for a T-token call of a FULL-token batch")
     ap.add_argument("--tiles", type=int, nargs="+", default=[64, 128, 256, 512, 1024])
+    ap.add_argument("--overlap-tokens", type=int, nargs="+", default=[2048, 2049, 1024])
+    ap.add_argument("--overlap-tiles", type=int, nargs="+", default=[256, 512, 1024])
+    ap.add_argument("--spin-cycles", type=int, default=20_000_000,
+                    help="side-stream spin before each stand-in all-reduce (mhcoverlap)")
     ap.add_argument("--onorm-heads", type=int, nargs="+", default=[32, 64])
     ap.add_argument("--l2-sizes", type=int, nargs="+",
                     default=[1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 40, 48, 64, 128, 256])
@@ -765,6 +858,8 @@ def main() -> int:
             res["mhcsplit"] = part_mhcsplit(args, model_dir)
         elif part == "mhctile":
             res["mhctile"] = part_mhctile(args, model_dir, sampler)
+        elif part == "mhcoverlap":
+            res["mhcoverlap"] = part_mhcoverlap(args, model_dir)
         else:
             raise SystemExit(f"unknown part {part}")
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
