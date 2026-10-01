@@ -873,6 +873,72 @@ def test_kda_recompile_declines_on_other_decorators(tmp_path):
     assert new is None and "decorators" in why
 
 
+def test_kda_recompile_compiles_exactly_the_edited_stock_method(tmp_path):
+    """The served ``_forward`` is the stock method's own lines with the one block swapped,
+    dedented and compiled under the override's file name, in a copy of the module's
+    namespace.  This pins what runs, whichever module does the parse and the exec."""
+    import ast
+    import textwrap
+
+    mod = _kda_module(tmp_path, gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"))
+    new, why = gp.recompile_kda_forward(mod)
+    assert new is not None, why
+    src = (tmp_path / "kda_fake.py").read_text()
+    cls = next(n for n in ast.parse(src).body if isinstance(n, ast.ClassDef) and n.name == gp.KDA_CLASS)
+    fn = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == gp.KDA_METHOD)
+    text = "".join(src.splitlines(keepends=True)[fn.lineno - 1:fn.end_lineno])
+    text = textwrap.dedent(text.replace(gp.KDA_STOCK_CONV_BLOCK, gp.KDA_SPLIT_CONV_BLOCK))
+    ns: dict = {}
+    exec(compile(text, f"<tessera glm53_prefill: {gp.KDA_CLASS}.{gp.KDA_METHOD} conv split>", "exec"), ns)
+    want, got = ns[gp.KDA_METHOD].__code__, new.__code__
+    for attr in ("co_code", "co_consts", "co_names", "co_varnames", "co_filename", "co_firstlineno",
+                 "co_argcount"):
+        assert getattr(got, attr) == getattr(want, attr), attr
+    assert set(new.__globals__) == set(vars(mod)) | {"_tessera_glm53_conv_split", gp.KDA_METHOD}
+    assert new.__globals__["_tessera_glm53_conv_split"] is gp.conv_split
+
+
+def test_serve_start_imports_and_install_order(monkeypatch):
+    """What ``install_for_current_config`` does at serve start with every flag on and no
+    inspected interface matching: the ONORM append, then SP mHC (importing ``SP_MODULES``
+    in order), then the KDA conv split (importing ``KDA_MODULES``), and nothing else."""
+    import sys
+    import types
+
+    cfg = _config()
+    vllm = types.ModuleType("vllm")
+    vllm_config = types.ModuleType("vllm.config")
+    vllm_config.get_current_vllm_config_or_none = lambda: cfg
+    vllm.config = vllm_config
+    monkeypatch.setitem(sys.modules, "vllm", vllm)
+    monkeypatch.setitem(sys.modules, "vllm.config", vllm_config)
+    for name, value in (("TESSERA_GLM53_ONORM_CUDA", "1"), ("TESSERA_GLM53_SP_MHC", "force"),
+                        ("TESSERA_GLM53_KDA_CONV_SPLIT", "on")):
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(gp, "_INSTALLED", {})
+    monkeypatch.setattr(gp, "_ONORM_DONE", set())  # ids are reused across tests
+    events = []
+
+    def fake_import(name):
+        events.append(("import", name))
+        return types.ModuleType(name)  # no __file__, so no digest and no interface matches
+
+    monkeypatch.setattr(gp, "importlib", NS(import_module=fake_import))
+    for fn_name in ("enable_onorm_cuda", "install_sp_mhc", "install_kda_conv_split"):
+        def wrapped(config, orig=getattr(gp, fn_name), fn_name=fn_name):
+            events.append(("install", fn_name))
+            return orig(config)
+        monkeypatch.setattr(gp, fn_name, wrapped)
+
+    gp.install_for_current_config()
+
+    assert events == ([("install", "enable_onorm_cuda"), ("install", "install_sp_mhc")]
+                      + [("import", n) for n in gp.SP_MODULES]
+                      + [("install", "install_kda_conv_split")]
+                      + [("import", n) for n in gp.KDA_MODULES])
+    assert cfg.compilation_config.custom_ops == ["none", "+fused_rms_norm_gated"]
+
+
 def test_kda_install_off_by_default_and_declines_on_digest_mismatch(monkeypatch, tmp_path):
     monkeypatch.delenv("TESSERA_GLM53_KDA_CONV_SPLIT", raising=False)
     assert gp.kda_conv_split_mode() == "off" and gp.install_kda_conv_split(_config()) is False

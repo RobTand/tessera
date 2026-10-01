@@ -783,10 +783,10 @@ def recompile_kda_forward(module: Any) -> tuple[Callable | None, str]:
 
     Returns ``(function, "")`` with the stock decorator applied, or ``(None, why)``.  Reads the
     file the digest check covered; the function's globals are a copy of the module's plus the
-    helper, so nothing is added to vLLM's namespace.
+    helper, so nothing is added to vLLM's namespace.  :func:`.method_rebuild.rebuild_method`
+    compiles it (see that module for why the read and the compile live apart).
     """
-    import ast
-    import textwrap
+    from .method_rebuild import rebuild_method
 
     path = getattr(module, "__file__", None)
     try:
@@ -795,30 +795,18 @@ def recompile_kda_forward(module: Any) -> tuple[Callable | None, str]:
         return None, f"cannot read {path}: {exc}"
     if src is None:
         return None, "module has no source file"
-    tree = ast.parse(src)
-    cls = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == KDA_CLASS), None)
-    fn = cls and next((n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == KDA_METHOD), None)
-    if fn is None:
-        return None, f"{KDA_CLASS}.{KDA_METHOD} not found"
-    decorators = [d.id if isinstance(d, ast.Name) else ast.dump(d) for d in fn.decorator_list]
-    if decorators != [KDA_DECORATOR]:
-        return None, f"{KDA_METHOD} decorators {decorators} are not [{KDA_DECORATOR}]"
-    lines = src.splitlines(keepends=True)
-    method = "".join(lines[fn.lineno - 1:fn.end_lineno])  # the def line through the body
-    n = method.count(KDA_STOCK_CONV_BLOCK)
-    if n != 1:
-        return None, f"the stock conv block occurs {n} times in {KDA_METHOD}"
-    method = textwrap.dedent(method.replace(KDA_STOCK_CONV_BLOCK, KDA_SPLIT_CONV_BLOCK))
     ns = dict(vars(module))
     ns["_tessera_glm53_conv_split"] = conv_split
-    try:
-        exec(compile(method, f"<tessera glm53_prefill: {KDA_CLASS}.{KDA_METHOD} conv split>", "exec"), ns)
-    except Exception as exc:  # noqa: BLE001 - any failure is a decline
-        return None, f"recompiling {KDA_METHOD} failed ({type(exc).__name__}: {exc})"
+    method, why = rebuild_method(src, ns, KDA_CLASS, KDA_METHOD, KDA_DECORATOR, KDA_STOCK_CONV_BLOCK,
+                                 KDA_SPLIT_CONV_BLOCK,
+                                 f"<tessera glm53_prefill: {KDA_CLASS}.{KDA_METHOD} conv split>",
+                                 block_name="the stock conv block")
+    if method is None:
+        return None, why
     decorator = getattr(module, KDA_DECORATOR, None)
     if decorator is None:
         return None, f"{KDA_DECORATOR} not in {module.__name__}"
-    new = decorator(ns[KDA_METHOD])
+    new = decorator(method)
     new._tessera_kda_conv_split = True  # type: ignore[attr-defined]
     return new, ""
 
