@@ -22,7 +22,11 @@ exactly as ``torch.nn.functional.linear`` calls it):
    on the fastest bitwise candidate, plus board power over a 2 s loop of each.
 
 Inputs are random (x ~ N(0, 1), w ~ N(0, 0.02^2)): accumulation order does not
-depend on the values. Writes ``<out>/gemm_algo_bitwise.json``.
+depend on the values; a faster bitwise candidate found here still needs a check on
+recorded activations before it counts. The reference counts as the serve only
+when this process picks the served kernel (``matches_served_kernel``). Writes
+``<out>/gemm_algo_bitwise.json`` after every shape (``meta.complete`` at the end),
+so a CUDA fault in a late candidate keeps the shapes already done.
 """
 from __future__ import annotations
 
@@ -34,13 +38,14 @@ import time
 
 import torch
 
-SHAPES = [  # name, N, K, calls per chunk (A8SESHMN rank 0), served ms per chunk (r0)
-    ("kda_in_proj", 12576, 4096, 34, 90.08),
-    ("kda_o_proj", 4096, 4096, 34, 27.66),
-    ("mla_o_proj", 4096, 8192, 11, 20.18),
-    ("qa_kva_and_shared_gate_up", 2048, 4096, 44, 18.58),
-    ("shared_down", 4096, 1024, 40, 8.80),
-    ("q_b", 8192, 1536, 11, 6.13),
+SHAPES = [  # name, N, K, calls per chunk (A8SESHMN rank 0), served ms per chunk (r0), served kernel
+    ("kda_in_proj", 12576, 4096, 34, 90.08, "nvjet_sm121_tst_mma_128x208x64_2_32x104x64_tmaAB_bz_TNNN"),
+    ("kda_o_proj", 4096, 4096, 34, 27.66, "nvjet_sm121_tst_mma_192x144x64_2_48x72x64_tmaAB_bz_TNNN"),
+    ("mla_o_proj", 4096, 8192, 11, 20.18, "nvjet_sm121_tst_mma_192x144x64_2_48x72x64_tmaAB_bz_TNNN"),
+    ("qa_kva_and_shared_gate_up", 2048, 4096, 44, 18.58,
+     "nvjet_sm121_tst_mma_128x176x64_2_32x88x64_tmaAB_bz_TNNN"),
+    ("shared_down", 4096, 1024, 40, 8.80, "cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_256x128"),
+    ("q_b", 8192, 1536, 11, 6.13, "cutlass_80_tensorop_bf16_s16816gemm_relu_bf16_128x256"),
 ]
 M = 2048
 WS_BYTES = 64 << 20
@@ -267,7 +272,17 @@ def main():
     ws = torch.empty(WS_BYTES, dtype=torch.uint8, device=dev)
     results = []
     wanted = None if args.shapes == "all" else set(args.shapes.split(","))
-    for name, n, k, calls, served_ms in SHAPES:
+    path = os.path.join(args.out, "gemm_algo_bitwise.json")
+
+    def dump(done):
+        meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        meta["complete"] = done
+        tmp = path + ".part"
+        with open(tmp, "w") as fh:
+            json.dump(dict(meta=meta, shapes=results), fh, indent=1)
+        os.replace(tmp, path)
+
+    for name, n, k, calls, served_ms, served_kernel in SHAPES:
         if wanted and name not in wanted:
             continue
         ts = time.time()
@@ -279,9 +294,11 @@ def main():
         torch.cuda.synchronize()
         ref_call = lambda: torch.nn.functional.linear(x, w)  # noqa: E731
         rec = dict(shape=name, m=M, n=n, k=k, calls_per_chunk=calls, served_ms_per_chunk_r0=served_ms,
-                   gflop=2 * M * n * k / 1e9,
+                   served_kernel=served_kernel, gflop=2 * M * n * k / 1e9,
                    reference=dict(kernels=kernel_names(ref_call), ms=time_calls(ref_call),
                                   deterministic=bool(torch.equal(ref.view(torch.int16), ref2.view(torch.int16)))))
+        # The comparison is against the serve only if this process picks the served kernel.
+        rec["reference"]["matches_served_kernel"] = any(served_kernel in kn for kn in rec["reference"]["kernels"])
         cands, seen = [], set()
         for source, algos in (("heuristic", ext.heuristics(M, n, k, WS_BYTES, 64)),
                               ("exhaustive", ext.exhaustive(M, n, k, WS_BYTES, args.max_exhaustive))):
@@ -354,8 +371,11 @@ def main():
                                    for r in rows]
         rec["seconds"] = round(time.time() - ts, 1)
         results.append(rec)
+        dump(False)
         ref_ms = rec["reference"]["ms"]
         print(json.dumps(dict(shape=name, ref_ms=round(ref_ms, 4), ref_kernels=rec["reference"]["kernels"][:2],
+                              ref_matches_served=rec["reference"]["matches_served_kernel"],
+                              rank0_bitwise=first[0].get("bitwise") if first else None,
                               candidates=len(rows), bitwise=len(bitwise),
                               best_bitwise_ms=best and round(best["ms"], 4),
                               best_bitwise_kernels=best and best.get("kernels", [])[:2],
@@ -363,9 +383,7 @@ def main():
                               fastest_any_bitwise=anyfast and anyfast[0]["bitwise"])), flush=True)
         del x, w, ref, ref2, out
         torch.cuda.empty_cache()
-    meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    with open(os.path.join(args.out, "gemm_algo_bitwise.json"), "w") as fh:
-        json.dump(dict(meta=meta, shapes=results), fh, indent=1)
+    dump(True)
     return 0
 
 
