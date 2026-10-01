@@ -1,5 +1,18 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for deep word staging, opt-in (tessera#807). With
+`TESSERA_ROUTED_FUSED_WORD_STAGES=n` (n > 3), `routed_fused` builds the
+E4M3-instruction library into its own `_ws<n>` build directory, and its
+single-rate launches in `routed_fused_window.cu` cycle through
+`deep_word_stages(mode, slot)` word stages: n, or as many as the 101,376 B
+block holds at `BM_WIDE`. A chunk's words are then issued WS - 1 chunks ahead
+of its decode instead of two, and each deep stage carries its chunk's staged
+stream history. Unset or 3 is the three-stage kernel. Two-run launches and the
+value and 16-bit E4M3 libraries keep their stages. Output is bitwise by
+construction. No contract, rung, route, cell or `executes` entry changes, and
+the default does not change. Receipt: [deep word
+staging](measurements/2026-10-01-deep-word-staging.md).
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -4026,7 +4039,16 @@ the producer barrier, then the next chunk's words; the descriptor ring keeps
 its four stages). `ROUTED_LANE_RATES` is derived from exactly that inequality
 at the instantiation's own stages -- 1..8 -- and the dense identity, which
 runs each role in its own launch and so has no two-table gate/up mode, reaches
-1..8, and 1..14 on the value library since contract v51 (`DENSE_RATE_MAX`). A
+1..8, and 1..14 on the value library since contract v51 (`DENSE_RATE_MAX`).
+Single-rate launches of the E4M3-instruction library can also stage deeper,
+opt-in (tessera#807): `TESSERA_ROUTED_FUSED_WORD_STAGES` builds
+`WORD_STAGES_ONE_RUN` into that library, and `word_stages(mode, slot, two)` is
+then `deep_word_stages(mode, slot)`, the requested count or as many deep
+stages as the block holds at `BM_WIDE` (`deep_stage_ints`: the slot's words
+plus the chunk's staged history), whenever that is more than three. Deep
+stages are taken only where they fit, so no rate depends on them. The host
+sizes such a launch from the pair's compile-time slot, and `launch_pair`
+refuses a `Params.slot_words` that is not that slot. A
 part with less opt-in shared memory than sm_121 refuses the slots it cannot
 hold, and the predicate names the launch, the slot and the bytes; it may
 JIT-build the extension to ask the device (a first call on a cold cache pays
