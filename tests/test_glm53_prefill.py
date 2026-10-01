@@ -55,6 +55,16 @@ def test_onorm_hook_appends_for_glm5next_only(monkeypatch):
     assert other.compilation_config.custom_ops == ["none"]
 
 
+def test_onorm_hook_is_not_fooled_by_a_reused_id(monkeypatch):
+    """CPython hands a dead object's id to a new one.  A config this hook enabled can die and
+    its id go to a config whose serve named the op itself, which is the serve's decision."""
+    monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", "1")
+    monkeypatch.setattr(gp, "_ONORM_DONE", type(gp._ONORM_DONE)())
+    monkeypatch.setattr(gp, "id", lambda obj: 42, raising=False)  # every config gets one id
+    assert gp.enable_onorm_cuda(_config()) is True
+    assert gp.enable_onorm_cuda(_config(custom_ops=["all", "+fused_rms_norm_gated"])) is False
+
+
 @pytest.mark.parametrize("ops", [["none", "-fused_rms_norm_gated"], ["all", "+fused_rms_norm_gated"]])
 def test_onorm_hook_respects_the_serve_either_way(monkeypatch, ops):
     monkeypatch.setenv("TESSERA_GLM53_ONORM_CUDA", "1")
@@ -916,7 +926,7 @@ def test_serve_start_imports_and_install_order(monkeypatch):
                         ("TESSERA_GLM53_KDA_CONV_SPLIT", "on")):
         monkeypatch.setenv(name, value)
     monkeypatch.setattr(gp, "_INSTALLED", {})
-    monkeypatch.setattr(gp, "_ONORM_DONE", set())  # ids are reused across tests
+    monkeypatch.setattr(gp, "_ONORM_DONE", type(gp._ONORM_DONE)())
     events = []
 
     def fake_import(name):

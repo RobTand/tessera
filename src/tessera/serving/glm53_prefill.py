@@ -186,7 +186,9 @@ T_GRID = (8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192)
 _WARMUP, _REPS = 3, 7
 
 _INSTALL_LOCK = threading.Lock()
-_ONORM_DONE: set[int] = set()
+#: The configs this hook appended the op to, by id.  Each is held, so a dead config's id
+#: cannot pass to a new config and read as this hook's decision.
+_ONORM_DONE: dict[int, Any] = {}
 
 
 # --------------------------------------------------------------------------- config
@@ -226,12 +228,12 @@ def enable_onorm_cuda(config: Any) -> bool:
     ops = getattr(compilation, "custom_ops", None)
     if not isinstance(ops, list):
         return False
-    if id(config) in _ONORM_DONE:
+    if _ONORM_DONE.get(id(config)) is config:
         return True
     if f"+{ONORM_OP}" in ops or f"-{ONORM_OP}" in ops:
         return False  # the serve decided; respect it either way
     ops.append(f"+{ONORM_OP}")
-    _ONORM_DONE.add(id(config))
+    _ONORM_DONE[id(config)] = config
     _log.warning("tessera.glm53_prefill: custom_ops += +%s (Glm5Next runs eager; the KDA "
                  "output norm takes vLLM's forward_cuda instead of its eager decomposition)",
                  ONORM_OP)
