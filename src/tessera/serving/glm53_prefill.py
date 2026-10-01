@@ -32,10 +32,13 @@ SP is NOT bit-identical to stock.  The pinned mHC kernels are not invariant to
 the token count of a call: two 1024-token calls differ from one 2048-token
 call over the same tokens (post and comb mixes at about 1e-5, the layer input
 by up to 2 bf16 ulps of its row max), while a 2048-token call matches its
-slice of an 8192-token call.  The token-count-dependent split of the pre-norm
-GEMM is one cause; 256- against 512-token calls differ at an equal split, so
-it is not the only one (``experiments/mhc/mhc_probe.py`` ``mhc`` split
-invariance).  The served TR3 panel moved from 0.027886 to 0.028144 (one run,
+slice of an 8192-token call.  The whole cause is the pre-norm GEMM's split-k,
+which ``compute_num_split`` derives from the token count: with the split
+forced to one value for a call and its chunks, every output is bitwise equal
+at 256 to 8192 tokens in 2 and 4 chunks, on both mHC sites
+(``experiments/mhc/mhc_probe.py`` ``mhcsplit``).  An SP rank that ran its
+half at the full batch's split would therefore be exact; this module does not
+do that yet.  The served TR3 panel moved from 0.027886 to 0.028144 (one run,
 window u4-R1-20261001T0058Z).  Hence the default ``off``.
 The attention ``o_proj`` and the MLP's final reduction are switched off on
 each layer's first forward, and below ``T*`` the rebound forward performs those
