@@ -45,8 +45,26 @@ serve's TP group.  ``T*`` is the smallest grid count from which the saving
 exceeds the cost at every larger grid count, agreed across ranks by a MAX
 reduction, and logged with the table.  No threshold is a constant here.
 
+**The KDA prefill conv, per q/k/v slice.**  The pinned KDA layer runs one
+short causal conv over the merged q|k|v channels and splits its token-major
+output, so q, k and v reach FlashKDA as row-strided views, and FlashKDA's
+dense-stride contract makes ``_flashkda_prefill`` copy all three
+(``.contiguous()``, 3 x [T, 4096] bf16 per KDA layer).  The conv is
+independent per channel, so running it once per slice is the same arithmetic
+(vLLM's own comment says so of the merge), and each call's ``empty_like``
+output on a channel-last slice is dense token-major, so FlashKDA's copies
+become no-ops.  :func:`install_kda_conv_split` rebinds
+``Glm5NextLinearAttention._forward`` to the stock method compiled from its own
+source with that one block replaced (:data:`KDA_STOCK_CONV_BLOCK`), only when
+both touched files are byte-identical to an inspected interface and the block
+occurs exactly once; the stock decorator is applied to the result.  A conv
+bias (stock passes ``q_conv1d.bias`` with the merged 3P-channel weight, so it
+is ``None`` on every inspected serve) keeps the stock merged call.
+
 Environment:
 
+- ``TESSERA_GLM53_KDA_CONV_SPLIT``: ``on`` or ``off`` (default ``off`` until a
+  served A/B lands).
 - ``TESSERA_GLM53_SP_MHC``: ``auto`` (default: measured ``T*``), ``off``
   (stock forward), or ``force`` (SP at every token count of at least the TP
   size; a measurement arm, logged as such).
@@ -217,18 +235,23 @@ def _sha256(module: Any) -> str | None:
         return None
 
 
-def _match_interface(modules: tuple[Any, ...]) -> tuple[_Interface | None, str]:
+def _match(modules: tuple[Any, ...], names: tuple[str, ...],
+           interfaces: tuple[_Interface, ...]) -> tuple[_Interface | None, str]:
     actual = tuple(_sha256(m) for m in modules)
-    for interface in _INTERFACES:
+    for interface in interfaces:
         if actual == interface.digests:
             return interface, ""
-    detail = ", ".join(f"{name}={digest}" for name, digest in zip(SP_MODULES, actual))
+    detail = ", ".join(f"{name}={digest}" for name, digest in zip(names, actual))
     return None, f"no inspected interface matches ({detail})"
 
 
-def _import_all() -> tuple[tuple[Any, ...] | None, str]:
+def _match_interface(modules: tuple[Any, ...]) -> tuple[_Interface | None, str]:
+    return _match(modules, SP_MODULES, _INTERFACES)
+
+
+def _import_all(names: tuple[str, ...] = SP_MODULES) -> tuple[tuple[Any, ...] | None, str]:
     mods = []
-    for name in SP_MODULES:
+    for name in names:
         try:
             mods.append(importlib.import_module(name))
         except Exception as exc:  # noqa: BLE001 - any import failure is a non-match
@@ -530,6 +553,178 @@ def _install_sp_mhc(config: Any, mode: str) -> bool:
     return True
 
 
+# ------------------------------------------------------------- KDA conv per slice
+
+#: The modules the KDA conv-split rebind reads or depends on, in digest order: the layer whose
+#: ``_forward`` is recompiled, and the conv whose wrapper and kernel must honour slice strides.
+KDA_MODULES = (
+    "vllm.models.glm5next.common.kda",
+    "vllm.model_executor.layers.mamba.ops.causal_conv1d",
+)
+
+#: sha256 of each module in KDA_MODULES order, read inside the image named at _INTERFACES.
+_KDA_INTERFACES = (
+    _Interface("nightly-20260929", (
+        "efd6fdca3110176e7e4aa8b5a7543b6840690b3d4c01dee48d45d246611b4eea",
+        "cb16cc9250c4195c09d6d83b43bba607c2d749b621d8d135a920443d1577265f",
+    )),
+)
+
+KDA_CLASS, KDA_METHOD, KDA_DECORATOR = "Glm5NextLinearAttention", "_forward", "eager_break_during_capture"
+
+#: The stock prefill conv block of ``Glm5NextLinearAttention._forward``, verbatim with its
+#: indentation; it must occur exactly once in the method's source.
+KDA_STOCK_CONV_BLOCK = """\
+            qkv_ns = causal_conv1d_fn(
+                qkv_ns.transpose(0, 1),
+                conv_weights,
+                conv_bias,
+                activation="silu",
+                conv_states=conv_state,
+                has_initial_state=has_initial_state,
+                cache_indices=non_spec_state_indices_tensor,
+                query_start_loc=non_spec_query_start_loc,
+                metadata=attn_metadata_narrowed,
+            ).transpose(0, 1)
+            q_ns, k_ns, v_ns = qkv_ns.split(self.local_projection_size, dim=-1)
+"""
+
+KDA_SPLIT_CONV_BLOCK = """\
+            q_ns, k_ns, v_ns = _tessera_glm53_conv_split(
+                causal_conv1d_fn,
+                qkv_ns,
+                conv_weights,
+                conv_bias,
+                conv_state,
+                has_initial_state,
+                non_spec_state_indices_tensor,
+                non_spec_query_start_loc,
+                attn_metadata_narrowed,
+                self.local_projection_size,
+            )
+"""
+
+
+def kda_conv_split_mode() -> str:
+    mode = os.environ.get("TESSERA_GLM53_KDA_CONV_SPLIT", "off").strip().lower()
+    if mode not in ("on", "off"):
+        raise ValueError(f"TESSERA_GLM53_KDA_CONV_SPLIT must be on or off; got {mode!r}")
+    return mode
+
+
+def conv_split(conv_fn: Callable, qkv: Any, weight: Any, bias: Any, conv_state: Any,
+               has_initial_state: Any, cache_indices: Any, query_start_loc: Any, metadata: Any,
+               p: int) -> tuple[Any, Any, Any]:
+    """The KDA prefill conv once per q/k/v slice: three dense token-major [T, p] outputs.
+
+    ``qkv`` is the merged [T, 3p] projection.  Each call sees a channel-last (p, T) slice of
+    it, the matching rows of the merged weight and the matching channels of ``conv_state``
+    (which it updates in place, as the merged call does), and allocates its own output with
+    ``empty_like``, which on that slice is dense token-major.  With a conv bias, or a shape
+    that is not 3p channels, this is the stock merged call and split.
+    """
+    x = qkv.transpose(0, 1)
+    if bias is not None or x.shape[0] != 3 * p or weight.shape[0] != 3 * p or conv_state.shape[1] != 3 * p:
+        out = conv_fn(x, weight, bias, activation="silu", conv_states=conv_state,
+                      has_initial_state=has_initial_state, cache_indices=cache_indices,
+                      query_start_loc=query_start_loc, metadata=metadata).transpose(0, 1)
+        return out.split(p, dim=-1)
+    outs = []
+    for i in range(3):
+        sl = slice(i * p, (i + 1) * p)
+        outs.append(conv_fn(x[sl], weight[sl], None, activation="silu", conv_states=conv_state[:, sl],
+                            has_initial_state=has_initial_state, cache_indices=cache_indices,
+                            query_start_loc=query_start_loc, metadata=metadata).transpose(0, 1))
+    return outs[0], outs[1], outs[2]
+
+
+def recompile_kda_forward(module: Any) -> tuple[Callable | None, str]:
+    """``KDA_CLASS.KDA_METHOD`` compiled from ``module``'s source with the conv block replaced.
+
+    Returns ``(function, "")`` with the stock decorator applied, or ``(None, why)``.  Reads the
+    file the digest check covered; the function's globals are a copy of the module's plus the
+    helper, so nothing is added to vLLM's namespace.
+    """
+    import ast
+    import textwrap
+
+    path = getattr(module, "__file__", None)
+    try:
+        src = Path(path).read_text() if path else None
+    except OSError as exc:
+        return None, f"cannot read {path}: {exc}"
+    if src is None:
+        return None, "module has no source file"
+    tree = ast.parse(src)
+    cls = next((n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == KDA_CLASS), None)
+    fn = cls and next((n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == KDA_METHOD), None)
+    if fn is None:
+        return None, f"{KDA_CLASS}.{KDA_METHOD} not found"
+    decorators = [d.id if isinstance(d, ast.Name) else ast.dump(d) for d in fn.decorator_list]
+    if decorators != [KDA_DECORATOR]:
+        return None, f"{KDA_METHOD} decorators {decorators} are not [{KDA_DECORATOR}]"
+    lines = src.splitlines(keepends=True)
+    method = "".join(lines[fn.lineno - 1:fn.end_lineno])  # the def line through the body
+    n = method.count(KDA_STOCK_CONV_BLOCK)
+    if n != 1:
+        return None, f"the stock conv block occurs {n} times in {KDA_METHOD}"
+    method = textwrap.dedent(method.replace(KDA_STOCK_CONV_BLOCK, KDA_SPLIT_CONV_BLOCK))
+    ns = dict(vars(module))
+    ns["_tessera_glm53_conv_split"] = conv_split
+    try:
+        exec(compile(method, f"<tessera glm53_prefill: {KDA_CLASS}.{KDA_METHOD} conv split>", "exec"), ns)
+    except Exception as exc:  # noqa: BLE001 - any failure is a decline
+        return None, f"recompiling {KDA_METHOD} failed ({type(exc).__name__}: {exc})"
+    decorator = getattr(module, KDA_DECORATOR, None)
+    if decorator is None:
+        return None, f"{KDA_DECORATOR} not in {module.__name__}"
+    new = decorator(ns[KDA_METHOD])
+    new._tessera_kda_conv_split = True  # type: ignore[attr-defined]
+    return new, ""
+
+
+def install_kda_conv_split(config: Any) -> bool:
+    """Rebind ``Glm5NextLinearAttention._forward`` when this serve is the inspected one."""
+    if kda_conv_split_mode() == "off":
+        return False
+    decided = _INSTALLED.get(("kda", id(config)))
+    if decided is not None:
+        return decided
+    _INSTALLED[("kda", id(config))] = active = _install_kda_conv_split(config)
+    return active
+
+
+def _install_kda_conv_split(config: Any) -> bool:
+    reasons = [] if config is not None and is_glm5next(config) else ["not a Glm5Next model"]
+    modules = None
+    if not reasons:
+        modules, why = _import_all(KDA_MODULES)
+        if modules is None:
+            reasons = [why]
+        else:
+            interface, why = _match(modules, KDA_MODULES, _KDA_INTERFACES)
+            if interface is None:
+                reasons = [why]
+    if not reasons:
+        cls = getattr(modules[0], KDA_CLASS, None)
+        if cls is None:
+            reasons = [f"{KDA_CLASS} not in {KDA_MODULES[0]}"]
+        elif getattr(getattr(cls, KDA_METHOD, None), "_tessera_kda_conv_split", False):
+            return True
+        else:
+            new, why = recompile_kda_forward(modules[0])
+            if new is None:
+                reasons = [why]
+    if reasons:
+        _log.warning("tessera.glm53_prefill: KDA conv split declined, stock %s.%s: %s",
+                      KDA_CLASS, KDA_METHOD, "; ".join(reasons))
+        return False
+    setattr(cls, KDA_METHOD, new)
+    _log.warning("tessera.glm53_prefill: KDA conv split installed (interface %s): the prefill conv "
+                 "runs per q/k/v slice, so FlashKDA's q/k/v copies are no-ops", interface.name)
+    return True
+
+
 def install_for_current_config() -> None:
     """Called from ``TesseraConfig.get_quant_method`` during model construction."""
     try:
@@ -543,3 +738,4 @@ def install_for_current_config() -> None:
     with _INSTALL_LOCK:
         enable_onorm_cuda(current)
         install_sp_mhc(current)
+        install_kda_conv_split(current)
