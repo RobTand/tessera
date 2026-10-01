@@ -12,10 +12,20 @@
 # (build_ext.sh <out_root>/src-<arm> <out_root>/ext-<arm>); this action only loads
 # them (BENCH_EXT_DIR) and refuses an arm without a prebuilt ext-<arm>, so no
 # compile runs inside the measurement host's window.  KERN_ALLOW_BUILD=1 overrides.
+# Exit status: a later step still runs after an earlier one fails (one bad arm
+# must not cost the others their window), but the action exits 1 if ANY step
+# exited non-zero, and 2 before running anything when ORACLE_IMAGE is unset
+# (bench_t8r.sh needs it; PB 1a0a0ba0 ran every step into that refusal and
+# still reported rc 0).  KERN_BENCH overrides the per-step harness (tests).
 set -uo pipefail
 OUT=${1:?out_root}; shift
 ARMS=("$@")
-H=experiments/t8r_speed/bench_t8r.sh
+H=${KERN_BENCH:-experiments/t8r_speed/bench_t8r.sh}
+if [[ -z "${ORACLE_IMAGE:-}" ]]; then
+  echo "REFUSED: ORACLE_IMAGE is unset; pass the PB-declared measurement image (pbrun --env ORACLE_IMAGE=...)" >&2
+  exit 2
+fi
+FAILED=()
 ROUTING=/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930
 export BENCH_ARTIFACT=${BENCH_ARTIFACT:-/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported}
 GROUPS_=${KERN_GROUPS:-experts.R1024.L10}
@@ -27,6 +37,7 @@ step() {
   local rc=$?
   echo "== step $name rc=$rc end=$(date -u +%FT%TZ) load=$(cut -d' ' -f1-3 /proc/loadavg)"
   tail -4 "$OUT/$name.log"
+  ((rc == 0)) || FAILED+=("$name:$rc")
 }
 armenv() {
   local f="$OUT/src-$1/env"; [[ -f "$f" ]] && grep -E '^[A-Z_][A-Z0-9_]*=' "$f" | tr '\n' ' '
@@ -59,5 +70,9 @@ if [[ $STEPS == *" ncu "* ]]; then
       BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$GROUPS_" --ms ${KERN_NCU_MS:-512} \
       ${KERN_NCU_ROUTING:+--routing "$KERN_NCU_ROUTING"}
   done
+fi
+if ((${#FAILED[@]})); then
+  echo "FAILED_STEPS ${FAILED[*]} $(date -u +%FT%TZ)" >&2
+  exit 1
 fi
 echo "ALL_DONE $(date -u +%FT%TZ)"
