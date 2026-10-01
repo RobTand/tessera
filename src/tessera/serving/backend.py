@@ -210,7 +210,7 @@ def platform_token(device=0, torch=None) -> str:
     return probed_platform_token(device, torch)
 
 
-def offload_flags(token: str, *, joined: bool = False) -> list[str]:
+def offload_flags(token: str, *, joined: bool = False, arch_specific: bool = False) -> list[str]:
     """The compiler flags that pin a build to one platform.
 
     CUDA gets the ``-gencode`` pair, architecture-GENERIC (no ``a`` suffix):
@@ -218,6 +218,14 @@ def offload_flags(token: str, *, joined: bool = False) -> list[str]:
     an ``a`` binary refuses to load on any other capability at all.  ``joined``
     returns the single-argument spelling ``-gencode=arch=...`` that the NVFP4
     loader has always passed, so neither loader's flag bytes move.
+
+    ``arch_specific`` asks for the ``a`` pair (``compute_121a``/``sm_121a``)
+    instead.  It is for a library that emits an architecture-specific
+    instruction -- the block-scaled FP4 MMA, ``mma.sync ... kind::mxf4nvf4``,
+    which ptxas refuses for the generic ``compute_121`` -- and only for it:
+    the build is still keyed on the plain token, and the binary loads on that
+    one capability, which is the only one a per-platform JIT build serves.
+    HIP has no such suffix and refuses the request by name.
 
     HIP gets ``--offload-arch=<token>``.  Passing it explicitly is what keeps
     a build to ONE architecture: without an offload-arch flag torch fans the
@@ -228,8 +236,12 @@ def offload_flags(token: str, *, joined: bool = False) -> list[str]:
     """
     _validate_token(token, "offload_flags(token)")
     if token.startswith("gfx"):
+        if arch_specific:
+            raise PlatformTokenError(
+                f"{token} has no architecture-specific (``a``) target; the request is "
+                "for an NVIDIA instruction a HIP build cannot emit")
         return [f"--offload-arch={token}"]
-    digits = token[len("sm_"):]
+    digits = token[len("sm_"):] + ("a" if arch_specific else "")
     arch = f"arch=compute_{digits},code=sm_{digits}"
     return [f"-gencode={arch}"] if joined else ["-gencode", arch]
 
