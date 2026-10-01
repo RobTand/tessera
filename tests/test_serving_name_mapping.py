@@ -28,6 +28,7 @@ from vllm.model_executor.models.utils import WeightsMapper                # noqa
 from tessera.serving.config import TesseraConfig                          # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV                         # noqa: E402
 from tessera.serving.scheme import TESSERA_FP8                            # noqa: E402
+from tessera.serving.weights_mapper import module_name_mapper            # noqa: E402
 
 #: The mapper ``Glm5NextForConditionalGeneration`` declares, copied as data.
 #: The test does not import the model class -- a multimodal GLM build is not a
@@ -76,7 +77,7 @@ def test_vllm_still_calls_the_hook_before_any_layer_is_built():
 
 
 def test_the_real_weights_mapper_translates_tessera_targets(monkeypatch):
-    mapper = WeightsMapper(orig_to_new_prefix=GLM_PREFIXES).get_unstacked_mapper()
+    mapper = module_name_mapper(WeightsMapper(orig_to_new_prefix=GLM_PREFIXES))
     declared = "model.language_model.layers.0.self_attn.qkv_proj"
     experts = "model.language_model.layers.1.mlp.experts"
     config = _config(monkeypatch, targets=(declared,), ignore=(experts, "lm_head"))
@@ -92,17 +93,16 @@ def test_the_real_weights_mapper_translates_tessera_targets(monkeypatch):
 
 
 def test_the_stacked_names_this_exporter_writes_survive_the_unstacked_mapper(monkeypatch):
-    """``get_unstacked_mapper`` drops the stacked map; our targets ARE stacked.
+    """The runtime's name-only view drops stacking; our targets ARE stacked.
 
     The exporter declares the fused module (``qkv_proj``, ``gate_up_proj``)
-    because vLLM builds one method per fused module.  vLLM passes the config the
-    UNSTACKED mapper, whose purpose is to leave constituent names alone -- so
-    the question is whether it leaves the stacked ones alone too.
+    because vLLM builds one method per fused module.  The question is whether
+    the same view vLLM hands quant configs leaves those stacked names alone.
     """
-    mapper = WeightsMapper(
+    mapper = module_name_mapper(WeightsMapper(
         orig_to_new_prefix=GLM_PREFIXES,
         orig_to_new_stacked={".q_proj.": (".qkv_proj.", "q")},
-    ).get_unstacked_mapper()
+    ))
     targets = ("model.language_model.layers.0.self_attn.qkv_proj",
                "model.language_model.layers.0.mlp.gate_up_proj")
     config = _config(monkeypatch, targets=targets)
@@ -119,7 +119,7 @@ def test_a_mapper_that_changes_nothing_changes_nothing(monkeypatch):
     config = _config(monkeypatch, targets=("model.layers.0.self_attn.qkv_proj",),
                      ignore=("lm_head",))
     before = dict(config.target_scheme), tuple(config.ignore)
-    config.apply_vllm_mapper(WeightsMapper().get_unstacked_mapper())
+    config.apply_vllm_mapper(module_name_mapper(WeightsMapper()))
     assert (config.target_scheme, config.ignore) == before
 
 
@@ -138,6 +138,8 @@ import json  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 from mapper_probes import REPLAYED_FIELDS, SYNTHETIC_TABLES, probe_names  # noqa: E402
+from test_serving_construction import _census_module  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     _MAPPER_FIELDS_REPLAYED, vllm_module_name)
 
@@ -164,7 +166,7 @@ def _real_mapper(table):
     """
     kwargs = {field: dict(table[field]) for field in _MAPPER_FIELDS_REPLAYED
               if table.get(field)}
-    return WeightsMapper(**kwargs).get_unstacked_mapper()
+    return module_name_mapper(WeightsMapper(**kwargs))
 
 
 @pytest.mark.parametrize("name,table", list(_tables()),
@@ -175,7 +177,12 @@ def test_vllm_module_name_agrees_with_the_real_weights_mapper(name, table):
     if unreplayable:
         pytest.skip(f"{name} uses {unreplayable}, which the producer refuses rather than replays")
     mapper = _real_mapper(table)
-    entry = {"architecture": name, "hf_to_vllm_mapper_unstacked": table}
+    # Attest the table the producer actually publishes, not the raw class
+    # table: get_rename_mapper removes None renames in the pinned runtime.
+    # Keep probes from the raw table so discarded rules are still exercised.
+    published = _census_module()._weights_mapper_table(
+        SimpleNamespace(hf_to_vllm_mapper=mapper))
+    entry = {"architecture": name, "hf_to_vllm_mapper_unstacked": published or {}}
     probes = probe_names(table)
     assert probes, "an attestation over no names attests nothing"
     for probe in probes:

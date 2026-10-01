@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
+(tessera#774). The T-8 release serve passes
+`--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
+with breakable CUDA graphs off, so its custom ops and IR norms resolve as
+eager's do (graph cause 1, tessera#702). Served at TP 2 on image `5be13705`:
+L8192 c1 prefill 1558.5 to 1657.8 tok/s (+6.4%), and the per-rank chunk's
+elementwise kernels 97.3 to 29.0 ms. The eager TR3 panel is bit-identical
+(0.027885896312391557), and decode under graphs past `max_model_len` 2048
+remains outside eager equivalence (cause 2). No route, launch, rung, cell or
+schema changes. See §5.1.2 and
+[the receipt](measurements/2026-10-01-glm-release-serve-mode-none.md).
+
 Re-stamped 2026-09-30 for the LM head as a Tessera route (tessera#750 WP3).
 `TesseraConfig.get_quant_method` now hands a `ParallelLMHead` its family's
 dense method when the checkpoint declares the head (`serving.head_route`). A
@@ -6870,6 +6882,35 @@ FP32 scales. The check records the selected variant and separately reports
 deviation from unquantized BF16 queries. `--heads 32 --repeat 13 --padded` covers
 the TP2-shaped prefill kernel and hybrid page strides. This does not
 measure full-model quality or qualify routed MoE, TP2, or a runtime contract cell.
+
+### 5.1.2 The GLM-5.3 release serve's compilation config
+
+The GLM-5.3 release serve uses CUDA graphs for decode only, in compilation
+mode NONE:
+
+```bash
+VLLM_USE_BREAKABLE_CUDAGRAPH=0 vllm serve <artifact> \
+  --compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}' ...
+```
+
+Without `"mode":"NONE"`, vLLM keeps `VLLM_COMPILE` on a model it never
+compiles. That mode resolves `custom_ops` to `none` and the norm IR ops to
+`native`, so every custom op in the served prefill runs its eager fallback.
+Mode NONE resolves them as an eager serve does, which the eager TR3 scorer
+measures. Breakable graphs stay off, as in every graph serve the receipts
+below measured; no GLM-5.3 serve with them on has a receipt.
+
+What this does not establish:
+
+- The graph serve's own prefill logits are unscored. The receipts are the
+  stub's sbG3/sbG4 arms (cause 1 is the operator resolution alone) and the
+  unchanged eager TR3 panel.
+- Decode replays FULL graphs captured at `max_seq_len = max_model_len`. On
+  image `5be13705` that is eager-equivalent only at `max_model_len <= 2048`
+  (cause 2, tessera#702), and the release serve runs 8448.
+- The MTP drafter under graphs has no receipt (tessera#695).
+
+Receipt: [the release serve's mode NONE](measurements/2026-10-01-glm-release-serve-mode-none.md).
 
 ### 5.2 What the wheel ships besides Python
 

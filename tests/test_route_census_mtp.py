@@ -51,6 +51,63 @@ def test_mtp_mapping_refuses_another_class_or_missing_module():
         census.draft_declared_in_module_space(draft, [source])
 
 
+class _NightlyGlm5NextMTP:
+    """The nightly-20260929 stock draft: another module, and no hf_to_vllm_mapper.
+
+    Its load_weights strips ``model.language_model.`` in code (tessera#749); the
+    census reaches that rule only through the source-recognized interface.
+    """
+
+    def __init__(self):
+        self.config = SimpleNamespace(num_hidden_layers=45, num_nextn_predict_layers=1)
+
+    def named_modules(self):
+        yield "", self
+        yield "model.layers.45.mtp_block.mlp.experts", SimpleNamespace()
+
+
+_NightlyGlm5NextMTP.__name__ = _NightlyGlm5NextMTP.__qualname__ = "Glm5NextMTP"
+_NightlyGlm5NextMTP.__module__ = "vllm.models.glm5next.common.mtp"
+_NIGHTLY = ("vllm.models.glm5next.common.mtp", ("model.language_model.", "model."))
+
+
+def test_mtp_mapping_accepts_the_recognized_nightly_draft_and_its_in_code_rename(monkeypatch):
+    # tessera#769: window u4-A8SE752-20260930T2257Z refused this stock class.
+    monkeypatch.setattr(census, "_recognized_draft_interface", lambda: _NIGHTLY, raising=False)
+    source = "model.language_model.layers.45.mlp.experts"
+    assert census.draft_declared_in_module_space(_NightlyGlm5NextMTP(), [source]) == {
+        source: "model.layers.45.mtp_block.mlp.experts"}
+
+
+def test_mtp_mapping_refuses_the_nightly_module_when_no_interface_is_recognized(monkeypatch):
+    monkeypatch.setattr(census, "_recognized_draft_interface", lambda: None, raising=False)
+    source = "model.language_model.layers.45.mlp.experts"
+    with pytest.raises(ValueError, match="stock Glm5NextMTP"):
+        census.draft_declared_in_module_space(_NightlyGlm5NextMTP(), [source])
+    # a recognized interface for another module does not admit this one
+    monkeypatch.setattr(census, "_recognized_draft_interface",
+                        lambda: ("vllm.models.glm5next.other.mtp", _NIGHTLY[1]), raising=False)
+    with pytest.raises(ValueError, match="stock Glm5NextMTP"):
+        census.draft_declared_in_module_space(_NightlyGlm5NextMTP(), [source])
+
+
+def test_mtp_mapping_refuses_a_recognized_draft_without_mapper_or_rename(monkeypatch):
+    monkeypatch.setattr(census, "_recognized_draft_interface",
+                        lambda: (_NIGHTLY[0], None), raising=False)
+    with pytest.raises(ValueError, match="no source-name mapper"):
+        census.draft_declared_in_module_space(
+            _NightlyGlm5NextMTP(), ["model.language_model.layers.45.mlp.experts"])
+
+
+def test_mtp_mapping_never_consults_the_interface_for_the_eugr_draft(monkeypatch):
+    def boom():
+        raise AssertionError("the eugr stock draft is accepted by name; no torch import")
+    monkeypatch.setattr(census, "_recognized_draft_interface", boom, raising=False)
+    source = "model.language_model.layers.45.mlp.experts"
+    assert census.draft_declared_in_module_space(Glm5NextMTP(), [source]) == {
+        source: "model.layers.45.mtp_block.mlp.experts"}
+
+
 def test_speculative_config_is_explicit_mtp_one_step_and_same_tp_world():
     value = census.parse_mtp_speculative_config(
         '{"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2}',
