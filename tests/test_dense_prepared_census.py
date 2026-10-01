@@ -18,6 +18,22 @@ torch = pytest.importorskip("torch")
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required")
 
 
+@pytest.fixture(autouse=True)
+def _unlatch_serve_mode():
+    """Leave no serve mode latched for the next test in this process.
+
+    The route fixtures this file drives set ``TESSERA_SERVE_MODE`` per case,
+    and the mode latches on first read (``tessera.serving.flags``).  Loaded
+    as plain modules, their own reset fixtures do not run here, so the last
+    case's ``streamed`` stayed latched and a later test that set ``resident``
+    was refused.
+    """
+    from tessera.serving import lane
+    lane.reset_for_tests()
+    yield
+    lane.reset_for_tests()
+
+
 def fixture_module(family):
     path = Path(__file__).with_name(f"test_serving_{family}_gemv.py")
     spec = importlib.util.spec_from_file_location(f"prepared_census_{family}", path)
