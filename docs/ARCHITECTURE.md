@@ -12,6 +12,16 @@ remains outside eager equivalence (cause 2). No route, launch, rung, cell or
 schema changes. See §5.1.2 and
 [the receipt](measurements/2026-10-01-glm-release-serve-mode-none.md).
 
+Re-stamped 2026-10-01 for the T-8 dense census (contract v53, Refs #750). One
+census stub of u1 stub B's source, `t8d1`, carries its 16 dense modules as
+`TESSERA_E4M3_K1` at one rung of every run table the rule admits, [1] to [8]
+and the pairs between them. It served on the GLM image at TP 1, eager,
+resident, with every dense module on the fused dense pair on the E4M3
+instruction in both phases. The two GLM-image E4M3 dense cells gain the census
+rungs, so their derived run tables are all 15 tables the rule admits, and they
+cover every rung of 256..2048. No `executes` list, route or routed cell moves.
+Receipt: [the T-8 dense census](measurements/2026-10-01-t8-dense-census.md).
+
 Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
 `routed_fused_window.cu` gains a fourth library, `tessera_routed_fused_e2m1`,
 on the block-scaled FP4 instruction (sm_121a). It is producer-side until a
