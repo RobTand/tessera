@@ -14,10 +14,19 @@
 # ab_summary.json: per (family, group, M) each arm's kernel time and power per
 # pass, the bitwise verdict over every arm and pass, and each arm's time over
 # the reference arm's in the same pass.
+# Exit status: every step runs even after an earlier one fails, but the action
+# exits 1 after the summary if ANY step exited non-zero, and 2 before running
+# anything when ORACLE_IMAGE is unset (bench_t8r.sh needs it).  AB_BENCH
+# overrides the per-step harness (tests).
 set -uo pipefail
 OUT=${1:?out_root}; shift
 ARMS=("$@")
 (( ${#ARMS[@]} >= 2 )) || { echo "need at least two arms" >&2; exit 2; }
+if [[ -z "${ORACLE_IMAGE:-}" ]]; then
+  echo "REFUSED: ORACLE_IMAGE is unset; pass the PB-declared measurement image (pbrun --env ORACLE_IMAGE=...)" >&2
+  exit 2
+fi
+FAILED=()
 for arm in "${ARMS[@]}"; do
   [[ -f "$OUT/src-$arm/src/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "missing snapshot: $OUT/src-$arm" >&2; exit 2; }
   # the libraries are built off the measurement host (build_ext.sh, a separate
@@ -35,8 +44,9 @@ step() {
   local rc=$?
   echo "== step $name rc=$rc end=$(date -u +%FT%TZ) load=$(cut -d' ' -f1-3 /proc/loadavg)"
   tail -3 "$OUT/$name.log"
+  ((rc == 0)) || FAILED+=("$name:$rc")
 }
-H=experiments/t8r_speed/bench_t8r.sh
+H=${AB_BENCH:-experiments/t8r_speed/bench_t8r.sh}
 # An arm whose <out_root>/ext-<arm> exists (build_ext.sh, run as its own row off
 # the measurement host) loads its libraries from there instead of compiling
 # them inside this action.
@@ -95,4 +105,8 @@ print(json.dumps(shas))
 for r in rows:
     print(json.dumps({k: v for k, v in r.items() if not k.endswith("_W")}))
 PY
+if ((${#FAILED[@]})); then
+  echo "FAILED_STEPS ${FAILED[*]} $(date -u +%FT%TZ)" >&2
+  exit 1
+fi
 echo "ALL_DONE $(date -u +%FT%TZ)"
