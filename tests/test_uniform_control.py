@@ -495,17 +495,11 @@ def _prismaquant_tessera_formats():
     An older one does not get a looser assertion, it gets a failure naming the
     tree -- see the accounting test.
     """
-    import sys
+    from tessera._dev.accounting_source import accountant
     tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
     if tree is None:
         box_artifacts.skip_now("prismaquant", "prismaquant", "tessera_formats.py")
-    if str(tree) not in sys.path:
-        sys.path.insert(0, str(tree))
-    try:
-        import prismaquant.tessera_formats as tessera_formats
-    except Exception as exc:                                    # pragma: no cover - env
-        pytest.skip(f"PrismaQuant not importable: {exc}")
-    return tessera_formats
+    return accountant(tree)
 
 
 def _price_both_ways(tessera_formats, shape):

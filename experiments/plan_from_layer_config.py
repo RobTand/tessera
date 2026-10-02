@@ -110,6 +110,7 @@ from tessera.control import (  # noqa: E402
     units_from_plan,
 )
 from tessera.errors import TesseraError  # noqa: E402
+from tessera._dev.accounting_source import accountant  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -365,13 +366,7 @@ def charged_bits(prismaquant: "Path | None", family: str, rung: int, shape) -> "
     """
     if prismaquant is None:
         return None
-    if str(prismaquant) not in sys.path:
-        sys.path.insert(0, str(prismaquant))
-    try:
-        from prismaquant.tessera_formats import artifact_bpp
-    except Exception as exc:                                    # pragma: no cover - env
-        print(f"  (no PrismaQuant accounting: {exc})", flush=True)
-        return None
+    artifact_bpp = accountant(prismaquant).artifact_bpp
     rows, cols = shape
     return Fraction(artifact_bpp(family, rung, shape=(rows, cols))) * rows * cols
 
