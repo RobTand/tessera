@@ -43,11 +43,12 @@ Three parts, each on the pinned serving image's own vLLM code:
            from +0 over the taps oldest to newest, fp32 weights, then
            ``div.full(acc, 1 + ex2.approx(0 - acc times log2e))`` and a bf16
            round), rebuilt in CUDA with explicit-rounding PTX, against the
-           stock conv's output bit for bit on varlen batches, signed zeros and
-           large magnitudes.  Three mutants (two roundings per tap,
-           ``ex2.approx.ftz``, ``div.rn``) record which rounding choices the
-           check can see.  This is the exactness gate for fusing the conv into
-           FlashKDA's tile loads; numerics only.
+           stock conv's q/k/v output and entire conv state bit for bit on
+           varlen batches, signed zeros and large magnitudes. Arithmetic and
+           physical-tail state mutants compare against the unmutated candidate,
+           so a shared reference error cannot manufacture a mutation witness.
+           A mismatch or an unobserved required mutant fails the action. This
+           convolution screen does not cover recurrent output/final state.
 
 ``kdafwd`` FlashKDA's two kernels (``_flash_kda_fwd_prepare`` and
            ``_flash_kda_fwd_recurrence``) at the served shape: per-kernel
@@ -685,6 +686,15 @@ KDA_PTX_MODES = {0: "served_sass", 1: "mutant_two_roundings_per_tap", 2: "mutant
                  4: "mutant_physical_tail_read", 5: "mutant_physical_tail_write"}
 
 
+def kdaptx_gate_errors(screen: dict) -> list[str]:
+    """Require exact output/state and every mutation witness named by the experiment."""
+    errors = [] if screen.get("served_bit_equal_all") is True else ["served bitwise mismatch"]
+    seen = screen.get("mutants_seen", {})
+    errors.extend(f"unobserved required mutant: {label}" for mode, label in KDA_PTX_MODES.items()
+                  if mode and seen.get(label) is not True)
+    return errors
+
+
 def bits_compare(a: torch.Tensor, b: torch.Tensor) -> dict:
     """Bit-pattern equality (``torch.equal`` treats +0 and -0 as equal), plus the value view."""
     ai, bi = a.contiguous().view(torch.int16), b.contiguous().view(torch.int16)
@@ -905,6 +915,7 @@ def main() -> int:
     res = {"meta": meta}
     name = "mhc_probe_numerics.json" if args.numerics_only else "mhc_probe.json"
     meta["numerics_only"] = args.numerics_only
+    failures = []
     for part in args.parts.split(","):
         if part == "l2" and args.numerics_only:
             raise SystemExit("--numerics-only has no l2 part (the L2 curve is a timing)")
@@ -926,7 +937,12 @@ def main() -> int:
             res["kdafwd"] = part_kdafwd(args, sampler)
         else:
             raise SystemExit(f"unknown part {part}")
+        if part == "kdaptx":
+            failures = kdaptx_gate_errors(res["kdaptx"])
+            res["kdaptx"]["gate"] = {"passed": not failures, "errors": failures}
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
+        if failures:
+            break
     sampler.stop_flag = True
     meta["utc_end"] = time.time()
     meta["power_sampler"] = sampler.source
@@ -936,14 +952,9 @@ def main() -> int:
         res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
     (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     log("done", out_dir / name)
-    if "kdaptx" in res:
-        screen = res["kdaptx"]
-        failures = ([] if screen["served_bit_equal_all"] else ["served bitwise mismatch"])
-        failures.extend(f"unobserved required mutant: {key}" for key, seen in screen["mutants_seen"].items()
-                        if not seen)
-        if failures:
-            log("kdaptx gate FAILED", "; ".join(failures))
-            return 1
+    if failures:
+        log("kdaptx gate FAILED", "; ".join(failures))
+        return 1
     return 0
 
 

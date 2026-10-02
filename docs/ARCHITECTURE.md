@@ -1,5 +1,15 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the KDA convolution screen's fail-closed admission
+(tessera#814). The experimental PTX reference follows the pinned stock
+prefill's width-minus-one history at the beginning of the physical cache,
+and compares actual q/k/v output and the entire convolution state as raw
+BF16 bits. Required mutants must differ from the unmutated candidate;
+a shared mismatch against stock is no mutation witness. A failed or
+vacuous screen returns nonzero and stops later timing parts. No serving
+override, runtime contract, format, route or default changes. See §5.1.3
+and [the recovery evidence](measurements/2026-10-02-kda-screen-recovery.md).
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -6961,6 +6971,20 @@ Every flag that rebinds a stock method or changes a stock default stays off by d
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv
 split that A/B is the VAL787 window (arms VS, VK and VB against V0).
+
+`experiments/mhc/mhc_probe.py --parts kdaptx --numerics-only` is the
+convolution reference screen for potential future FlashKDA fusion. It is
+not a serving override. It compares actual q/k/v output and the whole
+convolution state bit for bit, including spare/speculative columns and
+unused cache slots. The logical prefill history is `KERNEL_WIDTH - 1`,
+regardless of physical cache length; for width four, stock reads and
+writes columns 0..2. Every required arithmetic or state mutant must differ
+from the unmodified candidate. Missing or invisible mutants and any
+stock/candidate mismatch fail the action and stop later parts. The screen
+explicitly does not cover recurrent output or final recurrent state, and
+cannot admit a fused serving implementation by itself. `kdafwd` is a
+separate stock-kernel timing screen; its results require PrismaBuild's
+measurement admission and both in-process and host telemetry.
 
 ### 5.2 What the wheel ships besides Python
 
