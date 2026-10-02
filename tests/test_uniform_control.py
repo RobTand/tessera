@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from collections import Counter, namedtuple
 from fractions import Fraction
 from pathlib import Path
@@ -46,6 +47,7 @@ from tessera.grammar import (
 from tessera.manifest import BodyKind
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 
 #: Qwen3-0.6B's seven body Linears, the shapes the receipt was measured on.
 ROLE_SHAPES = {
@@ -495,7 +497,7 @@ def _prismaquant_tessera_formats():
     An older one does not get a looser assertion, it gets a failure naming the
     tree -- see the accounting test.
     """
-    from tessera._dev.accounting_source import accountant
+    from _accounting_source import accountant
     tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
     if tree is None:
         box_artifacts.skip_now("prismaquant", "prismaquant", "tessera_formats.py")

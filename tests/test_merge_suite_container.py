@@ -5,10 +5,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
-from tessera._dev import suite_container as owner, surface_publication
+from tessera._dev import surface_publication
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import _suite_container as owner
 
 
 def merge_module():
