@@ -46,7 +46,8 @@
 // stride), so a merged Linear's roles are one launch each and no concatenation
 // follows.  When the item count ``ceil(M / 64) * N / 128`` would leave SMs idle
 // (decode: M <= 64 on a 4096-row role is 32 items for 48 SMs) the K range is
-// split ``S`` ways (``k_split``); each split accumulates its chunk range into
+// split ``S`` ways (``k_split``, at most ``K / 64`` so every split item keeps
+// two K chunks; see ``dense_forward``); each split accumulates its chunk range into
 // an fp32 workspace ``[S, M, N]`` and ``dense_reduce_kernel`` sums the ``S``
 // partials in fixed order and applies the epilogue -- deterministic, and the
 // same fp32 operation order as the unsplit epilogue once the sum is formed.
@@ -2747,7 +2748,15 @@ void dense_forward(
                 && (out.stride(0) % 2) == 0,
                 "out must be a bf16 [M, N] view with unit column stride and an even row stride");
     const int nk = (int)(K / BK);
-    TORCH_CHECK(k_split >= 1 && k_split <= nk, "k_split must be in [1, K / ", BK, "]");
+    // The producers write item i + 2's descriptor into item i's slot once
+    // item i + 1's last chunk has waited EMPTY on the chunk two before it;
+    // the consumers read item i's slot before they release its first chunk
+    // (the split epilogue writes the raw partial from registers and reads no
+    // slot).  Items i and i + 1 of three chunks or more between them order
+    // the two, so every item keeps two chunks: floor(nk / S) >= 2, the E2M1
+    // launch's bound on the same protocol (tessera#805).
+    TORCH_CHECK(k_split >= 1 && k_split <= nk / 2, "k_split must be in [1, K / ", 2 * BK,
+                "]: every split item keeps two K chunks, so no descriptor slot is rewritten before it is read");
     TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, 2, (int)bm) && (bm == BM || k_split == 1), "bm ", bm,
                 ": the dense launch takes ", BM, "-row superblocks, or ", BM_WIDE,
                 " unsplit in the E4M3 family's library");
