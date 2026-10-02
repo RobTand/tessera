@@ -72,6 +72,7 @@ Run inside the serving image through ``experiments/mhc/mhc_probe.sh``.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -612,7 +613,7 @@ __device__ __forceinline__ float p_div_rn(float a, float b) {
 template <int MODE>
 __global__ void kda_conv_ref(const __nv_bfloat16* __restrict__ x, long sx_tok, long sx_dim,
                              const float* __restrict__ w, long sw_dim, long sw_w,
-                             const __nv_bfloat16* __restrict__ st, long ss_seq, long ss_dim, long ss_tok,
+                             __nv_bfloat16* __restrict__ st, long ss_seq, long ss_dim, long ss_tok,
                              int state_len, const int* __restrict__ qsl, const int* __restrict__ idx,
                              const bool* __restrict__ has, int dim, __nv_bfloat16* __restrict__ out, long so_tok) {
   int c = blockIdx.x * blockDim.x + threadIdx.x;
@@ -621,11 +622,14 @@ __global__ void kda_conv_ref(const __nv_bfloat16* __restrict__ x, long sx_tok, l
   const float w0 = w[c * sw_dim + 0 * sw_w], w1 = w[c * sw_dim + 1 * sw_w];
   const float w2 = w[c * sw_dim + 2 * sw_w], w3 = w[c * sw_dim + 3 * sw_w];
   float c0 = 0.f, c1 = 0.f, c2 = 0.f;
+  __nv_bfloat16* b = st + (long)idx[s] * ss_seq + (long)c * ss_dim;
   if (has[s]) {
-    const __nv_bfloat16* b = st + (long)idx[s] * ss_seq + (long)c * ss_dim;
-    c2 = __bfloat162float(b[(long)(state_len - 1) * ss_tok]);
-    c1 = __bfloat162float(b[(long)(state_len - 2) * ss_tok]);
-    c0 = __bfloat162float(b[(long)(state_len - 3) * ss_tok]);
+    // Stock prefill uses KERNEL_WIDTH-1 history columns, irrespective of
+    // the physical cache length. MODE 4 preserves the old tail-index bug.
+    const int first = MODE == 4 ? state_len - 3 : 0;
+    c2 = __bfloat162float(b[(long)(first + 2) * ss_tok]);
+    c1 = __bfloat162float(b[(long)(first + 1) * ss_tok]);
+    c0 = __bfloat162float(b[(long)first * ss_tok]);
   }
   for (int t = qsl[s]; t < qsl[s + 1]; ++t) {
     const float xc = __bfloat162float(x[(long)t * sx_tok + (long)c * sx_dim]);
@@ -642,6 +646,13 @@ __global__ void kda_conv_ref(const __nv_bfloat16* __restrict__ x, long sx_tok, l
     out[(long)t * so_tok + c] = __float2bfloat16_rn(y);
     c0 = c1; c1 = c2; c2 = xc;
   }
+  // One thread owns one sequence/channel, so the state write follows all
+  // reads. Short fresh sequences retain leading +0; spare columns stay put.
+  // MODE 5 makes the old physical-tail assumption observable on state writes.
+  const int first = MODE == 5 ? state_len - 3 : 0;
+  b[(long)first * ss_tok] = __float2bfloat16_rn(c0);
+  b[(long)(first + 1) * ss_tok] = __float2bfloat16_rn(c1);
+  b[(long)(first + 2) * ss_tok] = __float2bfloat16_rn(c2);
 }
 
 torch::Tensor conv_ref(torch::Tensor x, torch::Tensor w, torch::Tensor st, int64_t state_len,
@@ -653,21 +664,25 @@ torch::Tensor conv_ref(torch::Tensor x, torch::Tensor w, torch::Tensor st, int64
 #define KDA_LAUNCH(M) kda_conv_ref<M><<<grid, block, 0, stream>>>( \
     reinterpret_cast<const __nv_bfloat16*>(x.data_ptr()), x.stride(0), x.stride(1), \
     w.data_ptr<float>(), w.stride(0), w.stride(1), \
-    reinterpret_cast<const __nv_bfloat16*>(st.data_ptr()), st.stride(0), st.stride(1), st.stride(2), \
+    reinterpret_cast<__nv_bfloat16*>(st.data_ptr()), st.stride(0), st.stride(1), st.stride(2), \
     (int)state_len, qsl.data_ptr<int>(), idx.data_ptr<int>(), has.data_ptr<bool>(), dim, \
     reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), out.stride(0))
   switch (mode) {
     case 0: KDA_LAUNCH(0); break;
     case 1: KDA_LAUNCH(1); break;
     case 2: KDA_LAUNCH(2); break;
-    default: KDA_LAUNCH(3); break;
+    case 3: KDA_LAUNCH(3); break;
+    case 4: KDA_LAUNCH(4); break;
+    case 5: KDA_LAUNCH(5); break;
+    default: TORCH_CHECK(false, "unknown KDA PTX mode");
   }
 #undef KDA_LAUNCH
   return out;
 }
 """
 
-KDA_PTX_MODES = {0: "served_sass", 1: "mutant_two_roundings_per_tap", 2: "mutant_ex2_ftz", 3: "mutant_div_rn"}
+KDA_PTX_MODES = {0: "served_sass", 1: "mutant_two_roundings_per_tap", 2: "mutant_ex2_ftz", 3: "mutant_div_rn",
+                 4: "mutant_physical_tail_read", 5: "mutant_physical_tail_write"}
 
 
 def bits_compare(a: torch.Tensor, b: torch.Tensor) -> dict:
@@ -681,7 +696,9 @@ def part_kdaptx(args) -> dict:
     """The conv's served per-element arithmetic, rebuilt with explicit-rounding PTX, against the
     stock Triton conv bit for bit (the exactness gate for fusing the conv into FlashKDA's loads)."""
     from torch.utils.cpp_extension import load_inline
-    from vllm.model_executor.layers.mamba.ops.causal_conv1d import causal_conv1d_fn
+    from vllm.model_executor.layers.mamba.ops import causal_conv1d as stock_module
+
+    causal_conv1d_fn = stock_module.causal_conv1d_fn
 
     ext = load_inline(name="tessera_kda_conv_ptx", cpp_sources="torch::Tensor conv_ref(torch::Tensor x, "
                       "torch::Tensor w, torch::Tensor st, int64_t state_len, torch::Tensor qsl, torch::Tensor idx, "
@@ -695,7 +712,14 @@ def part_kdaptx(args) -> dict:
              ("continued_2048", (2048,), (True,), 1.0, 0.0),
              ("signed_zeros", (64, 300), (True, False), 1.0, 0.5),
              ("large_x64", (512, 33), (True, False), 64.0, 0.0)]
-    out = {"p": p, "width": KDA_WIDTH, "modes": KDA_PTX_MODES, "cases": []}
+    out = {"p": p, "width": KDA_WIDTH, "modes": KDA_PTX_MODES, "cases": [],
+           "coverage": {"compared": ["q", "k", "v", "conv_state"],
+                        "not_compared": ["recurrent_output", "final_recurrent_state"],
+                        "reason": "convolution reference only; no fused recurrent kernel exists"},
+           "source_bindings": {
+               "stock_conv_file": stock_module.__file__,
+               "stock_conv_sha256": hashlib.sha256(Path(stock_module.__file__).read_bytes()).hexdigest(),
+               "ptx_source_sha256": hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest()}}
     for layout in ("SD", "DS"):
         for state_len in (KDA_WIDTH - 1, KDA_WIDTH - 1 + 3):
             for name, lens, has, scale, zero_frac in cases:
@@ -707,22 +731,38 @@ def part_kdaptx(args) -> dict:
                     c["qkv"] = torch.where(u < zero_frac / 2, torch.zeros_like(c["qkv"]), c["qkv"])
                     c["qkv"] = torch.where((u >= zero_frac / 2) & (u < zero_frac),
                                            torch.full_like(c["qkv"], -0.0), c["qkv"])
+                ref_state = c["store"].clone()
                 ref = causal_conv1d_fn(c["qkv"].transpose(0, 1), c["weight"], None, activation="silu",
-                                       conv_states=kda_state_view(c, c["store"].clone()), has_initial_state=c["has"],
+                                       conv_states=kda_state_view(c, ref_state), has_initial_state=c["has"],
                                        cache_indices=c["idx"], query_start_loc=c["qsl"],
                                        metadata=c["md"]).transpose(0, 1)
-                st = kda_state_view(c, c["store"])
                 row = {"layout": layout, "state_len": state_len, "case": name, "lens": list(lens),
-                       "has": list(has), "ref_dense": bool(ref.is_contiguous())}
+                       "has": list(has), "cache_indices": c["idx"].tolist(),
+                       "input_strides": list(c["qkv"].stride()),
+                       "state_strides": list(kda_state_view(c, c["store"]).stride()),
+                       "ref_dense": bool(ref.is_contiguous())}
                 for mode, label in KDA_PTX_MODES.items():
+                    got_state = c["store"].clone()
+                    st = kda_state_view(c, got_state)
                     got = ext.conv_ref(c["qkv"], c["weight"], st, state_len, c["qsl"], c["idx"], c["has"], mode)
                     torch.cuda.synchronize()
                     row[label] = bits_compare(got, ref)
+                    row[label]["qkv"] = {key: bits_compare(a, b) for key, a, b in
+                                         zip(("q", "k", "v"), got.split(p, -1), ref.split(p, -1))}
+                    row[label]["conv_state"] = bits_compare(got_state, ref_state)
+                    if mode == 0:
+                        candidate, candidate_state = got, got_state
+                    else:
+                        row[label]["vs_candidate"] = bits_compare(got, candidate)
+                        row[label]["state_vs_candidate"] = bits_compare(got_state, candidate_state)
                 out["cases"].append(row)
                 log("kdaptx", layout, state_len, name,
                     {lab: row[lab]["bits_differing"] for lab in KDA_PTX_MODES.values()})
-    out["served_bit_equal_all"] = all(r["served_sass"]["bit_equal"] for r in out["cases"])
-    out["mutants_seen"] = {lab: any(not r[lab]["bit_equal"] for r in out["cases"])
+    out["served_output_bit_equal_all"] = all(r["served_sass"]["bit_equal"] for r in out["cases"])
+    out["served_conv_state_bit_equal_all"] = all(r["served_sass"]["conv_state"]["bit_equal"] for r in out["cases"])
+    out["served_bit_equal_all"] = out["served_output_bit_equal_all"] and out["served_conv_state_bit_equal_all"]
+    out["mutants_seen"] = {lab: any(not r[lab]["vs_candidate"]["bit_equal"] or
+                                    not r[lab]["state_vs_candidate"]["bit_equal"] for r in out["cases"])
                            for lab in list(KDA_PTX_MODES.values())[1:]}
     return out
 
@@ -896,6 +936,14 @@ def main() -> int:
         res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
     (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     log("done", out_dir / name)
+    if "kdaptx" in res:
+        screen = res["kdaptx"]
+        failures = ([] if screen["served_bit_equal_all"] else ["served bitwise mismatch"])
+        failures.extend(f"unobserved required mutant: {key}" for key, seen in screen["mutants_seen"].items()
+                        if not seen)
+        if failures:
+            log("kdaptx gate FAILED", "; ".join(failures))
+            return 1
     return 0
 
 

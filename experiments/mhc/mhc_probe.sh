@@ -48,6 +48,7 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e PYTHONPATH=/work/src:/work/tests:/work/experiments -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+  -e MAX_JOBS="${MAX_JOBS:-2}" \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
