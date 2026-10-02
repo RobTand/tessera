@@ -19,22 +19,28 @@ class InspectedInterface:
     digests: tuple[str, ...]
 
 
-def _file_digest(path):
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
+INSPECTION_ERRORS=(OSError,AttributeError,TypeError,ValueError)
+
+
+def stock_attribute(owner, name, default=None):
+    """Unavailable inspected attributes decline; installation policy stays local."""
+    try:
+        return getattr(owner,name,default)
+    except INSPECTION_ERRORS:
+        return default
 
 
 def source_digest(module: Any) -> str | None:
-    """The existing raw source observation; the caller owns its refusal policy."""
-    return _file_digest(getattr(module, '__file__', None))
-
-
-def module_digest(module: Any) -> str | None:
-    """The existing prefill source observer's OSError-to-nonmatch behavior."""
-    path=getattr(module,'__file__',None)
+    """An unreadable source is a non-match, never an install exception."""
     try:
-        return _file_digest(path)
-    except OSError:
+        path=getattr(module,'__file__',None)
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
+    except INSPECTION_ERRORS:
         return None
+
+
+# Prefill's existing name is an alias to the same observation used by all levers.
+module_digest=source_digest
 
 
 def match_modules(modules, names, interfaces):
@@ -57,4 +63,7 @@ def import_modules(names):
 
 
 def signature_parameters(owner, name):
-    return tuple(inspect.signature(getattr(owner,name)).parameters)
+    try:
+        return tuple(inspect.signature(getattr(owner,name)).parameters)
+    except INSPECTION_ERRORS:
+        return None
