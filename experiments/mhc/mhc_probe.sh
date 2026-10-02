@@ -25,12 +25,32 @@ HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unk
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
 echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF model=$MODEL"
 EXTRA_MOUNTS=()
+OBS_ENV=()
+declare -A OBS_MOUNTED=()
+for OBS_VAR in PRISMABUILD_PROFILE_TORCH_OUT PRISMABUILD_ACTION_PROGRESS_PATH PRISMABUILD_ACTION_PROGRESS_HELPER; do
+  OBS_VALUE=${!OBS_VAR:-}
+  if [[ -n "$OBS_VALUE" ]]; then
+    OBS_PARENT=$(dirname "$OBS_VALUE")
+    mkdir -p "$OBS_PARENT"
+    if [[ -z "${OBS_MOUNTED[$OBS_PARENT]:-}" ]]; then
+      OBS_READONLY=
+      [[ "$OBS_VAR" != PRISMABUILD_ACTION_PROGRESS_HELPER ]] || OBS_READONLY=,readonly
+      EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT$OBS_READONLY")
+      OBS_MOUNTED[$OBS_PARENT]=1
+    fi
+    OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
+  fi
+done
+for OBS_VAR in PRISMABUILD_ACTION_PROGRESS_TOKEN PRISMABUILD_ACTION_PROGRESS_PHASES PRISMABUILD_ACTION_PROGRESS_ALLOWANCES; do
+  OBS_VALUE=${!OBS_VAR:-}
+  [[ -z "$OBS_VALUE" ]] || OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
+done
 PREFIX=(bash -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec "$@"' bash)
 COMMAND=(python3 /work/experiments/mhc/mhc_probe.py)
 if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
   NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
-  EXTRA_MOUNTS=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
+  EXTRA_MOUNTS+=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all
     --kernel-name "${ORACLE_NCU_KERNELS:-regex:mhc_post|hc_prenorm_gemm|mhc_pre_big_fuse}"
     --section LaunchStats --section Occupancy --section SpeedOfLight
@@ -51,5 +71,5 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e MAX_JOBS="${MAX_JOBS:-2}" \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
-  "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
+  "${IMAGE_ENV[@]}" "${OBS_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
   "${PREFIX[@]:1}" "${COMMAND[@]}" --out "$OUT" --model "$MODEL" "$@"

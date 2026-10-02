@@ -217,3 +217,15 @@ Both endings/logs and CAS claim/receipt/payload checks pass. Receipts:
 `cas/actions/v3/3e/3e9ee3a2...json` and `cas/actions/v3/21/2140ada6...json`
 under `/mnt/shared/prismabuild-fleet/`. The correction is dictionary and
 artifact validation only; no GPU numerical repetition or timing launch.
+
+## Syntax-check command clarification
+
+The GREEN38 command compiled five Python modules, but its single
+`bash -n` invocation named two scripts. Bash checks only the first script
+in that form; the second is a positional argument. A separate admitted
+compile action, PB
+`930e91b7477581d0629a3c08bc235633115671afdb46c28da9318e621aa925cc`,
+on frozen accepted head `5393614d5b7863c1d26ddefe281a72e131b29f0d`,
+returned 0 after five Python compile checks and **two distinct** shell
+syntax invocations. This corrects the command attribution above without
+repeating the numerical bank, control or tests.

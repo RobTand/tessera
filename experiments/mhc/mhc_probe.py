@@ -61,9 +61,10 @@ Three parts, each on the pinned serving image's own vLLM code:
 ``kdafwd`` FlashKDA's two kernels (``_flash_kda_fwd_prepare`` and
            ``_flash_kda_fwd_recurrence``) at the served shape: per-kernel
            device time at ``--kda-tokens`` for ``--kda-heads`` local heads and
-           both state dtypes.  ``H=1`` gives the prepare's per-CTA latency
-           with the GPU nearly empty, which bounds what fusing the prepare
-           into the recurrence CTAs can save.
+           selected state dtypes. ``H=1`` is an aggregate launch diagnostic;
+           the prepare still launches one CTA per tile, so its total device
+           time is not a single-CTA latency. Eager kernel profiles and resident
+           graph power/timing windows are reported separately; no candidate.
 
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``; with
@@ -82,6 +83,8 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import runpy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -174,16 +177,33 @@ def copies_for(bytes_per_call: int, target: int = 256 << 20, cap: int = 64) -> i
     return max(2, min(cap, math.ceil(target / max(bytes_per_call, 1))))
 
 
-def kernel_device_us(fn, iters: int) -> dict[str, dict]:
+def kernel_device_us(fn, iters: int, trace_path: Path | None = None) -> dict[str, dict]:
     """Per-kernel device time from CUPTI (``key_averages``), by kernel name."""
     from torch.profiler import ProfilerActivity, profile
 
     fn()
     torch.cuda.synchronize()
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-        for _ in range(iters):
-            fn()
-        torch.cuda.synchronize()
+    if trace_path is None:
+        context = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA])
+    else:
+        from profile_torch import prismabuild_torch_profile
+
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        context = prismabuild_torch_profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True)
+    previous = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+    if trace_path is not None:
+        os.environ["PRISMABUILD_PROFILE_TORCH_OUT"] = str(trace_path)
+    try:
+        with context as prof:
+            for _ in range(iters):
+                fn()
+            torch.cuda.synchronize()
+    finally:
+        if trace_path is not None:
+            if previous is None:
+                os.environ.pop("PRISMABUILD_PROFILE_TORCH_OUT", None)
+            else:
+                os.environ["PRISMABUILD_PROFILE_TORCH_OUT"] = previous
     out = {}
     for row in rpo.kernel_table(prof, limit=200):
         out[row["name"]] = {"calls": row["count"], "mean_us": row["self_device_us_per_call"]}
@@ -1034,34 +1054,149 @@ def kdafwd_call(t: int, h: int, state_dtype, gen):
     cu = torch.tensor([0, t], dtype=torch.int32, device="cuda")
     ws = torch.empty(int(ops.get_workspace_size(t, h, 1)), dtype=torch.uint8, device="cuda")
     o = torch.empty(1, t, h, HEAD_DIM, device="cuda", dtype=torch.bfloat16)
-    return lambda: ops.fwd(q, k, v, g, beta, HEAD_DIM ** -0.5, o, ws, a_log, dt_bias, -5.0, init, final, cu,
+    call = lambda: ops.fwd(q, k, v, g, beta, HEAD_DIM ** -0.5, o, ws, a_log, dt_bias, -5.0, init, final, cu,
                            None, None)
+    call.workspace_bytes = ws.numel()
+    call.resident_bytes = sum(a.numel() * a.element_size() for a in
+                              (q, k, v, g, beta, a_log, dt_bias, init, final, cu, ws, o))
+    return call
+
+
+def kda_steady(graph, copies: int, seconds: float) -> dict:
+    """Completed stock graph calls; the event interval includes host replay gaps."""
+    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    start.record()
+    t0, begin = time.time(), time.perf_counter()
+    replays = 0
+    while time.perf_counter() - begin < seconds:
+        for _ in range(32):
+            graph.replay()
+        torch.cuda.synchronize()
+        replays += 32
+    end.record()
+    torch.cuda.synchronize()
+    t1 = time.time()
+    elapsed_ms = start.elapsed_time(end)
+    return {"interval_unix": [t0, t1], "duration_s": t1 - t0, "graph_replays": replays,
+            "completed_calls": replays * copies, "cuda_interval_ms": elapsed_ms,
+            "graph_ms_per_call": elapsed_ms / (replays * copies)}
+
+
+def kda_raw_netdata(label: str, host: str, t0: float, t1: float) -> dict:
+    """Reuse the box instrument's fetcher and retain every raw returned group."""
+    import box_power_window as bpw
+
+    contexts = [(c, dims) for c, dims in bpw.SERIES if c != "nvidia_smi.gpu_utilization"]
+    out = {"box": label, "request_host": host, "phase_interval_unix": [t0, t1],
+           "query_window_unix": [math.floor(t0), math.ceil(t1)], "series": {},
+           "energy_status": "unqualified; full raw groups retained, coverage agreement required"}
+    for context, dims in contexts:
+        try:
+            got = bpw._fetch(host, context, dims, math.floor(t0), math.ceil(t1), 0)
+            raw = got.get("raw_doc", got["doc"])
+            out["series"][context] = {"query": got["url"], "raw_response": raw,
+                                      "returned_view": raw.get("view")}
+        except Exception as exc:
+            out["series"][context] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
+def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
+    """Publish each complete measured cell before advancing its progress counter."""
+    temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
+    with temporary.open("w") as f:
+        f.write(json.dumps(out, indent=1) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+    helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
+    if helper:
+        runpy.run_path(helper)["commit"](units, phase)
 
 
 def part_kdafwd(args, sampler) -> dict:
     """FlashKDA prepare and recurrence device time at the served shape, per local head count."""
+    import vllm._flashkda_C as stock_module
+
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
     gen = torch.Generator(device="cuda").manual_seed(13)
     props = torch.cuda.get_device_properties(0)
-    out = {"sms": props.multi_processor_count, "cells": []}
+    out_dir = Path(args.out)
+    hosts = dict(v.split("=", 1) for v in args.kda_netdata_hosts)
+    if set(hosts) != {"sparky", "sparklina"}:
+        raise ValueError("stock timing requires both named Sparks' Netdata endpoints")
+    out = {"schema": "tessera.kda_stock_screen.v1", "sms": props.multi_processor_count, "cells": [],
+           "scope": "stock synthetic resident kernel screen; no candidate or serving comparison",
+           "source_bindings": {"stock_module": stock_module.__file__,
+                               "stock_module_sha256": hashlib.sha256(Path(stock_module.__file__).read_bytes()).hexdigest(),
+                               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
+           "primary_state_dtype": "float32 (pinned model kda_state_dtype default)",
+           "energy_status": "unqualified until fast-sampler/Netdata coverage agreement", "startup": []}
+    cells = []
     for t in args.kda_tokens:
         for h in args.kda_heads:
-            for sdt in (torch.float32, torch.bfloat16):
-                call = kdafwd_call(t, h, sdt, gen)
+            for dtype in args.kda_state_dtypes:
                 t0 = time.time()
-                kern = kernel_device_us(call, args.reps)
-                t1 = time.time()
-                tiles = (t + 15) // 16
-                ws_bytes = 13824 * tiles * h
-                cell = {"tokens": t, "heads": h, "state_dtype": str(sdt).split(".")[-1], "tiles": tiles,
-                        "workspace_bytes": ws_bytes, "power": sampler.window(t0, t1),
-                        "kernels": {n[:120]: v for n, v in kern.items()}}
-                for role, key in (("prepare", "_flash_kda_fwd_prepare"), ("recurrence", "_flash_kda_fwd_recurrence")):
-                    us = [v["mean_us"] for n, v in kern.items() if key in n]
-                    cell[f"{role}_us"] = us[0] if us else None
-                if cell["recurrence_us"]:
-                    cell["recurrence_us_per_tile"] = cell["recurrence_us"] / tiles
-                out["cells"].append(cell)
-                log("kdafwd", t, h, cell["state_dtype"], cell["prepare_us"], cell["recurrence_us"])
+                call = kdafwd_call(t, h, getattr(torch, dtype), gen)
+                copies = copies_for(call.resident_bytes)
+                calls = [call] + [kdafwd_call(t, h, getattr(torch, dtype), gen) for _ in range(copies - 1)]
+                for _ in range(3):
+                    for fn in calls:
+                        fn()
+                torch.cuda.synchronize()
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    for fn in calls:
+                        fn()
+                graph.replay()
+                torch.cuda.synchronize()
+                out["startup"].append({"tokens": t, "heads": h, "state_dtype": dtype,
+                                       "interval_unix": [t0, time.time()], "copies": copies})
+                cells.append((t, h, dtype, calls, graph))
+    primary_trace = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+    for round_index in range(args.kda_rounds):
+        ordered = cells if round_index % 2 == 0 else list(reversed(cells))
+        for t, h, dtype, calls, graph in ordered:
+            copies, tiles = len(calls), (t + 15) // 16
+            label = f"r{round_index}-t{t}-h{h}-{dtype}"
+            trace = Path(primary_trace) if not out["cells"] and primary_trace else out_dir / f"{label}.trace.json.gz"
+            t0 = time.time()
+            kern = kernel_device_us(lambda: [fn() for fn in calls], args.reps, trace)
+            profile_end = time.time()
+            cell = {"tokens": t, "heads": h, "state_dtype": dtype, "round": round_index, "tiles": tiles,
+                    "role": "native-default-state" if dtype == "float32" else "alternate-state-diagnostic",
+                    "copies": copies, "resident_bytes": sum(fn.resident_bytes for fn in calls),
+                    "workspace_bytes_per_copy": calls[0].workspace_bytes,
+                    "prepare_grid_from_pinned_source": [tiles + 1, h, 1],
+                    "workspace_tile_upper_bound": tiles + 1,
+                    "h1_scope": "aggregate prepare launch diagnostic; not a single-CTA measurement" if h == 1 else None,
+                    "profile": {"interval_unix": [t0, profile_end], "trace": str(trace),
+                                "trace_sha256": hashlib.sha256(trace.read_bytes()).hexdigest()},
+                    "kernels": kern}
+            for role, key in (("prepare", "_flash_kda_fwd_prepare"), ("recurrence", "_flash_kda_fwd_recurrence")):
+                us = [v["mean_us"] for n, v in kern.items() if key in n]
+                if len(us) != 1:
+                    raise RuntimeError(f"stock profile has ambiguous or absent {role} kernel: {us}")
+                cell[f"{role}_us"] = us[0]
+            cell["recurrence_us_per_tile"] = cell["recurrence_us"] / tiles
+            cell["settle"] = kda_steady(graph, copies, args.kda_warm_s)
+            cell["steady"] = kda_steady(graph, copies, args.kda_steady_s)
+            t0, t1 = cell["steady"]["interval_unix"]
+            cell["power"] = sampler.window(t0, t1)
+            cell["power"]["raw_samples"] = [[stamp, watts] for stamp, watts in sampler.samples if t0 <= stamp <= t1]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {label: pool.submit(kda_raw_netdata, label, host, t0, t1) for label, host in hosts.items()}
+                cell["netdata_both_boxes"] = {label: f.result() for label, f in futures.items()}
+            out["cells"].append(cell)
+            kda_commit(out, out_dir / "kdafwd_partial.json", len(out["cells"]))
+            log("kdafwd", label, cell["prepare_us"], cell["recurrence_us"], cell["steady"]["graph_ms_per_call"],
+                cell["power"].get("mean_w"), "W; energy unqualified")
     return out
 
 
@@ -1130,7 +1265,12 @@ def main() -> int:
     ap.add_argument("--ncu-tokens", type=int, nargs="+", default=[1024, 2048])
     ap.add_argument("--kda-tokens", type=int, nargs="+", default=[2048, 8192])
     ap.add_argument("--kda-heads", type=int, nargs="+", default=[32, 1],
-                    help="kdafwd local KDA heads (32 is TP2; 1 isolates the prepare's per-CTA latency)")
+                    help="kdafwd local heads (32 is TP2; 1 is an aggregate fusion-ceiling diagnostic)")
+    ap.add_argument("--kda-state-dtypes", choices=("float32", "bfloat16"), nargs="+", default=["float32", "bfloat16"])
+    ap.add_argument("--kda-steady-s", type=float, default=20.0)
+    ap.add_argument("--kda-warm-s", type=float, default=3.0)
+    ap.add_argument("--kda-rounds", type=int, default=2)
+    ap.add_argument("--kda-netdata-hosts", nargs="+", default=["sparky=sparky", "sparklina=sparklina"])
     ap.add_argument("--ncu-part", choices=("mhc", "kda"), default="mhc")
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--ncu", action="store_true")
@@ -1138,6 +1278,8 @@ def main() -> int:
                     help="ulp and split-invariance checks only; no timing (a shared-GPU row may run it)")
     ap.add_argument("--stub", default=None, help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if min(args.kda_steady_s, args.kda_warm_s, args.kda_rounds, args.reps) <= 0:
+        ap.error("KDA durations, rounds and profile repetitions must be positive")
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     model_dir = Path(args.model)
@@ -1193,11 +1335,18 @@ def main() -> int:
     sampler.stop_flag = True
     meta["utc_end"] = time.time()
     meta["power_sampler"] = sampler.source
-    try:
-        res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
-    except Exception as exc:  # noqa: BLE001
-        res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
-    (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
+    if "kdafwd" in res:
+        res["netdata"] = {"note": "full unfiltered per-window responses for both boxes are in kdafwd.cells",
+                          "energy_status": "unqualified; no whole-run or cropped-series energy claim"}
+    else:
+        try:
+            res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
+        except Exception as exc:  # noqa: BLE001
+            res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
+    if "kdafwd" in res:
+        kda_commit(res, out_dir / name, len(res["kdafwd"]["cells"]), "publish")
+    else:
+        (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     log("done", out_dir / name)
     if failures:
         log("kdaptx gate FAILED", "; ".join(failures))
