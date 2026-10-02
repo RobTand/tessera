@@ -157,3 +157,31 @@ the packaged runtime contract. Successful result claims are independently
 checked against their CAS receipts and hashed payloads; failed actions retain
 hashed terminal logs rather than successful CAS receipts. Full worker
 attestations were not independently audited.
+
+## Follow-up integration controls
+
+Hosted run `37064478325` at `71daeb719d` completed with 2771 passed,
+2 failed and 162 skipped in 183.18s. This failed run is not an accepted CI
+speedup. The broader population exposed two additions in this branch: the
+grid import probe inherited relative `PYTHONPATH=src` while its enclosing
+collection-control child ran from `tests/`, and unqualified PrismaBuild
+references were interpreted as Tessera issue numbers.
+
+PB action `4e441a7c2b9a08538b896cb24ee22a6743cd8069e9fd7d579b33ff485e931879`
+reproduced both failures (2 failed, 10.09s). The probe now explicitly runs
+from its own checkout root; the prose uses qualified repository links. The
+existing `tools/refresh_issues.py` regenerated the offline issue catalog so
+the new Tessera issue resolves in this branch too. No checker or collector
+gate changed.
+
+Complete collection-control, issue-reference and grid-roster modules then ran
+as three independent PB shards: actions
+`8d11f102ae8cd568fb2c541bb4730462634901d80e37e5513899cf9f4d59eefa`,
+`06a1c76d3823b1e007f5be975d26fc77f0f61e3150bfbaf937322a9608c1ac8c`, and
+`0a30d0c0290b67f13c385a88b8337a789afe66f41c41d215fea4be0934e3cebf`.
+All exited0: 17 passed/2 named Torch skips, 19 nodes reconciled with no
+collection gaps. The collection-control's nested torch-hidden run also passed;
+it exercises the test bodies from the different working directory that the
+initial touched-module check did not cover. Earlier snapshots and profiles
+remain bounded evidence for their recorded code, while this follow-up binds
+the corrected probe and references.
