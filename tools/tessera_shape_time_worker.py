@@ -84,7 +84,8 @@ def runtime_origins(expected_root):
  if os.environ.get("PYTHONPATH"):raise ValueError("native phase refuses PYTHONPATH")
  if any(Path(v or os.getcwd()).resolve().is_relative_to(ROOT/"src") for v in sys.path):raise ValueError("native phase refuses producer src in import paths")
  # The sealed accepted installation overlay is explicit; producer src is never inserted.
- sys.path.insert(0,str(root.parent))
+ overlay=str(root.parent)
+ if overlay not in sys.path:sys.path.insert(0,overlay)
  files={}
  for name in MODULES:
   module=importlib.import_module(name);path=Path(module.__file__).resolve()
