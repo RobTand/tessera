@@ -16,6 +16,10 @@ random-mask performance and energy remain unqualified. See
 `experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
 are not qualification evidence.
 
+Re-stamped 2026-10-02 for recovery of the default-off empty-RoPE override
+(tessera#796, §5.1.4) from PR #797 and its fail-closed stock-interface follow-up
+#851 onto current master. CPU guards do not establish GPU or served qualification.
+
 Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
 slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
 dense TP1 eager/resident operator, requiring canonical wire/container
@@ -7407,6 +7411,29 @@ The measured T512/T2048 H32 stock baseline is recorded in
 [the stock profile](measurements/2026-10-02-kda-stock-native-profile.md);
 it does not admit a serving change or substitute for recurrent-quality
 validation of a future fused candidate.
+
+### 5.1.4 Opt-in: skip the zero-width RoPE query cat (tessera#796)
+
+GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
+`FlashInferMLASparseSM120Impl.forward_mqa` still joins `(q_nope, q_pe)` with
+`torch.cat`, which copies all of `q_nope`: 11 copies of 67 MB per 2048-token
+prefill chunk at TP 2. The historical A8SESHMN trace cited in #796
+measured about 6.4 ms of cat kernels; a saving from this override remains
+unmeasured on the recovered current-master source.
+
+With `TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1`, `TesseraConfig.get_quant_method`
+rebinds that method (`serving.glm53_empty_rope`). The rebind passes `q_nope`
+itself when the cat would only copy it: a 2-tuple, a zero-wide second part,
+matching leading shape, dtype and device, and a contiguous, 512-byte-aligned
+`q_nope`. The kernel then reads the same bytes, shape, strides and alignment.
+Every other query reaches the stock code unchanged.
+
+The rebind installs only on a stock source whose sha256 is in the inspected
+set (image `5be13705`); any other source keeps the stock method. Each process
+logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
+whether the first tuple query skipped the cat.
+
+The flag is off by default. No route, contract or artifact changes.
 
 ### 5.2 What the wheel ships besides Python
 
