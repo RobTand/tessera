@@ -16,6 +16,15 @@ random-mask performance and energy remain unqualified. See
 `experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
 are not qualification evidence.
 
+Re-stamped 2026-10-02 (Refs #856): external shape-panel replay preserves
+the original request, producer, worker job and GPU evidence while creating
+a separate CPU replay job bound to the current checker worker. The existing
+installed preflight and full panel validator own both joins. An original
+immutable PB verifier path is accepted only when its held read-only regular
+bytes equal the current published verifier, under bounded stable reads;
+execution uses those held bytes and rechecks them afterwards. No fleet alias,
+original input rewrite, serving pin change or new GPU measurement is involved.
+
 Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
 slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
 dense TP1 eager/resident operator, requiring canonical wire/container
@@ -28,7 +37,7 @@ its source digest if deployed as a runtime. The repository producer owns
 its stdlib schema separately from an isolated subprocess using an accepted
 installed runtime, whose original cell source remains strict. This code
 publishes bounded operator measurements, never cells or runtimes, and cannot
-restamp old b40/v42 evidence. The repository application
+restamp original b40/contract-v45 evidence. The repository application
 `tools/tessera_shape_time_panel.py` preflights that context and uses the
 public native create/load/finalize/apply path, fresh route telemetry and
 existing CUDA-event/box instruments. It independently observes imported
@@ -48,8 +57,19 @@ producer then uses the existing planner's extracted private pure core, retaining
 its explicit registry hash. Local public planning and panel validation still
 strictly validate against their own package. External final panel validation
 requires the verified installed object and bound phase evidence; CLI replay
-reruns CPU preflight from the original request and job. The first b508 pilot
+reruns CPU preflight in a separate current-worker job bound to the original
+request, producer and wire roles. The first b508 pilot
 failed at producer-owned validation before CUDA, so it supplied no timings.
+The same CLI emits a versioned, input-bound handoff
+`tessera.shape_time_observation.v1` when `check` is given an externally
+supplied `--expected-panel-sha256`, `--observation-out` and an original
+producer root. It hashes the same panel bytes it parses, re-runs the existing
+`validate_external_panel` on the actual installed CPU preflight, and only then
+publishes the admitted scope, observed lane/cell, raw samples and warmups,
+fixed claims, the sealed original measurement producer and a distinct replay
+validator identity, every evidence/preflight binding and the
+`sample_unit=single_apply` operator projection. The observation is a data
+handoff, not a new validator, runtime contract or pin.
 The versioned native phase uses existing containment, TP1 context and
 single-apply event sampling; actual package/module origins, raw contract
 and source identities are checked at entry before device setup and exit.

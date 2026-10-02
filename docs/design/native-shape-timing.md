@@ -55,7 +55,7 @@ Deploying these new Python sources as a runtime changes its package identity.
 The repository producer instead loads its own passive schema in a separate
 process while the native worker imports an independently pinned installed
 runtime. An unchanged b40/v45 runtime retains its original cells; current
-b40/v42 panels are not rewritten or relabeled. A GPU pilot still requires
+original b40/v45 panels are not rewritten or relabeled. A GPU pilot still requires
 separate acceptance of the exact observed runtime and requested cell.
 CPU stand-ins validate this contract without claiming GPU execution.
 
@@ -127,7 +127,7 @@ The first accepted native GPU pilot and independent fresh installed CPU replay
 qualify the bounded execution path at q896/M512/N=K256/TP1 under b40/raw0869/f8.
 They establish no full-menu, serving, numerical/quality, compiled or cell qualification. The producer commit and schema origin are independent from the worker
 runtime's source; no unchanged pinned runtime requires requalification solely
-for a new producer checkout. No existing b40/v42 or other cell is relabeled, no census
+for a new producer checkout. No existing b40/v45 or other cell is relabeled, no census
 is published, and no PrismaQuant timing consumer or pin changes in this slice.
 
 The installed runtime uses its owning noneditable Git VCS metadata and full
@@ -156,3 +156,37 @@ its installed reader and observes actual hardware before TP1/CUDA setup.
 External CLI `check` requires `--request`, `--request-sha256` and a fresh
 `--preflight-output`; it reruns the installed CPU validation before replaying
 measurement evidence. A serialized success record alone is insufficient.
+
+Passing `--expected-panel-sha256` and `--observation-out` additionally makes
+`check` publish the versioned handoff `tessera.shape_time_observation.v1`. It
+hashes one owned buffer of the panel and checks it against the externally
+supplied digest, reruns the same actual installed CPU preflight and the same
+`validate_external_panel`, and only then writes the observation durably
+(`publish_json`, file then directory sync). The document binds the panel,
+request, expected runtime, raw contract, every evidence and preflight
+reference, the sealed original measurement producer identity, a distinct
+replay-validator identity, and the actual CPU-preflight invocation it reran.
+It carries the admitted scope, the observed lane and cell, the raw CUDA-event
+samples and warmup count, the fixed claims, and the producer's own sampling
+semantics: `sample_unit=single_apply`, one 2-D M-by-K operator apply that a
+consumer may key at `batch_size=1` for the panel's M prompt rows. That
+projection is not evidence of end-to-end batch-1 serving. The observation is
+data transfer from the existing validator, not a second validator, runtime
+contract or pin, and it is emitted only on the external-preflight path.
+
+The authoritative replay of the recorded pilot keeps its original producer
+closure: `--producer-root` points `check` at the original producer source tree,
+so the sealed producer identity and original measurement worker remain that
+producer's. A separate current-source CPU job binds the unchanged original
+request and producer to the checker worker that actually performs the new
+installed preflight. The observation records the replay tool's own identity
+and actual CPU invocation separately. If
+the original replay does not succeed against that closure, `check` refuses
+rather than resealing history.
+
+The original request may name an immutable PB verifier from an older fleet
+generation. Replay requires its read-only regular file bytes to equal the
+current published PB verifier under bounded stable reads. It executes the
+held source bytes and rechecks both owners after use; location equality alone
+does not decide code identity. Changed helper bytes, a mutable helper or a
+symlink outside that immutable path refuse.

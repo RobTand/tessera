@@ -188,3 +188,14 @@ def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel):
     assert tp.validate_panel(panel,expected_runtime=copy.deepcopy(panel["runtime"]))["cell_id"]==panel["rows"][0]["cell_id"]
     rewrite(panel,"runtime_origins",lambda v:v["installation"].update(installed_commit="9"*40))
     with pytest.raises(ValueError,match="RECORD"):tp.validate_panel(panel,expected_runtime=panel["runtime"])
+
+
+def test_panel_validator_stays_the_local_entry_point_and_the_handoff_is_versioned(panel):
+    result = tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel["runtime"]))
+    # validate_panel remains the passive summary; the bound handoff is a
+    # separate, versioned artifact the caller must gate on an installed CPU
+    # preflight before it can exist.
+    assert set(result) == {"scope_id", "cell_id", "kernel_lane", "timing", "energy_status", "claims"}
+    assert tp.OBSERVATION_SCHEMA == "tessera.shape_time_observation.v1"
+    assert tp.SAMPLE_UNIT == "single_apply"
+    assert "not end-to-end serving evidence" in tp.OPERATOR_PROJECTION
