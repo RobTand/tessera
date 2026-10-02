@@ -63,107 +63,18 @@ def reader_class():
     return module.StagedInputs
 
 
-def fixture(tmp_path, payload=b'owned-wire', expected=None, *, origin='/forbidden-origin/wire', offset=9):
-    staged = tmp_path / 'staged'
-    staged.write_bytes(payload)
-    entry = {'path': origin, 'offset': offset, 'bytes': len(b'owned-wire'),
-             'sha256': expected or hashlib.sha256(b'owned-wire').hexdigest()}
-    manifest = {'entries': [entry], 'entry_count': 1, 'total_bytes': entry['bytes']}
-    path = tmp_path / 'manifest.json'
-    path.write_text(json.dumps(manifest))
-    import sys
-    sys.path.insert(0, '/mnt/shared/prismabuild-fleet/runtime-generations/5b6b97c0f717-1790877039-dcd8ea6496f1/src')
-    from prismabuild import client
-    key = client.residency_map_key(origin, offset)
-    action = 'a'*64
-    opened = []
-    sdk = SimpleNamespace(
-        read_data_manifest=lambda p: (json.loads(Path(p).read_text()), 'identity'),
-        injected_context=lambda: {'ok': True, 'ctx': {'action_key': action,
-            'queue_root': str(tmp_path/'queue'), 'map_path': str(tmp_path/'queue'/client.RESIDENCY/'a.map.json')}},
-        read_residency_map=lambda p: client.validate_residency_map({
-            'schema': client.RESIDENCY_MAP_SCHEMA_V1, 'stage_root': str(tmp_path),
-            'manifest_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-            'tier_id': 'fixture', 'leads': ['f'*64], 'generation': 0,
-            'entries': {key: {'stage_path':str(staged),'offset':offset,
-                'bytes':entry['bytes'],'sha256':entry['sha256']}}}),
-        residency_map_key=client.residency_map_key,
-        PoolQueue=client.PoolQueue, RESIDENCY=client.RESIDENCY,
-        covers_for_keys=lambda *a,**k: {'ok': True, 'covers': [],
-            'expected':{key:{'bytes':entry['bytes'],'sha256':entry['sha256']}}},
-        acquire_for=lambda *a,**k: {'ok': True, 'pin_id': 'pin', 'ref_id': 'ref',
-                                  'pin': {'stage_root': str(tmp_path)}},
-        release=lambda *a,**k: True,
-    )
-    def pinned(*args, **kwargs):
-        fd = os.open(staged, os.O_RDONLY)
-        opened.append(fd)
-        return fd, {'range_ref': key}
-    sdk.open_pinned = pinned
-    return reader_class()(path, sdk=sdk), staged, opened, sdk
 
 
-def test_owned_bytes_survive_origin_and_stage_replacement(tmp_path, monkeypatch):
-    reader, staged, opened, sdk = fixture(tmp_path)
-    monkeypatch.setattr('builtins.open', forbidden_origin)
-    owned = reader.read('/forbidden-origin/wire', 9)
-    # Even a later same-name publication cannot change the already authenticated
-    # owner returned to the intake. There is no hash-then-origin-reread seam.
-    replacement = tmp_path / 'replacement'
-    replacement.write_bytes(b'other-wire')
-    replacement.replace(staged)
-    assert owned == b'owned-wire'
-    assert hashlib.sha256(owned).hexdigest() == reader.reads[0]['sha256']
-    with pytest.raises(OSError):
-        os.fstat(opened[0])
-    reader.close()
-    with pytest.raises(ValueError, match='released'):
-        reader.read('/forbidden-origin/wire', 9)
 
 
-@pytest.mark.parametrize('payload,reason', [(b'wrong-wire', 'digest'),
-    (b'owned', 'short'), (b'owned-wire-plus', 'oversized')])
-def test_bad_owned_bytes_refuse_and_close_descriptor(tmp_path, payload, reason):
-    reader, staged, opened, sdk = fixture(tmp_path, payload)
-    with pytest.raises(ValueError, match=reason):
-        reader.read('/forbidden-origin/wire', 9)
-    with pytest.raises(OSError):
-        os.fstat(opened[0])
-    reader.close()
 
 
-def test_wrong_offset_refuses_without_open_or_origin_fallback(tmp_path):
-    reader, staged, opened, sdk = fixture(tmp_path)
-    with pytest.raises(ValueError, match='undeclared'):
-        reader.read('/forbidden-origin/wire', 8)
-    assert opened == []
-    reader.close()
 
 
-def test_pin_open_failure_does_not_fall_back(tmp_path):
-    reader, staged, opened, sdk = fixture(tmp_path)
-    sdk.open_pinned = forbidden_origin
-    with pytest.raises(PermissionError):
-        reader.read('/forbidden-origin/wire', 9)
-    assert opened == []
-    reader.close()
 
 
-def test_missing_launch_context_refuses_before_acquire(tmp_path):
-    reader, staged, opened, sdk = fixture(tmp_path)
-    reader.close()
-    sdk.injected_context = lambda: {'ok': False, 'refusal': 'no-launch-context'}
-    sdk.acquire_for = lambda *a, **k: pytest.fail('must not acquire')
-    with pytest.raises(ValueError, match='no-launch-context'):
-        reader_class()(tmp_path/'manifest.json', sdk=sdk)
 
 
-def test_failed_release_is_visible(tmp_path):
-    reader, staged, opened, sdk = fixture(tmp_path)
-    sdk.release = lambda *a, **k: False
-    with pytest.raises(ValueError, match='release failed'):
-        reader.close()
-    assert reader.closed is False
 
 
 def options():
@@ -229,47 +140,12 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     assert closed == [True]
 
 
-def frame_checker():
-    path = ROOT / 'experiments/t8r_speed/pb_staged_store.py'
-    spec = importlib.util.spec_from_file_location('pb_staged_store', path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.verify_cached_frame
 
 
-def frame_fixture():
-    from tessera.fused import pack_fused
-    unit = b'independently-hashed-cached-unit'
-    raw = bytearray(pack_fused([('gate',2048,unit)]))
-    role = {'role':'gate', 'rows':2048, 'blob_bytes':len(raw),
-            'cached_blob_sha256':hashlib.sha256(unit).hexdigest()}
-    return raw, role
 
 
-def test_cached_digest_covers_inner_not_exported_outer():
-    raw, role = frame_fixture()
-    proof = frame_checker()(raw,role)
-    assert proof['inner_sha256'] == role['cached_blob_sha256']
-    assert proof['outer_sha256'] == hashlib.sha256(raw).hexdigest()
-    assert proof['outer_sha256'] != proof['inner_sha256']
-    assert proof['outer_bytes'] == len(raw)
-    assert proof['inner_bytes'] == len(b'independently-hashed-cached-unit')
 
 
-@pytest.mark.parametrize('fault', ['role','rows','inner','length','extra','trailing','magic'])
-def test_frame_rejects_wrong_or_extra_member_before_delivery(fault):
-    from tessera.fused import pack_fused
-    raw, role = frame_fixture()
-    if fault == 'role': role['role'] = 'up'
-    elif fault == 'rows': role['rows'] += 1
-    elif fault == 'inner': role['cached_blob_sha256'] = '0'*64
-    elif fault == 'length': role['blob_bytes'] += 1
-    elif fault == 'extra': raw = bytearray(pack_fused([('gate',2048,b'independently-hashed-cached-unit'),('up',2048,b'extra')]))
-    elif fault == 'trailing': raw += b'extra'
-    elif fault == 'magic': raw[0] ^= 1
-    from tessera.errors import GrammarError
-    with pytest.raises((ValueError,GrammarError)):
-        frame_checker()(raw,role)
 
 
 def real_roster():
@@ -297,20 +173,13 @@ def test_incomplete_or_foreign_roster_refuses(fault):
         reader.bind_roles('/unused',roles)
 
 
-def test_missing_public_cover_refuses_before_acquire(tmp_path):
-    reader,staged,opened,sdk=fixture(tmp_path)
-    reader.close()
-    sdk.covers_for_keys=lambda *a,**k:{'ok':True,'covers':[],'expected':{}}
-    sdk.acquire_for=lambda *a,**k:pytest.fail('missing proof must not acquire')
-    with pytest.raises(ValueError,match='prove every'):
-        reader_class()(tmp_path/'manifest.json',sdk=sdk)
 
 
-def test_final_public_covers_can_resolve_a_lagging_composed_map(tmp_path):
-    reader,staged,opened,sdk=fixture(tmp_path)
-    reader.close()
-    old_map=sdk.read_residency_map
-    sdk.read_residency_map=lambda p:{**old_map(p),'entries':{}}
-    second=reader_class()(tmp_path/'manifest.json',sdk=sdk)
-    assert second.read('/forbidden-origin/wire',9)==b'owned-wire'
-    second.close()
+
+
+@pytest.mark.parametrize('ncu,path',[(False,'/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so'),(True,'/foreign/module.so')])
+def test_native_input_requires_closed_counter_mode(ncu,path):
+    args=options();args.ncu=ncu;args.profile_native_file=path
+    with pytest.raises(ValueError,match='counter-only'):
+        require_options(args)
+

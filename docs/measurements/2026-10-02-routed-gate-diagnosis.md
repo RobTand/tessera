@@ -277,3 +277,34 @@ negativepopulations and limits are banked externally in routed-gate-protocol/REP
 Energy remains HOLD; the distinct native10s/returned8s cadence labeling defect
 is corrected separately inPR841/issue840,20CPUpasses/0skips/uncollected+2compile,
 without changing power values, bounds or repeating load.
+
+
+### Correction: pure CI must observe actual dependency boundaries
+
+Root review found the SDK test fixture lazily inserted a hardcoded fleet runtime
+path and imported PrismaBuild inside a fixture, after the existing dependency
+probe had executed the module. Causal PB e733a0d53ab9 reproduced one failure
+under explicit PrismaBuild import denial (34 deselected, zero skips/uncollected).
+The SDK fixture and lease/schema controls now declare PrismaBuild at module
+import, and the native-artifact controls share that declared SDK fixture. The
+real framing reader imports the existing Torch-dependent fused owner at module
+import. Store/options/roster/cleanup and both native CLI-refusal controls remain
+independent; no assertion, grammar, production code or GPU qualification moved.
+
+A fresh pytest9.0.2-only interpreter provisioned through PB21b1dbf4c6b9 has
+neither Torch nor PrismaBuild. Actual PB6952da0731b6 verified that the existing
+collection probe names the three new dependent modules and retains the pure
+module, then passed19 pure controls: zero skips,137 modules uncollected globally
+(including those three), no Torch/CUDA. This is a targeted pure population,
+not a whole-suite result. CASd5f517d6e84f53b2d783fbf6dd966752bf079b87442d156d4131bb151b4b1f49
+(4598B) passed full immutable-action lookup. Scientific/SDK PBbb0b4cfaae21
+passed the same affected44 controls with explicit published SDK environment,
+CPU Torch2.11.0,2xdist/native1,zero skips/uncollected plus5 compile checks;
+CAS13bc6eb7091f2aaf9a985fb974f5c2e378989991255734df54c21fbf3fe8a972
+(1328B) passed full lookup. Earlier GPU source/input/binary results are reused;
+there is no repeated measurement or blanket dependency skip.
+
+The issue snapshot also lacked this branch's new Tessera826/836 references.
+The existing refresh_issues.py regenerated it from both real repositories;
+this is metadata gate repair only. A targeted issue-reference/refresher gate
+follows below in the final PR evidence.
