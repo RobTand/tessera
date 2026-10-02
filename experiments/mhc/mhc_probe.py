@@ -78,6 +78,8 @@ import json
 import math
 import os
 import socket
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -680,6 +682,36 @@ torch::Tensor conv_ref(torch::Tensor x, torch::Tensor w, torch::Tensor st, int64
 #undef KDA_LAUNCH
   return out;
 }
+
+// Store both exponentials before +1. This makes the FTZ mutation observable
+// even though that difference need not survive the served SiLU operation.
+__global__ void kda_ex2_control(const float* accs, int n, float* raw, __nv_bfloat16* bf16) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  const float acc = accs[i];
+  const float z = p_mul(p_sub(0.f, acc), 1.44269502162933349609375f);
+  const float e0 = p_ex2(z), e2 = p_ex2_ftz(z);
+  const float d0 = p_add(e0, 1.f), d2 = p_add(e2, 1.f);
+  const float y0 = p_div_full(acc, d0), y2 = p_div_full(acc, d2);
+  raw[8*i+0] = acc; raw[8*i+1] = z;
+  raw[8*i+2] = e0; raw[8*i+3] = e2;
+  raw[8*i+4] = d0; raw[8*i+5] = d2;
+  raw[8*i+6] = y0; raw[8*i+7] = y2;
+  bf16[2*i+0] = __float2bfloat16_rn(y0);
+  bf16[2*i+1] = __float2bfloat16_rn(y2);
+}
+
+std::vector<torch::Tensor> ex2_control(torch::Tensor accs) {
+  TORCH_CHECK(accs.is_cuda() && accs.scalar_type() == torch::kFloat32 && accs.is_contiguous(),
+              "ex2 control needs contiguous CUDA fp32 accumulators");
+  const int n = accs.numel();
+  auto raw = torch::empty({n, 8}, accs.options());
+  auto bf16 = torch::empty({n, 2}, accs.options().dtype(torch::kBFloat16));
+  kda_ex2_control<<<(n+127)/128, 128, 0, at::cuda::getCurrentCUDAStream()>>>(
+    accs.data_ptr<float>(), n, raw.data_ptr<float>(),
+    reinterpret_cast<__nv_bfloat16*>(bf16.data_ptr()));
+  return {raw, bf16};
+}
 """
 
 KDA_PTX_MODES = {0: "served_sass", 1: "mutant_two_roundings_per_tap", 2: "mutant_ex2_ftz", 3: "mutant_div_rn",
@@ -697,23 +729,85 @@ def kdaptx_gate_errors(screen: dict) -> list[str]:
 
 def bits_compare(a: torch.Tensor, b: torch.Tensor) -> dict:
     """Bit-pattern equality (``torch.equal`` treats +0 and -0 as equal), plus the value view."""
-    ai, bi = a.contiguous().view(torch.int16), b.contiguous().view(torch.int16)
+    word = torch.int32 if a.dtype == torch.float32 else torch.int16
+    ai, bi = a.contiguous().view(word), b.contiguous().view(word)
     return {"bit_equal": bool(torch.equal(ai, bi)), "bits_differing": int((ai != bi).sum()),
             "value": compare(a, b)}
+
+
+def load_kda_ptx():
+    """One JIT build owns the convolution and its arithmetic observation control."""
+    from torch.utils.cpp_extension import load_inline
+
+    return load_inline(name="tessera_kda_conv_ptx", cpp_sources="torch::Tensor conv_ref(torch::Tensor x, "
+                      "torch::Tensor w, torch::Tensor st, int64_t state_len, torch::Tensor qsl, torch::Tensor idx, "
+                      "torch::Tensor has, int64_t mode); std::vector<torch::Tensor> ex2_control(torch::Tensor accs);",
+                      cuda_sources=KDA_CONV_PTX_SRC, functions=["conv_ref", "ex2_control"],
+                      extra_cuda_cflags=["-O3"], verbose=False)
+
+
+def part_kdaex2(args) -> dict:
+    """A minimal FTZ intermediate witness; this alone does not admit the conv screen."""
+    ext = load_kda_ptx()
+    # Values cross ex2's -126 normal/subnormal boundary and the input's
+    # zero/subnormal boundary. Extremal finite accs also exercise overflow in z.
+    tiny = torch.finfo(torch.float32).tiny
+    c = 1.44269502162933349609375
+    values = [0.0, -0.0, 2.0**-149, -2.0**-149, 2.0**-127, -2.0**-127,
+              tiny, -tiny, 1.0, -1.0, 32.0, -32.0, 64.0, -64.0,
+              torch.finfo(torch.float32).max, -torch.finfo(torch.float32).max]
+    values += [v / c for v in (125.5, 126.0, 126.25, 127.0, 128.0, 140.0, 149.0, 150.0)]
+    values += [-v / c for v in (125.5, 126.0, 127.0, 128.0, 140.0)]
+    accs = torch.tensor(values, dtype=torch.float32, device="cuda")
+    raw, bf16 = ext.ex2_control(accs)
+    torch.cuda.synchronize()
+    bits = raw.contiguous().view(torch.int32)
+    input_subnormal = (raw[:, 1].abs() < tiny) & (raw[:, 1] != 0)
+    changed = bits[:, 2] != bits[:, 3]
+    output_subnormal = (raw[:, 2] > 0) & (raw[:, 2] < tiny)
+    out = {"finite_accumulator_count": len(values), "columns": ["acc", "z", "ex2", "ex2_ftz",
+           "den", "den_ftz", "silu_fp32", "silu_fp32_ftz"],
+           "raw_fp32_bits": bits.cpu().tolist(),
+           "raw_bf16_bits": bf16.contiguous().view(torch.int16).cpu().tolist(),
+           "ex2": bits_compare(raw[:, 2], raw[:, 3]),
+           "denominator": bits_compare(raw[:, 4], raw[:, 5]),
+           "output_fp32": bits_compare(raw[:, 6], raw[:, 7]),
+           "output_bf16": bits_compare(bf16[:, 0], bf16[:, 1]),
+           "input_subnormal_count": int(input_subnormal.sum()),
+           "input_subnormal_ex2_is_one_both": bool(((bits[input_subnormal, 2] == 0x3f800000) &
+                                                      (bits[input_subnormal, 3] == 0x3f800000)).all()),
+           "changed_ex2_is_subnormal_flushed_to_positive_zero": bool((output_subnormal[changed] &
+                                                                       (bits[changed, 3] == 0)).all()),
+           "ptx_source_sha256": hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest(),
+           "compiled_module": ext.__file__}
+    cuobjdump = shutil.which("cuobjdump")
+    if cuobjdump is None and os.environ.get("CUDA_HOME"):
+        candidate = Path(os.environ["CUDA_HOME"]) / "bin/cuobjdump"
+        if candidate.is_file():
+            cuobjdump = str(candidate)
+    if cuobjdump:
+        sass = subprocess.run([cuobjdump, "--dump-sass", ext.__file__], capture_output=True,
+                              text=True, timeout=30, check=True).stdout
+        path = Path(args.out) / "kda_ptx_control.sass"
+        path.write_text(sass)
+        out["sass"] = {"path": str(path), "sha256": hashlib.sha256(sass.encode()).hexdigest()}
+    else:
+        out["sass"] = {"error": "cuobjdump unavailable"}
+    out["control_passed"] = (not out["ex2"]["bit_equal"] and out["input_subnormal_count"] > 0 and
+                              out["input_subnormal_ex2_is_one_both"] and
+                              out["changed_ex2_is_subnormal_flushed_to_positive_zero"] and
+                              all(out[k]["bit_equal"] for k in ("denominator", "output_fp32", "output_bf16")))
+    log("kdaex2", {k: out[k] for k in ("control_passed", "ex2", "denominator", "input_subnormal_count")})
+    return out
 
 
 def part_kdaptx(args) -> dict:
     """The conv's served per-element arithmetic, rebuilt with explicit-rounding PTX, against the
     stock Triton conv bit for bit (the exactness gate for fusing the conv into FlashKDA's loads)."""
-    from torch.utils.cpp_extension import load_inline
     from vllm.model_executor.layers.mamba.ops import causal_conv1d as stock_module
 
     causal_conv1d_fn = stock_module.causal_conv1d_fn
-
-    ext = load_inline(name="tessera_kda_conv_ptx", cpp_sources="torch::Tensor conv_ref(torch::Tensor x, "
-                      "torch::Tensor w, torch::Tensor st, int64_t state_len, torch::Tensor qsl, torch::Tensor idx, "
-                      "torch::Tensor has, int64_t mode);", cuda_sources=KDA_CONV_PTX_SRC, functions=["conv_ref"],
-                      extra_cuda_cflags=["-O3"], verbose=False)
+    ext = load_kda_ptx()
     p = KDA_P
     gen = torch.Generator(device="cuda").manual_seed(11)
     cases = [("varlen", (5, 2, 9, 700), (True, False, True, False), 1.0, 0.0),
@@ -931,6 +1025,10 @@ def main() -> int:
             res["mhcsplit"] = part_mhcsplit(args, model_dir)
         elif part == "kdaptx":
             res["kdaptx"] = part_kdaptx(args)
+        elif part == "kdaex2":
+            res["kdaex2"] = part_kdaex2(args)
+            if not res["kdaex2"]["control_passed"]:
+                failures = ["ex2 intermediate control failed"]
         elif part == "kdafwd":
             if args.numerics_only:
                 raise SystemExit("--numerics-only has no kdafwd part (it is a timing)")
