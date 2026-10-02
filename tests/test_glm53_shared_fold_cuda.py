@@ -90,6 +90,16 @@ def test_token_sum_shared_refuses_a_cpu_output_even_for_an_empty_workload(lib):
 
 
 @cuda
+@pytest.mark.parametrize("lib", tuple(rf.LIBRARIES))
+def test_original_token_sum_refuses_a_cpu_output_even_for_an_empty_workload(lib):
+    """#859: zero tokens expose the original binding's device hole safely."""
+    routed = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")
+    out = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cpu")
+    with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
+        rf._ext(lib).token_sum(routed, out, GLM_TOP_K)
+
+
+@cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("t", [1, 7, 71])
 def test_the_fused_forward_folds_the_shared_add_bitwise(family, t):
