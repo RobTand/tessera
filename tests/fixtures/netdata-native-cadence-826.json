@@ -1,0 +1,487 @@
+{
+  "provenance": {
+    "source": "PB2726 retained Netdata response; no fresh load",
+    "source_sha256": "a0a3a64e6c331baca860d871f3d7f84f71a76772527b4abd0e137c4fce90d726"
+  },
+  "requested_window_unix": [
+    1790933212,
+    1790933243
+  ],
+  "document": {
+    "api": 2,
+    "versions": {
+      "routing_hard_hash": 1,
+      "nodes_hard_hash": 1,
+      "contexts_hard_hash": 119412,
+      "contexts_soft_hash": 902,
+      "alerts_hard_hash": 474,
+      "alerts_soft_hash": 1035
+    },
+    "summary": {
+      "nodes": [
+        {
+          "mg": "ec41e08b-83bf-494e-b944-85302ffd5abb",
+          "nd": "133fe943-5744-44ba-bed8-ae32d2c7d79d",
+          "nm": "sparklina",
+          "ni": 0,
+          "st": {
+            "ai": 0,
+            "code": 200,
+            "msg": ""
+          },
+          "is": {
+            "sl": 1,
+            "qr": 1
+          },
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          }
+        }
+      ],
+      "contexts": [
+        {
+          "id": "nvidia_smi.gpu_power_draw",
+          "is": {
+            "sl": 1,
+            "qr": 1
+          },
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          }
+        }
+      ],
+      "instances": [
+        {
+          "id": "nvidia_smi.gpu_gpu-b1eceeea-fec7-371e-2cf3-cd10f2e7b705_power_draw",
+          "ni": 0,
+          "con": 100,
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          }
+        }
+      ],
+      "dimensions": [
+        {
+          "id": "power_draw",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "pri": 0
+        }
+      ],
+      "labels": [
+        {
+          "id": "_collect_plugin",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "vl": [
+            {
+              "id": "go.d",
+              "ds": {
+                "sl": 1,
+                "qr": 1
+              },
+              "sts": {
+                "min": 6,
+                "max": 87,
+                "avg": 47.75,
+                "arp": 0,
+                "con": 100
+              }
+            }
+          ]
+        },
+        {
+          "id": "_collect_job",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "vl": [
+            {
+              "id": "nvidia_smi",
+              "ds": {
+                "sl": 1,
+                "qr": 1
+              },
+              "sts": {
+                "min": 6,
+                "max": 87,
+                "avg": 47.75,
+                "arp": 0,
+                "con": 100
+              }
+            }
+          ]
+        },
+        {
+          "id": "index",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "vl": [
+            {
+              "id": "0",
+              "ds": {
+                "sl": 1,
+                "qr": 1
+              },
+              "sts": {
+                "min": 6,
+                "max": 87,
+                "avg": 47.75,
+                "arp": 0,
+                "con": 100
+              }
+            }
+          ]
+        },
+        {
+          "id": "uuid",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "vl": [
+            {
+              "id": "GPU-b1eceeea-fec7-371e-2cf3-cd10f2e7b705",
+              "ds": {
+                "sl": 1,
+                "qr": 1
+              },
+              "sts": {
+                "min": 6,
+                "max": 87,
+                "avg": 47.75,
+                "arp": 0,
+                "con": 100
+              }
+            }
+          ]
+        },
+        {
+          "id": "product_name",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "vl": [
+            {
+              "id": "NVIDIA GB10",
+              "ds": {
+                "sl": 1,
+                "qr": 1
+              },
+              "sts": {
+                "min": 6,
+                "max": 87,
+                "avg": 47.75,
+                "arp": 0,
+                "con": 100
+              }
+            }
+          ]
+        },
+        {
+          "id": "_collect_module",
+          "ds": {
+            "sl": 1,
+            "qr": 1
+          },
+          "sts": {
+            "min": 6,
+            "max": 87,
+            "avg": 47.75,
+            "arp": 0,
+            "con": 100
+          },
+          "vl": [
+            {
+              "id": "nvidia_smi",
+              "ds": {
+                "sl": 1,
+                "qr": 1
+              },
+              "sts": {
+                "min": 6,
+                "max": 87,
+                "avg": 47.75,
+                "arp": 0,
+                "con": 100
+              }
+            }
+          ]
+        }
+      ],
+      "alerts": []
+    },
+    "totals": {
+      "nodes": {
+        "sl": 1,
+        "qr": 1
+      },
+      "contexts": {
+        "sl": 1,
+        "qr": 1
+      },
+      "instances": {
+        "sl": 1,
+        "qr": 1
+      },
+      "dimensions": {
+        "sl": 1,
+        "qr": 1
+      },
+      "label_keys": {
+        "sl": 6,
+        "qr": 6
+      },
+      "label_key_values": {
+        "sl": 6,
+        "qr": 6
+      }
+    },
+    "functions": [],
+    "result": {
+      "labels": [
+        "time",
+        "power_draw"
+      ],
+      "point": {
+        "value": 0,
+        "arp": 1,
+        "pa": 2
+      },
+      "data": [
+        [
+          1790933248,
+          [
+            12.4,
+            0,
+            0
+          ]
+        ],
+        [
+          1790933240,
+          [
+            6,
+            0,
+            0
+          ]
+        ],
+        [
+          1790933232,
+          [
+            70.8,
+            0,
+            0
+          ]
+        ],
+        [
+          1790933224,
+          [
+            84.6,
+            0,
+            0
+          ]
+        ]
+      ]
+    },
+    "db": {
+      "tiers": 3,
+      "update_every": 10,
+      "first_entry": 1787940000,
+      "last_entry": 1790934610,
+      "units": "Watts",
+      "dimensions": {
+        "ids": [
+          "power_draw"
+        ],
+        "units": [
+          "Watts"
+        ],
+        "sts": {
+          "min": [
+            6
+          ],
+          "max": [
+            87
+          ],
+          "avg": [
+            47.75
+          ],
+          "arp": [
+            0
+          ],
+          "con": [
+            100
+          ]
+        }
+      },
+      "per_tier": [
+        {
+          "tier": 0,
+          "queries": 1,
+          "points": 4,
+          "update_every": 10,
+          "first_entry": 1790549040,
+          "last_entry": 1790934610
+        },
+        {
+          "tier": 1,
+          "queries": 0,
+          "points": 0,
+          "update_every": 600,
+          "first_entry": 1788145200,
+          "last_entry": 1790934000
+        },
+        {
+          "tier": 2,
+          "queries": 0,
+          "points": 0,
+          "update_every": 36000,
+          "first_entry": 1787940000,
+          "last_entry": 1790892000
+        }
+      ]
+    },
+    "view": {
+      "title": "Power draw",
+      "update_every": 8,
+      "after": 1790933217,
+      "before": 1790933248,
+      "units": "Watts",
+      "chart_type": "line",
+      "dimensions": {
+        "grouped_by": [
+          "dimension"
+        ],
+        "ids": [
+          "power_draw"
+        ],
+        "names": [
+          "power_draw"
+        ],
+        "units": [
+          "Watts"
+        ],
+        "priorities": [
+          0
+        ],
+        "aggregated": [
+          1
+        ],
+        "sts": {
+          "min": [
+            6
+          ],
+          "max": [
+            84.6
+          ],
+          "avg": [
+            43.45
+          ],
+          "arp": [
+            0
+          ],
+          "con": [
+            100
+          ]
+        }
+      },
+      "min": 6,
+      "max": 84.6
+    },
+    "agents": [
+      {
+        "mg": "ec41e08b-83bf-494e-b944-85302ffd5abb",
+        "nd": "133fe943-5744-44ba-bed8-ae32d2c7d79d",
+        "nm": "sparklina",
+        "now": 1790934619,
+        "ai": 0,
+        "timings": {
+          "prep_ms": 0.06,
+          "query_ms": 0.349,
+          "output_ms": 0.335,
+          "total_ms": 0.744,
+          "cloud_ms": 0.744
+        }
+      }
+    ],
+    "timings": {
+      "routing_ms": 0,
+      "node_max_ms": 0,
+      "total_ms": 0.744
+    }
+  }
+}

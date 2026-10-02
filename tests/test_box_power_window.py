@@ -189,3 +189,32 @@ def test_refused_fetch_preserves_unreadable_raw_window(monkeypatch):
     assert 'error' in result and 'stats' not in result
     assert result['raw_response']==raw
     assert result['requested_window_unix']==[100,120]
+
+
+def test_recorded_native_cadence_is_not_returned_bucket(monkeypatch):
+    import json
+    fixture = json.loads((ROOT / "tests/fixtures/netdata-native-cadence-826.json").read_text())
+    raw = fixture["document"]
+    after, before = fixture["requested_window_unix"]
+    monkeypatch.setattr(BPW, "SERIES", [("nvidia_smi.gpu_power_draw", ("power_draw",))])
+    monkeypatch.setattr(BPW, "_fetch", lambda *args: {"url": "recorded://PB2726", "doc": raw})
+    entry = BPW.collect("recorded", after, before, 4)["nvidia_smi.gpu_power_draw"]
+    assert entry["update_every_s"] == 10, "native DB cadence mislabeled as returned bucket"
+    assert entry["returned_bucket_s"] == 8
+    assert entry["collection_metadata"]["per_tier"] == raw["db"]["per_tier"]
+    assert entry["collection_metadata"]["nodes"] == raw["summary"]["nodes"]
+    assert entry["collection_metadata"]["instances"] == raw["summary"]["instances"]
+    assert entry["collection_metadata"]["totals"] == raw["totals"]
+    bounded, coverage = BPW.bounded_groups(raw, after, before)
+    assert entry["stats"] == BPW._stats(bounded, ("power_draw",))
+    assert entry["coverage"] == coverage
+    assert entry["raw_response"] is raw
+
+
+def test_unknown_native_cadence_stays_unknown(monkeypatch):
+    raw = grouped_document(8, [(108, 20)])
+    monkeypatch.setattr(BPW, "SERIES", [("nvidia_smi.gpu_power_draw", ("power_draw",))])
+    monkeypatch.setattr(BPW, "_fetch", lambda *args: {"url": "recorded://unknown", "doc": raw})
+    entry = BPW.collect("recorded", 100, 116, 4)["nvidia_smi.gpu_power_draw"]
+    assert entry["update_every_s"] is None, "returned bucket cannot establish native cadence"
+    assert entry["returned_bucket_s"] == 8
