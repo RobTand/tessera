@@ -61,7 +61,9 @@ def test_preparation_uses_public_exact_wire_path(panel, monkeypatch):
         def process_weights_after_loading(self, layer):
             events.append(('finalize', bytes(layer.wire_bytes.detach().numpy())))
             layer.tessera_shard_plan = SimpleNamespace(tp_rank=0, tp_size=1)
-            layer.tessera_native = SimpleNamespace(rows=16, columns=128, packed_bytes=lambda: 123)
+            from tessera.serving import native_window
+            published=native_window.DENSE_LANES[native_window.LANE_FUSED]
+            layer.tessera_native = SimpleNamespace(rows=16, columns=128, packed_bytes=lambda: 123, lane=native_window.LANE_FUSED, launch_pair=(published[0],published[1]["epilogue"]))
     method = Method()
     monkeypatch.setattr(lane, 'build_tessera_method', lambda *a: (events.append(('build', a)) or method))
     path, request = request_file(panel, monkeypatch);wire = app.tp.read_bound(request['wire'])
@@ -212,3 +214,31 @@ def test_phase_argv_is_isolated_and_preserves_admission(panel,monkeypatch,tmp_pa
     assert str(app.ROOT/'src') not in command
     assert timeout==120 and label=='native-dense'
     assert '-I' in command and not any('pbrun' in arg for arg in command)
+
+
+def test_prepared_triton_lane_refuses_before_timing(panel,monkeypatch):
+    from tessera.serving import lane
+    path,request=request_file(panel,monkeypatch);wire=app.tp.read_bound(request["wire"])
+    class Method:
+        def create_weights(self,layer,**kw):layer.wire_bytes=torch.nn.Parameter(torch.empty(len(wire),dtype=torch.uint8),requires_grad=False)
+        def process_weights_after_loading(self,layer):
+            layer.tessera_shard_plan=SimpleNamespace(tp_rank=0,tp_size=1)
+            layer.tessera_native=SimpleNamespace(rows=16,columns=128,packed_bytes=lambda:1,lane="triton",launch_pair=("tessera::window_gemm_dense","native_window_gemm"))
+    monkeypatch.setattr(lane,'build_tessera_method',lambda *a:Method())
+    with pytest.raises(ValueError,match="ELF-backed fused"):
+        worker.prepare_dense(dict(request,_wire_roles=app.tp.wire_facts(wire,request["scheme"])[1]),wire)
+
+
+def test_binary_observation_uses_existing_maps_and_never_loader(tmp_path,monkeypatch):
+    from tessera import routed_fused
+    from tessera.serving import native_window
+    from experiments import bench_native_operator
+    published=native_window.DENSE_LANES[native_window.LANE_FUSED]
+    native=SimpleNamespace(lane=native_window.LANE_FUSED,launch_pair=(published[0],published[1]["epilogue"]))
+    binary=tmp_path/(routed_fused.MODULE_NAME_E4M3+'.so');binary.write_bytes(b'\x7fELF CPU fixture')
+    monkeypatch.setattr(routed_fused,'_ext',lambda *a:pytest.fail('observer invoked unused native loader'))
+    monkeypatch.setattr(bench_native_operator,'_mapped_shared_libraries',lambda:{binary})
+    raw=worker.canonical({'native_extensions':[{'module_name_prefix':routed_fused.MODULE_NAME_E4M3,'filename_glob':routed_fused.MODULE_NAME_E4M3+'*.so'}]})
+    assert worker.loaded_fused_binary(native,'TESSERA_FP8',raw)==worker.file_binding(binary)
+    monkeypatch.setattr(bench_native_operator,'_mapped_shared_libraries',lambda:set())
+    with pytest.raises(ValueError,match='already-loaded'):worker.loaded_fused_binary(native,'TESSERA_FP8',raw)

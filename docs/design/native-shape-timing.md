@@ -122,3 +122,10 @@ is published, and no PrismaQuant timing consumer or pin changes in this slice.
 The installed runtime uses its owning noneditable Git VCS metadata and full
 RECORD proof even when the image has no Git binary. Producer Git metadata
 never substitutes for that runtime commit.
+
+The first application slice requires the prepared owner's actual fused lane
+before timing. Its warm call must map exactly one ELF matching that native
+owner's published extension. The existing process-map observer binds those
+already-loaded bytes before and after sampling; it never calls a library
+loader merely to obtain evidence. Triton preparation is explicitly unsupported
+by this first ELF receipt slice, without changing that serving lane's admission.

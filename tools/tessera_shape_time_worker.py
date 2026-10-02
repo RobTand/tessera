@@ -124,6 +124,32 @@ def observe_runtime(expected, record_verifier=None):
   "serve_flags":{k:os.environ[k] for k in expected["serve_flags"] if k in os.environ}}
  if canonical(value)!=canonical(expected):raise ValueError("actually imported runtime differs from frozen expected context")
  return value,origins
+def require_fused_preparation(native, family):
+    """The first receipt slice observes only an actual ELF-backed fused owner."""
+    from tessera.serving import native_window
+    arithmetic=native_window.NATIVE_WINDOW_ARITHMETIC[family]
+    published=native_window.DENSE_LANES[native_window.LANE_FUSED]
+    pair=(published[0],published[1][arithmetic])
+    if native.lane!=native_window.LANE_FUSED or tuple(native.launch_pair)!=pair:
+        raise ValueError("first timing slice requires the prepared ELF-backed fused lane")
+    return pair
+
+
+def loaded_fused_binary(native, family, raw_contract):
+    """Observe existing process mappings; never invoke a native library loader."""
+    import fnmatch
+    from tessera import routed_fused
+    from experiments.bench_native_operator import _mapped_shared_libraries
+    require_fused_preparation(native,family)
+    prefix=routed_fused.MODULE_NAME_E4M3
+    contracts=[row for row in json_bytes(raw_contract)["native_extensions"] if row["module_name_prefix"]==prefix]
+    if len(contracts)!=1:raise ValueError("actual fused owner lacks one native binary declaration")
+    paths=[path for path in _mapped_shared_libraries() if fnmatch.fnmatch(path.name,contracts[0]["filename_glob"])]
+    if len(paths)!=1:raise ValueError("actual fused call has no unique already-loaded native ELF")
+    if not paths[0].read_bytes().startswith(b"\x7fELF"):raise ValueError("loaded native object is not ELF")
+    return file_binding(paths[0])
+
+
 def prepare_dense(request, wire):
     """The public plugin's create/load/finalize path, with explicit TP1 coordinates."""
     import torch
@@ -147,6 +173,7 @@ def prepare_dense(request, wire):
     layer.wire_bytes.data.copy_(source)
     method.process_weights_after_loading(layer)
     native = layer.tessera_native
+    require_fused_preparation(native,request["scheme"]["family"])
     shape = {"M": scope["shape"]["M"], "N": native.rows, "K": native.columns}
     if shape != scope["shape"] or (layer.tessera_shard_plan.tp_rank, layer.tessera_shard_plan.tp_size) != (0, 1):
         raise ValueError("actual native preparation differs from explicit shape/partition")
@@ -231,6 +258,7 @@ def _native_measure(job, output, job_source):
     actual_contract = contract.contract_path().read_bytes()
     pair = list(layer.tessera_native.launch_pair)
     if hashlib.sha256(actual_contract).hexdigest()!=request["expected_runtime"]["contract_sha256"]:raise ValueError("runtime contract changed before native call")
+    native_binary=loaded_fused_binary(layer.tessera_native,request["scheme"]["family"],actual_contract)
     trace = profile_call(call, output / "profile.trace.json.gz")
     sampler = PowerSampler();sampler.start()
     t0 = time.time()
@@ -250,10 +278,9 @@ def _native_measure(job, output, job_source):
         pending = {box: pool.submit(raw_netdata, host, t0, t1) for box, host in request["netdata_hosts"].items()}
         telemetry = {"interval_unix": [t0, t1], "fast_power_samples": [[t, w] for t, w in sampler.samples if t0 <= t <= t1],
                      "netdata": {box: future.result() for box, future in pending.items()}}
-    # Reuse the library already loaded during native preparation; no new build path.
-    from tessera import routed_fused
-    module = routed_fused._ext(routed_fused.library_for("e4m3"))
-    evidence = {"trace": trace, "native_binary": file_binding(module.__file__)}
+    if loaded_fused_binary(layer.tessera_native,request["scheme"]["family"],actual_contract)!=native_binary:
+        raise ValueError("actual loaded native ELF changed during measurement")
+    evidence = {"trace": trace, "native_binary": native_binary}
     documents = {"runtime": runtime, "runtime_origins": origins, "producer": producer, "preparation": prep,
                  "samples": {"samples_ms": samples, "warmup_iterations": request["sampling"]["warmup_iterations"], "interval_unix": [t0, t1]},
                  "routes": {"records": records}, "telemetry": telemetry}
