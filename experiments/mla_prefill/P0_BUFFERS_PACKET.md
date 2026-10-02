@@ -3,6 +3,16 @@
 Experiment-private, default-off. This is a **source-level ownership proof plus a
 CPU compile gate**, not a GPU result. No speed claim is made here.
 
+## Provenance
+
+* base: Tessera `82e674041680c3b74fdf381f868c9a16f4f8f576`, kernel
+  `1e7d34d2a4d112f7cd4bb76953da158d54236eab2d17aed6bc14129fcb66672d`
+* compile-gate source: `62dc8d0fd676...` (the resource table below was taken at
+  this revision, before the default-0 wrong-pass guard was added)
+* the frozen head adds only the mutant guard, which is `0` by default and so
+  compiles the same text; **the PB compile gate must be re-run on the frozen
+  hash** before the GPU protocol, and the table re-stamped from it.
+
 ## What changes
 
 `src/tessera/serving/csrc/mla_prefill_mg.cu`, guarded by one compile-time
