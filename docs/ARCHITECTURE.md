@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the opt-in mHC overlap exception lifetime.
+`TileOverlap` registers its input and reduction output on the side stream
+before the first enqueue and synchronizes outstanding side work before
+propagating any enqueue/consumer error. Successful per-tile event ordering
+and arithmetic remain unchanged. CPU event/allocator controls establish
+this exception contract; they do not qualify CUDA allocator reuse or a
+served override, and all opt-in/default/source gates remain unchanged.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`

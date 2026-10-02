@@ -1397,7 +1397,8 @@ def test_tile_overlap_orders_each_tile_after_its_reduce_and_equals_reduce_then_t
     side = [e for i, size in enumerate(sizes) for e in (("reduce", "side", size), ("record", "side", i + 1))]
     tail = [e for i, size in enumerate(sizes) for e in (("wait", "compute", i + 1), ("post", size))]
     assert log == head + side + tail
-    assert kept == [(x.data_ptr(), "side")]
+    assert len(kept) == 2 and kept[0] == (x.data_ptr(), "side")
+    assert kept[1][0] != x.data_ptr() and kept[1][1] == "side"
     assert len(events) == n + 1
     # Events are reused across calls.
     log.clear()
@@ -1504,7 +1505,6 @@ def test_tile_overlap_exception_joins_pending_work_before_allocation_reuse(monke
         pending.clear()
     overlap.side.synchronize = join
     if failure == "consume":
-        original = gp.tiled_fused_post_pre
         def consume(*args, **kwargs):
             kwargs["before_tile"](0, 3)
             raise RuntimeError("partial consumption")

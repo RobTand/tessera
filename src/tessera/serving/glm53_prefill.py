@@ -921,8 +921,9 @@ class TileOverlap:
     :meth:`run` returns (asserted), so no later collective on the communicator,
     issued on the compute stream, can run beside one of these; and the side
     stream starts only after everything the compute stream issued before.
-    ``x``'s memory is kept for the side stream (``keep``) because the caller
-    drops ``x`` right after.  Events are reused: a wait binds the record that
+    Both ``x`` and ``out`` are registered on the side stream before any
+    asynchronous enqueue. An enqueue/consumer failure synchronizes that stream
+    before propagating, including a partial enqueue with no recorded tile event.  Events are reused: a wait binds the record that
     precedes it.
     """
 
@@ -947,27 +948,34 @@ class TileOverlap:
         num_tokens = x.shape[0]
         starts = list(range(0, num_tokens, tile))
         out = torch.empty_like(x)  # allocated before the ready mark: the side stream waits past its old uses
-        ready = self._event(0)
-        ready.record(compute)
-        side.wait_event(ready)
-        for i, a in enumerate(starts):
-            b = min(num_tokens, a + tile)
-            self.reduce_into(x[a:b], out[a:b], side)
-            self._event(i + 1).record(side)
         self.keep(x, side)
-        waited: list[int] = []
+        self.keep(out, side)
+        try:
+            ready = self._event(0)
+            ready.record(compute)
+            side.wait_event(ready)
+            for i, a in enumerate(starts):
+                b = min(num_tokens, a + tile)
+                self.reduce_into(x[a:b], out[a:b], side)
+                self._event(i + 1).record(side)
+            waited: list[int] = []
 
-        def before_tile(a: int, b: int) -> None:
-            i = a // tile
-            compute.wait_event(self._event(i + 1))
-            waited.append(i)
+            def before_tile(a: int, b: int) -> None:
+                i = a // tile
+                compute.wait_event(self._event(i + 1))
+                waited.append(i)
 
-        result = tiled_fused_post_pre(k, tile, out, residual, post, comb, fn, scale, base, rms_eps,
-                                      hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value,
-                                      sinkhorn_repeat, norm_weight=norm_weight, norm_eps=norm_eps,
-                                      before_tile=before_tile)
-        assert waited == list(range(len(starts))), (waited, len(starts))
-        return result
+            result = tiled_fused_post_pre(k, tile, out, residual, post, comb, fn, scale, base, rms_eps,
+                                          hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value,
+                                          sinkhorn_repeat, norm_weight=norm_weight, norm_eps=norm_eps,
+                                          before_tile=before_tile)
+            assert waited == list(range(len(starts))), (waited, len(starts))
+            return result
+        except BaseException:
+            # A reduction may enqueue and then raise, before its tile event exists.
+            # Join all side work before propagating an error or reusing allocations.
+            side.synchronize()
+            raise
 
 
 def _dispatches_cuda(op: Any) -> bool:
