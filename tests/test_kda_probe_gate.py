@@ -24,16 +24,17 @@ def probe(monkeypatch):
     return module
 
 
-@pytest.mark.parametrize("failed_field", ["served", "fma", "ex2", "div", None])
+@pytest.mark.parametrize("failed_field", ["served", "fma", "ex2", "div", "missing", None])
 def test_main_propagates_numerical_admission_failure(probe, monkeypatch, tmp_path, failed_field):
     result = {
         "served_bit_equal_all": failed_field != "served",
-        "mutants_seen": {
-            "mutant_two_roundings_per_tap": failed_field != "fma",
-            "mutant_ex2_ftz": failed_field != "ex2",
-            "mutant_div_rn": failed_field != "div",
-        },
+        "mutants_seen": {name: True for mode, name in probe.KDA_PTX_MODES.items() if mode},
     }
+    bad = {"fma": "mutant_two_roundings_per_tap", "ex2": "mutant_ex2_ftz", "div": "mutant_div_rn"}
+    if failed_field in bad:
+        result["mutants_seen"][bad[failed_field]] = False
+    elif failed_field == "missing":
+        result["mutants_seen"].pop("mutant_ex2_ftz")
     monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
     monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path),
                                       "--parts", "kdaptx", "--numerics-only"])
