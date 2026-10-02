@@ -1529,7 +1529,9 @@ def test_tile_overlap_registers_both_allocations_before_the_first_enqueue():
     def reduce_into(src, dst, stream):
         assert len(retained) == 2, "input/output were not registered before asynchronous enqueue"
         assert retained[0] == (x.data_ptr(), "side")
-        assert retained[1] == (dst.data_ptr(), "side")
+        # Registration owns the whole output allocation; later tiles are offset views.
+        assert retained[1][1] == "side"
+        assert retained[1][0] <= dst.data_ptr() < retained[1][0] + x.numel() * x.element_size()
         dst.copy_(src * 2)
     overlap.reduce_into = reduce_into
     overlap.run(_TileKernels(), 3, x, inputs["residual"], inputs["post_layer_mix"],
