@@ -789,9 +789,80 @@ def kdaex2_gate_errors(control: dict) -> list[str]:
         return ["ex2 equivalence control absent, malformed, or artifacts unavailable"]
 
 
+def kdaptx_case_gate_errors(screen: dict) -> list[str]:
+    """Derive admission summaries from the complete fixed screen's raw-word comparisons."""
+    try:
+        if (type(screen["p"]) is not int or screen["p"] != KDA_P or
+                type(screen["width"]) is not int or screen["width"] != KDA_WIDTH):
+            return ["KDA case geometry differs from the current screen"]
+        expected = {(layout, state_len, name): (list(lens), list(has))
+                    for layout in ("SD", "DS") for state_len in (KDA_WIDTH - 1, KDA_WIDTH + 2)
+                    for name, lens, has, *_ in KDA_PTX_CASES}
+        rows = screen["cases"]
+        if not isinstance(rows, list) or len(rows) != len(expected):
+            return ["KDA case roster is absent or incomplete"]
+        visited = set()
+        exact_output, exact_state = True, True
+        observed = {label: False for mode, label in KDA_PTX_MODES.items() if mode}
+
+        def count(record, maximum):
+            n = record["bits_differing"]
+            if type(n) is not int or not 0 <= n <= maximum or record["bit_equal"] is not (n == 0):
+                raise ValueError("KDA raw-word comparison count/flag is inconsistent")
+            return n
+
+        for row in rows:
+            key = (row["layout"], row["state_len"], row["case"])
+            if key not in expected or key in visited:
+                return ["KDA case roster contains an unexpected or duplicate cell"]
+            visited.add(key)
+            lens, has = expected[key]
+            if (row["lens"] != lens or row["has"] != has or
+                    any(type(v) is not int for v in row["lens"]) or
+                    any(type(v) is not bool for v in row["has"])):
+                return ["KDA case inputs differ from the current screen"]
+            output_max = sum(lens) * 3 * KDA_P
+            state_max = (len(lens) + 2) * 3 * KDA_P * row["state_len"]
+            reference = row[KDA_PTX_MODES[0]]
+            ref_output = count(reference, output_max)
+            ref_state = count(reference["conv_state"], state_max)
+            exact_output &= ref_output == 0
+            exact_state &= ref_state == 0
+            for mode, label in KDA_PTX_MODES.items():
+                cell = row[label]
+                output, state = count(cell, output_max), count(cell["conv_state"], state_max)
+                if set(cell["qkv"]) != {"q", "k", "v"} or sum(count(cell["qkv"][k], output_max // 3)
+                                                            for k in ("q", "k", "v")) != output:
+                    raise ValueError("KDA merged q/k/v count disagrees with slice counts")
+                if mode:
+                    relative_output = count(cell["vs_candidate"], output_max)
+                    relative_state = count(cell["state_vs_candidate"], state_max)
+                    if ref_output == 0 and relative_output != output:
+                        raise ValueError("KDA mutant output comparisons contradict exact stock/candidate output")
+                    if ref_state == 0 and relative_state != state:
+                        raise ValueError("KDA mutant state comparisons contradict exact stock/candidate state")
+                    observed[label] |= relative_output > 0 or relative_state > 0
+        if visited != set(expected):
+            return ["KDA case roster is incomplete"]
+        errors = []
+        for field, derived in (("served_output_bit_equal_all", exact_output),
+                               ("served_conv_state_bit_equal_all", exact_state),
+                               ("served_bit_equal_all", exact_output and exact_state)):
+            if screen[field] is not derived:
+                errors.append(f"KDA {field} summary contradicts actual case comparisons")
+        if not exact_output or not exact_state:
+            errors.append("KDA actual output or convolution state differs from stock")
+        if screen["mutants_seen"] != observed or any(type(v) is not bool for v in screen["mutants_seen"].values()):
+            errors.append("KDA mutation summary contradicts actual case comparisons")
+        return errors
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ["KDA case evidence is absent, malformed, or comparison counts are inconsistent"]
+
+
 def kdaptx_gate_errors(screen: dict) -> list[str]:
     """v2: output/state mutation witnesses plus an active, erased ex2 intermediate."""
     errors = [] if screen.get("served_bit_equal_all") is True else ["served bitwise mismatch"]
+    errors.extend(kdaptx_case_gate_errors(screen))
     if screen.get("gate_contract") != KDA_GATE_CONTRACT:
         errors.append("KDA numerical gate contract mismatch")
     seen = screen.get("mutants_seen", {})

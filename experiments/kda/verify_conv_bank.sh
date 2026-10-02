@@ -4,6 +4,7 @@ set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); OLD=$(realpath "$3"); NEW=$(realpath "$4")
 BANK=$(realpath "$5"); CONTROL=$(realpath "$6")
 BANK_SHA=$7; CONTROL_SHA=$8
+OLD_MODULE_SHA=$9
 IMAGE_REF=${ORACLE_IMAGE:?immutable declared image required}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
@@ -25,5 +26,5 @@ exec docker run --rm --network none --cpuset-cpus "$CPUS" --user "$(id -u):$(id 
     /usr/local/cuda/bin/cuobjdump --extract-elf all "$2"
     cd "$1/new"
     /usr/local/cuda/bin/cuobjdump --extract-elf all "$3"
-    python3 /work/experiments/kda/verify_conv_bank.py "$1" "$4" "$5" "$6" "$7"
-  ' bash "$OUT" "$OLD" "$NEW" "$BANK" "$CONTROL" "$BANK_SHA" "$CONTROL_SHA"
+    python3 /work/experiments/kda/verify_conv_bank.py "$1" "$4" "$5" "$6" "$7" "$8"
+  ' bash "$OUT" "$OLD" "$NEW" "$BANK" "$CONTROL" "$BANK_SHA" "$CONTROL_SHA" "$OLD_MODULE_SHA"
