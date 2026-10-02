@@ -32,9 +32,10 @@ CLAIMS = {"time_claim": "operator_sum_proposal", "certifies_placement": False,
           "served_p95": "not_claimed"}
 RUNTIME_FIELDS = {"image", "tessera_commit", "serving_source_sha256", "contract_sha256",
                   "platform", "torch", "vllm", "serve_flags", "execution_mode",
-                  "residency", "tp_rank", "tp_degree"}
+                  "residency", "tp_rank", "tp_degree", "package_root"}
 EVIDENCE = {"runtime", "producer", "contract", "wire", "preparation", "samples",
-            "routes", "trace", "telemetry", "native_binary"}
+            "routes", "trace", "telemetry", "native_binary", "runtime_origins"}
+RUNTIME_MODULES = ("tessera", "tessera.serving.backend", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
 NETDATA_CONTEXTS = {"nvidia_smi.gpu_power_draw", "system.cpu", "system.load",
                     "mem.swapio", "mem.available"}
 
@@ -120,6 +121,8 @@ def timing_summary(samples):
 def runtime_context(value):
     _object(value, RUNTIME_FIELDS, "runtime")
     require_runtime_image(value["image"])
+    if not isinstance(value["package_root"], str) or not Path(value["package_root"]).is_absolute() or str(Path(value["package_root"])) != value["package_root"]:
+        raise ValueError("runtime.package_root requires an explicit absolute imported package path")
     _sha(value["tessera_commit"], "runtime.tessera_commit", 40)
     for field in ("serving_source_sha256", "contract_sha256"):
         _sha(value[field], "runtime." + field)
@@ -233,6 +236,17 @@ def _validate_panel(panel, *, expected_runtime):
         raise ValueError("raw contract differs from runtime")
     if json_bytes(raw["runtime"]) != runtime:
         raise ValueError("runtime identity evidence differs")
+    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules"}, "runtime origins")
+    if origins["package_root"] != runtime["package_root"]:
+        raise ValueError("runtime origin root differs")
+    _object(origins["modules"], RUNTIME_MODULES, "runtime module origins")
+    for name, bound in origins["modules"].items():
+        _object(bound, {"path", "bytes", "sha256"}, "runtime module origin")
+        expected_path = Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")
+        if bound["path"] != str(expected_path):
+            raise ValueError("runtime module origin differs: " + name)
+        _integer(bound["bytes"], "runtime module source bytes")
+        _sha(bound["sha256"], "runtime module source sha256")
     producer = _object(json_bytes(raw["producer"]), {"commit", "tool_source_sha256"}, "producer")
     _sha(producer["commit"], "producer.commit", 40)
     _sha(producer["tool_source_sha256"], "producer.tool_source_sha256")

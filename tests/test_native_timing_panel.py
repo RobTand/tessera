@@ -54,7 +54,7 @@ def panel(tmp_path, canonical_wire):
                "serving_source_sha256": "2" * 64, "contract_sha256": hashlib.sha256(packed_contract).hexdigest(),
                "platform": "sm_121", "torch": cell["runtime"]["torch"], "vllm": cell["runtime"]["vllm"],
                "serve_flags": {"TESSERA_SERVE_MODE": "resident"}, "residency": "resident",
-               "execution_mode": "eager", "tp_rank": 0, "tp_degree": 1}
+               "execution_mode": "eager", "tp_rank": 0, "tp_degree": 1, "package_root": "/CPU-fixture/tessera"}
     scope = {"route": scheme.TESSERA_FP8, "grid": "E4M3", "q256": 1024, "structure": "dense",
              "mode": "resident", "execution_mode": "eager", "regime": "batch", "tp_degree": 1,
              "requested_platform": "sm_121", "shape": {"M": 512, "N": 16, "K": 128}}
@@ -75,6 +75,7 @@ def panel(tmp_path, canonical_wire):
                              for box in ("sparky", "sparklina")}}
     evidence = {
         "runtime": save(tmp_path, "runtime.json", runtime),
+        "runtime_origins": save(tmp_path, "origins.json", {"package_root": runtime["package_root"], "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")), "bytes": 1, "sha256": "a"*64} for name in tp.RUNTIME_MODULES}}),
         "producer": save(tmp_path, "producer.json", {"commit": "3" * 40, "tool_source_sha256": "4" * 64}),
         "contract": save(tmp_path, "contract.json", packed_contract, True),
         "wire": save(tmp_path, "wire.bin", blob, True),

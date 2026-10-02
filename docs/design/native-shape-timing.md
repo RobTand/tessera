@@ -40,9 +40,12 @@ Both Sparks' raw power/CPU/load/swap/available-memory contexts and fast
 power samples retain the timed interval. Energy remains `hold` for
 cross-host clock alignment (PB #1440); no work/J claim is accepted.
 
-Every new Python source changes the package source identity. Current
-b40/v42 panels are not rewritten, and a new runtime/census must be frozen
-and accepted before a native GPU pilot or any measured panel is admitted.
+Deploying these new Python sources as a runtime changes its package identity.
+The repository producer instead loads its own passive schema in a separate
+process while the native worker imports an independently pinned installed
+runtime. An unchanged b40/v45 runtime retains its original cells; current
+b40/v42 panels are not rewritten or relabeled. A GPU pilot still requires
+separate acceptance of the exact observed runtime and requested cell.
 CPU stand-ins validate this contract without claiming GPU execution.
 
 `tools/tessera_shape_time_panel.py` is the supported repository application.
@@ -57,15 +60,19 @@ before publishing the final receipt. These controls do not establish numerical
 quality or end-to-end serving correctness.
 
 The request schema is `tessera.dense_shape_time_request.v1`, with exactly
-`schema`, `expected_runtime`, `scope`, `prefix`, `scheme`, `wire`, `sampling`
-and `netdata_hosts`. `scope` uses the existing native census request fields;
+`schema`, `expected_runtime`, `scope`, `prefix`, `scheme`, `wire`, `sampling`,
+`netdata_hosts`, `contract`, `runtime_python` and `worker_timeout_s`. The
+contract and runtime interpreter are absolute bound files; the contract is
+the pinned runtime's raw bytes. The timeout is an explicit positive integer. `scope` uses the existing native census request fields;
 `scheme` is the existing dense wire declaration and `wire` is a bound file.
 `sampling` names integer `samples >= 3`, integer `warmup_iterations >= 1`,
 integer `seed >= 0` and finite positive `steady_s`. `netdata_hosts` explicitly
 names both `sparky` and `sparklina`. No topology or runtime is inferred.
-Preflight requires the exact packaged contract digest and a possible positively
+Preflight requires the exact independently bound runtime contract digest and a possible positively
 backed cell/wire join; the actual native pair must join again after preparation.
 
+`expected_runtime.package_root` explicitly binds the actual installed package
+path. A bound `runtime_origins` artifact records its required module files.
 The actual imported Tessera package supplies its commit through a clean,
 tracked Git checkout or VCS installation metadata owning that imported file.
 The launcher image declaration, package source digest, raw contract digest,
@@ -75,7 +82,17 @@ closure. Neither identity substitutes for the other. `native_packed_bytes`
 records the existing prepared object's named tensor byte sum, including views;
 it is not a deduplicated whole-process residency measurement.
 
-CUDA-event sampling reuses `tools.a4_measure.time_call`; profiling uses
+The producer reuses `step4_capture_launch.run_phase` to launch one native
+subprocess in the existing admitted action, with inherited CPU affinity and
+thread bounds. Its argv removes `PYTHONPATH` and uses the explicit interpreter
+with `-I -B`. The native worker adds repository tools, never repository `src`,
+and refuses a foreign package root, Python path or cached runtime owner. All
+required module origins are recorded; package source and raw contract must
+match at entry before CUDA setup and again at exit. Its versioned job/result
+files bind worker source, request and evidence. The existing
+`bench_native_operator.native_runtime_context` owns TP1 setup/teardown.
+
+CUDA-event sampling reuses `bench_native_operator.time_apply`; profiling uses
 `torch.profiler`; fast power and raw Netdata reuse the existing instruments.
 The requested steady interval supplies useful native calls for box observation,
 not additional timing prices. Raw responses must contain result samples.
@@ -84,6 +101,7 @@ before its durable publication. Only then may repository tooling report one
 committed PB publish unit. The package validator has no PB dependency.
 
 This application has CPU controls only until a separately accepted native
-GPU pilot qualifies the complete path. Its source changes invalidate the old
-runtime-source join. No existing b40/v42 or other cell is relabeled, no census
+GPU pilot qualifies the complete path. The producer commit and schema origin are independent from the worker
+runtime's source; no unchanged pinned runtime requires requalification solely
+for a new producer checkout. No existing b40/v42 or other cell is relabeled, no census
 is published, and no PrismaQuant timing consumer or pin changes in this slice.
