@@ -162,13 +162,15 @@ def snapshot(tmp_path, altered=False):
     return cas, {"inputs": [entry], "params": {"checkout_snapshot": {"commit": commit, "input": entry}}}
 
 
-def test_authenticated_runner_snapshot_is_required(tmp_path):
+def test_authenticated_runner_snapshot_is_required(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     cas, payload = snapshot(tmp_path, altered=True)
     with pytest.raises(ValueError, match="runner source differs"):
         owner.source_bound(payload, cas)
 
 
-def test_an_unchanged_authenticated_snapshot_is_read(tmp_path):
+def test_an_unchanged_authenticated_snapshot_is_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     cas, payload = snapshot(tmp_path)
     owner.source_bound(payload, cas)
     entry = payload["inputs"][0]
@@ -179,6 +181,7 @@ def test_an_unchanged_authenticated_snapshot_is_read(tmp_path):
 
 
 def test_resume_keeps_existing_binding_and_verifies_runner_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     module = merge_module()
     cas, payload = snapshot(tmp_path)
     surface = tmp_path / "surface" / "surface.gpu.json"
