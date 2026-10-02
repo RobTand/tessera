@@ -193,12 +193,29 @@ def scan_jit_extension_loads(src: Path, roots: list[str]) -> list[dict[str, obje
                          and func.value.id.endswith("cpp_extension"))))
             if not hit:
                 continue
-            sites.append({
-                "module": module,
-                "line": node.lineno,
-                "name": _producible_name(_name_argument(node), tree, node.lineno),
-            })
+            name = _producible_name(_name_argument(node), tree, node.lineno)
+            if (name is not None and isinstance(func, ast.Attribute)
+                    and func.attr in _LOADER_ATTRS):
+                # A loader attribute takes a PATH, and a glob is matched
+                # against the BASENAME of a mapped library (``match``), so the
+                # name a site declares is the basename without its suffix.
+                name = name.rsplit("/", 1)[-1].removesuffix(".so")
+            sites.append({"module": module, "line": node.lineno, "name": name})
     return sites
+
+
+def _declared_libraries() -> list[dict[str, object]]:
+    """Every library the contract publishes, from BOTH blocks that publish one."""
+    return [*ext.NATIVE_EXTENSIONS,
+            *(entry["library"] for entry in ext.STOCK_KERNEL_OVERRIDES if entry["library"])]
+
+
+def _undeclared(sites: list[dict[str, object]],
+                libraries: list[dict[str, object]]) -> list[dict[str, object]]:
+    """The readable load sites whose library no published glob matches."""
+    globs = [library["filename_glob"] for library in libraries]
+    return [s for s in sites if s["name"] is not None
+            and not any(fnmatch.fnmatch(f"{s['name']}.so", g) for g in globs)]
 
 
 def _serving_modules() -> list[str]:
@@ -278,27 +295,25 @@ def test_every_native_load_reachable_from_serving_is_declared():
     sites = scan_jit_extension_loads(SRC, _serving_modules())
     assert sites, ("the scan found no native load site at all; the walk is broken, and a "
                    "scan that finds nothing agrees with every table")
-    globs = [entry["filename_glob"] for entry in ext.NATIVE_EXTENSIONS]
     unreadable = [s for s in sites if s["name"] is None]
     assert not unreadable, (
         f"cannot statically read the module name at {unreadable}; a JIT loader that hides its "
         "name from a reader hides it from every consumer of this contract")
-    undeclared = [s for s in sites
-                  if not any(fnmatch.fnmatch(f"{s['name']}.so", g) for g in globs)]
+    undeclared = _undeclared(sites, _declared_libraries())
     assert not undeclared, (
         f"{undeclared} is loadable from tessera.serving and is not in "
-        "runtime_contract.json's native_extensions. Either it belongs there -- a library that "
-        "can be resident in a serving process is a library a fingerprint must be able to see -- "
-        "or the route that reaches it should not.")
+        "runtime_contract.json's native_extensions or stock_kernel_overrides. Either it belongs "
+        "there -- a library that can be resident in a serving process is a library a "
+        "fingerprint must be able to see -- or the route that reaches it should not.")
 
 
 def test_every_declared_extension_is_actually_loadable_from_serving():
     """The other direction: no entry outlives the code that loaded it."""
     sites = scan_jit_extension_loads(SRC, _serving_modules())
-    for entry in ext.NATIVE_EXTENSIONS:
-        assert any(fnmatch.fnmatch(f"{s['name']}.so", entry["filename_glob"])
+    for library in _declared_libraries():
+        assert any(fnmatch.fnmatch(f"{s['name']}.so", library["filename_glob"])
                    for s in sites if s["name"]), (
-            f"{entry['filename_glob']} is published and no reachable code loads it")
+            f"{library['filename_glob']} is published and no reachable code loads it")
 
 
 # --- the scanner itself has teeth ---------------------------------------------
@@ -329,6 +344,43 @@ def test_the_scanner_finds_an_undeclared_loader_through_an_import(tmp_path):
                                      ["tessera.serving", "tessera.serving.route"])
     assert [(s["module"], s["name"]) for s in sites] == [
         ("tessera.smuggled", "tessera_smuggled")]
+
+
+def test_an_undeclared_ctypes_loader_reachable_from_serving_is_still_undeclared(tmp_path):
+    """The mutant, for the second block: reading stock_kernel_overrides widens
+    what counts as declared, and must not widen it to everything.
+
+    A ``ctypes.CDLL`` of a library neither block publishes, reached from the
+    serving package the way an override's install path is, is undeclared
+    against the real published globs.  The same site counts as declared only
+    once a library with its glob is published.
+    """
+    root = tmp_path / "src" / "tessera"
+    (root / "serving").mkdir(parents=True)
+    (root / "__init__.py").write_text("")
+    (root / "serving" / "__init__.py").write_text(textwrap.dedent("""
+        def register():
+            from tessera.serving import smuggled_override
+            smuggled_override.install()
+    """))
+    (root / "serving" / "smuggled_override.py").write_text(textwrap.dedent("""
+        import ctypes
+
+        PREFIX = "tessera_smuggled_"
+
+        def install():
+            directory = cache_dir()
+            key = build_key()
+            return ctypes.CDLL(f"{directory}/{PREFIX}{key}.so")
+    """))
+    sites = scan_jit_extension_loads(tmp_path / "src", ["tessera.serving"])
+    assert [(s["module"], s["name"]) for s in sites] == [
+        ("tessera.serving.smuggled_override", "tessera_smuggled_0123456789abcdef")]
+    assert _undeclared(sites, _declared_libraries()) == sites
+    published = {"module_name_prefix": "tessera_smuggled_",
+                 "filename_glob": "tessera_smuggled_*.so",
+                 "match": ext.MATCH_BASENAME_FNMATCH, "source": "csrc/window_gemv.cu"}
+    assert _undeclared(sites, [*_declared_libraries(), published]) == []
 
 
 def test_the_scanner_refuses_a_load_site_it_cannot_read(tmp_path):
@@ -449,6 +501,139 @@ def test_a_fallback_block_that_answers_the_wrong_question_is_refused(
     monkeypatch.setattr(ext, "NATIVE_EXTENSIONS", contract["native_extensions"])
     with pytest.raises(ValueError, match=message):
         validate_serving_contract(contract)
+
+
+# --- the stock-kernel overrides block (contract v54) --------------------------
+
+def test_the_contract_publishes_exactly_the_overrides_this_build_installs():
+    contract = load_serving_contract()
+    assert contract["stock_kernel_overrides"] == list(ext.STOCK_KERNEL_OVERRIDES)
+
+
+def _override(**changes):
+    """A legible synthetic entry, built from files and modules this build has."""
+    entry = {
+        "kind": "attention_backend",
+        "overrides": {"backend": "FLASHINFER_MLA_SPARSE_SM120",
+                      "kernel": "sparse_mla_prefill_mg_kernel"},
+        "enabled_by": "TESSERA_SYNTHETIC_OVERRIDE",
+        "default": ext.OVERRIDE_DEFAULT_OFF,
+        "loaded_by": "tessera.serving.ext",
+        "library": {"module_name_prefix": "tessera_synthetic_override_",
+                    "filename_glob": "tessera_synthetic_override_*.so",
+                    "match": ext.MATCH_BASENAME_FNMATCH,
+                    "source": ext.WINDOW_GEMV_SOURCE},
+        "required_identity": ext.IDENTITY_BITWISE_VS_STOCK,
+        "evidence": [],
+    }
+    entry.update(changes)
+    return entry
+
+
+def _with_overrides(monkeypatch, *entries):
+    """The packaged contract carrying ``entries``, with the authority check stood
+    down so the STRUCTURE checks are reached (as for native_extensions above)."""
+    import copy
+
+    contract = copy.deepcopy(load_serving_contract())
+    contract["stock_kernel_overrides"] = list(entries)
+    monkeypatch.setattr(ext, "STOCK_KERNEL_OVERRIDES", contract["stock_kernel_overrides"])
+    return contract
+
+
+@pytest.mark.parametrize("changes", [
+    {},
+    {"library": None},
+    {"evidence": [{"gate": "served TR3", "receipt": "docs/measurements/x.md"}]},
+])
+def test_a_legible_override_is_admitted(monkeypatch, changes):
+    # Each synthetic installed table needs a fresh monkeypatch scope. Reading
+    # the real empty packaged contract while a prior synthetic table is still
+    # installed correctly fails its authority check.
+    validate_serving_contract(_with_overrides(monkeypatch, _override(**changes)))
+
+
+def test_a_missing_overrides_block_is_refused():
+    import copy
+
+    contract = copy.deepcopy(load_serving_contract())
+    del contract["stock_kernel_overrides"]
+    with pytest.raises(ValueError, match="missing.*stock_kernel_overrides"):
+        validate_serving_contract(contract)
+
+
+def test_an_override_this_build_does_not_install_is_refused():
+    import copy
+
+    contract = copy.deepcopy(load_serving_contract())
+    contract["stock_kernel_overrides"] = [_override()]
+    with pytest.raises(ValueError, match="not what this build installs"):
+        validate_serving_contract(contract)
+
+
+@pytest.mark.parametrize("changes, message", [
+    ({"kind": "unquantized_gemm"}, "kind is"),
+    ({"overrides": {"backend": "FLASHINFER_MLA_SPARSE_SM120"}}, r"overrides is missing \['kernel'\]"),
+    ({"overrides": {"backend": "X", "kernel": "k", "layer": "l"}}, "overrides carries unknown"),
+    ({"overrides": {"backend": "", "kernel": "k"}}, "must name the stock object"),
+    ({"enabled_by": "MLA_PREFILL"}, "enabled_by must be the TESSERA_"),
+    ({"default": "on"}, "default is 'on'"),
+    ({"loaded_by": "tessera.kernel_window_gemv"}, "loaded_by is"),
+    ({"required_identity": "allclose"}, "required_identity is 'allclose'"),
+    ({"evidence": {}}, "evidence must be a JSON array"),
+    ({"evidence": [{"gate": "served TR3"}]}, r"evidence\[0\] is missing \['receipt'\]"),
+    ({"library": {"module_name_prefix": "tessera_synthetic_override_",
+                  "filename_glob": "tessera_synthetic_override_*.so",
+                  "match": "prefix", "source": ext.WINDOW_GEMV_SOURCE}}, "match is"),
+    ({"library": {"module_name_prefix": "tessera_synthetic_override_",
+                  "filename_glob": "tessera_synthetic_override_*.so",
+                  "match": ext.MATCH_BASENAME_FNMATCH, "source": "csrc/absent.cu"}},
+     "not packaged with this build"),
+    # A prefix a native_extensions glob already matches: the window GEMV's
+    # glob is ``tessera_window_gemv*.so``.
+    ({"library": {"module_name_prefix": "tessera_window_gemv_prefill_",
+                  "filename_glob": "tessera_window_gemv_prefill_*.so",
+                  "match": ext.MATCH_BASENAME_FNMATCH, "source": ext.WINDOW_GEMV_SOURCE}},
+     "also matches"),
+])
+def test_an_illegible_override_is_refused(changes, message, monkeypatch):
+    with pytest.raises(ValueError, match=message):
+        validate_serving_contract(_with_overrides(monkeypatch, _override(**changes)))
+
+
+def test_one_flag_installs_one_override(monkeypatch):
+    second = _override(library={**_override()["library"],
+                                "module_name_prefix": "tessera_synthetic_second_",
+                                "filename_glob": "tessera_synthetic_second_*.so"})
+    with pytest.raises(ValueError, match="installs two overrides"):
+        validate_serving_contract(_with_overrides(monkeypatch, _override(), second))
+
+
+def test_the_install_path_is_held_to_its_published_entry(monkeypatch):
+    """``stock_kernel_override_refusal`` is the install path's whole permission."""
+    from tessera.serving.contract import stock_kernel_override_refusal
+
+    entry = _override()
+    contract = _with_overrides(monkeypatch, entry)
+    validate_serving_contract(contract)
+    asking = dict(kind=entry["kind"], overrides=entry["overrides"], loaded_by=entry["loaded_by"],
+                  library_prefix=entry["library"]["module_name_prefix"], contract=contract)
+    assert stock_kernel_override_refusal("TESSERA_SYNTHETIC_OVERRIDE", **asking) is None
+    assert "publishes no stock_kernel_overrides entry enabled by TESSERA_OTHER" in (
+        stock_kernel_override_refusal("TESSERA_OTHER", **asking))
+    for field, value in (("kind", "unquantized_linear"),
+                         ("overrides", {**entry["overrides"], "kernel": "another_kernel"}),
+                         ("loaded_by", "tessera.serving.glm53_nope"),
+                         ("library_prefix", "tessera_other_")):
+        reason = stock_kernel_override_refusal("TESSERA_SYNTHETIC_OVERRIDE",
+                                               **{**asking, field: value})
+        assert reason is not None and "this install would use" in reason, (field, reason)
+    # With no document passed, the PACKAGED contract is the one read, and it
+    # publishes nothing under the synthetic flag.
+    monkeypatch.undo()
+    assert stock_kernel_override_refusal(
+        "TESSERA_SYNTHETIC_OVERRIDE", kind="attention_backend", overrides={},
+        loaded_by="tessera.serving.ext", library_prefix=None) is not None
 
 
 # --- one source, one path (#134) ------------------------------------------------
