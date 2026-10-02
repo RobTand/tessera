@@ -71,3 +71,11 @@ also refused TP2 and a fully forged panel/observation/sample/proof set with
 matching hashes and no actual checker receipt. Root retains source acceptance
 and merge authority. This closes the bounded handoff acceptance, not parent
 #688, full PACT, quality, compiled, placement or served-latency qualification.
+
+Explicit compile checks for the panel tool, worker, timing validator and
+application controls passed through PB action
+`37a61fe4f0df933044f8b07bb71cb0fa5e6ce9ab22fa3477a96cca2ff8972863`,
+CAS receipt `cb09d4f7283e011e624e1849cb4a57529aa3ca8cdd1167b8f42b187df45ad33c`.
+It reserved one CPU and 1 GiB on dl380g10. A prior submission stopped before
+publication because the results document was added during snapshotting;
+it produced no action or execution result and is superseded by this check.
