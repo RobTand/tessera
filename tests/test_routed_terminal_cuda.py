@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import uuid
 
 import pytest
 import torch
@@ -46,10 +47,17 @@ def record_loaded_native(lib, library):
                 matches.append(line)
     assert matches, 'returned native module is not mapped from the hashed file inode'
     source = Path(rf.__file__).parent / 'serving/csrc/routed_fused_window.cu'
-    print('TERMINAL_NATIVE_IDENTITY ' + json.dumps(dict(
+    identity = dict(
         library=library, path=str(path), sha256=digest, pid=os.getpid(),
         source=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
-        executable_mappings=matches)), flush=True)
+        executable_mappings=matches)
+    directory = os.environ.get('TERMINAL_NATIVE_IDENTITY_DIR')
+    if directory:
+        target = Path(directory)
+        target.mkdir(parents=True, exist_ok=True)
+        with (target / (uuid.uuid4().hex + '.json')).open('x') as handle:
+            json.dump(identity, handle)
+    print('TERMINAL_NATIVE_IDENTITY ' + json.dumps(identity), flush=True)
 
 
 @pytest.mark.parametrize('library', ['value', 'e4m3', 'e4m3mma', 'e2m1'])

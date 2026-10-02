@@ -34,6 +34,25 @@ from test_routed_fused_window import (HIDDEN, LIBRARY_IDS, TOP_K, _bundles,  # n
 GLM_HIDDEN, GLM_TOP_K = 4096, 8
 
 
+@pytest.fixture(autouse=True)
+def _observe_mapped_native_library(request):
+    """Use #855's qualified file/inode observer for each exercised library."""
+    if not torch.cuda.is_available():
+        return
+    params = getattr(getattr(request.node, "callspec", None), "params", {})
+    library = params.get("lib", params.get("family"))
+    if library is None:
+        return
+    from test_routed_terminal_cuda import record_loaded_native
+
+    if library == "e2m1":
+        from tessera import routed_fused_e2m1
+        extension = routed_fused_e2m1._ext()
+    else:
+        extension = rf._ext(library)
+    record_loaded_native(extension, library)
+
+
 def _stock(lib, routed, shared, top_k):
     """token_sum, then the runner's add."""
     fused = torch.empty(shared.shape, dtype=torch.bfloat16, device=shared.device)
