@@ -34,10 +34,11 @@ def test_disabled_stock_noop_writer_is_declined_before_any_rank_shards(disabled_
             return ranks.sp_reduce_scatter(x)
         ops.sp_available, ops.sp_reduce_scatter = available, rs
         forwarded.append(gp.make_forward(stock_forward, ops, gp.SpState("force", 8, 2), _NoCuda))
-    result = _run(ranks, forwarded, 8, passes=2)
-    assert all(torch.equal(a, b) for a, b in zip(reference, result)), "unwritten RS output reached model"
+    with pytest.raises(AssertionError, match="SP collective unavailable before activation"):
+        # The shared two-rank fixture reports its captured worker errors in an assertion.
+        _run(ranks, forwarded, 8, passes=2)
     assert writer_calls == [0, 0]
-    assert availability == [2, 2]
+    assert availability == [1, 1]
 
 
 def _dc():

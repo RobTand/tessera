@@ -458,7 +458,7 @@ def _ops(ranks, exact=lambda t, hidden, n: True):
     return NS(sp_shard=ranks.sp_shard, sp_all_gather=ranks.sp_all_gather,
               sp_reduce_scatter=ranks.sp_reduce_scatter, all_reduce=ranks.all_reduce,
               hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp,
-              sp_exact=exact, full_split=full_split)
+              sp_exact=exact, sp_available=lambda: True, full_split=full_split)
 
 
 class _NoCuda:

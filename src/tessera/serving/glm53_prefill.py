@@ -131,7 +131,7 @@ from types import SimpleNamespace
 from typing import Any, Callable
 
 from .stock_interface import InspectedInterface as _Interface
-from .stock_interface import import_modules, match_modules, module_digest as _sha256
+from .stock_interface import import_modules, match_modules, module_digest as _sha256, stock_attribute
 
 _log = logging.getLogger(__name__)
 
@@ -150,6 +150,12 @@ SP_MODULES = (
     "vllm.model_executor.kernels.mhc.tilelang",
     "vllm.model_executor.layers.mhc",
     "vllm.utils.deep_gemm",
+    # SP's selected collective must have an active writer, not merely an object.
+    "vllm.distributed.device_communicators.cuda_communicator",
+    "vllm.distributed.device_communicators.all_reduce_utils",
+    "vllm.distributed.device_communicators.pynccl",
+    "vllm.distributed.parallel_state",
+    "vllm.utils.torch_utils",
 )
 
 #: The token tile both pinned ``compute_num_split`` call sites pass as its grid,
@@ -173,6 +179,11 @@ _INTERFACES = (
         "204e19209db5b19eb3dd25ea6ae10c84425dee02ef5bc896eca3f83da6149a8e",
         "433d750a4d669ad468679b1faf0a3f1e846410198fb4a1eeee2d14cfe55e6a55",
         "3c6652c4fcf2a6aa2e8c95d52056c2d86355a057d1234715b2d4b14c052dfc61",
+        "2a0695d8b46757be83b38fe657df605ba0bfb2ef2dfa690c78c57419bbad0762",
+        "b41e3ab17e21d81c7516cbef29850b0096ad3efd73d23538300af652ffce42d6",
+        "4c51becc2ebfd41910526b93d7bd8e9e36312df444fdfb55fa2fbc92b0f8f88e",
+        "a33fc846e0f4e682a644ce712d862806ecfa12dca6e5f641806e2e7991cd0087",
+        "eab9ea0a3d3b9792fd7e3076cca1a3484031b22ce662baa7709cb5a68dc2115f",
     )),
 )
 
@@ -506,12 +517,15 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
         num_tokens = positions.shape[0]
         if post is None and self.layer_idx == 0:
             capturing = torch.cuda.is_current_stream_capturing()
-            if state.wants_measurement() and not capturing and state.declined is None:
+            available = not capturing and ops.sp_available()
+            if not capturing and not available:
+                raise RuntimeError("SP collective unavailable before activation")
+            if state.wants_measurement() and available and state.declined is None:
                 with state.lock:
                     if state.t_star is None:
                         measure_t_star(self, state, ops, torch, hidden_states.device)
             state.begin_pass(num_tokens, capturing,
-                             exact=ops.sp_exact(num_tokens, self.hidden_size, self.n))
+                             exact=available and ops.sp_exact(num_tokens, self.hidden_size, self.n))
         if not state.prepare(self):
             return stock_forward(self, positions, hidden_states, residual, post, comb)
         sp = state.pass_sp
@@ -596,13 +610,82 @@ def shard_split_exact(kernels: Any, deep_gemm: Any, tp_size: int, num_tokens: in
                for t in (num_tokens, shard))
 
 
+def sp_collective_decline(dc: Any, *, symmetric_ag_rs: Any) -> str | None:
+    """Require the pinned ordinary SP route's active TP2 PyNccl writer.
+
+    Custom/symmetric SP routes are outside this inspected route's qualification.
+    PyNccl's disabled methods are no-ops; suspended communicators cannot be used
+    before their collective resume. Unknown state is unavailable.
+    """
+    if dc is None or stock_attribute(dc, "world_size") != 2:
+        return "no TP2 device communicator"
+    if stock_attribute(dc, "ca_comm", object()) is not None:
+        return "custom SP communicator present or unknown"
+    if type(symmetric_ag_rs) is not bool or symmetric_ag_rs:
+        return "symmetric-memory SP enabled or unknown"
+    nccl = stock_attribute(dc, "pynccl_comm")
+    if (nccl is None or stock_attribute(nccl, "world_size") != 2
+            or stock_attribute(nccl, "available") is not True
+            or stock_attribute(nccl, "disabled") is not False
+            or stock_attribute(nccl, "_suspended") is not False):
+        return "PyNccl writer missing, disabled, suspended or unknown"
+    if any(not callable(stock_attribute(nccl, name)) for name in ("reduce_scatter", "all_gather")):
+        return "PyNccl SP methods unavailable"
+    return None
+
+
+class SpCollectiveGuard:
+    """Agree availability on the existing TP CPU group before each SP boundary.
+
+    The control group remains usable when the selected PyNccl writer is
+    disabled. A pass refuses before sharding; a transient fault after that
+    refuses both ranks before either enters a mismatched/no-op collective.
+    Capture uses stock all-reduces and never enters the SP control exchange.
+    The active writer's inputs, outputs and NCCL operation order are unchanged.
+    """
+    def __init__(self, *, route: Callable, agree: Callable, capturing: Callable):
+        self.route, self.agree, self.capturing = route, agree, capturing
+
+    def available(self) -> bool:
+        if self.capturing():
+            return False
+        try:
+            why = self.route()
+        except (AttributeError, OSError, TypeError, ValueError, AssertionError):
+            why = "unavailable communicator facts"
+        return self.agree(float(why is not None)) == 0
+
+    def call(self, fn: Callable, x: Any) -> Any:
+        if self.capturing():
+            raise RuntimeError("SP collective is unavailable under graph capture")
+        if not self.available():
+            raise RuntimeError("SP collective unavailable before writer enqueue")
+        return fn(x)
+
+
 def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
-    model, _runner, _linear, seqpar, comm, kernels, _tilelang, _mhc_ops, deep_gemm = modules
+    (model, _runner, _linear, seqpar, comm, kernels, _tilelang, _mhc_ops, deep_gemm,
+     _cuda_comm, ar_utils, _pynccl, _parallel_state, _torch_utils) = modules
     import torch
 
     from vllm.distributed import get_tp_group
 
     forcer = install_split_forcer(kernels)
+
+    def route():
+        return sp_collective_decline(get_tp_group().device_communicator,
+                                     symmetric_ag_rs=ar_utils.should_nccl_symm_mem_ag_rs())
+
+    def agree(value: float) -> float:
+        # A CPU control exchange must not call the disabled writer it checks,
+        # introduce a CUDA capture node, or change the SP NCCL reduction order.
+        control = torch.tensor([int(value)], dtype=torch.int32)
+        torch.distributed.all_reduce(control, op=torch.distributed.ReduceOp.MAX,
+                                     group=get_tp_group().cpu_group)
+        return float(control.item())
+
+    guard = SpCollectiveGuard(route=route, agree=agree,
+                              capturing=torch.cuda.is_current_stream_capturing)
 
     def sp_exact(num_tokens: int, hidden: int, n: int) -> bool:
         return shard_split_exact(kernels, deep_gemm, tp_size, num_tokens, hidden, n)
@@ -617,11 +700,13 @@ def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
         return math.inf if out >= big else out
 
     return SimpleNamespace(
-        sp_shard=seqpar.sp_shard, sp_all_gather=seqpar.sp_all_gather,
-        sp_reduce_scatter=seqpar.sp_reduce_scatter,
+        sp_shard=seqpar.sp_shard,
+        sp_all_gather=lambda x: guard.call(seqpar.sp_all_gather, x),
+        sp_reduce_scatter=lambda x: guard.call(seqpar.sp_reduce_scatter, x),
         all_reduce=comm.tensor_model_parallel_all_reduce,
         hc_expand=model.hc_expand, hc_contract=model.hc_contract,
-        max_across_tp=max_across_tp, sp_exact=sp_exact, full_split=forcer.full_batch)
+        max_across_tp=max_across_tp, sp_exact=sp_exact, sp_available=guard.available,
+        full_split=forcer.full_batch)
 
 
 _INSTALLED: dict[str, Any] = {}
