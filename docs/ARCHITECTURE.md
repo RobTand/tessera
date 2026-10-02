@@ -1,5 +1,23 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the default-off paired-K32 routed experiment (#857).
+The existing E4M3 MMA build owner accepts the explicit compile flag
+`TESSERA_ROUTED_FUSED_PAIRED_K32=1`. Only routed fused gate/up or down,
+one-run R4 with its exact eight-word slot, BMT128, K divisible by64 and
+at least192, and input rows at least512 select it. Other calls retain the
+original specialization. Two paired words/history slots feed two paired
+A/B slots, one producer/consumer handoff per two unchanged logical K32
+microsteps. Per-accumulator MMA order, wire, route ownership and epilogue
+remain the source contract. The existing shared-size owner binds the
+live-device check, exact-function opt-in and launch to76,240B gate/up or
+59,664B down. Cumulative paired parity persists across items; at least
+three pairs protect descriptor and row-scale reads after the last EMPTY.
+The terminal EMPTY acknowledgment from #855 remains a separate prerequisite.
+This standalone experimental source uses legacy resident addressing.
+CPU admission/lifetime controls and native compilation are preliminary;
+no GPU numerical, serving, timing, energy, default, cell or pin qualification
+follows. See `measurements/2026-10-02-paired-k32-compile.md`.
+
 Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
 slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
 dense TP1 eager/resident operator, requiring canonical wire/container
