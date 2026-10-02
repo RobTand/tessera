@@ -229,3 +229,31 @@ Using the existing script-local helper import passed PB
 `42c766bd57f1561ea42f5055f16f620b5e9bd2fe06e93fea9f67f3e8912f3771`, one
 CPU pass, zero skips/missing collection. The entry refused the missing protocol
 before device access. Numeric, timing and profiling execution are still held.
+
+## Frozen observer and cold dependencies
+
+The real production adapter is frozen. The original PM observer tried to set
+its `_launch` field; a CPU control using the actual production class reproduced
+six failures with `FrozenInstanceError` in PB
+`740856dc8360ac3daac92b51de1a349941b3fc9637e651c6f9ab58b8ea885e31`.
+The observer now uses the same exact-instance guarded class seam as the paired
+owner (`827abb48d787506c4fcc2295a9d0eeda4f0fc48e`), forwards the original calls
+and restores the class method in `finally`. It never mutates adapter fields.
+The CPU control reaches mode0/1/2 and covers a foreign instance, missing or
+duplicate roles, wrong family and forward exceptions.
+
+The direct wrapper reuses the qualified pure-Python runner mounted by
+`3c3b73ca49ed9b9731efa8be0fcd9ac646eae580`; its actual source remains the
+#855 shipping GPU43 runner. The old PM wrapper failed the mount/PYTHONPATH
+control in PB `8c43910d26d0c607c9cfcc53d295cdf627006ad0ff9eb0458eeaba844aadcc17`.
+The corrected observer, wrapper and existing argument checks passed PB
+`468f8f4551ecce68554092fbc99383cd1ced2c360a9aff267ed639cbfb6e2022`:
+33 CPU passes, zero skips/missing collection, two xdist workers, native1.
+The cleanup/time/pressure owner remains the existing external
+`paired_k32_action.run_direct_arm` and `owned_cleanup`, now bound to the exact
+qualified `3c3b73` bytes containing `e3234180a8b5f4d1bd3743ae556d2f18e68e86e1`:
+only an exact owned-CID absence is accepted, case is normalized, and cleanup
+survives the poll/signal ProcessLookupError race. Its prior focused 50-check PB
+qualification is reused, not repeated. No native build or GPU run was made.
+The original numeric packet is retained as an unlaunched, superseded input;
+updated execution uses a separate v2 protocol and window packet.

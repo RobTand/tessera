@@ -480,6 +480,38 @@ def require_single_replay_options(args, *, stubbed=False):
         raise ValueError("artifact/staged-input overrides require the exact single replay")
 
 
+def numeric_outputs(fn, xa):
+    """Observe the real frozen adapter's class seam for this one instance."""
+    import torch
+    from tessera import routed_fused as rf
+
+    native = fn.native
+    if type(native) is not rf.FusedRoutedWindowMoE or native.library != "e4m3mma":
+        raise ValueError("comparison requires the actual frozen E4M3 MMA adapter")
+    owner = type(native)
+    original = owner._launch
+    captured_outputs = {}
+    def bits(tensor):
+        return tensor.detach().contiguous().view(torch.uint8).cpu()
+    def observe(instance, mode, *a, **kw):
+        original(instance, mode, *a, **kw)
+        if instance is not native:
+            return
+        key = "mode" + str(mode)
+        if mode not in (0, 1, 2) or key in captured_outputs:
+            raise ValueError("comparison must expose each routed reader mode once")
+        captured_outputs[key] = bits(kw["out"])
+    owner._launch = observe
+    try:
+        captured_outputs["forward"] = bits(fn(*xa))
+        captured_outputs["mode1"] = bits(native.gate_up(*xa))
+    finally:
+        owner._launch = original
+    if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
+        raise ValueError("comparison did not observe every routed reader mode")
+    return captured_outputs
+
+
 def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, native_owner):
     """Finite numeric or ABBA phase using this benchmark's existing owners."""
     from pathlib import Path
@@ -539,23 +571,6 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
 
     def bits(tensor):
         return tensor.detach().contiguous().view(torch.uint8).cpu()
-
-    def numeric_outputs(fn, xa):
-        native = fn.native
-        original = native._launch
-        captured_outputs = {}
-        def observe(mode, *a, **kw):
-            original(mode, *a, **kw)
-            captured_outputs["mode" + str(mode)] = bits(kw["out"])
-        native._launch = observe
-        try:
-            captured_outputs["forward"] = bits(fn(*xa))
-            captured_outputs["mode1"] = bits(native.gate_up(*xa))
-        finally:
-            del native._launch
-        if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
-            raise ValueError("comparison did not observe every routed reader mode")
-        return captured_outputs
 
     results = []
     power = PowerSampler() if phase == "timing" else None
