@@ -89,39 +89,54 @@ def check_case(lib, ext, data, tokens, seed):
                 bitwise=all(r["differing"] == 0 for r in runs) and not failures)
 
 
-def sass_check(base_source, out_dir):
+def sass_report_admits(rows):
+    """The fold's gate: unchanged existing sequences and only its added kernel."""
+    return (set(rows) == set(SASS_LIBRARIES)
+            and all(not r.get("multiset") and not r.get("differs")
+                    and not r.get("only_before")
+                    and len(r.get("only_after", [])) == 1
+                    and "token_sum_shared_kernel" in r["only_after"][0]
+                    for r in rows.values()))
+
+
+def sass_check(base_source, out_dir, before_dump=None, after_dump=None):
     tool = os.path.join(ROOT, "experiments", "t4_code", "sass_dump.py")
     new_source = os.path.join(ROOT, "src", "tessera", "serving", "csrc", "routed_fused_window.cu")
     rec = dict(base_source=base_source,
                base_sha256=hashlib.sha256(open(base_source, "rb").read()).hexdigest(),
                new_sha256=hashlib.sha256(open(new_source, "rb").read()).hexdigest())
-    env = dict(os.environ)
-    env["PATH"] = os.pathsep.join([env.get("PATH", ""), "/usr/local/cuda/bin"])
-    for tag, src in (("before", base_source), ("after", new_source)):
-        dump = subprocess.run([sys.executable, tool, "dump", "--source", src,
-                               "--libraries", ",".join(SASS_LIBRARIES),
-                               "--out", os.path.join(out_dir, f"sass-{tag}")],
-                              capture_output=True, text=True, env=env)
-        rec[f"dump_{tag}_rc"] = dump.returncode
-        rec[f"dump_{tag}_tail"] = (dump.stdout + dump.stderr)[-2000:]
-        if dump.returncode:
-            rec["passed"] = False
-            return rec
+    if (before_dump is None) != (after_dump is None):
+        raise ValueError("retained SASS dumps require both before and after directories")
+    if before_dump is None:
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([env.get("PATH", ""), "/usr/local/cuda/bin"])
+        before_dump, after_dump = (os.path.join(out_dir, f"sass-{tag}")
+                                   for tag in ("before", "after"))
+        for tag, src, target in (("before", base_source, before_dump),
+                                 ("after", new_source, after_dump)):
+            dump = subprocess.run([sys.executable, tool, "dump", "--source", src,
+                                   "--libraries", ",".join(SASS_LIBRARIES),
+                                   "--out", target], capture_output=True, text=True, env=env)
+            rec[f"dump_{tag}_rc"] = dump.returncode
+            rec[f"dump_{tag}_tail"] = (dump.stdout + dump.stderr)[-2000:]
+            if dump.returncode:
+                rec["passed"] = False
+                return rec
+    else:
+        # These are the existing SASS owner's JSON dumps parsed from retained,
+        # identity-bound ELF disassemblies. Never rebuild either arm here.
+        rec["mode"] = "retained_dso_sass"
+        rec["retained_dumps"] = dict(before=before_dump, after=after_dump)
     report = os.path.join(out_dir, "sass-compare.json")
-    cmp = subprocess.run([sys.executable, tool, "compare", os.path.join(out_dir, "sass-before"),
-                          os.path.join(out_dir, "sass-after"), "--json", report],
+    cmp = subprocess.run([sys.executable, tool, "compare", before_dump,
+                          after_dump, "--json", report],
                          capture_output=True, text=True)
     rec["compare_rc"] = cmp.returncode
     rec["compare_stdout"] = cmp.stdout[-4000:]
     rows = json.load(open(report)) if os.path.exists(report) else {}
     added = sorted({k for r in rows.values() for k in r.get("only_after", [])})
     rec["only_after"] = added
-    rec["passed"] = (cmp.returncode == 0 and set(rows) == set(SASS_LIBRARIES)
-                     and all(not r.get("multiset") and not r.get("differs")
-                             and not r.get("only_before")
-                             and len(r.get("only_after", [])) == 1
-                             and "token_sum_shared_kernel" in r["only_after"][0]
-                             for r in rows.values()))
+    rec["passed"] = cmp.returncode == 0 and sass_report_admits(rows)
     return rec
 
 
@@ -167,7 +182,11 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--reps", type=int, default=50)
     ap.add_argument("--base-source", help="the parent commit's routed_fused_window.cu, for the SASS check")
+    ap.add_argument("--sass-before", help="retained baseline ELF SASS dump directory")
+    ap.add_argument("--sass-after", help="retained candidate ELF SASS dump directory")
     args = ap.parse_args()
+    if bool(args.sass_before) != bool(args.sass_after) or (args.sass_before and not args.base_source):
+        ap.error("retained SASS requires --sass-before, --sass-after and --base-source together")
     os.makedirs(args.out, exist_ok=True)
     sys.path.insert(0, os.path.join(ROOT, "tests"))
     from tessera import routed_fused as rf
@@ -198,7 +217,7 @@ def main():
     log["all_bitwise"] = bool(results) and all(r.get("bitwise") for r in results)
     if args.base_source:
         try:
-            log["sass"] = sass_check(args.base_source, args.out)
+            log["sass"] = sass_check(args.base_source, args.out, args.sass_before, args.sass_after)
         except Exception as exc:
             log["sass"] = dict(passed=False, error=f"{type(exc).__name__}: {exc}")
         print("SASS", "PASS" if log["sass"].get("passed") else "FAIL",

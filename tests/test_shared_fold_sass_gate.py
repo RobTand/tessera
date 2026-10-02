@@ -41,3 +41,33 @@ def test_sass_gate_requires_existing_instruction_sequences_unchanged(checker, mo
     base.write_text("// retained base source\n")
     record = checker.sass_check(str(base), str(tmp_path))
     assert record["passed"] is (nonidentical is None)
+
+
+def test_retained_sass_uses_the_same_gate_without_compiling(checker, monkeypatch, tmp_path):
+    rows = {lib: dict(identical=["token_sum_kernel"], multiset=[], differs=[], only_before=[],
+                      only_after=["token_sum_shared_kernel"])
+            for lib in checker.SASS_LIBRARIES}
+
+    def run(argv, **kwargs):
+        assert "dump" not in argv, "a retained baseline must never be rebuilt"
+        assert argv[argv.index("compare") + 1:argv.index("--json")] == ["retained-before", "retained-after"]
+        Path(argv[argv.index("--json") + 1]).write_text(json.dumps(rows))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(checker.subprocess, "run", run)
+    base = tmp_path / "base.cu"
+    base.write_text("// retained baseline source\n")
+    result = checker.sass_check(str(base), str(tmp_path), "retained-before", "retained-after")
+    assert result["passed"] is True
+    assert result["mode"] == "retained_dso_sass"
+
+
+def test_one_retained_sass_arm_is_refused_before_compilation(checker, monkeypatch, tmp_path):
+    def unexpected(*args, **kwargs):
+        raise AssertionError("incomplete retained inputs must not start a subprocess")
+
+    monkeypatch.setattr(checker.subprocess, "run", unexpected)
+    base = tmp_path / "base.cu"
+    base.write_text("// retained baseline source\n")
+    with pytest.raises(ValueError, match="both before and after"):
+        checker.sass_check(str(base), str(tmp_path), "retained-before", None)

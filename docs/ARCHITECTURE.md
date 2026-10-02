@@ -7465,6 +7465,8 @@ installs `serving.glm53_shared_fold`:
   existing-kernel SASS and served TR3 equality remain required qualification.
   The shared-fold driver requires identical existing instruction sequences;
   the generic SASS comparator's weaker multiset match cannot qualify this fold.
+  The same gate can read identity-bound JSON dumps parsed by the existing
+  SASS owner from retained baseline/candidate ELFs, avoiding baseline rebuilds.
   `token_sum` and every other kernel are unchanged.
   `FusedRoutedWindowMoE.__call__` takes a keyword-only `shared=`.
   The new binding refuses an output outside the routed tensor's CUDA device
