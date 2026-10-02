@@ -82,6 +82,17 @@ the declared CPUs with native threads one; all existing source, publication,
 device-allocation and missing-artifact gates remain in force. This changes no
 wire, serving route, runtime pin or artifact.
 
+Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
+(tessera#825). The plan converter and accounting gate use one repo-tooling
+import owner, `tessera._dev.accounting_source`. It binds the requested root
+to the canonical origin of both `prismaquant` and its `tessera_formats`
+module before reading prices. A foreign cached module or an unavailable
+explicit accountant refuses; no module is evicted and no pricing logic is
+copied. Same-origin cached modules retain the original accounting function.
+Different source versions need separate processes or one qualified compatible
+root; an unspecified accountant remains explicitly absent. No wire, serving
+route, runtime pin, numerical pricing rule or production default changes.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
