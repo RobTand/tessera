@@ -237,3 +237,36 @@ The unrelated discovered placement forwarding omission is corrected in
 `42b7c2851c`; it changes future descriptive metadata, not the historical
 operator receipt or results. The wrapper syntax and new runtime fixture were
 checked through CPU PB action `42bbab6f8d4e` without launching CUDA.
+
+## Actual vLLM runtime gate — completed 2026-10-02
+
+At source `2ef2708f2843ea808737d4e900511964ee08ca3e`, one direct vLLM-exempt
+run executed the existing two cases (512@512 and 2048@8192) in image5be on
+Sparky's GB10. Both passed with strict CUDA, zero skips/uncollected modules
+and two measured CUDA-allocation cases. Eager native output is bit exact
+against stock; capture and replay use stock and also match its output.
+The fixture calls the actual cached production factory and refuses compilation.
+The candidate DSO/manifest/Ninja hashes pass before and after loading. No new
+native build occurred, and no full-model throughput or quality claim follows.
+
+The direct outer command finished rc0 in 14.39 s (pytest 10.27 s), within the
+single 180 s attempt. Existing container ownership captured immutable ID
+`84bd56f8991a0e993f6d0b6023a87c92d8c96e44fd2cd69bd93cc73542881287`;
+final state records exit0, and inspection after cleanup says no such object.
+CPU affinity was physical core9, quota1/native1, with Docker aggregate memory
+16 GiB. The 4 GiB GPU footprint was an estimate, not an enforced GPU subset.
+
+Raw data: `runtime-v1/{surface.json,runtime.log,container-final.json}` under the
+same shared result root. Direct argv SHA-256:
+`b09f14e08abab18ea25c45eed358290954c0c4cb2e24702abe1751bcdab2937d`.
+`attention_comm/RUNTIME-PROTOCOL.json`, `RUNTIME-ENDING.json` and
+`RUNTIME-RESULT.json` retain the command, hashes, source and cleanup proof.
+
+The pytest surface's built-in Git identity is explicitly **unknown** because
+this worktree's Git metadata target is outside the read-only container mount.
+The alternative direct-run source binding is separate: the command requires
+clean exact host HEAD before launch, Docker's actual mount record binds that
+checkout read-only at `/work`, and unchanged HEAD plus eight relevant source
+files were verified against that commit immediately afterward. The raw surface
+is not relabeled as a verified PB snapshot. Root still owns full-model serving
+acceptance and activation; the optimization remains default-off.

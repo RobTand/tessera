@@ -100,7 +100,9 @@ The stock Q power-of-two scale rounding and arithmetic order remain intact.
 The opt-in native call uses the pass-buffer schedule; decode, mixed and
 capture guards remain unchanged. Its runtime GPU fixture exercises the actual
 cached factory with a retained DSO and refuses compilation. Full-model and
-actual vLLM-runtime validation of that selection remain separate gates.
+actual vLLM-runtime validation are separate gates: the two-case eager/stock-
+capture fixture passed on the retained candidate; full-model serving remains
+unqualified.
 No production runtime pin, route cell, default, artifact or ship gate moves.
 
 Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
