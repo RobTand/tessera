@@ -54,19 +54,17 @@ for the first kept call (with the reason).
 from __future__ import annotations
 
 import functools
-import hashlib
 import importlib
-import inspect
 import logging
 import os
 import threading
-from pathlib import Path
 from threading import RLock
 from typing import Any
 
 import torch
 
 from .flags import latched_bool
+from .stock_interface import source_digest as _source_digest, signature_parameters
 
 __all__ = ["FLAG", "install_for_current_config", "native_call", "runner_decline_reason"]
 
@@ -247,11 +245,6 @@ def native_call(adapter: Any, x: Any, expert_ids: Any, routing_weights: Any, *,
 
 # -- install -----------------------------------------------------------------
 
-def _source_digest(module: Any) -> str | None:
-    path = getattr(module, "__file__", None)
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
-
-
 def _compilation_reason() -> str | None:
     try:
         from vllm import config as vllm_config
@@ -277,7 +270,7 @@ def _decline_reason(runner_module: Any, shared_module: Any) -> str | None:
     runner = getattr(runner_module, "MoERunner", None)
     if runner is None:
         return f"{_RUNNER_MODULE} has no MoERunner"
-    params = tuple(inspect.signature(runner._maybe_apply_routed_scale_to_output).parameters)
+    params = signature_parameters(runner,"_maybe_apply_routed_scale_to_output")
     if params != _SIGNATURE:
         return (f"MoERunner._maybe_apply_routed_scale_to_output has parameters {params}, "
                 f"expected {_SIGNATURE}")
