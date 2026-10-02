@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T11:16:57Z",
+ "generated": "2026-10-02T11:38:21Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4638,6 +4638,10 @@
    "2040": {
     "state": "CLOSED",
     "title": "Reuse real priced baselines across private campaign resume test consumers"
+   },
+   "2041": {
+    "state": "OPEN",
+    "title": "Add opt-in bounded projected-source preparation on the shared read pool"
    },
    "205": {
     "state": "CLOSED",
@@ -11382,7 +11386,7 @@
     "title": "Bound Netdata phase evidence to complete requested-window groups"
    },
    "823": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Research opt-in sparse-MLA prefill masked-tile skip"
    },
    "824": {
@@ -11414,7 +11418,7 @@
     "title": "Serve the window-GEMV lane: census, two-arm KL and latency, none of which #10 measured"
    },
    "830": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Record qualified stock KDA profiles and native workspace allocations"
    },
    "831": {
@@ -11446,7 +11450,7 @@
     "title": "Attribute resumed interpreter metadata to the authenticated producer"
    },
    "838": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Attribute resumed interpreter metadata to its authenticated producer"
    },
    "839": {
@@ -11458,16 +11462,28 @@
     "title": "E4M3's window table saturates at 1.167x reach: a 4x spread request delivers 1.167x, silently"
    },
    "840": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: distinguish native Netdata cadence from returned bucket duration"
    },
    "841": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix(measurement): report native Netdata cadence and bucket separately"
    },
    "842": {
     "state": "OPEN",
     "title": "P2: test default-off read-only LUT loads for routed Mode0 RL4 BMT128"
+   },
+   "843": {
+    "state": "OPEN",
+    "title": "Implement the first dense native timing receipt and producer/runtime boundary"
+   },
+   "844": {
+    "state": "OPEN",
+    "title": "Add a bounded dense native timing receipt with separate producer and runtime"
+   },
+   "845": {
+    "state": "OPEN",
+    "title": "experiment: bound a read-only LUT comparison for routed gate/up"
    },
    "85": {
     "state": "CLOSED",
