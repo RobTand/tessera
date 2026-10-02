@@ -754,6 +754,20 @@ def block_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     return desc.to(torch.int32).contiguous()
 
 
+def has_one_rate_four_run(b, e: int) -> bool:
+    """Whether a bundle is the bounded one-run rate-4 body (tessera#739).
+
+    The piece-major resident layout is scoped to exactly this shape: one run,
+    rate 4, covering every column.  ``run_pair`` already validates that shape;
+    this reads its result rather than the raw table.
+    """
+    pair, why = run_pair(b.runs_all.reshape(e, -1, 4)[0], int(b.cols))
+    if why is not None or pair is None:
+        return False
+    r_lo, _c0, n_lo, _w0, _r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
+    return n_hi == 0 and r_lo == 4 and n_lo == int(b.cols)
+
+
 def _run_stack_reason(name: str, b, e: int) -> "str | None":
     """The wire checks every fused window lane makes on one projection's
     stack: words by expert, one run table for the stack that is the kernel's
@@ -828,10 +842,16 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
         if b.window_bits != WINDOW_BITS:
             return f"{name} window_bits {b.window_bits} != {WINDOW_BITS}"
         if str(getattr(b, "word_layout", "legacy")) != "legacy":
-            # The compiled R4 reader does not yet address this order; until it
-            # does, a re-laid stack is refused here (never re-strided by the
-            # legacy reader).  tessera#739.
-            return f"{name} is {getattr(b, 'word_layout', 'legacy')!r}; the lane reads legacy words only"
+            # The piece-major reader addresses the ONE-RUN RATE-4 routed body
+            # only (tessera#739): an odd rate's 16-byte alignment does not port,
+            # and a two-run stack has no single piece stride.  Everything else
+            # keeps legacy words.
+            lays = {str(getattr(x, "word_layout", "legacy")) for x in bundles.values()}
+            if len(lays) != 1:
+                return f"the gate/up/down bundles disagree on their word layout: {sorted(lays)}"
+            if not has_one_rate_four_run(b, e):
+                return (f"{name} is piece_major, which the lane reads only for a single run at "
+                        f"rate 4; its run table is not one rate-4 run over {b.cols} columns")
         if int(b.experts) != e:
             return f"{name} has {b.experts} experts, down has {e}"
         if fam == "e4m3" and b.quantizer != "native":
@@ -999,6 +1019,16 @@ class FusedRoutedWindowMoE:
     counters: torch.Tensor
     activation: str = "silu"
 
+    @property
+    def piece_major(self) -> bool:
+        """Whether the resident words are the piece-major order (tessera#739).
+
+        Read off the bundles' shared tag (``word_layout``), never recomputed
+        from the run table: the reader must agree with how the stack was
+        actually written.
+        """
+        return str(getattr(self.down, "word_layout", "legacy")) != "legacy"
+
     @classmethod
     def from_bundles(cls, gate, up, down, *, activation: str = "silu") -> "FusedRoutedWindowMoE":
         reason = fused_routed_window_supported(gate, up, down)
@@ -1104,6 +1134,7 @@ class FusedRoutedWindowMoE:
             b0.scale_all, b1.scale_all,
             r0, r1, d0, d1,
             int(tile_words), int(slot_words),
+            bool(self.piece_major),
             routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),

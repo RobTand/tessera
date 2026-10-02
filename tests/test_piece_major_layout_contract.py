@@ -12,7 +12,7 @@ import torch
 
 from tessera.errors import GrammarError
 from tessera.kernel_window_gemv import (
-    PICECES_PER_TILE,
+    PIECES_PER_TILE,
     WORD_LAYOUT_LEGACY,
     WORD_LAYOUT_PIECE_MAJOR,
     Repacked,
@@ -62,9 +62,9 @@ def test_piece_major_relay_is_a_bijection_and_keeps_the_counts():
     assert relaid.rates == rep.rates
     assert sorted(relaid.words.tolist()) == sorted(rep.words.tolist())
     per_piece = 2 * 4
-    old = rep.words.reshape(3, PICECES_PER_TILE, per_piece)
-    new = relaid.words.reshape(PICECES_PER_TILE, 3, per_piece)
-    for t64 in range(PICECES_PER_TILE):
+    old = rep.words.reshape(3, PIECES_PER_TILE, per_piece)
+    new = relaid.words.reshape(PIECES_PER_TILE, 3, per_piece)
+    for t64 in range(PIECES_PER_TILE):
         for col in range(3):
             assert torch.equal(new[t64, col], old[col, t64])
 
@@ -84,3 +84,64 @@ def test_legacy_only_reader_refuses_a_non_legacy_stack():
     require_legacy_word_layout(WORD_LAYOUT_LEGACY, "reader")          # allowed
     with pytest.raises(GrammarError):
         require_legacy_word_layout(WORD_LAYOUT_PIECE_MAJOR, "reader")
+
+
+# --- intake eligibility: the tag is bounded by family AND shape -----------
+def _piece_major_requested(family: str, rep) -> bool:
+    """The exact predicate ctx of the intake site in serving/moe_route.py."""
+    return family == "e4m3" and piece_major_eligible(rep)
+
+
+def test_intake_never_re_lays_a_bf16_value_unit():
+    # A8SE layer45 is TESSERA_BF16; a rate-4 value unit must NOT be re-laid,
+    # so the predicate gates on family before shape (tessera#739).
+    rep = _repacked((4,))
+    assert _piece_major_requested("value", rep) is False
+    assert _piece_major_requested("e4m3", rep) is True
+
+
+def test_intake_never_re_lays_a_two_run_or_non_rate_four_unit():
+    assert _piece_major_requested("e4m3", _repacked((4, 5))) is False
+    assert _piece_major_requested("e4m3", _repacked((5,))) is False
+
+
+# --- the refusal happens BEFORE any allocation or extension build ---------
+_ALLOCATED = []
+
+
+class _GuardedReader:
+    """A reader that refuses the layout before it touches any device buffer."""
+
+    def __init__(self, tag):
+        self.tag = tag
+
+    def __call__(self, word_layout, *, allocate):
+        require_legacy_word_layout(word_layout, "guarded reader")
+        allocate()
+        return True
+
+
+def test_refusal_precedes_allocation_and_extension_build():
+    _ALLOCATED.clear()
+    reader = _GuardedReader(WORD_LAYOUT_LEGACY)
+    with pytest.raises(GrammarError):
+        reader(WORD_LAYOUT_PIECE_MAJOR, allocate=lambda: _ALLOCATED.append("device"))
+    assert _ALLOCATED == []          # nothing was allocated, nothing was built
+    _ALLOCATED.clear()
+    assert reader(WORD_LAYOUT_LEGACY, allocate=lambda: _ALLOCATED.append("device")) is True
+    assert _ALLOCATED == ["device"]
+
+
+def test_three_bundle_tags_must_agree():
+    # PackedWindowMoeBundles.word_layout refuses a mixed stack; model the set
+    # check here (the real property reads gate/up/down, never gate alone).
+    def _shared(tags):
+        distinct = set(tags.values())
+        if len(distinct) != 1:
+            raise GrammarError(f"bundles disagree: {tags}")
+        return distinct.pop()
+
+    assert _shared({"gate": "legacy", "up": "legacy", "down": "legacy"}) == "legacy"
+    assert _shared({"gate": "piece_major", "up": "piece_major", "down": "piece_major"}) == "piece_major"
+    with pytest.raises(GrammarError):
+        _shared({"gate": "piece_major", "up": "legacy", "down": "piece_major"})

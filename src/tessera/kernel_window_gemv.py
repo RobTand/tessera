@@ -472,7 +472,7 @@ WORD_LAYOUT_PIECE_MAJOR = "piece_major"
 WORD_LAYOUTS = (WORD_LAYOUT_LEGACY, WORD_LAYOUT_PIECE_MAJOR)
 
 #: The 64-row piece count inside a 512-row tile, fixed by the format.
-PICECES_PER_TILE = TILE_ROWS // 64
+PIECES_PER_TILE = TILE_ROWS // 64
 
 
 def piece_major_eligible(rep: "Repacked") -> bool:
@@ -580,7 +580,7 @@ class Repacked:
             raise GrammarError(
                 f"word count {int(self.words.numel())} is not {n_tiles} tiles x {cols} columns "
                 f"x {per_col} words")
-        tiled = self.words.reshape(n_tiles, cols, PICECES_PER_TILE, per_piece)
+        tiled = self.words.reshape(n_tiles, cols, PIECES_PER_TILE, per_piece)
         relaid = tiled.permute(0, 2, 1, 3).reshape(-1).contiguous()
         return dataclasses.replace(self, words=relaid, word_layout=WORD_LAYOUT_PIECE_MAJOR)
 
@@ -1250,6 +1250,8 @@ def window_gemv(unit: WindowGemvUnit, x: torch.Tensor, *, out: "torch.Tensor | N
         raise GrammarError("x must be a CUDA bf16 [M, K] tensor")
     if x.shape[1] != unit.cols:
         raise GrammarError(f"x has {x.shape[1]} features, the unit {unit.cols} columns")
+    require_legacy_word_layout(getattr(unit.rep, "word_layout", WORD_LAYOUT_LEGACY),
+                               "the window_gemv lane")
     if out is None:
         return _gemv_op(x, *_op_args(unit), int(ablation))
     return _gemv_concrete(x, *_op_args(unit), int(ablation), out=out)
@@ -1267,6 +1269,8 @@ def decode_codes(unit: WindowGemvUnit) -> torch.Tensor:
     repacked words through the kernel's own state extraction."""
     if unit.codes_of_state is None:
         raise GrammarError("the value family has no grid codes to decode")
+    require_legacy_word_layout(getattr(unit.rep, "word_layout", WORD_LAYOUT_LEGACY),
+                               "window_decode")
     out = torch.empty(unit.rows, unit.cols, dtype=torch.uint8, device=unit.rep.words.device)
     _ext().window_decode(
         unit.rep.words, int(unit.rep.tile_words), int(unit.rep.n_tiles), unit.rep.runs,
@@ -1294,6 +1298,8 @@ def decode_values(unit: WindowGemvUnit) -> torch.Tensor:
     """
     if unit.family != "value":
         raise GrammarError("decode_values is the value family's tile; use decode_fp8 for E4M3")
+    require_legacy_word_layout(getattr(unit.rep, "word_layout", WORD_LAYOUT_LEGACY),
+                               "window_decode")
     table = unit.table if unit.table.dtype == torch.bfloat16 else unit.table.to(torch.bfloat16)
     out = torch.empty(unit.rows, unit.cols, dtype=torch.bfloat16, device=unit.rep.words.device)
     _ext().window_decode(

@@ -611,7 +611,12 @@ class _RankLocalPackedIntake:
             # knows it or refuses (tessera#739).
             from ..kernel_window_gemv import (WORD_LAYOUT_PIECE_MAJOR,
                                               piece_major_eligible)
-            if _piece_major_requested() and piece_major_eligible(unit.rep):
+            # Bounded to the E4M3 (fp8) routed family: A8SE also carries BF16
+            # layer45 units, whose (value) reader stays legacy.  Never tag by
+            # rate alone.
+            if (_piece_major_requested()
+                    and family == "e4m3"
+                    and piece_major_eligible(unit.rep)):
                 unit = replace(unit, rep=unit.rep.with_word_layout(WORD_LAYOUT_PIECE_MAJOR))
             # The axis allocates each plane stack once and drops this unit as
             # soon as its expert slot is filled; a repeated callback refuses.

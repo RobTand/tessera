@@ -145,6 +145,9 @@ constexpr int RATE_MAX = (FAMILY_FP8 || FAMILY_FP4) ? 8 : 14;
 constexpr int ROUTED_RATE_MAX = 8;
 constexpr int BDESC_INTS = 12;                      // per-32-column descriptor (see ``col_map``)
 constexpr int TILE_ROWS = 512;
+// The 64-row pieces inside one 512-row tile (the piece-major layout's plan:
+// a column's chunk is PIECES_PER_TILE pieces of 2*rate words each).
+constexpr int PIECES_PER_TILE = TILE_ROWS / 64;
 constexpr int WINDOW_BITS = 14;
 constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 static_assert(RATE_MAX <= WINDOW_BITS && ROUTED_RATE_MAX <= RATE_MAX, "a code fits its window");
@@ -698,6 +701,7 @@ struct Params {
     const int32_t* bdesc1;
     long words_stride;
     int tile_words;
+    int piece_major;               // 1: words are [tile][piece][column] (tessera#739)
     int slot_words;                // int32 words per (half, column) word-stage slot (see Layout)
     int K;
     int N;                         // rows per projection
@@ -722,10 +726,17 @@ struct Params {
 
 // ``RL``, ``TWO``: the launch's run pair (``pair_of``) -- the low (or only)
 // rate, and whether a second run at ``RL + 1`` exists.
-template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
+// ``PM``: the resident words are the piece-major [tile][piece][column] order
+// (tessera#739).  It is the bounded one-run rate-4 routed body only: an odd
+// rate's 16-byte alignment depends on the piece index in a way the piece-major
+// address (t64 * ncols + c) does not preserve, so the odd-rate copy path is
+// deliberately not ported.
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT, bool PM = false>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
+    static_assert(!PM || (!TWO && RL == 4 && !DENSE),
+                  "the piece-major reader is the one-run rate-4 routed body only");
     static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
                   "wide superblocks: the launches ``has_width`` names, unsplit");
@@ -886,8 +897,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const bool second = (MODE != 2) && h == 1;
                 g_h[h] = g;
                 t64_h[h] = t / HALF;
+                // Piece-major: the tile is [8 pieces][columns], so a piece's
+                // plane is tile_words / PIECES_PER_TILE long.  The three
+                // address sites (``tbase_h``, ``issue_words``, ``load_prev``)
+                // use this same base, so only the tile origin differs.
                 tbase_h[h] = (second ? p.words1 : p.words0) + (long)e * p.words_stride
-                             + (long)g * p.tile_words;
+                             + (long)g * p.tile_words
+                             - (PM ? p.tile_words - p.tile_words / PIECES_PER_TILE : 0);
                 init_h[h] = (second ? p.init1 : p.init0) + (long)e * p.K;
                 hasinit_h[h] = (second ? p.has_init1 : p.has_init0)[e];
                 rp_h[h] = load_runs(second ? p.runs1 : p.runs0, e);
@@ -905,6 +921,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // (``pair_of``).  A mismatch here would address outside the
             // expert's words, so it traps rather than reads.
             if (tid == 0) {
+                // A piece-major launch is only ever the one-run rate-4 case;
+                // any other shape with the flag set is a caller bug, not a
+                // decode to attempt.
+                if (p.piece_major && (TWO || RL != 4)) __trap();
                 #pragma unroll
                 for (int h = 0; h < 2; ++h) {
                     const RunPair& rp = rp_h[h];
@@ -1065,7 +1085,14 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int mm = (tid >> 1) & 31;
                         const int q = tid & 1;
                         const ColMap c = col_map<RL, TWO>(blk_of(kc, ih, ring), n_lo, w_hi, kc, mm);
-                        const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
+                        // Legacy: a column's chunk starts at cw0 and its t64-th
+                        // piece is 2*rate words in.  Piece-major: the piece
+                        // planes are tile_words / PIECES_PER_TILE long, and the
+                        // column's own words sit cw0 / PIECES_PER_TILE in.
+                        const int32_t* src = PM
+                            ? tbase_i + t64_i * (p.tile_words / PIECES_PER_TILE)
+                                  + c.cw0 / PIECES_PER_TILE
+                            : tbase_i + c.cw0 + 2 * c.rate * t64_i;
                         int32_t* dst = Ws + (kc % WS) * W_STAGE + (ih * BK + mm) * SW;
                         if constexpr (TWO) {
                             if (c.lo) copy_half<RL>(dst, src, t64_i, q);
@@ -1079,12 +1106,29 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if constexpr (PREV_STAGED) {
                             if (q == 1) {
                                 int32_t* pd = Ps + (kc % WS) * PREV_STAGE_INTS + ih * BK + mm;
-                                const int wr0 = 2 * c.rate * t64_i;
-                                const int32_t* wcol = tbase_i + c.cw0;
-                                if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
-                                else if (g_i > 0) cp_async4(pd, wcol + 16 * c.rate - 1 - p.tile_words);
-                                else if (hasinit_i) cp_async4(pd, init_i + c.p);
-                                else *pd = 0;
+                                if constexpr (PM) {
+                                    // The word before the half in the piece
+                                    // plane: the same column's previous piece's
+                                    // last word; at t64 == 0 the previous tile's
+                                    // piece 7, one plane stride below the first
+                                    // piece (7*ps - tile_words == -ps).
+                                    const int ps = p.tile_words / PIECES_PER_TILE;
+                                    const int colbase = c.cw0 / PIECES_PER_TILE;
+                                    if (t64_i > 0)
+                                        cp_async4(pd, tbase_i + (t64_i - 1) * ps + colbase
+                                                          + 2 * c.rate - 1);
+                                    else if (g_i > 0)
+                                        cp_async4(pd, tbase_i + colbase + 2 * c.rate - 1 - ps);
+                                    else if (hasinit_i) cp_async4(pd, init_i + c.p);
+                                    else *pd = 0;
+                                } else {
+                                    const int wr0 = 2 * c.rate * t64_i;
+                                    const int32_t* wcol = tbase_i + c.cw0;
+                                    if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
+                                    else if (g_i > 0) cp_async4(pd, wcol + 16 * c.rate - 1 - p.tile_words);
+                                    else if (hasinit_i) cp_async4(pd, init_i + c.p);
+                                    else *pd = 0;
+                                }
                             }
                         }
                     }
@@ -1110,12 +1154,21 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
                         if (PREV_STAGED || 8 * j * c.rate >= 32) continue;
-                        const int wr0 = 2 * c.rate * t64_h[h];
-                        const int32_t* wcol = tbase_h[h] + c.cw0;
                         int32_t v;
-                        if (wr0 > 0) v = wcol[wr0 - 1];
-                        else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
-                        else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        if constexpr (PM) {
+                            const int ps = p.tile_words / PIECES_PER_TILE;
+                            const int colbase = c.cw0 / PIECES_PER_TILE;
+                            const int t64 = t64_h[h];
+                            if (t64 > 0) v = tbase_h[h][(t64 - 1) * ps + colbase + 2 * c.rate - 1];
+                            else if (g_h[h] > 0) v = tbase_h[h][colbase + 2 * c.rate - 1 - ps];
+                            else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        } else {
+                            const int wr0 = 2 * c.rate * t64_h[h];
+                            const int32_t* wcol = tbase_h[h] + c.cw0;
+                            if (wr0 > 0) v = wcol[wr0 - 1];
+                            else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
+                            else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        }
                         pv[h] = v;
                     }
                 };
@@ -1544,11 +1597,11 @@ void launch_pair(const Params& p, int grid, cudaStream_t stream) {
     const int smem = launch_smem_bytes(MODE, p.slot_words, BMT);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
     if (smem > attributed) {
-        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT>,
+        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT, PM>,
                                             cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
         attributed = smem;
     }
-    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT><<<grid, THREADS, smem, stream>>>(p);
+    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT, PM><<<grid, THREADS, smem, stream>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -1563,6 +1616,18 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     // One case per (r_lo, two); a two-run key is offset past every rate.
     constexpr int KEY_TWO = 16;
     static_assert(RATE_MAX < KEY_TWO, "one-run and two-run keys stay apart");
+    // The piece-major reader exists only for the one-run rate-4 routed case
+    // (tessera#739); it is a distinct instantiation, keyed on ``p.piece_major``
+    // and compiled only where its static asserts allow.
+    if (p.piece_major) {
+        TORCH_CHECK(!k.two && k.r_lo == 4 && MODE != 2 && !DENSE,
+                    "the piece-major reader is the one-run rate-4 routed body only");
+        if constexpr (launch_decodes(MODE, 4, false, DENSE)) {
+            launch_pair<FP8, MODE, DENSE, SPLIT, 4, false, BMT, true>(p, grid, stream);
+            return;
+        }
+        TORCH_CHECK(false, "no piece-major rate-4 launch for this mode/width");
+    }
     switch (k.two ? KEY_TWO + k.r_lo : k.r_lo) {
 #define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
         case (T ? KEY_TWO : 0) + R:                                                            \
@@ -2573,6 +2638,7 @@ void routed_fused_forward(
     torch::Tensor runs0, torch::Tensor runs1,
     torch::Tensor bdesc0, torch::Tensor bdesc1,
     int64_t tile_words, int64_t slot_words,
+    bool piece_major,
     torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
     torch::Tensor item_off, torch::Tensor counter,
     int64_t top_k, int64_t a_row_mode, bool mul_weight, double limit,
@@ -2666,6 +2732,7 @@ void routed_fused_forward(
     if (two) check_words(words1, "words1");
     p.words_stride = words0.size(1);
     p.tile_words = (int)tile_words;
+    p.piece_major = piece_major ? 1 : 0;
     check_slot((int)mode, slot_words, x, (int)bm);
     p.slot_words = (int)slot_words;
     p.K = (int)K;

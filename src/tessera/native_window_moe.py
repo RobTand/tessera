@@ -464,8 +464,18 @@ class PackedWindowMoeBundles:
 
     @property
     def word_layout(self) -> str:
-        """The resident word order every bundle shares (see WORD_LAYOUT_*)."""
-        return str(getattr(self.gate, "word_layout", "legacy"))
+        """The resident word order every bundle shares (see WORD_LAYOUT_*).
+
+        The three bundles must AGREE; a mixed stack refuses here rather than
+        letting ``gate`` speak for ``up``/``down``.
+        """
+        tags = {role: str(getattr(getattr(self, role), "word_layout", "legacy"))
+                for role in ("gate", "up", "down")}
+        distinct = set(tags.values())
+        if len(distinct) != 1:
+            raise GrammarError(
+                f"the gate/up/down bundles disagree on their resident word layout: {tags}")
+        return distinct.pop()
 
     def resident_bytes(self) -> int:
         total = 0
