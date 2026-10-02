@@ -52,7 +52,12 @@ if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
     PB_ENV+=(-e "$key=${!key}")
   done
   [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published PB SDK" >&2; exit 2; }
-  EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet --pid=host)
+  STAGE_ROOT=$(PYTHONPATH="$PB_CLIENT_ROOT/src" python3 -c 'import os; from prismabuild.client import read_residency_map; print(read_residency_map(os.environ["PRISMABUILD_RESIDENCY_MAP"])["stage_root"])')
+  [[ -d "$STAGE_ROOT" ]] || { echo "missing admitted stage root" >&2; exit 2; }
+  # Public acquire/open/release owns coordination under this root; expose the
+  # exact admitted namespace, with all data reads still through pinned FDs.
+  EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet
+                 -v "$STAGE_ROOT":"$STAGE_ROOT" --pid=host)
   IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
 fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source

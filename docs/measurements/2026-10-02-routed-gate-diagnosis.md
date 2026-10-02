@@ -128,3 +128,15 @@ not relabel the local box as Sparky. Both stable box addresses are queried.
 This is a measurement attribution correction only; its syntax qualification
 and actual both-box coverage are recorded separately. No GPU timing/profile
 or performance finding has yet been produced.
+
+
+The explicit telemetry endpoint compiled through PB `18f3c2f512a6` (exit 0,
+CAS `042b6b270ea2299aceeeba6bbcfa2192933c1d85348b8da823d4c31ab15e0c96`,
+44 bytes). Before the first GPU attempt, real map inspection found its
+`stage_root=/stage/prewarm` was outside the existing fleet-control mount and
+PB's Docker shim does not add data mounts. The strict wrapper therefore also
+binds the exact public SDK-validated stage root. SDK ownership coordination
+requires that mount writable; payload reads still use pinned descriptors and
+same-owner hashes, with no origin fallback. The final GPU request disables
+RAM overlay and uses the admitted stage tier. This is a namespace-access
+repair, not a parallel staging mechanism or an HDD read path.
