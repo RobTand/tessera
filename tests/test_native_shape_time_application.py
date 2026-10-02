@@ -494,8 +494,11 @@ def test_bound_observation_records_distinct_identities_and_sampling(tmp_path, pa
     assert doc['operator_projection']['batch_size'] == 1 and doc['operator_projection']['rows'] == 512
     assert doc['producer'] == case.request['producer_identity']
     producer_identity = app.tp.json_bytes(app.tp.read_bound(case.request['producer_identity']))
-    assert doc['replay']['tool_source_sha256'] != producer_identity['tool_source_sha256']
+    # The producer and replay tools live in the same source tree here, so their
+    # tree-derived digests coincide; the two identities stay separately bound.
+    assert producer_identity['tool_source_sha256'] == doc['replay']['tool_source_sha256']
     assert doc['replay']['tool']['sha256'] == app.tp.file_binding(__file__)['sha256']
+    assert doc['replay']['tool']['path'] != doc['producer']['path']
     assert doc['evidence'] == case.panel['evidence'] and doc['preflight'] == case.panel['preflight']
 
 
@@ -513,7 +516,12 @@ def test_bound_observation_refuses_unbound_or_unverified_context(tmp_path, panel
         Path(case.panel_binding['path']).write_bytes(b'changed panel bytes')
         match = 'file evidence'
     else:
-        case.runtime_path.write_bytes(app.tp.canonical(case.request['expected_runtime']) + b' ')
+        # An extra JSON key changes the expected runtime the caller passes,
+        # while the observation still binds the original bytes, so the
+        # bound-bytes cross-check must refuse rather than trust the caller.
+        altered = copy.deepcopy(case.request['expected_runtime'])
+        altered['implicit_rank'] = 0
+        overrides['expected_runtime'] = altered
         match = 'bound bytes'
     with pytest.raises(ValueError, match=match):
         bound_observation(case, **overrides)
@@ -557,10 +565,15 @@ def test_check_writes_no_observation_on_a_refused_bound_request(tmp_path, panel,
     monkeypatch.setattr(step4_capture_launch, 'run_phase', phase)
     panel_path = case.panel_path
     if fault == 'local_panel':
+        # The observation path re-binds the expected runtime against the bytes
+        # the caller names; point `--expected-runtime` at different bytes so the
+        # bound-observation cross-check refuses even though the panel is valid.
         bound = case.unit / 'bound-panel.json'
         bound.write_bytes(app.tp.canonical(case.panel))
         binding = app.tp.file_binding(bound)
-        assert app.main(['check', str(bound), '--expected-runtime', str(case.runtime_path),
+        other_runtime = case.unit / 'other-runtime.json'
+        other_runtime.write_bytes(app.tp.canonical(dict(case.request['expected_runtime'], implicit_rank=0)))
+        assert app.main(['check', str(bound), '--expected-runtime', str(other_runtime),
                          '--request', str(case.path),
                          '--request-sha256', hashlib.sha256(case.path.read_bytes()).hexdigest(),
                          '--preflight-output', str(case.unit / 'refused-local_panel'),
