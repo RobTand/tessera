@@ -13,8 +13,8 @@ from cubin_cmp import sections
 
 def main() -> int:
     out = Path(sys.argv[1])
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mhc"))
-    import mhc_probe as probe
+    import conv_gate as probe
+    validator_source_identity = probe.harness_source_identity()
 
     expected_old_module_sha = sys.argv[6]
     paths = [list((out / name).glob("*.cubin")) for name in ("old", "new")]
@@ -75,6 +75,9 @@ def main() -> int:
                        "sha256": hashlib.sha256(control_path.read_bytes()).hexdigest(),
                        "action_key": control_record["meta"]["pb_action"]}})
     result["expected_old_module_sha256"] = expected_old_module_sha
+    result["validator_source_identity"] = validator_source_identity
+    if not probe.harness_source_identity_matches(validator_source_identity):
+        raise RuntimeError("KDA admission/progress source changed during the audit")
     (out / "kernel_identity.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, sort_keys=True))
     return 0 if result["gate_passed"] else 1

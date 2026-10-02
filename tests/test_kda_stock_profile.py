@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from test_kda_probe_gate import probe
+from test_kda_probe_driver import probe
 
 
 @pytest.fixture
