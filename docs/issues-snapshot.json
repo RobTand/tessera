@@ -11489,6 +11489,10 @@
     "state": "CLOSED",
     "title": "Refit-objective comparisons on the LUT plane are confounded by the landing, which reorders the arms"
    },
+   "853": {
+    "state": "OPEN",
+    "title": "[P2] GLM-5.3 sparse MLA prefill: reuse the two WFP8 parities as the two residual passes (default-off)"
+   },
    "86": {
     "state": "CLOSED",
     "title": "A Linear outside the decoder body is passed through but never named in ignore, and the plugin refuses exactly that"
