@@ -773,6 +773,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int item = claim[0];
             const int slot = item_idx & 1;
             if (item >= total_items) {
+                // FULL(gc) reuses FULL(gc-2), just like an ordinary chunk.
+                // The last real chunk waited only for EMPTY(gc-3); producers
+                // may still be ahead of the consumers by two chunks (#855).
+                if (gc >= 2) bar_sync(BAR_EMPTY0 + (gc & 1), THREADS);
                 if (tid == 0) desc[slot * 8 + 0] = -1;
                 __threadfence_block();
                 bar_arrive(BAR_FULL0 + (gc & 1), THREADS);
@@ -1944,6 +1948,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
             const int item = claim[0];
             const int slot = item_idx & 1;
             if (item >= total_items) {
+                // Drain this reused FULL phase before publishing termination,
+                // as the value/E4M3 persistent producer does (#855).
+                if (gc >= 2) bar_sync(BAR_EMPTY0 + (gc & 1), THREADS);
                 if (tid == 0) desc[slot * 8 + 0] = -1;
                 __threadfence_block();
                 bar_arrive(BAR_FULL0 + (gc & 1), THREADS);
