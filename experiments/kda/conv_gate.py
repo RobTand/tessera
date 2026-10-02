@@ -26,17 +26,16 @@ def harness_source_identity(root: Path | None = None, *, origins: dict | None = 
     return body
 
 
-def harness_source_identity_matches(record, root: Path | None = None) -> bool:
+def harness_source_identity_matches(record, root: Path | None = None, *, origins: dict | None = None) -> bool:
     try:
-        return record == harness_source_identity(root)
+        return record == harness_source_identity(root, origins=origins)
     except OSError:
         return False
 
 
 def require_harness_source_identity(record, root: Path, *, origins: dict) -> None:
     """One publication fence: actual caller/owner origins and unchanged bytes."""
-    harness_source_identity(root, origins=origins)
-    if not harness_source_identity_matches(record, root):
+    if not harness_source_identity_matches(record, root, origins=origins):
         raise RuntimeError("KDA harness or admission/progress source changed during execution")
 
 KDA_P = 4096
