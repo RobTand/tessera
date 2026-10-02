@@ -106,6 +106,7 @@ def test_docker_builder_preserves_scope_route_readonly_source_and_owned_cache(tm
     assert "PYTHONNOUSERSITE=1" in built
     assert "PYTHONDONTWRITEBYTECODE=1" in built
     assert "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1" in built
+    assert f"{owner.artifact_specs()['scratch'].env}={spec['--cache-dir']}/tmp" in built
     assert built[-2:] == ["--basetemp", spec["--cache-dir"] + "/pytest"]
     for name in owner.THREAD_LIMITS:
         assert f"{name}=1" in built

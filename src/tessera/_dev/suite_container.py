@@ -43,10 +43,13 @@ def _overlap(a, b):
     return a == b or a in b.parents or b in a.parents
 
 
-def artifact_variables():
+def artifact_specs():
     repo = Path(__file__).resolve().parents[3]
-    roots = runpy.run_path(str(repo / "tests/box_artifacts.py"))["ROOTS"]
-    return {spec.env for spec in roots.values()}
+    return runpy.run_path(str(repo / "tests/box_artifacts.py"))["ROOTS"]
+
+
+def artifact_variables():
+    return {spec.env for spec in artifact_specs().values()}
 
 
 def parse(argv):
@@ -119,6 +122,9 @@ def parse(argv):
     _require(not _overlap(absolute(values["--surface-dir"]), absolute(values["--cache-dir"])), "surface/cache mount overlap")
     _require(not _overlap(absolute(values["--deps-site"]), absolute(values["--cache-dir"]))
              and not _overlap(absolute(values["--deps-site"]), absolute(values["--surface-dir"])), "dependency writable mount shadow")
+    scratch_env = artifact_specs()["scratch"].env
+    _require(scratch_env not in artifacts or artifacts[scratch_env] == values["--cache-dir"] + "/tmp",
+             "scratch must use the action-owned cache")
     return {**values, **repeated, "artifacts": artifacts, "inner": inner, "surface": str(output), "workers": workers}
 
 
@@ -217,7 +223,8 @@ def docker_command(spec, checkout, environment):
     _require(all(path.resolve() == path for path in paths), "source/dependency/output/cache symlink refused")
     _require(all(not _overlap(checkout, path) for path in paths[1:]), "mount shadows source checkout")
     readonly = [absolute(path) for path in spec["--data-root"]]
-    readonly += [absolute(path) for path in spec["artifacts"].values()]
+    scratch_env = artifact_specs()["scratch"].env
+    readonly += [absolute(path) for key, path in spec["artifacts"].items() if key != scratch_env]
     readonly += paths[:2]
     for path in readonly:
         _require(path.resolve() == path and path.exists(), "readonly mount missing or symlink: " + str(path))
@@ -248,6 +255,7 @@ def docker_command(spec, checkout, environment):
         if environment.get(key):
             _require(spec["artifacts"].get(key) == environment[key], "artifact environment shadow: " + key)
     env.update(spec["artifacts"])
+    env[scratch_env] = env["TMPDIR"]
     for name in ("TESSERA_PRISMAQUANT_DIR", "TESSERA_PRISMAQUANT_WORKTREE"):
         if name in spec["artifacts"]:
             env["PYTHONPATH"] += ":" + spec["artifacts"][name]
