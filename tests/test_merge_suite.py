@@ -1383,6 +1383,40 @@ def _request_of(requests, key):
     return requests / key[:2] / f"{key}.json"
 
 
+@pytest.mark.parametrize("mode", ["python", "deadline", "console"])
+def test_resumed_runtime_metadata_comes_from_the_authenticated_command(tmp_path, mode):
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    key = "beef" + "0" * 60
+    python = "/qualified/suite/bin/python3.14"
+    inner = [python, "-m", "pytest", "tests", "--strict-cuda", "--surface-json", str(surface)]
+    if mode == "console":
+        inner = ["/qualified/suite/bin/pytest", *inner[3:]]
+    command = (["/outer/bin/python3", "tools/suite_deadline.py", "--timeout-s", "300", "--", *inner]
+               if mode == "deadline" else inner)
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", surface, [(key, "done", 0, "fixture")], command=command)
+    _gpu_population(surface, producer=_request_of(merge_suite.POOL_CAS_REQUESTS, key))
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["exit_status_observed"] is True
+    assert record["python"] == (None if mode == "console" else python)
+    assert record["pytest_command"] == inner
+
+
+def test_a_resume_without_a_bound_producer_does_not_borrow_a_configured_interpreter(tmp_path):
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    merge_suite.POOL_QUEUE = tmp_path / "empty-pool"
+    merge_suite.POOL_CAS_REQUESTS = tmp_path / "empty-cas"
+    _gpu_population(receipt_dir / "surface.gpu.json")
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["python"] is None
+    assert record.get("pytest_command") is None
+
+
 def test_a_resumed_row_reads_the_exit_status_the_pool_recorded(tmp_path):
     """The run nobody here watched was watched by the worker that ran it.
 
@@ -1461,7 +1495,7 @@ def test_two_actions_on_one_population_leave_the_row_unobserved(tmp_path):
     that can both bind to it are two records of THAT action -- one in ``done``
     and one in ``failed`` is the pool disagreeing with itself about a single
     action, and still not one status. A second action on the same path is not
-    ambiguity; it is refused by name, which the last assertion pins.
+    ambiguity. The producer-stamp lookup never reads that unrelated action.
     """
 
     merge_suite = _module()
@@ -1482,8 +1516,8 @@ def test_two_actions_on_one_population_leave_the_row_unobserved(tmp_path):
     assert len(record["pool_actions_matching"]) == 2, record
     assert "no single exit status" in record["exit_status_note"], record
     assert not merge_suite._verdict([record]).startswith("green on")
-    assert [r for r in record["pool_actions_refused"]
-            if r.startswith(other[:12])], record
+    assert not any(r.startswith(other[:12])
+                   for r in record.get("pool_actions_refused", [])), record
 
 
 def test_a_resume_keeps_the_receipt_the_original_run_wrote(tmp_path):
@@ -2008,13 +2042,13 @@ def test_a_population_that_names_no_producer_adopts_no_status(tmp_path):
     _unobserved(merge_suite, record, "names no sealed action")
     assert record["surface"]["counts"]["passed"] == 1827, record
 
-    # Naming a different action is the same refusal with both keys in it.
+    # A different named producer gets no terminal status from unrelated work.
     merge_suite, record = _resumed_with(
         tmp_path, population={"source_identity": {
             **_population("gpu")["surface"]["source_identity"],
             "excluded_metadata": [{"action_key": "dead" + "0" * 60,
                                    "request_sha256": "e" * 64}]}})
-    _unobserved(merge_suite, record, "dead00000000", "beef00000000")
+    _unobserved(merge_suite, record, "dead00000000", "no terminal")
 
 
 def test_a_request_the_population_did_not_see_is_not_its_producer(tmp_path):
@@ -2102,8 +2136,8 @@ def test_a_later_attempt_that_could_not_publish_cannot_inherit(tmp_path):
     population stamps, its stdout says it wrote this path with these counts,
     and its status is the row's. The second ran five minutes later, exited 0,
     and its stdout has no publication line -- it could not publish (the suite
-    aborted, the path was unwritable, whatever) -- and it is refused by name
-    rather than inheriting the file the first one left. Under #218 it was
+    aborted, the path was unwritable, whatever) -- and it is never queried as
+    this population's producer. Under #218 it was
     inside the clock allowance, so it counted as a second writer and the
     genuine producer's status was lost to "no single exit status".
 
@@ -2134,8 +2168,8 @@ def test_a_later_attempt_that_could_not_publish_cannot_inherit(tmp_path):
     assert record["pool_action"]["action_key"] == producer, record
     assert record["pool_action"]["host"] == "sparky", record
     assert merge_suite._verdict([record]).startswith("green on")
-    refused = record["pool_actions_refused"]
-    assert len(refused) == 1 and refused[0].startswith(later[:12]), refused
+    assert not any(reason.startswith(later[:12])
+                   for reason in record.get("pool_actions_refused", [])), record
 
 
 #: A small, self-contained file for the child run below. It is named for the

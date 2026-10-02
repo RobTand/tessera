@@ -38,8 +38,38 @@ Three parts, each on the pinned serving image's own vLLM code:
            split is the only cause of the mismatch; with timing, the T/2-token call at
            the full batch's split against its own (the price of an exact SP rank).
 
+``kdaptx`` The KDA prefill conv's per-element arithmetic, as read off the served
+           Triton ``_causal_conv1d_fwd_kernel`` SASS on sm_121 (a 4-FFMA chain
+           from +0 over the taps oldest to newest, fp32 weights, then
+           ``div.full(acc, 1 + ex2.approx(0 - acc times log2e))`` and a bf16
+           round), rebuilt in CUDA with explicit-rounding PTX, against the
+           stock conv's q/k/v output and entire conv state bit for bit on
+           varlen batches, signed zeros and large magnitudes. Arithmetic and
+           physical-tail state mutants compare against the unmutated candidate,
+           so a shared reference error cannot manufacture a mutation witness.
+           v2 requires output/state witnesses for FMA, division and state
+           indexing/writes. The ex2-ftz control instead must change the raw
+           exponential while preserving downstream denominator/FP32/BF16 bits,
+           bound to the current source and compiled artifacts. Any missing or
+           malformed evidence fails. This convolution screen does not cover
+           recurrent output/final state.
+
+``kdaex2`` A standalone 29-finite-accumulator observation of both exponentials,
+           denominators and SiLU outputs. It qualifies the ex2 equivalence
+           control, not the convolution or a serving implementation by itself.
+
+``kdafwd`` FlashKDA's two kernels (``_flash_kda_fwd_prepare`` and
+           ``_flash_kda_fwd_recurrence``) at the served shape: per-kernel
+           device time at ``--kda-tokens`` for ``--kda-heads`` local heads and
+           selected state dtypes. ``H=1`` is an aggregate launch diagnostic;
+           the prepare still launches one CTA per tile, so its total device
+           time is not a single-CTA latency. Eager kernel profiles and resident
+           graph power/timing windows are reported separately; no candidate.
+
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
-``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``.
+``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``; with
+``--ncu-part kda`` it runs the ``kdafwd`` calls instead (set
+``ORACLE_NCU_KERNELS`` to the FlashKDA kernel regex).
 
 ``--numerics-only`` keeps only what does not depend on having the box to
 itself: the ``onorm`` ulp comparisons and the ``mhc`` split invariance.  It
@@ -52,10 +82,15 @@ Run inside the serving image through ``experiments/mhc/mhc_probe.sh``.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import runpy
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
 import socket
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -65,6 +100,27 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import routed_pair_oracle as rpo  # noqa: E402  (power sampler, Netdata window, ulp stats)
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "kda"))
+import conv_gate as _kda_gate
+import conv_progress as _kda_progress
+from conv_gate import (KDA_P, KDA_HEADS, KDA_WIDTH, KDA_CONV_PTX_SRC, KDA_PTX_CASES,
+                       KDA_PTX_MODES, KDA_GATE_CONTRACT, KDA_PTX_CFLAGS,
+                       kdaex2_gate_errors, kdaptx_case_gate_errors, kdaptx_gate_errors,
+                       harness_source_identity, harness_source_identity_matches,
+                       require_harness_source_identity)
+from conv_progress import kda_commit
+
+
+def _harness_source(expected=None):
+    root = Path(__file__).resolve().parents[1]
+    origins = {"mhc/mhc_probe.py": [__file__],
+               "kda/conv_gate.py": [_kda_gate.__file__, _kda_gate.kdaptx_gate_errors.__code__.co_filename],
+               "kda/conv_progress.py": [_kda_progress.__file__, _kda_progress.kda_commit.__code__.co_filename]}
+    if expected is None:
+        return harness_source_identity(root, origins=origins)
+    require_harness_source_identity(expected, root, origins=origins)
+
 
 #: GB10 LPDDR5x peak: 8533 MT/s x 256-bit bus.  The practical plateau is
 #: measured by the ``l2`` part on the same box and reported beside it.
@@ -142,16 +198,33 @@ def copies_for(bytes_per_call: int, target: int = 256 << 20, cap: int = 64) -> i
     return max(2, min(cap, math.ceil(target / max(bytes_per_call, 1))))
 
 
-def kernel_device_us(fn, iters: int) -> dict[str, dict]:
+def kernel_device_us(fn, iters: int, trace_path: Path | None = None) -> dict[str, dict]:
     """Per-kernel device time from CUPTI (``key_averages``), by kernel name."""
     from torch.profiler import ProfilerActivity, profile
 
     fn()
     torch.cuda.synchronize()
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-        for _ in range(iters):
-            fn()
-        torch.cuda.synchronize()
+    if trace_path is None:
+        context = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA])
+    else:
+        from profile_torch import prismabuild_torch_profile
+
+        trace_path.parent.mkdir(parents=True, exist_ok=True)
+        context = prismabuild_torch_profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True)
+    previous = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+    if trace_path is not None:
+        os.environ["PRISMABUILD_PROFILE_TORCH_OUT"] = str(trace_path)
+    try:
+        with context as prof:
+            for _ in range(iters):
+                fn()
+            torch.cuda.synchronize()
+    finally:
+        if trace_path is not None:
+            if previous is None:
+                os.environ.pop("PRISMABUILD_PROFILE_TORCH_OUT", None)
+            else:
+                os.environ["PRISMABUILD_PROFILE_TORCH_OUT"] = previous
     out = {}
     for row in rpo.kernel_table(prof, limit=200):
         out[row["name"]] = {"calls": row["count"], "mean_us": row["self_device_us_per_call"]}
@@ -452,9 +525,6 @@ def part_mhcsplit(args, model_dir: Path) -> dict:
 
 #: TP2 local KDA projection (64 heads x 128 / 2) and the short-conv width
 #: (``linear_attn_config.short_conv_kernel_size``).
-KDA_P = 4096
-KDA_HEADS = 32
-KDA_WIDTH = 4
 
 
 def kda_conv_case(lens, has, p: int, state_len: int, layout: str, gen) -> dict:
@@ -564,6 +634,305 @@ def part_kdaconv(args, sampler) -> dict:
     return out
 
 
+
+
+
+
+
+
+
+
+
+def bits_compare(a: torch.Tensor, b: torch.Tensor) -> dict:
+    """Bit-pattern equality (``torch.equal`` treats +0 and -0 as equal), plus the value view."""
+    word = torch.int32 if a.dtype == torch.float32 else torch.int16
+    ai, bi = a.contiguous().view(word), b.contiguous().view(word)
+    return {"bit_equal": bool(torch.equal(ai, bi)), "bits_differing": int((ai != bi).sum()),
+            "value": compare(a, b)}
+
+
+def load_kda_ptx():
+    """One JIT build owns the convolution and its arithmetic observation control."""
+    from torch.utils.cpp_extension import load_inline
+
+    return load_inline(name="tessera_kda_conv_ptx", cpp_sources="torch::Tensor conv_ref(torch::Tensor x, "
+                      "torch::Tensor w, torch::Tensor st, int64_t state_len, torch::Tensor qsl, torch::Tensor idx, "
+                      "torch::Tensor has, int64_t mode); std::vector<torch::Tensor> ex2_control(torch::Tensor accs);",
+                      cuda_sources=KDA_CONV_PTX_SRC, functions=["conv_ref", "ex2_control"],
+                      extra_cuda_cflags=KDA_PTX_CFLAGS, verbose=False)
+
+
+def part_kdaex2(args) -> dict:
+    """A minimal FTZ intermediate witness; this alone does not admit the conv screen."""
+    ext = load_kda_ptx()
+    # Values cross ex2's -126 normal/subnormal boundary and the input's
+    # zero/subnormal boundary. Extremal finite accs also exercise overflow in z.
+    tiny = torch.finfo(torch.float32).tiny
+    c = 1.44269502162933349609375
+    values = [0.0, -0.0, 2.0**-149, -2.0**-149, 2.0**-127, -2.0**-127,
+              tiny, -tiny, 1.0, -1.0, 32.0, -32.0, 64.0, -64.0,
+              torch.finfo(torch.float32).max, -torch.finfo(torch.float32).max]
+    values += [v / c for v in (125.5, 126.0, 126.25, 127.0, 128.0, 140.0, 149.0, 150.0)]
+    values += [-v / c for v in (125.5, 126.0, 127.0, 128.0, 140.0)]
+    accs = torch.tensor(values, dtype=torch.float32, device="cuda")
+    raw, bf16 = ext.ex2_control(accs)
+    torch.cuda.synchronize()
+    bits = raw.contiguous().view(torch.int32)
+    input_subnormal = (raw[:, 1].abs() < tiny) & (raw[:, 1] != 0)
+    changed = bits[:, 2] != bits[:, 3]
+    output_subnormal = (raw[:, 2] > 0) & (raw[:, 2] < tiny)
+    out = {"schema": "tessera.kda_ex2_control.v1", "finite_accumulator_count": len(values),
+           "all_accumulators_finite": bool(torch.isfinite(accs).all()),
+           "columns": ["acc", "z", "ex2", "ex2_ftz",
+           "den", "den_ftz", "silu_fp32", "silu_fp32_ftz"],
+           "raw_fp32_bits": bits.cpu().tolist(),
+           "raw_bf16_bits": bf16.contiguous().view(torch.int16).cpu().tolist(),
+           "ex2": bits_compare(raw[:, 2], raw[:, 3]),
+           "denominator": bits_compare(raw[:, 4], raw[:, 5]),
+           "output_fp32": bits_compare(raw[:, 6], raw[:, 7]),
+           "output_bf16": bits_compare(bf16[:, 0], bf16[:, 1]),
+           "input_subnormal_count": int(input_subnormal.sum()),
+           "input_subnormal_ex2_is_one_both": bool(((bits[input_subnormal, 2] == 0x3f800000) &
+                                                      (bits[input_subnormal, 3] == 0x3f800000)).all()),
+           "changed_ex2_is_subnormal_flushed_to_positive_zero": bool((output_subnormal[changed] &
+                                                                       (bits[changed, 3] == 0)).all()),
+           "ptx_source_sha256": hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest(),
+           "cuda_flags": list(KDA_PTX_CFLAGS), "compiled_module": ext.__file__,
+           "compiled_module_sha256": hashlib.sha256(Path(ext.__file__).read_bytes()).hexdigest()}
+    # Raw equality is the observable here. An inf-inf value subtraction is
+    # undefined and would add NaN summary values to otherwise exact records.
+    for key in ("ex2", "denominator", "output_fp32", "output_bf16"):
+        out[key].pop("value")
+    cuobjdump = shutil.which("cuobjdump")
+    if cuobjdump is None and os.environ.get("CUDA_HOME"):
+        candidate = Path(os.environ["CUDA_HOME"]) / "bin/cuobjdump"
+        if candidate.is_file():
+            cuobjdump = str(candidate)
+    if cuobjdump:
+        sass = subprocess.run([cuobjdump, "--dump-sass", ext.__file__], capture_output=True,
+                              text=True, timeout=30, check=True).stdout
+        path = Path(args.out) / "kda_ptx_control.sass"
+        path.write_text(sass)
+        out["sass"] = {"path": str(path), "sha256": hashlib.sha256(sass.encode()).hexdigest()}
+    else:
+        out["sass"] = {"error": "cuobjdump unavailable"}
+    out["errors"] = kdaex2_gate_errors(out)
+    out["control_passed"] = not out["errors"]
+    log("kdaex2", {k: out[k] for k in ("control_passed", "ex2", "denominator", "input_subnormal_count")})
+    return out
+
+
+def part_kdaptx(args) -> dict:
+    """The conv's served per-element arithmetic, rebuilt with explicit-rounding PTX, against the
+    stock Triton conv bit for bit (the exactness gate for fusing the conv into FlashKDA's loads)."""
+    from vllm.model_executor.layers.mamba.ops import causal_conv1d as stock_module
+
+    causal_conv1d_fn = stock_module.causal_conv1d_fn
+    ext = load_kda_ptx()
+    p = KDA_P
+    gen = torch.Generator(device="cuda").manual_seed(11)
+    out = {"p": p, "width": KDA_WIDTH, "modes": KDA_PTX_MODES, "cases": [],
+           "gate_contract": KDA_GATE_CONTRACT, "ex2_equivalence": part_kdaex2(args),
+           "coverage": {"compared": ["q", "k", "v", "conv_state"],
+                        "not_compared": ["recurrent_output", "final_recurrent_state"],
+                        "reason": "convolution reference only; no fused recurrent kernel exists"},
+           "source_bindings": {
+               "stock_conv_file": stock_module.__file__,
+               "stock_conv_sha256": hashlib.sha256(Path(stock_module.__file__).read_bytes()).hexdigest(),
+               "ptx_source_sha256": hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest()}}
+    for layout in ("SD", "DS"):
+        for state_len in (KDA_WIDTH - 1, KDA_WIDTH - 1 + 3):
+            for name, lens, has, scale, zero_frac in KDA_PTX_CASES:
+                c = kda_conv_case(lens, has, p, state_len, layout, gen)
+                if scale != 1.0:
+                    c["qkv"] = (c["qkv"].float() * scale).bfloat16()
+                if zero_frac:
+                    u = torch.rand(c["qkv"].shape, device="cuda", generator=gen)
+                    c["qkv"] = torch.where(u < zero_frac / 2, torch.zeros_like(c["qkv"]), c["qkv"])
+                    c["qkv"] = torch.where((u >= zero_frac / 2) & (u < zero_frac),
+                                           torch.full_like(c["qkv"], -0.0), c["qkv"])
+                ref_state = c["store"].clone()
+                ref = causal_conv1d_fn(c["qkv"].transpose(0, 1), c["weight"], None, activation="silu",
+                                       conv_states=kda_state_view(c, ref_state), has_initial_state=c["has"],
+                                       cache_indices=c["idx"], query_start_loc=c["qsl"],
+                                       metadata=c["md"]).transpose(0, 1)
+                row = {"layout": layout, "state_len": state_len, "case": name, "lens": list(lens),
+                       "has": list(has), "cache_indices": c["idx"].tolist(),
+                       "input_strides": list(c["qkv"].stride()),
+                       "state_strides": list(kda_state_view(c, c["store"]).stride()),
+                       "ref_dense": bool(ref.is_contiguous())}
+                for mode, label in KDA_PTX_MODES.items():
+                    got_state = c["store"].clone()
+                    st = kda_state_view(c, got_state)
+                    got = ext.conv_ref(c["qkv"], c["weight"], st, state_len, c["qsl"], c["idx"], c["has"], mode)
+                    torch.cuda.synchronize()
+                    row[label] = bits_compare(got, ref)
+                    row[label]["qkv"] = {key: bits_compare(a, b) for key, a, b in
+                                         zip(("q", "k", "v"), got.split(p, -1), ref.split(p, -1))}
+                    row[label]["conv_state"] = bits_compare(got_state, ref_state)
+                    if mode == 0:
+                        candidate, candidate_state = got, got_state
+                    else:
+                        row[label]["vs_candidate"] = bits_compare(got, candidate)
+                        row[label]["state_vs_candidate"] = bits_compare(got_state, candidate_state)
+                out["cases"].append(row)
+                log("kdaptx", layout, state_len, name,
+                    {lab: row[lab]["bits_differing"] for lab in KDA_PTX_MODES.values()})
+    out["served_output_bit_equal_all"] = all(r["served_sass"]["bit_equal"] for r in out["cases"])
+    out["served_conv_state_bit_equal_all"] = all(r["served_sass"]["conv_state"]["bit_equal"] for r in out["cases"])
+    out["served_bit_equal_all"] = out["served_output_bit_equal_all"] and out["served_conv_state_bit_equal_all"]
+    out["mutants_seen"] = {lab: any(not r[lab]["vs_candidate"]["bit_equal"] or
+                                    not r[lab]["state_vs_candidate"]["bit_equal"] for r in out["cases"])
+                           for lab in list(KDA_PTX_MODES.values())[1:]}
+    return out
+
+
+def kdafwd_call(t: int, h: int, state_dtype, gen):
+    """One served-shape FlashKDA prefill call (varlen, one sequence, state in and out)."""
+    import vllm._flashkda_C  # noqa: F401
+
+    ops = torch.ops._flashkda_C
+    q, k, v, g = (torch.randn(1, t, h, HEAD_DIM, device="cuda", generator=gen).bfloat16() for _ in range(4))
+    beta = torch.randn(1, t, h, device="cuda", generator=gen).bfloat16()
+    a_log = torch.randn(h, device="cuda", generator=gen) * 0.1
+    dt_bias = torch.randn(h, HEAD_DIM, device="cuda", generator=gen) * 0.1
+    init = (torch.randn(1, h, HEAD_DIM, HEAD_DIM, device="cuda", generator=gen) * 0.01).to(state_dtype)
+    final = torch.empty_like(init)
+    cu = torch.tensor([0, t], dtype=torch.int32, device="cuda")
+    ws = torch.empty(int(ops.get_workspace_size(t, h, 1)), dtype=torch.uint8, device="cuda")
+    o = torch.empty(1, t, h, HEAD_DIM, device="cuda", dtype=torch.bfloat16)
+    call = lambda: ops.fwd(q, k, v, g, beta, HEAD_DIM ** -0.5, o, ws, a_log, dt_bias, -5.0, init, final, cu,
+                           None, None)
+    call.workspace_bytes = ws.numel()
+    call.resident_bytes = sum(a.numel() * a.element_size() for a in
+                              (q, k, v, g, beta, a_log, dt_bias, init, final, cu, ws, o))
+    return call
+
+
+def kda_steady(graph, copies: int, seconds: float) -> dict:
+    """Completed stock graph calls; the event interval includes host replay gaps."""
+    start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    start.record()
+    t0, begin = time.time(), time.perf_counter()
+    replays = 0
+    while time.perf_counter() - begin < seconds:
+        for _ in range(32):
+            graph.replay()
+        torch.cuda.synchronize()
+        replays += 32
+    end.record()
+    torch.cuda.synchronize()
+    t1 = time.time()
+    elapsed_ms = start.elapsed_time(end)
+    return {"interval_unix": [t0, t1], "duration_s": t1 - t0, "graph_replays": replays,
+            "completed_calls": replays * copies, "cuda_interval_ms": elapsed_ms,
+            "graph_ms_per_call": elapsed_ms / (replays * copies)}
+
+
+def kda_raw_netdata(label: str, host: str, t0: float, t1: float) -> dict:
+    """Reuse the box instrument's fetcher and retain every raw returned group."""
+    import box_power_window as bpw
+
+    contexts = [(c, dims) for c, dims in bpw.SERIES if c != "nvidia_smi.gpu_utilization"]
+    out = {"box": label, "request_host": host, "phase_interval_unix": [t0, t1],
+           "query_window_unix": [math.floor(t0), math.ceil(t1)], "series": {},
+           "energy_status": "unqualified; full raw groups retained, coverage agreement required"}
+    for context, dims in contexts:
+        try:
+            got = bpw._fetch(host, context, dims, math.floor(t0), math.ceil(t1), 0)
+            raw = got.get("raw_doc", got["doc"])
+            out["series"][context] = {"query": got["url"], "raw_response": raw,
+                                      "returned_view": raw.get("view")}
+        except Exception as exc:
+            out["series"][context] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
+
+
+def part_kdafwd(args, sampler) -> dict:
+    """FlashKDA prepare and recurrence device time at the served shape, per local head count."""
+    import vllm._flashkda_C as stock_module
+
+    torch.set_num_threads(1)
+    torch.set_num_interop_threads(1)
+    gen = torch.Generator(device="cuda").manual_seed(13)
+    props = torch.cuda.get_device_properties(0)
+    out_dir = Path(args.out)
+    hosts = dict(v.split("=", 1) for v in args.kda_netdata_hosts)
+    if set(hosts) != {"sparky", "sparklina"}:
+        raise ValueError("stock timing requires both named Sparks' Netdata endpoints")
+    out = {"schema": "tessera.kda_stock_screen.v1", "sms": props.multi_processor_count, "cells": [],
+           "scope": "stock synthetic resident kernel screen; no candidate or serving comparison",
+           "source_bindings": {"stock_module": stock_module.__file__,
+                               "stock_module_sha256": hashlib.sha256(Path(stock_module.__file__).read_bytes()).hexdigest(),
+                               "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                               "harness_source_identity": _harness_source()},
+           "primary_state_dtype": "float32 (pinned model kda_state_dtype default)",
+           "energy_status": "unqualified until fast-sampler/Netdata coverage agreement", "startup": []}
+    cells = []
+    for t in args.kda_tokens:
+        for h in args.kda_heads:
+            for dtype in args.kda_state_dtypes:
+                t0 = time.time()
+                call = kdafwd_call(t, h, getattr(torch, dtype), gen)
+                copies = copies_for(call.resident_bytes)
+                calls = [call] + [kdafwd_call(t, h, getattr(torch, dtype), gen) for _ in range(copies - 1)]
+                for _ in range(3):
+                    for fn in calls:
+                        fn()
+                torch.cuda.synchronize()
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    for fn in calls:
+                        fn()
+                graph.replay()
+                torch.cuda.synchronize()
+                out["startup"].append({"tokens": t, "heads": h, "state_dtype": dtype,
+                                       "interval_unix": [t0, time.time()], "copies": copies})
+                cells.append((t, h, dtype, calls, graph))
+    primary_trace = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+    for round_index in range(args.kda_rounds):
+        ordered = cells if round_index % 2 == 0 else list(reversed(cells))
+        for t, h, dtype, calls, graph in ordered:
+            copies, tiles = len(calls), (t + 15) // 16
+            label = f"r{round_index}-t{t}-h{h}-{dtype}"
+            trace = Path(primary_trace) if not out["cells"] and primary_trace else out_dir / f"{label}.trace.json.gz"
+            t0 = time.time()
+            kern = kernel_device_us(lambda: [fn() for fn in calls], args.reps, trace)
+            profile_end = time.time()
+            cell = {"tokens": t, "heads": h, "state_dtype": dtype, "round": round_index, "tiles": tiles,
+                    "role": "native-default-state" if dtype == "float32" else "alternate-state-diagnostic",
+                    "copies": copies, "resident_bytes": sum(fn.resident_bytes for fn in calls),
+                    "workspace_bytes_per_copy": calls[0].workspace_bytes,
+                    "prepare_grid_from_pinned_source": [tiles + 1, h, 1],
+                    "workspace_tile_upper_bound": tiles + 1,
+                    "h1_scope": "aggregate prepare launch diagnostic; not a single-CTA measurement" if h == 1 else None,
+                    "profile": {"interval_unix": [t0, profile_end], "trace": str(trace),
+                                "trace_sha256": hashlib.sha256(trace.read_bytes()).hexdigest()},
+                    "kernels": kern}
+            for role, key in (("prepare", "_flash_kda_fwd_prepare"), ("recurrence", "_flash_kda_fwd_recurrence")):
+                us = [v["mean_us"] for n, v in kern.items() if key in n]
+                if len(us) != 1:
+                    raise RuntimeError(f"stock profile has ambiguous or absent {role} kernel: {us}")
+                cell[f"{role}_us"] = us[0]
+            cell["recurrence_us_per_tile"] = cell["recurrence_us"] / tiles
+            cell["settle"] = kda_steady(graph, copies, args.kda_warm_s)
+            cell["steady"] = kda_steady(graph, copies, args.kda_steady_s)
+            t0, t1 = cell["steady"]["interval_unix"]
+            cell["power"] = sampler.window(t0, t1)
+            cell["power"]["raw_samples"] = [[stamp, watts] for stamp, watts in sampler.samples if t0 <= stamp <= t1]
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {label: pool.submit(kda_raw_netdata, label, host, t0, t1) for label, host in hosts.items()}
+                cell["netdata_both_boxes"] = {label: f.result() for label, f in futures.items()}
+            out["cells"].append(cell)
+            _harness_source(out["source_bindings"]["harness_source_identity"])
+            kda_commit(out, out_dir / "kdafwd_partial.json", len(out["cells"]))
+            log("kdafwd", label, cell["prepare_us"], cell["recurrence_us"], cell["steady"]["graph_ms_per_call"],
+                cell["power"].get("mean_w"), "W; energy unqualified")
+    return out
+
+
 def part_l2(args, sampler) -> dict:
     props = torch.cuda.get_device_properties(0)
     out = {"l2_cache_bytes": getattr(props, "L2_cache_size", None), "sms": props.multi_processor_count,
@@ -601,6 +970,20 @@ def part_ncu(args, model_dir: Path) -> dict:
     return {"ncu_tokens": args.ncu_tokens}
 
 
+def part_ncu_kda(args) -> dict:
+    gen = torch.Generator(device="cuda").manual_seed(13)
+    calls = [kdafwd_call(t, h, torch.float32, gen) for t in args.kda_tokens for h in args.kda_heads]
+    for call in calls:
+        call()
+    torch.cuda.synchronize()
+    torch.cuda.profiler.start()
+    for call in calls:
+        call()
+    torch.cuda.synchronize()
+    torch.cuda.profiler.stop()
+    return {"kda_tokens": args.kda_tokens, "kda_heads": args.kda_heads, "state_dtype": "float32"}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", required=True)
@@ -614,12 +997,22 @@ def main() -> int:
                     default=[1, 2, 4, 6, 8, 12, 16, 20, 24, 28, 32, 40, 48, 64, 128, 256])
     ap.add_argument("--ncu-tokens", type=int, nargs="+", default=[1024, 2048])
     ap.add_argument("--kda-tokens", type=int, nargs="+", default=[2048, 8192])
+    ap.add_argument("--kda-heads", type=int, nargs="+", default=[32, 1],
+                    help="kdafwd local heads (32 is TP2; 1 is an aggregate fusion-ceiling diagnostic)")
+    ap.add_argument("--kda-state-dtypes", choices=("float32", "bfloat16"), nargs="+", default=["float32", "bfloat16"])
+    ap.add_argument("--kda-steady-s", type=float, default=20.0)
+    ap.add_argument("--kda-warm-s", type=float, default=3.0)
+    ap.add_argument("--kda-rounds", type=int, default=2)
+    ap.add_argument("--kda-netdata-hosts", nargs="+", default=["sparky=sparky", "sparklina=sparklina"])
+    ap.add_argument("--ncu-part", choices=("mhc", "kda"), default="mhc")
     ap.add_argument("--reps", type=int, default=20)
     ap.add_argument("--ncu", action="store_true")
     ap.add_argument("--numerics-only", action="store_true",
                     help="ulp and split-invariance checks only; no timing (a shared-GPU row may run it)")
     ap.add_argument("--stub", default=None, help=argparse.SUPPRESS)
     args = ap.parse_args()
+    if min(args.kda_steady_s, args.kda_warm_s, args.kda_rounds, args.reps) <= 0:
+        ap.error("KDA durations, rounds and profile repetitions must be positive")
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     model_dir = Path(args.model)
@@ -631,15 +1024,19 @@ def main() -> int:
             "device": torch.cuda.get_device_name(0), "model": str(model_dir), "argv": sys.argv,
             "peak_dram_gbs": PEAK_DRAM_GBS, "utc_start": time.time()}
     log("meta", json.dumps(meta))
+    meta["harness_source_identity"] = _harness_source()
     if args.ncu:
-        res = {"meta": meta, "ncu": part_ncu(args, model_dir)}
+        res = {"meta": meta, "ncu": part_ncu_kda(args) if args.ncu_part == "kda" else part_ncu(args, model_dir)}
+        _harness_source(meta["harness_source_identity"])
         (out_dir / "mhc_probe_ncu.json").write_text(json.dumps(res, indent=1) + "\n")
+        _harness_source(meta["harness_source_identity"])
         return 0
     sampler = rpo.PowerSampler()
     sampler.start()
     res = {"meta": meta}
     name = "mhc_probe_numerics.json" if args.numerics_only else "mhc_probe.json"
     meta["numerics_only"] = args.numerics_only
+    failures = []
     for part in args.parts.split(","):
         if part == "l2" and args.numerics_only:
             raise SystemExit("--numerics-only has no l2 part (the L2 curve is a timing)")
@@ -653,18 +1050,46 @@ def main() -> int:
             res["kdaconv"] = part_kdaconv(args, sampler)
         elif part == "mhcsplit":
             res["mhcsplit"] = part_mhcsplit(args, model_dir)
+        elif part == "kdaptx":
+            res["kdaptx"] = part_kdaptx(args)
+        elif part == "kdaex2":
+            res["kdaex2"] = part_kdaex2(args)
+            if not res["kdaex2"]["control_passed"]:
+                failures = ["ex2 intermediate control failed"]
+        elif part == "kdafwd":
+            if args.numerics_only:
+                raise SystemExit("--numerics-only has no kdafwd part (it is a timing)")
+            res["kdafwd"] = part_kdafwd(args, sampler)
         else:
             raise SystemExit(f"unknown part {part}")
+        if part == "kdaptx":
+            failures = kdaptx_gate_errors(res["kdaptx"])
+            res["kdaptx"]["gate"] = {"passed": not failures, "errors": failures}
+        _harness_source(meta["harness_source_identity"])
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
+        if failures:
+            break
     sampler.stop_flag = True
     meta["utc_end"] = time.time()
     meta["power_sampler"] = sampler.source
-    try:
-        res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
-    except Exception as exc:  # noqa: BLE001
-        res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
-    (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
+    if "kdafwd" in res:
+        res["netdata"] = {"note": "full unfiltered per-window responses for both boxes are in kdafwd.cells",
+                          "energy_status": "unqualified; no whole-run or cropped-series energy claim"}
+    else:
+        try:
+            res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
+        except Exception as exc:  # noqa: BLE001
+            res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
+    _harness_source(meta["harness_source_identity"])
+    if "kdafwd" in res:
+        kda_commit(res, out_dir / name, len(res["kdafwd"]["cells"]), "publish")
+    else:
+        (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     log("done", out_dir / name)
+    _harness_source(meta["harness_source_identity"])
+    if failures:
+        log("kdaptx gate FAILED", "; ".join(failures))
+        return 1
     return 0
 
 

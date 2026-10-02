@@ -43,10 +43,17 @@ def _child_env(**extra):
 
 
 def _run(args, **env_extra):
+    env = _child_env(**env_extra)
+    plugins = []
+    if env.get("PYTEST_DISABLE_PLUGIN_AUTOLOAD") and "-n" in args:
+        # The canonical container admits a finite plugin set. Nested parallel
+        # controls need the same explicit xdist declaration; serial controls
+        # retain their intentional plugin-absence environment.
+        plugins = ["-p", "xdist.plugin"]
     return subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *args],
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *plugins, *args],
         cwd=str(ROOT),
-        env=_child_env(**env_extra),
+        env=env,
         capture_output=True,
         text=True,
         timeout=600,

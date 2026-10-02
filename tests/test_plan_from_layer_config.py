@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytest
 import box_artifacts
+from test_accounting_source import package_roots
+from tessera.errors import TesseraError
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -32,6 +34,41 @@ SPEC.loader.exec_module(PLAN)
 PQ_TREE = box_artifacts.root("prismaquant_worktree")
 ALLOC = box_artifacts.path("shared_runs", "pq-continuous", "qwen06b", "alloc")
 MODEL = box_artifacts.path("models", "Qwen3-0.6B")
+
+
+def test_charged_bits_refuses_a_foreign_cached_accountant(package_roots):
+    _, second = package_roots
+    with pytest.raises(TesseraError, match="accounting source"):
+        PLAN.charged_bits(second, "E4M3", 1024, (8, 8))
+
+
+def test_charged_bits_uses_the_same_root_accountant(package_roots):
+    first, _ = package_roots
+    assert PLAN.charged_bits(first, "E4M3", 1024, (8, 8)) == 192
+
+
+def test_charged_bits_refuses_a_foreign_cached_parent(package_roots):
+    import sys
+    _, second = package_roots
+    sys.modules.pop("prismaquant.tessera_formats")
+    with pytest.raises(TesseraError, match="accounting source"):
+        PLAN.charged_bits(second, "E4M3", 1024, (8, 8))
+
+
+def test_charged_bits_refuses_an_explicit_missing_root(tmp_path):
+    with pytest.raises(TesseraError, match="accounting source"):
+        PLAN.charged_bits(tmp_path / "absent", "E4M3", 1024, (8, 8))
+
+
+def test_unspecified_accounting_remains_explicitly_absent():
+    assert PLAN.charged_bits(None, "E4M3", 1024, (8, 8)) is None
+
+
+def test_charged_bits_resolves_a_same_origin_alias(package_roots, tmp_path):
+    first, _ = package_roots
+    alias = tmp_path / "alias"
+    alias.symlink_to(first, target_is_directory=True)
+    assert PLAN.charged_bits(alias, "E4M3", 1024, (8, 8)) == 192
 
 
 def tessera(fmt: str) -> dict:

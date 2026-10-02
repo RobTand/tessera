@@ -75,3 +75,10 @@ def register() -> None:
         if backend.is_overridden() and backend.get_path() != path:
             raise RuntimeError("Tessera GLM53 NoPE refuses to replace another CUSTOM backend")
         register_backend(backend, path)
+
+    # Independent default-off stock-backend override, published by the shared
+    # contract. Its own install checks source identity and refuses conflicts.
+    from .flags import latched_bool
+    if latched_bool("TESSERA_RESEARCH_MLA_MASK_SKIP", meaning="eager sparse-MLA prefill mask skip"):
+        from .mla_sparse_sm120 import install
+        install()
