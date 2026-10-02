@@ -17,6 +17,20 @@ the same column's preceding piece/tile or its incoming state. This opt-in has
 no numerical, performance, graph or serving qualification from CPU checks or
 compilation alone. No serving cell, default, precision menu or pin is promoted.
 
+The finite PM experiment extends the existing benchmark, StagedInputs and
+NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
+ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
+source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
+and final output bits must agree before a content-bound numeric receipt can
+admit ABBA timing. This vLLM-backed operator uses the explicit direct execution
+exception; held original FDs retain the existing outer/inner checks, native
+load/fence checks and close-before-publication behavior. CPU checks and builds
+still use PB. Seeded activations and uniform routing weights are geometry
+controls, not served decode or quality measurements. Every timed arm retains
+raw events, Torch profiler traces and power windows; both-host Netdata and
+clock review are required, and energy remains HOLD. Defaults and serving cells
+are unchanged.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,

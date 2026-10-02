@@ -1,7 +1,9 @@
 """Opt-in pinned inputs for the existing single-case kernel benchmark Store.
 
 No origin fallback, cache, dispatcher, or tensor materialization framework.
-Only PrismaBuild's public client SDK admits and opens the declared ranges.
+PrismaBuild's public client SDK owns admitted staged ranges. The explicit
+direct-vLLM mode uses the same sealed ranges through held original FDs;
+it acquires no PB context, residency state or lease.
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import sys
 import json
 import os
 import secrets
+import stat
 import struct
 from pathlib import Path
 
@@ -42,7 +45,7 @@ def verify_cached_frame(raw, role):
 
 
 class StagedInputs:
-    def __init__(self, manifest_path, *, sdk=None, allow_unsealed_wires=False):
+    def __init__(self, manifest_path, *, sdk=None, allow_unsealed_wires=False, direct_vllm=False):
         if sdk is None:
             from prismabuild import client as sdk
         self.sdk = sdk
@@ -52,15 +55,43 @@ class StagedInputs:
         if encoding != "identity" or manifest != json.loads(raw):
             raise ValueError("sealed replay manifest changed during validation")
         self.manifest = manifest
+        self.direct_vllm = bool(direct_vllm)
+        self.closed = False
+        self.reads = []
+        self.headers = {}
+        self.roles = {}
         self.entries = {(e['path'], e['offset']): e for e in manifest['entries']}
         if len(self.entries) != manifest['entry_count']:
             raise ValueError('duplicate input ranges')
         for (path, offset), entry in self.entries.items():
             digest = entry.get('sha256')
-            if digest is None and allow_unsealed_wires and offset > 0 and path.endswith('.safetensors'):
+            if digest is None and allow_unsealed_wires and not direct_vllm and offset > 0 and path.endswith('.safetensors'):
                 continue
             if not isinstance(digest,str) or len(digest)!=64:
                 raise ValueError('single replay requires every input digest')
+        if direct_vllm:
+            self.actual_digests = {identity:entry['sha256'] for identity,entry in self.entries.items()}
+            self.direct_files = {}
+            self.direct_record = {'transport':'direct-vllm-held-original-fds',
+                'manifest_sha256':self.manifest_sha256,'before':{},'after':None}
+            try:
+                for path in sorted({path for path,_offset in self.entries}):
+                    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+                    self.direct_files[path] = {'fd':fd}
+                    info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode):
+                        raise ValueError('direct input is not a regular file')
+                    identity = self._file_identity(path,info)
+                    self.direct_files[path]['identity'] = identity
+                    self.direct_record['before'][path] = identity
+                for (path,offset),entry in self.entries.items():
+                    if offset + entry['bytes'] > self.direct_files[path]['identity']['size']:
+                        raise ValueError('direct range exceeds held file')
+            except BaseException:
+                for item in self.direct_files.values():os.close(item['fd'])
+                self.closed = True
+                raise
+            return
         bound = sdk.injected_context()
         if not bound.get('ok'):
             raise ValueError(f"pinned inputs refused: {bound.get('refusal')}")
@@ -96,10 +127,18 @@ class StagedInputs:
         if not held.get('ok'):
             raise ValueError(f"pinned inputs refused: {held.get('refusal')}")
         self.held = held
-        self.closed = False
-        self.reads = []
-        self.headers = {}
-        self.roles = {}
+
+    @staticmethod
+    def _file_identity(path, info):
+        return {'path':path,'device':info.st_dev,'inode':info.st_ino,'size':info.st_size,
+                'mtime_ns':info.st_mtime_ns,'ctime_ns':info.st_ctime_ns}
+
+    def _direct_identity(self, path):
+        item = self.direct_files[path]
+        identity = self._file_identity(path,os.fstat(item['fd']))
+        if identity != item['identity']:
+            raise ValueError('direct input file identity changed: '+path)
+        return identity
 
     def read(self, path, offset=0):
         if self.closed:
@@ -108,20 +147,28 @@ class StagedInputs:
         entry = self.entries.get(identity)
         if entry is None:
             raise ValueError(f'undeclared input range: {identity}')
-        key = self.keys[identity]
-        fd, serving = self.sdk.open_pinned(self.queue, self.held['pin'],
-                                         self.held['ref_id'], key)
+        if self.direct_vllm:
+            self._direct_identity(identity[0])
+            fd = self.direct_files[identity[0]]['fd']
+            serving = {'transport':'direct-vllm-held-original-fd'}
+        else:
+            key = self.keys[identity]
+            fd, serving = self.sdk.open_pinned(self.queue, self.held['pin'],
+                                             self.held['ref_id'], key)
         try:
             # A staged range starts at byte zero. No source-path reread follows
             # authentication: this owned bytearray is exactly what the consumer gets.
             data = bytearray()
             while len(data) < entry['bytes']:
-                chunk = os.read(fd, min(1 << 20, entry['bytes'] - len(data)))
+                length = min(1 << 20, entry['bytes'] - len(data))
+                chunk = (os.pread(fd,length,identity[1]+len(data)) if self.direct_vllm
+                         else os.read(fd,length))
                 if not chunk:
                     raise ValueError('short pinned range')
                 data.extend(chunk)
-            if os.read(fd, 1):
+            if not self.direct_vllm and os.read(fd, 1):
                 raise ValueError('oversized pinned range')
+            if self.direct_vllm:self._direct_identity(identity[0])
             digest = hashlib.sha256(data).hexdigest()
             if digest != self.actual_digests[identity]:
                 raise ValueError(f'pinned range digest differs: {identity}')
@@ -129,7 +176,7 @@ class StagedInputs:
                                'bytes': len(data), 'sha256': digest, 'serving_tier': serving})
             return data
         finally:
-            os.close(fd)
+            if not self.direct_vllm:os.close(fd)
 
     def json(self, path):
         return json.loads(self.read(path))
@@ -183,12 +230,23 @@ class StagedInputs:
         entry = self.entries.get(identity)
         if self.closed or entry is None or not str(path).endswith('.so'):
             raise ValueError('undeclared native code artifact')
+        if self.direct_vllm:
+            self._direct_identity(str(path))
+            return os.dup(self.direct_files[str(path)]['fd']),dict(entry),{'transport':'direct-vllm-held-original-fd'}
         fd,serving = self.sdk.open_pinned(self.queue,self.held['pin'],
                                         self.held['ref_id'],self.keys[identity])
         return fd,dict(entry),serving
 
     def close(self):
         if not self.closed:
+            if self.direct_vllm:
+                try:
+                    self.direct_record['after'] = {path:self._direct_identity(path)
+                                                   for path in self.direct_files}
+                finally:
+                    for item in self.direct_files.values():os.close(item['fd'])
+                    self.closed = True
+                return
             result = self.sdk.release(self.queue, self.held['pin_id'], self.held['ref_id'],
                                       consumer_action_key=self.ctx['action_key'],
                                       stage_root=self.held['pin']['stage_root'])
@@ -215,8 +273,11 @@ class NativeCallback:
         self.file_id=(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
         self.record = {'code_artifact_contract':'experimental trusted binary owner; not immutable original tensor provider',
                        'declared_path':str(path),'expected_sha256':expected_sha256,
-                       'serving_tier':self.serving,'pin_id':reader.held['pin_id'],
-                       'ref_id':reader.held['ref_id'],'source_sha256':source_sha256}
+                       'serving_tier':self.serving,'source_sha256':source_sha256}
+        if reader.direct_vllm:
+            self.record['input_transport'] = 'direct-vllm-held-original-fd'
+        else:
+            self.record.update(pin_id=reader.held['pin_id'],ref_id=reader.held['ref_id'])
         self.source_sha256 = source_sha256
         try:
             if (self.MODULE in sys.modules or rf._ext.cache_info().currsize):

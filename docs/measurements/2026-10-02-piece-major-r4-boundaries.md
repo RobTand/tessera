@@ -177,3 +177,32 @@ passed 63 selected CPU checks, zero skips/missing collection, two xdist workers.
 The row established equal serialized blobs and an exact word bijection, with
 different physical resident order. It measured no GPU decode. The 20.18-second
 row ran once; the prior encoder matrices were not redundantly remeasured.
+
+The direct-vLLM input/native extension is reused byte-for-byte from
+`731f5caf9e7303318feeaa254d5b4a0f471967ea` at the existing `pb_staged_store.py`
+owner, with its direct/native callback tests. Its original causal control was
+PB red `e73d2521bc0423099bfdabc4f52d8b30f117a23e769c7cd78d5c8c94c1a8cd02`;
+PB `daa406b752cd23ecc0f2b11d6f1b4d2e1c5cda4d62d427f79c933c9328b96d37`
+passed 101 CPU checks, zero skips/missing collection, receipt
+`925703ae54707baeecde446a981241835f7b89481a87fdf55b34739e041adcce`.
+This owner qualification is reused rather than repeated. No paired-K32
+kernel, schedule, feature selection or benchmark mode is imported.
+
+One canonical native CPU action,
+`293aa99d09279ad065e12df84385509816b5f2b6b43f3cc751d56e227313a1fa`, passed
+with CUDA hidden on Sparky: one CPU, 4 GiB, 59.98 seconds, measured cgroup peak
+3,840,479,232 bytes. Both PM arms use its ELF
+`4d693c2621333eb36b32b21479e0283e95236e8864923fad9d1f15bc1487091d`.
+The finalizer retained exact source/object/ELF/recipe bindings and Ninja no-work
+state. Full CAS lookup and all 116 frozen source files were checked. This is
+compile/reuse evidence, not speed or GPU numeric evidence.
+
+The owned 873-entry readset reuses all 872 entries of the verified sealer
+`a01cb090aa43f96220159e92788ae372c161fcb1a27895548f0797b63d2d165a`
+(original manifest `ac4606e82384c891114a4836525456c3356f04dc8b6ec4db898949454fb4f2d0`),
+including captured routing, and adds only the exact PM ELF. No whole-model
+rehash or shared-inventory mutation occurred. Its digest is
+`ae1fb40659d2a1b8c372c4609f3256a9fd62980f09e0687bde4042e5225ccf07`.
+The packet is under
+`/mnt/shared/astra-resume-20261002/t8_performance/piece-major-common-c236b7aa/`.
+Numeric GPU execution and measured performance remain pending root GO.
