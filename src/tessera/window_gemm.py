@@ -215,6 +215,10 @@ class PreparedWindowGemm:
     #: fp32 accumulator) or ``"folded"`` (into each decoded weight, one bf16
     #: rounding, before the dot).  The E4M3 family is always ``"epilogue"``.
     arithmetic: str = "epilogue"
+    #: The resident word order of ``words`` (``kernel_window_gemv``
+    #: ``WORD_LAYOUT_*``), carried from the unit's own repack so a single-unit
+    #: bundle never silently strips a re-laid body to the legacy default.
+    word_layout: str = "legacy"
 
     def __post_init__(self):
         # Metadata only -- no tensor is read -- so the custom op that rebuilds
@@ -444,6 +448,7 @@ def prepare_window_gemm(
         block_k=block_k,
         quantizer=quantizer if unit.family == "e4m3" else "native",
         arithmetic=arithmetic,
+        word_layout=str(getattr(unit.rep, "word_layout", "legacy")),
     )
 
 

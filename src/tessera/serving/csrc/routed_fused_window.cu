@@ -735,7 +735,9 @@ template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT,
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
-    static_assert(!PM || (!TWO && RL == 4 && !DENSE),
+    // PM is only ever instantiated for the one-run rate-4 routed case; the
+    // assert pins that so a future call cannot quietly read a wrong layout.
+    static_assert(!PM || (!TWO && RL == 4 && !DENSE && (MODE == 0 || MODE == 1)),
                   "the piece-major reader is the one-run rate-4 routed body only");
     static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
@@ -897,13 +899,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const bool second = (MODE != 2) && h == 1;
                 g_h[h] = g;
                 t64_h[h] = t / HALF;
-                // Piece-major: the tile is [8 pieces][columns], so a piece's
-                // plane is tile_words / PIECES_PER_TILE long.  The three
-                // address sites (``tbase_h``, ``issue_words``, ``load_prev``)
-                // use this same base, so only the tile origin differs.
+                // The tile origin is the same in both layouts: piece 0 starts
+                // at the tile, and piece k is an offset INSIDE it (a piece
+                // plane is tile_words / PIECES_PER_TILE long).  Only the three
+                // inner addresses below move, never this base.
                 tbase_h[h] = (second ? p.words1 : p.words0) + (long)e * p.words_stride
-                             + (long)g * p.tile_words
-                             - (PM ? p.tile_words - p.tile_words / PIECES_PER_TILE : 0);
+                             + (long)g * p.tile_words;
                 init_h[h] = (second ? p.init1 : p.init0) + (long)e * p.K;
                 hasinit_h[h] = (second ? p.has_init1 : p.has_init0)[e];
                 rp_h[h] = load_runs(second ? p.runs1 : p.runs0, e);
@@ -923,8 +924,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             if (tid == 0) {
                 // A piece-major launch is only ever the one-run rate-4 case;
                 // any other shape with the flag set is a caller bug, not a
-                // decode to attempt.
-                if (p.piece_major && (TWO || RL != 4)) __trap();
+                // decode to attempt.  (Routed only: DENSE never sets the flag.)
+                if (PM && (TWO || RL != 4 || DENSE)) __trap();
                 #pragma unroll
                 for (int h = 0; h < 2; ++h) {
                     const RunPair& rp = rp_h[h];
@@ -1593,6 +1594,7 @@ int max_dynamic_smem_bytes(int device) {
 }
 
 template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT, bool PM>
 void launch_pair(const Params& p, int grid, cudaStream_t stream) {
     const int smem = launch_smem_bytes(MODE, p.slot_words, BMT);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
@@ -1619,20 +1621,26 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     // The piece-major reader exists only for the one-run rate-4 routed case
     // (tessera#739); it is a distinct instantiation, keyed on ``p.piece_major``
     // and compiled only where its static asserts allow.
-    if (p.piece_major) {
-        TORCH_CHECK(!k.two && k.r_lo == 4 && MODE != 2 && !DENSE,
-                    "the piece-major reader is the one-run rate-4 routed body only");
-        if constexpr (launch_decodes(MODE, 4, false, DENSE)) {
-            launch_pair<FP8, MODE, DENSE, SPLIT, 4, false, BMT, true>(p, grid, stream);
-            return;
+    // Piece-major is the one-run rate-4 ROUTED body (gate/up MODE 0/1, or the
+    // routed down MODE 2 -- DENSE is the separate dense Linear flag, not
+    // MODE).  Guarded by ``if constexpr`` so the PM instantiation is never
+    // even named for a dense or unsupported pair.
+    if constexpr (!DENSE && (MODE == 0 || MODE == 1 || MODE == 2)) {
+        if (p.piece_major) {
+            TORCH_CHECK(!k.two && k.r_lo == 4,
+                        "the piece-major reader is the one-run rate-4 routed body only");
+            if constexpr (launch_decodes(MODE, 4, false, DENSE)) {
+                launch_pair<FP8, MODE, false, SPLIT, 4, false, BMT, true>(p, grid, stream);
+                return;
+            }
+            TORCH_CHECK(false, "no piece-major rate-4 launch for this mode/width");
         }
-        TORCH_CHECK(false, "no piece-major rate-4 launch for this mode/width");
     }
     switch (k.two ? KEY_TWO + k.r_lo : k.r_lo) {
 #define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
         case (T ? KEY_TWO : 0) + R:                                                            \
             if constexpr (launch_decodes(MODE, R, T, DENSE)) {                                 \
-                launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT>(p, grid, stream);              \
+                launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT, false>(p, grid, stream);              \
                 return;                                                                        \
             }                                                                                  \
             break;

@@ -569,6 +569,11 @@ def prepare_grouped_window_gemm(
                     f"expert {e}: {name}={getattr(p, name)} differs from expert 0's "
                     f"{getattr(first, name)}; a grouped stack is homogeneous"
                 )
+        if str(getattr(p, "word_layout", "legacy")) != str(getattr(first, "word_layout", "legacy")):
+            raise GrammarError(
+                f"expert {e}: word_layout {getattr(p, 'word_layout', 'legacy')!r} differs from "
+                f"expert 0's {getattr(first, 'word_layout', 'legacy')!r}; one grouped stack "
+                "needs one resident word order")
     device = first.device
     if arithmetic == "folded" and first.family != "value":
         raise GrammarError(
@@ -604,4 +609,5 @@ def prepare_grouped_window_gemm(
         block_k=block_k,
         quantizer=quantizer if first.family == "e4m3" else "native",
         arithmetic=arithmetic,
+        word_layout=str(getattr(first, "word_layout", "legacy")),
     )

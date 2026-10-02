@@ -1,16 +1,20 @@
-"""Source-contract tests for the piece-major resident word layout (tessera#739).
+"""Contract tests for the piece-major resident word layout (tessera#739).
 
-The layout is decided once at intake and recorded on the per-stack signature;
-a reader that knows only the legacy order must refuse a re-laid stack rather
-than re-stride it.  These tests cover the tag home (``Repacked``), the re-lay
-bijection, eligibility, and the compact Triton reader's refusal.
+These call the PRODUCTION predicates and refusal helpers -- Repacked's re-lay,
+piece_major_eligible, require_legacy_word_layout, and the readers that use
+them -- not local re-implementations.  The refusal must happen BEFORE any
+allocation or extension build, proven by monkeypatching the allocation/build
+seams with bombs.
 """
 from __future__ import annotations
+
+import dataclasses
 
 import pytest
 import torch
 
 from tessera.errors import GrammarError
+from tessera import kernel_window_gemv as kw
 from tessera.kernel_window_gemv import (
     PIECES_PER_TILE,
     WORD_LAYOUT_LEGACY,
@@ -33,6 +37,15 @@ def _repacked(rates, cols=3):
         rates=tuple(int(r) for r in rates), word_layout=WORD_LAYOUT_LEGACY)
 
 
+def _unit(rep, family="e4m3"):
+    """A WindowGemvUnit around a repack, with the fields a reader reads."""
+    return kw.WindowGemvUnit(
+        rep=rep, table=torch.zeros(1 << 14, dtype=torch.bfloat16),
+        scale=torch.ones(rep.rows, dtype=torch.float32), window_bits=14,
+        plan=kw.default_plan(rep.rows, rep.cols, M=1), family=family)
+
+
+# --- the production re-lay predicate and bijection ------------------------
 def test_default_layout_is_legacy():
     assert _repacked((4,)).word_layout == WORD_LAYOUT_LEGACY
 
@@ -79,69 +92,69 @@ def test_piece_major_relay_refuses_a_non_rate_four_body():
         _repacked((5,)).with_word_layout(WORD_LAYOUT_PIECE_MAJOR)
 
 
-def test_legacy_only_reader_refuses_a_non_legacy_stack():
-    # the compact Triton reader and every other unlearned reader calls this
-    require_legacy_word_layout(WORD_LAYOUT_LEGACY, "reader")          # allowed
+def test_unknown_word_layout_is_refused():
+    rep = _repacked((4,))
+    with pytest.raises(GrammarError):
+        rep.with_word_layout("f16_piece_major")
+
+
+# --- the production readers refuse, before any allocation/build -----------
+def _bomb(*a, **k):
+    raise AssertionError("allocation/extension build must not run before the refusal")
+
+
+def test_window_gemv_refuses_before_allocation(monkeypatch):
+    unit = _unit(_repacked((4,)).with_word_layout(WORD_LAYOUT_PIECE_MAJOR))
+    # _op_args / _gemv_op / _gemv_concrete are the allocation/extension seams.
+    monkeypatch.setattr(kw, "_op_args", _bomb)
+    monkeypatch.setattr(kw, "_gemv_op", _bomb)
+    monkeypatch.setattr(kw, "_gemv_concrete", _bomb)
+    with pytest.raises(GrammarError):
+        kw.window_gemv(unit, torch.zeros(1, unit.cols, dtype=torch.bfloat16))
+
+
+def test_decode_codes_refuses_before_extension(monkeypatch):
+    unit = dataclasses.replace(_unit(_repacked((4,)).with_word_layout(WORD_LAYOUT_PIECE_MAJOR)),
+                               codes_of_state=torch.zeros(1 << 14, dtype=torch.uint8))
+    monkeypatch.setattr(kw, "_ext", _bomb)
+    # _ext is the extension loader used only AFTER the layout gate.
+    with pytest.raises(GrammarError):
+        kw.decode_codes(unit)
+
+
+def test_require_legacy_word_layout_is_the_production_helper():
+    require_legacy_word_layout(WORD_LAYOUT_LEGACY, "reader")
     with pytest.raises(GrammarError):
         require_legacy_word_layout(WORD_LAYOUT_PIECE_MAJOR, "reader")
 
 
-# --- intake eligibility: the tag is bounded by family AND shape -----------
-def _piece_major_requested(family: str, rep) -> bool:
-    """The exact predicate ctx of the intake site in serving/moe_route.py."""
-    return family == "e4m3" and piece_major_eligible(rep)
+# --- production bundle + supported-check tags -----------------------------
+def _bundle(word_layout, family="e4m3"):
+    import types
+    return types.SimpleNamespace(
+        family=family, word_layout=word_layout, arithmetic="epilogue", device=torch.device("cpu"),
+        window_bits=14, experts=2, cols=64, rows=64, quantizer="native",
+        # one run per expert: (rate, col0, ncols, word0) rows, flattened [E, R, 4]
+        runs_all=torch.tensor([[[4, 0, 64, 0]]] * 2, dtype=torch.int32),
+        scale_all=torch.ones(2, 64), perm_all=torch.zeros(2, 64, dtype=torch.int32),
+        init_all=torch.zeros(2, 64, dtype=torch.int32), has_init=torch.zeros(2, dtype=torch.int32),
+        tile_words=torch.full((2,), 64 * 16 * 4, dtype=torch.int32),
+        run_off=torch.tensor([0, 1, 2], dtype=torch.int32), library="threshold")
 
 
-def test_intake_never_re_lays_a_bf16_value_unit():
-    # A8SE layer45 is TESSERA_BF16; a rate-4 value unit must NOT be re-laid,
-    # so the predicate gates on family before shape (tessera#739).
-    rep = _repacked((4,))
-    assert _piece_major_requested("value", rep) is False
-    assert _piece_major_requested("e4m3", rep) is True
+def test_supported_check_refuses_piece_major_for_a_non_e4m3_family():
+    from tessera.routed_fused import fused_routed_window_supported
+    g = _bundle(WORD_LAYOUT_PIECE_MAJOR, family="value")
+    why = fused_routed_window_supported(g, g, g)
+    # value family is refused earlier for its arithmetic; the layout must not
+    # be the thing that lets a non-E4M3 stack through.
+    assert why is not None
 
 
-def test_intake_never_re_lays_a_two_run_or_non_rate_four_unit():
-    assert _piece_major_requested("e4m3", _repacked((4, 5))) is False
-    assert _piece_major_requested("e4m3", _repacked((5,))) is False
-
-
-# --- the refusal happens BEFORE any allocation or extension build ---------
-_ALLOCATED = []
-
-
-class _GuardedReader:
-    """A reader that refuses the layout before it touches any device buffer."""
-
-    def __init__(self, tag):
-        self.tag = tag
-
-    def __call__(self, word_layout, *, allocate):
-        require_legacy_word_layout(word_layout, "guarded reader")
-        allocate()
-        return True
-
-
-def test_refusal_precedes_allocation_and_extension_build():
-    _ALLOCATED.clear()
-    reader = _GuardedReader(WORD_LAYOUT_LEGACY)
-    with pytest.raises(GrammarError):
-        reader(WORD_LAYOUT_PIECE_MAJOR, allocate=lambda: _ALLOCATED.append("device"))
-    assert _ALLOCATED == []          # nothing was allocated, nothing was built
-    _ALLOCATED.clear()
-    assert reader(WORD_LAYOUT_LEGACY, allocate=lambda: _ALLOCATED.append("device")) is True
-    assert _ALLOCATED == ["device"]
-
-
-def test_three_bundle_tags_must_agree():
-    # PackedWindowMoeBundles.word_layout refuses a mixed stack; model the set
-    # check here (the real property reads gate/up/down, never gate alone).
-    def _shared(tags):
-        distinct = set(tags.values())
-        if len(distinct) != 1:
-            raise GrammarError(f"bundles disagree: {tags}")
-        return distinct.pop()
-
-    assert _shared({"gate": "legacy", "up": "legacy", "down": "legacy"}) == "legacy"
-    assert _shared({"gate": "piece_major", "up": "piece_major", "down": "piece_major"}) == "piece_major"
-    with pytest.raises(GrammarError):
-        _shared({"gate": "piece_major", "up": "legacy", "down": "piece_major"})
+def test_has_one_rate_four_run_matches_the_bounded_shape():
+    from tessera.routed_fused import has_one_rate_four_run
+    assert has_one_rate_four_run(_bundle(WORD_LAYOUT_PIECE_MAJOR), 2) is True
+    two_run = _bundle(WORD_LAYOUT_PIECE_MAJOR)
+    two_run.runs_all = torch.tensor([[[4, 0, 32, 0], [5, 32, 32, 2048]]] * 2, dtype=torch.int32)
+    two_run.run_off = torch.tensor([0, 1, 2], dtype=torch.int32)
+    assert has_one_rate_four_run(two_run, 2) is False

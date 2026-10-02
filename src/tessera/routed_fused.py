@@ -841,14 +841,20 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name} lives on {b.device}; the lane is CUDA"
         if b.window_bits != WINDOW_BITS:
             return f"{name} window_bits {b.window_bits} != {WINDOW_BITS}"
-        if str(getattr(b, "word_layout", "legacy")) != "legacy":
-            # The piece-major reader addresses the ONE-RUN RATE-4 routed body
-            # only (tessera#739): an odd rate's 16-byte alignment does not port,
-            # and a two-run stack has no single piece stride.  Everything else
-            # keeps legacy words.
-            lays = {str(getattr(x, "word_layout", "legacy")) for x in bundles.values()}
-            if len(lays) != 1:
-                return f"the gate/up/down bundles disagree on their word layout: {sorted(lays)}"
+        # The word layout must be an EXACT tag this lane reads: 'legacy' for
+        # every stack, or 'piece_major' for the bounded E4M3 one-run rate-4
+        # routed body only (tessera#739).  An unknown tag is refused, and the
+        # three bundles must agree -- never inferred from one of them.
+        lays = {str(getattr(x, "word_layout", "legacy")) for x in bundles.values()}
+        if len(lays) != 1:
+            return f"the gate/up/down bundles disagree on their word layout: {sorted(lays)}"
+        layout = lays.pop()
+        if layout not in ("legacy", "piece_major"):
+            return f"{name} carries unknown word layout {layout!r}"
+        if layout == "piece_major":
+            if fam != "e4m3":
+                return (f"{name} is piece_major; the lane reads piece-major only for the "
+                        f"E4M3 family, not {fam!r}")
             if not has_one_rate_four_run(b, e):
                 return (f"{name} is piece_major, which the lane reads only for a single run at "
                         f"rate 4; its run table is not one rate-4 run over {b.cols} columns")
