@@ -93,12 +93,17 @@ import re
 import subprocess
 import sys
 from collections import defaultdict, deque
+from contextlib import suppress
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from tessera._dev.suite_source import measured_source  # noqa: E402
 from tessera._dev.source_dependencies import (  # noqa: E402
-    DATA_WILDCARD, WILDCARD, file_imports, source_execution_modules)
+    DATA_WILDCARD,
+    WILDCARD,
+    file_imports,
+    source_execution_modules,
+)
+from tessera._dev.suite_source import measured_source  # noqa: E402
 
 # Coupling no import statement expresses.  A change at or below any of these
 # forces the full suite rather than a narrowed list.
@@ -370,10 +375,8 @@ def import_graph(
     # files that cannot be read and supplies their wildcard dependencies.
     trees = {}
     for path in by_name.values():
-        try:
+        with suppress(SyntaxError, OSError):
             trees[path] = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-        except (SyntaxError, OSError):
-            pass
     executing = source_execution_modules(
         trees, {path: module_of[node] for node, path in by_name.items()},
         lambda spelling: tuple(by_name[node] for node in _targets(spelling)),
