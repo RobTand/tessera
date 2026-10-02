@@ -98,6 +98,7 @@ def _init_vllm_world1(rdv_dir):
 from safetensors import safe_open  # noqa: E402
 
 ARTIFACT = "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported"
+REPLAY_ARTIFACT = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 P = "model.language_model.layers."
 TOP_K, EXPERTS, SWIGLU_LIMIT = 8, 288, 10.0
 TP_SIZE, TP_RANK = 2, 0
@@ -449,6 +450,16 @@ def kernel_profile(call, reps=5, *, full_names=False):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args, "outputs_only", False):
+        if (args.artifact != REPLAY_ARTIFACT or args.groups != "experts.R1024.L10"
+                or args.ms != "1,2048" or not args.no_graph or args.ncu
+                or args.input_manifest is not None or args.routing is not None
+                or args.single_routing_file is not None or args.profile_native_file is not None):
+            raise ValueError("paired layout output screen requires exact A8SE L10/M1,2048, "
+                             "no graph, profiling, staging or routing overrides")
+        if stubbed:
+            raise ValueError("paired layout output screen refuses stubbed vLLM")
+        return
     if getattr(args,"profile_native_file",None):
         expected = "/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so"
         if not args.single_routing_file or not args.ncu or args.profile_native_file!=expected:
@@ -458,7 +469,7 @@ def require_single_replay_options(args, *, stubbed=False):
                 or not args.input_manifest or args.routing or not args.no_graph
                 or args.power_s < 30 or args.warmup != 10 or args.iters != 30):
             raise ValueError("single replay requires L10/M2048, staged inputs, no graph/menu and >=30s power")
-        if args.artifact != "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported":
+        if args.artifact != REPLAY_ARTIFACT:
             raise ValueError("single replay requires the actual A8SE artifact")
         if stubbed:
             raise ValueError("single replay refuses stubbed vLLM")
