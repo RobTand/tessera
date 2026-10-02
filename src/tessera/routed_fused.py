@@ -819,7 +819,7 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     want_arith = "folded" if fam == "value" else "epilogue"
     e = int(down.experts)
     for name, b in bundles.items():
-        if b.perm_all is None:
+        if getattr(b, "perm_all", ...) is None:
             return f"{name} compact planes were retired; use its already-prepared fused owner"
         if b.family != fam:
             return f"{name} family {b.family!r} differs from down's {fam!r}"
@@ -1061,7 +1061,7 @@ class FusedRoutedWindowMoE:
         return self.family == "e4m3"
 
     def named_tables(self):
-        """The tensors this lane holds BEYOND the bundles' own planes."""
+        """Native lookup, dispatch metadata and counters, declared by reference."""
         yield "routed_fused.table_gate", self.table_gate
         yield "routed_fused.table_up", self.table_up
         yield "routed_fused.table_down", self.table_down
