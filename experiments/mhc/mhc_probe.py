@@ -47,8 +47,16 @@ Three parts, each on the pinned serving image's own vLLM code:
            varlen batches, signed zeros and large magnitudes. Arithmetic and
            physical-tail state mutants compare against the unmutated candidate,
            so a shared reference error cannot manufacture a mutation witness.
-           A mismatch or an unobserved required mutant fails the action. This
-           convolution screen does not cover recurrent output/final state.
+           v2 requires output/state witnesses for FMA, division and state
+           indexing/writes. The ex2-ftz control instead must change the raw
+           exponential while preserving downstream denominator/FP32/BF16 bits,
+           bound to the current source and compiled artifacts. Any missing or
+           malformed evidence fails. This convolution screen does not cover
+           recurrent output/final state.
+
+``kdaex2`` A standalone 29-finite-accumulator observation of both exponentials,
+           denominators and SiLU outputs. It qualifies the ex2 equivalence
+           control, not the convolution or a serving implementation by itself.
 
 ``kdafwd`` FlashKDA's two kernels (``_flash_kda_fwd_prepare`` and
            ``_flash_kda_fwd_recurrence``) at the served shape: per-kernel

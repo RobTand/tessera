@@ -1,7 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for `tessera.kda_conv_screen.v2` (tessera#814),
+reviewed by Astra after the original ex2 output witness proved impossible
+in the measured operation order. Four required mutations change actual
+output or state; ex2-ftz instead requires an active raw exponential
+difference and identical downstream denominator/FP32/BF16 bits. The
+control refuses absent, malformed, vacuous or stale source/compiled
+evidence. The original v1 failure remains history. No serving contract,
+route or default changes. See §5.1.3 and
+[the bound control and proof](measurements/2026-10-02-kda-ex2-equivalence.md).
+
 Re-stamped 2026-10-02 for the KDA convolution screen's fail-closed admission
-(tessera#814). The experimental PTX reference follows the pinned stock
+(the initial v1 contract, tessera#814). The experimental PTX reference follows the pinned stock
 prefill's width-minus-one history at the beginning of the physical cache,
 and compares actual q/k/v output and the entire convolution state as raw
 BF16 bits. Required mutants must differ from the unmutated candidate;
@@ -6978,9 +6988,19 @@ not a serving override. It compares actual q/k/v output and the whole
 convolution state bit for bit, including spare/speculative columns and
 unused cache slots. The logical prefill history is `KERNEL_WIDTH - 1`,
 regardless of physical cache length; for width four, stock reads and
-writes columns 0..2. Every required arithmetic or state mutant must differ
-from the unmodified candidate. Missing or invisible mutants and any
-stock/candidate mismatch fail the action and stop later parts. The screen
+writes columns 0..2. Contract `tessera.kda_conv_screen.v2` requires FMA,
+division, physical-tail-read and physical-tail-write mutations to differ
+from the unmodified candidate in actual output or state. Ex2-ftz remains
+required as a separate observable: an actual subnormal FP32 exponential
+must differ, while the rounded `+1` denominator, FP32 SiLU and BF16 output
+remain bit-identical. Actual raw words, summaries, finite-input scope and
+current PTX/build flags/compiled module/SASS digests are checked. Missing,
+malformed, stale or vacuous control evidence fails; the entire convolution
+matrix must also observe no ex2 output/state difference. Any failure
+stops later parts. The original v1 failure is preserved, not re-labelled.
+Banked cases are reused only when relevant device text and test inputs
+are unchanged; the artifact audit seals expected JSON digests and checks
+the installed stock source. The screen
 explicitly does not cover recurrent output or final recurrent state, and
 cannot admit a fused serving implementation by itself. `kdafwd` is a
 separate stock-kernel timing screen; its results require PrismaBuild's
