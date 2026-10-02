@@ -40,6 +40,8 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -e PYTHONPATH=/work/src -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, os, sys, time
+from pathlib import Path
+from experiments.t8r_speed.finalize_native_build import finalize
 from tessera import routed_fused as rf
 from tessera.serving.backend import PlatformMismatchError
 root = os.environ["TORCH_EXTENSIONS_DIR"]
@@ -60,6 +62,7 @@ for lib in sys.argv[1:]:
     if not found:
         sys.exit(f"{lib}: no library under {root} after the build")
     for so in found:
+        finalize(Path(so).parent, Path(rf.__file__).parent / 'serving/csrc/routed_fused_window.cu')
         print(f"{lib}: {so} sha256={hashlib.sha256(open(so, 'rb').read()).hexdigest()} "
               f"{time.time() - t0:.1f}s {how}", flush=True)
 PY
