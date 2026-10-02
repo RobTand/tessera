@@ -74,7 +74,7 @@ inventory does not assert complete arbitrary-Python read discovery.
 | `src/tessera/historical_producer.py:115` | Namespace-root guard; no new historical producer behavior |
 | `src/tessera/serving/ext.py:551` | Header-directory discovery from torch install; not Python source execution |
 | `src/tessera/serving/glm53_nope.py:63,73` | Package-relative pinned stock-source hashes; generic external-origin inference not implemented; serving owner |
-| `src/tessera/serving/glm53_prefill.py:289,793` | Generic source hash and read-to-imported-executor boundary; relation to the conftest selectivity block unverified, Astra follow-on |
+| `src/tessera/serving/glm53_prefill.py:289,793` | Generic source hash and read-to-imported-executor boundary; revised receipt establishes a static path to the conftest through layout's lazy slicing import; runtime callable reachability and source origin remain unproved, Astra follow-on |
 | `src/tessera/serving/mtp_draft_lifetime.py:148` | Generic digest-only read, no Python execution of these bytes; retain data-reader semantics, serving owner |
 | `tests/test_audit_byte_baseline.py:103,110,112` (two at 110) | In-tree source mutation/exec and synthetic module metadata; conservative selection, no wire changes |
 | `tests/test_audit_container_accounting.py:117,202`, `tests/test_audit_sec2.py:222`, `tests/test_compensate.py:83` | Package/text assertion reads; existing plain-reader rules |
