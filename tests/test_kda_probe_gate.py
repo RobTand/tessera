@@ -53,3 +53,27 @@ def test_failed_screen_stops_later_timing(probe, monkeypatch, tmp_path):
     assert probe.main() != 0
     saved = json.loads((tmp_path / "mhc_probe.json").read_text())
     assert "kdafwd" not in saved
+
+
+def _ex2_control():
+    return {"finite_accumulator_count": 29, "all_accumulators_finite": True,
+            "ex2": {"bit_equal": False, "bits_differing": 5},
+            "denominator": {"bit_equal": True, "bits_differing": 0},
+            "output_fp32": {"bit_equal": True, "bits_differing": 0},
+            "output_bf16": {"bit_equal": True, "bits_differing": 0},
+            "input_subnormal_count": 4, "input_subnormal_ex2_is_one_both": True,
+            "changed_ex2_is_subnormal_flushed_to_positive_zero": True}
+
+
+def test_ex2_intermediate_equivalence_is_distinct_from_output_mutation(probe, monkeypatch, tmp_path):
+    """The authorized v2 contract needs an active, erased exponential mutation."""
+    result = {"gate_contract": "tessera.kda_conv_screen.v2", "served_bit_equal_all": True,
+              "mutants_seen": {name: mode != 2 for mode, name in probe.KDA_PTX_MODES.items() if mode},
+              "ex2_equivalence": _ex2_control()}
+    monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
+    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path),
+                                      "--parts", "kdaptx", "--numerics-only"])
+    assert probe.main() == 0
+    saved = json.loads((tmp_path / "mhc_probe_numerics.json").read_text())
+    assert saved["kdaptx"]["mutants_seen"]["mutant_ex2_ftz"] is False
+    assert saved["kdaptx"]["ex2_equivalence"]["ex2"]["bits_differing"] == 5
