@@ -579,6 +579,9 @@ class _RankLocalPackedIntake:
             from ..native_window_moe import WindowUnitAxis
 
             window_family = "value" if self.family == TESSERA_BF16 else "e4m3"
+            # Freeze the reader choice for this resident owner. A later env
+            # change cannot cause two callbacks to place different layouts.
+            self._piece_major = _piece_major_admissible(window_family)
             self.axis = {g: WindowUnitAxis(
                 int(declared['experts']),
                 tuple(str(role['roles'][0][0]) for role in self.roles[g]),
@@ -637,7 +640,7 @@ class _RankLocalPackedIntake:
             # carries BF16 layer45 units, whose (value) reader stays legacy, and
             # an explicit TESSERA_FUSED_E4M3_MMA=f16 keeps every body legacy.
             # Never tag by rate alone.
-            if _piece_major_admissible(family) and piece_major_eligible(unit.rep):
+            if self._piece_major and piece_major_eligible(unit.rep):
                 unit = replace(unit, rep=unit.rep.with_word_layout(WORD_LAYOUT_PIECE_MAJOR))
             # The axis allocates each plane stack once and drops this unit as
             # soon as its expert slot is filled; a repeated callback refuses.

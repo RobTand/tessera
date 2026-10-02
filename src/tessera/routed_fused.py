@@ -1289,6 +1289,12 @@ def fused_dense_window_supported(bundle) -> "str | None":
     ``tessera::window_gemm_dense``, and the reason is the string returned
     here so a load log can say which.
     """
+    from .kernel_window_gemv import require_legacy_word_layout
+    try:
+        require_legacy_word_layout(getattr(bundle, "word_layout", "legacy"),
+                                   "the fused dense window reader")
+    except GrammarError as exc:
+        return str(exc)
     if not fused_dense_window_enabled():
         return f"disabled by {ENV_TOGGLE_DENSE}=0"
     fam = bundle.family

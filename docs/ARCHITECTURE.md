@@ -1,5 +1,22 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
+(#739, `sol/routed-piece-major-r4-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
+selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
+that choice before loading; each eligible one-run R4 unit is permuted from
+`[tile][column][64-row piece][word]` to `[tile][64-row piece][column][word]`
+before its one `WindowUnitAxis.put`. Serialized bytes, word counts, scales,
+column permutation and TP-cut initial states stay unchanged. The owner carries
+the layout through its signature and finished SoA; finish copies no word plane.
+BF16 (including A8SE layer45), forced f16 and routed opt-out retain legacy
+placement. A prepared PM stack refuses an incompatible reader or fallback.
+Dense Triton/fused/custom-op owners, GEMV argument extraction and E2M1 WINDOW
+readers require legacy words before dropping their layout metadata. Native PM
+dispatch is limited to routed E4M3 MMA, one-run R4, modes 0/1/2; history reads
+the same column's preceding piece/tile or its incoming state. This opt-in has
+no numerical, performance, graph or serving qualification from CPU checks or
+compilation alone. No serving cell, default, precision menu or pin is promoted.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,

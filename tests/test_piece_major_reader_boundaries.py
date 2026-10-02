@@ -136,6 +136,38 @@ def test_routed_mixed_tags_refused(monkeypatch):
     assert "disagree" in rf.fused_routed_window_supported(a, a, b)
 
 
+@pytest.mark.parametrize("failure", ["disabled", "f16", "build"])
+def test_pm_owner_never_falls_back_to_legacy_reader(monkeypatch, failure):
+    from tessera import native_window_moe as nm
+    b = bundle(layout=PM)
+    owner = nm.PackedWindowMoeBundles(gate=b, up=b, down=b, family="e4m3")
+    monkeypatch.setattr(nm, "native_window_moe_from_bundles", bomb)
+    if failure == "disabled":
+        monkeypatch.setenv("TESSERA_ROUTED_FUSED", "0")
+    elif failure == "f16":
+        monkeypatch.setenv("TESSERA_FUSED_E4M3_MMA", "f16")
+    def unavailable(*args):
+        raise RuntimeError("unavailable native library")
+    monkeypatch.setattr(rf, "_ext", unavailable if failure == "build" else bomb)
+    with pytest.raises(GrammarError, match="Refusing rather than mis-reading"):
+        owner.adapter()
+
+
+def test_legacy_owner_keeps_existing_fallback(monkeypatch):
+    from tessera import native_window_moe as nm
+    b = bundle()
+    owner = nm.PackedWindowMoeBundles(gate=b, up=b, down=b, family="e4m3")
+    monkeypatch.setenv("TESSERA_ROUTED_FUSED", "0")
+    monkeypatch.setattr(rf, "_ext", bomb)
+    fallback = object()
+    calls = []
+    def compact(*args, **kwargs):
+        calls.append((args, kwargs))
+        return fallback
+    monkeypatch.setattr(nm, "native_window_moe_from_bundles", compact)
+    assert owner.adapter() is fallback and len(calls) == 1
+
+
 @pytest.mark.parametrize("layout", [PM, "unknown"])
 def test_e2m1_dense_refuses_before_build(monkeypatch, layout):
     from tessera import routed_fused_e2m1 as fe
@@ -175,7 +207,9 @@ def intake(family):
     ("e4m3", "1", "0", "e4m3", LEGACY), ("e4m3", "1", "1", "f16", LEGACY),
     ("value", "1", "1", "e4m3", LEGACY),
 ])
-def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma, expected):
+@pytest.mark.parametrize("change_environment", [False, True])
+def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma, expected,
+                                         change_environment):
     from tessera.serving import moe_route as mr
     monkeypatch.setenv(mr.ENV_PIECE_MAJOR, optin)
     monkeypatch.setenv("TESSERA_ROUTED_FUSED", fused)
@@ -191,12 +225,23 @@ def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma
         for group, count in (("w13", 2), ("w2", 1)):
             for i in range(count):
                 owner.load(group, i, e, torch.zeros(4, dtype=torch.uint8), device="cuda")
+        if change_environment:
+            # A loaded owner keeps its decision even if later callbacks see
+            # different process settings. The adapter separately admits its
+            # frozen words against the reader selected at construction.
+            monkeypatch.setenv(mr.ENV_PIECE_MAJOR, "0" if expected == PM else "1")
+            monkeypatch.setenv("TESSERA_ROUTED_FUSED", "1")
+            monkeypatch.setenv("TESSERA_FUSED_E4M3_MMA", "e4m3")
     pointers = {part: slot["words"].data_ptr()
                 for axis in owner.axis.values() for part, slot in axis._slots.items()}
     before = owner.resident_bytes()
     bundles = owner.finish(torch.full((2, 2), 4), torch.full((2,), 4))
     assert bundles.word_layout == expected and owner.axis == {} and owner._scratch == {}
-    assert bundles.resident_bytes() == before
+    # finish adds only the existing word/run offsets, never a second body.
+    offsets = sum(t.numel() * t.element_size()
+                  for b in (bundles.gate, bundles.up, bundles.down)
+                  for t in (b.word_off, b.run_off))
+    assert bundles.resident_bytes() == before + offsets
     want = u.rep.words if expected == LEGACY else u.rep.with_word_layout(PM).words
     for role in ("gate", "up", "down"):
         b = getattr(bundles, role)

@@ -1220,6 +1220,9 @@ def _gemv_op_fake(x, words, items_1, items_4, perm, table, scale, tile_words, ro
 def _op_args(unit: WindowGemvUnit) -> tuple:
     """The unit as the op's arguments: tensors and Python scalars, nothing
     the trace has to look inside."""
+    # Serving holders also use this boundary directly, bypassing window_gemv.
+    # Refuse before the tag is erased into the legacy custom-op arguments.
+    require_legacy_word_layout(unit.rep.word_layout, "the window GEMV argument boundary")
     items_1, max_cols_1 = unit.items_for(1)
     if 4 in unit.items_by_mt:
         items_4, max_cols_4 = unit.items_for(4)

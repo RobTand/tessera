@@ -236,6 +236,8 @@ class PreparedWindowGemm:
 
     def __call__(self, x: torch.Tensor, a_scale: "torch.Tensor | None" = None,
                  out: "torch.Tensor | None" = None) -> torch.Tensor:
+        from .kernel_window_gemv import require_legacy_word_layout
+        require_legacy_word_layout(self.word_layout, "the compact Triton dense GEMM")
         if x.dim() != 2 or x.shape[1] != self.cols or x.device != self.device:
             raise GrammarError(
                 f"x must be a [M, {self.cols}] tensor on {self.device}, got "
