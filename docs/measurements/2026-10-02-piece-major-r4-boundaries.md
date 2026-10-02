@@ -206,3 +206,13 @@ rehash or shared-inventory mutation occurred. Its digest is
 The packet is under
 `/mnt/shared/astra-resume-20261002/t8_performance/piece-major-common-c236b7aa/`.
 Numeric GPU execution and measured performance remain pending root GO.
+
+The existing Netdata collector previously overwrote `steady-power` for every
+cell, losing all but the last arm's measured window. The actual collector
+regression reproduced that loss (PB
+`f6f3a705d7a3cf36cdcb42ef5c32521dfcf748f3faac0f66251f6b72d47ac3d6`, one failure).
+It now keeps every cell's window for both boxes while retaining the historical
+alias. PB `8049cd2c142c94fb7d53e402327d3a1121711022edbfbd106bb99ed2e9d4de72`
+passed the control, zero skips/missing collection. This observable defect is
+fixed in a separate commit; the control used inert telemetry responses and
+establishes no actual coverage or energy claim.

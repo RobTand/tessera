@@ -17,10 +17,13 @@ def main():
     timing = root/'timing/bench_t8r.json'
     if timing.exists():
         data = json.loads(timing.read_text())
-        for result in data['results']:
-            for cell in result.get('cells', {}).values():
+        for number, result in enumerate(data['results']):
+            for key, cell in result.get('cells', {}).items():
                 if cell.get('power', {}).get('window_unix'):
-                    phases['steady-power'] = cell['power']['window_unix']
+                    window = cell['power']['window_unix']
+                    # Keep the historical alias and every finite comparison arm.
+                    phases['steady-power'] = window
+                    phases[f"steady-power:{number}:{key}"] = window
     report = {'schema':'tessera.routed_gate_netdata.v1', 'phases':{}}
     for phase, (a,z) in phases.items():
         start,end = math.floor(a),math.ceil(z)
