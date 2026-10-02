@@ -65,3 +65,61 @@ profiling, both-host Netdata, live shared-memory carveout and matched served
 quality/decode remain required later. Energy remains HOLD while clocks are
 unqualified. The historical121-register /57,552B dynamic gate/up profile is
 context, not this candidate's resource or speed result.
+
+
+Final CPU population on frozen source10f3d16d: PB
+`5ac82fb983cbcb575af913b3c486a20532835b9064552e8112a9f2d336173a8c`,
+dl380g10 CPU2/native1/memory3GiB, xdist2/worksteal,56 passed and423 skipped
+in6.15s, zero uncollected/device allocations. All423 skip reasons are
+`the lane is a CUDA kernel`. This includes original support predicates,
+additional oversized-slot fallback controls and the CPU-only source tests.
+
+Actual CPU native compile: PB
+`6980a48f85a4e60a5abbad43d7232659f7d3e18714b5309a2750bf62ff167661`,
+Sparklina, one CPU/native1/memory4GiB, CUDA hidden, one attempt, exit0.
+The E4M3MMA library compiled in56.3s; whole action62.648s, CPU61.920s,
+peak resident memory3,864,571,904B. Canonical receipt
+`0bd1a58ba35db109c314dfc52d6bd74da17d80abcf970288953c45f5850a6135`,
+ELF `bbbbb4d30815b64dd1bd65534d7a853bda0d77c948204fd1ff9aee917ab36f13`.
+
+| Native specification | Original registers | Paired registers | Stack/local bytes | LDL/STL instructions |
+| --- | ---: | ---: | ---: | ---: |
+| R4 MODE0 BMT128 |121|120|0|0|
+| R4 MODE2 BMT128 |122|124|0|0|
+
+Both paired specifications are present in the same ELF as the original ones.
+Both report1,024B compiled static shared memory, separately from the dynamic
+76,240/59,664B launch requirement. Actual runtime allocation/carveout is not
+measured. The compiler unrolls the original body differently (48 static QMMA
+sites versus32 paired sites); those static counts are not work or speed
+measurements. No FP16/BF16 conversion occurs between the first and last QMMA
+site. Source comparison proves the per-microstep MMA body unchanged and
+both terminal branches plus epilogue byte-identical to the parent. Real
+numerical equality and execution order remain GPU acceptance work.
+
+An additional wrapper finding was fixed separately: `bench_t8r.sh` dropped
+the paired compile-choice environment, risking an unintended rebuild when
+loading the retained binary. The causal CPU shell test (fake Docker, no GPU)
+failed on explicit choice1 before forwarding was added: PB
+`a1660204e185e7300124501eb3c6fc289778d5aa486a4daf700c7a164c33ea19`,
+1 failed/1 passed (`[] != ['TESSERA_ROUTED_FUSED_PAIRED_K32=1']`).
+The absent-choice control preserves the default-off behavior.
+
+
+Wrapper GREEN: PB
+`17b36906e6960cac62c68ba0bd186121dcffd7df7f10c1659acccca377e980e5`,
+CPU2/native1/memory2GiB, xdist2/worksteal,5 passed in4.59s, zero
+skipped/uncollected/device allocations. One earlier invocation refused while
+snapshotting because this append-only measurement document changed; it
+published no action and is not a test result. The completed GREEN above is
+the actual fixed-wrapper action.
+
+Final paired CPU controls: PB
+`11b8b395ad8afb7696e87e0f8fad6cada02b099a9b0610154449ae87cd7b022f`,
+CPU2/native1/memory3GiB, xdist2/worksteal,38 passed in5.71s, zero
+skipped/uncollected/device allocations. Four intentionally unsafe variants of
+the actual source loop causally refuse: missing copy wait, missing EMPTY,
+reordered microstep and missing final async drain. The original loop passes.
+These controls strengthen the CPU model; they do not turn it into GPU proof.
+SASS confirms all producer barriers have256 participants and FULL/EMPTY have
+512, in both paired roles.

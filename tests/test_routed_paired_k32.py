@@ -137,6 +137,7 @@ std::array<bool,4> read_words{};
 struct Pair {int item,kc; bool published=false;};
 std::vector<Pair> published;
 unsigned gc=0, consumer=0;
+int groups=0;
 int cur_item=0, cur_k=-1, next_k=-1, np=0, epilogued=-1;
 int wscale[2]={-1,-1};
 void require(bool ok,const char* message) {if(!ok) throw std::runtime_error(message);}
@@ -146,11 +147,11 @@ void issue_words(int kc,bool ring) {
     require(words[slot].item<0 || read_words[slot],"word slot overwritten before final producer reader");
     pending.push_back({cur_item,kc});
 }
-void cp_async_commit() {}
+void cp_async_commit() {++groups;}
 template<int N> void cp_async_wait() {
     require(N==0,"paired schedule did not wait for sole current group");
     for(auto c:pending) {int slot=((c.kc/2)&1)*2+(c.kc&1);words[slot]=c;read_words[slot]=false;}
-    pending.clear();
+    pending.clear();groups=0;
 }
 void consume_to(unsigned target) {
     while(consumer<=target) {
@@ -183,6 +184,7 @@ int main(int argc,char** argv) {
     auto advance_micro=[&]() {cur_k=next_k;};
     auto publish_micro=[&](int kc,int micro) {
         require(cur_k==kc,"register pipeline changed K32 order");
+        require(gc<2 || consumer>gc-2,"decoded stage overwritten before consumer EMPTY");
         require(micro==2*(gc&1)+(kc&1),"decoded microstage parity differs");
         int slot=((kc/2)&1)*2+(kc&1);
         require(words[slot].item==cur_item && words[slot].kc==kc,"decode before word/history group completed");
@@ -199,7 +201,7 @@ int main(int argc,char** argv) {
             int prev_nxt=0,cm_nxt=0,a_nxt=0;
             cur_k=0;const int nkc=2*np;
 @PAIRED_BODY@
-            require(pending.empty(),"last group leaks into next item's LUT copies");
+            require(pending.empty() && groups==0,"last group leaks into next item's LUT copies");
         }
         consume_to(gc-1);epilogued=items-1;
         std::cout<<"ordered K32 pairs="<<gc<<" items="<<items;
@@ -237,3 +239,35 @@ def test_two_pair_item_is_causal_scale_lifetime_control(native_producer):
     result=subprocess.run([str(native_producer),'2','3'],capture_output=True,text=True,timeout=5)
     assert result.returncode==1
     assert 'item slot overwrite raced last epilogue' in result.stderr
+
+
+@pytest.mark.parametrize('mutation,expected', [
+    ('wait', 'decode before word/history group completed'),
+    ('empty', 'decoded stage overwritten before consumer EMPTY'),
+    ('order', 'register pipeline changed K32 order'),
+    ('drain', "last group leaks into next item's LUT copies"),
+])
+def test_producer_model_catches_unsafe_source_mutants(tmp_path, mutation, expected):
+    text=SOURCE.read_text()
+    marker='const int np = nkc / 2;'
+    start=text.rfind('if constexpr (PAIRED) {',0,text.index(marker))
+    opening=text.index('{',start)
+    body=text[opening+1:_function_end(text,opening)-1]
+    if mutation=='wait':
+        body=body.replace('cp_async_wait<0>();','/* causal missing copy wait */')
+    elif mutation=='empty':
+        body=body.replace('if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);', '/* causal missing EMPTY */')
+    elif mutation=='order':
+        body=body.replace('publish_micro(kc + 1, 2 * stage + 1);','publish_micro(kc, 2 * stage + 1);')
+    else:
+        position=body.rfind('cp_async_wait<0>();')
+        body=body[:position]+body[position:].replace('cp_async_wait<0>();','/* causal missing final drain */',1)
+    cpp,binary=tmp_path/'mutant.cpp',tmp_path/'mutant'
+    cpp.write_text(PRODUCER_HARNESS.replace('@PAIRED_BODY@',body))
+    compiler=shutil.which(os.environ.get('CXX','c++'))
+    assert compiler
+    result=subprocess.run([compiler,'-std=c++17','-O0',str(cpp),'-o',str(binary)],capture_output=True,text=True)
+    assert result.returncode==0,result.stderr
+    result=subprocess.run([str(binary),'3','3'],capture_output=True,text=True,timeout=5)
+    assert result.returncode==1
+    assert expected in result.stderr
