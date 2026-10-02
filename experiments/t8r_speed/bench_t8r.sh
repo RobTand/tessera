@@ -77,7 +77,14 @@ if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   RUN_PREFIX=(timeout --signal=TERM --kill-after=15s 240s)
   # Pure public manifest parsing only; no queue or residency state is mounted.
   EXTRA_MOUNTS+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro)
-  IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
+  # Reuse the pure-Python runner already used by routed_fused_tests.sh: the
+  # existing encoded-fixture owner imports pytest; image torch/vLLM stay first.
+  FIXTURE_SP=${BENCH_FIXTURE_RUNNER_SP:?closed numeric fixtures require the qualified pure-Python runner}
+  for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
+    [[ -e "$FIXTURE_SP/$pkg" ]] || { echo "missing fixture dependency $FIXTURE_SP/$pkg" >&2; exit 2; }
+  done
+  EXTRA_MOUNTS+=(-v "$FIXTURE_SP":"$FIXTURE_SP":ro)
+  IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src:$FIXTURE_SP")
 fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
 # model, recorded activations), mounted read-only at the same path.

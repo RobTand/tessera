@@ -2,7 +2,7 @@
   "experiments/t8r_speed/paired_k32_action.py": "2db1c8e09950322cbd1e028c9f9f84dbbbea0b6c0f79fce59dbbddb833e1bd0c",
   "experiments/t8r_speed/paired_k32_qualification.py": "3269a12106e8e84d71c1d5241825618abadc213a059cf27cf3cf31d70ee412d7",
   "experiments/t8r_speed/bench_t8r.py": "5e593fa1819c986f94e37c07ef80a74b457489f38f9006e7ef826a8a3dcbb844",
-  "experiments/t8r_speed/bench_t8r.sh": "d5f3c3be227131086aecc64c9398ed3f7ec5eb56ce8edfe0b8dc2711f80defe6",
+  "experiments/t8r_speed/bench_t8r.sh": "1f7da4937a7c037c4a48888f30e734710ee0988a27034abd67c5342703f42935",
   "experiments/t8r_speed/pb_staged_store.py": "eac14eadc055852c77bc657a305b7a66c9828ea7ddc675cb5b38830b71eef124",
   "experiments/routed_pair_oracle.py": "76f7850a935c4a929123a2233d201397ac3d24a3b5bb5b6972f150d219d78f6b",
   "experiments/runtime_image.sh": "41425b6ed3b8c0839bcc98c9f8cf8f6db29e49055b14af445251eb6f2cfce200",

@@ -256,3 +256,23 @@ between poll and signal. The focused50-case GREEN above covers both faults,
 including the ProcessLookupError race. A bounded independent Docker inspect
 confirmed the exact first CID d6970821...5536fb absent before the authorized
 second attempt. Native/CUDA/flag banks are unchanged.
+
+Actual attempt2 on e3234180 completed all three original real cases: repeated
+intermediate/final words, fixed-order route reduction, exact native profiles
+and bounded independent reference passed atM1/512/2048. Its nine raw files
+are preserved under `paired-k32-direct-numeric-v2/baseline/`. It exited1
+before synthetic controls because the serving image has no pytest, imported
+by the reused existing encoded fixture. Candidate did not start. Cleanup
+correctly recorded the exact owned CID already absent. This is valid bounded
+baseline evidence, not paired numerical or speed qualification.
+
+The wrapper now mounts the already-qualified pure-Python runner from the
+actual #855shipping43 bank read-only, appended after the pinned image's
+torch/vLLM and source/public SDK paths. It neither changes the image nor
+introduces an encoded fixture or decoder. Focused PB wrapper controls
+`3b4e1be7f927c0b7287605e1d232915fba6db8e8cc90d2bb9500bf30752fabc3`
+passed7 cases in0.83s, CPU1/native1/memory2GiB, no skips/uncollected/device
+allocations, canonical2633688a. An optional CPU import preflight using a
+host-class selector refused before publication (that selector requires
+measurement transport); no action/test ran, and the prior actual shipping
+runner qualification is reused rather than repeated.

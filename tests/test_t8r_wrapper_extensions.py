@@ -95,7 +95,11 @@ def test_bench_wrapper_retains_paired_build_choice(tmp_path, choice,direct):
     extra=[]
     if direct:
         sdk=tmp_path/'published-sdk';(sdk/'src/prismabuild').mkdir(parents=True)
-        env.update(BENCH_DIRECT_VLLM='1',BENCH_OWNER_TOKEN='a'*32,PB_CLIENT_ROOT=str(sdk))
+        fixture_sp=tmp_path/'qualified-fixture-runner';fixture_sp.mkdir()
+        for package in ('pytest','_pytest','pluggy','iniconfig','packaging'):(fixture_sp/package).mkdir()
+        (fixture_sp/'py.py').write_text('')
+        env.update(BENCH_DIRECT_VLLM='1',BENCH_OWNER_TOKEN='a'*32,PB_CLIENT_ROOT=str(sdk),
+                   BENCH_FIXTURE_RUNNER_SP=str(fixture_sp))
         env.pop('BENCH_STRICT_STAGED',None)
         extra=['--paired-k32-numerics','--direct-vllm-inputs']
     subprocess.run(['bash',str(wrapper),str(checkout),str(tmp_path/'out'),
@@ -109,4 +113,6 @@ def test_bench_wrapper_retains_paired_build_choice(tmp_path, choice,direct):
         assert args[args.index('--cidfile')+1]==str(tmp_path/'out/owned.cid')
         assert 'tessera.paired_numeric_owner='+'a'*32 in args
         assert str(sdk)+':'+str(sdk)+':ro' in args
+        assert str(fixture_sp)+':'+str(fixture_sp)+':ro' in args
+        assert 'PYTHONPATH=/work/src:/work/tests:'+str(sdk)+'/src:'+str(fixture_sp) in args
         assert not any(x.startswith('PRISMABUILD_') for x in args)
