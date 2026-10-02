@@ -1,5 +1,7 @@
 """Task842: actual pinned source roots and closed two-arm descriptors."""
 import copy
+import ast
+import inspect
 import importlib.util
 import json
 from pathlib import Path
@@ -13,9 +15,28 @@ O = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(O)
 
 
+def binary_prefix():
+    """Use the real descriptor guard's required prefix, without box defaults."""
+    tree = ast.parse(inspect.getsource(O.arm_descriptor))
+    matches = [node.args[0].value for node in ast.walk(tree)
+               if isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Attribute)
+               and node.func.attr == "startswith"
+               and isinstance(node.func.value, ast.Subscript)
+               and isinstance(node.func.value.value, ast.Name)
+               and node.func.value.value.id == "entry"
+               and isinstance(node.func.value.slice, ast.Constant)
+               and node.func.value.slice.value == "binary"
+               and len(node.args) == 1
+               and isinstance(node.args[0], ast.Constant)
+               and isinstance(node.args[0].value, str)]
+    assert len(matches) == 1, "descriptor must declare one binary prefix"
+    return Path(matches[0])
+
+
 def descriptor():
     return {"schema": "tessera.routed_lut_pair.v1", "arms": {
-        arm: {"binary": "/mnt/shared/test/" + arm + ".so",
+        arm: {"binary": str(binary_prefix() / "test" / (arm + ".so")),
               "binary_sha256": O.BASELINE_BINARY if arm == "A" else "b" * 64,
               "kernel_sha256": O.BASELINE_SOURCE if arm == "A" else O.CANDIDATE_SOURCE,
               "owners": O.OWNERS, "compile_flags": ["-O3"]}
@@ -35,7 +56,7 @@ def test_altered_arm_descriptor_refuses_before_native_load(mutation):
     if mutation == "flags": arm["compile_flags"] = []
     if mutation == "owners": arm["owners"] = {}
     if mutation == "extra": arm["unbound"] = True
-    if mutation == "path": arm["binary"] = "/mnt/shared/../foreign.so"
+    if mutation == "path": arm["binary"] = str(binary_prefix() / ".." / "foreign.so")
     with pytest.raises(ValueError): O.arm_descriptor(json.dumps(doc), "A", ["-O3"])
 
 
