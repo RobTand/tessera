@@ -1198,31 +1198,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
                     a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
                 }
-                for (int ic = 0; ic < nkc; ++ic, ++gc) {
-                    const int kc = kc0 + ic;
-                    // The two orders are the measured ones: a one-run loop that
-                    // issues the activation chunk first waits longer at M = 1.
-                    if constexpr (TWO) {
-                        if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
-                    } else {
-                        if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
-                    }
-                    if constexpr (PREFETCH_A) {
-                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
-                    }
-                    // Chunk kc's words (and the tables) have landed ...
-                    if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
-                    else cp_async_wait<0>();
-                    bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                    if constexpr (WS == WORD_STAGES) {
-                        if (ic + 2 < nkc) issue_words(kc + 2, TWO);
-                    } else {
-                        if (ic + 1 < nkc) issue_words(kc + 1, TWO);
-                    }
-                    if (ic + 4 < nkc) issue_desc(kc + 4);
-                    cp_async_commit();
-                    const int stage = gc & 1;
-                    if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
+                // One ordinary K32 decode/store; both schedules reuse this
+                // body when the opt-in paired schedule is introduced separately.
+                auto publish_micro = [&](int kc, int stage) {
                     store_a(stage, a_cur);
                     const int32_t* W = Ws + (kc % WS) * W_STAGE;
                     uint8_t* B = Bs + stage * B_STAGE_BYTES;
@@ -1274,10 +1252,40 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                             *reinterpret_cast<uint4*>(B + cib * (BN * 2) + (bswz(chunk[h], cib) << 4)) =
                                 make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
                     }
-                    bar_arrive(BAR_FULL0 + stage, THREADS);
+                };
+                auto advance_micro = [&]() {
                     if constexpr (!PREV_STAGED) { prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1]; }
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
                     a_cur = a_nxt;
+                };
+                for (int ic = 0; ic < nkc; ++ic, ++gc) {
+                    const int kc = kc0 + ic;
+                    // The two orders are the measured ones: a one-run loop that
+                    // issues the activation chunk first waits longer at M = 1.
+                    if constexpr (TWO) {
+                        if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
+                    } else {
+                        if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
+                    }
+                    if constexpr (PREFETCH_A) {
+                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                    }
+                    // Chunk kc's words (and the tables) have landed ...
+                    if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
+                    else cp_async_wait<0>();
+                    bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
+                    if constexpr (WS == WORD_STAGES) {
+                        if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                    } else {
+                        if (ic + 1 < nkc) issue_words(kc + 1, TWO);
+                    }
+                    if (ic + 4 < nkc) issue_desc(kc + 4);
+                    cp_async_commit();
+                    const int stage = gc & 1;
+                    if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
+                    publish_micro(kc, stage);
+                    bar_arrive(BAR_FULL0 + stage, THREADS);
+                    advance_micro();
                 }
             };
             // Every item of a launch carries the kernel's pair (one run table
