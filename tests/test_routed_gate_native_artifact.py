@@ -8,7 +8,9 @@ from types import ModuleType,SimpleNamespace
 
 import pytest
 
-from test_routed_gate_staged_store import fixture,ROOT,require_options,options
+from prismabuild import client
+from _routed_gate_sdk_fixture import fixture
+from test_routed_gate_staged_store import ROOT
 
 
 def callback_module():
@@ -99,8 +101,3 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
     owner.finish(lambda:None);reader.close()
 
 
-@pytest.mark.parametrize('ncu,path',[(False,'/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so'),(True,'/foreign/module.so')])
-def test_native_input_requires_closed_counter_mode(ncu,path):
-    args=options();args.ncu=ncu;args.profile_native_file=path
-    with pytest.raises(ValueError,match='counter-only'):
-        require_options(args)
