@@ -514,7 +514,7 @@ def main():
         ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
         if inputs:
             meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
-                                      "baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
+                                      "reference_baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
                                       "manifest_sha256": inputs.manifest_sha256,
                                       "sdk_version": inputs.sdk.SDK_VERSION}
         results = []

@@ -3,7 +3,10 @@
 set -euo pipefail
 [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo 'PB admission required' >&2; exit 2; }
 OUT="$PWD/.routed-gate-diagnosis"
-mkdir -p "$OUT"
+mkdir -p "$OUT" "$OUT/extensions"
+# Reuse the existing master wrapper owner: compile once before timing, then
+# both children read the identical built libraries. No second JIT build.
+export BENCH_EXT_DIR="$OUT/extensions"
 export BENCH_STRICT_STAGED=1
 export PB_CLIENT_ROOT=${PB_CLIENT_ROOT:?sealed published PB client generation required}
 export ORACLE_IMAGE=${ORACLE_IMAGE:?sealed 5be image required}

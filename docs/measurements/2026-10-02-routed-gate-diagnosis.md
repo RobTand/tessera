@@ -33,3 +33,22 @@ CPU-only torch2.11.0+cpu, zero CUDA allocations. The actual old Store calls
 safe_open on the forbidden origin, and lacks the staged metadata boundary.
 Its failed terminal/stdout is retained outside the tree; no success CAS
 receipt is claimed for that failure. Later qualification/results append below.
+
+## Delivery context and avoided duplicate compilation
+
+The baseline608-based executor source3ddf39055a is frozen and retained.
+Its PB2fb8faa1 qualification is30 passed/zero skips/uncollected onCPU-only
+torch2.11.0+cpu plus4 compile/2 shell checks (snapshot53145b66). CAS result
+342233838ccd70f28f6fdda458be450de994055b5bce4059dc2e77bf4744c066 was checked.
+
+GitHub master4e5674d8 is not a descendant of608bb (mergebase29e60eb6), so
+only the three executor commits were cherry-picked onto master. The baseline's
+SP/KDA serving family is excluded from this delivery. The routed kernel
+blob f38cecbbf4a0dc740b4da1baf13bc7dfcc80e124 is identical in both parents;
+the existing master wrapper's BENCH_EXT_DIR support is preserved. The protocol
+now sets one shared extension directory for timing and NCU children, preventing
+a second build of the identical source. First sealed GPU request5dbb3304 was
+withdrawn while READY, before claim;0 tokens released, no GPU execution or
+measurement was repeated. The new action will record truthful delivery source
+and exact operator-component equality to reference608, not pretend its full
+package Git head is608. A fresh affected CPU/compile gate covers this context.
