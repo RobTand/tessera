@@ -116,6 +116,21 @@ def test_selections_in_one_directory_retain_their_own_recipe(native_build):
     assert native_build.calls == ['compile','dlopen','compile','dlopen','dlopen']
 
 
+def test_bound_retained_manifest_refuses_changed_evidence(native_build):
+    import hashlib
+    built = mla.MlaPrefillLibrary(native_build.root)
+    path = built.build.manifest_path
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    mla.MlaPrefillLibrary(native_build.root, require_retained=True,
+                         retained_manifest_sha256=digest)
+    path.write_text(path.read_text()+' ')
+    native_build.calls.clear()
+    with pytest.raises(RuntimeError, match='manifest SHA-256 mismatch'):
+        mla.MlaPrefillLibrary(native_build.root, require_retained=True,
+                             retained_manifest_sha256=digest)
+    assert native_build.calls == []
+
+
 @pytest.mark.parametrize('selector', ['mutation', 'p0_buffers', 'p0_wrong_pass'])
 @pytest.mark.parametrize('value', ['0', 1])
 def test_non_boolean_build_selectors_refused(native_build, selector, value):

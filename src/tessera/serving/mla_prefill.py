@@ -87,10 +87,15 @@ class MlaPrefillBuild:
     """
 
     def __init__(self, build_directory, *, mutation=False, p0_buffers=False,
-                 p0_wrong_pass=False, require_retained=False):
+                 p0_wrong_pass=False, require_retained=False, retained_manifest_sha256=None):
         from flashinfer.jit.env import FLASHINFER_INCLUDE_DIR, CCCL_INCLUDE_DIRS
         self.flags = select_flags(mutation=mutation, p0_buffers=p0_buffers,
                                   p0_wrong_pass=p0_wrong_pass)
+        if retained_manifest_sha256 is not None and (not require_retained or
+                not isinstance(retained_manifest_sha256, str) or
+                re.fullmatch('[0-9a-f]{64}', retained_manifest_sha256) is None):
+            raise ValueError('a retained manifest SHA-256 requires retained-only loading')
+        self.retained_manifest_sha256 = retained_manifest_sha256
         if build_directory is None:
             from torch.utils.cpp_extension import _get_build_directory
             build_directory = _get_build_directory('tessera_mla_prefill', verbose=False)
@@ -167,6 +172,9 @@ class MlaPrefillBuild:
             raw = handle.read(65537)
         if len(raw) > 65536:
             raise RuntimeError('retained MLA manifest exceeds 64KiB')
+        if (self.retained_manifest_sha256 is not None and
+                hashlib.sha256(raw).hexdigest() != self.retained_manifest_sha256):
+            raise RuntimeError('retained MLA manifest SHA-256 mismatch')
         manifest = json.loads(raw)
         if not isinstance(manifest, dict) or manifest.get('schema') != 'tessera.mla_prefill.build.v1':
             raise RuntimeError('unrecognized retained MLA build manifest')
@@ -189,14 +197,15 @@ def _sha256(path: Path) -> str:
 
 class MlaPrefillLibrary:
     def __init__(self, build_directory, *, mutation=False, p0_buffers=False,
-                 p0_wrong_pass=False, require_retained=False):
+                 p0_wrong_pass=False, require_retained=False, retained_manifest_sha256=None):
         # Runtime gate: the kernel is compiled for a specific device, so it is
         # only run where that device is present.
         if torch.cuda.get_device_capability() != (12,1):
             raise RuntimeError('requires SM121')
         self.build = MlaPrefillBuild(build_directory, mutation=mutation,
                                      p0_buffers=p0_buffers, p0_wrong_pass=p0_wrong_pass,
-                                     require_retained=require_retained)
+                                     require_retained=require_retained,
+                                     retained_manifest_sha256=retained_manifest_sha256)
         self.source = self.build.source
         self.source_sha256 = self.build.source_sha256
         self.flags = self.build.flags
