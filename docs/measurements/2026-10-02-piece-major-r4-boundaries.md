@@ -257,3 +257,14 @@ survives the poll/signal ProcessLookupError race. Its prior focused 50-check PB
 qualification is reused, not repeated. No native build or GPU run was made.
 The original numeric packet is retained as an unlaunched, superseded input;
 updated execution uses a separate v2 protocol and window packet.
+
+The closed comparison's original MMA setting was wrong: it required `1`,
+while production `routed_fused.library_for` accepts only `e4m3` or `f16`.
+The actual production-selector control reproduced two failures/one pass in PB
+`d93c0ae36c4548928eaf7832d9eb5a9deaab0b6c626c91714c17d9a7ce4f4a3e`:
+the valid MMA selection was refused and `1` was incorrectly admitted. The
+comparison now requires `TESSERA_FUSED_E4M3_MMA=e4m3`, preserving the production
+selector and defaults. The fixed module passed PB
+`7606e28c7780e598f2d6270b858cef9e86587a7aa0900fb9c35b1c72d20b320e`.
+The superseded unlaunched protocols retain their original bytes; the final v3
+packet binds this correction. No GPU result is claimed from admission checks.

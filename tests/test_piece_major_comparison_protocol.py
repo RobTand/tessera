@@ -54,7 +54,7 @@ def options(doc):
 
 def environment(monkeypatch, doc):
     for key in ("TESSERA_ROUTED_FUSED", "TESSERA_FUSED_E4M3_MMA", "TESSERA_ROUTED_FUSED_WIDE"):
-        monkeypatch.setenv(key, "1")
+        monkeypatch.setenv(key, "e4m3" if key == "TESSERA_FUSED_E4M3_MMA" else "1")
     monkeypatch.setenv("BENCH_EXPECT_LIBRARY_SHA256", doc["native"]["sha256"])
 
 
@@ -143,3 +143,18 @@ def test_cold_script_resolves_protocol_owner_without_checkout_cwd(tmp_path):
     assert result.returncode != 0
     assert 'FileNotFoundError' in result.stderr, result.stderr
     assert "No module named 'experiments'" not in result.stderr
+
+
+@pytest.mark.parametrize('choice,accepted', [('e4m3', True), ('1', False), ('f16', False)])
+def test_comparison_admission_matches_actual_mma_selector(tmp_path, monkeypatch, choice, accepted):
+    pytest.importorskip('torch')
+    from tessera import routed_fused as rf
+    doc = protocol(tmp_path)
+    environment(monkeypatch, doc)
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, choice)
+    if accepted:
+        assert rf.library_for('e4m3') == 'e4m3mma'
+        pp.require_options(options(doc), doc)
+    else:
+        with pytest.raises(ValueError):
+            pp.require_options(options(doc), doc)

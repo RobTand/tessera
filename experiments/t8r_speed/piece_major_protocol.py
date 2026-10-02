@@ -77,9 +77,11 @@ def require_options(args, doc, *, stubbed=False):
         raise ValueError("comparison arguments differ from the finite protocol")
     if stubbed:
         raise ValueError("comparison refuses stubbed vLLM")
-    for key in ("TESSERA_ROUTED_FUSED", "TESSERA_FUSED_E4M3_MMA", "TESSERA_ROUTED_FUSED_WIDE"):
-        if os.environ.get(key) != "1":
-            raise ValueError(f"comparison requires {key}=1")
+    choices = {"TESSERA_ROUTED_FUSED": "1", "TESSERA_FUSED_E4M3_MMA": "e4m3",
+               "TESSERA_ROUTED_FUSED_WIDE": "1"}
+    for key, expected in choices.items():
+        if os.environ.get(key) != expected:
+            raise ValueError(f"comparison requires {key}={expected}")
     if os.environ.get("BENCH_EXPECT_LIBRARY_SHA256") != doc["native"]["sha256"]:
         raise ValueError("comparison native expectation differs from the protocol")
     hashed_json(doc["input_manifest"]["path"], doc["input_manifest"]["sha256"])
