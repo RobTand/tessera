@@ -722,6 +722,12 @@ std::vector<torch::Tensor> ex2_control(torch::Tensor accs) {
 }
 """
 
+KDA_PTX_CASES = (("varlen", (5, 2, 9, 700), (True, False, True, False), 1.0, 0.0),
+                 ("short", (2, 1, 3), (False, True, True), 1.0, 0.0),
+                 ("served_2048", (2048,), (False,), 1.0, 0.0),
+                 ("continued_2048", (2048,), (True,), 1.0, 0.0),
+                 ("signed_zeros", (64, 300), (True, False), 1.0, 0.5),
+                 ("large_x64", (512, 33), (True, False), 64.0, 0.0))
 KDA_PTX_MODES = {0: "served_sass", 1: "mutant_two_roundings_per_tap", 2: "mutant_ex2_ftz", 3: "mutant_div_rn",
                  4: "mutant_physical_tail_read", 5: "mutant_physical_tail_write"}
 KDA_GATE_CONTRACT = "tessera.kda_conv_screen.v2"
@@ -885,12 +891,6 @@ def part_kdaptx(args) -> dict:
     ext = load_kda_ptx()
     p = KDA_P
     gen = torch.Generator(device="cuda").manual_seed(11)
-    cases = [("varlen", (5, 2, 9, 700), (True, False, True, False), 1.0, 0.0),
-             ("short", (2, 1, 3), (False, True, True), 1.0, 0.0),
-             ("served_2048", (2048,), (False,), 1.0, 0.0),
-             ("continued_2048", (2048,), (True,), 1.0, 0.0),
-             ("signed_zeros", (64, 300), (True, False), 1.0, 0.5),
-             ("large_x64", (512, 33), (True, False), 64.0, 0.0)]
     out = {"p": p, "width": KDA_WIDTH, "modes": KDA_PTX_MODES, "cases": [],
            "gate_contract": KDA_GATE_CONTRACT, "ex2_equivalence": part_kdaex2(args),
            "coverage": {"compared": ["q", "k", "v", "conv_state"],
@@ -902,7 +902,7 @@ def part_kdaptx(args) -> dict:
                "ptx_source_sha256": hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest()}}
     for layout in ("SD", "DS"):
         for state_len in (KDA_WIDTH - 1, KDA_WIDTH - 1 + 3):
-            for name, lens, has, scale, zero_frac in cases:
+            for name, lens, has, scale, zero_frac in KDA_PTX_CASES:
                 c = kda_conv_case(lens, has, p, state_len, layout, gen)
                 if scale != 1.0:
                     c["qkv"] = (c["qkv"].float() * scale).bfloat16()
