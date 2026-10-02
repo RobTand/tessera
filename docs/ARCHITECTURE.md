@@ -1,10 +1,11 @@
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
-§5.1.3). A requested eager SP serve refuses before activation when its
+§5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
-ranks agree on the existing TP CPU group before activation and every SP
-collective boundary; capture retains the stock all-reduce sequence. CPU
+ranks agree once on the existing TP CPU group at SP activation, under the
+inspected MP communicator lifecycle. Boundary checks are local; profile,
+small, declined and captured passes retain their stock path. CPU
 fixtures reproduce the unwritten-output path and refusal. No wrong-output
 GPU observation or guard latency/energy qualification is claimed.
 
@@ -7364,19 +7365,34 @@ raises.
 
 The module docstring records the decline rules and the exactness argument.
 The SP source read set includes the CUDA communicator, AG/RS route rule,
-PyNccl, parallel state and Torch utilities. Ordinary SP requires an active,
+PyNccl, parallel state, Torch utilities, MP executor, GPU worker and engine
+core. The qualified backend is `mp`. Ordinary SP requires an active,
 available TP2 PyNccl writer with `disabled=False` and `_suspended=False`;
 custom or symmetric-memory SP routes are outside this inspected qualification.
 `SpCollectiveGuard` agrees local availability through a MAX on the **existing
-TP CPU group**, before any activation changes ownership and before each SP
-all-gather/reduce-scatter. A fault before activation refuses the requested
-eager SP serve; a transient disable/suspend after sharding refuses both ranks
-before either calls the selected writer. This prevents the pinned stock
+TP CPU group** only when the existing state/split/threshold decision would
+activate SP. The optional `auto` threshold benchmark also checks availability
+before attempting its SP measurements. Profile/small/declined/captured passes
+keep their stock path. An unavailable writer at activation refuses both ranks
+before sharding. Subsequent boundary checks only inspect local status and
+the admitted writer identity, with no CPU collective per RS/AG. This prevents the pinned stock
 reduce-scatter wrapper from returning its unwritten `torch.empty` allocation
-when PyNccl silently returns on `disabled`. Capture enters no SP control
-exchange and retains the stock all-reduces. The active SP writer's tensor
+when PyNccl silently returns on `disabled`.
+
+This scope follows the inspected lifecycle: PyNccl writes `disabled` only in
+construction/destruction; suspend/resume modify `_suspended` without toggling
+`disabled` (`pynccl.py:584–603`). `WorkerProc.worker_busy_loop` executes one
+RPC at a time (`multiproc_executor.py:1032–1050`). Engine pause drains pending
+work and synchronizes the device before sleep; the GPU worker synchronizes
+before communicator suspension (`gpu_worker.py:271–293`), and wake resumes
+communicators before the engine resumes scheduling (`core.py:957–978`).
+An unsupported disable/suspend/owner replacement inside an admitted model
+RPC refuses locally before enqueue; concurrent out-of-contract field mutation
+and cross-rank failure containment are not qualified by the CPU fixtures.
+No vLLM lifecycle method is modified. Capture enters no SP control exchange
+and retains the stock all-reduces. The active SP writer's tensor
 arguments, results and NCCL reduction order are unchanged; the added CPU
-control exchanges have unmeasured latency and energy overhead.
+activation control has unmeasured latency and energy overhead.
 
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
 TR3 A/B against stock, on the same pin and in the same window, shows identical
