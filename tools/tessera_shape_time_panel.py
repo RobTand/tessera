@@ -50,17 +50,24 @@ def publish_json(value, path):
 PRODUCER_SCHEMA = "tessera.native_panel_producer_identity.v1"
 
 
-def producer_source_identity():
-    """Existing source-tree and tool-closure owners; no in-container Git required."""
+def producer_source_identity(root=ROOT):
+    """Existing source-tree and tool-closure owners; no in-container Git required.
+
+    ``root`` names the producer checkout whose bytes are hashed. The supported
+    replay path may point it at an original producer source tree independently
+    of the running tool, so a changed replay tool cannot claim to be that
+    producer by re-deriving the identity from its own tree.
+    """
     from experiments.full_engine_plugin_install import source_tree_identity
     from tessera.source_profiles import source_profiles
-    tree_sha, members = source_tree_identity(ROOT)
-    owners = [__file__, ROOT / "tools/tessera_shape_time_worker.py",
-              ROOT / "experiments/bench_native_operator.py", ROOT / "experiments/step4_capture_launch.py",
-              ROOT / "experiments/full_engine_plugin_install.py", ROOT / "tools/run_glm_cached_cpu_export.py",
-              ROOT / "experiments/box_power_window.py", ROOT / "experiments/routed_pair_oracle.py"]
+    tree_sha, members = source_tree_identity(root)
+    owners = [root / "tools/tessera_shape_time_panel.py",
+              root / "tools/tessera_shape_time_worker.py",
+              root / "experiments/bench_native_operator.py", root / "experiments/step4_capture_launch.py",
+              root / "experiments/full_engine_plugin_install.py", root / "tools/run_glm_cached_cpu_export.py",
+              root / "experiments/box_power_window.py", root / "experiments/routed_pair_oracle.py"]
     profile = "tessera.shape_panel.tools.v1"
-    value = source_profiles(((str(Path(p).relative_to(ROOT)), Path(p).read_bytes()) for p in owners),
+    value = source_profiles(((str(Path(p).relative_to(root)), Path(p).read_bytes()) for p in owners),
                             legacy_profile=profile, legacy_prefix=profile.encode() + b"\0")
     return {"source_tree_sha256": tree_sha, "source_tree_members": members,
             "tool_source_sha256": value[profile]}
@@ -80,20 +87,24 @@ def seal_producer(path):
     return publish_json(value, path)
 
 
-def producer_identity(binding):
-    """The source is independently host-attested; this process verifies every byte."""
+def producer_identity(binding, root=ROOT):
+    """The source is independently host-attested; this process verifies every byte.
+
+    ``root`` is the producer checkout the sealed identity must equal; the
+    replay caller supplies the original producer tree it executes against.
+    """
     value = tp.json_bytes(tp.read_bound(binding))
     tp._object(value, {"schema", "commit", "commit_source", "source_tree_sha256", "source_tree_members", "tool_source_sha256"}, "sealed producer")
     tp._sha(value["commit"], "sealed producer commit", 40)
     if value["schema"] != PRODUCER_SCHEMA or value["commit_source"] != "sealed_checkout":
         raise ValueError("requires an independent sealed host checkout identity")
-    observed = producer_source_identity()
+    observed = producer_source_identity(root)
     if any(value[k] != observed[k] for k in observed):
         raise ValueError("producer source differs from independent sealed checkout")
     return value
 
 
-def read_request(path, *, expected_sha256=None):
+def read_request(path, *, expected_sha256=None, producer_root=ROOT):
     require_producer_origins()
     raw = Path(path).read_bytes()
     if expected_sha256 is not None:
@@ -105,7 +116,7 @@ def read_request(path, *, expected_sha256=None):
                          "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "record_verifier", "producer_identity"}, "dense request")
     if request["schema"] != REQUEST_SCHEMA:
         raise ValueError("unknown dense request schema")
-    producer_identity(request["producer_identity"])
+    producer_identity(request["producer_identity"], producer_root)
     runtime = tp.runtime_context(request["expected_runtime"])
     raw_contract = tp.read_bound(request["contract"])
     tp.read_bound(request["runtime_python"])
@@ -145,8 +156,8 @@ def read_request(path, *, expected_sha256=None):
     return request, scope, wire
 
 
-def phase_command(request, job_source, output, *, preflight=False):
-    worker=ROOT/"tools/tessera_shape_time_worker.py"
+def phase_command(request, job_source, output, *, preflight=False, producer_root=ROOT):
+    worker=producer_root/"tools/tessera_shape_time_worker.py"
     command=["env","-u","PYTHONPATH","OMP_NUM_THREADS=1","MKL_NUM_THREADS=1","OPENBLAS_NUM_THREADS=1"]
     command += [key+"="+value for key,value in request["expected_runtime"]["serve_flags"].items()]
     if preflight:command.append("CUDA_VISIBLE_DEVICES=")
@@ -156,12 +167,12 @@ def phase_command(request, job_source, output, *, preflight=False):
     return command
 
 
-def run_runtime_preflight(request, job_source, output):
+def run_runtime_preflight(request, job_source, output, *, producer_root=ROOT):
     # Only this actual execution path issues the in-memory external validation result.
     from experiments.step4_capture_launch import run_phase
     if Path(run_phase.__code__.co_filename).resolve()!=ROOT/"experiments/step4_capture_launch.py":
         raise ValueError("foreign native phase helper")
-    command=phase_command(request,job_source,output,preflight=True)
+    command=phase_command(request,job_source,output,preflight=True,producer_root=producer_root)
     phase=run_phase("runtime-preflight",command,Path(output)/"runtime-preflight.log",request["worker_timeout_s"])
     publish_json(phase,Path(output)/"runtime-preflight-phase.json")
     if phase["returncode"]!=0:raise ValueError("installed runtime CPU preflight refused; inspect "+str(Path(output)/"runtime-preflight.log"))
@@ -173,10 +184,10 @@ def run_runtime_preflight(request, job_source, output):
     return validation
 
 
-def owned_job(request_path, request, wire, output):
-    producer=producer_identity(request["producer_identity"])
+def owned_job(request_path, request, wire, output, *, producer_root=ROOT):
+    producer=producer_identity(request["producer_identity"], producer_root)
     _,roles=tp.wire_facts(wire,request["scheme"])
-    worker=ROOT/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
+    worker=producer_root/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
     request_source=tp.file_binding(request_path)
     if tp.json_bytes(tp.read_bound(request_source))!=request:raise ValueError("original request changed after entry")
     job={"schema":"tessera.native_shape_worker_job.v1","request":request,"request_source":request_source,
@@ -185,10 +196,10 @@ def owned_job(request_path, request, wire, output):
     return producer,roles,worker_source,job_source
 
 
-def prepare_request_phase(request_path, output, expected_request_sha256):
-    request,scope,wire=read_request(request_path,expected_sha256=expected_request_sha256)
+def prepare_request_phase(request_path, output, expected_request_sha256, *, producer_root=ROOT):
+    request,scope,wire=read_request(request_path,expected_sha256=expected_request_sha256,producer_root=producer_root)
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
-    producer,roles,worker_source,job_source=owned_job(request_path,request,wire,output)
+    producer,roles,worker_source,job_source=owned_job(request_path,request,wire,output,producer_root=producer_root)
     if tp.json_bytes(tp.read_bound(job_source))["request_source"]["sha256"]!=expected_request_sha256:
         raise ValueError("owned original request changed")
     return request,scope,wire,output,producer,roles,worker_source,job_source
