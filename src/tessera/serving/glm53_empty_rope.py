@@ -120,11 +120,11 @@ def _inspect(module: Any):
     digest=_source_digest(module)
     if digest is None:return None,None,digest,f"{_MODULE} has no source file to inspect"
     if digest not in _INSPECTED_SHA256:return None,None,digest,f"{_MODULE} sha256 {digest[:12]} is not an inspected source"
-    impl=getattr(module,_CLASS,None)
+    impl=stock_attribute(module,_CLASS)
     if impl is None:return None,None,digest,f"{_MODULE} has no {_CLASS}"
     params=signature_parameters(impl,"forward_mqa")
     if params!=_SIGNATURE:return None,None,digest,f"{_CLASS}.forward_mqa has parameters {params}, expected {_SIGNATURE}"
-    return impl,impl.forward_mqa,digest,None
+    return impl,stock_attribute(impl,"forward_mqa"),digest,None
 
 
 def _decline_reason(module: Any) -> str | None:
@@ -166,7 +166,7 @@ def install_for_current_config() -> bool:
             reason = f"{_MODULE} is not importable ({exc})"
             module = None
         else:
-            impl = getattr(module, _CLASS, None)
+            impl = stock_attribute(module,_CLASS)
             if impl is not None and stock_attribute(stock_attribute(impl,"forward_mqa"),_MARK,False):
                 return True
             impl,original,digest,reason = _inspect(module)
