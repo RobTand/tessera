@@ -34,6 +34,10 @@ def main() -> int:
     import mhc_probe as probe
 
     bank_path, control_path = map(Path, sys.argv[2:4])
+    expected_bank_sha, expected_control_sha = sys.argv[4:6]
+    if (hashlib.sha256(bank_path.read_bytes()).hexdigest() != expected_bank_sha or
+            hashlib.sha256(control_path.read_bytes()).hexdigest() != expected_control_sha):
+        raise SystemExit("numerical bank or control differs from the sealed expected digest")
     bank_record = json.loads(bank_path.read_text())
     control_record = json.loads(control_path.read_text())
     bank = bank_record["kdaptx"]
