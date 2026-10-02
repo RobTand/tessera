@@ -27,12 +27,8 @@ def probe(monkeypatch):
 
 @pytest.mark.parametrize("failed_field", ["served", "fma", "ex2", "div", "missing", None])
 def test_main_propagates_numerical_admission_failure(probe, monkeypatch, tmp_path, failed_field):
-    result = {
-        "gate_contract": "tessera.kda_conv_screen.v2",
-        "served_bit_equal_all": failed_field != "served",
-        "mutants_seen": {name: mode != 2 for mode, name in probe.KDA_PTX_MODES.items() if mode},
-        "ex2_equivalence": _ex2_control(probe, tmp_path),
-    }
+    result = _screen(probe, tmp_path)
+    result["served_bit_equal_all"] = failed_field != "served"
     bad = {"fma": "mutant_two_roundings_per_tap", "div": "mutant_div_rn"}
     if failed_field in bad:
         result["mutants_seen"][bad[failed_field]] = False
@@ -89,9 +85,7 @@ def _ex2_control(probe, tmp_path):
 
 def test_ex2_intermediate_equivalence_is_distinct_from_output_mutation(probe, monkeypatch, tmp_path):
     """The authorized v2 contract needs an active, erased exponential mutation."""
-    result = {"gate_contract": "tessera.kda_conv_screen.v2", "served_bit_equal_all": True,
-              "mutants_seen": {name: mode != 2 for mode, name in probe.KDA_PTX_MODES.items() if mode},
-              "ex2_equivalence": _ex2_control(probe, tmp_path)}
+    result = _screen(probe, tmp_path)
     monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
     monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path),
                                       "--parts", "kdaptx", "--numerics-only"])
@@ -133,3 +127,63 @@ def test_ex2_control_fails_closed_on_bad_evidence(probe, tmp_path, fault):
     elif fault == "flags":
         c["cuda_flags"] = ["-O3", "--use_fast_math"]
     assert probe.kdaex2_gate_errors(c)
+
+
+def _cmp(n):
+    return {"bit_equal": n == 0, "bits_differing": n}
+
+
+def _screen(probe, tmp_path):
+    """CPU policy stand-in: complete roster and internally consistent comparisons."""
+    cases = []
+    for layout in ("SD", "DS"):
+        for state_len in (probe.KDA_WIDTH - 1, probe.KDA_WIDTH + 2):
+            for name, lens, has, *_ in probe.KDA_PTX_CASES:
+                row = {"layout": layout, "state_len": state_len, "case": name,
+                       "lens": list(lens), "has": list(has)}
+                for mode, label in probe.KDA_PTX_MODES.items():
+                    output = int(mode in (1, 3) or (mode == 4 and state_len == 6))
+                    state = int(mode in (4, 5) and state_len == 6)
+                    row[label] = dict(_cmp(output), qkv={"q": _cmp(output), "k": _cmp(0), "v": _cmp(0)},
+                                      conv_state=_cmp(state))
+                    if mode:
+                        row[label].update(vs_candidate=_cmp(output), state_vs_candidate=_cmp(state))
+                cases.append(row)
+    return {"gate_contract": "tessera.kda_conv_screen.v2", "p": probe.KDA_P, "width": probe.KDA_WIDTH,
+            "served_bit_equal_all": True, "served_output_bit_equal_all": True,
+            "served_conv_state_bit_equal_all": True, "cases": cases,
+            "mutants_seen": {name: mode != 2 for mode, name in probe.KDA_PTX_MODES.items() if mode},
+            "ex2_equivalence": _ex2_control(probe, tmp_path)}
+
+
+@pytest.mark.parametrize("fault", ["absent", "subset", "duplicate", "wrong_label", "wrong_lens",
+                                  "wrong_has", "bad_width", "counterflag", "qkvtotals",
+                                  "mutant_summary", "served_summary"])
+def test_numerical_gate_derives_summaries_from_complete_case_evidence(probe, tmp_path, fault):
+    s = _screen(probe, tmp_path)
+    if fault == "absent":
+        s.pop("cases")
+    elif fault == "subset":
+        s["cases"].pop()
+    elif fault == "duplicate":
+        s["cases"][-1] = s["cases"][0]
+    elif fault == "wrong_label":
+        s["cases"][0]["case"] = "unknown"
+    elif fault == "wrong_lens":
+        s["cases"][0]["lens"][0] += 1
+    elif fault == "wrong_has":
+        s["cases"][0]["has"][0] = False
+    elif fault == "bad_width":
+        s["width"] = 5
+    elif fault == "counterflag":
+        s["cases"][0]["served_sass"]["bits_differing"] = 1
+    elif fault == "qkvtotals":
+        s["cases"][0]["mutant_two_roundings_per_tap"]["qkv"]["q"]["bits_differing"] = 2
+    elif fault == "mutant_summary":
+        for row in s["cases"]:
+            row["mutant_two_roundings_per_tap"] = dict(_cmp(0), qkv={k: _cmp(0) for k in ("q", "k", "v")},
+                                                     conv_state=_cmp(0), vs_candidate=_cmp(0), state_vs_candidate=_cmp(0))
+    elif fault == "served_summary":
+        s["cases"][0]["served_sass"].update(_cmp(1))
+        s["cases"][0]["served_sass"]["qkv"]["q"] = _cmp(1)
+    assert probe.kdaptx_gate_errors(s)
