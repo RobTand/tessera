@@ -128,10 +128,10 @@ import os
 from pathlib import Path
 import threading
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Callable
 
 from .stock_interface import InspectedInterface as _Interface
-from .stock_interface import import_modules, match_modules, module_digest as _sha256, Callable
+from .stock_interface import import_modules, match_modules, module_digest as _sha256
 
 _log = logging.getLogger(__name__)
 
