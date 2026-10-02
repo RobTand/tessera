@@ -122,8 +122,6 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
-import hashlib
-import importlib
 import logging
 import math
 import os
@@ -131,6 +129,9 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 from typing import Any, Callable
+
+from .stock_interface import InspectedInterface as _Interface
+from .stock_interface import import_modules, match_modules, module_digest as _sha256
 
 _log = logging.getLogger(__name__)
 
@@ -156,12 +157,6 @@ SP_MODULES = (
 #: and the warmup compile key (``kernels/mhc/tilelang_kernels.py``).  Re-check it
 #: whenever a digest in ``_INTERFACES`` changes.
 PRENORM_BLOCK_M = 64
-
-
-@dataclass(frozen=True)
-class _Interface:
-    name: str
-    digests: tuple[str, ...]
 
 
 #: sha256 of each module in SP_MODULES order, read inside
@@ -285,22 +280,9 @@ def sp_decline_reasons(config: Any) -> list[str]:
 # ------------------------------------------------------------------ source identity
 
 
-def _sha256(module: Any) -> str | None:
-    path = getattr(module, "__file__", None)
-    try:
-        return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
-    except OSError:
-        return None
-
-
 def _match(modules: tuple[Any, ...], names: tuple[str, ...],
            interfaces: tuple[_Interface, ...]) -> tuple[_Interface | None, str]:
-    actual = tuple(_sha256(m) for m in modules)
-    for interface in interfaces:
-        if actual == interface.digests:
-            return interface, ""
-    detail = ", ".join(f"{name}={digest}" for name, digest in zip(names, actual))
-    return None, f"no inspected interface matches ({detail})"
+    return match_modules(modules,names,interfaces)
 
 
 def _match_interface(modules: tuple[Any, ...]) -> tuple[_Interface | None, str]:
@@ -308,13 +290,7 @@ def _match_interface(modules: tuple[Any, ...]) -> tuple[_Interface | None, str]:
 
 
 def _import_all(names: tuple[str, ...] = SP_MODULES) -> tuple[tuple[Any, ...] | None, str]:
-    mods = []
-    for name in names:
-        try:
-            mods.append(importlib.import_module(name))
-        except Exception as exc:  # noqa: BLE001 - any import failure is a non-match
-            return None, f"{name} not importable ({type(exc).__name__}: {exc})"
-    return tuple(mods), ""
+    return import_modules(names)
 
 
 # ------------------------------------------------------------------------ the forward

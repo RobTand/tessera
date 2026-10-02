@@ -8,12 +8,69 @@ retained build cannot silently compile; runtime loading still requires SM121.
 The generic loader retains the original schedule by default. The existing
 default-off `TESSERA_RESEARCH_MLA_MASK_SKIP` backend explicitly selects the
 pass-buffer schedule and emits `mg_mask_skip_pass_buffers`; no new flag or
-stock/default route is introduced. The wrong-pass mutant stays experiment-only. The bounded operator gate passed 17 exact
+stock/default route is introduced. The wrong-pass mutant stays experiment-only.
+The bounded operator gate passed 17 exact
 output/LSE cases and two causal mutants; pooled-mask old-L0 comparisons reduced
 operator time 18.97% at 2048@8192 and 13.50% at 2048@2048. Full-model serving,
 random-mask performance and energy remain unqualified. See
 `experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
 are not qualification evidence.
+
+Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
+slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
+dense TP1 eager/resident operator, requiring canonical wire/container
+checks, independent runtime identity, a positively matching backed cell,
+its named native launch and wire predicate, and bound raw measurement
+evidence. It shares `fused_frame` framing with the existing fused reader.
+Samples determine a true median and inclusive quartiles; energy remains
+HOLD while cross-host clocks are unqualified. New package source changes
+its source digest if deployed as a runtime. The repository producer owns
+its stdlib schema separately from an isolated subprocess using an accepted
+installed runtime, whose original cell source remains strict. This code
+publishes bounded operator measurements, never cells or runtimes, and cannot
+restamp old b40/v42 evidence. The repository application
+`tools/tessera_shape_time_panel.py` preflights that context and uses the
+public native create/load/finalize/apply path, fresh route telemetry and
+existing CUDA-event/box instruments. It independently observes imported
+runtime and producer source, fences final publication against drift and
+reports committed progress only after durable artifact publication. The
+application has one qualified execution/replay at q896/M512/N=K256/TP1 under
+b40/raw0869/f8; no full-menu, quality, compiled, serving or cell qualification
+follows. See `measurements/2026-10-02-native-dense-first-receipt.md`.
+The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
+Its own unchanged strict validator checks the same owned contract bytes after
+RECORD, imported-root, commit and software/source checks. The successful phase
+is bound to the original request SHA, job SHA, worker/validator bytes, actual
+exit status and raw contract digest. Entry/exit identities must agree. Only
+that actual process result issues the private external-validation object;
+a bool, copied extension roster or serialized claim is insufficient. The
+producer then uses the existing planner's extracted private pure core, retaining
+its explicit registry hash. Local public planning and panel validation still
+strictly validate against their own package. External final panel validation
+requires the verified installed object and bound phase evidence; CLI replay
+reruns CPU preflight from the original request and job. The first b508 pilot
+failed at producer-owned validation before CUDA, so it supplied no timings.
+The versioned native phase uses existing containment, TP1 context and
+single-apply event sampling; actual package/module origins, raw contract
+and source identities are checked at entry before device setup and exit.
+Legacy cells without a code pair retain external exact-runtime binding;
+partial or mismatched pairs refuse. The repository worker reuses the
+published stdlib VCS/RECORD checker and refreshes cached package hashes.
+A host-only clean-checkout seal supplies the independent producer commit
+and existing source-tree/tool closures; the Gitless container verifies
+those bytes and records `commit_source=sealed_checkout`. Installed runtime
+metadata remains separate. The first ELF receipt requires the actual
+prepared fused lane and observes existing process mappings before/after
+sampling; it refuses Triton preparation and never builds a library for
+evidence. Measurement requires the sealed request digest; the producer
+hashes and parses one owned byte buffer before any native phase. See
+[the bounded receipt contract](design/native-shape-timing.md).
+
+Re-stamped 2026-10-02 for shared inspected-stock interface facts. The current prefill
+guards reuse `serving.stock_interface` and keep their own pins and parameters.
+Empty-RoPE and shared-add adaptations remain separate experimental follow-ups. Complete digest tuples stay indivisible.
+Unreadable source/attributes/signatures decline to stock, with no installation
+framework, format, default, runtime pin or serving qualification change.
 
 Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
 The existing T8R benchmark can replay one historical real-ID distribution
