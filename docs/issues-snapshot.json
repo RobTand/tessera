@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T20:36:16Z",
+ "generated": "2026-10-02T21:21:22Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4958,6 +4958,34 @@
    "2112": {
     "state": "OPEN",
     "title": "Bind shape-time prices to reviewed PB checker completions"
+   },
+   "2113": {
+    "state": "OPEN",
+    "title": "[P2] Own-process skipped test proxy has no line location and crashes pytest reporting"
+   },
+   "2114": {
+    "state": "OPEN",
+    "title": "Validate measured activation metadata when reusing campaign rows"
+   },
+   "2115": {
+    "state": "OPEN",
+    "title": "[P3] Compact and bound remaining Stage B read-plan metadata"
+   },
+   "2116": {
+    "state": "OPEN",
+    "title": "Preserve source locations for own-process skipped tests"
+   },
+   "2117": {
+    "state": "OPEN",
+    "title": "Prepare genuine checkpoint export component for PB905 pacing A/B"
+   },
+   "2118": {
+    "state": "OPEN",
+    "title": "[P2] Bind checkpoint streaming to immutable executable input phases"
+   },
+   "2119": {
+    "state": "OPEN",
+    "title": "Qualify original source copy lifetimes and bind existing identities to owned descriptors"
    },
    "212": {
     "state": "CLOSED",
@@ -11810,7 +11838,7 @@
     "title": "GLM-5.3 MLA: reuse FP8 pass buffers with retained native build identity"
    },
    "855": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Possible persistent-kernel terminal FULL barrier reuse before consumer acknowledgment"
    },
    "856": {
@@ -11838,7 +11866,7 @@
     "title": "Add an uninstalled SP mHC tile pipeline and finite TP2 probe"
    },
    "861": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Drain the reused terminal barrier in persistent kernels"
    },
    "862": {
@@ -11860,6 +11888,14 @@
    "866": {
     "state": "OPEN",
     "title": "Refuse exact SP before unavailable PyNccl writers"
+   },
+   "867": {
+    "state": "OPEN",
+    "title": "test: remove repeated pure CI fixture work"
+   },
+   "868": {
+    "state": "OPEN",
+    "title": "Add opt-in R4 piece-major placement for routed E4M3 MMA"
    },
    "87": {
     "state": "CLOSED",
