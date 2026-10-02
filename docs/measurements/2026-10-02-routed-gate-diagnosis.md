@@ -152,3 +152,17 @@ The separate fix uses stdlib `statistics.median`, preserves existing nearest
 sample quartile semantics, and retains raw CUDA-event timing samples in original
 execution order for deterministic reanalysis. Historical records are retained
 with their original statistic; no GPU samples have yet been produced here.
+
+
+### Fresh extension directory refusal retained as a wrapper negative
+
+Actual GPU-admitted action `bfde43967bf6` claimed Sparklina CPU mask 5,6 and
+failed in 1.08 seconds, before Docker, compile, timing or any GPU kernel. Its
+wrapper's empty-directory `ls` pipeline returned 2 under `set -e/pipefail`;
+The verified complete stdout hash and negative archive are retained externally. No timing, profiler or steady-power
+samples exist from that attempt. A withdrawal check found it already finished;
+no running action was killed. PB regression `0309d64c0660` reproduced one
+failure and one pass: fresh empty extension directory fails, while an existing
+library is listed. The existing listing owner now accepts an empty directory
+and reports each actual library's mtime/name with `stat`. Libraries still share
+the same existing extension directory; no second build/cache or kernel change.

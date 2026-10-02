@@ -107,7 +107,13 @@ if [[ -n "${BENCH_EXT_DIR:-}" ]]; then
   [[ -d "$EXT_DIR" ]] || { echo "missing BENCH_EXT_DIR: $EXT_DIR" >&2; exit 2; }
   EXTRA_MOUNTS+=(-v "$EXT_DIR":"$EXT_DIR")
 fi
-ext_libs() { (cd "$EXT_DIR" 2>/dev/null && ls -l --time-style=+%s -- */*.so 2>/dev/null | awk '{print $6, $7}'); }
+ext_libs() {
+  local lib
+  for lib in "$EXT_DIR"/*/*.so; do
+    [[ -f "$lib" ]] || continue
+    stat -c '%Y %n' "$lib"
+  done
+}
 EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
