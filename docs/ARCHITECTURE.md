@@ -57,6 +57,16 @@ a straddling group is unknown for this phase and is never interpolated into
 its power statistics. This repairs provenance, without claiming that the
 coarse sensor values or any historical energy comparison are qualified.
 
+Re-stamped 2026-10-02 for the optional container GPU merge-suite arm
+(tessera#818). A source-sealed runner uses PrismaBuild's Docker ownership and
+affinity shim, immutable image and scoped dependency content identities, and
+same-path readonly source/data mounts. The coordinator's existing receipt
+reader authenticates the runner and shared argv owner from the request's
+snapshot bundle before adopting a resumed exit. Container GPU xdist spends
+the declared CPUs with native threads one; all existing source, publication,
+device-allocation and missing-artifact gates remain in force. This changes no
+wire, serving route, runtime pin or artifact.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -1980,7 +1990,7 @@ allocator sees is `docs/tessera-one-format.md` §5.
 PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
 `--exclusive`: the deployed scheduler derives the complete GPU reservation
 from that worker's advertised capacity, rather than treating one logical slot
-as physical exclusion. The GPU arm remains serial under `--strict-cuda`,
+as physical exclusion. The native GPU arm remains serial under `--strict-cuda`,
 which has three legs since tessera#152: it refuses a device-less session
 before anything runs, refuses at the end a run in which no test allocated on
 the device (torch's own allocator counter, published as
@@ -1994,6 +2004,42 @@ Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
 defaults and preventing each xdist worker's native math or extension compiler
 from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
+An explicit `--gpu-image` enables the container GPU arm. It requires
+`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
+`--gpu-cache-dir` outside the checkout. `tessera._dev.suite_container` owns
+the finite runner grammar and Docker argv; `tools/suite_container.py` launches
+it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
+--dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
+`--gpu-mem-gb` when its population needs different CPU
+or aggregate memory reservations from the x86 arm. The pinned image must
+already be local according to PB's `--container-image` contract. Scoped
+dependencies declare their versions and every file's path, mode, length and
+SHA-256 (`tessera.suite_dependencies.v1`); changed bytes or a symlink refuse.
+The runner checks the dependency seal at entry and exit, so a host-side
+mutation during pytest cannot turn a clean summary into a successful action.
+The source and declared data roots mount readonly at their actual absolute
+paths, while the surface directory and action-owned cache mount writable.
+`--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
+these overrides are sealed, mounted and forwarded to pytest. The helper
+disables user-site imports, bytecode writes and implicit pytest plugin
+autoload, fixes the Python entrypoint/workdir and native thread limits, and
+keeps pytest temporary files and compiler caches outside the source tree.
+PB's Docker shim retains responsibility for scope ownership, affinity,
+memory containment and exact-attempt termination.
+
+The receipt reader recognizes only the canonical relative runner path and
+its shared finite grammar, never arbitrary Docker tokens or shell fragments.
+It keeps the existing snapshot/stamp/request/publication/terminal checks and
+additionally reads the exact request's authenticated Git bundle (bounded to
+256 MiB), comparing the runner and shared owner blobs with the coordinator's
+sources. A receipt assembly verifies each distinct bundle once; this is
+ephemeral verification state, not a second source-identity cache. A modified
+runner, option/environment/mount shadow, worker/reservation mismatch, unknown
+producer, unverified source or different effective source remains non-green.
+Resume reads only the action keys the population's verified producer stamps
+name. It does not scan unrelated fleet history; several named producers or
+conflicting terminal records remain ambiguous, and an unstamped population
+cannot acquire an exit from another action.
 The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then
