@@ -157,6 +157,7 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
     args = options()
     args.out = str(tmp_path/'out')
+    args.outputs_only = False
     closed = []
     reader = SimpleNamespace(close=lambda: closed.append(True))
     module = ModuleType('pb_staged_store')
