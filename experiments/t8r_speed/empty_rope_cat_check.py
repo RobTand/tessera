@@ -148,7 +148,7 @@ def check_case(name, positions, cache, workspace, mla, helper, dev, seed):
                 bitwise=all(r["bitwise_equal_to_first_cat"] for r in rows) and same_object)
 
 
-def screen(cache, workspace, mla, helper, dev, reps):
+def screen(cache, workspace, mla, helper, dev, reps, trace_root=None):
     from torch.profiler import ProfilerActivity, profile
     positions = torch.arange(6144, 8192, device=dev)
     nope = torch.randn((2048, N_HEADS, LATENT), device=dev).to(torch.bfloat16)
@@ -159,7 +159,8 @@ def screen(cache, workspace, mla, helper, dev, reps):
         run_kernel(torch.cat(q, dim=-1), cache, indices, workspace, mla)
         run_kernel(helper(q), cache, indices, workspace, mla)
     torch.cuda.synchronize()
-    for form in ("cat", "direct", "cat", "direct"):
+    for order, form in enumerate(("cat", "direct", "cat", "direct")):
+        window_start = time.time()
         with profile(activities=[ProfilerActivity.CUDA]) as prof:
             start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
             start.record()
@@ -168,13 +169,19 @@ def screen(cache, workspace, mla, helper, dev, reps):
                 run_kernel(qq, cache, indices, workspace, mla)
             end.record()
             torch.cuda.synchronize()
+        window_end = time.time()
+        trace = os.path.join(trace_root, f"empty-rope-{order}-{form}.trace.json") \
+            if trace_root is not None else None
+        if trace is not None:
+            prof.export_chrome_trace(trace)
         kernels = {}
         for ev in prof.key_averages():
             t = getattr(ev, "self_device_time_total", None) or getattr(ev, "self_cuda_time_total", 0)
             if t and ev.count:
                 kernels[ev.key[:120]] = dict(count=ev.count, us_per_call=t / ev.count)
         result.setdefault(form, []).append(dict(
-            event_ms_per_iter=start.elapsed_time(end) / reps, kernels=kernels))
+            event_ms_per_iter=start.elapsed_time(end) / reps, kernels=kernels,
+            trace=trace, window_unix=[window_start, window_end]))
     return result
 
 
@@ -213,7 +220,7 @@ def main():
             results.append(dict(case=name, bitwise=False, error=f"{type(exc).__name__}: {exc}"))
         print(json.dumps({k: v for k, v in results[-1].items() if k != "runs"}), flush=True)
     try:
-        log["screen"] = screen(cache, workspace, mla, helper, dev, args.reps)
+        log["screen"] = screen(cache, workspace, mla, helper, dev, args.reps, args.out)
         log["screen_label"] = "[S] torch.profiler, non-measurement row"
     except Exception as exc:
         log["screen_error"] = f"{type(exc).__name__}: {exc}"
