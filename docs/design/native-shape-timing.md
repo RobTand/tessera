@@ -123,8 +123,9 @@ Every artifact is file- and directory-synced, and the final panel is validated
 before its durable publication. Only then may repository tooling report one
 committed PB publish unit. The package validator has no PB dependency.
 
-This application has CPU controls only until a separately accepted native
-GPU pilot qualifies the complete path. The producer commit and schema origin are independent from the worker
+The first accepted native GPU pilot and independent fresh installed CPU replay
+qualify the bounded execution path at q896/M512/N=K256/TP1 under b40/raw0869/f8.
+They establish no full-menu, serving, numerical/quality, compiled or cell qualification. The producer commit and schema origin are independent from the worker
 runtime's source; no unchanged pinned runtime requires requalification solely
 for a new producer checkout. No existing b40/v42 or other cell is relabeled, no census
 is published, and no PrismaQuant timing consumer or pin changes in this slice.

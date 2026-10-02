@@ -11,13 +11,16 @@ HOLD while cross-host clocks are unqualified. New package source changes
 its source digest if deployed as a runtime. The repository producer owns
 its stdlib schema separately from an isolated subprocess using an accepted
 installed runtime, whose original cell source remains strict. This code
-publishes no cell, runtime or measurement and cannot restamp old b40/v42 evidence. The repository application
+publishes bounded operator measurements, never cells or runtimes, and cannot
+restamp old b40/v42 evidence. The repository application
 `tools/tessera_shape_time_panel.py` preflights that context and uses the
 public native create/load/finalize/apply path, fresh route telemetry and
 existing CUDA-event/box instruments. It independently observes imported
 runtime and producer source, fences final publication against drift and
 reports committed progress only after durable artifact publication. The
-application remains GPU-unqualified; no pilot or census is published.
+application has one qualified execution/replay at q896/M512/N=K256/TP1 under
+b40/raw0869/f8; no full-menu, quality, compiled, serving or cell qualification
+follows. See `measurements/2026-10-02-native-dense-first-receipt.md`.
 The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
 Its own unchanged strict validator checks the same owned contract bytes after
 RECORD, imported-root, commit and software/source checks. The successful phase
