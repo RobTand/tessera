@@ -13,7 +13,14 @@ binds the actual runtime and independent producer records, raw runtime
 contract, canonical wire, native preparation, raw CUDA-event samples,
 observed per-call routes, gzip profiler trace, native ELF binary and full
 raw telemetry by absolute path, byte length and SHA-256. Its single scope
-is rebuilt through the existing census planner and dispatch registry.
+is rebuilt through the existing census planner and dispatch registry. The local
+public API validates against its own packaged runtime. External panels use
+`validate_external_panel` with the private immutable result of an actual
+installed-runtime CPU preflight, never a boolean or a copied extension roster.
+That phase runs the installed reader's unchanged strict validator on its own
+hash-bound raw bytes, after RECORD, root, commit and source/software checks.
+The existing planner's private validated-document core then retains the
+producer registry hash without claiming that producer is the runtime.
 
 The canonical fused frame reader is shared with `tessera.fused`; existing
 framing bytes and public names remain unchanged. The passive replay uses
@@ -53,8 +60,11 @@ separate acceptance of the exact observed runtime and requested cell.
 CPU stand-ins validate this contract without claiming GPU execution.
 
 `tools/tessera_shape_time_panel.py` is the supported repository application.
-`check-request REQUEST.json` performs a CPU preflight without preparation or
-measurement. `measure --request REQUEST.json --request-sha256 SHA256 --output NEW_DIRECTORY` calls
+`check-request REQUEST.json` checks the request's owned bytes, scope and
+possible cell/wire join; installed contract validation is explicitly pending.
+`preflight-request --request REQUEST.json --request-sha256 SHA256 --output NEW_DIRECTORY`
+runs the actual CUDA-disabled installed contract phase and publishes an
+unmeasured plan with bound result/returncode evidence. `measure --request REQUEST.json --request-sha256 SHA256 --output NEW_DIRECTORY` calls
 `lane.build_tessera_method`, `create_weights`, loads the exact owned wire into
 the plugin parameter, and calls `process_weights_after_loading` and `apply`.
 It clears the latest route before every call so retained records cannot stand
@@ -95,8 +105,8 @@ closure. Neither identity substitutes for the other. `native_packed_bytes`
 records the existing prepared object's named tensor byte sum, including views;
 it is not a deduplicated whole-process residency measurement.
 
-The producer reuses `step4_capture_launch.run_phase` to launch one native
-subprocess in the existing admitted action, with inherited CPU affinity and
+The producer reuses `step4_capture_launch.run_phase` for the installed CPU
+contract preflight and the subsequent native subprocess in the existing admitted action, with inherited CPU affinity and
 thread bounds. Its argv removes `PYTHONPATH` and uses the explicit interpreter
 with `-I -B`. The native worker adds repository tools, never repository `src`,
 and refuses a foreign package root, Python path or cached runtime owner. All
@@ -134,3 +144,14 @@ The measurement command requires the externally sealed request SHA-256.
 The producer reads one owned byte buffer, checks that digest and parses
 that same buffer; a separate launcher hash followed by a second read is
 not a sealed request boundary.
+
+
+The original request and versioned worker job each have an independently checked
+SHA-256 over the same owned bytes parsed by the child. The actual CPU phase's
+argv, returncode, source origins, validator file and raw contract are bound into
+the external validation result. Entry/exit software identities must agree and
+CUDA must remain uninitialized. A native phase still independently validates
+its installed reader and observes actual hardware before TP1/CUDA setup.
+External CLI `check` requires `--request`, `--request-sha256` and a fresh
+`--preflight-output`; it reruns the installed CPU validation before replaying
+measurement evidence. A serialized success record alone is insufficient.
