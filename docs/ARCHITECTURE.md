@@ -1,3 +1,14 @@
+Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
+The existing T8R benchmark can replay one historical real-ID distribution
+against the A8SE wires through PB public pinned readers, binding the same
+owned bytes to publisher digests before the unchanged rank-local intake.
+Only served mode0/RL4/one-run/BMT128 is profiled; the teacher-forced mode1
+interface is excluded. Seeded activation/uniform downstream weights remain
+a declared proxy; no full-model quality/speed, serving/default/pin change
+or gate promotion is delivered. A >=30s steady power loop and both-box
+Netdata supplement the one-kernel profile; energy remains held until actual
+coverage and instrument agreement. See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
+
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode

@@ -20,6 +20,9 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_WIDE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WIDE=$TESSERA_ROUTED_FUSED_WIDE")
 ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
+for ((i=1; i<=$#; i++)); do
+  if [[ "${!i}" == --artifact ]]; then j=$((i+1)); ART=${!j}; fi
+done
 [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
@@ -40,6 +43,18 @@ fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
 EXTRA_MOUNTS=()
+# The strict replay uses PB's public SDK from this sealed published generation,
+# and reads only ranges opened through its leases. Preserve the injected attempt.
+PB_ENV=()
+if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
+  for key in PRISMABUILD_ACTION_KEY PRISMABUILD_ACTION_NONCE PRISMABUILD_ACTION_SCOPE PRISMABUILD_QUEUE_ROOT PRISMABUILD_RESIDENCY_MAP PRISMABUILD_READER_HELPER_ROOT; do
+    [[ -n "${!key:-}" ]] || { echo "missing strict staged context: $key" >&2; exit 2; }
+    PB_ENV+=(-e "$key=${!key}")
+  done
+  [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published PB SDK" >&2; exit 2; }
+  EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet --pid=host)
+  IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
+fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
 # model, recorded activations), mounted read-only at the same path.
 for d in ${BENCH_RO_MOUNTS:-}; do
@@ -62,7 +77,11 @@ if [[ "${BENCH_NCU:-0}" == 1 ]]; then
   NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
   EXTRA_MOUNTS+=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
-  COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all
+  NCU_EXACT=()
+  if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
+    NCU_EXACT=(--kernel-name-base demangled --cache-control none --launch-count 1)
+  fi
+  COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all "${NCU_EXACT[@]}"
     --kernel-name "regex:${BENCH_NCU_KERNELS:-routed_fused_kernel|token_sum_kernel|window}"
     --section LaunchStats --section Occupancy --section SpeedOfLight
     --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Tables
@@ -95,10 +114,10 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e TORCH_EXTENSIONS_DIR="$EXT_DIR" \
   -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
-  -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e NUMEXPR_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
-  "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
+  "${IMAGE_ENV[@]}" "${PB_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
   "${COMMAND[@]:1}" --out "$OUT" "$@" || rc=$?
 EXT_AFTER=$(ext_libs)
 if [[ -n "${BENCH_EXT_DIR:-}" && "$EXT_AFTER" != "$EXT_BEFORE" ]]; then

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import sys
@@ -150,17 +151,24 @@ BF16_GROUPS = [
 
 
 class Store:
-    def __init__(self, root):
+    def __init__(self, root, inputs=None):
         self.root = root
-        self.index = json.load(open(os.path.join(root, "model.safetensors.index.json")))["weight_map"]
-        self.config = json.load(open(os.path.join(root, "config.json")))
+        self.inputs = inputs
+        self.index = self.metadata("model.safetensors.index.json")["weight_map"]
+        self.config = self.metadata("config.json")
         self._open = {}
         self.schemes = {}
         for g in self.config["quantization_config"]["config_groups"].values():
             for t in g["targets"]:
                 self.schemes[t] = g["scheme"]
 
+    def metadata(self, name):
+        path = os.path.join(self.root, name)
+        return self.inputs.json(path) if self.inputs else json.load(open(path))
+
     def get(self, name):
+        if self.inputs:
+            return self.inputs.tensor(self.root, name, index=self.index)
         shard = self.index[name]
         if shard not in self._open:
             self._open[shard] = safe_open(os.path.join(self.root, shard), "pt", device="cpu")
@@ -197,7 +205,7 @@ class PowerSampler:
             return float(out.split()[0])
         return None
 
-    def sample_during(self, work, seconds):
+    def sample_during(self, work, seconds, *, capture_series=False):
         """Run ``work()`` back to back for ``seconds`` while sampling; return stats."""
         if self.source is None:
             n = 0
@@ -206,12 +214,16 @@ class PowerSampler:
                 work(); n += 1
             torch.cuda.synchronize()
             return {"source": None, "calls": n, "seconds": time.time() - t0}
-        samples, stop = [], threading.Event()
+        samples, clocks, stop = [], [], threading.Event()
 
         def loop():
             while not stop.is_set():
                 try:
-                    samples.append((time.time(), self.read_w()))
+                    ts = time.time()
+                    samples.append((ts, self.read_w()))
+                    if capture_series and self.source == "pynvml":
+                        clocks.append((ts, self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM),
+                                       self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)))
                 except Exception:  # noqa: BLE001
                     pass
                 stop.wait(0.1)
@@ -231,7 +243,14 @@ class PowerSampler:
         stop.set(); th.join()
         w = [v for ts, v in samples if v is not None and t0 <= ts <= t1]
         mean = sum(w) / len(w) if w else None
-        return {"source": self.source, "calls": n, "seconds": t1 - t0, "window_unix": [t0, t1],
+        extra = {}
+        if capture_series:
+            extra = {"power_series_unix_w": samples, "clock_temperature_series": clocks, "energy_status": "HOLD_pending_Netdata_coverage",
+                     "gpu_clock_mhz": self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM)
+                         if self.source == "pynvml" else None,
+                     "gpu_temperature_c": self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)
+                         if self.source == "pynvml" else None}
+        return {**extra, "source": self.source, "calls": n, "seconds": t1 - t0, "window_unix": [t0, t1],
                 "samples": len(w), "mean_w": mean, "max_w": max(w) if w else None,
                 "envelope_frac": (mean / ENVELOPE_W) if mean else None,
                 "calls_per_j": (n / ((t1 - t0) * mean)) if mean else None}
@@ -386,7 +405,7 @@ def time_events(call, warmup, iters):
     return out
 
 
-def kernel_profile(call, reps=5):
+def kernel_profile(call, reps=5, *, full_names=False):
     from torch.profiler import profile, ProfilerActivity
     call(); torch.cuda.synchronize()
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
@@ -401,13 +420,26 @@ def kernel_profile(call, reps=5):
         if dev_us is None:
             dev_us = getattr(evt, "self_cuda_time_total", 0.0)
         if dev_us and evt.device_type is not None and str(evt.device_type).endswith("CUDA"):
-            per[evt.key[:120]] = {"us_per_call": dev_us / reps, "count_per_call": evt.count / reps}
+            per[evt.key if full_names else evt.key[:120]] = {"us_per_call": dev_us / reps, "count_per_call": evt.count / reps}
             total += dev_us / reps
         if evt.key in ("cudaLaunchKernel", "cuLaunchKernel", "cuLaunchKernelEx", "cudaLaunchKernelExC"):
             launches += evt.count / reps
     top = dict(sorted(per.items(), key=lambda kv: -kv[1]["us_per_call"])[:12])
     return {"kernel_us_per_call": total, "launches_per_call": launches, "top": top}
 
+
+def require_single_replay_options(args, *, stubbed=False):
+    if args.single_routing_file:
+        if (args.groups != "experts.R1024.L10" or args.ms != "2048"
+                or not args.input_manifest or args.routing or not args.no_graph
+                or args.power_s < 30 or args.warmup != 10 or args.iters != 30):
+            raise ValueError("single replay requires L10/M2048, staged inputs, no graph/menu and >=30s power")
+        if args.artifact != "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported":
+            raise ValueError("single replay requires the actual A8SE artifact")
+        if stubbed:
+            raise ValueError("single replay refuses stubbed vLLM")
+    elif args.input_manifest or args.artifact != ARTIFACT:
+        raise ValueError("artifact/staged-input overrides require the exact single replay")
 
 def main():
     ap = argparse.ArgumentParser()
@@ -423,18 +455,42 @@ def main():
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
     ap.add_argument("--ncu", action="store_true",
                     help="one call per (group, M) between cudaProfilerStart/Stop; no timing")
+    ap.add_argument("--artifact", default=ARTIFACT)
+    ap.add_argument("--single-routing-file", default=None,
+                    help="one sealed historical real-ID replay; no balanced/menu cases")
+    ap.add_argument("--input-manifest", default=None,
+                    help="exact PB-staged readset for the single replay")
     args = ap.parse_args()
+    require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
     wanted = None if args.groups == "all" else set(args.groups.split(","))
     torch.manual_seed(0)
     dev = torch.device("cuda")
-    store = Store(ARTIFACT)
+    inputs = None
+    if args.single_routing_file:
+        from pb_staged_store import StagedInputs
+        inputs = StagedInputs(args.input_manifest)
+    store = Store(args.artifact, inputs)
+    if inputs:
+        # Bind publisher declarations to the exact staged bytes intake reads.
+        published = store.metadata("tessera_serving_manifest.json")
+        for role in published["modules"][P + "10.mlp.experts"]["roles"]:
+            name = role["tensor"].removesuffix(".weight") + ".wire"
+            shard = store.index[name]
+            header = inputs.read(os.path.join(store.root, shard))
+            import struct
+            n = struct.unpack("<Q", header[:8])[0]
+            spec = json.loads(header[8:])[name]
+            entry = inputs.entries[(os.path.join(store.root, shard), 8+n+spec["data_offsets"][0])]
+            if entry["sha256"] != role["cached_blob_sha256"] or entry["bytes"] != role["blob_bytes"]:
+                raise SystemExit("staged wire range differs from serving publisher")
+
     power = PowerSampler()
     import tessera
     meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
             "top_k": TOP_K, "experts": EXPERTS, "ms": ms, "warmup": args.warmup, "iters": args.iters,
-            "power_source": power.source, "tessera_file": tessera.__file__, "artifact": ARTIFACT,
+            "power_source": power.source, "tessera_file": tessera.__file__, "artifact": args.artifact,
             "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
             "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
             "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
@@ -455,6 +511,11 @@ def main():
     except Exception as exc:  # noqa: BLE001
         meta["tessera_meta_error"] = repr(exc)
     ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
+    if inputs:
+        meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
+                                  "baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
+                                  "manifest_sha256": inputs.manifest_sha256,
+                                  "sdk_version": inputs.sdk.SDK_VERSION}
     results = []
     plan = [(g, k, mod) for g, k, mod in TESSERA_GROUPS] + [(g, "bf16", (o, i)) for g, o, i in BF16_GROUPS]
     for gid, kind, module in plan:
@@ -477,6 +538,10 @@ def main():
                 rec["cells"] = {}
                 cases = []
                 for m in ms:
+                    if args.single_routing_file:
+                        cases.append((f"{m}@{os.path.splitext(os.path.basename(args.single_routing_file))[0]}",
+                                      m, args.single_routing_file))
+                        continue
                     cases.append((str(m), m, None))
                     if kind == "routed":
                         cases += [(f"{m}@{os.path.splitext(os.path.basename(f))[0]}", m, f)
@@ -490,12 +555,40 @@ def main():
                         xa = (x,)
                     elif rfile is None:
                         xa = (x, *balanced_routing(m, dev))
+                    elif inputs:
+                        loaded = torch.load(io.BytesIO(inputs.read(rfile)), map_location="cpu", weights_only=True)
+                        ids = loaded["ids"]
+                        if tuple(ids.shape) != (2048, TOP_K) or ids.dtype != torch.int32:
+                            raise ValueError("single replay routing shape/dtype differs")
+                        if int(ids.min()) < 0 or int(ids.max()) >= EXPERTS:
+                            raise ValueError("single replay expert ids out of range")
+                        weights = torch.full((m, TOP_K), 1.0/TOP_K, dtype=torch.float32, device=dev)
+                        xa = (x, ids.to(device=dev), weights)
+                        from tessera import routed_fused as rf
+                        expected = "3a32d040668cc1fe5678c2088deb5afa8cd6f227a7920dfbd899c90863c03254"
+                        source = os.path.join(os.path.dirname(rf.__file__), "serving/csrc/routed_fused_window.cu")
+                        if hashlib.sha256(open(source, "rb").read()).hexdigest() != expected:
+                            raise ValueError("single replay kernel source differs from baseline608")
+                        if rf.library_for("e4m3") != "e4m3mma" or rf.superblock_rows("e4m3mma", 0, m) != 128:
+                            raise ValueError("single replay library/width differs")
+                        meta["single_replay"]["input_hashes"] = {
+                            "x": hashlib.sha256(x.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest(),
+                            "weights": hashlib.sha256(weights.view(torch.uint8).cpu().numpy().tobytes()).hexdigest(),
+                            "ids": hashlib.sha256(ids.contiguous().view(torch.uint8).numpy().tobytes()).hexdigest()}
+                        meta["single_replay"]["seed"] = zlib.crc32(f"{gid}:{m}".encode())
+                        from tessera.serving.backend import platform_token
+                        token = platform_token(torch=torch)
+                        meta["single_replay"]["compile_flags"] = rf._cflags(token, True, True)
+                        lib = rf._ext("e4m3mma")
+                        meta["single_replay"]["library_path"] = lib.__file__
+                        meta["single_replay"]["library_sha256"] = hashlib.sha256(open(lib.__file__, "rb").read()).hexdigest()
+                        meta["single_replay"]["build_platform"] = token
                     else:
                         xa = (x, *recorded_routing(rfile, m, dev))
                     call = lambda: fn(*xa)  # noqa: E731
                     if args.ncu:
                         # ncu --profile-from-start off: exactly one profiled call per (group, M).
-                        for _ in range(3):
+                        for _ in range(args.warmup if inputs else 3):
                             call()
                         torch.cuda.synchronize()
                         torch.cuda.cudart().cudaProfilerStart()
@@ -519,7 +612,13 @@ def main():
                     ts = time.time()
                     cell["wall"] = summarize(time_events(call, args.warmup, args.iters))
                     cell["wall_window_unix"] = [ts, time.time()]
-                    cell["profile"] = kernel_profile(call)
+                    cell["profile"] = kernel_profile(call, full_names=bool(inputs))
+                    if inputs:
+                        wanted_kernel = "routed_fused_kernel<true, 0, false, false, 4, false, 128>"
+                        mode0 = [v for k,v in cell["profile"]["top"].items() if wanted_kernel in k]
+                        if len(mode0) != 1 or mode0[0]["count_per_call"] != 1:
+                            raise ValueError("actual profiled single replay is not one mode0/RL4/BMT128 kernel")
+                        cell["mode0_profile"] = mode0[0]
                     if not args.no_graph and m <= 8:
                         try:
                             s = torch.cuda.Stream()
@@ -539,7 +638,12 @@ def main():
                             replay = call
                     else:
                         replay = call
-                    cell["power"] = power.sample_during(replay, args.power_s)
+                    cell["power"] = power.sample_during(replay, args.power_s, capture_series=bool(inputs))
+                    if inputs:
+                        cell["power"]["scope"] = "whole single-owner forward; not gate-only or full-model energy"
+                        cell["power"]["calls_per_j"] = None
+                        if cell["power"].get("source") is None:
+                            raise ValueError("single replay requires fast power instrument")
                     best = cell.get("graph", cell["wall"])["median_ms"]
                     cell["eff_gbps"] = cell["bytes"] / (best * 1e-3) / 1e9
                     k_us = cell["profile"]["kernel_us_per_call"]
@@ -564,6 +668,9 @@ def main():
         results.append(rec)
         json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                   indent=1, default=repr)
+    if inputs:
+        meta["staged_reads"] = inputs.reads
+        inputs.close()
     meta["end_unix"] = time.time()
     json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
               indent=1, default=repr)
