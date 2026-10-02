@@ -90,10 +90,11 @@ def parsed_unit(role: str, group: str, rank: int, device="cpu") -> A4Unit:
     return A4Unit.from_prepared(prepare_span2_planes(local[1], device="cuda"))
 
 
-def check_compact_equals_parsed(rank: int, group: str):
+def check_compact_equals_parsed(rank: int, group: str, *, loaded_units=None):
     results = {}
     for role in ROLES[group]:
-        compact = compact_unit(role, group, rank)
+        compact = (loaded_units[role] if loaded_units is not None
+                   else compact_unit(role, group, rank))
         parsed = parsed_unit(role, group, rank)
         assert (compact.rows, compact.cols) == (parsed.rows, parsed.cols)
         for field in ("select", "label", "point", "nibbles", "label_lut",
