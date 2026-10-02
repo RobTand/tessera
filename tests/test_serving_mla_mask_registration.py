@@ -121,3 +121,30 @@ def test_compiled_forward_keeps_stock_scope_without_gpu_queries(impl,monkeypatch
     sentinel=object();monkeypatch.setattr(module.FlashInferMLASparseSM120Impl,'forward_mqa',lambda self,*args:sentinel)
     assert instance.forward_mqa(object(),object(),object(),object()) is sentinel
     assert instance._tessera_mla_context is previous
+
+
+def test_native_factory_selects_pass_buffers_once_per_device(monkeypatch):
+    from contextlib import nullcontext
+    from tessera.serving import mla_sparse_sm120 as module
+    calls=[]; sentinel=object()
+    monkeypatch.setattr(module.torch.cuda,'device',lambda device:nullcontext())
+    monkeypatch.setattr(module,'MlaPrefillLibrary',lambda *a,**kw:calls.append((a,kw)) or sentinel)
+    module.library_for_device.cache_clear()
+    try:
+        assert module.library_for_device('cuda:0') is sentinel
+        assert module.library_for_device('cuda:0') is sentinel
+        assert calls==[((None,),{'p0_buffers':True})]
+    finally:
+        module.library_for_device.cache_clear()
+
+
+@pytest.mark.parametrize('reason,schedule',[(None,'mg_mask_skip_pass_buffers'),('decode','stock_mg')])
+def test_dispatch_identifies_selected_schedule(impl,monkeypatch,reason,schedule):
+    from types import SimpleNamespace
+    module,instance=impl;rows=[]
+    monkeypatch.setattr(module.torch.compiler,'is_compiling',lambda:False)
+    monkeypatch.setattr(module.torch.cuda,'is_current_stream_capturing',lambda:False)
+    monkeypatch.setattr(module.telemetry,'emit_route',lambda *a,**kw:rows.append(kw))
+    instance._emit(SimpleNamespace(shape=(512,32,512)),'stock' if reason else 'tessera_mla_prefill_mg_l0',reason)
+    assert len(rows)==1
+    assert rows[0]['kernel_schedule']==schedule
