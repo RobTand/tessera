@@ -868,6 +868,16 @@ def _possible_symbols(expression, scope):
     return result
 
 
+def _helper_capability(capable, edges):
+    """One monotone fixed point for effects of recognized helper calls."""
+    while True:
+        expanded = capable | {key for key, dependencies in edges.items()
+                              if dependencies & capable}
+        if expanded == capable:
+            return capable
+        capable = expanded
+
+
 def source_execution_modules(trees, modules, targets, *, scanners=None):
     """Files that call a source executor, including known imported helpers.
 
@@ -921,12 +931,7 @@ def source_execution_modules(trees, modules, targets, *, scanners=None):
         }
         for path, defined in functions.items() for name, alternatives in defined.items()
     }
-    while True:
-        expanded = capable | {key for key, dependencies in edges.items()
-                              if dependencies & capable}
-        if expanded == capable:
-            break
-        capable = expanded
+    capable = _helper_capability(capable, edges)
     return {
         path for path, tree in trees.items()
         if any(_source_call(call, symbols) for call, symbols in calls[path].items())
