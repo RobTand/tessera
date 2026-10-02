@@ -13,7 +13,7 @@ import torch
 
 from test_native_timing_panel import panel, canonical_wire
 from tools import tessera_shape_time_panel as app, tessera_shape_time_worker as worker
-from tessera.serving import contract, telemetry, backend, source_identity, runtime_image
+from tessera.serving import contract, scheme, telemetry, backend, source_identity, runtime_image
 
 
 def request_file(panel, monkeypatch):
@@ -408,3 +408,163 @@ def test_repeated_runtime_observation_inserts_overlay_once(installed_origins):
     worker.runtime_origins(str(root))
     worker.runtime_origins(str(root))
     assert sys.path.count(str(root.parent))==1, 'duplicate overlay roots make RECORD owner discovery ambiguous'
+
+
+def external_observation_case(tmp_path, panel, monkeypatch):
+    """A genuinely verified external context for the bound-observation path.
+
+    The request is rewritten so its expected runtime names the synthetic
+    installed root, then the job, the recorded preflight result and phase are
+    rebuilt exactly as the in-container producer would own them. The returned
+    ``validation`` is the same private object the real check path derives.
+    """
+    path, request = request_file(panel, monkeypatch)
+    root = tmp_path / 'installed' / 'tessera'; root.mkdir(parents=True)
+    runtime = copy.deepcopy(panel['runtime']); runtime['package_root'] = str(root)
+    request['expected_runtime'] = runtime
+    path.write_bytes(app.tp.canonical(request))
+    request_source = app.tp.file_binding(path)
+    origins = copy.deepcopy(app.tp.json_bytes(app.tp.read_bound(panel['evidence']['runtime_origins'])))
+    origins['package_root'] = str(root)
+    for name in worker.MODULES:
+        suffix = '__init__.py' if name == 'tessera' else name.removeprefix('tessera.').replace('.', '/') + '.py'
+        target = root / suffix; target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('# CPU owner fixture\n')
+        origins['modules'][name] = app.tp.file_binding(target)
+    origins['installation']['origin'] = str(root / '__init__.py')
+    verifier = app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools', 'pbtest_pins.py'))
+    origins['record_verifier'] = verifier
+    worker_source = app.tp.file_binding(app.ROOT / 'tools/tessera_shape_time_worker.py')
+    job = {'schema': 'tessera.native_shape_worker_job.v1', 'request': request,
+           'request_source': request_source,
+           'wire_roles': app.tp.wire_facts(app.tp.read_bound(request['wire']), request['scheme'])[1],
+           'producer': app.producer_identity(request['producer_identity']),
+           'worker_source': worker_source}
+    job_source = app.publish_json(job, tmp_path / 'worker-job.json')
+    unit = tmp_path / 'measure'; (unit / 'onecell').mkdir(parents=True)
+    phase_dir = unit / 'preflight'
+    command = app.phase_command(request, job_source, phase_dir, preflight=True)
+    phase = {'phase': 'runtime-preflight', 'returncode': 0, 'command': command}
+    result = {'schema': 'tessera.installed_contract_preflight.v1',
+              'software': {k: v for k, v in runtime.items() if k != 'platform'},
+              'runtime_origins': origins,
+              'validator': {'module': 'tessera.serving.contract', 'function': 'validate_serving_contract',
+                            'source': origins['modules']['tessera.serving.contract']},
+              'contract_sha256': runtime['contract_sha256'], 'gpu_executed': False,
+              'worker_source': worker_source, 'job_source': job_source, 'request_source': request_source}
+    validation = app.tp._verify_runtime_preflight(result, raw_contract=app.tp.read_bound(request['contract']),
+        expected_runtime=runtime, job_source=job_source, worker_source=worker_source,
+        request_source=request_source, command=command, phase=phase)
+    panel['runtime'] = runtime
+    panel['evidence']['runtime'] = app.publish_json(runtime, unit / 'onecell' / 'external-runtime.json')
+    panel['evidence']['runtime_origins'] = app.publish_json(origins, unit / 'onecell' / 'external-origins.json')
+    panel['preflight'] = {'result': app.publish_json(result, unit / 'onecell' / 'external-preflight.json'),
+                          'phase': app.publish_json(phase, unit / 'onecell' / 'external-phase.json')}
+    panel_path = unit / 'onecell' / 'panel.json'; panel_path.write_bytes(app.tp.canonical(panel))
+    runtime_path = unit / 'onecell' / 'expected-runtime.json'; runtime_path.write_bytes(app.tp.canonical(runtime))
+    return SimpleNamespace(path=path, request=request, panel=panel, panel_path=panel_path,
+                           runtime_path=runtime_path, result=result, origins=origins, unit=unit,
+                           job_source=job_source, worker_source=worker_source,
+                           request_source=request_source, validation=validation, command=command, phase=phase,
+                           panel_binding=app.tp.file_binding(panel_path))
+
+
+def bound_observation(case, **overrides):
+    kwargs = dict(panel_binding=case.panel_binding, expected_panel_sha256=case.panel_binding['sha256'],
+                  request_binding=app.tp.file_binding(case.path), request=case.request,
+                  expected_runtime_binding=app.tp.file_binding(case.runtime_path),
+                  expected_runtime=case.request['expected_runtime'], runtime_validation=case.validation,
+                  replay={**app.producer_source_identity(), 'tool': app.tp.file_binding(__file__)})
+    kwargs.update(overrides)
+    return app.tp.observation(case.panel, **kwargs)
+
+
+def test_bound_observation_records_distinct_identities_and_sampling(tmp_path, panel, monkeypatch):
+    case = external_observation_case(tmp_path, panel, monkeypatch)
+    doc = bound_observation(case)
+    assert doc['schema'] == app.tp.OBSERVATION_SCHEMA and doc['status'] == 'validated'
+    assert doc['gpu_executed'] is False and doc['energy_status'] == 'hold'
+    assert doc['family'] == contract.PAYLOAD_FAMILY_BY_ROUTE[scheme.TESSERA_FP8]
+    assert doc['rank_local_shape'] == '16x128' and doc['payload'] == {
+        'route': 'TESSERA_FP8', 'grid': 'E4M3', 'q256': 1024, 'rows': 16, 'columns': 128}
+    assert doc['timing']['median_ms'] == 2.5
+    assert doc['sampling'] == {'method': 'cuda_events', 'sample_unit': 'single_apply',
+                               'warmup_iterations': 1, 'n': 4, 'samples_ms': [1.0, 2.0, 3.0, 4.0],
+                               'interval_unix': [10.0, 11.0]}
+    assert doc['operator_projection']['batch_size'] == 1 and doc['operator_projection']['rows'] == 512
+    assert doc['producer'] == case.request['producer_identity']
+    assert doc['replay']['tool_source_sha256'] != doc['producer']['tool_source_sha256']
+    assert doc['replay']['tool']['sha256'] == app.tp.file_binding(__file__)['sha256']
+    assert doc['evidence'] == case.panel['evidence'] and doc['preflight'] == case.panel['preflight']
+
+
+@pytest.mark.parametrize('fault', ['digest', 'token', 'panel_bytes', 'runtime_bytes'])
+def test_bound_observation_refuses_unbound_or_unverified_context(tmp_path, panel, monkeypatch, fault):
+    case = external_observation_case(tmp_path, panel, monkeypatch)
+    overrides = {}
+    if fault == 'digest':
+        overrides['expected_panel_sha256'] = '0' * 64
+        match = 'externally supplied digest'
+    elif fault == 'token':
+        overrides['runtime_validation'] = {'validated': True}
+        match = 'verified installed preflight'
+    elif fault == 'panel_bytes':
+        Path(case.panel_binding['path']).write_bytes(b'changed panel bytes')
+        match = 'file evidence'
+    else:
+        Path(app.tp.file_binding(case.runtime_path)['path']).write_bytes(b'changed runtime bytes')
+        match = 'file evidence'
+    with pytest.raises(ValueError, match=match):
+        bound_observation(case, **overrides)
+
+
+def test_check_emits_bound_observation_after_verified_preflight(tmp_path, panel, monkeypatch):
+    case = external_observation_case(tmp_path, panel, monkeypatch)
+    from experiments import step4_capture_launch
+    seen = []
+    def phase(label, command, log, timeout):
+        seen.append(command)
+        Path(log).parent.mkdir(parents=True, exist_ok=True)
+        (Path(log).parent / 'runtime-preflight.json').write_bytes(app.tp.canonical(case.result))
+        return {'phase': label, 'returncode': 0, 'command': command}
+    phase.__code__ = phase.__code__.replace(co_filename=str(Path(app.ROOT / 'experiments/step4_capture_launch.py')))
+    monkeypatch.setattr(step4_capture_launch, 'run_phase', phase)
+    observation_path = case.unit / 'observation.json'
+    rc = app.main(['check', str(case.panel_path), '--expected-runtime', str(case.runtime_path),
+                   '--request', str(case.path),
+                   '--request-sha256', hashlib.sha256(case.path.read_bytes()).hexdigest(),
+                   '--preflight-output', str(case.unit / 'replay-preflight'),
+                   '--expected-panel-sha256', hashlib.sha256(case.panel_path.read_bytes()).hexdigest(),
+                   '--observation-out', str(observation_path)])
+    assert rc == 0 and observation_path.exists()
+    assert seen and 'CUDA_VISIBLE_DEVICES=' in seen[0] and '--preflight' in seen[0]
+    doc = app.tp.json_bytes(observation_path.read_bytes())
+    assert doc['schema'] == app.tp.OBSERVATION_SCHEMA and doc['status'] == 'validated'
+    assert doc['sampling']['samples_ms'] == [1.0, 2.0, 3.0, 4.0]
+    assert doc['panel']['sha256'] == hashlib.sha256(case.panel_path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize('fault', ['digest', 'no_digest', 'local_panel'])
+def test_check_writes_no_observation_on_a_refused_bound_request(tmp_path, panel, monkeypatch, fault):
+    case = external_observation_case(tmp_path, panel, monkeypatch)
+    from experiments import step4_capture_launch
+    def phase(label, command, log, timeout):
+        Path(log).parent.mkdir(parents=True, exist_ok=True)
+        (Path(log).parent / 'runtime-preflight.json').write_bytes(app.tp.canonical(case.result))
+        return {'phase': label, 'returncode': 0, 'command': command}
+    phase.__code__ = phase.__code__.replace(co_filename=str(Path(app.ROOT / 'experiments/step4_capture_launch.py')))
+    monkeypatch.setattr(step4_capture_launch, 'run_phase', phase)
+    panel_path = case.panel_path
+    if fault == 'local_panel':
+        panel_path = case.unit / 'local-panel.json'; panel_path.write_bytes(app.tp.canonical(panel))
+    argv = ['check', str(panel_path), '--expected-runtime', str(case.runtime_path),
+            '--request', str(case.path),
+            '--request-sha256', hashlib.sha256(case.path.read_bytes()).hexdigest(),
+            '--preflight-output', str(case.unit / f'refused-{fault}'),
+            '--observation-out', str(case.unit / 'refused-observation.json')]
+    if fault == 'digest':
+        argv += ['--expected-panel-sha256', '0' * 64]
+    elif fault != 'no_digest':
+        argv += ['--expected-panel-sha256', hashlib.sha256(panel_path.read_bytes()).hexdigest()]
+    assert app.main(argv) == 2
+    assert not (case.unit / 'refused-observation.json').exists()

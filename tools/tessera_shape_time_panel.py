@@ -249,6 +249,9 @@ def main(argv=None):
     check = sub.add_parser("check")
     check.add_argument("panel", type=Path);check.add_argument("--expected-runtime", type=Path, required=True)
     check.add_argument("--request",type=Path);check.add_argument("--request-sha256");check.add_argument("--preflight-output",type=Path)
+    check.add_argument("--producer-root",type=Path)
+    check.add_argument("--expected-panel-sha256")
+    check.add_argument("--observation-out",type=Path)
     preflight = sub.add_parser("check-request")
     preflight.add_argument("request", type=Path)
     seal = sub.add_parser("seal-producer")
@@ -264,20 +267,41 @@ def main(argv=None):
         if args.action == "seal-producer": result = seal_producer(args.output)
         elif args.action == "preflight-request":result=preflight_request(args.request,args.output,expected_request_sha256=args.request_sha256)
         elif args.action == "check":
-            panel=tp.json_bytes(args.panel.read_bytes());expected=tp.json_bytes(args.expected_runtime.read_bytes())
+            raw=args.panel.read_bytes();panel=tp.json_bytes(raw);expected=tp.json_bytes(args.expected_runtime.read_bytes())
+            if args.expected_panel_sha256 is not None:
+                tp._sha(args.expected_panel_sha256,"expected panel sha256")
+                if hashlib.sha256(raw).hexdigest()!=args.expected_panel_sha256:
+                    raise ValueError("panel bytes differ from the externally supplied digest")
+            observation_out=args.observation_out is not None
             if "preflight" in panel:
                 if args.request is None or args.request_sha256 is None or args.preflight_output is None:
                     raise ValueError("external replay requires owned request/SHA and a fresh CPU preflight output")
-                request,_,_=read_request(args.request,expected_sha256=args.request_sha256)
+                if observation_out and args.expected_panel_sha256 is None:
+                    raise ValueError("bound observation requires --expected-panel-sha256")
+                producer_root=ROOT if args.producer_root is None else args.producer_root.resolve()
+                request,_,_=read_request(args.request,expected_sha256=args.request_sha256,producer_root=producer_root)
                 if request["expected_runtime"]!=expected:raise ValueError("check context differs from owned request")
                 prior=tp.json_bytes(tp.read_bound(panel["preflight"]["result"]))
                 job_source=prior["job_source"]
                 job=tp.json_bytes(tp.read_bound(job_source))
                 if job["request"]!=request or job["request_source"]!=tp.file_binding(args.request):raise ValueError("panel job differs from owned request")
                 output=args.preflight_output.resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
-                validation=run_runtime_preflight(request,job_source,output)
+                validation=run_runtime_preflight(request,job_source,output,producer_root=producer_root)
                 result=tp.validate_external_panel(panel,expected_runtime=expected,runtime_validation=validation)
-            else:result=tp.validate_panel(panel,expected_runtime=expected)
+                if observation_out:
+                    binding={"path":str(args.panel.resolve()),"bytes":len(raw),
+                             "sha256":hashlib.sha256(raw).hexdigest()}
+                    replay={**producer_source_identity(ROOT),"tool":tp.file_binding(__file__)}
+                    result=tp.observation(panel,panel_binding=binding,
+                            expected_panel_sha256=args.expected_panel_sha256,
+                            request_binding=tp.file_binding(args.request),request=request,
+                            expected_runtime_binding=tp.file_binding(args.expected_runtime),
+                            expected_runtime=expected,runtime_validation=validation,replay=replay)
+                    publish_json(result,args.observation_out)
+            else:
+                if observation_out or args.expected_panel_sha256 is not None:
+                    raise ValueError("bound observation requires an external panel with an installed CPU preflight")
+                result=tp.validate_panel(panel,expected_runtime=expected)
         elif args.action == "check-request":
             _,scope,_=read_request(args.request);result={"scope":scope,"status":"unmeasured","gpu_executed":False,"contract_validation":"pending_installed_preflight"}
         else: result = measure(args.request, args.output, expected_request_sha256=args.request_sha256)

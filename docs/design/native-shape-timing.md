@@ -156,3 +156,27 @@ its installed reader and observes actual hardware before TP1/CUDA setup.
 External CLI `check` requires `--request`, `--request-sha256` and a fresh
 `--preflight-output`; it reruns the installed CPU validation before replaying
 measurement evidence. A serialized success record alone is insufficient.
+
+Passing `--expected-panel-sha256` and `--observation-out` additionally makes
+`check` publish the versioned handoff `tessera.shape_time_observation.v1`. It
+hashes one owned buffer of the panel and checks it against the externally
+supplied digest, reruns the same actual installed CPU preflight and the same
+`validate_external_panel`, and only then writes the observation durably
+(`publish_json`, file then directory sync). The document binds the panel,
+request, expected runtime, raw contract, every evidence and preflight
+reference, the sealed original measurement producer identity, a distinct
+replay-validator identity, and the actual CPU-preflight invocation it reran.
+It carries the admitted scope, the observed lane and cell, the raw CUDA-event
+samples and warmup count, the fixed claims, and the producer's own sampling
+semantics: `sample_unit=single_apply`, one 2-D M-by-K operator apply that a
+consumer may key at `batch_size=1` for the panel's M prompt rows. That
+projection is not evidence of end-to-end batch-1 serving. The observation is
+data transfer from the existing validator, not a second validator, runtime
+contract or pin, and it is emitted only on the external-preflight path.
+
+The authoritative replay of the recorded pilot keeps its original producer
+closure: `--producer-root` points `check` at the original producer source tree,
+so the sealed producer identity and the executed worker are that producer's,
+while the observation records the replay tool's own identity separately. If
+the original replay does not succeed against that closure, `check` refuses
+rather than resealing history.

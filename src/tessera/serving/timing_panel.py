@@ -29,8 +29,27 @@ from .contract import (PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, cell_runtime_s
 from .census import cell_launch_agreement
 
 SCHEMA = "tessera.shape_time_panel.v1"
+#: The versioned, input-bound handoff a validated panel is published through.
+#: It binds the exact panel/request/runtime/contract bytes, the sealed original
+#: measurement producer and a distinct replay-validator identity, every
+#: evidence and preflight reference, and the producer's own sampling semantics.
+#: It carries no runtime cell, pin or placement change.
+OBSERVATION_SCHEMA = "tessera.shape_time_observation.v1"
 CLAIMS = {"time_claim": "operator_sum_proposal", "certifies_placement": False,
           "served_p95": "not_claimed"}
+#: ``bench_native_operator.time_apply`` times ONE complete apply per CUDA-event
+#: pair; a consumer may key the row as one operator at batch size 1 for the
+#: panel's own M prompt rows, but this is not end-to-end batch-1 serving
+#: evidence and must not be read as a served-batch or p95 claim.
+SAMPLE_UNIT = "single_apply"
+OPERATOR_PROJECTION = ("one 2-D M-by-K operator apply; PQ may key this row at "
+                       "batch_size=1 for M prompt rows; not end-to-end serving evidence")
+OBSERVATION_FIELDS = {"schema", "status", "claims", "gpu_executed", "panel",
+                      "expected_panel_sha256", "request", "expected_runtime", "contract",
+                      "evidence", "preflight", "producer", "replay", "invocation", "scope",
+                      "scope_id", "cell_id", "kernel_lane", "structure", "rank_local_shape",
+                      "family", "payload", "timing", "sampling", "operator_projection",
+                      "energy_status"}
 RUNTIME_FIELDS = {"image", "tessera_commit", "serving_source_sha256", "contract_sha256",
                   "platform", "torch", "vllm", "serve_flags", "execution_mode",
                   "residency", "tp_rank", "tp_degree", "package_root"}
@@ -456,3 +475,79 @@ def validate_external_panel(panel, *, expected_runtime, runtime_validation):
         return _validate_panel(panel,expected_runtime=expected_runtime,runtime_validation=runtime_validation)
     except (KeyError,TypeError,IndexError,AttributeError,StopIteration,TesseraError) as exc:
         raise ValueError(f"malformed native timing receipt: {exc}") from exc
+
+
+def observation(panel, *, panel_binding, expected_panel_sha256, request_binding, request,
+                expected_runtime_binding, expected_runtime, runtime_validation, replay):
+    """Compose and re-validate the versioned handoff for one external panel.
+
+    The one semantic validator (``validate_external_panel``) remains the gate:
+    this function hashes the same panel bytes the caller parsed, checks them
+    against an externally supplied digest, and emits the document only after
+    that validator succeeds on the actual installed CPU preflight. It never
+    deserializes a saved success into the private validation token, and it
+    records the sealed original producer separately from the replay validator.
+    """
+    _sha(expected_panel_sha256, "expected panel sha256")
+    raw_panel = read_bound(panel_binding)
+    if hashlib.sha256(raw_panel).hexdigest() != expected_panel_sha256:
+        raise ValueError("panel bytes differ from the externally supplied digest")
+    if json_bytes(raw_panel) != panel:
+        raise ValueError("parsed panel differs from the bound bytes")
+    raw_runtime = read_bound(expected_runtime_binding)
+    if json_bytes(raw_runtime) != expected_runtime:
+        raise ValueError("expected runtime differs from the bound bytes")
+    _object(request_binding, {"path", "bytes", "sha256"}, "request binding")
+    read_bound(request_binding)
+    _object(replay, {"source_tree_sha256", "source_tree_members", "tool_source_sha256", "tool"},
+            "replay validator")
+    _sha(replay["source_tree_sha256"], "replay source tree")
+    _sha(replay["tool_source_sha256"], "replay tool source")
+    _integer(replay["source_tree_members"], "replay source members")
+    _object(replay["tool"], {"path", "bytes", "sha256"}, "replay tool binding")
+    result = validate_external_panel(panel, expected_runtime=expected_runtime,
+                                     runtime_validation=runtime_validation)
+    runtime = runtime_context(panel["runtime"])
+    if runtime != runtime_context(expected_runtime):
+        raise ValueError("observed runtime differs from independent expected context")
+    plan_row = panel["plan"]["rows"][0]
+    scope = plan_row["scope"]
+    shape = scope["shape"]
+    declared, _roles = wire_facts(read_bound(panel["evidence"]["wire"]), panel["rows"][0]["scheme"])
+    samples = json_bytes(read_bound(panel["evidence"]["samples"]))
+    if canonical(result["timing"]) != canonical(timing_summary(samples["samples_ms"])):
+        raise ValueError("timing summary differs from actual raw samples")
+    producer = request["producer_identity"]
+    _object(producer, {"path", "bytes", "sha256"}, "original producer identity")
+    phase = runtime_validation.phase
+    value = {
+        "schema": OBSERVATION_SCHEMA, "status": "validated", "claims": dict(CLAIMS),
+        "gpu_executed": False,
+        "panel": dict(panel_binding), "expected_panel_sha256": expected_panel_sha256,
+        "request": dict(request_binding), "expected_runtime": dict(expected_runtime_binding),
+        "contract": dict(panel["evidence"]["contract"]),
+        "evidence": {name: dict(bound) for name, bound in panel["evidence"].items()},
+        "preflight": {name: dict(bound) for name, bound in panel["preflight"].items()},
+        "producer": dict(producer), "replay": {"source_tree_sha256": replay["source_tree_sha256"],
+                                               "source_tree_members": replay["source_tree_members"],
+                                               "tool_source_sha256": replay["tool_source_sha256"],
+                                               "tool": dict(replay["tool"])},
+        "invocation": {"command": list(phase["command"]), "phase": phase["phase"],
+                       "returncode": phase["returncode"]},
+        "scope": dict(scope), "scope_id": result["scope_id"], "cell_id": result["cell_id"],
+        "kernel_lane": list(result["kernel_lane"]), "structure": scope["structure"],
+        "rank_local_shape": f"{shape['N']}x{shape['K']}",
+        "family": PAYLOAD_FAMILY_BY_ROUTE[scope["route"]],
+        "payload": {"route": scope["route"], "grid": declared["grid"], "q256": scope["q256"],
+                    "rows": declared["rows"], "columns": declared["columns"]},
+        "timing": dict(result["timing"]),
+        "sampling": {"method": result["timing"]["method"], "sample_unit": SAMPLE_UNIT,
+                     "warmup_iterations": samples["warmup_iterations"],
+                     "n": len(samples["samples_ms"]), "samples_ms": list(samples["samples_ms"]),
+                     "interval_unix": list(samples["interval_unix"])},
+        "operator_projection": {"batch_size": 1, "rows": shape["M"], "reading": OPERATOR_PROJECTION},
+        "energy_status": result["energy_status"],
+    }
+    _object(value, OBSERVATION_FIELDS, "validated observation")
+    canonical(value)
+    return value

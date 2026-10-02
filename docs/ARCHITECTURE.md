@@ -50,6 +50,16 @@ strictly validate against their own package. External final panel validation
 requires the verified installed object and bound phase evidence; CLI replay
 reruns CPU preflight from the original request and job. The first b508 pilot
 failed at producer-owned validation before CUDA, so it supplied no timings.
+The same CLI emits a versioned, input-bound handoff
+`tessera.shape_time_observation.v1` when `check` is given an externally
+supplied `--expected-panel-sha256`, `--observation-out` and an original
+producer root. It hashes the same panel bytes it parses, re-runs the existing
+`validate_external_panel` on the actual installed CPU preflight, and only then
+publishes the admitted scope, observed lane/cell, raw samples and warmups,
+fixed claims, the sealed original measurement producer and a distinct replay
+validator identity, every evidence/preflight binding and the
+`sample_unit=single_apply` operator projection. The observation is a data
+handoff, not a new validator, runtime contract or pin.
 The versioned native phase uses existing containment, TP1 context and
 single-apply event sampling; actual package/module origins, raw contract
 and source identities are checked at entry before device setup and exit.
