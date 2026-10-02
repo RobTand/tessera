@@ -379,3 +379,56 @@ def test_the_refusals_are_the_references():
             encode.viterbi_window(*args, impl="reference")
         with pytest.raises(GrammarError):
             viterbi_window(*args, impl="reference")
+
+
+@pytest.mark.parametrize("arity", [1, 2])
+@pytest.mark.parametrize("weighted", [False, True])
+@pytest.mark.parametrize("impl", ["auto", "reference"])
+def test_cpu_inputs_keep_their_device_under_a_meta_default(arity, weighted, impl):
+    # Inputs already on CPU must keep the reference's explicit placement,
+    # even when a caller constructs unrelated tensors on meta by default.
+    targets, vectors, weights = _problem(8, arity, 18, 7, weighted, False, 91)
+    with torch.device("meta"):
+        old = viterbi_window(targets, vectors, 8, 2, weights, 4,
+                             impl="reference")
+        new = encode.viterbi_window(targets, vectors, 8, 2, weights, 4,
+                                    impl=impl)
+        assert old[0].device.type == new[0].device.type == "cpu"
+        _same(new, old)
+
+
+@pytest.mark.parametrize("default_device", ["cpu", "meta"])
+@pytest.mark.parametrize("dtype", [
+    torch.float16, torch.bfloat16, torch.float32, torch.float64])
+@pytest.mark.parametrize("arity", [1, 2])
+@pytest.mark.parametrize("weighted", [False, True])
+def test_global_float_dtype_preserves_the_reference(
+        default_device, dtype, arity, weighted):
+    # The old front inherits the default dtype, but each branch cost is
+    # computed in float32 before the addition. Widening/narrowing in-place
+    # branch buffers changes that arithmetic, so compare the exact SSE too.
+    targets, vectors, weights = _problem(8, arity, 18, 7, weighted, False, 91)
+    initial = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(dtype)
+        with torch.device(default_device):
+            _same(*_both(targets, vectors, 8, 2, weights, 4))
+    finally:
+        torch.set_default_dtype(initial)
+
+
+@pytest.mark.parametrize("grad_enabled", [False, True])
+@pytest.mark.parametrize("grad_input", ["targets", "vectors", "weights"])
+@pytest.mark.parametrize("arity", [1, 2])
+def test_gradient_inputs_preserve_the_reference(grad_enabled, grad_input, arity):
+    targets, vectors, weights = _problem(8, arity, 18, 7, True, False, 91)
+    {"targets": targets, "vectors": vectors, "weights": weights}[grad_input].requires_grad_()
+    # The functional reference supports these inputs even though its outputs
+    # are integer states and a Python float. No-grad calls can still use the
+    # optimized buffers; grad-enabled calls must preserve the reference.
+    with torch.set_grad_enabled(grad_enabled):
+        old = viterbi_window(targets, vectors, 8, 2, weights, 4,
+                             impl="reference")
+        new = encode.viterbi_window(targets, vectors, 8, 2, weights, 4,
+                                    impl="reference")
+        _same(new, old)

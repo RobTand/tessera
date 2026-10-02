@@ -97,3 +97,124 @@ def test_the_first_colon_split_would_have_failed_here():
     head, _, tail = window.rpartition(":")
     with pytest.raises(ValueError):
         BPW._parse_instant(head, NOW)
+
+
+def test_recorded_aligned_power_response_cannot_escape_arm(monkeypatch):
+    import json
+    fixture=json.loads((ROOT/'tests/fixtures/netdata-power-aligned-arm-819.json').read_text())
+    after,before=fixture['requested_window_unix']
+    monkeypatch.setattr(BPW,'SERIES',[("nvidia_smi.gpu_power_draw",("power_draw",))])
+    monkeypatch.setattr(BPW,'_fetch',lambda *args:{"url":"recorded://issue819","doc":fixture['document']})
+    series=BPW.collect('recorded',after,before,4)['nvidia_smi.gpu_power_draw']
+    assert all(after < stamp <= before for stamp,_ in series['samples']), "aligned power sample escaped requested steady arm"
+
+
+def grouped_document(width, stamps):
+    return {"view":{"update_every":width,"after":90,"before":130},
+            "result":{"labels":["time","power_draw"],"data":[[stamp,[value,0,0]] for stamp,value in stamps]}}
+
+
+def test_straddling_groups_are_not_interpolated_into_window():
+    raw=grouped_document(10,[(105,100),(110,90),(120,80),(125,1)])
+    bounded,coverage=BPW.bounded_groups(raw,100,120)
+    assert [r[0] for r in bounded['result']['data']]==[110,120]
+    assert len(raw['result']['data'])==4
+    assert coverage['accepted_group_intervals_unix']==[[100,110],[110,120]]
+    assert coverage['accepted_coverage_s']==20
+    assert coverage['unobserved_requested_s']==0
+    assert len(coverage['rejected_groups'])==2
+    assert BPW._stats(bounded,('power_draw',))['power_draw']['mean']==85
+
+
+def test_no_whole_group_is_missing_measurement_not_zero():
+    raw=grouped_document(10,[(105,1),(115,1)])
+    bounded,coverage=BPW.bounded_groups(raw,104,106)
+    stats=BPW._stats(bounded,('power_draw',))['power_draw']
+    assert stats['points']==0 and 'mean' not in stats
+    assert coverage['accepted_coverage_window_unix'] is None
+    assert coverage['unobserved_requested_s']==2
+
+
+@pytest.mark.parametrize('width',[None,0,-1,float('nan'),True])
+def test_unknown_group_duration_is_refused(width):
+    with pytest.raises(ValueError,match='group duration'):
+        BPW.bounded_groups(grouped_document(width,[(110,90)]),100,120)
+
+
+def test_duplicate_groups_are_refused():
+    with pytest.raises(ValueError,match='repeats'):
+        BPW.bounded_groups(grouped_document(10,[(110,90),(110,90)]),100,120)
+
+
+def test_recorded_response_keeps_raw_request_and_actual_coverage(monkeypatch):
+    import json
+    fixture=json.loads((ROOT/'tests/fixtures/netdata-power-aligned-arm-819.json').read_text())
+    after,before=fixture['requested_window_unix'];raw=fixture['document']
+    monkeypatch.setattr(BPW,'SERIES',[("nvidia_smi.gpu_power_draw",("power_draw",))])
+    monkeypatch.setattr(BPW,'_fetch',lambda *args:{"url":"recorded://issue819","doc":raw})
+    result=BPW.collect('recorded',after,before,4)['nvidia_smi.gpu_power_draw']
+    assert result['raw_response'] is raw
+    assert result['coverage']['requested_window_unix']==[after,before]
+    assert result['coverage']['returned_window_unix']==[raw['view']['after'],raw['view']['before']]
+    assert result['coverage']['accepted_groups']==3
+    assert result['coverage']['accepted_coverage_window_unix']==[1790920180,1790920201]
+    assert result['coverage']['unobserved_requested_s']==6
+
+
+def test_fetch_requests_unaligned_but_still_bounds_server_response(monkeypatch):
+    import json,urllib.parse
+    raw=grouped_document(10,[(105,1),(110,90),(120,80),(125,1)])
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def read(self):return json.dumps(raw).encode()
+    urls=[]
+    monkeypatch.setattr(BPW.urllib.request,'urlopen',lambda url,**kwargs:urls.append(url) or Response())
+    fetched=BPW._fetch('recorded','nvidia_smi.gpu_power_draw',('power_draw',),100,120,4)
+    assert urllib.parse.parse_qs(urllib.parse.urlsplit(urls[0]).query)['options']==['unaligned']
+    assert [r[0] for r in fetched['doc']['result']['data']]==[110,120]
+    assert len(fetched['raw_doc']['result']['data'])==4
+
+
+def test_refused_fetch_preserves_unreadable_raw_window(monkeypatch):
+    import json
+    raw=grouped_document(None,[(110,90)])
+    class Response:
+        def __enter__(self):return self
+        def __exit__(self,*args):pass
+        def read(self):return json.dumps(raw).encode()
+    monkeypatch.setattr(BPW.urllib.request,'urlopen',lambda *a,**k:Response())
+    monkeypatch.setattr(BPW,'SERIES',[("nvidia_smi.gpu_power_draw",("power_draw",))])
+    result=BPW.collect('recorded',100,120,4)['nvidia_smi.gpu_power_draw']
+    assert 'error' in result and 'stats' not in result
+    assert result['raw_response']==raw
+    assert result['requested_window_unix']==[100,120]
+
+
+def test_recorded_native_cadence_is_not_returned_bucket(monkeypatch):
+    import json
+    fixture = json.loads((ROOT / "tests/fixtures/netdata-native-cadence-826.json").read_text())
+    raw = fixture["document"]
+    after, before = fixture["requested_window_unix"]
+    monkeypatch.setattr(BPW, "SERIES", [("nvidia_smi.gpu_power_draw", ("power_draw",))])
+    monkeypatch.setattr(BPW, "_fetch", lambda *args: {"url": "recorded://PB2726", "doc": raw})
+    entry = BPW.collect("recorded", after, before, 4)["nvidia_smi.gpu_power_draw"]
+    assert entry["update_every_s"] == 10, "native DB cadence mislabeled as returned bucket"
+    assert entry["returned_bucket_s"] == 8
+    assert entry["collection_metadata"]["per_tier"] == raw["db"]["per_tier"]
+    assert entry["collection_metadata"]["nodes"] == raw["summary"]["nodes"]
+    assert entry["collection_metadata"]["instances"] == raw["summary"]["instances"]
+    assert entry["collection_metadata"]["totals"] == raw["totals"]
+    bounded, coverage = BPW.bounded_groups(raw, after, before)
+    assert entry["stats"] == BPW._stats(bounded, ("power_draw",))
+    assert entry["coverage"] == coverage
+    assert entry["raw_response"] is raw
+
+
+def test_unknown_native_cadence_stays_unknown(monkeypatch):
+    raw = grouped_document(8, [(108, 20)])
+    monkeypatch.setattr(BPW, "SERIES", [("nvidia_smi.gpu_power_draw", ("power_draw",))])
+    monkeypatch.setattr(BPW, "_fetch", lambda *args: {"url": "recorded://unknown", "doc": raw})
+    entry = BPW.collect("recorded", 100, 116, 4)["nvidia_smi.gpu_power_draw"]
+    assert entry["update_every_s"] is None, "returned bucket cannot establish native cadence"
+    assert entry["returned_bucket_s"] == 8

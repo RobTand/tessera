@@ -795,12 +795,28 @@ def test_compact_a4_tensor_planes_and_epilogues_are_frozen():
         _module()._native_tensors(layer)
 
 
-def test_loaded_route_selects_actual_native_pair_when_history_has_two(monkeypatch):
+@pytest.mark.parametrize('cold_rate_grid', [False, True], ids=['warm-contract', 'cold-contract'])
+def test_loaded_route_selects_actual_native_pair_when_history_has_two(monkeypatch, cold_rate_grid):
     module,blob,record,source,rendered,kwargs,trace=_fake_preparation(monkeypatch)
-    from tessera.serving import lane,scheme
+    from tessera.serving import contract,lane,scheme
+    monkeypatch.setattr(contract, '_PACKAGED_RATE_GRID', {})
+    if not cold_rate_grid:
+        assert contract.reader_rate_grid('TESSERA_BF16', 'BF16') is not None
     build=lane.build_tessera_method
     expected=('fixture.packed','fixture.packed.decoder')
-    monkeypatch.setattr(scheme,'launch_pairs',lambda *a,**k:{expected,('old.fallback','old.decoder')})
+    original_launch_pairs = scheme.launch_pairs
+    fixture_calls = []
+    def fixture_launch_pairs(family, **narrow):
+        if family == 'TESSERA_BF16' and narrow == {
+            'structure': scheme.STRUCTURE_DENSE, 'mode': 'resident',
+            'include_experimental': True,
+        }:
+            fixture_calls.append(family)
+            return {expected, ('old.fallback', 'old.decoder')}
+        # Packaged-contract validation must read the real dispatch table,
+        # including when this test is the first reader in an xdist worker.
+        return original_launch_pairs(family, **narrow)
+    monkeypatch.setattr(scheme, 'launch_pairs', fixture_launch_pairs)
     def explicit(*a,**k):
         method=build(*a,**k);process=method.process_weights_after_loading
         def load(layer):
@@ -809,6 +825,7 @@ def test_loaded_route_selects_actual_native_pair_when_history_has_two(monkeypatc
         return method
     monkeypatch.setattr(lane,'build_tessera_method',explicit)
     actual=module.prepare_native_operator(blob,record,source,rendered,**kwargs)
+    assert fixture_calls == ['TESSERA_BF16']
     assert actual['operator']['declared_route']['symbol']==expected[0]
     assert actual['operator']['declared_route']['decoder']==expected[1]
 
