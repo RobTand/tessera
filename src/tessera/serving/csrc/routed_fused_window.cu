@@ -3118,9 +3118,10 @@ void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
 void token_sum_shared(torch::Tensor routed, torch::Tensor shared, torch::Tensor out, int64_t top_k) {
     TORCH_CHECK(routed.is_cuda() && routed.dim() == 2 && routed.scalar_type() == torch::kBFloat16
                 && routed.is_contiguous(), "routed must be contiguous bf16 [P, H]");
-    TORCH_CHECK(out.dim() == 2 && out.scalar_type() == torch::kBFloat16 && out.is_contiguous()
+    TORCH_CHECK(out.is_cuda() && out.device() == routed.device()
+                && out.dim() == 2 && out.scalar_type() == torch::kBFloat16 && out.is_contiguous()
                 && out.size(1) == routed.size(1) && out.size(0) * top_k == routed.size(0),
-                "out must be bf16 [T, H] with T * top_k == P");
+                "out must be contiguous bf16 [T, H] on routed's CUDA device with T * top_k == P");
     TORCH_CHECK(routed.size(1) % 8 == 0, "H must be a multiple of 8");
     TORCH_CHECK(shared.is_cuda() && shared.device() == routed.device() && shared.dim() == 2
                 && shared.scalar_type() == torch::kBFloat16 && shared.is_contiguous()

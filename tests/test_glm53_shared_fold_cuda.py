@@ -75,6 +75,21 @@ def test_token_sum_shared_refuses_a_shared_output_it_cannot_read_in_place(lib):
 
 
 @cuda
+@pytest.mark.parametrize("lib", LIBRARY_IDS)
+def test_token_sum_shared_refuses_a_cpu_output_even_for_an_empty_workload(lib):
+    """The old binding silently accepts this invalid output without launching.
+
+    Zero tokens make the pre-fix control safe: its vecs==0 return precedes
+    the CUDA launch. Nonempty CPU output would give the kernel a host pointer.
+    """
+    routed = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")
+    shared = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")
+    out = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cpu")
+    with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
+        rf._ext(lib).token_sum_shared(routed, shared, out, GLM_TOP_K)
+
+
+@cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("t", [1, 7, 71])
 def test_the_fused_forward_folds_the_shared_add_bitwise(family, t):
