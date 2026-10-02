@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import json
+from pathlib import Path
 from types import SimpleNamespace as NS
 
 import pytest
@@ -190,3 +192,28 @@ def test_auto_measurement_skips_unsupported_writer_then_preserves_profile_fallba
     assert checked == [1, 1]
     assert all(torch.isfinite(x).all() for x in outputs)
     assert ranks.calls == {"all_reduce": 6, "all_gather": 0, "reduce_scatter": 0}
+
+
+@pytest.mark.parametrize("disabled,has_suspend", [(False, True), (False, False), (True, True)])
+def test_pinned_suspend_resume_preserve_disabled_and_change_only_supported_suspension(disabled, has_suspend):
+    # Exact method slices from the pinned image, attributed by full module SHA.
+    # Executed only inside the admitted CPU test, with NCCL calls as stand-ins.
+    fixture = json.loads((Path(__file__).parent / "fixtures/pynccl_lifecycle_20260929.json").read_text())
+    assert fixture["source_sha256"] == gp._INTERFACES[0].digests[gp.SP_MODULES.index(
+        "vllm.distributed.device_communicators.pynccl")]
+    calls, flag = [], object()
+    namespace = {"logger": NS(warning_once=lambda *a: calls.append("warning")),
+                 "_NCCL_SUSPEND_MEM": flag}
+    for method in fixture["methods"].values():
+        exec(compile(method["source"], "<pinned PyNccl lifecycle CPU fixture>", "exec"), namespace)
+    obj = NS(disabled=disabled, _suspended=False, comm=object(), nccl=NS(
+        has_symbol=lambda name: has_suspend,
+        ncclCommSuspend=lambda comm, flags: calls.append(("suspend", comm, flags)),
+        ncclCommResume=lambda comm: calls.append(("resume", comm))))
+    namespace["suspend"](obj)
+    assert obj.disabled is disabled
+    assert obj._suspended == (not disabled and has_suspend)
+    namespace["resume"](obj)
+    assert obj.disabled is disabled and obj._suspended is False
+    expected = [] if disabled else [("suspend", obj.comm, flag), ("resume", obj.comm)] if has_suspend else ["warning"]
+    assert calls == expected
