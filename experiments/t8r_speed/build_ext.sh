@@ -44,10 +44,15 @@ from tessera import routed_fused as rf
 from tessera.serving.backend import PlatformMismatchError
 root = os.environ["TORCH_EXTENSIONS_DIR"]
 for lib in sys.argv[1:]:
-    module = rf.LIBRARIES[lib][0]
+    if lib == "e2m1":
+        from tessera import routed_fused_e2m1 as fe
+        module, build = fe.MODULE_NAME, fe._ext
+    else:
+        module = rf.LIBRARIES[lib][0]
+        build = lambda: rf._ext(lib)
     t0 = time.time()
     try:
-        rf._ext(lib)
+        build()
         how = "loaded"
     except PlatformMismatchError:
         how = "compile gate (no matching device here)"
