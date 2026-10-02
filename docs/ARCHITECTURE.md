@@ -3,11 +3,12 @@
 Re-stamped 2026-10-02 for guarded module re-exports in the impacted-test
 selector (Refs #808). The dependency owner derives a finite import condition
 only from a fully recognized, immutable-name `__getattr__` forwarding hook.
-Named imports request their attributes and Python's implicit `__path__`;
-namespace, star, explicit hook and file-load demands retain the union. Ordinary
-imports and package initialization remain unconditional. Unsupported or escaping
-hooks, guards, namespace access and aliased source execution retain the previous
-union. The source-read capability and UNKNOWN origin contract are unchanged;
+Changed files retain the conservative import union. Only UNKNOWN propagation
+may exclude that proved conditional edge; direct named calls retain named
+demand plus Python's implicit `__path__`, while object/namespace escapes,
+stars, explicit hook and file loads retain the union, including ordinary
+re-exports. Ordinary imports and package initialization remain unconditional.
+The source-read capability and UNKNOWN origin contract are unchanged;
 no serving interface, runtime, wire, pin, lane or promotion gate moves. See §1.1.
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
@@ -2290,14 +2291,22 @@ followed by a literal `AttributeError`. It accepts no hook decorators, computed
 defaults, extra effects, shadowed builtins, guard rebinding/mutation or hook,
 guard or global-namespace escape. A literal `__all__` directory hook may enumerate
 that immutable set. Every other shape retains the unconditional import union.
-Only this proved guarded import moves from a dependency of the whole module
-to a dependency of the consumers that can demand its attributes. Explicit
-from-imports request their named attributes plus Python's implicit `__path__`;
-namespace imports, stars, explicit `__getattr__` access and exact file loads
-request every branch. Re-exports inherit those dependencies, and ambiguous
+The graph keeps the conservative dependency union for changed files, including
+this guarded import. Only UNKNOWN propagation may exclude its proved conditional
+edge; active attribute demands retain direct dependencies. Explicit
+from-imports used only as direct callees (or unused) request their named
+attributes plus Python's implicit `__path__`. Passing, storing, returning or
+inspecting imported objects, mutable namespace access, namespace imports, stars,
+explicit hook or guard access and exact file loads request every branch.
+Unknown namespace demand forwards through ordinary re-exports as a finite union.
+Ambiguous
 spellings still resolve to every candidate through the existing module resolver.
 All ordinary imports and package-initialization effects remain dependencies;
-the guard worklist terminates on cycles. Failed source reads cannot publish a
+the guard worklist terminates on cycles. The receipt reports
+`uncertainty_guarded_imports_skipped` with provider, literal guard names and
+predecessor witnesses separately from collection-probe exclusions. Changed and
+uncertain seeds traverse the same annotated graph under their respective rules;
+their reached consumers are then combined. Failed source reads cannot publish a
 summary and remain authoritative wildcard uncertainty. The real-tree causal
 probe established that the guarded slicing-to-layout edge was a complete cut
 between all recorded uncertainty seeds and conftests on frozen `202d1f07`;

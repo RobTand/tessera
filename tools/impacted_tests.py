@@ -272,6 +272,7 @@ def _is_collection_probe(importer: Path, target: Path | None) -> bool:
 
 def import_graph(
     root: Path,
+    *, guarded_edges=None,
 ) -> tuple[dict[str, Path], dict[str, set[str]],
            set[tuple[str, str]], dict[str, str]]:
     """The graph, the collection-probe reverse edges, and what would not read.
@@ -365,16 +366,25 @@ def import_graph(
         tree = _read_python_source(path, root, unreadable)
         if tree is not None:
             trees[path] = tree
+    scanners = {}
     executing = source_execution_modules(
         trees, {path: module_of[node] for node, path in by_name.items()},
         lambda spelling: tuple(by_name[node] for node in _targets(spelling)),
+        scanners=scanners,
     )
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
     guarded = {path: summary for path, tree in trees.items()
                if path not in executing and (summary := guarded_reexport(tree)) is not None}
+    requests_of = {
+        path: module_import_requests(
+            tree, module_of[nodes[path]], is_package=path.name == "__init__.py",
+            omit={guarded[path][1]} if path in guarded else set(), scanner=scanners[path])
+        for path, tree in trees.items()
+    }
+    unconditional, conditional = set(), {}
 
-    def add_statements(requests, importer, *, loaded_target=None):
+    def add_statements(requests, importer, *, loaded_target=None, coarse_only=False):
         """Retain initialization; forward only proved guarded attribute demands.
 
         Every spelling still uses _targets. Unknown namespaces, hook access,
@@ -382,9 +392,9 @@ def import_graph(
         guarded re-exports without choosing an alias or recursing on cycles.
         """
         pending = deque([(loaded_target, None)] if loaded_target is not None else [])
-        visited = set()
+        visited, edges = set(), set()
 
-        def add(requests):
+        def add(requests, *, publish_edges=True):
             for spelling, demand in requests.items():
                 parts, matched = spelling.split("."), False
                 for cut in range(len(parts), 0, -1):
@@ -394,7 +404,9 @@ def import_graph(
                         continue
                     for resolved in known:
                         if not matched or by_name[resolved].name == "__init__.py":
-                            importers[resolved].add(importer)
+                            if publish_edges:
+                                importers[resolved].add(importer)
+                                edges.add((resolved, importer))
                             # A real child module yields a namespace, while a
                             # fallback prefix of a possible child requests no
                             # further attributes. The from-import's named
@@ -406,6 +418,8 @@ def import_graph(
                     matched = True
 
         add(requests)
+        if coarse_only:
+            return edges
         while pending:
             target, demand = pending.popleft()
             if (target, demand) in visited:
@@ -414,37 +428,56 @@ def import_graph(
             path = by_name[target]
             summary = guarded.get(path)
             if summary is None:
+                # An escaped namespace can expose ordinary re-exports too.
+                # Forward unknown demand through the same parsed import facts;
+                # this is a finite union, not an interpreter for helper calls.
+                if demand is None and path in requests_of:
+                    add({spelling: None if names else names
+                         for spelling, names in requests_of[path].items()}, publish_edges=False)
                 continue
-            names, imported = summary
+            names, imported, guard = summary
             # A Python from-import can ask a non-package for __path__ before
             # fetching the requested names. Explicit hook access escapes the
             # name restriction, including re-exported callable aliases.
-            active = names if demand is None or "__getattr__" in demand \
+            active = names if demand is None or guard in demand \
+                or any(name.startswith("__") and name != "__path__" for name in demand) \
                 else names & (demand | {"__path__"})
             if active:
                 add(module_import_requests(
                     ast.Module(body=[imported], type_ignores=[]), module_of[target],
                     is_package=path.name == "__init__.py"))
+        unconditional.update(edges)
+        return edges
 
     for node, path in by_name.items():
         if path not in trees:
             statements, loaded, data = {WILDCARD}, set(), set()
         else:
-            omitted = {guarded[path][1]} if path in guarded else set()
-            requests = module_import_requests(
-                trees[path], module_of[node], is_package=path.name == "__init__.py",
-                omit=omitted)
+            requests = requests_of[path]
             statements, loaded, data = _imports(
                 path, module_of[node], root, unreadable, nodes,
                 tree=trees[path], executes_source=path in executing,
                 statement_requests=requests)
             add_statements(requests, node)
+            if path in guarded:
+                names, imported, guard = guarded[path]
+                # Preserve the original changed-file graph, including the
+                # lazy body. Only unknown-source propagation can exclude this
+                # proved conditional edge; active demands retain direct edges.
+                for edge in add_statements(module_import_requests(
+                        ast.Module(body=[imported], type_ignores=[]), module_of[node],
+                        is_package=path.name == "__init__.py"), node, coarse_only=True):
+                    conditional[edge] = {
+                        "provider": str(path.relative_to(root)),
+                        "guard": guard, "names": sorted(names), "line": imported.lineno,
+                    }
         if WILDCARD in statements:
             importers[WILDCARD].add(node)
         for target in loaded:
             # An exact path names an exact file.  It does not execute the
             # packages above it, so it gets no prefix edges.
             importers[target].add(node)
+            unconditional.add((target, node))
             if target in by_name:
                 # Loading a file does not prove which attributes its caller
                 # can request, so it retains every possible lazy dependency.
@@ -453,6 +486,9 @@ def import_graph(
                 probes.add((target, node))
         for target in data:
             importers[target].add(node)
+    if guarded_edges is not None:
+        guarded_edges.update({edge: fact for edge, fact in conditional.items()
+                              if edge not in unconditional})
     return by_name, importers, probes, unreadable
 
 
@@ -487,18 +523,20 @@ def _reverse_reachable(
     return seen
 
 
-def _uncertainty_evidence(root, seeds, by_name, importers, probes, unreadable):
+def _uncertainty_evidence(root, seeds, by_name, importers, probes, unreadable,
+                          *, guarded_edges=None, guarded_skipped=None):
     """Resolved-file predecessor witnesses from the same walk that forces full.
 
     These are static graph witnesses, not proof of runtime call reachability.
     Collection-probe exclusions are recorded even when no conftest is reached.
     """
     paths, skipped = [], []
+    guarded_edges = guarded_edges or {}
     relative = {node: str(path.relative_to(root)) for node, path in by_name.items()}
     for seed in sorted(seeds):
         predecessors, excluded = {}, set()
         reached = _reverse_reachable(
-            {seed}, importers, skip=probes,
+            {seed}, importers, skip=probes | guarded_edges.keys(),
             predecessors=predecessors, skipped_edges=excluded,
         )
         for conftest in sorted(reached):
@@ -517,7 +555,17 @@ def _uncertainty_evidence(root, seeds, by_name, importers, probes, unreadable):
             })
         skipped.extend({"seed": relative[seed], "from": relative[target],
                         "to": relative[importer]}
-                       for target, importer in sorted(excluded))
+                       for target, importer in sorted(excluded & probes))
+        if guarded_skipped is not None:
+            for target, importer in sorted(excluded & guarded_edges.keys()):
+                chain = [target]
+                while chain[-1] != seed:
+                    chain.append(predecessors[chain[-1]])
+                guarded_skipped.append({
+                    "seed": relative[seed], "from": relative[target], "to": relative[importer],
+                    "path": [relative[node] for node in reversed(chain)] + [relative[importer]],
+                    **guarded_edges[(target, importer)],
+                })
     return paths, skipped
 
 
@@ -650,7 +698,8 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # that it is harmless scaffolding from its spelling, so fail open.
     forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
-    by_name, importers, probes, unreadable = import_graph(root)
+    guarded_edges = {}
+    by_name, importers, probes, unreadable = import_graph(root, guarded_edges=guarded_edges)
     name_of = {str(p.relative_to(root)): n for n, p in by_name.items()}
 
     # Seed from the path, not from a lookup in the checked-out tree.  The
@@ -678,7 +727,6 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # because "repair this file" is the only action one of them admits.
     non_inert = any(Path(f).suffix not in INERT for f in changed)
     uncertain = importers.get(WILDCARD, set()) if non_inert else set()
-    seeds.update(uncertain)
     unresolved = {name for name in uncertain
                   if str(by_name[name].relative_to(root)) not in unreadable}
     # A third kind: a module that reads a file it named and the resolver
@@ -695,14 +743,15 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # The probe edges are excluded HERE and nowhere else: a conftest's own
     # uncertainty still forces the population, but a test file's does not
     # become the conftest's by way of the conftest having exec'd it.
-    uncertain_consumers = _reverse_reachable(uncertain, importers, skip=probes)
+    uncertain_consumers = _reverse_reachable(
+        uncertain, importers, skip=probes | guarded_edges.keys())
     forced += [str(by_name[name].relative_to(root)) for name in sorted(uncertain_consumers)
                if by_name[name].name == "conftest.py"]
     missing = [f for f in changed
                if f.endswith(".py") and not (root / f).exists()]
     # Reverse-reachable closure: everything that imports a changed module,
     # transitively.
-    seen = _reverse_reachable(seeds, importers)
+    seen = _reverse_reachable(seeds, importers) | uncertain_consumers
 
     # A module in `seen` may have no file in this checkout -- a test the branch
     # ADDS is exactly that case, and it is the one selection can least afford
@@ -742,7 +791,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # reason they are excluded from the escalation walk: a conftest that execs
     # the test files below it would otherwise make any one changed test file
     # select the whole population.
-    reached = _reverse_reachable(seeds, importers, skip=probes)
+    reached = _reverse_reachable(seeds, importers, skip=probes) | uncertain_consumers
     scopes = {by_name[name].parent for name in reached
               if name in by_name and by_name[name].name == "conftest.py"}
     scopes |= {(root / f).parent for f in changed if Path(f).name == "conftest.py"}
@@ -763,8 +812,10 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     if missing:
         forced = forced + missing
     verdict = "full" if forced else ("narrowed" if tests else "none")
+    uncertainty_guards = []
     uncertainty_paths, uncertainty_probes = _uncertainty_evidence(
         root, uncertain, by_name, importers, probes, unreadable,
+        guarded_edges=guarded_edges, guarded_skipped=uncertainty_guards,
     )
     result = {
         "verdict": verdict,
@@ -777,6 +828,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             str(by_name[name].relative_to(root)) for name in unresolved),
         "uncertainty_paths": uncertainty_paths,
         "uncertainty_collection_probes_skipped": uncertainty_probes,
+        "uncertainty_guarded_imports_skipped": uncertainty_guards,
         "unplaced_data_reads": sorted(
             str(by_name[name].relative_to(root)) for name in unplaced),
         # A property of the tree, not of this change: report it whether or not

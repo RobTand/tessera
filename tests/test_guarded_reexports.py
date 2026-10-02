@@ -47,6 +47,12 @@ def test_direct_nonlazy_names_do_not_invoke_the_guarded_branch(tmp_path, consume
     result = _select(repo)
     assert result["verdict"] == "narrowed", result
     assert result["uncertainty_paths"] == []
+    assert result["uncertainty_collection_probes_skipped"] == []
+    guards = result["uncertainty_guarded_imports_skipped"]
+    assert any(entry["provider"] == "support/lazy.py" and entry["guard"] == "_NAMES"
+               and entry["names"] == ["lazy"]
+               and entry["path"] == ["support/impl.py", "support/lazy.py"]
+               for entry in guards), guards
     assert "support/impl.py" in result["unresolved_file_loaders"]
     assert "tests/test_lazy.py" in result["tests"]
 
@@ -182,3 +188,27 @@ def test_literal_from_import_matches_actual_initialization_reach(tmp_path):
     result = _select(repo)
     assert result["verdict"] == "narrowed", result
     assert "tests/test_safe.py" not in result["tests"], result
+
+
+@pytest.mark.parametrize("consumer", [
+    "from support.lazy import __dict__ as namespace\nnamespace['__getattr__']('lazy')\n",
+    "from support.lazy import safe\nsafe.__globals__['__getattr__']('lazy')\n",
+    "from support.lazy import safe\nfrom support.inspector import invoke\ninvoke(safe)\n",
+    "from support.facade import safe\nsafe.__globals__['__getattr__']('lazy')\n",
+    "import support.facade as facade\nfacade.safe.__globals__['__getattr__']('lazy')\n",
+    "from support.facade import __dict__ as namespace\nnamespace['safe'].__globals__['__getattr__']('lazy')\n",
+    "from support.lazy import safe\nfrom builtins import globals as context\ncontext()['safe'].__globals__['__getattr__']('lazy')\n",
+])
+def test_object_or_namespace_escape_keeps_possible_hook_execution(tmp_path, consumer):
+    repo = _fixture(tmp_path, consumer, extra={
+        "support/facade.py": "from .lazy import safe\n",
+        "support/inspector.py": "def invoke(function): return function.__globals__['__getattr__']('lazy')\n",
+    })
+    assert _select(repo)["verdict"] == "full"
+
+
+def test_changed_lazy_implementation_keeps_the_conservative_dependency_union(tmp_path):
+    repo = _fixture(tmp_path, extra={"tests/test_safe.py": "from support.lazy import safe\n"})
+    result = impacted.select(repo, ["support/impl.py"])
+    assert "tests/test_safe.py" in result["tests"], result
+    assert "conftest" in result["reason"], result

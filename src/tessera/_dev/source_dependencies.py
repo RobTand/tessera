@@ -80,7 +80,7 @@ def statement_import_requests(node, module, *, is_package=False):
     return requests
 
 
-def module_import_requests(tree, module, *, is_package=False, omit=frozenset()):
+def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), scanner=None):
     """Union requests without choosing between alias candidates or branches."""
     found = {}
     for node in ast.walk(tree):
@@ -94,7 +94,47 @@ def module_import_requests(tree, module, *, is_package=False, omit=frozenset()):
                 found[spelling] = None
             else:
                 found[spelling] = found[spelling] | names
+    named = {spelling for spelling, names in found.items() if names}
+    if not named:
+        return found
+    if scanner is None:
+        scanner = _Scanner(Path("__init__.py" if is_package else "module.py"), module)
+        scanner.visit(tree)
+    if _namespace_access(scanner, tree):
+        return {spelling: None if names else names for spelling, names in found.items()}
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    for reference, scope in scanner.references:
+        parent = parents.get(reference)
+        if isinstance(parent, ast.Call) and parent.func is reference:
+            continue
+        # Passing, storing, returning or inspecting an imported object can
+        # expose its defining globals. Only direct calls retain named demand;
+        # aliases and unsupported uses retain the union.
+        for symbol in _possible_symbols(reference, scope):
+            for spelling in tuple(named):
+                if symbol.startswith(spelling + "."):
+                    found[spelling] = None
+                    named.remove(spelling)
+        if not named:
+            break
     return found
+
+
+def _namespace_access(scanner, tree):
+    """Possible access to mutable Python namespaces, including lexical aliases."""
+    if any(isinstance(node, ast.Attribute) and node.attr in
+           {"__dict__", "__globals__", "__getattr__", "__builtins__", "f_globals", "f_locals"}
+           for node in ast.walk(tree)):
+        return True
+    for call, scope in scanner.calls:
+        symbols = _possible_symbols(call.func, scope)
+        if (_source_call(call, symbols)
+                or isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals"}
+                or symbols & {"builtins.globals", "builtins.locals"}
+                or not call.args and ("builtins.vars" in symbols
+                    or isinstance(call.func, ast.Name) and call.func.id == "vars")):
+            return True
+    return False
 
 
 def _literal_strings(expression):
@@ -261,13 +301,9 @@ def guarded_reexport(tree):
     # retain aliased access to a module's mutable namespace.
     scanner = _Scanner(Path("__guarded_export__.py"))
     scanner.visit(tree)
-    for call, scope in scanner.calls:
-        symbols = _possible_symbols(call.func, scope)
-        if (_source_call(call, symbols)
-                or symbols & {"builtins.globals", "builtins.locals"}
-                or "builtins.vars" in symbols and not call.args):
-            return None
-    return names, imported
+    if _namespace_access(scanner, tree):
+        return None
+    return names, imported, guard
 
 
 _LOADERS = {"spec_from_file_location": (1, "location"),
@@ -298,7 +334,18 @@ class _Scanner(ast.NodeVisitor):
         self.scope = _Scope()
         self.scope.bindings["__file__"].append(ast.Constant(str(path)))
         self.calls = []
+        self.references = []
         self.functions = defaultdict(list)
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load):
+            self.references.append((node, self.scope))
+
+    def _target_references(self, target):
+        # Assignment/deletion targets can inspect an imported object's
+        # namespace too. Record references without changing executor facts.
+        self.references.extend((node, self.scope) for node in ast.walk(target)
+                               if isinstance(node, ast.Name))
 
     def visit_Import(self, node):
         for alias in node.names:
@@ -321,16 +368,19 @@ class _Scanner(ast.NodeVisitor):
     def visit_Assign(self, node):
         for target in node.targets:
             self.scope.bind(target, node.value)
+            self._target_references(target)
         self.visit(node.value)
 
     def visit_AnnAssign(self, node):
         self.scope.bind(node.target, node.value)
+        self._target_references(node.target)
         self.visit(node.annotation)
         if node.value:
             self.visit(node.value)
 
     def visit_AugAssign(self, node):
         self.scope.bind(node.target, None)
+        self._target_references(node.target)
         self.visit(node.value)
 
     def visit_NamedExpr(self, node):
@@ -372,6 +422,7 @@ class _Scanner(ast.NodeVisitor):
 
     def visit_Delete(self, node):
         for target in node.targets:
+            self._target_references(target)
             for name in ast.walk(target):
                 if isinstance(name, ast.Name):
                     self.scope.bindings[name.id].append(None)
@@ -804,7 +855,7 @@ def _possible_symbols(expression, scope):
     return result
 
 
-def source_execution_modules(trees, modules, targets):
+def source_execution_modules(trees, modules, targets, *, scanners=None):
     """Files that call a source executor, including known imported helpers.
 
     ``targets`` is the selector's authoritative, ambiguity-preserving module
@@ -819,6 +870,8 @@ def source_execution_modules(trees, modules, targets):
     for path, tree in trees.items():
         scanner = _Scanner(path, modules[path])
         scanner.visit(tree)
+        if scanners is not None:
+            scanners[path] = scanner
         functions[path] = scanner.functions
         scopes[path] = scanner.scope
         calls[path] = {
