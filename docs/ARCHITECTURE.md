@@ -6,8 +6,12 @@ row. It retains the final DSO and verifies source, selector, flags, compiler,
 header, image declaration and artifact identity before reuse. A required
 retained build cannot silently compile; runtime loading still requires SM121.
 The candidate schedule and wrong-pass mutant are explicit private build
-selections, never serving defaults. Their numerical and timing gates remain
-pending; excluded direct-Docker objects are not qualification evidence.
+selections, never serving defaults. The bounded operator gate passed 17 exact
+output/LSE cases and two causal mutants; pooled-mask old-L0 comparisons reduced
+operator time 18.97% at 2048@8192 and 13.50% at 2048@2048. Full-model serving,
+random-mask performance and energy remain unqualified. See
+`experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
+are not qualification evidence.
 
 Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
 The existing T8R benchmark can replay one historical real-ID distribution

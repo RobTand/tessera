@@ -1,7 +1,8 @@
 # MLA pass-buffer schedule (T8): QA packet
 
-Experiment-private, default-off. This is a **source-level ownership proof plus a
-proposed CPU compile gate**, not an accepted native result. No speed claim is made here.
+Experiment-private, default-off. The source proof, retained CPU builds and
+bounded native operator gate are complete. The measured reductions below apply
+only to the two pooled-mask resident operator cells, not full-model serving.
 
 ## Provenance
 
@@ -24,8 +25,8 @@ selector `TESSERA_MLA_P0_BUFFERS`:
 
 * `0` (default) is the current qualified L0 schedule. The `#else` branch is
   textually byte-identical to the shipped region; only the shared closing brace
-  moved outside the `#if/#else`. Generated default-code identity still needs
-  the qualified final build; source equality alone is not that measurement.
+  moved outside the `#if/#else`. The retained baseline is the comparator below;
+  source equality does not establish binary identity to an older shipped DSO.
 * `1` reuses FlashInfer's two WFP8 parities (`sm.w_fp8()`, `2 x 2560 = 5120`
   bytes, `smem_layout.cuh` `SMEM_W_FP8_MG`) as the pass0/pass1 storage of a
   **single** V chunk, so one publication barrier covers both residual passes.
@@ -111,9 +112,9 @@ build recipe and DSO length/hash before any native load or build. Explicit
 GPU worker. Default selection cannot adopt a candidate manifest. The runtime
 SM121 gate remains; the CPU builder never calls a kernel.
 
-Qualified final codegen, numerical and speed results are **pending**.
+The qualified retained builds and bounded operator results are recorded below.
 
-## GPU protocol (proposed; NOT authorized here)
+## GPU protocol (completed once under lead authorization)
 
 Bounded, same-window old/new arms; no sweep.
 
@@ -126,7 +127,8 @@ Bounded, same-window old/new arms; no sweep.
   fail; add a selector + buffer-identity control.
 * Timing: first paired `2048@8192`, plus `2048@2048` control; existing ABBA arms.
   Energy/work-J stays HOLD until clock/cadence alignment is established.
-* Fallthrough preserved: decode, mixed, graph/capture, unsupported shapes.
+* Serving fallthrough is unchanged in source; this operator experiment does
+  not exercise the vLLM decode, mixed or graph/capture dispatcher.
 
 ## Reuse map
 
@@ -137,3 +139,76 @@ Bounded, same-window old/new arms; no sweep.
 * prior receipts under `/mnt/shared/tessera-measurements/mla-mask-recovery-20261002/`
   and `/home/rob/tmp/claude-campaign-20260926/tmp/sol-mla-recovery-20261002/`
   are reused only for their exact identities.
+
+## Accepted operator result — 2026-10-02
+
+Frozen GPU source: `04e640554eae4f97de97c7fb8454b70188181e21`; CUDA SHA-256
+`bb45f827fe34fd64222ca27db85ee1a92a6a792b05d2cc506c74b419e36c17ed`.
+The CUDA source and flags equal the retained CPU-build source `1ae2e51482`.
+The three PB builds (`1cf9b68af1c5`, `e77a9ed86ecb`, `4b041c2c3534`) use
+image `5be13705`, nvcc 13.0.88 and SM121a, with no GPU visible. Each finished
+rc0 in about 7 seconds and below 866 MB peak memory. No GPU rebuild occurred.
+
+Final codegen: baseline/candidate have 3424/3072 instructions and 30/25
+BAR.SYNC instructions, respectively; both use 168 registers, zero stack/local
+memory and no LDL/STL. The copy kernel's 3048 instruction/control words are
+identical across all three builds.
+
+One PB GPU action `0c77dbd5ddccc866630e2c7e477cb67e435be1e1fd2315710a7331b03dca19aa`
+finished rc0 in 566.41 seconds on Sparky's GB10. Its full canonical receipt is
+`4d333730fe8853798d61bd44ee63cf5b1258804a0ca93dfe8a8e40b145ea09ed`.
+CPU affinity was [5,6], native threads 1, exclusive GPU, aggregate reservation
+16 GiB and GPU subset 4 GiB; cgroup peak was 1,395,040,256 bytes. The latter
+is a cgroup measurement, not a complete unified-memory/GPU peak.
+
+All 12 pooled/random served-shape cells and 5 edge cells have raw bit-exact
+candidate output **and LSE** versus stock; the unchanged copy also passes.
+Both wrong-pass mutant cells fail causally (2,129,868 differing BF16 output
+words in total), with exact LSE and unchanged-copy output/LSE. The numerical
+reference is stock FlashInfer. The performance comparator is retained old L0:
+legacy JSON arm `stock` means `retained_l0`, and `l0` means `pass_buffers`.
+
+| Pooled-mask cell | Old L0 median | Pass-buffer median | Less operator time |
+|---|---:|---:|---:|
+| 2048 queries, 8192 context | 8.018737 ms | 6.497623 ms | 18.9695% |
+| 2048 queries, 2048 context | 4.210287 ms | 3.641979 ms | 13.4981% |
+
+Each cell used two ABBA cycles (eight arms), conventional medians and resident
+CUDA graph timing. Actual arms were 32.429–33.674 s and 31.990–32.361 s,
+respectively. The separate eager Torch profiles contain three calls of
+`tessera_mla_prefill_mg_l0` per arm: old/new means 7581.785/6189.434 us and
+3999.691/3573.141 us. No new kernel or spill appears in those profiles.
+
+Raw power and both-host Netdata CPU/power/pressure series are retained. Netdata
+power's native cadence is 10 s; its returned 1 s buckets are not 1 s sensor
+samples. Power and clocks vary across arms (candidate clocks are lower), and
+sensor coverage does not establish energy accuracy. **Energy/work-J is HOLD**;
+there is no clock normalization or utilization-based saturation claim.
+The wrapper omitted the descriptive `MLA_PLACEMENT` environment from Docker,
+so the raw JSON says `unqualified`; the sealed PB receipt independently binds
+actual exclusive GPU placement. Historical raw output is unchanged.
+
+No random-mask performance, vLLM dispatch/capture behavior, model quality,
+full-model prefill/decode speed, T4/T16 qualification, default promotion or
+runtime-pin change is established here. Common attention may apply to other
+weight precisions only under the same stock geometry, FP8 KV and resolver
+contract, with separate qualification.
+
+Durable raw results are under
+`/mnt/shared/tessera-measurements/mla-pass-buffers-20261002/gpu-v1/`.
+Each paired directory contains `abba.json`, both before/after Torch traces and
+`both-host-netdata.json`; matrix/edges/mutant contain their gate reports.
+Retained DSOs and manifests are in the adjacent `build-v1/` directory:
+
+* baseline SHA `30206f1f622dd0b09c90dd22f3daa0bd2db840fd4e93b4dff6ded6f786406f5a`
+* candidate SHA `a88b11fca6e702fd659ed001ed85d336de86a0c4be790f63df4a5741a32d956d`
+* mutant SHA `94623ee4bbaa48456713b62bf7dee3f6222f833efd7dc01abe2a9e4d7444e402`
+
+The source-bundle, full-request CAS, resources and independently recomputed
+results are recorded under
+`/home/rob/tmp/astra-resume-20261002/t8_performance/attention_comm/` in
+`NATIVE-BUILD-CAS.json`, `NATIVE-BUILD-ARTIFACTS.json`,
+`BUILDER-CPU-PROOF.json`, `GPU-SOURCE-LEAD-REVIEW.json`,
+`GPU-RESULT-LEAD-REVIEW.json`, `GPU-COMPLETION.json` and
+`GPU-FINAL-ARTIFACTS.json`. CPU controls cover 17 distinct cases, zero skips
+or missing collection, with causal failures before the retention fixes.
