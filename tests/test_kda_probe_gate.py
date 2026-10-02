@@ -11,49 +11,19 @@ from types import SimpleNamespace
 import pytest
 
 
+
+
+
+
+
+
 @pytest.fixture
-def probe(monkeypatch):
-    path = Path(__file__).resolve().parents[1] / "experiments/mhc/mhc_probe.py"
-    spec = importlib.util.spec_from_file_location("kda_probe_gate_test", path)
+def probe():
+    path = Path(__file__).resolve().parents[1] / "experiments/kda/conv_gate.py"
+    spec = importlib.util.spec_from_file_location("kda_conv_gate_test", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    monkeypatch.setitem(sys.modules, "vllm", SimpleNamespace(__version__="test"))
-    monkeypatch.setattr(module.torch.cuda, "get_device_name", lambda _: "CPU gate test")
-    sampler = SimpleNamespace(start=lambda: None, source="test", stop_flag=False)
-    monkeypatch.setattr(module.rpo, "PowerSampler", lambda: sampler)
-    monkeypatch.setattr(module.rpo, "netdata_window", lambda *_: {})
     return module
-
-
-@pytest.mark.parametrize("failed_field", ["served", "fma", "ex2", "div", "missing", None])
-def test_main_propagates_numerical_admission_failure(probe, monkeypatch, tmp_path, failed_field):
-    result = _screen(probe, tmp_path)
-    result["served_bit_equal_all"] = failed_field != "served"
-    bad = {"fma": "mutant_two_roundings_per_tap", "div": "mutant_div_rn"}
-    if failed_field in bad:
-        result["mutants_seen"][bad[failed_field]] = False
-    elif failed_field == "missing":
-        result["mutants_seen"].pop("mutant_ex2_ftz")
-    elif failed_field == "ex2":
-        result["ex2_equivalence"]["raw_fp32_bits"][2][3] = 7053949
-    monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
-    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path),
-                                      "--parts", "kdaptx", "--numerics-only"])
-    rc = probe.main()
-    saved = json.loads((tmp_path / "mhc_probe_numerics.json").read_text())
-    assert saved["kdaptx"]["served_bit_equal_all"] == result["served_bit_equal_all"]
-    assert saved["kdaptx"]["mutants_seen"] == result["mutants_seen"]
-    assert (rc == 0) is (failed_field is None)
-
-
-def test_failed_screen_stops_later_timing(probe, monkeypatch, tmp_path):
-    result = {"served_bit_equal_all": False, "mutants_seen": {}}
-    monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
-    monkeypatch.setattr(probe, "part_kdafwd", lambda *_: pytest.fail("timing ran after failed numerics"))
-    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path), "--parts", "kdaptx,kdafwd"])
-    assert probe.main() != 0
-    saved = json.loads((tmp_path / "mhc_probe.json").read_text())
-    assert "kdafwd" not in saved
 
 
 def _ex2_control(probe, tmp_path):
@@ -83,16 +53,6 @@ def _ex2_control(probe, tmp_path):
             "sass": {"path": str(sass), "sha256": hashlib.sha256(sass.read_bytes()).hexdigest()}}
 
 
-def test_ex2_intermediate_equivalence_is_distinct_from_output_mutation(probe, monkeypatch, tmp_path):
-    """The authorized v2 contract needs an active, erased exponential mutation."""
-    result = _screen(probe, tmp_path)
-    monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
-    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path),
-                                      "--parts", "kdaptx", "--numerics-only"])
-    assert probe.main() == 0
-    saved = json.loads((tmp_path / "mhc_probe_numerics.json").read_text())
-    assert saved["kdaptx"]["mutants_seen"]["mutant_ex2_ftz"] is False
-    assert saved["kdaptx"]["ex2_equivalence"]["ex2"]["bits_differing"] == 1
 
 
 @pytest.mark.parametrize("fault", ["absent", "raw_shape", "raw_type", "false_count", "vacuous",
@@ -187,3 +147,33 @@ def test_numerical_gate_derives_summaries_from_complete_case_evidence(probe, tmp
         s["cases"][0]["served_sass"].update(_cmp(1))
         s["cases"][0]["served_sass"]["qkv"]["q"] = _cmp(1)
     assert probe.kdaptx_gate_errors(s)
+
+
+@pytest.mark.parametrize("owner", ["kda/conv_gate.py", "kda/conv_progress.py"])
+def test_each_new_source_owner_changes_and_refuses_the_identity(probe, tmp_path, owner):
+    for name in probe.SOURCE_OWNERS:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"initial owned source")
+    record = probe.harness_source_identity(tmp_path)
+    assert probe.harness_source_identity_matches(record, tmp_path)
+    (tmp_path / owner).write_bytes(b"changed owner")
+    assert not probe.harness_source_identity_matches(record, tmp_path)
+
+
+def test_gate_and_progress_import_without_scientific_dependencies():
+    import subprocess
+    root = Path(__file__).resolve().parents[1]
+    script = '''import importlib.abc,sys
+sys.path.insert(0,sys.argv[1]+"/experiments/kda")
+class Block(importlib.abc.MetaPathFinder):
+ def find_spec(self,fullname,path=None,target=None):
+  if fullname.split(".")[0] in {"torch","vllm","numpy","prismaquant","prismabuild"}: raise ImportError(fullname)
+sys.meta_path.insert(0,Block())
+import conv_gate,conv_progress
+assert conv_gate.kdaptx_gate_errors({})
+assert conv_gate.harness_source_identity_matches(conv_gate.harness_source_identity())
+assert callable(conv_progress.kda_commit)
+'''
+    result = subprocess.run([sys.executable, "-I", "-c", script, str(root)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

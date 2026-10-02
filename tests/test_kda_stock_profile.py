@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from test_kda_probe_gate import probe
+from test_kda_probe_driver import probe
 
 
 @pytest.fixture
@@ -75,3 +75,19 @@ def test_stock_workspace_comes_from_actual_allocation(stock_standins, monkeypatc
     out = probe.part_kdafwd(args, sampler)
     cell = out["cells"][0]
     assert cell.get("workspace_bytes_per_copy", cell.get("workspace_bytes")) == 14598144
+
+
+def test_stock_source_guard_precedes_partial_progress(stock_standins, monkeypatch):
+    probe, args, sampler = stock_standins
+    published = []
+    monkeypatch.setattr(probe, "kda_commit", lambda *a: published.append(a))
+    monkeypatch.setattr(probe, "harness_source_identity_matches", lambda *a, **k: False)
+    monkeypatch.setattr(sys.modules["conv_gate"], "harness_source_identity_matches", lambda *a, **k: False)
+    def profile(fn, reps, trace=None):
+        trace.write_bytes(b"CPU profile fixture")
+        return {"_flash_kda_fwd_prepare<stock>": {"mean_us": 10},
+                "_flash_kda_fwd_recurrence<stock>": {"mean_us": 20}}
+    monkeypatch.setattr(probe, "kernel_device_us", profile)
+    with pytest.raises(RuntimeError, match="source|owner|harness"):
+        probe.part_kdafwd(args, sampler)
+    assert not published
