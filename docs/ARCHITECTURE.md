@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
+§5.1.3). A requested eager SP serve refuses before activation when its
+ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
+ranks agree on the existing TP CPU group before activation and every SP
+collective boundary; capture retains the stock all-reduce sequence. CPU
+fixtures reproduce the unwritten-output path and refusal. No wrong-output
+GPU observation or guard latency/energy qualification is claimed.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,
@@ -7355,6 +7363,21 @@ raises.
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
 
 The module docstring records the decline rules and the exactness argument.
+The SP source read set includes the CUDA communicator, AG/RS route rule,
+PyNccl, parallel state and Torch utilities. Ordinary SP requires an active,
+available TP2 PyNccl writer with `disabled=False` and `_suspended=False`;
+custom or symmetric-memory SP routes are outside this inspected qualification.
+`SpCollectiveGuard` agrees local availability through a MAX on the **existing
+TP CPU group**, before any activation changes ownership and before each SP
+all-gather/reduce-scatter. A fault before activation refuses the requested
+eager SP serve; a transient disable/suspend after sharding refuses both ranks
+before either calls the selected writer. This prevents the pinned stock
+reduce-scatter wrapper from returning its unwritten `torch.empty` allocation
+when PyNccl silently returns on `disabled`. Capture enters no SP control
+exchange and retains the stock all-reduces. The active SP writer's tensor
+arguments, results and NCCL reduction order are unchanged; the added CPU
+control exchanges have unmeasured latency and energy overhead.
+
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv

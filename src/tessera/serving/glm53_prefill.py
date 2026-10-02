@@ -663,6 +663,14 @@ class SpCollectiveGuard:
         return fn(x)
 
 
+def agree_sp_collective(torch: Any, group: Any, value: float) -> float:
+    """Existing TP CPU-group control, explicit even under a CUDA default device."""
+    control = torch.tensor([int(value)], dtype=torch.int32, device="cpu")
+    torch.distributed.all_reduce(control, op=torch.distributed.ReduceOp.MAX,
+                                 group=group.cpu_group)
+    return float(control.item())
+
+
 def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
     (model, _runner, _linear, seqpar, comm, kernels, _tilelang, _mhc_ops, deep_gemm,
      _cuda_comm, ar_utils, _pynccl, _parallel_state, _torch_utils) = modules
@@ -679,10 +687,7 @@ def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
     def agree(value: float) -> float:
         # A CPU control exchange must not call the disabled writer it checks,
         # introduce a CUDA capture node, or change the SP NCCL reduction order.
-        control = torch.tensor([int(value)], dtype=torch.int32)
-        torch.distributed.all_reduce(control, op=torch.distributed.ReduceOp.MAX,
-                                     group=get_tp_group().cpu_group)
-        return float(control.item())
+        return agree_sp_collective(torch, get_tp_group(), value)
 
     guard = SpCollectiveGuard(route=route, agree=agree,
                               capturing=torch.cuda.is_current_stream_capturing)
