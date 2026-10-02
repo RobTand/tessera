@@ -23,12 +23,12 @@ def clean_environment(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
 
-def unit(family="e4m3", layout=LEGACY, cols=128):
+def unit(family="e4m3", layout=LEGACY, cols=128, rate=4):
     rep = kw.Repacked(
-        words=torch.arange(cols * 64, dtype=torch.int32), tile_words=cols * 64,
+        words=torch.arange(cols * 16 * rate, dtype=torch.int32), tile_words=cols * 16 * rate,
         n_tiles=1, rows=128, cols=cols, rows_p=512,
         perm=torch.arange(cols, dtype=torch.int32),
-        runs=torch.tensor([[4, 0, cols, 0]], dtype=torch.int32), rates=(4,) * cols)
+        runs=torch.tensor([[rate, 0, cols, 0]], dtype=torch.int32), rates=(rate,) * cols)
     if layout != LEGACY:
         rep = rep.with_word_layout(layout)
     return kw.WindowGemvUnit(
@@ -46,9 +46,9 @@ def prepared(family="e4m3", layout=LEGACY):
                                arithmetic="folded" if family == "value" else "epilogue")
 
 
-def bundle(family="e4m3", layout=LEGACY):
+def bundle(family="e4m3", layout=LEGACY, cols=128, rate=4):
     from tessera.window_gemm_grouped import prepare_grouped_window_gemm
-    b = prepare_grouped_window_gemm([unit(family, layout)] * 2, quantizer=None,
+    b = prepare_grouped_window_gemm([unit(family, layout, cols=cols, rate=rate)] * 2, quantizer=None,
                                    arithmetic="folded" if family == "value" else "epilogue")
     # CUDA metadata only: tensor-content checks remain real CPU operations.
     return SimpleNamespace(**{**vars(b), "quantizer": "native"}, device=torch.device("cuda"))
@@ -114,6 +114,15 @@ def test_routed_positive_controls(monkeypatch, family):
     if family == "e4m3":
         b.word_layout = PM
         assert rf.fused_routed_window_supported(b, b, b) is None
+
+
+def test_value_rate_eight_remains_admitted_and_nine_refused(monkeypatch):
+    monkeypatch.setattr(rf, "smem_reason", lambda *a: None)
+    monkeypatch.setattr(rf, "_ext", bomb)
+    b = bundle("value", rate=8)
+    assert rf.fused_routed_window_supported(b, b, b) is None
+    b = bundle("value", rate=9)
+    assert "1..8" in rf.fused_routed_window_supported(b, b, b)
 
 
 @pytest.mark.parametrize("family,layout,mma,reason", [
@@ -184,6 +193,20 @@ def test_e2m1_routed_refuses_layout(monkeypatch, layout):
     monkeypatch.setattr(fe, "_ext", bomb)
     b = SimpleNamespace(family="e2m1", word_layout=layout, experts=2)
     assert "word order" in fe.fused_routed_e2m1_supported(b, b, b)
+
+
+def test_e2m1_legacy_positive_controls(monkeypatch):
+    from tessera import routed_fused_e2m1 as fe
+    monkeypatch.setattr(fe, "_ext", bomb)
+    monkeypatch.setattr(fe, "smem_reason", lambda *a: None)
+    u = SimpleNamespace(rep=unit(cols=256).rep, window_bits=14, arity=2, cols=256, rows=256)
+    assert fe.dense_role_reason(u) is None
+    b = bundle(cols=256)
+    b.family, b.rows = "e2m1", 256
+    b.scale_plane_all = torch.zeros(2, 256 * 256 // 32, dtype=torch.uint8)
+    b.scale_lut_all = torch.zeros(2, 16, dtype=torch.uint8)
+    b.global_all = torch.ones(2)
+    assert fe.fused_routed_e2m1_supported(b, b, b) is None
 
 
 def intake(family):
