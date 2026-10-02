@@ -476,16 +476,7 @@ def main():
         if inputs:
             # Bind publisher declarations to the exact staged bytes intake reads.
             published = store.metadata("tessera_serving_manifest.json")
-            for role in published["modules"][P + "10.mlp.experts"]["roles"]:
-                name = role["tensor"].removesuffix(".weight") + ".wire"
-                shard = store.index[name]
-                header = inputs.read(os.path.join(store.root, shard))
-                import struct
-                n = struct.unpack("<Q", header[:8])[0]
-                spec = json.loads(header[8:])[name]
-                entry = inputs.entries[(os.path.join(store.root, shard), 8+n+spec["data_offsets"][0])]
-                if entry["sha256"] != role["cached_blob_sha256"] or entry["bytes"] != role["blob_bytes"]:
-                    raise SystemExit("staged wire range differs from serving publisher")
+            inputs.bind_roles(store.root, published["modules"][P + "10.mlp.experts"]["roles"])
 
         power = PowerSampler()
         import tessera

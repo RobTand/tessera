@@ -52,3 +52,30 @@ withdrawn while READY, before claim;0 tokens released, no GPU execution or
 measurement was repeated. The new action will record truthful delivery source
 and exact operator-component equality to reference608, not pretend its full
 package Git head is608. A fresh affected CPU/compile gate covers this context.
+
+
+### Correction: cached-inner identity is not the exported outer-frame identity
+
+The first staged readset mistakenly applied the serving publisher's
+`cached_blob_sha256` to `.wire` outer frames. `export_serving.py` wraps the
+verified cached unit with `pack_fused`, whereas the published cached digest
+still covers the inner unit. Stage action `5c61f8ddd728` therefore retained
+20 range hash failures and only eight metadata ranges; CAS payload
+`15333e5d78148d05dc86315d4ba28a757399a9b9b04b2cb9c93ad4901c5a6504`
+(9289 bytes) records this readset interpretation error, not artifact corruption.
+GPU consumer `825b9ba3c5d1` was withdrawn READY before a claim; no GPU work or
+measurement occurred. The prior CPU green counts cover the prototype seam,
+not a successful public SDK/GPU population.
+
+The repair uses the real public `PoolQueue` and `RESIDENCY` owners and validated
+map schema, which has no invented consumer-action field. A new SDK-schema
+control initially failed at a fixture missing required `generation` (8 failed,
+13 passed, `439d2716c9aa`); that is a fixture negative, not a claimed causal
+reader regression. The corrected control and subsequent receipts are recorded
+below after completion. The bounded CPU-only PB sealer admits the same ranges
+with unknown outer hashes initially, reads each through `open_pinned`, verifies
+one role/rows member and its independently pinned cached-inner SHA, and compares
+`pack_fused(parse_fused(owned_outer))` with those same owned bytes. It records
+both hashes and lengths only after all 864 members qualify. Metadata and routing
+hashes stay mandatory; final GPU input hashes cover the outer frames. No origin
+fallback, decoder, serving/default/pin change or timing claim is introduced.

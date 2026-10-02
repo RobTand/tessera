@@ -11,11 +11,35 @@ import os
 import secrets
 import struct
 from pathlib import Path
-from types import SimpleNamespace
+
+
+def verify_cached_frame(raw, role):
+    """Verify the producer's cached unit inside the actual exported frame.
+
+    export_serving.pack_cached_expert_unit adds canonical TSRFUSE1 framing;
+    its cached_blob_sha256 covers the inner unit, not the outer wire tensor.
+    """
+    from tessera.fused import parse_fused, pack_fused
+    members = parse_fused(raw)
+    if len(members) != 1:
+        raise ValueError('cached expert wire must have exactly one member')
+    member = members[0]
+    if member.name != role['role'] or member.rows != role['rows']:
+        raise ValueError('cached expert frame role/rows differ')
+    inner = hashlib.sha256(member.blob).hexdigest()
+    if inner != role['cached_blob_sha256']:
+        raise ValueError('cached inner unit digest differs')
+    if pack_fused([(member.name, member.rows, member.blob)]) != raw:
+        raise ValueError('cached expert frame is not canonical')
+    if len(raw) != role['blob_bytes']:
+        raise ValueError('cached expert outer length differs')
+    return {'inner_sha256':inner, 'inner_bytes':len(member.blob),
+            'outer_sha256':hashlib.sha256(raw).hexdigest(), 'outer_bytes':len(raw),
+            'role':member.name, 'rows':member.rows}
 
 
 class StagedInputs:
-    def __init__(self, manifest_path, *, sdk=None):
+    def __init__(self, manifest_path, *, sdk=None, allow_unsealed_wires=False):
         if sdk is None:
             from prismabuild import client as sdk
         self.sdk = sdk
@@ -24,30 +48,33 @@ class StagedInputs:
         manifest, encoding = sdk.read_data_manifest(manifest_path)
         if encoding != "identity" or manifest != json.loads(raw):
             raise ValueError("sealed replay manifest changed during validation")
+        self.manifest = manifest
         self.entries = {(e['path'], e['offset']): e for e in manifest['entries']}
         if len(self.entries) != manifest['entry_count']:
             raise ValueError('duplicate input ranges')
-        if any(not isinstance(e.get('sha256'), str) or len(e['sha256']) != 64
-               for e in self.entries.values()):
-            raise ValueError('single replay requires every input digest')
+        for (path, offset), entry in self.entries.items():
+            digest = entry.get('sha256')
+            if digest is None and allow_unsealed_wires and offset > 0 and path.endswith('.safetensors'):
+                continue
+            if not isinstance(digest,str) or len(digest)!=64:
+                raise ValueError('single replay requires every input digest')
         bound = sdk.injected_context()
         if not bound.get('ok'):
             raise ValueError(f"pinned inputs refused: {bound.get('refusal')}")
         self.ctx = bound['ctx']
-        # The public descriptor/release APIs consume queue.root; admission itself
-        # constructs its authoritative PoolQueue inside acquire_for/injected_context.
-        self.queue = SimpleNamespace(root=Path(self.ctx['queue_root']))
+        self.queue = sdk.PoolQueue(Path(self.ctx['queue_root']))
         mapping = sdk.read_residency_map(self.ctx['map_path'])
-        if (mapping['consumer_action_key'] != self.ctx['action_key']
-                or mapping['manifest_sha256'] != self.manifest_sha256):
+        if mapping['manifest_sha256'] != self.manifest_sha256:
             raise ValueError('residency map does not bind this action/readset')
         self.keys = {(p, off): sdk.residency_map_key(p, off) for p, off in self.entries}
-        expected = {self.keys[k]: {'bytes': e['bytes'], 'sha256': e['sha256']}
-                    for k, e in self.entries.items()}
-        if any(k not in mapping['entries'] for k in expected):
+        if any(k not in mapping['entries'] for k in self.keys.values()):
             raise ValueError('residency map does not cover every declared range')
+        expected = {self.keys[k]: {'bytes':e['bytes'],
+                    'sha256':e['sha256'] or mapping['entries'][self.keys[k]]['sha256']}
+                    for k,e in self.entries.items()}
+        self.actual_digests = {k: expected[key]['sha256'] for k,key in self.keys.items()}
         epoch = mapping.get('epoch', '')
-        root = Path(self.ctx['map_path']).parent.parent
+        root = self.queue.root / sdk.RESIDENCY
         covers = sdk.covers_for_keys(root, self.ctx['action_key'], list(expected),
                                     tier_id=mapping['tier_id'], epoch=epoch,
                                     manifest_sha256=self.manifest_sha256)
@@ -63,6 +90,7 @@ class StagedInputs:
         self.closed = False
         self.reads = []
         self.headers = {}
+        self.roles = {}
 
     def read(self, path, offset=0):
         if self.closed:
@@ -86,7 +114,7 @@ class StagedInputs:
             if os.read(fd, 1):
                 raise ValueError('oversized pinned range')
             digest = hashlib.sha256(data).hexdigest()
-            if digest != entry['sha256']:
+            if digest != self.actual_digests[identity]:
                 raise ValueError(f'pinned range digest differs: {identity}')
             self.reads.append({'path': identity[0], 'offset': identity[1],
                                'bytes': len(data), 'sha256': digest, 'serving_tier': serving})
@@ -97,10 +125,17 @@ class StagedInputs:
     def json(self, path):
         return json.loads(self.read(path))
 
-    def tensor(self, root, name, *, index=None):
-        import torch
-        if index is None:
-            index = self.json(Path(root) / 'model.safetensors.index.json')['weight_map']
+    def bind_roles(self, root, roles):
+        """Publisher metadata is already pinned; retain its cached-unit authority."""
+        self.roles = {r['tensor'].removesuffix('.weight')+'.wire':r for r in roles}
+        roster = {(r['expert'],r['role']) for r in roles}
+        if (len(roles)!=864 or len(self.roles)!=864 or
+            roster != {(e,r) for e in range(288) for r in ('gate','up','down')} or
+            any(not n.startswith('model.language_model.layers.10.mlp.experts.') for n in self.roles)):
+            raise ValueError('single replay requires exactly the L10 expert-role roster')
+
+    def wire(self, root, name, *, index):
+        """One authenticated outer frame and its independently checked inner unit."""
         path = str(Path(root) / index[name])
         if path not in self.headers:
             raw = self.read(path)
@@ -116,6 +151,15 @@ class StagedInputs:
         raw = self.read(path, 8 + n + start)
         if len(raw) != end - start or len(raw) != record['shape'][0]:
             raise ValueError('wire header differs from owned bytes')
+        if name not in self.roles:
+            raise ValueError('wire lacks independent cached-unit authority')
+        identity = verify_cached_frame(raw, self.roles[name])
+        self.reads[-1]['cached_member'] = identity
+        return raw
+
+    def tensor(self, root, name, *, index):
+        import torch
+        raw = self.wire(root,name,index=index)
         # frombuffer retains THIS authenticated owner; no mutable path is opened
         # again. The unchanged intake consumes this exact tensor.
         return torch.frombuffer(raw, dtype=torch.uint8)

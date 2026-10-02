@@ -1,7 +1,10 @@
 Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
 The existing T8R benchmark can replay one historical real-ID distribution
 against the A8SE wires through PB public pinned readers, binding the same
-owned bytes to publisher digests before the unchanged rank-local intake.
+owned outer bytes to publisher cached-inner digests plus exact role/rows and
+canonical TSRFUSE1 reframing before the unchanged rank-local intake. A PB-only
+sealer records outer-frame hashes for the final GPU readset; it never treats
+a cached inner-unit digest as an exported outer-frame digest.
 Only served mode0/RL4/one-run/BMT128 is profiled; the teacher-forced mode1
 interface is excluded. Seeded activation/uniform downstream weights remain
 a declared proxy; no full-model quality/speed, serving/default/pin change
