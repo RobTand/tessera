@@ -1652,8 +1652,8 @@ def test_split_source_reader_keeps_unknown_execution_edges(tmp_path, read, bindi
     "Path(stock.__file__).read_bytes()",
     "open(stock.__file__).read()",
 ])
-def test_imported_external_source_read_does_not_force_the_tree(tmp_path, expression):
-    """#808: a declared external import is not an unnameable in-tree loader."""
+def test_unproven_import_source_read_keeps_unknown_origin(tmp_path, expression):
+    """#808: an absent import origin is unknown, not proven external source."""
     repo, base = _dynamic_repo(tmp_path, '''
         from tools.driver import VALUE
         def test_dynamic(): assert VALUE
@@ -1669,8 +1669,8 @@ def test_imported_external_source_read_does_not_force_the_tree(tmp_path, express
     })
     (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
     _git(repo, "add", "tools/driver.py")
-    _git(repo, "commit", "-qm", "leaf change cannot alter external package source")
+    _git(repo, "commit", "-qm", "leaf change does not prove imported source origin")
     result = _selector(repo, f"{base}...HEAD")
-    assert result["verdict"] == "narrowed", result
+    assert result["verdict"] == "full", result
     assert result["tests"] == ["tests/test_dynamic.py"]
-    assert result["unresolved_file_loaders"] == []
+    assert result["unresolved_file_loaders"] == ["support/reader.py"]

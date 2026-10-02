@@ -12,13 +12,20 @@ then computes source-execution capability to a fixed point over recognized calls
 to top-level functions, using its existing ambiguity-preserving module resolver.
 Relative imports, assignment aliases and re-exports participate; shadowed aliases
 retain possible execution instead of proving it ceased. Mere import presence does
-not promote a reader. Exact reads still use the existing root-bounded resolver;
-unknown and named-but-refused reads retain their existing distinct fallback rules.
+not promote a reader. The independent review found refusal and helper-seeding
+gaps; the revision retains authoritative first-pass failures, walks deep aliases
+iteratively, and shares one source-call predicate for module and helper seeds.
+Exact reads still use the existing root-bounded resolver; unknown and
+named-but-refused reads retain their existing distinct fallback rules.
+Selection records static resolved-file uncertainty predecessors and skipped
+collection-probe edges, using the same walk as full escalation.
 
 Capability is **not provenance**. Neither a generic module parameter nor an import
 absent from this graph proves external origin. The three banked `foreign_runtime`
-fixtures expect narrowing from precisely that unsupported assumption; they remain
-unchanged for review, not xfailed, and are not established production contracts.
+fixtures originally expected narrowing from precisely that unsupported assumption.
+Their historical RED evidence is retained, but Astra authorized correcting these
+proposed fixtures to expect full plus an unresolved-reader diagnostic. This
+corrects an unsupported assumption rather than weakening a production gate.
 The real leaf/conftest/box-artifact selectivity ratchets also remain unchanged.
 No successful qualification is claimed in this census; exact observed populations
 and immutable action/log/source identities belong to the accompanying PR report.

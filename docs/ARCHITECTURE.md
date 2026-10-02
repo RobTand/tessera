@@ -2259,13 +2259,20 @@ the reader can execute Python; a parameterized filename in a source-executing
 module is not silently treated as no dependency. Recognized calls to imported
 source-executing helpers now propagate that capability to their callers via a
 fixed point over top-level helper summaries, preserving relative imports,
-re-exports and ambiguous module spellings. Importing a helper without calling
-it does not promote a reader. This capability proves no external origin: a
+re-exports and ambiguous module spellings. Module and helper seeds use the same
+source-call predicate with enclosing lexical aliases. A single authoritative
+parse/read result supplies both summaries and graph edges: a first-pass failure
+remains diagnosed wildcard uncertainty, never erased by a retry. Callable alias
+recognition uses a finite worklist and per-path cycle guards rather than the
+Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
 generic module parameter and an import missing from the graph remain unknown.
 The #808 draft is blocked on unchanged selectivity ratchets that force full
 for the shared conftest. The retained diagnostic has no predecessor path proving
 which uncertainty seed causes that escalation; attributing it to GLM53 through
-serving.config is unverified. It is not a completed external-origin contract. What this misses is a source
+serving.config is unverified. Selection now records resolved-file
+`uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
+reverse walk that decides escalation. These are static predecessor witnesses,
+not proof that a runtime call executes. It is not a completed external-origin contract. What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
 A conftest **reached** -- changed, or importing anything changed -- reaches its

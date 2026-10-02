@@ -272,31 +272,10 @@ def _source_call(call, symbols):
 
 def _executes_python_source(tree):
     """Whether this module can turn file bytes into Python it runs or parses."""
-    direct, modules = {}, {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if alias.name in _SOURCE_QUALIFIED:
-                    modules[alias.asname or alias.name] = alias.name
-        elif isinstance(node, ast.ImportFrom) and not node.level:
-            owned = _SOURCE_QUALIFIED.get(node.module or "", set())
-            for alias in node.names:
-                if alias.name in owned or alias.name in _SOURCE_ATTRIBUTES:
-                    direct[alias.asname or alias.name] = f"{node.module}.{alias.name}"
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        function = node.func
-        symbols = set()
-        if isinstance(function, ast.Name) and function.id in direct:
-            symbols.add(direct[function.id])
-        elif isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name):
-            module = modules.get(function.value.id)
-            if module is not None:
-                symbols.add(module + "." + function.attr)
-        if _source_call(node, symbols):
-            return True
-    return False
+    scanner = _Scanner(Path("source.py"))
+    scanner.visit(tree)
+    return any(_source_call(call, _possible_symbols(call.func, scope))
+               for call, scope in scanner.calls)
 
 
 #: A symlink chain longer than this is a loop for our purposes, and the walk
@@ -578,27 +557,29 @@ def _file_consumer_scan(tree, path):
     return scanner, kind
 
 
-def _possible_symbols(expression, scope, visiting=frozenset()):
+def _possible_symbols(expression, scope):
     """Recognition only: union aliases, including shadowed alternatives.
 
-    This never proves a callable or an external file origin. An unresolved
-    replacement for a known source executor cannot prove that execution ceased.
+    The worklist walks finite binding paths without consuming Python's call
+    stack. Binding-cycle guards apply per path, before extending attributes,
+    so ``alias = alias.member`` cannot produce an infinite suffix chain.
+    This never proves a callable or an external file origin.
     """
-    if isinstance(expression, tuple) and expression[0] == "symbol":
-        return {expression[1]}
-    if isinstance(expression, ast.Attribute):
-        return {symbol + "." + expression.attr
-                for symbol in _possible_symbols(expression.value, scope, visiting)}
-    if not isinstance(expression, ast.Name):
-        return set()
     result = set()
-    here = scope
-    while here is not None:
-        key = (id(here), expression.id)
-        if key not in visiting:
-            for value in here.bindings.get(expression.id, ()):
-                result.update(_possible_symbols(value, here, visiting | {key}))
-        here = here.parent
+    pending = [(expression, scope, "", frozenset())]
+    while pending:
+        value, here, suffix, visiting = pending.pop()
+        if isinstance(value, tuple) and value[0] == "symbol":
+            result.add(value[1] + suffix)
+        elif isinstance(value, ast.Attribute):
+            pending.append((value.value, here, "." + value.attr + suffix, visiting))
+        elif isinstance(value, ast.Name):
+            while here is not None:
+                key = (id(here), value.id)
+                if key not in visiting:
+                    pending.extend((bound, here, suffix, visiting | {key})
+                                   for bound in here.bindings.get(value.id, ()))
+                here = here.parent
     return result
 
 
@@ -638,17 +619,12 @@ def source_execution_modules(trees, modules, targets):
                 if path in scopes:
                     pending.update(_possible_symbols(ast.Name(id=name), scopes[path]) - seen)
 
-    source_symbols = {
-        module + "." + name for module, names in _SOURCE_QUALIFIED.items()
-        for name in names
-    }
     capable = {
         (path, name) for path, defined in functions.items()
         for name, alternatives in defined.items()
-        if any(_executes_python_source(function) or any(
-            calls[path].get(node, set()) & source_symbols
-            for node in ast.walk(function) if isinstance(node, ast.Call))
-            for function in alternatives)
+        if any(_source_call(node, calls[path].get(node, ()))
+               for function in alternatives for node in ast.walk(function)
+               if isinstance(node, ast.Call))
     }
     edges = {
         (path, name): {
@@ -666,9 +642,9 @@ def source_execution_modules(trees, modules, targets):
         capable = expanded
     return {
         path for path, tree in trees.items()
-        if _executes_python_source(tree) or any(
-            helper in capable for symbols in calls[path].values()
-            for helper in helpers(symbols))
+        if any(_source_call(call, symbols) for call, symbols in calls[path].items())
+        or any(helper in capable for symbols in calls[path].values()
+               for helper in helpers(symbols))
     }
 
 

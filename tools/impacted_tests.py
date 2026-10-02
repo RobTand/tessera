@@ -93,7 +93,6 @@ import re
 import subprocess
 import sys
 from collections import defaultdict, deque
-from contextlib import suppress
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -379,24 +378,28 @@ def import_graph(
             resolved.append(name)
         return tuple(resolved)
 
-    # Helper capability is graph knowledge, not a file-local execution guess.
-    # Parse once for readable files; the existing refusal path still diagnoses
-    # files that cannot be read and supplies their wildcard dependencies.
+    # One authoritative read supplies both helper facts and dependency edges.
+    # A failed read remains a wildcard even if a later filesystem retry could
+    # succeed; retrying only edges would leave helper summaries inconsistent.
     trees = {}
+    unreadable: dict[str, str] = {}
     for path in by_name.values():
-        with suppress(SyntaxError, OSError):
-            trees[path] = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        tree = _read_python_source(path, root, unreadable)
+        if tree is not None:
+            trees[path] = tree
     executing = source_execution_modules(
         trees, {path: module_of[node] for node, path in by_name.items()},
         lambda spelling: tuple(by_name[node] for node in _targets(spelling)),
     )
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
-    unreadable: dict[str, str] = {}
     for node, path in by_name.items():
-        statements, loaded, data = _imports(
-            path, module_of[node], root, unreadable, nodes,
-            tree=trees.get(path), executes_source=path in executing)
+        if path not in trees:
+            statements, loaded, data = {WILDCARD}, set(), set()
+        else:
+            statements, loaded, data = _imports(
+                path, module_of[node], root, unreadable, nodes,
+                tree=trees[path], executes_source=path in executing)
         for target in statements:
             if target == WILDCARD:
                 importers[WILDCARD].add(node)
@@ -441,16 +444,58 @@ def build_graph(root: Path) -> tuple[dict[str, Path], dict[str, set[str]]]:
     return by_name, importers
 
 
-def _reverse_reachable(seeds, importers, skip=frozenset()):
-    seen, queue = set(seeds), deque(seeds)
+def _reverse_reachable(
+    seeds, importers, skip=frozenset(), *, predecessors=None, skipped_edges=None,
+):
+    seen, queue = set(seeds), deque(sorted(seeds))
     while queue:
         node = queue.popleft()
-        for importer in importers.get(node, ()):
-            if importer in seen or (node, importer) in skip:
+        for importer in sorted(importers.get(node, ())):
+            if (node, importer) in skip:
+                if skipped_edges is not None:
+                    skipped_edges.add((node, importer))
+                continue
+            if importer in seen:
                 continue
             seen.add(importer)
+            if predecessors is not None:
+                predecessors[importer] = node
             queue.append(importer)
     return seen
+
+
+def _uncertainty_evidence(root, seeds, by_name, importers, probes, unreadable):
+    """Resolved-file predecessor witnesses from the same walk that forces full.
+
+    These are static graph witnesses, not proof of runtime call reachability.
+    Collection-probe exclusions are recorded even when no conftest is reached.
+    """
+    paths, skipped = [], []
+    relative = {node: str(path.relative_to(root)) for node, path in by_name.items()}
+    for seed in sorted(seeds):
+        predecessors, excluded = {}, set()
+        reached = _reverse_reachable(
+            {seed}, importers, skip=probes,
+            predecessors=predecessors, skipped_edges=excluded,
+        )
+        for conftest in sorted(reached):
+            if by_name[conftest].name != "conftest.py":
+                continue
+            chain = [conftest]
+            while chain[-1] != seed:
+                chain.append(predecessors[chain[-1]])
+            paths.append({
+                "seed": relative[seed],
+                "seed_kind": "unreadable_source" if relative[seed] in unreadable
+                             else "unresolved_file_loader",
+                "source_failure": unreadable.get(relative[seed]),
+                "conftest": relative[conftest],
+                "path": [relative[node] for node in reversed(chain)],
+            })
+        skipped.extend({"seed": relative[seed], "from": relative[target],
+                        "to": relative[importer]}
+                       for target, importer in sorted(excluded))
+    return paths, skipped
 
 
 def _resolved_commit(ref: str, root: Path) -> str | None:
@@ -695,6 +740,9 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     if missing:
         forced = forced + missing
     verdict = "full" if forced else ("narrowed" if tests else "none")
+    uncertainty_paths, uncertainty_probes = _uncertainty_evidence(
+        root, uncertain, by_name, importers, probes, unreadable,
+    )
     result = {
         "verdict": verdict,
         "changed": len(changed),
@@ -704,6 +752,8 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
         "forces_full": forced,
         "unresolved_file_loaders": sorted(
             str(by_name[name].relative_to(root)) for name in unresolved),
+        "uncertainty_paths": uncertainty_paths,
+        "uncertainty_collection_probes_skipped": uncertainty_probes,
         "unplaced_data_reads": sorted(
             str(by_name[name].relative_to(root)) for name in unplaced),
         # A property of the tree, not of this change: report it whether or not
