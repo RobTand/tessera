@@ -190,14 +190,10 @@ def test_retained_shared_fold_operator_packet(monkeypatch, tmp_path):
 
     Select this node alone for profiling so independent CUDA tests cannot
     contaminate its interleaved arms. Retained SASS inputs are mandatory:
-    this node never rebuilds the qualified baseline.
+    this node reuses the CPU SASS qualification and never rebuilds either arm.
     """
     from test_routed_terminal_cuda import record_loaded_native
 
-    bank = Path(os.environ["TORCH_EXTENSIONS_DIR"])
-    before, after = bank / "sass-comparison/before", bank / "sass-comparison/after"
-    base = bank / "sass-comparison/BASELINE-SOURCE.cu"
-    assert before.is_dir() and after.is_dir() and base.is_file()
     identity_dir = os.environ.get("TERMINAL_NATIVE_IDENTITY_DIR")
     out = Path(identity_dir).parent / "operator-packet" if identity_dir else tmp_path
     for library in rf.LIBRARIES:
@@ -206,9 +202,10 @@ def test_retained_shared_fold_operator_packet(monkeypatch, tmp_path):
     spec = importlib.util.spec_from_file_location("shared_fold_packet", path)
     driver = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(driver)
-    monkeypatch.setattr(sys, "argv", [str(path), "--out", str(out), "--reps", "50",
-                                     "--base-source", str(base), "--sass-before", str(before),
-                                     "--sass-after", str(after)])
+    # Root preflight binds the already-qualified CPU SASS report to these
+    # source/ELF identities. Repeating that comparison inside the GPU window
+    # would leave the device idle without producing new evidence.
+    monkeypatch.setattr(sys, "argv", [str(path), "--out", str(out), "--reps", "50"])
     assert driver.main() == 0
     import json
 
