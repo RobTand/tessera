@@ -126,3 +126,20 @@ def test_a_screen_or_incomplete_numeric_result_cannot_admit_timing(tmp_path, cha
 def test_timing_without_numeric_receipt_refuses():
     with pytest.raises(ValueError):
         pp.require_numeric_receipt(None, None, "b" * 64)
+
+
+def test_cold_script_resolves_protocol_owner_without_checkout_cwd(tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+    import os
+    import subprocess
+    import sys
+    root = PATH.parents[2]
+    env = dict(os.environ, PYTHONPATH=str(root / 'src'), CUDA_VISIBLE_DEVICES='')
+    result = subprocess.run([sys.executable, str(root / 'experiments/t8r_speed/bench_t8r.py'),
+                             '--out', str(tmp_path / 'out'), '--comparison-protocol',
+                             str(tmp_path / 'missing.json')], cwd=tmp_path, env=env,
+                            text=True, capture_output=True)
+    assert result.returncode != 0
+    assert 'FileNotFoundError' in result.stderr, result.stderr
+    assert "No module named 'experiments'" not in result.stderr

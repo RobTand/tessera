@@ -216,3 +216,16 @@ alias. PB `8049cd2c142c94fb7d53e402327d3a1121711022edbfbd106bb99ed2e9d4de72`
 passed the control, zero skips/missing collection. This observable defect is
 fixed in a separate commit; the control used inert telemetry responses and
 establishes no actual coverage or energy claim.
+
+Mode-specific integration passed PB
+`ba11d685b547746fe0d7ea7588cc3ed8eb8939aa222f4c38168de6ebf9e7728f`:
+75 CPU passes, zero skips/missing collection, two xdist workers. The direct PM
+container/canonical namespace control passed PB
+`40d20c6a401c4ff9620bb60dda755c20c220729a6bf1c7b812a891b0687f7070`.
+The final cold-script check reproduced an import-path defect at the real entry:
+PB `98639dd605b454940ee9f12f3c43c065bf93e2448061bf2319c4ef99f2528d49`
+failed because running the script does not add the checkout root to sys.path.
+Using the existing script-local helper import passed PB
+`42c766bd57f1561ea42f5055f16f620b5e9bd2fe06e93fea9f67f3e8912f3771`, one
+CPU pass, zero skips/missing collection. The entry refused the missing protocol
+before device access. Numeric, timing and profiling execution are still held.

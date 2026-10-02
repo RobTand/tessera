@@ -483,7 +483,7 @@ def require_single_replay_options(args, *, stubbed=False):
 def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, native_owner):
     """Finite numeric or ABBA phase using this benchmark's existing owners."""
     from pathlib import Path
-    from experiments.t8r_speed import piece_major_protocol as pp
+    import piece_major_protocol as pp
     from tessera import routed_fused as rf
     import tessera
 
@@ -673,7 +673,7 @@ def main():
     comparison = None
     comparison_sha = None
     if getattr(args, "comparison_protocol", None):
-        from experiments.t8r_speed import piece_major_protocol as pp
+        import piece_major_protocol as pp
         comparison, comparison_sha = pp.load(args.comparison_protocol)
         pp.require_options(args, comparison, stubbed=VLLM_STUBBED)
         if args.comparison_phase != "numeric":
