@@ -17,6 +17,8 @@ The lane is a CUDA kernel JIT-built on first use. These tests run through
 PrismaBuild inside the pinned serving image (``experiments/routed_fused_tests.sh``).
 """
 import sys
+import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -180,3 +182,40 @@ def test_the_folded_forward_captures_and_replays_twice_against_eager(family):
     graph.replay()
     torch.cuda.synchronize()
     assert torch.equal(captured, shared + fused(x, ids, rw))
+
+
+@cuda
+def test_retained_shared_fold_operator_packet(monkeypatch, tmp_path):
+    """Run the existing finite operator driver under the canonical test owner.
+
+    Select this node alone for profiling so independent CUDA tests cannot
+    contaminate its interleaved arms. Retained SASS inputs are mandatory:
+    this node never rebuilds the qualified baseline.
+    """
+    from test_routed_terminal_cuda import record_loaded_native
+
+    bank = Path(os.environ["TORCH_EXTENSIONS_DIR"])
+    before, after = bank / "sass-comparison/before", bank / "sass-comparison/after"
+    base = bank / "sass-comparison/BASELINE-SOURCE.cu"
+    assert before.is_dir() and after.is_dir() and base.is_file()
+    identity_dir = os.environ.get("TERMINAL_NATIVE_IDENTITY_DIR")
+    out = Path(identity_dir).parent / "operator-packet" if identity_dir else tmp_path
+    for library in rf.LIBRARIES:
+        record_loaded_native(rf._ext(library), library)
+    path = Path(__file__).resolve().parents[1] / "experiments/t8r_speed/shared_fold_check.py"
+    spec = importlib.util.spec_from_file_location("shared_fold_packet", path)
+    driver = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(driver)
+    monkeypatch.setattr(sys, "argv", [str(path), "--out", str(out), "--reps", "50",
+                                     "--base-source", str(base), "--sass-before", str(before),
+                                     "--sass-after", str(after)])
+    assert driver.main() == 0
+    import json
+
+    record = json.loads((out / "shared_fold_check.json").read_text())
+    assert "screen_error" not in record
+    assert set(record["screen"]) == set(rf.LIBRARIES)
+    for forms in record["screen"].values():
+        for rows in forms.values():
+            for row in rows:
+                assert Path(row["trace"]).is_file() and row["kernels"]

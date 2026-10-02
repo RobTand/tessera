@@ -21,8 +21,7 @@ add). With ``TESSERA_GLM53_FOLD_SHARED_ADD=1`` one kernel,
    identical instruction sequences; the new kernel is the only one
    added.
 3. **Screen.** ``torch.profiler`` at T 2048: stock (token_sum + add)
-   against the fold, alternating, plus CUDA-event time per iteration. It runs
-   on a non-measurement row, so it is a screen [S].
+   against the fold, alternating, plus CUDA-event time per iteration. It remains a synthetic operator screen [S], without a served result.
 
 Writes ``<out>/shared_fold_check.json``; exits 1 unless every case is bitwise,
 the targeted answers hold, and the SASS check passes.
@@ -225,7 +224,7 @@ def main():
     if "value" in exts:
         try:
             log["screen"] = {lib: screen(exts[lib], args.reps, args.out, lib) for lib in exts}
-            log["screen_label"] = "[S] torch.profiler and CUDA events, non-measurement row"
+            log["screen_label"] = "[S] synthetic operator torch.profiler and CUDA events; no served result"
         except Exception as exc:
             log["screen_error"] = f"{type(exc).__name__}: {exc}"
     log["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
