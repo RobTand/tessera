@@ -1,17 +1,21 @@
 # MLA pass-buffer schedule (T8): QA packet
 
 Experiment-private, default-off. This is a **source-level ownership proof plus a
-CPU compile gate**, not a GPU result. No speed claim is made here.
+proposed CPU compile gate**, not an accepted native result. No speed claim is made here.
 
 ## Provenance
 
 * base: Tessera `82e674041680c3b74fdf381f868c9a16f4f8f576`, kernel
   `1e7d34d2a4d112f7cd4bb76953da158d54236eab2d17aed6bc14129fcb66672d`
-* compile-gate source: `62dc8d0fd676...` (the resource table below was taken at
-  this revision, before the default-0 wrong-pass guard was added)
-* the frozen head adds only the mutant guard, which is `0` by default and so
-  compiles the same text; **the PB compile gate must be re-run on the frozen
-  hash** before the GPU protocol, and the table re-stamped from it.
+* Earlier source `62dc8d0fd676...` was compiled directly in Docker, outside
+  PrismaBuild. **Those artifacts are EXCLUDED FROM QUALIFICATION.** They
+  predate the mutant and subsequent source corrections, have no PB receipt,
+  and cannot establish current register use, SASS identity or correctness.
+  They remain at `/home/rob/tmp/astra-resume-20261002/t8_performance/mla-pass-buffers-p0-local/`
+  as bounded evidence of the policy violation, without being deleted or relabeled.
+* Root transferred implementation to Astra after that disclosure. The corrected
+  build uses the existing shared loader recipe through PB and retains final
+  DSOs for subsequent numerical work; it does not reuse the excluded object files.
 
 ## What changes
 
@@ -20,8 +24,9 @@ selector `TESSERA_MLA_P0_BUFFERS`:
 
 * `0` (default) is the current qualified L0 schedule. The `#else` branch is
   textually byte-identical to the shipped region; only the shared closing brace
-  moved outside the `#if/#else`. A default build compiles the same kernel body.
-* `1` reuses FlashInfer's two W_SUM parities (`sm.w_fp8()`, `2 x 2560 = 5120`
+  moved outside the `#if/#else`. Generated default-code identity still needs
+  the qualified final build; source equality alone is not that measurement.
+* `1` reuses FlashInfer's two WFP8 parities (`sm.w_fp8()`, `2 x 2560 = 5120`
   bytes, `smem_layout.cuh` `SMEM_W_FP8_MG`) as the pass0/pass1 storage of a
   **single** V chunk, so one publication barrier covers both residual passes.
 
@@ -55,8 +60,9 @@ tile's finalization barriers are unchanged.
 
 ## Changed-expression / consumer map
 
-Every changed line is inside the `for (int vc ...)` region. Nothing outside it
-differs: QK, softmax, cross-warp max, normalizer, `KvFree`/`BulkReady`, the
+The changed numerical loop is inside the `for (int vc ...)` region. Selector
+and bound assertions, the builder and experiment wrapper also change. QK,
+softmax, cross-warp max, normalizer, `KvFree`/`BulkReady`, the
 epilogue (`kv_buf(0)` staging), LSE, and the mask/order IO path are untouched.
 
 | expression | L0 | P0 | operand source (identical) |
@@ -69,8 +75,8 @@ epilogue (`kv_buf(0)` staging), LSE, and the mask/order IO path are untouched.
 | `acc_o` fold | `acc_o += xv_acc*vc_scale` | same | same association |
 
 W writers/readers, exhaustively: writers are the two per-wp `for g` store loops;
-readers are `pv_fp8_d2_16x8` only. The IO warps never touch W_SUM (they write
-KV buffers, their mask and `tile_order`, all before `OFF_W_FP8`). `q_rope`
+readers are `pv_fp8_d2_16x8` only. The IO warps never touch WFP8: KV buffers
+precede it; their mask and `tile_order` follow `Layout::TOTAL`. `q_rope`
 aliases `OFF_W_FP8` through `OFF_SCRATCH`, but this instantiation has
 `D_ROPE=0` and Q setup finishes before the loop.
 
@@ -87,21 +93,25 @@ Retirement paths covered: (a) between V chunks, the top-of-loop barrier at
 
 ## CPU compile gate (no GPU)
 
-`experiments/mla_prefill/p0_compile_row.sh`, run inside the pinned 5be image
+`experiments/mla_prefill/p0_compile_row.sh` runs inside the pinned 5be image
 (`localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705...`, nvcc 13.0.88,
 `-use_fast_math -O3 sm_121a`), no `--gpus`.
 
-| | regs | spills | local | BAR.SYNC | SASS instr |
-|---|---|---|---|---|---|
-| L0 (default) `l0` | 168 | 0 | 0 | 30 | 3424 |
-| P0 buffers `l0` | 168 | 0 | 0 | 25 | 3064 |
-| `copy` (both) | 168 | 0 | 0 | 6 | 3048 (byte-identical) |
+The wrapper calls `MlaPrefillBuild` through `p0_build_only.py`, exactly the
+owner used by `MlaPrefillLibrary`. Source, selectors, resolved compiler,
+canonical include roots, flags and build ID have one owner. It builds final
+baseline/candidate/wrong-pass DSOs once, retaining each manifest, build.ninja,
+SASS and resource report. The image root is read-only and include roots must
+remain inside its FlashInfer package; only checkout and output are mounted.
+No raw-nvcc recipe or hardcoded alternate include tree remains.
 
-The copy kernel's SASS is identical across the two builds, and the `#else` body
-is textually identical to the shipped region, so the default path is unchanged.
-P0 drops exactly the 5 barriers the schedule removes and introduces no spill or
-local-memory traffic. This is a codegen result on one source revision, not a
-speed claim.
+Retained reuse verifies current source/selection/flags/compiler/header/image,
+build recipe and DSO length/hash before any native load or build. Explicit
+`require_retained=True` refuses a missing build rather than compiling on the
+GPU worker. Default selection cannot adopt a candidate manifest. The runtime
+SM121 gate remains; the CPU builder never calls a kernel.
+
+Qualified final codegen, numerical and speed results are **pending**.
 
 ## GPU protocol (proposed; NOT authorized here)
 

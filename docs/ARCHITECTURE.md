@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
+The existing MLA loader now shares one build owner with the CPU experiment
+row. It retains the final DSO and verifies source, selector, flags, compiler,
+header, image declaration and artifact identity before reuse. A required
+retained build cannot silently compile; runtime loading still requires SM121.
+The candidate schedule and wrong-pass mutant are explicit private build
+selections, never serving defaults. Their numerical and timing gates remain
+pending; excluded direct-Docker objects are not qualification evidence.
+
 Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
 The existing T8R benchmark can replay one historical real-ID distribution
 against the A8SE wires through PB public pinned readers, binding the same

@@ -6,7 +6,7 @@
 # regression is visible before any GPU request.
 #
 # --container-image on pbrun DECLARES placement only; it does NOT run the
-# command in the image. This wrapper is the thing that actually starts the
+# command in the image. This wrapper actually starts the
 # pinned CUDA container (experiments/runtime_image.sh resolves the digest and
 # passes its declared identity in), the same way experiments/t8r_speed/
 # build_ext.sh does for its libraries.
@@ -32,40 +32,18 @@ echo "host=$(hostname) cpus=$CPUS image=$IMAGE kernel_sha256=$(sha256sum "$SRC" 
      "start=$(date -u +%FT%TZ)"
 # --network=none, no --gpus: a compile gate, never a GPU probe.
 docker run --rm --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
+  --read-only \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e MAX_JOBS=1 \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
+  -e CUDA_VISIBLE_DEVICES= -e PYTHONDONTWRITEBYTECODE=1 -e PYTHONPATH=/work/src \
   -e PYTHONUNBUFFERED=1 "${IMAGE_ENV[@]}" -w "$OUT" --entrypoint bash "$IMAGE" -c '
     set -euo pipefail
-    D=/usr/local/lib/python3.12/dist-packages/flashinfer/data
-    INC=$D/include
-    CCCL=(-I$D/cccl/cub -I$D/cccl/libcudacxx/include -I$D/cccl/thrust)
-    FLAGS=(-std=c++17 --threads 1 -use_fast_math -DTESSERA_MLA_DECLARED_FAST_MATH=1
-      -DFLASHINFER_ENABLE_F16 -DFLASHINFER_ENABLE_BF16 -DFLASHINFER_ENABLE_FP8_E4M3
-      -DFLASHINFER_ENABLE_FP8_E5M2 -DFLASHINFER_ENABLE_FP8_E8M0 -DFLASHINFER_ENABLE_FP4_E2M1
-      -DNDEBUG -O3 -gencode=arch=compute_121a,code=sm_121a
-      -D_GLIBCXX_USE_CXX11_ABI=1 -DPy_LIMITED_API=0x03090000
-      --expt-relaxed-constexpr -static-global-template-stub=false
-      -Xfatbin=-compress-all --compress-mode=size)
-    SRC=/work/src/tessera/serving/csrc/mla_prefill_mg.cu
-    echo "nvcc: $(nvcc --version | tail -2 | head -1)"
-    # name:flags -- 0 L0, 1 pass-buffers, 1m pass-buffers + wrong-pass mutant
-    build() { # name extra-defines...
-      local name=$1; shift
-      echo "== $name : $* =="
-      nvcc "${CCCL[@]}" -isystem "$INC" "${FLAGS[@]}" "$@" \
-        -Xptxas -v -c "$SRC" -o "$name.o" 2> "compile_$name.log"
-      grep -E "error|registers|spill|lmem|smem|Function properties|Compiling entry" "compile_$name.log" || true
-      cuobjdump -sass "$name.o" > "$name.sass" 2>/dev/null
-      cuobjdump -res-usage "$name.o" > "$name.res" 2>&1
-      echo "sass_lines=$(wc -l < $name.sass) obj_sha256=$(sha256sum $name.o | cut -d" " -f1)"
-    }
-    for n in 0 1; do
-      build "p0_$n" -DTESSERA_MLA_P0_BUFFERS=$n
-    done
-    build p0_1m -DTESSERA_MLA_P0_BUFFERS=1 -DTESSERA_MLA_P0_WRONG_PASS=1
-    echo "== L0 (P0_BUFFERS=0) resource usage =="; cat p0_0.res
-    echo "== P0-buffers (P0_BUFFERS=1) resource usage =="; cat p0_1.res
-    echo "== wrong-pass mutant (P0_BUFFERS=1,WRONG_PASS=1) resource usage =="; cat p0_1m.res
+    source /work/experiments/cuda_home_shadow.sh "$HOME"
+    # One admitted process owns these three dependent build selections.
+    # Separate directories retain each final DSO and its actual build.ninja.
+    python3 /work/experiments/mla_prefill/p0_build_only.py --out "$PWD/p0_0"
+    python3 /work/experiments/mla_prefill/p0_build_only.py --out "$PWD/p0_1" --p0-buffers
+    python3 /work/experiments/mla_prefill/p0_build_only.py --out "$PWD/p0_1m" --p0-buffers --p0-wrong-pass
   ' | tee "$OUT/compile.log"
 echo "end=$(date -u +%FT%TZ)"
