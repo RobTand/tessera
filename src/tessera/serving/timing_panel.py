@@ -18,6 +18,7 @@ from pathlib import Path
 from collections.abc import Mapping
 
 from ..container import parse
+from ..errors import TesseraError
 from ..fused_frame import parse_fused
 from . import census_plan, scheme
 from .contract import (PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, cell_runtime_scope,
@@ -145,12 +146,18 @@ def wire_facts(blob, declaration):
         raise ValueError("first slice requires one uniform operator rung")
     if len(blob) != declared["wire_bytes"]:
         raise ValueError("wire length differs from dense scheme")
-    members = parse_fused(blob)
+    try:
+        members = parse_fused(blob)
+    except TesseraError as exc:
+        raise ValueError(f"canonical fused wire refuses: {exc}") from exc
     if [[m.name, m.rows] for m in members] != [list(r) for r in declared["roles"]] or len({m.name for m in members}) != len(members):
         raise ValueError("wire roles differ from dense scheme")
     roles = []
     for member, q in zip(members, declared["role_q256"]):
-        parsed = parse(member.blob)
+        try:
+            parsed = parse(member.blob)
+        except TesseraError as exc:
+            raise ValueError(f"canonical unit wire refuses: {exc}") from exc
         m = parsed.manifest
         actual = (m.geometry.rows, m.geometry.columns, m.branch.root_q256, m.body.name,
                   m.scale_plane.kind.name, m.span)
@@ -161,7 +168,8 @@ def wire_facts(blob, declaration):
         counts = dict(zip((kind.name for kind in m.plane_order), parsed.terminal.plane_elements))
         facts = {"rates": list(m.rates), "window_bits": m.window_bits, "body": m.body.name,
                  "plane": m.scale_plane.kind.name, "release_overrides": counts.get("RELEASE", 0),
-                 "diagonals": bool(counts.get("DIAG_SU", 0) or counts.get("DIAG_SV", 0)),
+                 # CHANNEL's DIAG_SV is its row scale, not a rotation diagonal.
+                 "diagonals": bool(counts.get("DIAG_SU", 0)),
                  "start_state": bool(m.shard and m.shard.has_initial_state),
                  "rotation": m.branch.rotation.name, "grid_arity": 1, "structure": "dense"}
         roles.append({"name": member.name, "rows": member.rows, "facts": facts,
