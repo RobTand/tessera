@@ -1383,6 +1383,40 @@ def _request_of(requests, key):
     return requests / key[:2] / f"{key}.json"
 
 
+@pytest.mark.parametrize("mode", ["python", "deadline", "console"])
+def test_resumed_runtime_metadata_comes_from_the_authenticated_command(tmp_path, mode):
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    surface = receipt_dir / "surface.gpu.json"
+    key = "beef" + "0" * 60
+    python = "/qualified/suite/bin/python3.14"
+    inner = [python, "-m", "pytest", "tests", "--strict-cuda", "--surface-json", str(surface)]
+    if mode == "console":
+        inner = ["/qualified/suite/bin/pytest", *inner[3:]]
+    command = (["/outer/bin/python3", "tools/suite_deadline.py", "--timeout-s", "300", "--", *inner]
+               if mode == "deadline" else inner)
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", surface, [(key, "done", 0, "fixture")], command=command)
+    _gpu_population(surface, producer=_request_of(merge_suite.POOL_CAS_REQUESTS, key))
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["exit_status_observed"] is True
+    assert record["python"] == (None if mode == "console" else python)
+    assert record["pytest_command"] == inner
+
+
+def test_a_resume_without_a_bound_producer_does_not_borrow_a_configured_interpreter(tmp_path):
+    merge_suite = _module()
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    merge_suite.POOL_QUEUE = tmp_path / "empty-pool"
+    merge_suite.POOL_CAS_REQUESTS = tmp_path / "empty-cas"
+    _gpu_population(receipt_dir / "surface.gpu.json")
+    record = merge_suite._resume("gpu", merge_suite.ARMS["gpu"], receipt_dir)
+    assert record["python"] is None
+    assert record.get("pytest_command") is None
+
+
 def test_a_resumed_row_reads_the_exit_status_the_pool_recorded(tmp_path):
     """The run nobody here watched was watched by the worker that ran it.
 

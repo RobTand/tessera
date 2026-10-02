@@ -980,6 +980,13 @@ def _attach_pool_exit_status(record: dict, surface_json: Path,
         record["exit_status_observed"] = True
         record["exit_status_source"] = "pool"
         record["pool_action"] = pool
+        # The authenticated producer's effective command names its runtime;
+        # configured arm defaults describe a prospective submission instead.
+        argv, _ = _pytest_argv(pool.get("command") or [])
+        record["pytest_command"] = argv
+        record["python"] = (argv[0] if argv and len(argv) >= 3
+                            and _PYTHON_NAME.match(Path(argv[0]).name)
+                            and argv[1:3] == ["-m", "pytest"] else None)
         record["exit_status_note"] = (
             "the submitting process did not survive to watch this run, so the "
             "exit status is the one PrismaBuild's worker recorded for action "
@@ -1029,7 +1036,7 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
     record = {
         "arm": name,
         "why": arm["why"],
-        "python": arm["python"],
+        "python": None,
         "requires_cuda": bool(arm["strict_cuda"]),
         "resumed": True,
         "exit_status_observed": False,

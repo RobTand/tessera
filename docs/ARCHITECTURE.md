@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for resumed interpreter attribution (Refs #837).
+Resumed runtime metadata comes from the uniquely authenticated producer's
+effective pytest command, using the existing deadline/container parser. An
+unbound population or a console pytest entry point leaves `python` unknown;
+configured arm defaults do not establish the interpreter a past run used.
+Source, exit, image and serving gates remain unchanged.
+
 Re-stamped 2026-10-02 for the standalone integration-tool boundary
 (Refs #832). The explicit pricing-root owner and the sealed container-runner
 owner live under repository `tools/`, outside the installed `tessera` package.
@@ -2059,6 +2066,12 @@ autoload, fixes the Python entrypoint/workdir and native thread limits, and
 keeps pytest temporary files and compiler caches outside the source tree.
 PB's Docker shim retains responsibility for scope ownership, affinity,
 memory containment and exact-attempt termination.
+
+For a resumed arm, `pytest_command` records the effective command from its
+uniquely authenticated producer. `python` names the explicit interpreter of
+that command's `-m pytest` form, including the container's inner interpreter.
+It is unknown for a console pytest entry point or an unbound population;
+the configured arm default is not observed runtime metadata.
 
 The receipt reader recognizes only the canonical relative runner path and
 its shared finite grammar, never arbitrary Docker tokens or shell fragments.
