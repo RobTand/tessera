@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # One admitted action, one exact historical proxy. No serve and no arm/menu sweep.
 set -euo pipefail
+PROFILE_ONLY=0
+if (( $# )); then
+  [[ $# == 1 && $1 == --profile-only ]] || { echo 'unsupported diagnosis mode' >&2; exit 2; }
+  PROFILE_ONLY=1
+  export BENCH_EXPECT_LIBRARY_SHA256=71490241ee8a2b9112499fe9f9c3f36626e2d624a1dd41a8a4a84844cbea0f2a
+fi
 [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo 'PB admission required' >&2; exit 2; }
 OUT="$PWD/.routed-gate-diagnosis"
 mkdir -p "$OUT" "$OUT/extensions"
@@ -13,14 +19,16 @@ export ORACLE_IMAGE=${ORACLE_IMAGE:?sealed 5be image required}
 EXPECTED=localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a
 [[ "$ORACLE_IMAGE" == "$EXPECTED" ]] || { echo 'wrong image' >&2; exit 2; }
 export TESSERA_FUSED_E4M3_MMA=e4m3
-export BENCH_NCU_KERNELS='routed_fused_kernel<true, 0, false, false, 4, false, 128>'
+export BENCH_NCU_KERNELS='routed_fused_kernel<\(bool\)1,[ ]*\(int\)0,[ ]*\(bool\)0,[ ]*\(bool\)0,[ ]*\(int\)4,[ ]*\(bool\)0,[ ]*\(int\)128>'
 ARGS=(--groups experts.R1024.L10 --ms 2048 --no-graph --warmup 10 --iters 30 --power-s 30
   --artifact /mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported
   --single-routing-file /mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000007.pt
   --input-manifest /work/experiments/configs/routed_gate_826_inputs.json)
 phase_start=$(date +%s.%N)
 rc=0
-bash experiments/t8r_speed/bench_t8r.sh "$PWD" "$OUT/timing" "${ARGS[@]}" >"$OUT/timing.log" 2>&1 || rc=$?
+if [[ "$PROFILE_ONLY" == 0 ]]; then
+  bash experiments/t8r_speed/bench_t8r.sh "$PWD" "$OUT/timing" "${ARGS[@]}" >"$OUT/timing.log" 2>&1 || rc=$?
+fi
 if [[ "$rc" == 0 ]]; then
   BENCH_NCU=1 bash experiments/t8r_speed/bench_t8r.sh "$PWD" "$OUT/profile" "${ARGS[@]}" >"$OUT/profile.log" 2>&1 || rc=$?
 fi
@@ -39,7 +47,7 @@ fi
 python3 - "$OUT" "$rc" <<'PY'
 import base64, hashlib, io, json, pathlib, sys, tarfile
 root = pathlib.Path(sys.argv[1])
-files = [p for p in root.rglob('*') if p.is_file() and p.suffix in {'.json','.log','.txt','.csv','.stderr','.ncu-rep'}]
+files = [p for p in root.rglob('*') if p.is_file() and p.suffix in {'.json','.log','.txt','.csv','.stderr','.ncu-rep','.so'}]
 proof = {'returncode':int(sys.argv[2]), 'files':{str(p.relative_to(root)):
          {'bytes':p.stat().st_size,'sha256':hashlib.sha256(p.read_bytes()).hexdigest()} for p in files}}
 (root/'artifacts.json').write_text(json.dumps(proof,indent=2)+'\n')

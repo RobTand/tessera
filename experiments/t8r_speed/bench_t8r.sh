@@ -46,6 +46,7 @@ EXTRA_MOUNTS=()
 # The strict replay uses PB's public SDK from this sealed published generation,
 # and reads only ranges opened through its leases. Preserve the injected attempt.
 PB_ENV=()
+[[ -z "${BENCH_EXPECT_LIBRARY_SHA256:-}" ]] || IMAGE_ENV+=(-e "BENCH_EXPECT_LIBRARY_SHA256=$BENCH_EXPECT_LIBRARY_SHA256")
 if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   for key in PRISMABUILD_ACTION_KEY PRISMABUILD_ACTION_NONCE PRISMABUILD_ACTION_SCOPE PRISMABUILD_QUEUE_ROOT PRISMABUILD_RESIDENCY_MAP PRISMABUILD_READER_HELPER_ROOT; do
     [[ -n "${!key:-}" ]] || { echo "missing strict staged context: $key" >&2; exit 2; }

@@ -166,3 +166,32 @@ failure and one pass: fresh empty extension directory fails, while an existing
 library is listed. The existing listing owner now accepts an empty directory
 and reports each actual library's mtime/name with `stat`. Libraries still share
 the same existing extension directory; no second build/cache or kernel change.
+
+
+### Valid timing/power population; missing Nsight instrument retained separately
+
+Actual action `2726dec9d916` on Sparklina ended overall failed (157.32 seconds),
+because Nsight matched zero kernels and produced no `.ncu-rep` for import.
+Both benchmark children returned 0; this is not restamped as an overall pass.
+Retained raw 30 CUDA-event samples reconcile exactly to the corrected median
+13.6124482155 ms for the whole historical proxy forward. Torch profiling records
+one mode0/RL4/one-run/BMT128 kernel/call, 8044.488 us, and total device time
+13556.474 us/call. Power records 2208 forwards over 30.1894800663 seconds with
+301 samples, mean 87.0969335548 W. Energy remains HOLD pending actual Netdata
+coverage/instrument agreement. This establishes no VB1770 speed or quality.
+
+The executed snapshot was `a4a3e192ca244839d79a3fd94464f2ce888d6d47`, parent
+`2535bd3ce96be664c412fba9a2d0f2babeb0e7c4`; native CUDA source SHA
+`3a32d040668cc1fe5678c2088deb5afa8cd6f227a7920dfbd899c90863c03254`,
+native library SHA `71490241ee8a2b9112499fe9f9c3f36626e2d624a1dd41a8a4a84844cbea0f2a`,
+image5be, TP2/rank0, all same-owner staged wire proofs retained. Nsight's actual
+Available Kernels spells typed template arguments `(bool)1, (int)0, ...`,
+whereas the filter used Torch's `true, 0, ...` spelling. The positive actual-name
+control failed, five other-specialization negatives passed (`456e54f7af6e`).
+The correction matches exactly the typed mode0/RL4/BMT128 specialization and
+recovers only the missing profile with `--profile-only`; timing and power loops
+are skipped. The recovery requires native library SHA equality with the measured
+binary before any profiler start. PB removed the failed materialized checkout;
+if no exact existing binary remains, only the existing owner may rebuild and
+hash equality is mandatory. The output archive now retains native `.so` bytes
+alongside their identity so future recovery does not lose that artifact.

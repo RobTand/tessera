@@ -577,6 +577,9 @@ def main():
                             lib = rf._ext("e4m3mma")
                             meta["single_replay"]["library_path"] = lib.__file__
                             meta["single_replay"]["library_sha256"] = hashlib.sha256(open(lib.__file__, "rb").read()).hexdigest()
+                            expected_library = os.environ.get("BENCH_EXPECT_LIBRARY_SHA256")
+                            if expected_library and meta["single_replay"]["library_sha256"] != expected_library:
+                                raise ValueError("profile recovery native binary differs from measured library")
                             meta["single_replay"]["build_platform"] = token
                         else:
                             xa = (x, *recorded_routing(rfile, m, dev))
