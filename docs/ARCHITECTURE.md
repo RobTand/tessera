@@ -16,6 +16,11 @@ random-mask performance and energy remain unqualified. See
 `experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
 are not qualification evidence.
 
+Re-stamped 2026-10-02 for recovery of the default-off shared-add fold
+(tessera#799, §5.1.5) from PR #800 and its fail-closed stock-interface follow-up
+#852. Its new terminal sum is a separate kernel; existing routed kernel bodies
+remain untouched. Native GPU/SASS and served qualification remain pending.
+
 Re-stamped 2026-10-02 for recovery of the default-off empty-RoPE override
 (tessera#796, §5.1.4) from PR #797 and its fail-closed stock-interface follow-up
 #851 onto current master. CPU guards do not establish GPU or served qualification.
@@ -7432,6 +7437,47 @@ The rebind installs only on a stock source whose sha256 is in the inspected
 set (image `5be13705`); any other source keeps the stock method. Each process
 logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
 whether the first tuple query skipped the cat.
+
+The flag is off by default. No route, contract or artifact changes.
+
+### 5.1.5 Opt-in: fold the MoE shared-expert add into the token sum (tessera#799)
+
+Each stock MoE layer ends with `result = shared_output + fused_output`
+(`MoERunner.forward`), a bf16 `[T, H]` add. On a 2048-token GLM-5.3 prefill
+chunk at TP 2 the historical A8SESHMN trace cited in #799 measured
+42 adds of about 195 us. A saving from this override remains unmeasured
+on the recovered current-master source. The fused routed window's last
+kernel, `token_sum`, already stores the routed output, so it can add the shared
+output as it stores.
+
+With `TESSERA_GLM53_FOLD_SHARED_ADD=1`, `TesseraConfig.get_quant_method`
+installs `serving.glm53_shared_fold`:
+
+- `token_sum_shared` (`routed_fused_window.cu`) stores
+  `bf16(f32(shared) + f32(bf16(sum_j f32(routed_j))))`. That is the stock
+  path's two roundings in the same order, with the same `cvt.rn.bf16.f32`
+  instruction ATen's bf16 store uses. GPU bitwise equality, unchanged
+  existing-kernel SASS and served TR3 equality remain required qualification.
+  `token_sum` and every other kernel are unchanged.
+  `FusedRoutedWindowMoE.__call__` takes a keyword-only `shared=`.
+- The routed method's `_apply_native` calls the adapter through
+  `native_call`. It passes `shared=` only when the shared experts ran on the
+  current stream before the routed call (`NO_OVERLAP`), the routed input is
+  unpadded, and the shared output is a contiguous, 16-byte-aligned bf16
+  `[T, H]` tensor. It records the fold.
+- The rebound `MoERunner._maybe_apply_routed_scale_to_output`, called once just
+  before the add, consumes the record and returns `(None, fused)`, so the
+  runner takes its no-shared branch. A record that does not match the tensors
+  the runner holds raises rather than add the shared output twice.
+
+The install declines unless both stock sources (`runner/moe_runner.py`,
+`runner/shared_experts.py`) have an inspected sha256 (image `5be13705`) and
+the serve runs compilation mode `NONE`. Each runner is checked on its first
+forward and keeps the stock add on a routed scale other than 1.0, a reducing
+routed kernel, a routed transform, unpadded output, naive dispatch/combine,
+prefill context parallelism or dual-batch overlap. Each process logs one
+install line (`installed`, `declined` with the reason, or `off`), plus one line
+for the first folded call and one for the first kept call.
 
 The flag is off by default. No route, contract or artifact changes.
 
