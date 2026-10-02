@@ -14,6 +14,7 @@
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
 #   TEST_RO_MOUNTS    host directories mounted read-only at the same path
 #   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
+#   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
@@ -25,6 +26,15 @@ while IFS= read -r line; do
   [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")
 done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 EXT=${BENCH_EXT_DIR:-$OUT/torch-ext}
+CONTAINER_SRC=${NATIVE_CONTAINER_SRC:-/work/src}
+CONTAINER_EXT=${NATIVE_CONTAINER_EXT:-$EXT}
+[[ "$CONTAINER_SRC" == /* && "$CONTAINER_EXT" == /* ]] || { echo "native test paths must be absolute" >&2; exit 2; }
+SOURCE_PLUGIN=()
+if [[ "$CONTAINER_SRC" != /work/src ]]; then
+  # Bind the package before legacy test helpers prepend /work/src. All child
+  # imports retain this package's source path, including in xdist workers.
+  SOURCE_PLUGIN=(-p native_test_source)
+fi
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton" "$EXT" "$OUT/runner-sp"
 # py.py is the one-file shim _pytest/compat.py imports (the retired ``py``
 # library's name); a runner copy without it fails at import.
@@ -50,11 +60,12 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF"
 # mounted read-only at the same path.  TEST_LOCAL_TMP=1 puts TMPDIR and pytest's
 # basetemp on a container tmpfs: flock on an NFS out directory fails with EBADF.
 EXTRA=()
-if [[ -n "${BENCH_SRC:-}" ]]; then
-  [[ -f "$BENCH_SRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "BENCH_SRC is not a tessera src tree" >&2; exit 2; }
-  EXTRA+=(-v "$BENCH_SRC":/work/src:ro)
+if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
+  SOURCE_HOST=${BENCH_SRC:-$CHECKOUT/src}
+  [[ -f "$SOURCE_HOST/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "not a tessera src tree: $SOURCE_HOST" >&2; exit 2; }
+  EXTRA+=(-v "$SOURCE_HOST":"$CONTAINER_SRC":ro)
 fi
-if [[ -n "${BENCH_EXT_DIR:-}" ]]; then EXTRA+=(-v "$EXT":"$EXT"); fi
+if [[ -n "${BENCH_EXT_DIR:-}" || "$CONTAINER_EXT" != "$EXT" ]]; then EXTRA+=(-v "$EXT":"$CONTAINER_EXT"); fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
@@ -62,8 +73,9 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
   -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
-  -e TORCH_EXTENSIONS_DIR="$EXT" -e PYTHONDONTWRITEBYTECODE=1 \
-  -e PYTHONPATH=/work/src:/work/tests:/work/experiments:"$OUT/runner-sp" \
+  -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" -e PYTHONDONTWRITEBYTECODE=1 \
+  -e NATIVE_CONTAINER_SRC="$CONTAINER_SRC" \
+  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp" \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
@@ -71,5 +83,5 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint python3 -w /work "$IMAGE_REF" \
-  -m pytest -p no:cacheprovider "${XDIST[@]}" -q -rA --junitxml="$OUT/junit.xml" \
+  -m pytest -p no:cacheprovider "${SOURCE_PLUGIN[@]}" "${XDIST[@]}" -q -rA --junitxml="$OUT/junit.xml" \
   -o "cache_dir=$OUT/tmp/pytest-cache" --basetemp="$BT" "$@"

@@ -10,6 +10,9 @@
 # BUILD_TOKEN: the platform token to compile for (default sm_121, GB10); the
 # build is a compile gate here (TESSERA_PLATFORM_TOKEN) and a serving library on
 # the device that token names.
+# NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT select the consumer's in-container
+# paths; defaults remain /work/src and the absolute host extension directory.
+# NATIVE_BUILD_WORK_DIR isolates temporary build state for independent libraries.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); EXT=$(realpath -m "$2"); shift 2
 LIBS=("$@"); (( ${#LIBS[@]} )) || LIBS=(value e4m3 e4m3mma)
@@ -20,24 +23,26 @@ IMAGE_ENV=()
 while IFS= read -r line; do
   [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")
 done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
+CONTAINER_SRC=${NATIVE_CONTAINER_SRC:-/work/src}
+CONTAINER_EXT=${NATIVE_CONTAINER_EXT:-$EXT}
+BUILD_WORK=${NATIVE_BUILD_WORK_DIR:-$EXT.work}
+[[ "$CONTAINER_SRC" == /* && "$CONTAINER_EXT" == /* && "$BUILD_WORK" == /* ]] || { echo "native build paths must be absolute" >&2; exit 2; }
+KSRC=${BENCH_SRC:-$CHECKOUT/src}
+[[ -f "$KSRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "not a tessera src tree: $KSRC" >&2; exit 2; }
 SRC_MOUNT=()
-if [[ -n "${BENCH_SRC:-}" ]]; then
-  [[ -f "$BENCH_SRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "BENCH_SRC is not a tessera src tree: $BENCH_SRC" >&2; exit 2; }
-  SRC_MOUNT=(-v "$BENCH_SRC":/work/src:ro)
-  KSRC="$BENCH_SRC"
-else
-  KSRC="$CHECKOUT/src"
+if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
+  SRC_MOUNT=(-v "$KSRC":"$CONTAINER_SRC":ro)
 fi
-mkdir -p "$EXT" "$EXT.work/home" "$EXT.work/tmp"
+mkdir -p "$EXT" "$BUILD_WORK/home" "$BUILD_WORK/tmp"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 NCPU=$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')
 echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT start=$(date -u +%FT%TZ)"
 echo "arm src=$KSRC kernel_sha=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)"
 docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
-  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$EXT" -v "$EXT.work":"$EXT.work" \
-  -e HOME="$EXT.work/home" -e TMPDIR="$EXT.work/tmp" -e TORCH_EXTENSIONS_DIR="$EXT" \
+  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$CONTAINER_EXT" -v "$BUILD_WORK":"$BUILD_WORK" \
+  -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
-  -e PYTHONPATH=/work/src -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, os, sys, time
 from pathlib import Path
