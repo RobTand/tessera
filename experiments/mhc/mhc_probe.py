@@ -1101,7 +1101,7 @@ def kda_raw_netdata(label: str, host: str, t0: float, t1: float) -> dict:
     return out
 
 
-def kda_commit(out: dict, path: Path, units: int):
+def kda_commit(out: dict, path: Path, units: int, phase: str = "measure"):
     """Publish each complete measured cell before advancing its progress counter."""
     temporary = path.with_name(path.name + f".{os.getpid()}.tmp")
     with temporary.open("w") as f:
@@ -1109,9 +1109,14 @@ def kda_commit(out: dict, path: Path, units: int):
         f.flush()
         os.fsync(f.fileno())
     os.replace(temporary, path)
+    directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
     helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
     if helper:
-        runpy.run_path(helper)["commit"](units, "measure")
+        runpy.run_path(helper)["commit"](units, phase)
 
 
 def part_kdafwd(args, sampler) -> dict:
@@ -1338,9 +1343,10 @@ def main() -> int:
             res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
         except Exception as exc:  # noqa: BLE001
             res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
-    (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
-    if "kdafwd" in res and os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER"):
-        runpy.run_path(os.environ["PRISMABUILD_ACTION_PROGRESS_HELPER"])["commit"](len(res["kdafwd"]["cells"]), "publish")
+    if "kdafwd" in res:
+        kda_commit(res, out_dir / name, len(res["kdafwd"]["cells"]), "publish")
+    else:
+        (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     log("done", out_dir / name)
     if failures:
         log("kdaptx gate FAILED", "; ".join(failures))
