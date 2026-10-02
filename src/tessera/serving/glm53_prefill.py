@@ -114,6 +114,14 @@ or whose final reduction is already skipped, a zero-expert MoE) also declines:
 each layer is checked, before anything on it changes, on its first forward in
 vLLM's profile run, which never takes SP; a layer that fails runs the stock
 forward and no later pass takes SP.
+
+The ordinary SP collective route must also have an available, active TP2
+PyNccl writer. Missing/disabled/suspended or unknown writers, custom SP and
+symmetric-memory SP are outside this inspected qualification. Both ranks
+agree through the existing TP CPU group before eager activation and each
+SP collective boundary; an unavailable writer refuses before enqueue.
+Graph capture retains stock all-reduces and enters no SP control exchange.
+The additional CPU control exchanges have unmeasured runtime overhead.
 """
 from __future__ import annotations
 
