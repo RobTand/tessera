@@ -270,3 +270,28 @@ def test_frame_rejects_wrong_or_extra_member_before_delivery(fault):
     from tessera.errors import GrammarError
     with pytest.raises((ValueError,GrammarError)):
         frame_checker()(raw,role)
+
+
+def real_roster():
+    return [{'expert':e,'role':r,'tensor':
+             f'model.language_model.layers.10.mlp.experts.{e}.{r}.weight'}
+            for e in range(288) for r in ('gate_proj','up_proj','down_proj')]
+
+
+def test_actual_publisher_projection_names_bind_complete_l10_roster():
+    cls = reader_class()
+    reader = cls.__new__(cls)
+    reader.bind_roles('/unused',real_roster())
+    assert len(reader.roles) == 864
+    assert 'model.language_model.layers.10.mlp.experts.0.gate_proj.wire' in reader.roles
+
+
+@pytest.mark.parametrize('fault',['missing','duplicate','foreign'])
+def test_incomplete_or_foreign_roster_refuses(fault):
+    roles=real_roster()
+    if fault=='missing': roles.pop()
+    elif fault=='duplicate': roles[-1]=roles[0]
+    else: roles[-1]['tensor']='foreign.287.down_proj.weight'
+    cls=reader_class(); reader=cls.__new__(cls)
+    with pytest.raises(ValueError,match='roster'):
+        reader.bind_roles('/unused',roles)
