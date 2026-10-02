@@ -1978,6 +1978,10 @@ sources. A receipt assembly verifies each distinct bundle once; this is
 ephemeral verification state, not a second source-identity cache. A modified
 runner, option/environment/mount shadow, worker/reservation mismatch, unknown
 producer, unverified source or different effective source remains non-green.
+Resume reads only the action keys the population's verified producer stamps
+name. It does not scan unrelated fleet history; several named producers or
+conflicting terminal records remain ambiguous, and an unstamped population
+cannot acquire an exit from another action.
 The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then

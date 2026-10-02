@@ -848,15 +848,30 @@ def _pool_actions_that_wrote(surface_json: Path,
     """
 
     wanted = str(Path(surface_json))
+    stamps = ((published.payload.get("source_identity") or {}).get("excluded_metadata") or []) if published else []
+    keys = {entry.get("action_key") for entry in stamps if isinstance(entry, dict)
+            and isinstance(entry.get("action_key"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", entry["action_key"])}
+    if not keys:
+        return [], ["the population names no sealed action as its producer "
+                    "(no source_identity.excluded_metadata action_key)"]
     found: list[dict] = []
     refused: list[str] = []
     verified_bundles: dict = {}
+    terminal_keys: set[str] = set()
     for state in ("done", "failed"):
         folder = POOL_QUEUE / state
         if not folder.is_dir():
             continue
-        for outcome_path in sorted(folder.glob("*.json")):
-            key = outcome_path.stem
+        # The population names its producer(s). Unrelated history cannot
+        # supply an exit; reading it made a real resume exceed its 300-second
+        # PB budget. Multiple producers and duplicate terminal states still
+        # go through every binding check and remain ambiguous.
+        for key in sorted(keys):
+            outcome_path = folder / f"{key}.json"
+            if not outcome_path.is_file():
+                continue
+            terminal_keys.add(key)
             request = POOL_CAS_REQUESTS / key[:2] / f"{key}.json"
             try:
                 request_bytes = request.read_bytes()
@@ -902,6 +917,8 @@ def _pool_actions_that_wrote(surface_json: Path,
                 # chose the mode is gone.
                 "command": command,
             })
+    for key in sorted(keys - terminal_keys):
+        refused.append(f"{key[:12]}: no terminal done/failed record for the named producer")
     return found, refused
 
 
@@ -954,8 +971,8 @@ def _attach_pool_exit_status(record: dict, surface_json: Path,
     if refused:
         record["pool_actions_refused"] = refused
         record["exit_status_note"] += (
-            " A finished pool action named this population's path and was not "
-            "bound to it: " + "; ".join(refused) + ".")
+            " The named producer did not establish a bound terminal status: "
+            + "; ".join(refused) + ".")
     if len(matches) == 1 and isinstance(matches[0].get("returncode"), int):
         pool = matches[0]
         record["returncode"] = pool["returncode"]
