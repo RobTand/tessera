@@ -26,9 +26,35 @@ def main() -> int:
         module = Path((out / f"{name}-module-path.txt").read_text().strip())
         result[f"{name}_module"] = {"path": str(module),
                                      "sha256": hashlib.sha256(module.read_bytes()).hexdigest()}
+    # Admission of a composed evidence packet does not rewrite the v1 ending.
+    # Device text is checked above; the current helper rechecks the raw control
+    # and current source/module/SASS identities. All old output/state witnesses
+    # remain actual recorded observations.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "mhc"))
+    import mhc_probe as probe
+
+    bank_path, control_path = map(Path, sys.argv[2:4])
+    bank_record = json.loads(bank_path.read_text())
+    control_record = json.loads(control_path.read_text())
+    bank = bank_record["kdaptx"]
+    stock = bank["source_bindings"]
+    stock_binding_ok = (hashlib.sha256(Path(stock["stock_conv_file"]).read_bytes()).hexdigest()
+                        == stock["stock_conv_sha256"])
+    composed = dict(bank, gate_contract=probe.KDA_GATE_CONTRACT,
+                    ex2_equivalence=control_record["kdaex2"])
+    errors = probe.kdaptx_gate_errors(composed)
+    if not result["all_banked_conv_text_equal"] or not stock_binding_ok:
+        errors.append("banked convolution device text or installed stock source differs")
+    result.update({"gate_contract": probe.KDA_GATE_CONTRACT, "gate_passed": not errors, "errors": errors,
+                   "stock_binding_ok": stock_binding_ok, "numerical_bank": {
+                       "path": str(bank_path), "sha256": hashlib.sha256(bank_path.read_bytes()).hexdigest(),
+                       "action_key": bank_record["meta"]["pb_action"], "cases": len(bank["cases"])},
+                   "intermediate_control": {"path": str(control_path),
+                       "sha256": hashlib.sha256(control_path.read_bytes()).hexdigest(),
+                       "action_key": control_record["meta"]["pb_action"]}})
     (out / "kernel_identity.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, sort_keys=True))
-    return 0 if result["all_banked_conv_text_equal"] else 1
+    return 0 if result["gate_passed"] else 1
 
 
 if __name__ == "__main__":
