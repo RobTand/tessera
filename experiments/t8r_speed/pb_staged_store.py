@@ -130,7 +130,7 @@ class StagedInputs:
         self.roles = {r['tensor'].removesuffix('.weight')+'.wire':r for r in roles}
         roster = {(r['expert'],r['role']) for r in roles}
         if (len(roles)!=864 or len(self.roles)!=864 or
-            roster != {(e,r) for e in range(288) for r in ('gate','up','down')} or
+            roster != {(e,r) for e in range(288) for r in ('gate_proj','up_proj','down_proj')} or
             any(not n.startswith('model.language_model.layers.10.mlp.experts.') for n in self.roles)):
             raise ValueError('single replay requires exactly the L10 expert-role roster')
 

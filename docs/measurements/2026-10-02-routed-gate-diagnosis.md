@@ -79,3 +79,16 @@ one role/rows member and its independently pinned cached-inner SHA, and compares
 both hashes and lengths only after all 864 members qualify. Metadata and routing
 hashes stay mandatory; final GPU input hashes cover the outer frames. No origin
 fallback, decoder, serving/default/pin change or timing claim is introduced.
+
+
+The corrected real-schema control against the old reader produced the causal
+`KeyError: consumer_action_key` (1 failed, zero skips, action `3431f3b59811`);
+current repair then passed 38 CPU tests, zero skips/uncollected, five compile
+and two shell syntax checks (`69ba95cdd098`, result
+`36f8b67446ff7d02b476bfa1301397c892108dbf45025128250a25c34586effd`,
+463 bytes). Inspection of pinned publisher metadata found its actual projection
+names are `gate_proj`, `up_proj`, `down_proj`; an actual-name roster control
+failed (1 failed, zero skips, `3fe5d4d9b8da`) before correcting the bounded
+roster check. This changes only the experimental reader; production bytes,
+kernels and serving remain unchanged. The expanded family gate and actual
+public lease sealer follow, not inferred from those earlier unit controls.
