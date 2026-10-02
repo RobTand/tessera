@@ -855,6 +855,15 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             if fam != "e4m3":
                 return (f"{name} is piece_major; the lane reads piece-major only for the "
                         f"E4M3 family, not {fam!r}")
+            # The piece-major reader is instantiated only in the MMA E4M3
+            # library.  An explicit TESSERA_FUSED_E4M3_MMA=f16 selects the
+            # f16-byte reader, which reads legacy words only: refuse here, before
+            # the device query or any smem/extension build below.
+            lib = library_for(fam)
+            if not library_mma8(lib):
+                return (f"{name} is piece_major, which the lane reads only on the MMA E4M3 "
+                        f"reader ({ENV_E4M3_MMA}={os.environ.get(ENV_E4M3_MMA, E4M3_MMA_DEFAULT)!r} "
+                        f"selects {lib!r})")
             if not has_one_rate_four_run(b, e):
                 return (f"{name} is piece_major, which the lane reads only for a single run at "
                         f"rate 4; its run table is not one rate-4 run over {b.cols} columns")

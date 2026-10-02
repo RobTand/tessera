@@ -130,6 +130,28 @@ def _piece_major_requested() -> bool:
     return os.environ.get(ENV_PIECE_MAJOR, "0").strip().lower() not in ("", "0", "false", "no")
 
 
+def _piece_major_admissible(family: str) -> bool:
+    """The full intake gate for the piece-major resident layout (tessera#739).
+
+    All four must hold, and each is checked before the transient is re-laid:
+
+    * the flag is on (opt-in, default off);
+    * the family is E4M3 -- a BF16 (value) unit stays legacy;
+    * the fused routed window lane is enabled;
+    * the E4M3 library this process builds is the MMA one, since the
+      piece-major reader is instantiated only there.  ``library_for`` reads
+      ``TESSERA_FUSED_E4M3_MMA``: an explicit ``f16`` keeps every body legacy.
+    """
+    if not _piece_major_requested():
+        return False
+    if family != "e4m3":
+        return False
+    from ..routed_fused import fused_routed_window_enabled, library_for, library_mma8
+    if not fused_routed_window_enabled():
+        return False
+    return library_mma8(library_for(family))
+
+
 __all__ = [
     "ACTIVATION_CONTRACT",
     "GEMM_SYMBOL",
@@ -611,12 +633,11 @@ class _RankLocalPackedIntake:
             # knows it or refuses (tessera#739).
             from ..kernel_window_gemv import (WORD_LAYOUT_PIECE_MAJOR,
                                               piece_major_eligible)
-            # Bounded to the E4M3 (fp8) routed family: A8SE also carries BF16
-            # layer45 units, whose (value) reader stays legacy.  Never tag by
-            # rate alone.
-            if (_piece_major_requested()
-                    and family == "e4m3"
-                    and piece_major_eligible(unit.rep)):
+            # Bounded to the E4M3 MMA one-run rate-4 routed body: A8SE also
+            # carries BF16 layer45 units, whose (value) reader stays legacy, and
+            # an explicit TESSERA_FUSED_E4M3_MMA=f16 keeps every body legacy.
+            # Never tag by rate alone.
+            if _piece_major_admissible(family) and piece_major_eligible(unit.rep):
                 unit = replace(unit, rep=unit.rep.with_word_layout(WORD_LAYOUT_PIECE_MAJOR))
             # The axis allocates each plane stack once and drops this unit as
             # soon as its expert slot is filled; a repeated callback refuses.
