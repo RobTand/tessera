@@ -231,3 +231,16 @@ def test_uninspectable_stock_declines_without_rebinding(empty_rope,monkeypatch,f
     before=getattr(empty_rope.impl,'forward_mqa',None)
     assert mod.install_for_current_config() is False
     assert getattr(empty_rope.impl,'forward_mqa',None) is before
+
+
+@pytest.mark.parametrize('exception',[OSError,ValueError,TypeError])
+def test_unavailable_stock_class_declines_without_rebinding(empty_rope,monkeypatch,exception):
+    mod=empty_rope.mod;monkeypatch.setenv(mod.FLAG,'1')
+    stock=sys.modules[STOCK]
+    class UnavailableClassModule(types.ModuleType):
+        def __getattribute__(self,name):
+            if name=='FlashInferMLASparseSM120Impl':raise exception('stock class unavailable')
+            return super().__getattribute__(name)
+    broken=UnavailableClassModule(stock.__name__);broken.__file__=stock.__file__
+    monkeypatch.setitem(sys.modules,STOCK,broken)
+    assert mod.install_for_current_config() is False
