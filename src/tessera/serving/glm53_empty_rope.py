@@ -36,7 +36,7 @@ from typing import Any
 import torch
 
 from .flags import latched_bool
-from .stock_interface import source_digest as _source_digest, signature_parameters
+from .stock_interface import source_digest as _source_digest, signature_parameters, stock_attribute
 
 __all__ = ["FLAG", "install_for_current_config", "query_without_empty_rope", "skip_reason"]
 
@@ -161,12 +161,12 @@ def install_for_current_config() -> bool:
     with _LOCK:
         try:
             module = importlib.import_module(_MODULE)
-        except ImportError as exc:
+        except Exception as exc:
             reason = f"{_MODULE} is not importable ({exc})"
             module = None
         else:
             impl = getattr(module, _CLASS, None)
-            if impl is not None and getattr(impl.forward_mqa, _MARK, False):
+            if impl is not None and stock_attribute(stock_attribute(impl,"forward_mqa"),_MARK,False):
                 return True
             reason = _decline_reason(module)
         if reason is not None:
