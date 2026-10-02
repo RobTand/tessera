@@ -300,5 +300,5 @@ class NativeCallback:
         finally:
             self.rf.build_library=self.original
             os.close(self.fd);self.closed=True
-            if sys.modules.get(self.MODULE) is self.module:
+            if self.module is not None and sys.modules.get(self.MODULE) is self.module:
                 del sys.modules[self.MODULE]

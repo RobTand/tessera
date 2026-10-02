@@ -589,6 +589,8 @@ def main():
                             token = platform_token(torch=torch)
                             meta["single_replay"]["compile_flags"] = rf._cflags(token, True, True)
                             lib = rf._ext("e4m3mma")
+                            if native_owner:
+                                native_owner.bind(lib)
                             meta["single_replay"]["library_path"] = lib.__file__
                             meta["single_replay"]["library_sha256"] = hashlib.sha256(open(lib.__file__, "rb").read()).hexdigest()
                             expected_library = os.environ.get("BENCH_EXPECT_LIBRARY_SHA256")

@@ -230,3 +230,12 @@ power43.45W/raw DB summary47.75W disagree with fast87.10W. Energy/work-J remain
 HOLD. The shared-owner metadata correction will be against the accepted newer
 helper, preserving numeric values and original raw evidence, not an invented
 node-selector fix or a new power population.
+
+
+The callback guard CPU population `3a072e0b810c` exposed one cleanup error
+(1 failed,15 passed,0 skips/uncollected): refusing an unrelated library before
+any module loaded compared absent sys.modules value None with owner.module
+None, then attempted to delete a nonexistent entry. The separate repair only
+removes an actually loaded owned module and still restores callback/closes FD.
+The benchmark also binds the actual `_ext("e4m3mma")` result to that callback's
+loaded object before its profile. The following gate qualifies these repairs.
