@@ -90,10 +90,11 @@ def parsed_unit(role: str, group: str, rank: int, device="cpu") -> A4Unit:
     return A4Unit.from_prepared(prepare_span2_planes(local[1], device="cuda"))
 
 
-def check_compact_equals_parsed(rank: int, group: str):
+def check_compact_equals_parsed(rank: int, group: str, *, loaded_units=None):
     results = {}
     for role in ROLES[group]:
-        compact = compact_unit(role, group, rank)
+        compact = (loaded_units[role] if loaded_units is not None
+                   else compact_unit(role, group, rank))
         parsed = parsed_unit(role, group, rank)
         assert (compact.rows, compact.cols) == (parsed.rows, parsed.cols)
         for field in ("select", "label", "point", "nibbles", "label_lut",
@@ -140,18 +141,58 @@ def check_compact_cut_refusal():
 
 
 def check_route_imports():
-    """The two routes and the adapter import and carry their native hooks."""
+    """Bind the real native routes and compact reader to actual rank inputs."""
     import importlib
+    from unittest.mock import patch
 
     route = importlib.import_module("tessera.serving.nvfp4_route")
     moe = importlib.import_module("tessera.serving.nvfp4_moe_route")
     adapter = importlib.import_module("tessera.serving.native_a4")
-    for module, name in ((route, "a4_span2_gemm"), (moe, "a4_grouped_apply"),
-                         (adapter, "prepare_a4_unit")):
-        source = Path(module.__file__).read_text()
-        assert name in source, f"{module.__name__} lost its native hook {name}"
-    assert "parse_compact_expert" in Path(moe.__file__).read_text()
-    return {"routes": ["nvfp4_route", "nvfp4_moe_route", "native_a4"]}
+    scheme = importlib.import_module("tessera.serving.scheme")
+    assert route.a4_span2_gemm is a4_span2_gemm
+    assert adapter.prepare_a4_unit is prepare_a4_unit
+    assert callable(moe.build_tessera_nvfp4_moe_method)
+    reader = scheme.parse_compact_tessera_expert_blob
+    calls = []
+
+    def observed(blob, declaration, target, **kwargs):
+        # Observe and return the REAL validator's result; never synthesize a
+        # parser, member or prepared unit for the serving gate.
+        members = reader(blob, declaration, target, **kwargs)
+        calls.append((declaration, target, [name for name, _ in members],
+                      torch.device(kwargs["device"])))
+        return members
+
+    bindings = []
+    with patch.object(scheme, "parse_compact_tessera_expert_blob", side_effect=observed):
+        for rank in range(TP):
+            intake = moe._ExpertIntake(declared(), PREFIX, rank, TP)
+            for group, roles in ROLES.items():
+                for index, role in enumerate(roles):
+                    before = len(calls)
+                    ready = intake.take(group, index, 0,
+                        (DATA / f"{role}_wire.bin").read_bytes(), torch.device("cuda"))
+                    assert len(calls) == before + 1, "intake bypassed the canonical compact reader"
+                    declaration, target, names, device = calls[-1]
+                    assert declaration is intake.roles[group][index]
+                    assert names == [role]
+                    assert target == f"{PREFIX} {group} expert 0"
+                    assert device.type == "cuda"
+                    bindings.append({"rank": rank, "group": group, "role": role})
+                    if group == "w13" and index == 0:
+                        assert ready is None, "a half expert was exposed before its mate"
+                    else:
+                        units, global_scale = ready
+                        assert [name for name, _ in units] == list(roles)
+                        assert all(unit.global_scale == global_scale for _, unit in units)
+                        if group == "w2":
+                            # The actual production intake's returned unit must
+                            # satisfy the existing planes/kernel/parsed oracle.
+                            check_compact_equals_parsed(rank, group,
+                                                       loaded_units=dict(units))
+    return {"routes": ["nvfp4_route", "nvfp4_moe_route", "native_a4"],
+            "reader": reader.__module__ + "." + reader.__name__,
+            "intake_bindings": bindings, "actual_w2_rank_products": TP}
 
 
 def run_gate(report_path=None) -> dict:
