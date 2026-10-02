@@ -16,7 +16,7 @@ def action(monkeypatch):
     return module
 
 
-@pytest.mark.parametrize('state',['owned','foreign','absent','daemon_error'])
+@pytest.mark.parametrize('state',['owned','foreign','absent','absent_lowercase','absent_wrong_cid','daemon_error'])
 def test_cleanup_checks_actual_cid_and_owner_before_removing(tmp_path,monkeypatch,state):
     module=action(monkeypatch)
     cid='c'*64;token='a'*32
@@ -28,11 +28,13 @@ def test_cleanup_checks_actual_cid_and_owner_before_removing(tmp_path,monkeypatc
         assert kwargs['timeout'] in (5,15)
         if argv[1]=='inspect':
             if state=='absent':return SimpleNamespace(returncode=1,stderr='Error: No such object: '+cid)
+            if state=='absent_lowercase':return SimpleNamespace(returncode=1,stderr='error: no such object: '+cid)
+            if state=='absent_wrong_cid':return SimpleNamespace(returncode=1,stderr='error: no such object: '+'f'*64)
             if state=='daemon_error':return SimpleNamespace(returncode=1,stderr='Cannot connect to daemon')
             return SimpleNamespace(returncode=0,stdout=json.dumps([{'Id':cid,'Config':{'Labels':
                 {'tessera.paired_numeric_owner':token if state=='owned' else 'f'*32}}}]))
         return SimpleNamespace(returncode=0,stderr='')
-    if state in ('foreign','daemon_error'):
+    if state in ('foreign','daemon_error','absent_wrong_cid'):
         with pytest.raises((ValueError,RuntimeError)):module.owned_cleanup(tmp_path,run=run)
         assert len(calls)==1
     else:
@@ -49,14 +51,17 @@ def test_launch_headroom_refuses_before_starting_child(tmp_path,monkeypatch,pres
             popen=lambda *a,**k:pytest.fail('must not launch'))
 
 
-@pytest.mark.parametrize('reason',['memory','psi','timeout'])
+@pytest.mark.parametrize('reason',['memory','psi','timeout','kill_race'])
 def test_active_bound_stops_only_its_owned_process_group_and_cleans_up(tmp_path,monkeypatch,reason):
     module=action(monkeypatch)
-    pressures=iter([(80*(1<<30),0),((23 if reason=='memory' else 80)*(1<<30),20 if reason=='psi' else 0)])
+    pressures=iter([(80*(1<<30),0),((23 if reason in ('memory','kill_race') else 80)*(1<<30),20 if reason=='psi' else 0)])
     clock=iter([0,241 if reason=='timeout' else 1])
     monkeypatch.setattr(module.time,'monotonic',lambda:next(clock))
     killed=[]
-    monkeypatch.setattr(module.os,'killpg',lambda pid,sig:killed.append((pid,sig)))
+    def kill(pid,sig):
+        killed.append((pid,sig))
+        if reason=='kill_race':raise ProcessLookupError('owned group already exited')
+    monkeypatch.setattr(module.os,'killpg',kill)
     class Child:
         pid=424242
         returncode=None

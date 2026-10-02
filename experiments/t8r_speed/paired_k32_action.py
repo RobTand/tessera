@@ -31,7 +31,8 @@ def owned_cleanup(arm_out, *, run=subprocess.run):
     if inspect.returncode:
         # --rm normally removes a completed container. A daemon failure is
         # distinct from absence and must not silently certify cleanup.
-        if 'No such object' not in inspect.stderr and 'No such container' not in inspect.stderr:
+        if not re.fullmatch(r'(?:error(?::| response from daemon:)\s*)?no such (?:object|container):\s*'+re.escape(cid),
+                            inspect.stderr.strip(),flags=re.IGNORECASE):
             raise RuntimeError('owned container inspection failed: '+inspect.stderr)
         return {'state':'already absent','cid':cid,'owner':token}
     objects=json.loads(inspect.stdout)
@@ -68,13 +69,18 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
                 time.sleep(1)
         return child.returncode
     finally:
-        if child.poll() is None:
-            os.killpg(child.pid,signal.SIGTERM)
-            try:child.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=5)
-        cleanup=owned_cleanup(arm_out)
-        (arm_out.parent/(arm_out.name+'-cleanup.json')).write_text(json.dumps(cleanup,indent=2)+'\n')
+        try:
+            if child.poll() is None:
+                try:os.killpg(child.pid,signal.SIGTERM)
+                except ProcessLookupError:pass  # already exited after the poll
+                try:child.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    try:os.killpg(child.pid,signal.SIGKILL)
+                    except ProcessLookupError:pass
+                    child.wait(timeout=5)
+        finally:
+            cleanup=owned_cleanup(arm_out)
+            (arm_out.parent/(arm_out.name+'-cleanup.json')).write_text(json.dumps(cleanup,indent=2)+'\n')
 
 
 def identities(paths):

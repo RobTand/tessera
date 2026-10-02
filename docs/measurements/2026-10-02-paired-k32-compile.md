@@ -246,3 +246,13 @@ Focused GREEN: PB
 50 passed in4.12s, CPU2/native1/memory3GiB, zero skips/uncollected/device
 allocations; canonical6114ac6e. A second production-class instance verifies
 the observation guard excludes foreign owners.
+
+Attempt1's already auto-removed CID produced Docker's lowercase exact
+`error: no such object: <owned CID>`, which the old cleanup reporter refused.
+The separately fixed reporter accepts only an exact owned-CID absence with
+case normalization; foreign CID, changed label and daemon errors still
+refuse. Cleanup now runs even when the owned process group disappears
+between poll and signal. The focused50-case GREEN above covers both faults,
+including the ProcessLookupError race. A bounded independent Docker inspect
+confirmed the exact first CID d6970821...5536fb absent before the authorized
+second attempt. Native/CUDA/flag banks are unchanged.
