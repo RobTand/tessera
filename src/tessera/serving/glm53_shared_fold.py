@@ -64,7 +64,7 @@ from typing import Any
 import torch
 
 from .flags import latched_bool
-from .stock_interface import source_digest as _source_digest, signature_parameters
+from .stock_interface import source_digest as _source_digest, signature_parameters, stock_attribute
 
 __all__ = ["FLAG", "install_for_current_config", "native_call", "runner_decline_reason"]
 
@@ -298,12 +298,11 @@ def install_for_current_config() -> bool:
         try:
             runner_module = importlib.import_module(_RUNNER_MODULE)
             shared_module = importlib.import_module(_SHARED_MODULE)
-        except ImportError as exc:
+        except Exception as exc:
             reason = f"the stock MoE runner is not importable ({exc})"
         else:
             runner = getattr(runner_module, "MoERunner", None)
-            if runner is not None and getattr(runner._maybe_apply_routed_scale_to_output, _MARK,
-                                              False) and _STATE.get("installed"):
+            if runner is not None and stock_attribute(stock_attribute(runner,"_maybe_apply_routed_scale_to_output"),_MARK,False) and _STATE.get("installed"):
                 return True
             reason = _decline_reason(runner_module, shared_module)
         if reason is not None:
