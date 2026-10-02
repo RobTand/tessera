@@ -85,3 +85,13 @@ def test_default_benchmark_admission_is_unchanged(monkeypatch, tmp_path):
     monkeypatch.setattr('sys.argv', ['bench_t8r.py', '--out', str(tmp_path / 'out')])
     with pytest.raises(DeviceBoundaryReached):
         main_scope()['main']()
+
+
+def test_finite_comparison_parser_exists_before_device(monkeypatch, tmp_path):
+    argv = ['--out', str(tmp_path / 'out'), '--comparison-protocol', 'missing.json',
+            '--comparison-phase', 'numeric']
+    monkeypatch.setattr('sys.argv', ['bench_t8r.py', *argv])
+    # The old parser exits with an unknown-argument error; the new owner must
+    # read the explicit protocol before touching a device.
+    with pytest.raises(FileNotFoundError):
+        main_scope()['main']()

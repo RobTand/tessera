@@ -132,3 +132,26 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
     assert 'PYTHONPATH=' + container_source + ':/work/tests' in forwarded
     if canonical:
         assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
+
+
+def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_path):
+    wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    artifact = tmp_path / 'artifact'; artifact.mkdir()
+    (artifact / 'config.json').write_text('{}')
+    extensions.mkdir()
+    sdk = tmp_path / 'published'; (sdk / 'src/prismabuild').mkdir(parents=True)
+    env.update(BENCH_DIRECT_VLLM='1', BENCH_OWNER_TOKEN='e' * 32,
+               PB_CLIENT_ROOT=str(sdk), NATIVE_CONTAINER_SRC='/tessera/src',
+               NATIVE_CONTAINER_EXT='/ext')
+    subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+                    '--artifact', str(artifact), '--comparison-protocol', '/owned/protocol.json',
+                    '--comparison-phase', 'numeric'],
+                   env=env, check=True, capture_output=True, text=True)
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'e' * 32
+    assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
+    assert args[args.index('--cpus') + 1] == '2'
+    assert str(sdk) + ':' + str(sdk) + ':ro' in args
+    assert 'PYTHONPATH=/tessera/src:/work/tests:' + str(sdk) + '/src' in args
+    assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32

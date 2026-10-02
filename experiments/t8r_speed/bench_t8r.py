@@ -344,6 +344,7 @@ def build_routed(store, module):
 
     def fn(x, ids, w):
         return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+    fn.native = native  # The finite comparison observes this same serving owner.
     return fn, info, packed, touched
 
 
@@ -426,13 +427,15 @@ def time_events(call, warmup, iters):
     return out
 
 
-def kernel_profile(call, reps=5, *, full_names=False):
+def kernel_profile(call, reps=5, *, full_names=False, trace_path=None):
     from torch.profiler import profile, ProfilerActivity
     call(); torch.cuda.synchronize()
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
         for _ in range(reps):
             call()
         torch.cuda.synchronize()
+    if trace_path is not None:
+        prof.export_chrome_trace(str(trace_path))
     per = {}
     total = 0.0
     launches = 0
@@ -476,6 +479,167 @@ def require_single_replay_options(args, *, stubbed=False):
     elif args.input_manifest or args.artifact != ARTIFACT:
         raise ValueError("artifact/staged-input overrides require the exact single replay")
 
+
+def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, native_owner):
+    """Finite numeric or ABBA phase using this benchmark's existing owners."""
+    from pathlib import Path
+    from experiments.t8r_speed import piece_major_protocol as pp
+    from tessera import routed_fused as rf
+    import tessera
+
+    phase = args.comparison_phase
+    numeric_receipt = None
+    if phase != "numeric":
+        numeric_receipt = pp.require_numeric_receipt(args.comparison_numeric_receipt,
+                                   args.comparison_numeric_sha256, protocol_sha)
+    if inputs.manifest_sha256 != protocol["input_manifest"]["sha256"]:
+        raise ValueError("comparison readset differs from its authenticated lease")
+    source_root = Path(tessera.__file__).resolve().parent.parent
+    before = pp.source_identity(protocol, source_root)
+    pp.native_bank_identity(protocol["native"])
+    native_raw = inputs.read(protocol["native"]["origin_path"])
+    if hashlib.sha256(native_raw).hexdigest() != protocol["native"]["sha256"]:
+        raise ValueError("comparison native bank differs from the authenticated artifact")
+    del native_raw
+    routing_raw = inputs.read(protocol["routing"]["path"])
+    if hashlib.sha256(routing_raw).hexdigest() != protocol["routing"]["sha256"]:
+        raise ValueError("comparison routing differs from the bound capture")
+    captured = torch.load(io.BytesIO(routing_raw), map_location="cpu", weights_only=True)["ids"]
+    if (tuple(captured.shape) != (2048, TOP_K) or captured.dtype != torch.int32
+            or int(captured.min()) < 0 or int(captured.max()) >= EXPERTS):
+        raise ValueError("comparison requires the captured 2048x8 expert-ID matrix")
+    meta = {"schema": pp.SCHEMA + ".receipt", "phase": phase, "status": "running",
+            "protocol_sha256": protocol_sha, "ms": protocol["ms"],
+            "routing_scope": "M2048 captured IDs; M1 first row, an operator geometry control, not a fresh decode capture",
+            "activation_scope": "seeded BF16 inputs and uniform routing weights; not served activation replay",
+            "tp": [TP_RANK, TP_SIZE], "artifact": args.artifact, "source_root": str(source_root),
+            "kernel_sha256": protocol["kernel_sha256"], "start_unix": time.time(),
+            "native": {}, "arm_info": {}, "energy_status": "HOLD_pending_both_host_coverage_and_clock_review"}
+    arms = {}
+    previous = os.environ.get("TESSERA_ROUTED_PIECE_MAJOR")
+    try:
+        # Retain the two prepared resident stacks; never relay in a timed call.
+        for arm in ("legacy", "piece_major"):
+            os.environ["TESSERA_ROUTED_PIECE_MAJOR"] = "1" if arm == "piece_major" else "0"
+            fn, info, holder, touched = build_routed(store, P + "10.mlp.experts")
+            if (info["native_library"] != "e4m3mma"
+                    or info["native_piece_major"] != (arm == "piece_major")
+                    or set(info["resident_word_layouts"].values()) != {arm}):
+                raise ValueError("actual comparison resident layout or dispatch differs")
+            arms[arm] = (fn, holder, touched)
+            meta["arm_info"][arm] = info
+            meta["native"][arm] = pp.mapped_native_identity(rf._ext("e4m3mma"), protocol["native"])
+        if meta["arm_info"]["legacy"]["resident_bytes"] != meta["arm_info"]["piece_major"]["resident_bytes"]:
+            raise ValueError("comparison resident byte counts differ")
+    finally:
+        if previous is None:
+            os.environ.pop("TESSERA_ROUTED_PIECE_MAJOR", None)
+        else:
+            os.environ["TESSERA_ROUTED_PIECE_MAJOR"] = previous
+
+    def bits(tensor):
+        return tensor.detach().contiguous().view(torch.uint8).cpu()
+
+    def numeric_outputs(fn, xa):
+        native = fn.native
+        original = native._launch
+        captured_outputs = {}
+        def observe(mode, *a, **kw):
+            original(mode, *a, **kw)
+            captured_outputs["mode" + str(mode)] = bits(kw["out"])
+        native._launch = observe
+        try:
+            captured_outputs["forward"] = bits(fn(*xa))
+            captured_outputs["mode1"] = bits(native.gate_up(*xa))
+        finally:
+            del native._launch
+        if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
+            raise ValueError("comparison did not observe every routed reader mode")
+        return captured_outputs
+
+    results = []
+    power = PowerSampler() if phase == "timing" else None
+    for m in protocol["ms"]:
+        seed = zlib.crc32(f"{protocol['group']}:{m}".encode())
+        torch.manual_seed(seed)
+        x = torch.randn(m, HIDDEN, device="cuda", dtype=torch.bfloat16)
+        ids = captured[:m].to(device="cuda")
+        weights = torch.full((m, TOP_K), 1.0 / TOP_K, device="cuda", dtype=torch.float32)
+        xa = (x, ids, weights)
+        input_hashes = {name: hashlib.sha256(bits(t).numpy().tobytes()).hexdigest()
+                        for name, t in zip(("x", "ids", "weights"), xa)}
+        rec = {"group": protocol["group"], "M": m, "seed": seed,
+               "input_hashes": input_hashes, "routing": routing_stats(ids), "cells": {}}
+        if phase == "numeric":
+            control = numeric_outputs(arms["legacy"][0], xa)
+            candidate = numeric_outputs(arms["piece_major"][0], xa)
+            if any(not torch.equal(control[key], candidate[key]) for key in control):
+                raise ValueError(f"comparison intermediate/output bits differ at M={m}")
+            rec["bit_hashes"] = {key: hashlib.sha256(value.numpy().tobytes()).hexdigest()
+                                  for key, value in control.items()}
+            rec["intermediate_bits_equal"] = True
+        else:
+            proof = next(row for row in numeric_receipt["results"] if row["M"] == m)
+            if input_hashes != proof["input_hashes"]:
+                raise ValueError("comparison timing inputs differ from its numeric proof")
+            order = protocol["order"] if phase == "timing" else ("legacy", "piece_major")
+            for position, arm in enumerate(order):
+                fn, holder, touched = arms[arm]
+                call = lambda: fn(*xa)
+                key = f"{position}:{arm}:M{m}"
+                observed = hashlib.sha256(bits(call()).numpy().tobytes()).hexdigest()
+                if observed != proof["bit_hashes"]["forward"]:
+                    raise ValueError("comparison timed arm output differs from its numeric proof")
+                if phase == "ncu":
+                    for _ in range(10):
+                        call()
+                    torch.cuda.synchronize()
+                    torch.cuda.cudart().cudaProfilerStart()
+                    call()
+                    torch.cuda.synchronize()
+                    torch.cuda.cudart().cudaProfilerStop()
+                    rec["cells"][key] = {"ncu": True}
+                    continue
+                t0 = time.time()
+                wall = summarize(time_events(call, 10, 30))
+                window = [t0, time.time()]
+                trace = Path(args.out) / f"torch-{m}-{position}-{arm}.json"
+                profile = kernel_profile(call, full_names=True, trace_path=trace)
+                profile["trace_sha256"] = hashlib.sha256(trace.read_bytes()).hexdigest()
+                profile["trace_path"] = str(trace)
+                sampled = power.sample_during(call, 30, capture_series=True)
+                if sampled.get("source") != "pynvml" or sampled.get("samples", 0) < 2:
+                    raise ValueError("comparison requires a fast recorded power series")
+                sampled["calls_per_j"] = None
+                sampled["energy_status"] = meta["energy_status"]
+                rec["cells"][key] = {"arm": arm, "wall": wall, "wall_window_unix": window,
+                                     "profile": profile, "power": sampled, "bytes": touched(m)}
+        results.append(rec)
+    torch.cuda.synchronize()
+    pp.harness_identity(protocol)
+    after = pp.source_identity(protocol, source_root)
+    if before != after:
+        raise ValueError("comparison source identity changed")
+    for arm in arms:
+        now = pp.mapped_native_identity(rf._ext("e4m3mma"), protocol["native"])
+        if now["files"] != meta["native"][arm]["files"]:
+            raise ValueError("comparison compiled or changed native artifacts")
+    native_owner.finish(torch.cuda.synchronize)
+    meta["native_code_artifact"] = native_owner.record
+    inputs.close()  # Release/fence the actual input owner before publishing success.
+    meta["input_ownership"] = getattr(inputs, "direct_record", None)
+    meta.update(status="passed", end_unix=time.time(), staged_reads=inputs.reads,
+                intermediate_bits_equal=phase == "numeric", source_files_unchanged=True)
+    output = {**meta, "meta": meta, "results": results}
+    dest = Path(args.out) / "bench_t8r.json"
+    temp = dest.with_suffix(".tmp")
+    temp.write_text(json.dumps(output, indent=1) + "\n")
+    os.replace(temp, dest)
+    print(json.dumps({"comparison_phase": phase, "status": "passed", "protocol_sha256": protocol_sha,
+                      "receipt_sha256": hashlib.sha256(dest.read_bytes()).hexdigest()}), flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
@@ -490,6 +654,10 @@ def main():
     ap.add_argument("--routing", default=None,
                     help="directory with m<M>/*.pt recorded top-k ids; each file adds a "
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
+    ap.add_argument("--comparison-protocol", default=None)
+    ap.add_argument("--comparison-phase", choices=("numeric", "timing", "ncu"), default="numeric")
+    ap.add_argument("--comparison-numeric-receipt", default=None)
+    ap.add_argument("--comparison-numeric-sha256", default=None)
     ap.add_argument("--ncu", action="store_true",
                     help="one call per (group, M) between cudaProfilerStart/Stop; no timing")
     ap.add_argument("--artifact", default=ARTIFACT)
@@ -502,7 +670,17 @@ def main():
     args = ap.parse_args()
     if args.outputs_only and args.ncu:
         ap.error("--outputs-only cannot be combined with --ncu")
-    require_single_replay_options(args, stubbed=VLLM_STUBBED)
+    comparison = None
+    comparison_sha = None
+    if getattr(args, "comparison_protocol", None):
+        from experiments.t8r_speed import piece_major_protocol as pp
+        comparison, comparison_sha = pp.load(args.comparison_protocol)
+        pp.require_options(args, comparison, stubbed=VLLM_STUBBED)
+        if args.comparison_phase != "numeric":
+            pp.require_numeric_receipt(args.comparison_numeric_receipt,
+                                       args.comparison_numeric_sha256, comparison_sha)
+    else:
+        require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
     wanted = None if args.groups == "all" else set(args.groups.split(","))
@@ -510,9 +688,10 @@ def main():
     dev = torch.device("cuda")
     inputs = None
     native_owner = None
-    if args.single_routing_file:
+    if args.single_routing_file or comparison:
         from pb_staged_store import StagedInputs
-        inputs = StagedInputs(args.input_manifest)
+        inputs = (StagedInputs(args.input_manifest, direct_vllm=True) if comparison
+                  else StagedInputs(args.input_manifest))
     try:
         store = Store(args.artifact, inputs)
         if inputs:
@@ -527,6 +706,14 @@ def main():
                     expected_sha256=os.environ["BENCH_EXPECT_LIBRARY_SHA256"],
                     source_sha256=os.environ["KERNEL_SHA"])
 
+        if comparison:
+            from pb_staged_store import NativeCallback
+            from tessera import routed_fused as rf
+            native_owner = NativeCallback(inputs, comparison["native"]["origin_path"], rf,
+                os.path.join(args.out, "native-artifact"),
+                expected_sha256=comparison["native"]["sha256"],
+                source_sha256=comparison["kernel_sha256"])
+            return run_piece_major_comparison(args, comparison, comparison_sha, inputs, store, native_owner)
         power = PowerSampler()
         import tessera
         meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
