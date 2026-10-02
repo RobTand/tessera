@@ -239,3 +239,41 @@ None, then attempted to delete a nonexistent entry. The separate repair only
 removes an actually loaded owned module and still restores callback/closes FD.
 The benchmark also binds the actual `_ext("e4m3mma")` result to that callback's
 loaded object before its profile. The following gate qualifies these repairs.
+
+
+### Qualified retained-native counter population; contained predecessor stays negative
+
+Callback repair qualified16 CPU tests,0 skips/uncollected,3 compile/2 shell
+checks (PB e5471c52e9ea, exact sourcebbd86ae7); CAS222a3b11f76f4976be651418fcddfff7825639aaddf390c592558139eb7dddaa/468B.
+Prior scoped44 public-schema,6 median/wrapper and6 NCU-filter controls remain
+separate receipts, not a new summed suite or CUDA-surface qualification.
+
+The first retained0f counter action78dffddb4ef4 was contained at a reported
+4.202GiB GPU lower bound versus its4GiB budget, rc137. Its scope was verified
+dead/container absent before Astra authorized a truthful5GiB replacement;
+no sealed request was modified. Actual counter-only7ae4bc6c8ce2 completed
+rc0 on Sparky in50.499s,2CPU/16GiBhost/5GiBGPU/native1/900s. It reused EXACT
+bbd86ae7 parent and556299eef9c7c967d54f8e29621242e1ea3820cf snapshot,
+873-input readsetSHAfc10173e9d7abec9425117bf15e48d2f64ba7d0ac65ef019174123ceda91aa09,
+image5be and retained0f binary. Before/load/after-profile SHA checks and actual
+moduleorigin/proc/self/fd/33 agree; all864 canonical same-owned wire proofs
+remain. Timing and power were not repeated. Full immutable-action CAS.lookup
+verified resultdc1c75fba1ea01933a6e576eb144c99155a6faa84838ced11c063c9b3e81dd7b
+(10,090,519B); all16 archive files verified, including actual report and.so.
+
+NCU exactMode0/RL4/one-run/BMT128:48CTAs,512threads,121registers,58.624KB
+allocatedshared/block. Instrumented8.503488ms belongs only to this0f binary
+population, not the earlier7149 timing baseline. Eligiblewarps0.429884,
+issue30.9855%,tensor18.4457%,L2throughput70.032%. PC sampling reports41.43%
+barrier,18.10%wait,10.42%short-scoreboard,10.07%MIO,3.73%long-scoreboard;
+warp samples are not walltime savings. ActualSASS/line mappings identify
+consumerFULL waits and sharedLUT/decode work: source651has16 LDS.U8sites,
+each3-wayconflict/58,953MIOsamples. ProducerBAR_PROD wait follows1211;
+consumerFULL waits map1324 and inlinehelper363 with surroundingBAR instructions.
+Astra receives one unimplemented read-only/L1-LUT hypothesis using existing
+residenttable owners; no kernel/default/cache/serving change or gain is claimed.
+The rawPC/source mapping, both-box Netdata, actual source/CAS/resourceproof,
+negativepopulations and limits are banked externally in routed-gate-protocol/REPORT.md.
+Energy remains HOLD; the distinct native10s/returned8s cadence labeling defect
+is corrected separately inPR841/issue840,20CPUpasses/0skips/uncollected+2compile,
+without changing power values, bounds or repeating load.
