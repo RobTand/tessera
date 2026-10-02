@@ -207,6 +207,15 @@ class PowerSampler:
             return float(out.split()[0])
         return None
 
+    def read_clock_temperature(self):
+        if self.source != "pynvml":
+            return {"sm_clock_mhz": None, "temperature_c": None}
+        return {"sm_clock_mhz": self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM),
+                "temperature_c": self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)}
+
+    def observation(self):
+        return {"unix": time.time(), "power_w": self.read_w(), **self.read_clock_temperature()}
+
     def sample_during(self, work, seconds, *, capture_series=False):
         """Run ``work()`` back to back for ``seconds`` while sampling; return stats."""
         if self.source is None:
@@ -224,8 +233,8 @@ class PowerSampler:
                     ts = time.time()
                     samples.append((ts, self.read_w()))
                     if capture_series and self.source == "pynvml":
-                        clocks.append((ts, self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM),
-                                       self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)))
+                        reading = self.read_clock_temperature()
+                        clocks.append((ts, reading["sm_clock_mhz"], reading["temperature_c"]))
                 except Exception:  # noqa: BLE001
                     pass
                 stop.wait(0.1)
@@ -523,7 +532,7 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
     numeric_receipt = None
     if phase != "numeric":
         numeric_receipt = pp.require_numeric_receipt(args.comparison_numeric_receipt,
-                                   args.comparison_numeric_sha256, protocol_sha)
+                                   args.comparison_numeric_sha256, pp.numeric_protocol_sha256(protocol, protocol_sha))
     if inputs.manifest_sha256 != protocol["input_manifest"]["sha256"]:
         raise ValueError("comparison readset differs from its authenticated lease")
     source_root = Path(tessera.__file__).resolve().parent.parent
@@ -616,7 +625,9 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
                     rec["cells"][key] = {"ncu": True}
                     continue
                 t0 = time.time()
+                event_before = power.observation()
                 wall = summarize(time_events(call, 10, 30))
+                event_after = power.observation()
                 window = [t0, time.time()]
                 trace = Path(args.out) / f"torch-{m}-{position}-{arm}.json"
                 profile = kernel_profile(call, full_names=True, trace_path=trace)
@@ -628,7 +639,8 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
                 sampled["calls_per_j"] = None
                 sampled["energy_status"] = meta["energy_status"]
                 rec["cells"][key] = {"arm": arm, "wall": wall, "wall_window_unix": window,
-                                     "profile": profile, "power": sampled, "bytes": touched(m)}
+                                     "profile": profile, "power": sampled, "bytes": touched(m),
+                                     "event_observations": [event_before, event_after]}
         results.append(rec)
     torch.cuda.synchronize()
     pp.harness_identity(protocol)
@@ -693,7 +705,7 @@ def main():
         pp.require_options(args, comparison, stubbed=VLLM_STUBBED)
         if args.comparison_phase != "numeric":
             pp.require_numeric_receipt(args.comparison_numeric_receipt,
-                                       args.comparison_numeric_sha256, comparison_sha)
+                                       args.comparison_numeric_sha256, pp.numeric_protocol_sha256(comparison, comparison_sha))
     else:
         require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)

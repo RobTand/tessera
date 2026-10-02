@@ -74,7 +74,10 @@ fi
 # only; timing/profiling require a separately reviewed resource window.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "direct vLLM mode cannot use a PB launch context" >&2; exit 2; }
-  [[ " $* " == *" --comparison-protocol "* && " $* " == *" --comparison-phase numeric "* ]] || { echo "direct transport requires closed PM numeric mode" >&2; exit 2; }
+  [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol" >&2; exit 2; }
+  if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
+  elif [[ " $* " == *" --comparison-phase timing "* ]]; then DIRECT_TIMEOUT=600
+  else echo "direct transport requires closed numeric or timing phase" >&2; exit 2; fi
   [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
   [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
   [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
@@ -82,7 +85,7 @@ if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   # The existing containment owner reads this same label key and a unique token.
   DIRECT_OPTS=(--cidfile "$OUT/owned.cid" --label "tessera.paired_numeric_owner=$BENCH_OWNER_TOKEN"
                --memory 16g --memory-swap 16g --pids-limit 512 --cpus 2)
-  RUN_PREFIX=(timeout --signal=TERM --kill-after=15s 240s)
+  RUN_PREFIX=(timeout --signal=TERM --kill-after=15s "${DIRECT_TIMEOUT}s")
   EXTRA_MOUNTS+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro)
   # Reuse the qualified pure-Python fixture runner; image torch/vLLM stay first.
   FIXTURE_SP=${BENCH_FIXTURE_RUNNER_SP:?closed numeric fixtures require the qualified pure-Python runner}

@@ -28,7 +28,7 @@ def require_digest(value):
 def validate(doc):
     fields = {"schema", "artifact", "group", "ms", "order", "warmup", "iters", "power_s",
               "input_manifest", "source_manifest", "kernel_sha256", "native", "routing", "harness"}
-    if set(doc) != fields or doc["schema"] != SCHEMA:
+    if set(doc) not in (fields, fields | {"numeric_protocol"}) or doc["schema"] != SCHEMA:
         raise ValueError("unknown comparison schema or fields")
     if (doc["artifact"] != ARTIFACT or doc["group"] != GROUP or doc["ms"] != [1, 2048]
             or doc["order"] != ORDER or doc["warmup"] != 10 or doc["iters"] != 30
@@ -50,13 +50,32 @@ def validate(doc):
         require_digest(item["sha256"])
     if not Path(doc["native"]["origin_path"]).is_absolute() or not doc["native"]["files"]:
         raise ValueError("comparison requires the native bank and its recipe bindings")
+    if "numeric_protocol" in doc:
+        proof = doc["numeric_protocol"]
+        if set(proof) != {"path", "sha256"} or not Path(proof["path"]).is_absolute():
+            raise ValueError("timing requires the bound original numeric protocol")
+        require_digest(proof["sha256"])
     return doc
+
+
+def numeric_protocol_sha256(doc, current_digest):
+    if "numeric_protocol" not in doc:
+        return current_digest
+    proof = doc["numeric_protocol"]
+    original, digest = hashed_json(proof["path"], proof["sha256"])
+    validate(original)
+    # Launch/proof wiring may change; every measured semantic input remains exact.
+    for key in set(original) - {"harness", "numeric_protocol"}:
+        if doc[key] != original[key]:
+            raise ValueError(f"timing semantic input differs from accepted numeric protocol: {key}")
+    return digest
 
 
 def load(path):
     doc, digest = hashed_json(path)
     validate(doc)
     harness_identity(doc)
+    numeric_protocol_sha256(doc, digest)
     return doc, digest
 
 

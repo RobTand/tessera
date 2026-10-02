@@ -158,3 +158,21 @@ def test_comparison_admission_matches_actual_mma_selector(tmp_path, monkeypatch,
     else:
         with pytest.raises(ValueError):
             pp.require_options(options(doc), doc)
+
+
+@pytest.mark.parametrize('change', [None, 'kernel_sha256', 'routing', 'native', 'source_manifest'])
+def test_timing_reuses_only_semantically_identical_numeric_protocol(tmp_path, change):
+    original = protocol(tmp_path)
+    path = tmp_path / 'numeric-protocol.json'
+    path.write_text(json.dumps(original))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    timing = copy.deepcopy(original)
+    timing['harness'] = {name: 'c' * 64 for name in original['harness']}
+    timing['numeric_protocol'] = {'path': str(path), 'sha256': digest}
+    if change:
+        if change == 'kernel_sha256': timing[change] = 'd' * 64
+        else: timing[change]['sha256'] = 'd' * 64
+        with pytest.raises(ValueError, match='semantic input differs'):
+            pp.numeric_protocol_sha256(timing, 'e' * 64)
+    else:
+        assert pp.numeric_protocol_sha256(pp.validate(timing), 'e' * 64) == digest
