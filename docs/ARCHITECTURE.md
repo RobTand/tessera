@@ -21,6 +21,14 @@ See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
 
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for a default-off routed LUT diagnostic experiment.
+The production CUDA source and runtime contract remain unchanged. A pinned
+experimental source patch and explicit compile definition select hardware read-only
+loads from the existing resident tables for FP8 Mode0, RL4, one-run, BMT128.
+All other cells and the default retain shared-table decoding; table bytes,
+allocation/residency, format, runtime pin, serving route and ship gates do not
+change. A paired result, including a negative, is required before any claim.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`

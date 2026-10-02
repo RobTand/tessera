@@ -1,0 +1,93 @@
+diff --git a/src/tessera/serving/csrc/routed_fused_window.cu b/src/tessera/serving/csrc/routed_fused_window.cu
+index f38cecbbf4..c606713265 100644
+--- a/src/tessera/serving/csrc/routed_fused_window.cu
++++ b/src/tessera/serving/csrc/routed_fused_window.cu
+@@ -174,6 +174,14 @@ constexpr int WORD_STAGES_MIN = 2;
+ #ifndef TESSERA_ROUTED_FUSED_A_PREFETCH
+ #define TESSERA_ROUTED_FUSED_A_PREFETCH 4
+ #endif
++// Diagnostic-only experiment: default code and every unrelated specialization
++// retain the shared table owner. Hardware read-only/L1 loads use the SAME
++// already-resident byte tables, never another materialization or cache.
++#ifndef TESSERA_ROUTED_FUSED_LUT_READONLY
++#define TESSERA_ROUTED_FUSED_LUT_READONLY 0
++#endif
++static_assert(TESSERA_ROUTED_FUSED_LUT_READONLY == 0 ||
++              TESSERA_ROUTED_FUSED_LUT_READONLY == 1, "readonly LUT experiment is boolean");
+ constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
+ static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
+ 
+@@ -582,7 +590,7 @@ __device__ __forceinline__ void copy_half(int32_t* dst, const int32_t* src, int
+ // docs/measurements/2026-09-30-t16-dense-rates-9-14.md).  Rates 9..14 read the
+ // NZ-word array ``Zw``.  One form can replace both once a same-session timing
+ // A/B shows the array form costs nothing at rates 1..8.
+-template <bool FP8, int R>
++template <bool FP8, int R, bool READ_ONLY = false>
+ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, int j,
+                                             const TabT* T, const float* ws,
+                                             uint32_t (&packed)[4]) {
+@@ -648,7 +656,14 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
+                 s[i] = __funnelshift_r(Zw[k1 + 1], Zw[k1], shift) & 0x3FFFu;
+             }
+         }
+-        uint32_t t0 = T[s[0]], t1 = T[s[1]];
++        uint32_t t0, t1;
++        if constexpr (READ_ONLY) {
++            t0 = __ldg(T + s[0]);
++            t1 = __ldg(T + s[1]);
++        } else {
++            t0 = T[s[0]];
++            t1 = T[s[1]];
++        }
+         if constexpr (!FP8) {
+             // FOLDED: one bf16 rounding of value * row_scale, before the dot
+             t0 = bf16_bits_rn(__fmul_rn(bf16_bits_to_f32(t0), ws[r]));
+@@ -670,12 +685,12 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
+ // Both halves of a chunk (rates RA and RB, each compile-time) as ONE
+ // straight-line block, so the scheduler can issue the second half's word and
+ // table loads while the first half's are in flight.
+-template <bool FP8, int RA, int RB>
++template <bool FP8, int RA, int RB, bool READ_ONLY = false>
+ __device__ __forceinline__ void decode_two(const int32_t* const (&Wc)[2], const int32_t (&prev)[2], int j,
+                                            const TabT* T0, const TabT* T1,
+                                            const float* const (&ws)[2], uint32_t (&packed)[2][4]) {
+-    decode_rows<FP8, RA>(Wc[0], (uint32_t)prev[0], j, T0, ws[0], packed[0]);
+-    decode_rows<FP8, RB>(Wc[1], (uint32_t)prev[1], j, T1, ws[1], packed[1]);
++    decode_rows<FP8, RA, READ_ONLY>(Wc[0], (uint32_t)prev[0], j, T0, ws[0], packed[0]);
++    decode_rows<FP8, RB, READ_ONLY>(Wc[1], (uint32_t)prev[1], j, T1, ws[1], packed[1]);
+ }
+ 
+ struct Params {
+@@ -732,6 +747,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
+                   "the pair fits the target's block at this width");
+     using L = Layout<MODE, BMT>;
+     constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
++    constexpr bool READ_ONLY_LUT = TESSERA_ROUTED_FUSED_LUT_READONLY && FP8 &&
++        FAMILY_MMA8 && MODE == 0 && !DENSE && !SPLIT && RL == 4 && !TWO && BMT == 128;
+     // One A tile of BMT rows, and the consumers' rows: two warp rows of
+     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
+     // tile, two per row.
+@@ -850,7 +867,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
+             // after the first of one expert (always, in the dense case).  Safe
+             // because every producer passed the barrier above after its last
+             // lookup of the previous item, and consumers never read the table.
+-            if (e != last_e) {
++            if (!READ_ONLY_LUT && e != last_e) {
+                 constexpr int PER16 = 16 / ELEM_BYTES;   // table entries per 16-byte copy
+                 const TabT* t0 = static_cast<const TabT*>(p.table0) + (long)e * TABLE_ENTRIES;
+                 for (int i = tid; i < TABLE_ENTRIES / PER16; i += PRODUCER_THREADS)
+@@ -1244,9 +1261,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
+                     }
+                     const TabT* T0 = tab;
+                     const TabT* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
++                    if constexpr (READ_ONLY_LUT) {
++                        T0 = static_cast<const TabT*>(p.table0) + (long)e * TABLE_ENTRIES;
++                        T1 = static_cast<const TabT*>(p.table1) + (long)e * TABLE_ENTRIES;
++                    }
+                     uint32_t packed[2][4];
+                     if constexpr (!TWO) {
+-                        decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
++                        decode_two<FP8, RL, RL, READ_ONLY_LUT>(Wc, pv, j, T0, T1, ws, packed);
+                     } else if constexpr (MODE == 2) {
+                         // one column in both halves: one rate
+                         if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, pv, j, T0, T1, ws, packed);
