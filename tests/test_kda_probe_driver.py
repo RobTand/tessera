@@ -85,3 +85,36 @@ def test_publish_progress_waits_for_complete_durable_result(probe, monkeypatch, 
     monkeypatch.setattr(probe.runpy, "run_path", lambda _: {"commit": commit})
     assert probe.main() == 0
     assert events[-1] == "progress"
+
+
+@pytest.mark.parametrize("mode", ["ncu", "normal", "numerics"])
+def test_source_guard_precedes_every_publication(probe, monkeypatch, tmp_path, mode):
+    monkeypatch.setattr(probe, "harness_source_identity_matches", lambda *a, **k: False)
+    monkeypatch.setattr(sys.modules["conv_gate"], "harness_source_identity_matches", lambda *a, **k: False)
+    monkeypatch.setattr(probe, "part_ncu", lambda *a: {})
+    monkeypatch.setattr(probe, "part_onorm", lambda *a: {})
+    args = ["mhc_probe.py", "--out", str(tmp_path), "--parts", "onorm"]
+    if mode == "ncu": args.append("--ncu")
+    if mode == "numerics": args.append("--numerics-only")
+    monkeypatch.setattr(sys, "argv", args)
+    with pytest.raises(RuntimeError, match="source|owner|harness"):
+        probe.main()
+    assert not list(tmp_path.glob("mhc_probe*.json")), "drifted evidence was published"
+
+
+def test_source_guard_rejects_foreign_cached_owner_origins(probe, monkeypatch, tmp_path):
+    gate = sys.modules["conv_gate"]
+    progress = sys.modules["conv_progress"]
+    actual = Path(probe.__file__).resolve().parents[1]
+    foreign = tmp_path / "foreign"
+    for name in gate.SOURCE_OWNERS:
+        target = foreign / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((actual / name).read_bytes())
+    monkeypatch.setattr(gate, "__file__", str(foreign / "kda/conv_gate.py"))
+    monkeypatch.setattr(progress, "__file__", str(foreign / "kda/conv_progress.py"))
+    monkeypatch.setattr(probe, "part_ncu", lambda *a: {})
+    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path / "output"), "--ncu"])
+    with pytest.raises(RuntimeError, match="origin"):
+        probe.main()
+    assert not list((tmp_path / "output").glob("mhc_probe*.json"))

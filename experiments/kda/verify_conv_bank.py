@@ -14,7 +14,12 @@ from cubin_cmp import sections
 def main() -> int:
     out = Path(sys.argv[1])
     import conv_gate as probe
-    validator_source_identity = probe.harness_source_identity()
+    import conv_progress as progress
+    source_root = Path(__file__).resolve().parents[1]
+    origins = {"mhc/mhc_probe.py": [source_root / "mhc/mhc_probe.py"],
+               "kda/conv_gate.py": [probe.__file__, probe.kdaptx_gate_errors.__code__.co_filename],
+               "kda/conv_progress.py": [progress.__file__, progress.kda_commit.__code__.co_filename]}
+    validator_source_identity = probe.harness_source_identity(source_root, origins=origins)
 
     expected_old_module_sha = sys.argv[6]
     paths = [list((out / name).glob("*.cubin")) for name in ("old", "new")]
@@ -76,10 +81,10 @@ def main() -> int:
                        "action_key": control_record["meta"]["pb_action"]}})
     result["expected_old_module_sha256"] = expected_old_module_sha
     result["validator_source_identity"] = validator_source_identity
-    if not probe.harness_source_identity_matches(validator_source_identity):
-        raise RuntimeError("KDA admission/progress source changed during the audit")
+    probe.require_harness_source_identity(validator_source_identity, source_root, origins=origins)
     (out / "kernel_identity.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, sort_keys=True))
+    probe.require_harness_source_identity(validator_source_identity, source_root, origins=origins)
     return 0 if result["gate_passed"] else 1
 
 

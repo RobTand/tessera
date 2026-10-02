@@ -102,11 +102,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import routed_pair_oracle as rpo  # noqa: E402  (power sampler, Netdata window, ulp stats)
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "kda"))
+import conv_gate as _kda_gate
+import conv_progress as _kda_progress
 from conv_gate import (KDA_P, KDA_HEADS, KDA_WIDTH, KDA_CONV_PTX_SRC, KDA_PTX_CASES,
                        KDA_PTX_MODES, KDA_GATE_CONTRACT, KDA_PTX_CFLAGS,
                        kdaex2_gate_errors, kdaptx_case_gate_errors, kdaptx_gate_errors,
-                       harness_source_identity, harness_source_identity_matches)
+                       harness_source_identity, harness_source_identity_matches,
+                       require_harness_source_identity)
 from conv_progress import kda_commit
+
+
+def _harness_source(expected=None):
+    root = Path(__file__).resolve().parents[1]
+    origins = {"mhc/mhc_probe.py": [__file__],
+               "kda/conv_gate.py": [_kda_gate.__file__, _kda_gate.kdaptx_gate_errors.__code__.co_filename],
+               "kda/conv_progress.py": [_kda_progress.__file__, _kda_progress.kda_commit.__code__.co_filename]}
+    if expected is None:
+        return harness_source_identity(root, origins=origins)
+    require_harness_source_identity(expected, root, origins=origins)
 
 
 #: GB10 LPDDR5x peak: 8533 MT/s x 256-bit bus.  The practical plateau is
@@ -854,7 +867,7 @@ def part_kdafwd(args, sampler) -> dict:
            "source_bindings": {"stock_module": stock_module.__file__,
                                "stock_module_sha256": hashlib.sha256(Path(stock_module.__file__).read_bytes()).hexdigest(),
                                "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                               "harness_source_identity": harness_source_identity()},
+                               "harness_source_identity": _harness_source()},
            "primary_state_dtype": "float32 (pinned model kda_state_dtype default)",
            "energy_status": "unqualified until fast-sampler/Netdata coverage agreement", "startup": []}
     cells = []
@@ -913,6 +926,7 @@ def part_kdafwd(args, sampler) -> dict:
                 futures = {label: pool.submit(kda_raw_netdata, label, host, t0, t1) for label, host in hosts.items()}
                 cell["netdata_both_boxes"] = {label: f.result() for label, f in futures.items()}
             out["cells"].append(cell)
+            _harness_source(out["source_bindings"]["harness_source_identity"])
             kda_commit(out, out_dir / "kdafwd_partial.json", len(out["cells"]))
             log("kdafwd", label, cell["prepare_us"], cell["recurrence_us"], cell["steady"]["graph_ms_per_call"],
                 cell["power"].get("mean_w"), "W; energy unqualified")
@@ -1010,10 +1024,12 @@ def main() -> int:
             "device": torch.cuda.get_device_name(0), "model": str(model_dir), "argv": sys.argv,
             "peak_dram_gbs": PEAK_DRAM_GBS, "utc_start": time.time()}
     log("meta", json.dumps(meta))
-    meta["harness_source_identity"] = harness_source_identity()
+    meta["harness_source_identity"] = _harness_source()
     if args.ncu:
         res = {"meta": meta, "ncu": part_ncu_kda(args) if args.ncu_part == "kda" else part_ncu(args, model_dir)}
+        _harness_source(meta["harness_source_identity"])
         (out_dir / "mhc_probe_ncu.json").write_text(json.dumps(res, indent=1) + "\n")
+        _harness_source(meta["harness_source_identity"])
         return 0
     sampler = rpo.PowerSampler()
     sampler.start()
@@ -1049,12 +1065,11 @@ def main() -> int:
         if part == "kdaptx":
             failures = kdaptx_gate_errors(res["kdaptx"])
             res["kdaptx"]["gate"] = {"passed": not failures, "errors": failures}
+        _harness_source(meta["harness_source_identity"])
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
         if failures:
             break
     sampler.stop_flag = True
-    if not harness_source_identity_matches(meta["harness_source_identity"]):
-        raise RuntimeError("KDA harness or admission/progress owner changed during execution")
     meta["utc_end"] = time.time()
     meta["power_sampler"] = sampler.source
     if "kdafwd" in res:
@@ -1065,11 +1080,13 @@ def main() -> int:
             res["netdata"] = rpo.netdata_window(meta["utc_start"], meta["utc_end"])
         except Exception as exc:  # noqa: BLE001
             res["netdata"] = {"error": f"{type(exc).__name__}: {exc}"}
+    _harness_source(meta["harness_source_identity"])
     if "kdafwd" in res:
         kda_commit(res, out_dir / name, len(res["kdafwd"]["cells"]), "publish")
     else:
         (out_dir / name).write_text(json.dumps(res, indent=1) + "\n")
     log("done", out_dir / name)
+    _harness_source(meta["harness_source_identity"])
     if failures:
         log("kdaptx gate FAILED", "; ".join(failures))
         return 1

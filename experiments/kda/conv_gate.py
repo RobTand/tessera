@@ -7,9 +7,16 @@ from pathlib import Path
 SOURCE_OWNERS = ("mhc/mhc_probe.py", "kda/conv_gate.py", "kda/conv_progress.py")
 
 
-def harness_source_identity(root: Path | None = None) -> dict:
+def harness_source_identity(root: Path | None = None, *, origins: dict | None = None) -> dict:
     """Bind the driver and both scientific-independent policy owners."""
     root = Path(root) if root is not None else Path(__file__).resolve().parents[1]
+    root = root.resolve()
+    if origins is not None:
+        if set(origins) != set(SOURCE_OWNERS):
+            raise RuntimeError("KDA imported owner origin roster differs")
+        for name, paths in origins.items():
+            if any(Path(path).resolve() != root / name for path in paths):
+                raise RuntimeError(f"KDA imported owner origin differs: {name}")
     files = {}
     for name in SOURCE_OWNERS:
         raw = (root / name).read_bytes()
@@ -24,6 +31,13 @@ def harness_source_identity_matches(record, root: Path | None = None) -> bool:
         return record == harness_source_identity(root)
     except OSError:
         return False
+
+
+def require_harness_source_identity(record, root: Path, *, origins: dict) -> None:
+    """One publication fence: actual caller/owner origins and unchanged bytes."""
+    harness_source_identity(root, origins=origins)
+    if not harness_source_identity_matches(record, root):
+        raise RuntimeError("KDA harness or admission/progress source changed during execution")
 
 KDA_P = 4096
 
