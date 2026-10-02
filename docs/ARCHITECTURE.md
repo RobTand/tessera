@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
+slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
+dense TP1 eager/resident operator, requiring canonical wire/container
+checks, independent runtime identity, a positively matching backed cell,
+its named native launch and wire predicate, and bound raw measurement
+evidence. It shares `fused_frame` framing with the existing fused reader.
+Samples determine a true median and inclusive quartiles; energy remains
+HOLD while cross-host clocks are unqualified. New package source changes
+its source digest: this code publishes no cell, runtime or measurement
+and cannot restamp old b40/v42 evidence. See
+[the bounded receipt contract](design/native-shape-timing.md).
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`

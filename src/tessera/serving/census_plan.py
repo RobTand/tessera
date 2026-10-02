@@ -69,7 +69,8 @@ def _request_scope(request: Mapping[str, Any]) -> dict[str, Any]:
     return {**dict(request), "q256": q256, "tp_degree": tp, "shape": shape}
 
 
-def build_census_plan(requests: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def build_census_plan(requests: Iterable[Mapping[str, Any]], *,
+                      raw_contract: bytes | None = None) -> dict[str, Any]:
     """Bind requested rank-local scopes to the current registry, without execution.
 
     N/K are supplied rank-local dimensions, not a TP geometry derived here.
@@ -78,7 +79,7 @@ def build_census_plan(requests: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     inferred. Every row still needs actual preparation and device evidence.
     """
     try:
-        raw_contract = contract_path().read_bytes()
+        raw_contract = contract_path().read_bytes() if raw_contract is None else raw_contract
         contract = json.loads(raw_contract)
         validate_serving_contract(contract)
     except (OSError, ValueError, TypeError) as exc:
