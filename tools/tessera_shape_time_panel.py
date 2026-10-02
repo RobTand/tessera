@@ -115,8 +115,7 @@ def read_request(path, *, expected_sha256=None):
     tp._integer(request["worker_timeout_s"], "native worker timeout")
     if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("request requires a different immutable runtime contract")
-    plan = census_plan.build_census_plan([request["scope"]], raw_contract=raw_contract)
-    scope = plan["rows"][0]["scope"]
+    scope = census_plan._request_scope(request["scope"])
     if (scope["route"], scope["structure"], scope["mode"], scope["execution_mode"], scope["tp_degree"]) != ("TESSERA_FP8", "dense", "resident", "eager", 1) or scope["requested_platform"] != runtime["platform"]:
         raise ValueError("first slice requires one E4M3 dense TP1 eager/resident scope")
     tp._object(request["sampling"], {"samples", "warmup_iterations", "steady_s", "seed"}, "sampling")
@@ -143,29 +142,65 @@ def read_request(path, *, expected_sha256=None):
         possible.append(launch)
     if not possible:
         raise ValueError("request has no positively backed native cell/wire in its frozen runtime")
-    return request, plan, wire
+    return request, scope, wire
 
 
-def measure(request_path, output, *, expected_request_sha256):
-    request, plan, wire = read_request(request_path, expected_sha256=expected_request_sha256)
-    producer = producer_identity(request["producer_identity"])
-    output = Path(output).resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
-    _,roles=tp.wire_facts(wire,request["scheme"])
-    worker=ROOT/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
-    job={"schema":"tessera.native_shape_worker_job.v1","request":request,"wire_roles":roles,"producer":producer,"worker_source":worker_source}
-    job_source=publish_json(job,output/"worker-job.json")
-    # Reuse existing phase containment/owned-process cleanup; no nested PB action.
+def phase_command(request, job_source, output, *, preflight=False):
+    worker=ROOT/"tools/tessera_shape_time_worker.py"
+    command=["env","-u","PYTHONPATH","OMP_NUM_THREADS=1","MKL_NUM_THREADS=1","OPENBLAS_NUM_THREADS=1"]
+    command += [key+"="+value for key,value in request["expected_runtime"]["serve_flags"].items()]
+    if preflight:command.append("CUDA_VISIBLE_DEVICES=")
+    command += [request["runtime_python"]["path"],"-I","-B",str(worker),"--job",job_source["path"],
+                "--job-sha256",job_source["sha256"],"--output",str(output)]
+    if preflight:command.append("--preflight")
+    return command
+
+
+def run_runtime_preflight(request, job_source, output):
+    # Only this actual execution path issues the in-memory external validation result.
     from experiments.step4_capture_launch import run_phase
     if Path(run_phase.__code__.co_filename).resolve()!=ROOT/"experiments/step4_capture_launch.py":
         raise ValueError("foreign native phase helper")
-    command=["env","-u","PYTHONPATH","OMP_NUM_THREADS=1","MKL_NUM_THREADS=1","OPENBLAS_NUM_THREADS=1"]
-    command += [key+"="+value for key,value in request["expected_runtime"]["serve_flags"].items()]
-    command += [request["runtime_python"]["path"],"-I","-B",str(worker),"--job",str(output/"worker-job.json"),"--output",str(output)]
+    command=phase_command(request,job_source,output,preflight=True)
+    phase=run_phase("runtime-preflight",command,Path(output)/"runtime-preflight.log",request["worker_timeout_s"])
+    publish_json(phase,Path(output)/"runtime-preflight-phase.json")
+    if phase["returncode"]!=0:raise ValueError("installed runtime CPU preflight refused; inspect "+str(Path(output)/"runtime-preflight.log"))
+    result=tp.json_bytes((Path(output)/"runtime-preflight.json").read_bytes())
+    job=tp.json_bytes(tp.read_bound(job_source))
+    validation=tp._verify_runtime_preflight(result,raw_contract=tp.read_bound(request["contract"]),
+            expected_runtime=request["expected_runtime"],job_source=job_source,worker_source=job["worker_source"],
+            request_source=job["request_source"],command=command,phase=phase)
+    return validation
+
+
+def owned_job(request_path, request, wire, output):
+    producer=producer_identity(request["producer_identity"])
+    _,roles=tp.wire_facts(wire,request["scheme"])
+    worker=ROOT/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
+    request_source=tp.file_binding(request_path)
+    if tp.json_bytes(tp.read_bound(request_source))!=request:raise ValueError("original request changed after entry")
+    job={"schema":"tessera.native_shape_worker_job.v1","request":request,"request_source":request_source,
+         "wire_roles":roles,"producer":producer,"worker_source":worker_source}
+    job_source=publish_json(job,Path(output)/"worker-job.json")
+    return producer,roles,worker_source,job_source
+
+
+def measure(request_path, output, *, expected_request_sha256):
+    request,scope,wire=read_request(request_path,expected_sha256=expected_request_sha256)
+    output=Path(output).resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
+    producer,roles,worker_source,job_source=owned_job(request_path,request,wire,output)
+    if tp.json_bytes(tp.read_bound(job_source))["request_source"]["sha256"]!=expected_request_sha256:
+        raise ValueError("owned original request changed")
+    validation=run_runtime_preflight(request,job_source,output)
+    plan=census_plan._build_validated_census_plan([scope],raw_contract=validation.raw_contract,
+                                                contract=tp.json_bytes(validation.raw_contract))
+    from experiments.step4_capture_launch import run_phase
+    command=phase_command(request,job_source,output)
     phase=run_phase("native-dense",command,output/"native-phase.log",request["worker_timeout_s"])
     if phase["returncode"]!=0:raise ValueError("native phase refused; inspect "+str(output/"native-phase.log"))
     result=tp.json_bytes((output/"worker-result.json").read_bytes())
     tp._object(result,{"schema","evidence","worker_source","job_source","pair"},"native worker result")
-    if result["schema"]!="tessera.native_shape_worker_result.v1" or result["worker_source"]!=worker_source or result["job_source"]!=job_source or tp.file_binding(output/"worker-job.json")!=job_source or tp.file_binding(worker)!=worker_source or producer_identity(request["producer_identity"])!=producer:
+    if result["schema"]!="tessera.native_shape_worker_result.v1" or result["worker_source"]!=worker_source or result["job_source"]!=job_source or tp.file_binding(output/"worker-job.json")!=job_source or tp.file_binding(ROOT/"tools/tessera_shape_time_worker.py")!=worker_source or producer_identity(request["producer_identity"])!=producer:
         raise ValueError("native worker or producer source identity differs")
     evidence=result["evidence"];runtime=tp.json_bytes(tp.read_bound(evidence["runtime"]))
     actual_contract=tp.json_bytes(tp.read_bound(evidence["contract"]))
@@ -173,8 +208,8 @@ def measure(request_path, output, *, expected_request_sha256):
     samples=tp.json_bytes(tp.read_bound(evidence["samples"]))["samples_ms"]
     panel={"schema":tp.SCHEMA,"status":"measured","claims":dict(tp.CLAIMS),"runtime":runtime,"plan":plan,
            "rows":[{"scope_id":plan["rows"][0]["id"],"prefix":request["prefix"],"scheme":request["scheme"],"timing":tp.timing_summary(samples),"cell_id":cell["id"]}],
-           "evidence":evidence,"energy":{"status":"hold","reason":"cross_host_clock_alignment_unqualified","reference_w":140}}
-    tp.validate_panel(panel,expected_runtime=request["expected_runtime"])
+           "evidence":evidence,"preflight":{"result":tp.file_binding(output/"runtime-preflight.json"),"phase":tp.file_binding(output/"runtime-preflight-phase.json")},"energy":{"status":"hold","reason":"cross_host_clock_alignment_unqualified","reference_w":140}}
+    tp.validate_external_panel(panel,expected_runtime=request["expected_runtime"],runtime_validation=validation)
     require_producer_origins()
     bound=publish_json(panel,output/"panel.json")
     helper=os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
@@ -187,6 +222,7 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="action", required=True)
     check = sub.add_parser("check")
     check.add_argument("panel", type=Path);check.add_argument("--expected-runtime", type=Path, required=True)
+    check.add_argument("--request",type=Path);check.add_argument("--request-sha256");check.add_argument("--preflight-output",type=Path)
     preflight = sub.add_parser("check-request")
     preflight.add_argument("request", type=Path)
     seal = sub.add_parser("seal-producer")
@@ -198,9 +234,22 @@ def main(argv=None):
     try:
         if args.action == "seal-producer": result = seal_producer(args.output)
         elif args.action == "check":
-            result = tp.validate_panel(tp.json_bytes(args.panel.read_bytes()), expected_runtime=tp.json_bytes(args.expected_runtime.read_bytes()))
+            panel=tp.json_bytes(args.panel.read_bytes());expected=tp.json_bytes(args.expected_runtime.read_bytes())
+            if "preflight" in panel:
+                if args.request is None or args.request_sha256 is None or args.preflight_output is None:
+                    raise ValueError("external replay requires owned request/SHA and a fresh CPU preflight output")
+                request,_,_=read_request(args.request,expected_sha256=args.request_sha256)
+                if request["expected_runtime"]!=expected:raise ValueError("check context differs from owned request")
+                prior=tp.json_bytes(tp.read_bound(panel["preflight"]["result"]))
+                job_source=prior["job_source"]
+                job=tp.json_bytes(tp.read_bound(job_source))
+                if job["request"]!=request or job["request_source"]!=tp.file_binding(args.request):raise ValueError("panel job differs from owned request")
+                output=args.preflight_output.resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
+                validation=run_runtime_preflight(request,job_source,output)
+                result=tp.validate_external_panel(panel,expected_runtime=expected,runtime_validation=validation)
+            else:result=tp.validate_panel(panel,expected_runtime=expected)
         elif args.action == "check-request":
-            _, plan, _ = read_request(args.request);result = {"scope_id": plan["rows"][0]["id"], "status": "unmeasured", "gpu_executed": False}
+            _,scope,_=read_request(args.request);result={"scope":scope,"status":"unmeasured","gpu_executed":False,"contract_validation":"pending_installed_preflight"}
         else: result = measure(args.request, args.output, expected_request_sha256=args.request_sha256)
         print(json.dumps(result, sort_keys=True));return 0
     except (ValueError, OSError, RuntimeError) as exc:

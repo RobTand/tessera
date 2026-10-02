@@ -14,6 +14,7 @@ import json
 import math
 import re
 import statistics
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping
 
@@ -35,7 +36,7 @@ RUNTIME_FIELDS = {"image", "tessera_commit", "serving_source_sha256", "contract_
                   "residency", "tp_rank", "tp_degree", "package_root"}
 EVIDENCE = {"runtime", "producer", "contract", "wire", "preparation", "samples",
             "routes", "trace", "telemetry", "native_binary", "runtime_origins"}
-RUNTIME_MODULES = ("tessera", "tessera.serving.backend", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
+RUNTIME_MODULES = ("tessera", "tessera.serving.backend", "tessera.serving.ext", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
 NETDATA_CONTEXTS = {"nvidia_smi.gpu_power_draw", "system.cpu", "system.load",
                     "mem.swapio", "mem.available"}
 
@@ -220,9 +221,75 @@ def admitted_cell(contract, scope, runtime, pair, roles):
     return candidates[0], launches[0]["lane"]
 
 
-def _validate_panel(panel, *, expected_runtime):
+_VALIDATION_ISSUER=object()
+
+
+@dataclass(frozen=True)
+class _RuntimeContractValidation:
+    """In-memory result issued only after an owned installed CPU phase succeeds.
+
+    The external API never accepts a roster, bool or a serialized success claim.
+    Its producer re-executes the source-bound installed validator for replay.
+    """
+    raw_contract: bytes
+    result_bytes: bytes
+    phase_bytes: bytes
+    issuer: object
+
+    @property
+    def result(self):return json_bytes(self.result_bytes)
+
+    @property
+    def phase(self):return json_bytes(self.phase_bytes)
+
+
+def _preflight_origins(origins, expected):
+    _object(origins, {"package_root","modules","installation","record_verifier"}, "preflight origins")
+    if origins["package_root"]!=expected["package_root"]:raise ValueError("preflight runtime root differs")
+    _object(origins["modules"], RUNTIME_MODULES, "preflight modules")
+    for name,bound in origins["modules"].items():
+        suffix="__init__.py" if name=="tessera" else name.removeprefix("tessera.").replace(".","/")+".py"
+        if bound!=file_binding(Path(expected["package_root"])/suffix):raise ValueError("preflight module bytes differ")
+    installed=origins["installation"]
+    if installed["module"]!="tessera" or installed["expected_commit"]!=expected["tessera_commit"] or installed["installed_commit"]!=expected["tessera_commit"] or installed["origin"]!=str(Path(expected["package_root"])/"__init__.py"):
+        raise ValueError("preflight installed RECORD/commit differs")
+    _integer(installed["verified_files"], "preflight installed files")
+
+
+def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_source,
+                              worker_source, request_source, command, phase):
+    """Check actual run_phase output against independently owned invocation inputs."""
+    _object(result,{"schema","software","runtime_origins","validator","contract_sha256","gpu_executed",
+                    "worker_source","job_source","request_source"},"runtime preflight")
+    if (phase.get("phase"),type(phase.get("returncode")),phase.get("returncode"),phase.get("command"))!=("runtime-preflight",int,0,command):
+        raise ValueError("installed CPU preflight did not successfully execute owned command")
+    if "CUDA_VISIBLE_DEVICES=" not in command or "--preflight" not in command or "--job-sha256" not in command:
+        raise ValueError("preflight command lacks CPU isolation/owned job binding")
+    expected=runtime_context(expected_runtime)
+    if result["schema"]!="tessera.installed_contract_preflight.v1" or result["gpu_executed"] is not False:
+        raise ValueError("requires actual installed CPU contract validation")
+    if result["software"]!={k:v for k,v in expected.items() if k!="platform"} or result["contract_sha256"]!=expected["contract_sha256"] or hashlib.sha256(raw_contract).hexdigest()!=expected["contract_sha256"]:
+        raise ValueError("preflight software/contract differs from independent context")
+    for key,bound in (("job_source",job_source),("worker_source",worker_source),("request_source",request_source)):
+        if result[key]!=bound or file_binding(bound["path"])!=bound:raise ValueError("preflight owned source differs: "+key)
+    _preflight_origins(result["runtime_origins"],expected)
+    validator=result["validator"]
+    if validator!={"module":"tessera.serving.contract","function":"validate_serving_contract",
+                   "source":result["runtime_origins"]["modules"]["tessera.serving.contract"]}:
+        raise ValueError("preflight validator owner differs")
+    verifier=result["runtime_origins"]["record_verifier"]
+    job=json_bytes(read_bound(job_source))
+    if verifier!=job["request"]["record_verifier"] or json_bytes(read_bound(request_source))!=job["request"]:
+        raise ValueError("preflight request/verifier binding differs")
+    read_bound(verifier)
+    return _RuntimeContractValidation(raw_contract,canonical(result),canonical(phase),_VALIDATION_ISSUER)
+
+
+def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     """Replay one positive receipt; caller provides the independently frozen context."""
-    _object(panel, {"schema", "status", "claims", "runtime", "plan", "rows", "evidence", "energy"}, "panel")
+    fields={"schema", "status", "claims", "runtime", "plan", "rows", "evidence", "energy"}
+    if runtime_validation is not None:fields.add("preflight")
+    _object(panel, fields, "panel")
     canonical(panel)  # Reject nonfinite values anywhere, including cached summaries.
     if panel["schema"] != SCHEMA or panel["status"] != "measured" or canonical(panel["claims"]) != canonical(CLAIMS):
         raise ValueError("panel schema/status/claims differ")
@@ -232,7 +299,24 @@ def _validate_panel(panel, *, expected_runtime):
     evidence = _object(panel["evidence"], EVIDENCE, "evidence")
     raw = {name: read_bound(bound) for name, bound in evidence.items()}
     contract = json_bytes(raw["contract"])
-    validate_serving_contract(contract)
+    if runtime_validation is None:
+        validate_serving_contract(contract)
+    else:
+        if not isinstance(runtime_validation,_RuntimeContractValidation) or runtime_validation.issuer is not _VALIDATION_ISSUER:raise ValueError("external panel requires verified installed preflight")
+        if raw["contract"]!=runtime_validation.raw_contract or runtime_validation.result["software"]!={k:v for k,v in runtime.items() if k!="platform"}:
+            raise ValueError("external panel differs from verified installed contract")
+        preflight=_object(panel["preflight"],{"result","phase"},"panel preflight")
+        if json_bytes(read_bound(preflight["result"]))!=runtime_validation.result:
+            raise ValueError("panel preflight differs from actual installed validation")
+        prior_phase=json_bytes(read_bound(preflight["phase"]))
+        if prior_phase.get("returncode")!=0 or type(prior_phase.get("returncode")) is not int or prior_phase.get("phase")!="runtime-preflight":
+            raise ValueError("recorded preflight phase was not successful")
+        prior_command=prior_phase.get("command",[])
+        if "--preflight" not in prior_command or "CUDA_VISIBLE_DEVICES=" not in prior_command or "--job-sha256" not in prior_command:
+            raise ValueError("recorded preflight phase lost owned CPU command")
+        job_source=runtime_validation.result["job_source"]
+        if prior_command[prior_command.index("--job-sha256")+1]!=job_source["sha256"] or prior_command[prior_command.index("--job")+1]!=job_source["path"]:
+            raise ValueError("recorded preflight phase differs from owned job")
     if hashlib.sha256(raw["contract"]).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("raw contract differs from runtime")
     if json_bytes(raw["runtime"]) != runtime:
@@ -272,7 +356,9 @@ def _validate_panel(panel, *, expected_runtime):
     if not isinstance(plan, dict) or len(plan.get("rows", [])) != 1:
         raise ValueError("requires a singleton unmeasured census plan")
     scope = plan["rows"][0]["scope"]
-    rebuilt = census_plan.build_census_plan([scope], raw_contract=raw["contract"])
+    rebuilt = (census_plan.build_census_plan([scope], raw_contract=raw["contract"])
+               if runtime_validation is None else
+               census_plan._build_validated_census_plan([scope],raw_contract=raw["contract"],contract=contract))
     if canonical(rebuilt) != canonical(plan) or row["scope_id"] != rebuilt["rows"][0]["id"]:
         raise ValueError("plan/scope identity differs")
     if (scope["structure"], scope["route"], scope["mode"], scope["execution_mode"], scope["tp_degree"]) != ("dense", scheme.TESSERA_FP8, "resident", "eager", 1) or scope["requested_platform"] != runtime["platform"]:
@@ -356,4 +442,17 @@ def validate_panel(panel, *, expected_runtime):
     try:
         return _validate_panel(panel, expected_runtime=expected_runtime)
     except (KeyError, TypeError, IndexError, AttributeError, StopIteration, TesseraError) as exc:
+        raise ValueError(f"malformed native timing receipt: {exc}") from exc
+
+
+def validate_external_panel(panel, *, expected_runtime, runtime_validation):
+    """External-runtime replay requires an actual source-bound CPU preflight object.
+
+    validate_panel remains the strict packaged/local entry point.
+    """
+    if not isinstance(runtime_validation,_RuntimeContractValidation) or runtime_validation.issuer is not _VALIDATION_ISSUER:
+        raise ValueError("external panel requires verified installed preflight")
+    try:
+        return _validate_panel(panel,expected_runtime=expected_runtime,runtime_validation=runtime_validation)
+    except (KeyError,TypeError,IndexError,AttributeError,StopIteration,TesseraError) as exc:
         raise ValueError(f"malformed native timing receipt: {exc}") from exc

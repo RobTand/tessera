@@ -32,9 +32,9 @@ def request_file(panel, monkeypatch):
 
 def test_preflight_is_pure_and_positive(panel, monkeypatch):
     path, value = request_file(panel, monkeypatch)
-    got, plan, wire = app.read_request(path)
+    got, scope, wire = app.read_request(path)
     assert got == value and wire == app.tp.read_bound(value['wire'])
-    assert plan['gpu_executed'] is False
+    assert scope == value['scope']
     assert app.main(['check-request', str(path)]) == 0
 
 
@@ -207,12 +207,13 @@ def test_phase_argv_is_isolated_and_preserves_admission(panel,monkeypatch,tmp_pa
     # Preserve the real helper origin while observing its exact sealed argv.
     original=Path(app.ROOT/'experiments/step4_capture_launch.py')
     phase.__code__=phase.__code__.replace(co_filename=str(original))
-    with pytest.raises(ValueError,match='native phase'):app.measure(path,tmp_path/'owned-output',expected_request_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    with pytest.raises(ValueError,match='CPU preflight'):app.measure(path,tmp_path/'owned-output',expected_request_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     label,command,timeout=seen[0]
     assert command[:3]==['env','-u','PYTHONPATH']
     assert '-I' in command and '-B' in command and 'OMP_NUM_THREADS=1' in command
     assert str(app.ROOT/'src') not in command
-    assert timeout==120 and label=='native-dense'
+    assert timeout==120 and label=='runtime-preflight'
+    assert 'CUDA_VISIBLE_DEVICES=' in command and '--preflight' in command and '--job-sha256' in command
     assert '-I' in command and not any('pbrun' in arg for arg in command)
 
 
@@ -275,6 +276,7 @@ def test_external_request_defers_contract_validation_to_installed_owner(panel, m
 def test_software_observation_does_not_query_device(panel, monkeypatch):
     import sys
     expected = panel['runtime']
+    monkeypatch.setenv('TESSERA_SERVE_MODE','resident')
     origins = {'package_root': expected['package_root'], 'modules': {}}
     monkeypatch.setattr(worker, 'runtime_origins', lambda _: origins)
     monkeypatch.setattr(worker, 'observed_commit', lambda _: expected['tessera_commit'])
@@ -290,3 +292,98 @@ def test_software_observation_does_not_query_device(panel, monkeypatch):
     assert 'platform' not in got
     assert got == {k: v for k, v in expected.items() if k != 'platform'}
     assert raw == app.tp.read_bound(panel['evidence']['contract'])
+
+
+def preflight_inputs(tmp_path, panel):
+    request_source=app.publish_json({'independent':'request'},tmp_path/'original.json')
+    worker_source=app.tp.file_binding(worker.__file__)
+    origins=copy.deepcopy(app.tp.json_bytes(app.tp.read_bound(panel['evidence']['runtime_origins'])))
+    root=tmp_path/'installed'/'tessera';root.mkdir(parents=True)
+    runtime=copy.deepcopy(panel['runtime']);runtime['package_root']=str(root)
+    origins['package_root']=str(root)
+    for name in worker.MODULES:
+        suffix='__init__.py' if name=='tessera' else name.removeprefix('tessera.').replace('.','/')+'.py'
+        path=root/suffix;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('# CPU owner fixture\n')
+        origins['modules'][name]=app.tp.file_binding(path)
+    origins['installation']['origin']=str(root/'__init__.py')
+    verifier=app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py')
+    origins['record_verifier']=verifier
+    request={'record_verifier':verifier}
+    request_source=app.publish_json(request,tmp_path/'request-source.json')
+    job_source=app.publish_json({'request':request},tmp_path/'job.json')
+    command=['env','-u','PYTHONPATH','CUDA_VISIBLE_DEVICES=',str(worker.__file__),'--job',job_source['path'],
+             '--job-sha256',job_source['sha256'],'--preflight']
+    phase={'phase':'runtime-preflight','returncode':0,'command':command}
+    result={'schema':'tessera.installed_contract_preflight.v1','software':{k:v for k,v in runtime.items() if k!='platform'},
+            'runtime_origins':origins,'validator':{'module':'tessera.serving.contract','function':'validate_serving_contract',
+                                                  'source':origins['modules']['tessera.serving.contract']},
+            'contract_sha256':runtime['contract_sha256'],'gpu_executed':False,
+            'worker_source':worker_source,'job_source':job_source,'request_source':request_source}
+    kwargs=dict(raw_contract=app.tp.read_bound(panel['evidence']['contract']),expected_runtime=runtime,
+                job_source=job_source,worker_source=worker_source,request_source=request_source,command=command,phase=phase)
+    return result,kwargs
+
+
+@pytest.mark.parametrize('fault',['rc','bool_rc','argv','job','request','worker','raw','root','validator','module_bytes','copied_roster'])
+def test_preflight_refuses_unbound_or_failed_runtime_proof(panel,tmp_path,fault):
+    result,kwargs=preflight_inputs(tmp_path,panel)
+    if fault=='rc':kwargs['phase']['returncode']=2
+    elif fault=='bool_rc':kwargs['phase']['returncode']=False
+    elif fault=='argv':kwargs['phase']['command']=['unsealed']
+    elif fault in ('job','request','worker'):result[fault+'_source']['sha256']='0'*64
+    elif fault=='raw':kwargs['raw_contract']=b'changed owned contract'
+    elif fault=='root':result['runtime_origins']['package_root']='/foreign/root'
+    elif fault=='validator':result['validator']['function']='caller_roster_attestation'
+    elif fault=='module_bytes':Path(result['validator']['source']['path']).write_text('# changed installation\n')
+    else:result['native_extensions']=app.tp.json_bytes(kwargs['raw_contract'])['native_extensions']
+    with pytest.raises(ValueError):app.tp._verify_runtime_preflight(result,**kwargs)
+
+
+def test_verified_preflight_is_immutable_and_external_panel_requires_it(panel,tmp_path):
+    result,kwargs=preflight_inputs(tmp_path,panel)
+    verified=app.tp._verify_runtime_preflight(result,**kwargs)
+    result['gpu_executed']=True
+    assert verified.result['gpu_executed'] is False
+    for attestation in (None,True,False,{'validated':True}):
+        with pytest.raises(ValueError,match='verified installed preflight'):
+            app.tp.validate_external_panel(panel,expected_runtime=panel['runtime'],runtime_validation=attestation)
+
+
+def test_local_public_plan_keeps_strict_validator(panel,monkeypatch):
+    def strict(_):raise ValueError('strict local owner refusal')
+    monkeypatch.setattr(app.census_plan,'validate_serving_contract',strict)
+    with pytest.raises(ValueError,match='strict local owner refusal'):
+        app.census_plan.build_census_plan([panel['plan']['rows'][0]['scope']],raw_contract=app.tp.read_bound(panel['evidence']['contract']))
+
+
+def test_external_final_panel_replay_uses_verified_owner_and_refuses_drift(panel,tmp_path,monkeypatch):
+    result,kwargs=preflight_inputs(tmp_path,panel)
+    verified=app.tp._verify_runtime_preflight(result,**kwargs)
+    panel['runtime']=kwargs['expected_runtime']
+    root=Path(panel['evidence']['runtime']['path']).parent
+    panel['evidence']['runtime']=app.publish_json(panel['runtime'],root/'external-runtime.json')
+    panel['evidence']['runtime_origins']=app.publish_json(result['runtime_origins'],root/'external-origins.json')
+    panel['preflight']={'result':app.publish_json(result,root/'external-preflight.json'),
+                        'phase':app.publish_json(kwargs['phase'],root/'external-phase.json')}
+    def wrong_owner(_):pytest.fail('external replay reached producer strict validator')
+    monkeypatch.setattr(app.tp,'validate_serving_contract',wrong_owner)
+    monkeypatch.setattr(app.census_plan,'validate_serving_contract',wrong_owner)
+    replay=app.tp.validate_external_panel(panel,expected_runtime=panel['runtime'],runtime_validation=verified)
+    assert replay['energy_status']=='hold' and replay['timing']['n']==4
+    changed=copy.deepcopy(result);changed['contract_sha256']='0'*64
+    panel['preflight']['result']=app.publish_json(changed,root/'changed-preflight.json')
+    with pytest.raises(ValueError,match='preflight differs'):
+        app.tp.validate_external_panel(panel,expected_runtime=panel['runtime'],runtime_validation=verified)
+
+
+def test_local_public_plan_rejects_external_b40_loader_roster(panel):
+    raw=Path('/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera/serving/runtime_contract.json').read_bytes()
+    with pytest.raises(ValueError,match='native_extensions'):
+        app.census_plan.build_census_plan([panel['plan']['rows'][0]['scope']],raw_contract=raw)
+
+
+def test_job_hash_is_checked_before_json_or_imports(tmp_path,monkeypatch):
+    path=tmp_path/'job.json';path.write_bytes(b'{not-json')
+    monkeypatch.setattr(worker,'json_bytes',lambda _:pytest.fail('unbound job reached JSON parser'))
+    with pytest.raises(ValueError,match='owned native job'):
+        worker.read_job(path,'0'*64)

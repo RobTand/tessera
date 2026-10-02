@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from tools.run_glm_cached_cpu_export import fsync_path,read_bound
 SCHEMA="tessera.native_shape_worker_result.v1"
-MODULES=("tessera", "tessera.serving.backend", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
+MODULES=("tessera", "tessera.serving.backend", "tessera.serving.ext", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
 
 def canonical(value):return json.dumps(value,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
 def file_binding(path):
@@ -98,7 +98,7 @@ def runtime_origins(expected_root):
  return {"package_root":str(root),"modules":files}
 
 
-def observe_runtime(expected, record_verifier=None):
+def observe_software_runtime(expected, record_verifier=None):
  origins=runtime_origins(expected["package_root"])
  import torch,vllm,tessera
  from tessera.serving import backend,contract,source_identity,runtime_image
@@ -107,7 +107,8 @@ def observe_runtime(expected, record_verifier=None):
  cache=getattr(source_identity,"_cached_digest",None)
  if cache is not None:cache.cache_clear()
  actual_source=source_identity.serving_source_sha256()
- actual_contract=hashlib.sha256(contract.contract_path().read_bytes()).hexdigest()
+ raw_contract=contract.contract_path().read_bytes()
+ actual_contract=hashlib.sha256(raw_contract).hexdigest()
  if (declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)!=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"]):raise ValueError("runtime source/contract/version differs before device setup")
  if record_verifier is None:raise ValueError("missing sealed installation verifier")
  if Path(record_verifier["path"])!=Path("/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py").resolve(strict=True):raise ValueError("foreign installation verifier")
@@ -118,11 +119,23 @@ def observe_runtime(expected, record_verifier=None):
  value={"image":declaration["image"],"tessera_commit":actual_commit,
   "serving_source_sha256":actual_source,
   "contract_sha256":actual_contract,
-  "platform":backend.platform_of_this_process(torch),"torch":torch.__version__,"vllm":vllm.__version__,
+  "torch":torch.__version__,"vllm":vllm.__version__,
   "execution_mode":"eager","residency":"resident","tp_rank":0,"tp_degree":1,
   "package_root":origins["package_root"],
   "serve_flags":{k:os.environ[k] for k in expected["serve_flags"] if k in os.environ}}
- if canonical(value)!=canonical(expected):raise ValueError("actually imported runtime differs from frozen expected context")
+ if canonical(value)!=canonical({k:v for k,v in expected.items() if k!="platform"}):raise ValueError("actually imported software differs from frozen expected context")
+ # The installed reader owns all loader, source and registry checks. No caller roster.
+ if Path(contract.validate_serving_contract.__code__.co_filename).resolve()!=Path(contract.__file__).resolve():raise ValueError("foreign installed contract validator")
+ contract.validate_serving_contract(json_bytes(raw_contract))
+ return value,origins,raw_contract
+
+
+def observe_runtime(expected, record_verifier=None):
+ value,origins,_=observe_software_runtime(expected,record_verifier)
+ import torch
+ from tessera.serving import backend
+ value["platform"]=backend.platform_of_this_process(torch)
+ if canonical(value)!=canonical(expected):raise ValueError("actually imported hardware differs from frozen expected context")
  return value,origins
 def require_fused_preparation(native, family):
     """The first receipt slice observes only an actual ELF-backed fused owner."""
@@ -225,9 +238,9 @@ def profile_call(call, path):
 
 
 def _native_measure(job, output, job_source):
-    if set(job) != {"schema", "request", "wire_roles", "producer", "worker_source"} or job["schema"] != "tessera.native_shape_worker_job.v1":
+    if set(job) != JOB_FIELDS or job["schema"] != "tessera.native_shape_worker_job.v1":
         raise ValueError("unknown native phase job")
-    request=job["request"];request["_wire_roles"]=job["wire_roles"]
+    request=dict(job["request"]);request["_wire_roles"]=job["wire_roles"]
     wire=read_bound(request["wire"])
     if len(wire)!=request["wire"]["bytes"]:raise ValueError("wire bytes differ")
     import torch
@@ -299,24 +312,61 @@ def _native_measure(job, output, job_source):
     result={"schema":SCHEMA,"evidence":evidence,"worker_source":worker_source,"job_source":job_source,"pair":pair}
     return publish_json(result,output/"worker-result.json")
 
-def native_measure(job_path, output):
- # Observe identity before entering any distributed/CUDA setup.
- raw=Path(job_path).read_bytes();job=json_bytes(raw)
- if set(job)!={"schema","request","wire_roles","producer","worker_source"} or job["schema"]!="tessera.native_shape_worker_job.v1":raise ValueError("unknown native phase job")
- if file_binding(__file__)!=job["worker_source"]:raise ValueError("native worker source differs")
- for key in ("wire","contract","runtime_python","record_verifier"):
-  bound=job["request"][key];data=read_bound(bound)
-  if len(data)!=bound["bytes"]:raise ValueError("native input bytes differ")
- observe_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
- if Path(job_path).read_bytes()!=raw:raise ValueError("native job changed during entry checks")
- import torch
- torch.set_num_threads(1);torch.set_num_interop_threads(1)
- from experiments import bench_native_operator as instrument
- if Path(instrument.__file__).resolve()!=ROOT/"experiments/bench_native_operator.py":raise ValueError("foreign native context/timing helper")
- with instrument.native_runtime_context():return _native_measure(job,output,file_binding(job_path))
+JOB_FIELDS={"schema","request","request_source","wire_roles","producer","worker_source"}
+
+
+def read_job(job_path, expected_sha256):
+    # Hash and parse the same owned buffer; bind the request's original bytes too.
+    raw=Path(job_path).read_bytes()
+    hex_identity(expected_sha256,64)
+    if hashlib.sha256(raw).hexdigest()!=expected_sha256:raise ValueError("owned native job bytes differ")
+    job=json_bytes(raw)
+    if set(job)!=JOB_FIELDS or job["schema"]!="tessera.native_shape_worker_job.v1":raise ValueError("unknown native phase job")
+    if file_binding(__file__)!=job["worker_source"]:raise ValueError("native worker source differs")
+    if json_bytes(read_bound(job["request_source"]))!=job["request"]:raise ValueError("native request differs from owned original bytes")
+    for key in ("wire","contract","runtime_python","record_verifier"):
+        bound=job["request"][key];data=read_bound(bound)
+        if len(data)!=bound["bytes"]:raise ValueError("native input bytes differ")
+    source={"path":str(Path(job_path).resolve()),"bytes":len(raw),"sha256":hashlib.sha256(raw).hexdigest()}
+    return job,source
+
+
+def runtime_preflight(job_path, output, expected_job_sha256):
+    if os.environ.get("CUDA_VISIBLE_DEVICES")!="":raise ValueError("CPU preflight requires disabled CUDA visibility")
+    job,job_source=read_job(job_path,expected_job_sha256)
+    software,origins,raw=observe_software_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
+    import torch
+    from tessera.serving import contract
+    if torch.cuda.is_initialized():raise ValueError("CPU contract preflight initialized CUDA")
+    if raw!=read_bound(job["request"]["contract"]):raise ValueError("installed contract differs from owned request bytes")
+    result={"schema":"tessera.installed_contract_preflight.v1", "software":software,"runtime_origins":origins,
+            "validator":{"module":"tessera.serving.contract","function":"validate_serving_contract",
+                         "source":file_binding(contract.__file__)},
+            "contract_sha256":hashlib.sha256(raw).hexdigest(),"gpu_executed":False,
+            "worker_source":job["worker_source"],"job_source":job_source,"request_source":job["request_source"]}
+    after,after_origins,after_raw=observe_software_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
+    if after!=software or after_origins!=origins or after_raw!=raw:raise ValueError("installed runtime changed during CPU preflight")
+    if torch.cuda.is_initialized():raise ValueError("CPU contract preflight initialized CUDA")
+    if file_binding(job_path)!=job_source or file_binding(__file__)!=job["worker_source"]:raise ValueError("preflight source changed")
+    return publish_json(result,Path(output)/"runtime-preflight.json")
+
+
+def native_measure(job_path, output, expected_job_sha256):
+    job,job_source=read_job(job_path,expected_job_sha256)
+    # Strict installed-runtime validation precedes any distributed/device setup.
+    observe_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
+    import torch
+    torch.set_num_threads(1);torch.set_num_interop_threads(1)
+    from experiments import bench_native_operator as instrument
+    if Path(instrument.__file__).resolve()!=ROOT/"experiments/bench_native_operator.py":raise ValueError("foreign native context/timing helper")
+    with instrument.native_runtime_context():return _native_measure(job,output,job_source)
+
 
 def main(argv=None):
- ap=argparse.ArgumentParser();ap.add_argument("--job",type=Path,required=True);ap.add_argument("--output",type=Path,required=True);args=ap.parse_args(argv)
- try:print(json.dumps(native_measure(args.job,args.output),sort_keys=True));return 0
- except (ValueError,OSError,RuntimeError,KeyError,TypeError) as exc:print("[native-phase] REFUSED: "+str(exc),file=sys.stderr);return 2
+    ap=argparse.ArgumentParser();ap.add_argument("--job",type=Path,required=True);ap.add_argument("--job-sha256",required=True)
+    ap.add_argument("--output",type=Path,required=True);ap.add_argument("--preflight",action="store_true");args=ap.parse_args(argv)
+    try:
+        operation=runtime_preflight if args.preflight else native_measure
+        print(json.dumps(operation(args.job,args.output,args.job_sha256),sort_keys=True));return 0
+    except (ValueError,OSError,RuntimeError,KeyError,TypeError) as exc:print("[native-phase] REFUSED: "+str(exc),file=sys.stderr);return 2
 if __name__=="__main__":raise SystemExit(main())

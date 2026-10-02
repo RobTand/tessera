@@ -18,6 +18,19 @@ existing CUDA-event/box instruments. It independently observes imported
 runtime and producer source, fences final publication against drift and
 reports committed progress only after durable artifact publication. The
 application remains GPU-unqualified; no pilot or census is published.
+The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
+Its own unchanged strict validator checks the same owned contract bytes after
+RECORD, imported-root, commit and software/source checks. The successful phase
+is bound to the original request SHA, job SHA, worker/validator bytes, actual
+exit status and raw contract digest. Entry/exit identities must agree. Only
+that actual process result issues the private external-validation object;
+a bool, copied extension roster or serialized claim is insufficient. The
+producer then uses the existing planner's extracted private pure core, retaining
+its explicit registry hash. Local public planning and panel validation still
+strictly validate against their own package. External final panel validation
+requires the verified installed object and bound phase evidence; CLI replay
+reruns CPU preflight from the original request and job. The first b508 pilot
+failed at producer-owned validation before CUDA, so it supplied no timings.
 The versioned native phase uses existing containment, TP1 context and
 single-apply event sampling; actual package/module origins, raw contract
 and source identities are checked at entry before device setup and exit.
