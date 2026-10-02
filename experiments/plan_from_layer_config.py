@@ -101,6 +101,7 @@ from fractions import Fraction
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from tessera.control import (  # noqa: E402
     control_block,
@@ -110,7 +111,7 @@ from tessera.control import (  # noqa: E402
     units_from_plan,
 )
 from tessera.errors import TesseraError  # noqa: E402
-from tessera._dev.accounting_source import accountant  # noqa: E402
+from _accounting_source import accountant  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 

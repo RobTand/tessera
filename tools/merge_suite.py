@@ -96,9 +96,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
 from tessera._dev.suite_source import VERIFIER_ENV  # noqa: E402
-from tessera._dev import suite_container  # noqa: E402
+import _suite_container as suite_container  # noqa: E402
 from tessera._dev.surface_publication import (  # noqa: E402
     POPULATION,
     digest_bytes,

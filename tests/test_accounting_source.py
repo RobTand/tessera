@@ -1,11 +1,13 @@
 """Explicit pricing roots cannot borrow another root's cached accountant."""
 import importlib
-import importlib.util
 from pathlib import Path
 import sys
 
 import pytest
 from tessera.errors import TesseraError
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from _accounting_source import accountant
 
 
 @pytest.fixture
@@ -30,43 +32,42 @@ def package_roots(tmp_path, monkeypatch):
     sys.modules.update(saved)
 
 
-def planner():
-    path = Path(__file__).resolve().parents[1] / "experiments/plan_from_layer_config.py"
-    spec = importlib.util.spec_from_file_location("_accounting_plan", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_explicit_foreign_root_is_refused_before_pricing(package_roots):
     first, second = package_roots
     with pytest.raises(TesseraError, match="accounting source"):
-        planner().charged_bits(second, "E4M3", 1024, (8, 8))
+        accountant(second)
 
 
 def test_same_root_uses_the_existing_accountant(package_roots):
     first, _ = package_roots
-    assert planner().charged_bits(first, "E4M3", 1024, (8, 8)) == 192
+    assert accountant(first) is sys.modules["prismaquant.tessera_formats"]
 
 
 def test_a_foreign_parent_package_is_refused_even_without_a_cached_accountant(package_roots):
     _, second = package_roots
     sys.modules.pop("prismaquant.tessera_formats")
     with pytest.raises(TesseraError, match="accounting source"):
-        planner().charged_bits(second, "E4M3", 1024, (8, 8))
+        accountant(second)
 
 
 def test_an_explicit_missing_root_does_not_omit_accounting(tmp_path):
     with pytest.raises(TesseraError, match="accounting source"):
-        planner().charged_bits(tmp_path / "absent", "E4M3", 1024, (8, 8))
+        accountant(tmp_path / "absent")
 
 
-def test_unspecified_accounting_remains_explicitly_absent():
-    assert planner().charged_bits(None, "E4M3", 1024, (8, 8)) is None
+def test_a_fresh_accountant_uses_the_explicit_root_and_restores_the_import_path(package_roots):
+    _, second = package_roots
+    sys.modules.pop("prismaquant.tessera_formats")
+    sys.modules.pop("prismaquant")
+    previous = list(sys.path)
+    module = accountant(second)
+    assert module.__file__ == str(second / "prismaquant/tessera_formats.py")
+    assert module.artifact_bpp() == 7
+    assert sys.path == previous
 
 
 def test_same_origin_alias_root_is_resolved_before_import(package_roots, tmp_path):
     first, _ = package_roots
     alias = tmp_path / "alias"
     alias.symlink_to(first, target_is_directory=True)
-    assert planner().charged_bits(alias, "E4M3", 1024, (8, 8)) == 192
+    assert accountant(alias) is sys.modules["prismaquant.tessera_formats"]

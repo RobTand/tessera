@@ -5,10 +5,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
-from tessera._dev import suite_container as owner, surface_publication
+from tessera._dev import surface_publication
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+import _suite_container as owner
 
 
 def merge_module():
@@ -158,13 +162,15 @@ def snapshot(tmp_path, altered=False):
     return cas, {"inputs": [entry], "params": {"checkout_snapshot": {"commit": commit, "input": entry}}}
 
 
-def test_authenticated_runner_snapshot_is_required(tmp_path):
+def test_authenticated_runner_snapshot_is_required(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     cas, payload = snapshot(tmp_path, altered=True)
     with pytest.raises(ValueError, match="runner source differs"):
         owner.source_bound(payload, cas)
 
 
-def test_an_unchanged_authenticated_snapshot_is_read(tmp_path):
+def test_an_unchanged_authenticated_snapshot_is_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     cas, payload = snapshot(tmp_path)
     owner.source_bound(payload, cas)
     entry = payload["inputs"][0]
@@ -175,6 +181,7 @@ def test_an_unchanged_authenticated_snapshot_is_read(tmp_path):
 
 
 def test_resume_keeps_existing_binding_and_verifies_runner_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
     module = merge_module()
     cas, payload = snapshot(tmp_path)
     surface = tmp_path / "surface" / "surface.gpu.json"

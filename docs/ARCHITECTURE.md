@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the standalone integration-tool boundary
+(Refs #832). The explicit pricing-root owner and the sealed container-runner
+owner live under repository `tools/`, outside the installed `tessera` package.
+The converter, accounting gate, runner and receipt reader reuse those owners;
+the authenticated snapshot names the moved runner owner. No standalone
+allowlist, pricing rule, source-binding requirement or serving contract moves.
+
 Re-stamped 2026-10-02 (tessera#816, CPU encoder compatibility): window
 Viterbi's optimized CPU buffers explicitly use the input's device and float32
 dtype, so a meta default-device context cannot move CPU work. A non-float32
@@ -84,7 +91,7 @@ wire, serving route, runtime pin or artifact.
 
 Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
 (tessera#825). The plan converter and accounting gate use one repo-tooling
-import owner, `tessera._dev.accounting_source`. It binds the requested root
+import owner, `tools/_accounting_source.py`. It binds the requested root
 to the canonical origin of both `prismaquant` and its `tessera_formats`
 module before reading prices. A foreign cached module or an unavailable
 explicit accountant refuses; no module is evicted and no pricing logic is
@@ -2032,7 +2039,7 @@ from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
 An explicit `--gpu-image` enables the container GPU arm. It requires
 `--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` outside the checkout. `tessera._dev.suite_container` owns
+`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
 the finite runner grammar and Docker argv; `tools/suite_container.py` launches
 it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
 --dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and

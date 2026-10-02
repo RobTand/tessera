@@ -17,7 +17,7 @@ import sys
 import tempfile
 
 RUNNER = "tools/suite_container.py"
-OWNER = "src/tessera/_dev/suite_container.py"
+OWNER = "tools/_suite_container.py"
 SOURCE_FILES = (RUNNER, OWNER)
 PB_VERIFIER = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbsnapshot.py")
 _IMAGE = re.compile(r"(?:[^\s]+@)?sha256:[0-9a-f]{64}")
@@ -44,7 +44,7 @@ def _overlap(a, b):
 
 
 def artifact_specs():
-    repo = Path(__file__).resolve().parents[3]
+    repo = Path(__file__).resolve().parents[1]
     return runpy.run_path(str(repo / "tests/box_artifacts.py"))["ROOTS"]
 
 
@@ -188,7 +188,7 @@ def source_bound(payload, cas_root, verified_bundles=None):
             return subprocess.check_output(["git", "-C", directory, *args], stderr=subprocess.DEVNULL, timeout=30)
         git("init", "--bare", "--quiet")
         git("fetch", "--quiet", "--no-tags", str(blob), snapshot["commit"])
-        repo = Path(__file__).resolve().parents[3]
+        repo = Path(__file__).resolve().parents[1]
         for name in SOURCE_FILES:
             mode = git("ls-tree", snapshot["commit"], "--", name).split()[0]
             _require(mode in (b"100644", b"100755"), "runner source is not a regular blob")
