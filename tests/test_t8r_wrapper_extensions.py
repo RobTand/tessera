@@ -103,3 +103,37 @@ def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
     assert 'TMPDIR=' + str(work / 'tmp') in args
     if canonical:
         assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
+
+
+@pytest.mark.parametrize('selection', ['0', '1'])
+def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection):
+    """Execute the real wrapper; only image inspection and Docker are inert."""
+    wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
+    checkout = tmp_path / 'checkout'
+    experiments = checkout / 'experiments'
+    experiments.mkdir(parents=True)
+    (experiments / 'runtime_image.sh').write_text(
+        'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; }\n')
+    kernel = checkout / 'src/tessera/serving/csrc/routed_fused_window.cu'
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text('// inert source for wrapper argv inspection\n')
+    artifact = tmp_path / 'artifact'
+    artifact.mkdir()
+    (artifact / 'config.json').write_text('{}')
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    docker = binaries / 'docker'
+    docker.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$DOCKER_ARGV_PATH"\n')
+    docker.chmod(0o755)
+    argv_path = tmp_path / 'docker-argv'
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(('BENCH_', 'TESSERA_ROUTED_', 'TESSERA_FUSED_'))}
+    env.update(PATH=str(binaries) + os.pathsep + env['PATH'],
+               ORACLE_IMAGE='inert-inspected-image', DOCKER_ARGV_PATH=str(argv_path),
+               TESSERA_ROUTED_PIECE_MAJOR=selection)
+    subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+                    '--artifact', str(artifact), '--groups', 'experts.R1024.L10'],
+                   env=env, check=True, capture_output=True, text=True)
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    forwarded = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-e']
+    assert 'TESSERA_ROUTED_PIECE_MAJOR=' + selection in forwarded
