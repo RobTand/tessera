@@ -106,6 +106,16 @@ def test_ordinary_and_initialization_imports_stay_unconditional(tmp_path, effect
     assert _select(_fixture(tmp_path, hook=hook, extra=extra))["verdict"] == "full"
 
 
+@pytest.mark.parametrize("module", ["compiler", "facade"])
+def test_reexported_source_executor_cannot_publish_a_guarded_summary(tmp_path, module):
+    hook = _HOOK + f"from support.{module} import run as rebuild\nrebuild(source)\n"
+    repo = _fixture(tmp_path, hook=hook, extra={
+        "support/compiler.py": "def run(text): exec(text, {})\n",
+        "support/facade.py": "from .compiler import run\n",
+    })
+    assert _select(repo)["verdict"] == "full"
+
+
 def test_ambiguous_module_candidates_do_not_choose_a_nonlazy_winner(tmp_path):
     repo = _fixture(tmp_path, extra={
         "src/support/lazy.py": _HOOK.replace("{'lazy'}", "{'safe'}"),

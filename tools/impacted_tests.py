@@ -372,7 +372,7 @@ def import_graph(
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
     guarded = {path: summary for path, tree in trees.items()
-               if (summary := guarded_reexport(tree)) is not None}
+               if path not in executing and (summary := guarded_reexport(tree)) is not None}
 
     def add_statements(requests, importer, *, loaded_target=None):
         """Retain initialization; forward only proved guarded attribute demands.
