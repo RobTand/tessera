@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T21:11:50Z",
+ "generated": "2026-10-02T21:21:22Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4982,6 +4982,10 @@
    "2118": {
     "state": "OPEN",
     "title": "[P2] Bind checkpoint streaming to immutable executable input phases"
+   },
+   "2119": {
+    "state": "OPEN",
+    "title": "Qualify original source copy lifetimes and bind existing identities to owned descriptors"
    },
    "212": {
     "state": "CLOSED",
@@ -11888,6 +11892,10 @@
    "867": {
     "state": "OPEN",
     "title": "test: remove repeated pure CI fixture work"
+   },
+   "868": {
+    "state": "OPEN",
+    "title": "Add opt-in R4 piece-major placement for routed E4M3 MMA"
    },
    "87": {
     "state": "CLOSED",
