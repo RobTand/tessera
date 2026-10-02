@@ -21,3 +21,10 @@ def test_true_odd_and_even_sample_median(samples,expected):
     assert result['median_ms']==expected
     assert result['n']==len(samples)
     assert result['min_ms']==min(samples)
+
+
+def test_timing_samples_remain_available_in_execution_order():
+    raw=[4.0,1.0,3.0,2.0]
+    result=summarizer()(raw)
+    assert result['raw_samples_ms']==raw
+    assert result['raw_samples_ms'] is not raw

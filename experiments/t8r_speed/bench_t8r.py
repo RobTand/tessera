@@ -36,6 +36,7 @@ import hashlib
 import io
 import json
 import os
+import statistics
 import sys
 import threading
 import time
@@ -388,9 +389,11 @@ def routing_stats(ids):
 
 # ------------------------------------------------------------------ timing
 def summarize(samples):
-    s = sorted(samples)
+    raw = list(samples)
+    s = sorted(raw)
     q = lambda p: s[min(len(s) - 1, max(0, int(round(p * (len(s) - 1)))))]
-    return {"median_ms": q(0.5), "p25_ms": q(0.25), "p75_ms": q(0.75), "min_ms": s[0], "n": len(s)}
+    return {"median_ms": statistics.median(s), "p25_ms": q(0.25), "p75_ms": q(0.75),
+            "min_ms": s[0], "n": len(s), "raw_samples_ms": raw}
 
 
 def time_events(call, warmup, iters):

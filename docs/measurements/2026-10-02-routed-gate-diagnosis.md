@@ -140,3 +140,15 @@ requires that mount writable; payload reads still use pinned descriptors and
 same-owner hashes, with no origin fallback. The final GPU request disables
 RAM overlay and uses the admitted stage tier. This is a namespace-access
 repair, not a parallel staging mechanism or an HDD read path.
+
+
+### P1 timing-statistic correction (#836)
+
+The prior T8R `median_ms` field selected `round(.5*(N-1))`, which is an order
+statistic rather than the conventional median for even N. PB control
+`2906b71e79e0` reproduced two failures and one pass: `[1,2,3,4]` reported
+3 instead of 2.5; `[1,2]` reported 1 instead of 1.5; the odd-N case passed.
+The separate fix uses stdlib `statistics.median`, preserves existing nearest
+sample quartile semantics, and retains raw CUDA-event timing samples in original
+execution order for deterministic reanalysis. Historical records are retained
+with their original statistic; no GPU samples have yet been produced here.

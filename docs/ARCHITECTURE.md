@@ -10,7 +10,9 @@ interface is excluded. Seeded activation/uniform downstream weights remain
 a declared proxy; no full-model quality/speed, serving/default/pin change
 or gate promotion is delivered. A >=30s steady power loop and both-box
 Netdata supplement the one-kernel profile; energy remains held until actual
-coverage and instrument agreement. See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
+coverage and instrument agreement. Raw timing samples are retained and the
+reported median uses the conventional odd/even sample median (#836).
+See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
 
 # Tessera plan-to-serve architecture
 
