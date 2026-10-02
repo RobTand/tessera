@@ -54,9 +54,18 @@ def observed_commit(package):
                                    capture_output=True, text=True, check=True).stdout
             if dirty.strip():
                 raise ValueError("imported Tessera runtime checkout is dirty")
+            tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", str(Path(package.__file__).resolve().relative_to(root))], capture_output=True, text=True)
+            if tracked.returncode != 0:
+                raise ValueError("imported Tessera runtime is not tracked by its observed repository")
             return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                                   capture_output=True, text=True, check=True).stdout.strip()
-    metadata = importlib.metadata.distribution("tessera-quant").read_text("direct_url.json")
+    try:
+        distribution = importlib.metadata.distribution("tessera-quant")
+        if not distribution.files or not any(Path(distribution.locate_file(p)).resolve() == Path(package.__file__).resolve() for p in distribution.files):
+            raise ValueError("installed VCS metadata does not own the imported Tessera runtime")
+        metadata = distribution.read_text("direct_url.json")
+    except importlib.metadata.PackageNotFoundError:
+        metadata = None
     if metadata:
         record = tp.json_bytes(metadata)
         commit = record.get("vcs_info", {}).get("commit_id")
@@ -125,7 +134,7 @@ def prepare_dense(request, wire):
     prep = {"builder": "tessera.serving.lane.build_tessera_method",
             "wire_sha256": hashlib.sha256(wire).hexdigest(), "roles": roles, "shape": shape,
             "tp_rank": layer.tp_rank, "tp_degree": layer.tp_size, "grid": declaration["grid"],
-            "resident_bytes": native.packed_bytes()}
+            "native_packed_bytes": native.packed_bytes()}
     return layer, method, prep
 
 
@@ -176,7 +185,11 @@ def read_request(path):
     if request["schema"] != REQUEST_SCHEMA:
         raise ValueError("unknown dense request schema")
     runtime = tp.runtime_context(request["expected_runtime"])
-    plan = census_plan.build_census_plan([request["scope"]])
+    from tessera.serving import contract
+    raw_contract = contract.contract_path().read_bytes()
+    if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
+        raise ValueError("request requires a different immutable runtime contract")
+    plan = census_plan.build_census_plan([request["scope"]], raw_contract=raw_contract)
     scope = plan["rows"][0]["scope"]
     if (scope["route"], scope["structure"], scope["mode"], scope["execution_mode"], scope["tp_degree"]) != ("TESSERA_FP8", "dense", "resident", "eager", 1) or scope["requested_platform"] != runtime["platform"]:
         raise ValueError("first slice requires one E4M3 dense TP1 eager/resident scope")
@@ -191,9 +204,19 @@ def read_request(path):
     if any(not isinstance(v, str) or not v for v in request["netdata_hosts"].values()):
         raise ValueError("requires both explicit Netdata endpoints")
     wire = tp.read_bound(request["wire"])
-    declared, _ = tp.wire_facts(wire, request["scheme"])
+    declared, roles = tp.wire_facts(wire, request["scheme"])
     if (declared["rows"], declared["columns"], declared["q256"]) != (scope["shape"]["N"], scope["shape"]["K"], scope["q256"]):
         raise ValueError("request wire geometry/rung differs")
+    doc = tp.json_bytes(raw_contract)
+    possible = []
+    for launch in tp.scheme.route_launches(scope["route"], structure="dense", regime=scope["regime"], mode="resident"):
+        try:
+            tp.admitted_cell(doc, scope, runtime, (launch["symbol"], launch["decoder"]), roles)
+        except ValueError:
+            continue
+        possible.append(launch)
+    if not possible:
+        raise ValueError("request has no positively backed native cell/wire in its frozen runtime")
     return request, plan, wire
 
 
@@ -205,6 +228,7 @@ def measure(request_path, output):
     from experiments.routed_pair_oracle import PowerSampler
 
     runtime = observe_runtime(request["expected_runtime"])
+    producer = producer_identity()
     if not torch.cuda.is_available():
         raise ValueError("native measurement requires an actual CUDA device")
     torch.set_num_threads(1);torch.set_num_interop_threads(1)
@@ -215,12 +239,15 @@ def measure(request_path, output):
     gen = torch.Generator(device="cuda").manual_seed(request["sampling"]["seed"])
     x = torch.randn(request["scope"]["shape"]["M"], layer.tessera_columns, device="cuda", generator=gen).bfloat16()
     records = []
-    def call():
+    fingerprints = layer.tessera_native.fingerprints()
+    def call(verify=False):
         y, record = fresh_call(layer, method, x)
         if tuple(y.shape) != (request["scope"]["shape"]["M"], layer.tessera_rows):
             raise ValueError("actual output geometry differs")
+        if verify and not bool(torch.isfinite(y).all()):
+            raise ValueError("native output contains nonfinite values")
         return record
-    call();torch.cuda.synchronize()
+    call(verify=True);torch.cuda.synchronize()
     actual_contract = contract.contract_path().read_bytes()
     pair = list(layer.tessera_native.launch_pair)
     cell, lane = tp.admitted_cell(tp.json_bytes(actual_contract), request["scope"], runtime, pair, prep["roles"])
@@ -249,7 +276,7 @@ def measure(request_path, output):
     from tessera import routed_fused
     module = routed_fused._ext(routed_fused.library_for("e4m3"))
     evidence = {"trace": trace, "native_binary": tp.file_binding(module.__file__)}
-    documents = {"runtime": runtime, "producer": producer_identity(), "preparation": prep,
+    documents = {"runtime": runtime, "producer": producer, "preparation": prep,
                  "samples": {"samples_ms": samples, "warmup_iterations": request["sampling"]["warmup_iterations"], "interval_unix": [t0, t1]},
                  "routes": {"records": records}, "telemetry": telemetry}
     for name, value in documents.items(): evidence[name] = publish_json(value, output / (name + ".json"))
@@ -263,6 +290,10 @@ def measure(request_path, output):
                        "timing": tp.timing_summary(samples), "cell_id": cell["id"]}], "evidence": evidence,
              "energy": {"status": "hold", "reason": "cross_host_clock_alignment_unqualified", "reference_w": 140}}
     tp.validate_panel(panel, expected_runtime=request["expected_runtime"])
+    if layer.tessera_native.fingerprints() != fingerprints:
+        raise ValueError("prepared native weights changed during measurement")
+    if observe_runtime(request["expected_runtime"]) != runtime or producer_identity() != producer:
+        raise ValueError("runtime or producer source changed during measurement")
     bound = publish_json(panel, output / "panel.json")
     helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
     if helper: runpy.run_path(helper)["commit"](1, "publish")
@@ -274,12 +305,16 @@ def main(argv=None):
     sub = ap.add_subparsers(dest="action", required=True)
     check = sub.add_parser("check")
     check.add_argument("panel", type=Path);check.add_argument("--expected-runtime", type=Path, required=True)
+    preflight = sub.add_parser("check-request")
+    preflight.add_argument("request", type=Path)
     run = sub.add_parser("measure")
     run.add_argument("--request", type=Path, required=True);run.add_argument("--output", type=Path, required=True)
     args = ap.parse_args(argv)
     try:
         if args.action == "check":
             result = tp.validate_panel(tp.json_bytes(args.panel.read_bytes()), expected_runtime=tp.json_bytes(args.expected_runtime.read_bytes()))
+        elif args.action == "check-request":
+            _, plan, _ = read_request(args.request);result = {"scope_id": plan["rows"][0]["id"], "status": "unmeasured", "gpu_executed": False}
         else: result = measure(args.request, args.output)
         print(json.dumps(result, sort_keys=True));return 0
     except (ValueError, OSError, RuntimeError) as exc:

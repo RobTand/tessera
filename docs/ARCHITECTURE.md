@@ -9,7 +9,13 @@ evidence. It shares `fused_frame` framing with the existing fused reader.
 Samples determine a true median and inclusive quartiles; energy remains
 HOLD while cross-host clocks are unqualified. New package source changes
 its source digest: this code publishes no cell, runtime or measurement
-and cannot restamp old b40/v42 evidence. See
+and cannot restamp old b40/v42 evidence. The repository application
+`tools/tessera_shape_time_panel.py` preflights that context and uses the
+public native create/load/finalize/apply path, fresh route telemetry and
+existing CUDA-event/box instruments. It independently observes imported
+runtime and producer source, fences final publication against drift and
+reports committed progress only after durable artifact publication. The
+application remains GPU-unqualified; no pilot or census is published. See
 [the bounded receipt contract](design/native-shape-timing.md).
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode

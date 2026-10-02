@@ -44,3 +44,46 @@ Every new Python source changes the package source identity. Current
 b40/v42 panels are not rewritten, and a new runtime/census must be frozen
 and accepted before a native GPU pilot or any measured panel is admitted.
 CPU stand-ins validate this contract without claiming GPU execution.
+
+`tools/tessera_shape_time_panel.py` is the supported repository application.
+`check-request REQUEST.json` performs a CPU preflight without preparation or
+measurement. `measure --request REQUEST.json --output NEW_DIRECTORY` calls
+`lane.build_tessera_method`, `create_weights`, loads the exact owned wire into
+the plugin parameter, and calls `process_weights_after_loading` and `apply`.
+It clears the latest route before every call so retained records cannot stand
+in for a launch. Output geometry and an initial finite-output check must pass;
+prepared-weight fingerprints and both source identities are checked again
+before publishing the final receipt. These controls do not establish numerical
+quality or end-to-end serving correctness.
+
+The request schema is `tessera.dense_shape_time_request.v1`, with exactly
+`schema`, `expected_runtime`, `scope`, `prefix`, `scheme`, `wire`, `sampling`
+and `netdata_hosts`. `scope` uses the existing native census request fields;
+`scheme` is the existing dense wire declaration and `wire` is a bound file.
+`sampling` names integer `samples >= 3`, integer `warmup_iterations >= 1`,
+integer `seed >= 0` and finite positive `steady_s`. `netdata_hosts` explicitly
+names both `sparky` and `sparklina`. No topology or runtime is inferred.
+Preflight requires the exact packaged contract digest and a possible positively
+backed cell/wire join; the actual native pair must join again after preparation.
+
+The actual imported Tessera package supplies its commit through a clean,
+tracked Git checkout or VCS installation metadata owning that imported file.
+The launcher image declaration, package source digest, raw contract digest,
+Torch/vLLM versions, device platform and serving flags must equal the frozen
+expected context. The repository tool has a separate Git commit and source
+closure. Neither identity substitutes for the other. `native_packed_bytes`
+records the existing prepared object's named tensor byte sum, including views;
+it is not a deduplicated whole-process residency measurement.
+
+CUDA-event sampling reuses `tools.a4_measure.time_call`; profiling uses
+`torch.profiler`; fast power and raw Netdata reuse the existing instruments.
+The requested steady interval supplies useful native calls for box observation,
+not additional timing prices. Raw responses must contain result samples.
+Every artifact is file- and directory-synced, and the final panel is validated
+before its durable publication. Only then may repository tooling report one
+committed PB publish unit. The package validator has no PB dependency.
+
+This application has CPU controls only until a separately accepted native
+GPU pilot qualifies the complete path. Its source changes invalidate the old
+runtime-source join. No existing b40/v42 or other cell is relabeled, no census
+is published, and no PrismaQuant timing consumer or pin changes in this slice.
