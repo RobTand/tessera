@@ -4,8 +4,8 @@ Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
 (contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
 subclass for the stock `FLASHINFER_MLA_SPARSE_SM120` enum through the plugin.
 Its stock name, conversions and residency path remain inherited. Only eager
-pure-prefill BF16 queries, 32 heads, latent512/no RoPE, page64 packed FP8
-arbitrary-scale KV and2176 indices can select the qualified MG masked-tile
+pure-prefill BF16 queries, 32 heads, latent 512/no RoPE, page 64 packed FP8
+arbitrary-scale KV and 2176 indices can select the qualified MG masked-tile
 kernel; FlashInfer's own resolved plan must say FP8/MG/direct. Mixed, decode,
 staged, unsupported and CUDA stream-capture calls use stock. The backend and
 policy sources plus the complete sparse-MLA header tree are hash-bound to
