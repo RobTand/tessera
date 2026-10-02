@@ -1,0 +1,101 @@
+# Routed R4 resident layout: CPU boundary and compile evidence
+
+Source reviewed and built: `5f366b45d2fc7823d9720a51d6a8875b8d2cea29`,
+branch `sol/routed-piece-major-r4-20261002`, based on `82e6740416`.
+The CUDA source is `d8691b2a95772e6e880f8658d91a541df85b2e82ca4d7fef859d72db7491324e`.
+No GPU correctness, graph, served quality, timing or energy qualification is
+established here. The default remains legacy resident order.
+
+## Boundary corrections
+
+The resident intake freezes opt-in/family/reader selection before its callbacks.
+Only the E4M3 MMA one-run R4 path places piece-major words. BF16, the alternate
+f16 reader and routed opt-out retain legacy words. Actual loader callbacks and
+`WindowUnitAxis.put/finish` are exercised on CPU tensors with only the CUDA
+repacker stubbed: the stored permutation, start-state values, layout tags,
+single word-plane owner and folded BF16 arithmetic are checked through finish.
+
+Dense Triton calls, fused dense preparation, the native dense custom-op owner,
+GEMV argument extraction and E2M1 WINDOW readers now refuse unsupported resident
+layouts before metadata can be discarded or a reader launched. Tests use exact
+refusal reasons and admitted legacy controls, including value rate 8 admission
+and rate 9 refusal. They also cover mixed/unknown tags and native-build/opt-out
+fallback refusal. The three direct native benchmark callers pass the new layout
+ABI argument; the ordinary benchmark records actual stack tags, native selection
+and loaded ELF identity.
+
+## PrismaBuild evidence
+
+All tests were CPU-only (`CUDA_VISIBLE_DEVICES=''`) using Python 3.12,
+torch `2.11.0+cu130`, pytest and real Triton imports from `pq-cu130`.
+Native math threads were one; pytest used `--dist worksteal` where parallel.
+
+| Action | Source/scope | Result |
+|---|---|---|
+| `89b2983124e623f7a75b9b4ec03e2dad0ae2add244782849bbd76caa2b699868` | Initial production-boundary regressions on the inherited source | 15 failed, 8 passed; five failures were an incorrect new fixture wire-length shape, corrected before the causal comparison below |
+| `07668151f2138e71ddf4e55181da4816dea8ba998c2e59b553356e975fab9466` | Frozen pre-fix `aea3db88e1`, same corrected boundary tests | 16 failed, 20 passed; reader refusals absent and changing the environment changes intake placement |
+| `73ed5e41589c1528510f5e7b005cd158705c63a31a550572d1124c00cfc2c837` | `4c107769f7`, boundary and retained mapping files, two workers | 45 passed, zero skips, exit 0 |
+| `c6180143a74dd9b92335c2008268c4033e214c2713b3c562691011d5e1204b1f` | Import-graph-selected 362 files, four workers | 6421 passed, 2021 skipped, two failures, two collection errors; retained as a red outcome |
+| `6608f0bc29f75ca5b77285be843acdc4e835324c52a2b8aee6be9f0dbccc9571` | Pre-fix source: fully admitted E2M1 refusal controls and external pricing fixture | Three expected failures: two readers reach the device-query bomb, and the old PrismaQuant fixture root is absent |
+| `14f5c95567a005e930850b24e1e9c6b067ba6f7b337e907148457ff992b68f63` | `5f366b45d2`, affected files and strengthened controls, three workers | 113 passed, 60 CUDA skips, zero errors, exit 0 |
+
+The broad run's layout-identity expectation omitted the new `word_layout`
+component and was updated without relaxing the identity check. Its other
+failure used the absent default `/home/rob/pq-wt/tessera-continuous`; the
+follow-up supplied the existing `TESSERA_PRISMAQUANT_WORKTREE` setting pointing
+to `/home/rob/prismaquant` on Sparky. That checkout was `22149e1aa35a6190e2d7925defb085a698a74caa`,
+with accountant SHA-256 `11f171accd45868cbea6e2ae3961568734dcb5c1ed2322d1a9f16e7a41f034df`.
+The two collection errors were missing `prismabuild`; the follow-up supplied
+the published SDK on `PYTHONPATH`. Only the affected files were rerun. Counts
+from overlapping runs are not added into a fictional new full-suite result.
+
+The broad run used 1040.56 CPU-seconds in 278.89 seconds, with an 8 GiB scope
+peak. Subsequent builds were sequential to preserve the aggregate resource
+bound. These are PB resource observations, not quantization performance claims.
+
+## Retained native artifact
+
+The earlier compile `19f42876…` genuinely exited zero, but its ELF was not
+ingested and was deleted with its temporary checkout. Its log and receipt are
+retained as compile history; its recorded `3ac45a08…` hash is not a usable binary.
+
+One authorized recovery used the existing `experiments/t8r_speed/build_ext.sh`
+for `e4m3mma`, CPU 1 / memory 8 GiB / native threads 1, no GPU, in image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a`.
+Action `53b3ed1c915b47850e4e28a097858ac22b3e3ae649ccee5167f034f97c705087`
+exited zero and also compiled touched Python modules. Its receipt is
+`5b2619663f657cbacd276a1d884bb2d78b7025358dbfc147e292b80aa4e58e3b`.
+Full CAS manifest/attestation/payload verification passed.
+
+The existing extension directory is now persistent:
+`/mnt/shared/astra-resume-20261002/t8_performance/routed-native-d8691b2a-5f366b45`.
+The ELF under `tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/`
+has SHA-256 `ac004831299983bf37a9df889ba3bf4d627e133eb0e27ca9589d7f30bc01737c`.
+`resource_usage.txt` hashes to `98f21ae317f27544745a9aaf426ceb99d55cd8bcade93be44f607006d0233a2c`;
+`sass.txt` hashes to `4cd1a501fbe8df5197f22b9a937c85b4899449b434124497247d082e122d5d7f`.
+These actual files were independently hashed after the admitted build.
+
+All six routed R4 PM specializations (modes 0/1/2, widths 64/128) exist. PM and
+legacy have equal register counts: width64 uses 96; width128 mode0 uses 121,
+and mode1/2 use 122. Each reports STACK/LOCAL zero and 1024 bytes static shared
+memory; no LDL/STL instruction was found in the corresponding SASS. Dynamic
+shared memory remains sized by the unchanged launch owner. This does not
+establish occupancy, latency or numerical correctness on a GPU.
+
+## Commands, receipts and remaining work
+
+Test command family: `pbrun.py --cwd CHECKOUT --cpus N --demand mem_gb=M
+--env CUDA_VISIBLE_DEVICES= --env OMP_NUM_THREADS=1 --env MKL_NUM_THREADS=1
+--env OPENBLAS_NUM_THREADS=1 -- /home/rob/venvs/pq-cu130/bin/python -m pytest
+-n N --dist worksteal --durations=8 -q -ra FILES`. Every exact argv is retained
+in `/mnt/shared/prismabuild-fleet/cas/requests/<first-two>/<action>.json`;
+terminal logs are under `pb-queue/attempts/<action>/` and canonical successful
+receipts under `cas/actions/v3/<first-two>/<action>.json`.
+
+Detailed CPU and ELF manifests, impact selection and the proposed tiny real-wire
+protocol are at `/home/rob/tmp/astra-resume-20261002/t8_performance/routed_deep_qa/`.
+The initial proposal is an output-bit rejection screen of L10 TP2 rank0 at
+M1/2048 using the existing loader/benchmark, with explicit legacy/PM selection
+and the same retained ELF. Shared wrapper forwarding and exact root GPU GO
+are required. It does not replace the remaining TP cuts, intermediate outputs,
+layer45 BF16, remaining M values, graph, quality and matched performance gates.
