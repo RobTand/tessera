@@ -166,3 +166,14 @@ and unchanged output-screen argument tests passed PB
 `a0628a8108cd15b114c256e3e663aadf4a9c93a913296192c9723aa4ec53aded`: 25 passes,
 zero skips or missing collection, two xdist workers, CUDA disabled. This is
 wrapper evidence only. It establishes no GPU numeric or performance result.
+
+The existing byte-audit owner now includes a resident matrix row: an actual
+encoded E4M3 one-run R4 520x256 unit reaches two tiles and the partial trailing
+row. It hashes the serialized unit before/after resident relaying, the original
+words, the piece-major words and the restored words. The new corpus regression
+failed before the row existed (PB `c648658007a49b9631eba0097ec24363f16777fb0caa528ac46183e3acbafcb4`,
+`resident_hashes` absent). PB `fe3a599c7c9dbd3da94d64c39f3646e6d980786f0697909cf762f58db2b74aec`
+passed 63 selected CPU checks, zero skips/missing collection, two xdist workers.
+The row established equal serialized blobs and an exact word bijection, with
+different physical resident order. It measured no GPU decode. The 20.18-second
+row ran once; the prior encoder matrices were not redundantly remeasured.
