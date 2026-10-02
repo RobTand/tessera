@@ -120,3 +120,18 @@ rebase retains that change too. Its only conflict was the issue snapshot,
 resolved by rerunning the same GitHub-backed refresh owner. The three producer
 and two domain-test blobs above remain identical; no prior receipt is
 restamped onto this new source and no GPU or full domain suite was repeated.
+
+Root's later pure-test-fixture-cost merge advanced master to
+`1e985a9bd4cc9d3c024a2dd006360df5a2a12cb8` (PR #867). An ordinary merge
+preserves the previously reviewed `7fb95c8485...` ancestor and those upstream
+changes. Its only conflict was the generated issue catalog, resolved by the
+existing GitHub-backed refresh owner. PB action
+`61b8c37e611e268042dcbefc0d6eb2e486bbec5e095fdc0bf6f931c42d1a1166`
+asserted all five producer/test Git blobs above unchanged and ran the two
+reference modules: rc0, eight passed, zero skips/missing modules/CUDA
+allocations on dl380g10. CAS receipt:
+`2d878ccdfca7d0d421abe0bf1da08763524df6c23c621c36b121142d6617da29`.
+The CPU action reserved two CPUs and 3 GiB with native threads one and CUDA
+withheld. The prior 102-test/GPU/checker evidence remains source-specific;
+neither that suite nor the GPU pilot was repeated, and PQ's reviewed checker
+config still names the original `d28f1df...` / `c7f6d1a...` snapshot.
