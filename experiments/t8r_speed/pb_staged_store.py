@@ -6,6 +6,9 @@ Only PrismaBuild's public client SDK admits and opens the declared ranges.
 from __future__ import annotations
 
 import hashlib
+import importlib.machinery
+import importlib.util
+import sys
 import json
 import os
 import secrets
@@ -170,6 +173,20 @@ class StagedInputs:
         # again. The unchanged intake consumes this exact tensor.
         return torch.frombuffer(raw, dtype=torch.uint8)
 
+    def native_artifact(self, path):
+        """Experimental trusted code artifact, held through load/profile/fence.
+
+        A public pinned FD and pre/post hashes do not establish the immutable
+        original tensor-provider contract for mutable native-code file bytes.
+        """
+        identity = (str(path),0)
+        entry = self.entries.get(identity)
+        if self.closed or entry is None or not str(path).endswith('.so'):
+            raise ValueError('undeclared native code artifact')
+        fd,serving = self.sdk.open_pinned(self.queue,self.held['pin'],
+                                        self.held['ref_id'],self.keys[identity])
+        return fd,dict(entry),serving
+
     def close(self):
         if not self.closed:
             result = self.sdk.release(self.queue, self.held['pin_id'], self.held['ref_id'],
@@ -178,3 +195,110 @@ class StagedInputs:
             if result is not True:
                 raise ValueError(f'pinned input release failed: {result}')
             self.closed = True
+
+
+class NativeCallback:
+    """One diagnostic code artifact through the existing build callback.
+
+    Model-wire admission stays in StagedInputs.wire. This experimental code
+    path trusts the native artifact owner; it makes no immutable-provider claim.
+    """
+    MODULE = 'tessera_routed_fused_mma_e4m3'
+
+    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256):
+        self.reader,self.rf,self.out = reader,rf,Path(out)
+        self.original = rf.build_library
+        self.fd,self.entry,self.serving = reader.native_artifact(path)
+        self.module = None
+        self.closed = False
+        info=os.fstat(self.fd)
+        self.file_id=(info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+        self.record = {'code_artifact_contract':'experimental trusted binary owner; not immutable original tensor provider',
+                       'declared_path':str(path),'expected_sha256':expected_sha256,
+                       'serving_tier':self.serving,'pin_id':reader.held['pin_id'],
+                       'ref_id':reader.held['ref_id'],'source_sha256':source_sha256}
+        self.source_sha256 = source_sha256
+        try:
+            if (self.MODULE in sys.modules or rf._ext.cache_info().currsize):
+                raise ValueError('foreign native module already loaded')
+            self.record['before_load_sha256'] = self._hash()
+            if self.entry['sha256'] != expected_sha256 or self.record['before_load_sha256']!=expected_sha256:
+                raise ValueError('native code artifact digest differs')
+            # Retain exact bytes before the first profile; no source-path copy.
+            self.out.mkdir(parents=True,exist_ok=True)
+            target=self.out/(self.MODULE+'.so')
+            with target.open('xb') as stream:
+                offset=0
+                while offset<self.entry['bytes']:
+                    chunk=os.pread(self.fd,min(1<<20,self.entry['bytes']-offset),offset)
+                    if not chunk: raise ValueError('short native code artifact')
+                    stream.write(chunk);offset+=len(chunk)
+                stream.flush();os.fsync(stream.fileno())
+            if hashlib.sha256(target.read_bytes()).hexdigest()!=expected_sha256:
+                raise ValueError('retained native code artifact differs')
+            self.record['retained_path']=str(target)
+            rf.build_library=self._build
+        except BaseException:
+            os.close(self.fd);self.closed=True
+            raise
+
+    def _hash(self):
+        info=os.fstat(self.fd)
+        if (info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns,info.st_ctime_ns)!=self.file_id:
+            raise ValueError('native code artifact file identity changed')
+        if info.st_size!=self.entry['bytes']:
+            raise ValueError('native code artifact length differs')
+        digest=hashlib.sha256();offset=0
+        while offset<info.st_size:
+            data=os.pread(self.fd,min(1<<20,info.st_size-offset),offset)
+            if not data: raise ValueError('short native code artifact')
+            digest.update(data);offset+=len(data)
+        return digest.hexdigest()
+
+    def _build(self, module, source_module, compile_fn):
+        if (module,source_module)!=(self.MODULE,self.MODULE):
+            raise ValueError('foreign native library requested')
+        def retained(src,build,token,verbose):
+            if hashlib.sha256(Path(src).read_bytes()).hexdigest()!=self.source_sha256:
+                raise ValueError('native artifact source owner differs')
+            if self.module is not None or self.MODULE in sys.modules:
+                raise ValueError('native module already loaded')
+            if self._hash()!=self.record['expected_sha256']:
+                raise ValueError('native artifact changed before load')
+            origin=f'/proc/self/fd/{self.fd}'
+            loader=importlib.machinery.ExtensionFileLoader(self.MODULE,origin)
+            spec=importlib.util.spec_from_file_location(self.MODULE,origin,loader=loader)
+            self.module=importlib.util.module_from_spec(spec)
+            sys.modules[self.MODULE]=self.module
+            loader.exec_module(self.module)
+            self.bind(self.module)
+            self.record['module_origin']=origin
+            self.record['stage_fd_target']=os.readlink(origin)
+            self.record['after_load_sha256']=self._hash()
+            if self.record['after_load_sha256']!=self.record['expected_sha256']:
+                raise ValueError('native artifact changed during load')
+            return self.module
+        # Existing owner still checks platform, lock and all exported constants.
+        return self.original(module,source_module,retained)
+
+    def bind(self, module):
+        origin=f'/proc/self/fd/{self.fd}'
+        if (module is not self.module or sys.modules.get(self.MODULE) is not module or
+            module.__name__!=self.MODULE or module.__file__!=origin or
+            module.__spec__.origin!=origin):
+            raise ValueError('actual native module origin/identity differs')
+
+    def finish(self, fence):
+        if self.closed: return
+        try:
+            if self.module is not None:
+                fence()
+                self.bind(self.module)
+                self.record['after_profile_sha256']=self._hash()
+                if self.record['after_profile_sha256']!=self.record['expected_sha256']:
+                    raise ValueError('native artifact changed during profile')
+        finally:
+            self.rf.build_library=self.original
+            os.close(self.fd);self.closed=True
+            if sys.modules.get(self.MODULE) is self.module:
+                del sys.modules[self.MODULE]

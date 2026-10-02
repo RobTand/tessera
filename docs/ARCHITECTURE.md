@@ -12,6 +12,11 @@ or gate promotion is delivered. A >=30s steady power loop and both-box
 Netdata supplement the one-kernel profile; energy remains held until actual
 coverage and instrument agreement. Raw timing samples are retained and the
 reported median uses the conventional odd/even sample median (#836).
+A missing counter instrument may be recovered without repeating timing/power.
+The separate retained-native counter population uses the existing build callback
+and a public SDK-held native-code FD with pre/post hashes and module-origin
+checks; this trusts the experimental native artifact owner and does not qualify
+an immutable original tensor provider. Production source and defaults stay fixed.
 See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
 
 # Tessera plan-to-serve architecture

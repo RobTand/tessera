@@ -63,11 +63,10 @@ def reader_class():
     return module.StagedInputs
 
 
-def fixture(tmp_path, payload=b'owned-wire', expected=None):
+def fixture(tmp_path, payload=b'owned-wire', expected=None, *, origin='/forbidden-origin/wire', offset=9):
     staged = tmp_path / 'staged'
     staged.write_bytes(payload)
-    origin = '/forbidden-origin/wire'
-    entry = {'path': origin, 'offset': 9, 'bytes': len(b'owned-wire'),
+    entry = {'path': origin, 'offset': offset, 'bytes': len(b'owned-wire'),
              'sha256': expected or hashlib.sha256(b'owned-wire').hexdigest()}
     manifest = {'entries': [entry], 'entry_count': 1, 'total_bytes': entry['bytes']}
     path = tmp_path / 'manifest.json'
@@ -75,7 +74,7 @@ def fixture(tmp_path, payload=b'owned-wire', expected=None):
     import sys
     sys.path.insert(0, '/mnt/shared/prismabuild-fleet/runtime-generations/5b6b97c0f717-1790877039-dcd8ea6496f1/src')
     from prismabuild import client
-    key = client.residency_map_key(origin, 9)
+    key = client.residency_map_key(origin, offset)
     action = 'a'*64
     opened = []
     sdk = SimpleNamespace(
@@ -86,7 +85,7 @@ def fixture(tmp_path, payload=b'owned-wire', expected=None):
             'schema': client.RESIDENCY_MAP_SCHEMA_V1, 'stage_root': str(tmp_path),
             'manifest_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
             'tier_id': 'fixture', 'leads': ['f'*64], 'generation': 0,
-            'entries': {key: {'stage_path':str(staged),'offset':9,
+            'entries': {key: {'stage_path':str(staged),'offset':offset,
                 'bytes':entry['bytes'],'sha256':entry['sha256']}}}),
         residency_map_key=client.residency_map_key,
         PoolQueue=client.PoolQueue, RESIDENCY=client.RESIDENCY,

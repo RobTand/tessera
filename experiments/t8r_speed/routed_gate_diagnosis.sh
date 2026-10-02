@@ -5,7 +5,7 @@ PROFILE_ONLY=0
 if (( $# )); then
   [[ $# == 1 && $1 == --profile-only ]] || { echo 'unsupported diagnosis mode' >&2; exit 2; }
   PROFILE_ONLY=1
-  export BENCH_EXPECT_LIBRARY_SHA256=71490241ee8a2b9112499fe9f9c3f36626e2d624a1dd41a8a4a84844cbea0f2a
+  export BENCH_EXPECT_LIBRARY_SHA256=0f953b69f4bc10df29f3bd82b9811cbf4c307eaf48d66331c8c2ea1f1a1334af
 fi
 [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo 'PB admission required' >&2; exit 2; }
 OUT="$PWD/.routed-gate-diagnosis"
@@ -24,6 +24,9 @@ ARGS=(--groups experts.R1024.L10 --ms 2048 --no-graph --warmup 10 --iters 30 --p
   --artifact /mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported
   --single-routing-file /mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000007.pt
   --input-manifest /work/experiments/configs/routed_gate_826_inputs.json)
+if [[ "$PROFILE_ONLY" == 1 ]]; then
+  ARGS+=(--profile-native-file /mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so)
+fi
 phase_start=$(date +%s.%N)
 rc=0
 if [[ "$PROFILE_ONLY" == 0 ]]; then

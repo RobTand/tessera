@@ -195,3 +195,38 @@ binary before any profiler start. PB removed the failed materialized checkout;
 if no exact existing binary remains, only the existing owner may rebuild and
 hash equality is mandatory. The output archive now retains native `.so` bytes
 alongside their identity so future recovery does not lose that artifact.
+
+
+### Exact-binary continuation refused; separate retained-native population
+
+Counter-only continuation `a2a6fbb5889d` refused before profiler start because
+its existing JIT rebuild produced ELF SHA
+`0f953b69f4bc10df29f3bd82b9811cbf4c307eaf48d66331c8c2ea1f1a1334af`
+(3,146,816 bytes), differing from measured `71490241...`; source, image, flags,
+input hashes and geometry agree but complete binary bytes do not. The refusal
+stays failed; it contains no timing/power/counter population. The rebuilt exact
+`.so` is retained in the verified stdout archive and shared owned artifact path.
+
+Astra approved ONE separate counter population on that exact retained `0f...`
+binary. It is explicitly not a byte-identical continuation of `7149...` timing.
+A diagnostic-only callback supplies the existing `routed_fused.build_library`
+compile_fn seam with Python's ExtensionFileLoader over a held public SDK FD.
+Normal owner platform, lock and constant checks remain. Foreign loaded modules,
+other requested libraries, wrong origin/identity and digest/file changes refuse;
+the callback restores on failure, and the FD/lease stay held through CUDA fence
+and post-profile check. Hashes are checked before/after load and after profile.
+This experimental native-code artifact path trusts its owner and does NOT claim
+immutable-original-provider qualification for mutable native-code file bytes.
+No PrismaQuant import, copied sealing abstraction, production code, kernel,
+new cache, dispatcher, timing or power baseline is added. The original 864 model
+wire ranges and their pinned same-owned-byte checks remain unchanged; the new
+readset appends only the declared retained `.so` (873 ranges total).
+
+Native DB cadence is10s while the initial helper reported returned8s bucket
+spacing as update_every_s. Actual raw Netdata metadata falsifies cross-node
+aggregation: each endpoint selects one node and one GPU instance. The returned
+power window3217..3248 differs from requested3212..3243; returned Sparklina
+power43.45W/raw DB summary47.75W disagree with fast87.10W. Energy/work-J remain
+HOLD. The shared-owner metadata correction will be against the accepted newer
+helper, preserving numeric values and original raw evidence, not an invented
+node-selector fix or a new power population.

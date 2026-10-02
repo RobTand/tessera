@@ -432,6 +432,10 @@ def kernel_profile(call, reps=5, *, full_names=False):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args,"profile_native_file",None):
+        expected = "/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so"
+        if not args.single_routing_file or not args.ncu or args.profile_native_file!=expected:
+            raise ValueError("retained native artifact requires the exact counter-only replay")
     if args.single_routing_file:
         if (args.groups != "experts.R1024.L10" or args.ms != "2048"
                 or not args.input_manifest or args.routing or not args.no_graph
@@ -463,6 +467,8 @@ def main():
                     help="one sealed historical real-ID replay; no balanced/menu cases")
     ap.add_argument("--input-manifest", default=None,
                     help="exact PB-staged readset for the single replay")
+    ap.add_argument("--profile-native-file", default=None,
+                    help="one declared retained native-code artifact for counter-only recovery")
     args = ap.parse_args()
     require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
@@ -471,6 +477,7 @@ def main():
     torch.manual_seed(0)
     dev = torch.device("cuda")
     inputs = None
+    native_owner = None
     if args.single_routing_file:
         from pb_staged_store import StagedInputs
         inputs = StagedInputs(args.input_manifest)
@@ -480,6 +487,13 @@ def main():
             # Bind publisher declarations to the exact staged bytes intake reads.
             published = store.metadata("tessera_serving_manifest.json")
             inputs.bind_roles(store.root, published["modules"][P + "10.mlp.experts"]["roles"])
+            if args.profile_native_file:
+                from pb_staged_store import NativeCallback
+                from tessera import routed_fused as rf
+                native_owner = NativeCallback(inputs,args.profile_native_file,rf,
+                    os.path.join(args.out,"native-artifact"),
+                    expected_sha256=os.environ["BENCH_EXPECT_LIBRARY_SHA256"],
+                    source_sha256=os.environ["KERNEL_SHA"])
 
         power = PowerSampler()
         import tessera
@@ -666,6 +680,9 @@ def main():
             results.append(rec)
             json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                       indent=1, default=repr)
+        if native_owner:
+            native_owner.finish(torch.cuda.synchronize)
+            meta["native_code_artifact"] = native_owner.record
         if inputs:
             meta["staged_reads"] = inputs.reads
             inputs.close()
@@ -676,8 +693,12 @@ def main():
         print("done; failed groups:", bad, flush=True)
         return 1 if bad else 0
     finally:
-        if inputs:
-            inputs.close()
+        try:
+            if native_owner:
+                native_owner.finish(torch.cuda.synchronize)
+        finally:
+            if inputs:
+                inputs.close()
 
 
 if __name__ == "__main__":

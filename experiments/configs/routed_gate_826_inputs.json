@@ -3,15 +3,20 @@
   "produced_by": {
     "tool": "PB pinned cached-inner/canonical-outer sealer",
     "commit": "fd4b2334de0432a80c2dd748b812a17c7eaed4b2",
-    "action_key": "a01cb090aa43f96220159e92788ae372c161fcb1a27895548f0797b63d2d165a"
+    "action_key": "a01cb090aa43f96220159e92788ae372c161fcb1a27895548f0797b63d2d165a",
+    "counter_native_owner": {
+      "sha256": "0f953b69f4bc10df29f3bd82b9811cbf4c307eaf48d66331c8c2ea1f1a1334af",
+      "source_action": "a2a6fbb5889d6887ddbcb5c00deefc3cbad5ed881f6a0a37f7d154a7d6103e32",
+      "scope": "separate native-code counter population; not7149 timing continuation"
+    }
   },
   "annotations": {
-    "row_id": "routed-gate826-sealed-one-BMT128",
+    "row_id": "routed-gate826-new-native0f-counter-only",
     "phases": [
       {
         "name": "one-owner-inputs",
-        "bytes": 3677315501,
-        "cumulative_bytes": 3677315501
+        "bytes": 3680462317,
+        "cumulative_bytes": 3680462317
       }
     ]
   },
@@ -5248,8 +5253,14 @@
       "offset": 0,
       "bytes": 67226,
       "sha256": "41ab82c0433f9f228ba13d2bf45070f4b52f8eaee24e836eb26bdee33d4caf97"
+    },
+    {
+      "path": "/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so",
+      "offset": 0,
+      "bytes": 3146816,
+      "sha256": "0f953b69f4bc10df29f3bd82b9811cbf4c307eaf48d66331c8c2ea1f1a1334af"
     }
   ],
-  "entry_count": 872,
-  "total_bytes": 3677315501
+  "entry_count": 873,
+  "total_bytes": 3680462317
 }
