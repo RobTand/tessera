@@ -716,14 +716,76 @@ std::vector<torch::Tensor> ex2_control(torch::Tensor accs) {
 
 KDA_PTX_MODES = {0: "served_sass", 1: "mutant_two_roundings_per_tap", 2: "mutant_ex2_ftz", 3: "mutant_div_rn",
                  4: "mutant_physical_tail_read", 5: "mutant_physical_tail_write"}
+KDA_GATE_CONTRACT = "tessera.kda_conv_screen.v2"
+KDA_PTX_CFLAGS = ["-O3"]
+
+
+def kdaex2_gate_errors(control: dict) -> list[str]:
+    """Validate actual intermediate bits and their current source/compiled bindings."""
+    if not isinstance(control, dict):
+        return ["ex2 equivalence control absent or malformed"]
+    try:
+        if control["schema"] != "tessera.kda_ex2_control.v1":
+            return ["ex2 equivalence control schema mismatch"]
+        if (control["ptx_source_sha256"] != hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest()
+                or control["cuda_flags"] != KDA_PTX_CFLAGS):
+            return ["ex2 equivalence control does not match current PTX/build flags"]
+        for path, digest in ((control["compiled_module"], control["compiled_module_sha256"]),
+                             (control["sass"]["path"], control["sass"]["sha256"])):
+            artifact = Path(path).read_bytes()
+            if not artifact or hashlib.sha256(artifact).hexdigest() != digest:
+                return ["ex2 compiled identity or SASS digest mismatch"]
+        rows, bf16 = control["raw_fp32_bits"], control["raw_bf16_bits"]
+        n = control["finite_accumulator_count"]
+        if type(n) is not int or n <= 0 or len(rows) != n or len(bf16) != n:
+            return ["ex2 control has no complete finite-accumulator population"]
+        if (any(len(row) != 8 or any(type(v) is not int or not -(1 << 31) <= v < (1 << 31) for v in row)
+                for row in rows) or
+                any(len(row) != 2 or any(type(v) is not int or not -(1 << 15) <= v < (1 << 15) for v in row)
+                    for row in bf16)):
+            return ["ex2 control raw words are malformed"]
+        if not all((r[0] & 0x7fffffff) < 0x7f800000 for r in rows):
+            return ["ex2 equivalence only covers finite FP32 accumulators"]
+        changed = [r for r in rows if r[2] != r[3]]
+        tiny_inputs = [r for r in rows if 0 < (r[1] & 0x7fffffff) < 0x00800000]
+        errors = []
+        if not changed:
+            errors.append("ex2 mutation is vacuous: no raw exponential difference")
+        if not all(0 < r[2] < 0x00800000 and r[3] == 0 and r[4] == r[5] == 0x3f800000 for r in changed):
+            errors.append("ex2 difference is not subnormal erasure by rounded +1")
+        if not tiny_inputs or not all(r[2] == r[3] == 0x3f800000 for r in tiny_inputs):
+            errors.append("ex2 subnormal-input instruction behavior differs or is unobserved")
+        for key, pairs in (("ex2", [(r[2], r[3]) for r in rows]),
+                           ("denominator", [(r[4], r[5]) for r in rows]),
+                           ("output_fp32", [(r[6], r[7]) for r in rows]),
+                           ("output_bf16", bf16)):
+            count = sum(a != b for a, b in pairs)
+            if (type(control[key]["bits_differing"]) is not int or control[key]["bits_differing"] != count
+                    or control[key]["bit_equal"] is not (count == 0)):
+                errors.append(f"ex2 {key} summary disagrees with actual raw words")
+            if key != "ex2" and count:
+                errors.append(f"ex2 downstream {key} differs")
+        if (type(control["input_subnormal_count"]) is not int or control["input_subnormal_count"] != len(tiny_inputs) or
+                control["all_accumulators_finite"] is not True or
+                control["input_subnormal_ex2_is_one_both"] is not True or
+                control["changed_ex2_is_subnormal_flushed_to_positive_zero"] is not True):
+            errors.append("ex2 control population/classification summary is malformed")
+        return errors
+    except (KeyError, TypeError, ValueError, OSError):
+        return ["ex2 equivalence control absent, malformed, or artifacts unavailable"]
 
 
 def kdaptx_gate_errors(screen: dict) -> list[str]:
-    """Require exact output/state and every mutation witness named by the experiment."""
+    """v2: output/state mutation witnesses plus an active, erased ex2 intermediate."""
     errors = [] if screen.get("served_bit_equal_all") is True else ["served bitwise mismatch"]
+    if screen.get("gate_contract") != KDA_GATE_CONTRACT:
+        errors.append("KDA numerical gate contract mismatch")
     seen = screen.get("mutants_seen", {})
     errors.extend(f"unobserved required mutant: {label}" for mode, label in KDA_PTX_MODES.items()
-                  if mode and seen.get(label) is not True)
+                  if mode not in (0, 2) and seen.get(label) is not True)
+    if seen.get(KDA_PTX_MODES[2]) is not False:
+        errors.append("ex2 output/state equivalence differs or is unobserved")
+    errors.extend(kdaex2_gate_errors(screen.get("ex2_equivalence")))
     return errors
 
 
@@ -743,7 +805,7 @@ def load_kda_ptx():
                       "torch::Tensor w, torch::Tensor st, int64_t state_len, torch::Tensor qsl, torch::Tensor idx, "
                       "torch::Tensor has, int64_t mode); std::vector<torch::Tensor> ex2_control(torch::Tensor accs);",
                       cuda_sources=KDA_CONV_PTX_SRC, functions=["conv_ref", "ex2_control"],
-                      extra_cuda_cflags=["-O3"], verbose=False)
+                      extra_cuda_cflags=KDA_PTX_CFLAGS, verbose=False)
 
 
 def part_kdaex2(args) -> dict:
@@ -765,7 +827,9 @@ def part_kdaex2(args) -> dict:
     input_subnormal = (raw[:, 1].abs() < tiny) & (raw[:, 1] != 0)
     changed = bits[:, 2] != bits[:, 3]
     output_subnormal = (raw[:, 2] > 0) & (raw[:, 2] < tiny)
-    out = {"finite_accumulator_count": len(values), "columns": ["acc", "z", "ex2", "ex2_ftz",
+    out = {"schema": "tessera.kda_ex2_control.v1", "finite_accumulator_count": len(values),
+           "all_accumulators_finite": bool(torch.isfinite(accs).all()),
+           "columns": ["acc", "z", "ex2", "ex2_ftz",
            "den", "den_ftz", "silu_fp32", "silu_fp32_ftz"],
            "raw_fp32_bits": bits.cpu().tolist(),
            "raw_bf16_bits": bf16.contiguous().view(torch.int16).cpu().tolist(),
@@ -779,7 +843,12 @@ def part_kdaex2(args) -> dict:
            "changed_ex2_is_subnormal_flushed_to_positive_zero": bool((output_subnormal[changed] &
                                                                        (bits[changed, 3] == 0)).all()),
            "ptx_source_sha256": hashlib.sha256(KDA_CONV_PTX_SRC.encode()).hexdigest(),
-           "compiled_module": ext.__file__}
+           "cuda_flags": list(KDA_PTX_CFLAGS), "compiled_module": ext.__file__,
+           "compiled_module_sha256": hashlib.sha256(Path(ext.__file__).read_bytes()).hexdigest()}
+    # Raw equality is the observable here. An inf-inf value subtraction is
+    # undefined and would add NaN summary values to otherwise exact records.
+    for key in ("ex2", "denominator", "output_fp32", "output_bf16"):
+        out[key].pop("value")
     cuobjdump = shutil.which("cuobjdump")
     if cuobjdump is None and os.environ.get("CUDA_HOME"):
         candidate = Path(os.environ["CUDA_HOME"]) / "bin/cuobjdump"
@@ -793,10 +862,8 @@ def part_kdaex2(args) -> dict:
         out["sass"] = {"path": str(path), "sha256": hashlib.sha256(sass.encode()).hexdigest()}
     else:
         out["sass"] = {"error": "cuobjdump unavailable"}
-    out["control_passed"] = (not out["ex2"]["bit_equal"] and out["input_subnormal_count"] > 0 and
-                              out["input_subnormal_ex2_is_one_both"] and
-                              out["changed_ex2_is_subnormal_flushed_to_positive_zero"] and
-                              all(out[k]["bit_equal"] for k in ("denominator", "output_fp32", "output_bf16")))
+    out["errors"] = kdaex2_gate_errors(out)
+    out["control_passed"] = not out["errors"]
     log("kdaex2", {k: out[k] for k in ("control_passed", "ex2", "denominator", "input_subnormal_count")})
     return out
 
@@ -817,6 +884,7 @@ def part_kdaptx(args) -> dict:
              ("signed_zeros", (64, 300), (True, False), 1.0, 0.5),
              ("large_x64", (512, 33), (True, False), 64.0, 0.0)]
     out = {"p": p, "width": KDA_WIDTH, "modes": KDA_PTX_MODES, "cases": [],
+           "gate_contract": KDA_GATE_CONTRACT, "ex2_equivalence": part_kdaex2(args),
            "coverage": {"compared": ["q", "k", "v", "conv_state"],
                         "not_compared": ["recurrent_output", "final_recurrent_state"],
                         "reason": "convolution reference only; no fused recurrent kernel exists"},
