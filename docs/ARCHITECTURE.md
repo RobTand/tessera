@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for shared inspected-stock interface facts. The current prefill
+guards reuse `serving.stock_interface` and keep their own pins and parameters.
+Empty-RoPE and shared-add adaptations remain separate experimental follow-ups. Complete digest tuples stay indivisible.
+Unreadable source/attributes/signatures decline to stock, with no installation
+framework, format, default, runtime pin or serving qualification change.
+
 Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
 The existing T8R benchmark can replay one historical real-ID distribution
 against the A8SE wires through PB public pinned readers, binding the same
