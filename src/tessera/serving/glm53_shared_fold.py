@@ -267,15 +267,16 @@ def _inspect(runner_module: Any, shared_module: Any):
         digest=_source_digest(module);digests.append(digest)
         if digest is None:return None,None,None,tuple(digests),f"{name} has no source file to inspect"
         if digest not in _INSPECTED_SHA256[name]:return None,None,None,tuple(digests),f"{name} sha256 {digest[:12]} is not an inspected source"
-    runner=getattr(runner_module,"MoERunner",None)
+    runner=stock_attribute(runner_module,"MoERunner")
     if runner is None:return None,None,None,tuple(digests),f"{_RUNNER_MODULE} has no MoERunner"
     params=signature_parameters(runner,"_maybe_apply_routed_scale_to_output")
     if params!=_SIGNATURE:return None,None,None,tuple(digests),f"MoERunner._maybe_apply_routed_scale_to_output has parameters {params}, expected {_SIGNATURE}"
-    order=getattr(shared_module,"SharedExpertsOrder",None)
-    shared=getattr(shared_module,"SharedExperts",None)
-    if getattr(order,"NO_OVERLAP",None) is None or shared is None or not hasattr(shared,"_determine_shared_experts_order") or not hasattr(shared,"_output_idx"):
+    order=stock_attribute(shared_module,"SharedExpertsOrder")
+    shared=stock_attribute(shared_module,"SharedExperts")
+    no_overlap=stock_attribute(order,"NO_OVERLAP")
+    if no_overlap is None or shared is None or stock_attribute(shared,"_determine_shared_experts_order") is None or stock_attribute(shared,"_output_idx") is None:
         return None,None,None,tuple(digests),f"{_SHARED_MODULE} lacks SharedExpertsOrder.NO_OVERLAP or the SharedExperts slots"
-    return runner,runner._maybe_apply_routed_scale_to_output,order.NO_OVERLAP,tuple(digests),_compilation_reason()
+    return runner,stock_attribute(runner,"_maybe_apply_routed_scale_to_output"),no_overlap,tuple(digests),_compilation_reason()
 
 
 def _decline_reason(runner_module: Any, shared_module: Any) -> str | None:
@@ -300,7 +301,7 @@ def install_for_current_config() -> bool:
         except Exception as exc:
             reason = f"the stock MoE runner is not importable ({exc})"
         else:
-            runner = getattr(runner_module, "MoERunner", None)
+            runner = stock_attribute(runner_module,"MoERunner")
             if runner is not None and stock_attribute(stock_attribute(runner,"_maybe_apply_routed_scale_to_output"),_MARK,False) and _STATE.get("installed"):
                 return True
             runner,stock,no_overlap,digests,reason = _inspect(runner_module,shared_module)
