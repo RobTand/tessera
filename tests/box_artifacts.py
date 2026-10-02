@@ -120,6 +120,18 @@ ROOTS: dict[str, Root] = {
             "receipts beside them",
         ),
         Root(
+            "prismabuild_tools",
+            "TESSERA_PRISMABUILD_TOOLS_DIR",
+            "/mnt/shared/prismabuild-fleet/repo/tools",
+            "the published PrismaBuild installation verifier used by native preflight",
+        ),
+        Root(
+            "b40_runtime",
+            "TESSERA_B40_RUNTIME_DIR",
+            "/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera",
+            "the historical b40 installed runtime whose unchanged contract the native reader checks",
+        ),
+        Root(
             "a4_export",
             "TESSERA_A4_EXPORT_DIR",
             "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/"

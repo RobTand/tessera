@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import subprocess
 
 import pytest
+import box_artifacts
 import torch
 
 from test_native_timing_panel import panel, canonical_wire
@@ -20,7 +21,7 @@ def request_file(panel, monkeypatch):
     value = {'schema': app.REQUEST_SCHEMA, 'expected_runtime': copy.deepcopy(panel['runtime']),
              'scope': copy.deepcopy(panel['plan']['rows'][0]['scope']), 'prefix': 'test.dense',
              'scheme': copy.deepcopy(panel['rows'][0]['scheme']), 'wire': panel['evidence']['wire'],
-             'contract': panel['evidence']['contract'], 'record_verifier': app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py'), 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
+             'contract': panel['evidence']['contract'], 'record_verifier': app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py')), 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
              'sampling': {'samples': 4, 'warmup_iterations': 1, 'steady_s': 20.0, 'seed': 688},
              'netdata_hosts': {'sparky': 'sparky', 'sparklina': 'sparklina'}}
     source = {'schema': app.PRODUCER_SCHEMA, 'commit': 'a'*40, 'commit_source': 'sealed_checkout', **app.producer_source_identity()}
@@ -286,7 +287,7 @@ def test_software_observation_does_not_query_device(panel, monkeypatch):
     monkeypatch.setattr(runtime_image, 'declared_reference', lambda _: {'image': expected['image']})
     monkeypatch.setattr(contract, 'contract_path', lambda: Path(panel['evidence']['contract']['path']))
     monkeypatch.setattr(backend, 'platform_of_this_process', lambda *_: pytest.fail('CPU preflight queried CUDA'))
-    verifier = app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py')
+    verifier = app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py'))
     monkeypatch.setattr(worker.runpy, 'run_path', lambda _: {'verify_install': lambda *_: {'verified_files': 1}})
     got, _, raw = worker.observe_software_runtime(expected, verifier)
     assert 'platform' not in got
@@ -306,7 +307,7 @@ def preflight_inputs(tmp_path, panel):
         path=root/suffix;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('# CPU owner fixture\n')
         origins['modules'][name]=app.tp.file_binding(path)
     origins['installation']['origin']=str(root/'__init__.py')
-    verifier=app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py')
+    verifier=app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py'))
     origins['record_verifier']=verifier
     request={'record_verifier':verifier}
     request_source=app.publish_json(request,tmp_path/'request-source.json')
@@ -377,7 +378,7 @@ def test_external_final_panel_replay_uses_verified_owner_and_refuses_drift(panel
 
 
 def test_local_public_plan_rejects_external_b40_contract(panel):
-    raw=Path('/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera/serving/runtime_contract.json').read_bytes()
+    raw=box_artifacts.skip_now('b40_runtime','serving','runtime_contract.json').read_bytes()
     # This is the unchanged historical document, not a producer-schema upgrade.
     # New required fields may refuse it before the loader-roster comparison.
     with pytest.raises(ValueError,match='cannot read valid packaged runtime contract'):
@@ -385,7 +386,7 @@ def test_local_public_plan_rejects_external_b40_contract(panel):
 
 
 def test_local_public_plan_rejects_external_b40_loader_roster(panel):
-    raw=Path('/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera/serving/runtime_contract.json').read_bytes()
+    raw=box_artifacts.skip_now('b40_runtime','serving','runtime_contract.json').read_bytes()
     # Isolate the historical roster in a current-schema CPU fixture so this
     # assertion proves roster strictness independently of schema precedence.
     doc=copy.deepcopy(contract.load_serving_contract())
