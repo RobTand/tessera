@@ -80,6 +80,8 @@ def runtime_origins(expected_root):
  if not root.is_absolute() or root.resolve()!=root or root.is_relative_to(ROOT):raise ValueError("runtime root must be the installed immutable package outside producer checkout")
  if os.environ.get("PYTHONPATH"):raise ValueError("native phase refuses PYTHONPATH")
  if any(Path(v or os.getcwd()).resolve().is_relative_to(ROOT/"src") for v in sys.path):raise ValueError("native phase refuses producer src in import paths")
+ # The sealed accepted installation overlay is explicit; producer src is never inserted.
+ sys.path.insert(0,str(root.parent))
  files={}
  for name in MODULES:
   module=importlib.import_module(name);path=Path(module.__file__).resolve()
