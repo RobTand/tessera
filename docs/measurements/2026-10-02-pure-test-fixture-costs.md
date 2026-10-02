@@ -60,11 +60,13 @@ Earlier attempts are retained as negative evidence:
 
 - An eight-shard Python 3.14 exploratory fanout used explicit file buckets,
   overriding Tessera's directory `collect_ignore` exclusions. Its errors are
-  not equivalent population evidence. This exposed PB #1458.
+  not equivalent population evidence. This exposed
+  [RobTand/prismabuild#1458](https://github.com/RobTand/prismabuild/issues/1458).
 - PB `--profile sample` creates untracked `.prismabuild-profile/container-route`
   and `exit_status` before the child. Probe
   `99306bba26507428330070a65aedb211c8ccd0b6caf98816070ce8bb024314e7`
-  confirms source identity correctly refuses that dirty checkout. PB #1459
+  confirms source identity correctly refuses that dirty checkout.
+  [RobTand/prismabuild#1459](https://github.com/RobTand/prismabuild/issues/1459)
   owns the instrumentation repair. No dirty-source gate was changed here.
 - Interpreter provisioning required a current scoped uv installer; the
   unsuccessful installer invocations and withdrawn interpreter-presence probe
