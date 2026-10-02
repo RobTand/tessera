@@ -512,8 +512,8 @@ def test_bound_observation_refuses_unbound_or_unverified_context(tmp_path, panel
         Path(case.panel_binding['path']).write_bytes(b'changed panel bytes')
         match = 'file evidence'
     else:
-        Path(app.tp.file_binding(case.runtime_path)['path']).write_bytes(b'changed runtime bytes')
-        match = 'file evidence'
+        case.runtime_path.write_bytes(app.tp.canonical(case.request['expected_runtime']) + b' ')
+        match = 'bound bytes'
     with pytest.raises(ValueError, match=match):
         bound_observation(case, **overrides)
 
@@ -556,7 +556,17 @@ def test_check_writes_no_observation_on_a_refused_bound_request(tmp_path, panel,
     monkeypatch.setattr(step4_capture_launch, 'run_phase', phase)
     panel_path = case.panel_path
     if fault == 'local_panel':
-        panel_path = case.unit / 'local-panel.json'; panel_path.write_bytes(app.tp.canonical(panel))
+        bound = case.unit / 'bound-panel.json'
+        bound.write_bytes(app.tp.canonical(case.panel))
+        binding = app.tp.file_binding(bound)
+        assert app.main(['check', str(bound), '--expected-runtime', str(case.runtime_path),
+                         '--request', str(case.path),
+                         '--request-sha256', hashlib.sha256(case.path.read_bytes()).hexdigest(),
+                         '--preflight-output', str(case.unit / 'refused-local_panel'),
+                         '--expected-panel-sha256', binding['sha256'],
+                         '--observation-out', str(case.unit / 'refused-observation.json')]) == 2
+        assert not (case.unit / 'refused-observation.json').exists()
+        return
     argv = ['check', str(panel_path), '--expected-runtime', str(case.runtime_path),
             '--request', str(case.path),
             '--request-sha256', hashlib.sha256(case.path.read_bytes()).hexdigest(),
