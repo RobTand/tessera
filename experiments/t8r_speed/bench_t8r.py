@@ -326,6 +326,7 @@ def build_routed(store, module):
 
     def fn(x, ids, w):
         return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+    fn.native_adapter = native
     return fn, info, packed, touched
 
 
@@ -432,6 +433,10 @@ def kernel_profile(call, reps=5, *, full_names=False):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args, 'paired_k32_numerics', False):
+        from paired_k32_qualification import require_options
+        require_options(args, stubbed=stubbed)
+        return
     if getattr(args,"profile_native_file",None):
         expected = "/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so"
         if not args.single_routing_file or not args.ncu or args.profile_native_file!=expected:
@@ -469,6 +474,9 @@ def main():
                     help="exact PB-staged readset for the single replay")
     ap.add_argument("--profile-native-file", default=None,
                     help="one declared retained native-code artifact for counter-only recovery")
+    ap.add_argument('--paired-k32-numerics', action='store_true',
+                    help='closed-world pinned A8SE L10 TP2rank0 M1,512,2048 raw-bit qualification')
+    ap.add_argument('--paired-k32-source-sha256', default=None)
     args = ap.parse_args()
     require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
@@ -478,7 +486,7 @@ def main():
     dev = torch.device("cuda")
     inputs = None
     native_owner = None
-    if args.single_routing_file:
+    if args.single_routing_file or args.paired_k32_numerics:
         from pb_staged_store import StagedInputs
         inputs = StagedInputs(args.input_manifest)
     try:
@@ -495,6 +503,11 @@ def main():
                     expected_sha256=os.environ["BENCH_EXPECT_LIBRARY_SHA256"],
                     source_sha256=os.environ["KERNEL_SHA"])
 
+        if args.paired_k32_numerics:
+            if os.environ.get('KERNEL_SHA') != args.paired_k32_source_sha256:
+                raise ValueError('paired-K32 actual source differs from sealed expected source')
+            if not native_owner:
+                raise ValueError('paired-K32 numerics requires held native artifact owner')
         power = PowerSampler()
         import tessera
         meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
@@ -520,7 +533,12 @@ def main():
         except Exception as exc:  # noqa: BLE001
             meta["tessera_meta_error"] = repr(exc)
         ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
-        if inputs:
+        if args.paired_k32_numerics:
+            meta['paired_k32'] = {'input_manifest_sha256': inputs.manifest_sha256,
+                'source_sha256': args.paired_k32_source_sha256,
+                'scope': 'balanced seeded inputs, real A8SE wire TP2rank0; no full-model quality/timing',
+                'sdk_version': inputs.sdk.SDK_VERSION}
+        elif inputs:
             meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
                                       "reference_baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
                                       "manifest_sha256": inputs.manifest_sha256,
@@ -545,6 +563,7 @@ def main():
                     rec["info"] = info
                     rec["load_s"] = time.time() - t0
                     rec["cells"] = {}
+                    paired_reference_holder = {}  # bounded offline reference for this one group
                     cases = []
                     for m in ms:
                         if args.single_routing_file:
@@ -600,6 +619,14 @@ def main():
                         else:
                             xa = (x, *recorded_routing(rfile, m, dev))
                         call = lambda: fn(*xa)  # noqa: E731
+                        if args.paired_k32_numerics:
+                            from paired_k32_qualification import numeric_cell
+                            rec['cells'][key] = numeric_cell(fn, store, *xa,
+                                os.path.join(args.out, 'numeric-words', key), kernel_profile=kernel_profile,
+                                reference_holder=paired_reference_holder)
+                            print(json.dumps({'group': gid, 'M': key, 'numeric_words': rec['cells'][key]['outputs']}), flush=True)
+                            del x, xa
+                            continue
                         if args.ncu:
                             # ncu --profile-from-start off: exactly one profiled call per (group, M).
                             for _ in range(args.warmup if inputs else 3):
@@ -669,6 +696,10 @@ def main():
                                           "GBps_kernel": round(cell["eff_gbps_kernel"] or 0, 1),
                                           "W": round(cell["power"].get("mean_w") or 0, 1)}), flush=True)
                         del x, xa
+                if args.paired_k32_numerics:
+                    from paired_k32_qualification import synthetic_controls
+                    rec['synthetic_controls'] = synthetic_controls(os.path.join(args.out, 'synthetic-words'),
+                                                                   kernel_profile=kernel_profile)
                 rec["ok"] = True
             except Exception:  # noqa: BLE001
                 import traceback

@@ -123,3 +123,59 @@ reordered microstep and missing final async drain. The original loop passes.
 These controls strengthen the CPU model; they do not turn it into GPU proof.
 SASS confirms all producer barriers have256 participants and FULL/EMPTY have
 512, in both paired roles.
+
+## Closed-world numeric qualification preparation
+
+The exact flag-off baseline compiled from10f3d16d through PB
+`8244016432969f0485184effc7e89985769017d15d6a0cd2f7ffd686c2d9cfa2`,
+Sparky CPU1/native1/memory4GiB, no CUDA device, exit0. Canonical receipt
+`13750f6023bf23fc2873f80398de1baeff0bd9e4f03fbe154958eb82fed150d2`;
+baseline ELF `b89ba2d62705abf0152fbc8bb6b338e7bd60f88199211b5f6d61effddfa0c705`.
+The flag-on ELF remains unchanged. An initial misuse of `--snapshot-ref`
+refused before publication: it carries branch refs; it does not select source.
+The correction used a detached exact10f3d16d source checkout.
+
+The existing T8R bench owner has a separate explicit numeric mode for exactly
+A8SE L10 TP2rank0 balanced M1,512,2048, pinned readset/native FD, no graphs or
+routing/timing overrides. Its normal historical counter gate remains fixed.
+Raw gate/up, down-route and reduced-output words are retained and compared
+across binaries. Repeated execution, independent fixed-order route sum and
+actual full native kernel names/counts are checked. Both arms force the existing
+wide knob to1 so M512 exercises the paired BMT128 scope; this does not change
+serving defaults. M1 still uses the original scheduling by its row guard.
+
+The existing independent materializing parser, TP sharder, `materialize_stock`
+and routed fp64 oracle qualify token0's eight real experts, with the actual
+full paired batch's prefix compared bitwise with teacher-forced composition.
+Only this bounded prefix has the independent derived-bound proof. The old
+oracle's emit-route pass field remains inapplicable to this direct operator
+harness; the actual profile establishes native dispatch separately. No
+full-model quality or full-batch fp64 proof follows. Its bounded reference
+weights are prepared once per arm and reused across the three cases.
+
+Synthetic encoded fixtures separately exercise downK128 fallback and the
+minimum downK192 paired boundary atM512, with one persistent CTA forcing many
+item transitions and expert changes. Existing fixture TP-history states,
+public quantization and the original stage owner are reused. Odd K160/K224
+cannot form this full fused adapter's intermediate geometry; their native
+admission refusal remains a CPU-source control, not an invented serving test.
+
+The actual PB a01cb090 sealer's CAS payload90eb8054 was recovered and both
+archive hashes checked. The new readset preserves871 original artifact
+ranges from the true outer-hashed ac4606e8 manifest, removes one unused
+historical routing capture and adds two exact native binaries:873 ranges,
+3,683,753,731 bytes. Original receipts are not resealed or restamped. The
+older a1bca824 inventory with cached-inner hashes is excluded as negative
+historical input evidence. Every new wire read still uses the existing public
+pinned reader and independent cached-inner/canonical-outer validation.
+
+CLI causal RED on original driver source10f3d16d: PB
+`68758fe0a57566851687abbd058c37bf6782c18c50086c2cd797a6d5e71d6a5c`
+refused the new exact numeric mode with `retained native artifact requires
+the exact counter-only replay`. Final CPU harness/FD/wrapper controls:
+PB `819e96949c30502125923f68fff9a4bcc9108ea1e8aa182a16add947c637b0b4`,
+44 passed in2.28s, xdist2/native1/CPU2/memory3GiB, no skipped/uncollected or
+CUDA allocations. An earlier attempt4bb5cd20 retained5 fixture failures
+(CPU tensors/fence not explicitly mocked) and one missing published-SDK
+collection error; the scoped CPU fixture and PYTHONPATH correction is included.
+These are CPU qualification controls only. No numeric GPU action has run yet.

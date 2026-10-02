@@ -14,6 +14,12 @@ live-device check, exact-function opt-in and launch to76,240B gate/up or
 three pairs protect descriptor and row-scale reads after the last EMPTY.
 The terminal EMPTY acknowledgment from #855 remains a separate prerequisite.
 This standalone experimental source uses legacy resident addressing.
+The existing T8R owner has an explicit closed-world numeric mode for pinned
+A8SE L10 TP2rank0 balanced M1/512/2048, retaining intermediate and final raw
+words and observing actual native profiles. Its bounded materializing/fp64
+reference covers token0/expert0..7 only; separate synthetic one-CTA controls
+cover the K192 down boundary and K128 fallback. Historical counter replay
+admission remains fixed. This preparation does not establish GPU execution.
 CPU admission/lifetime controls and native compilation are preliminary;
 no GPU numerical, serving, timing, energy, default, cell or pin qualification
 follows. See `measurements/2026-10-02-paired-k32-compile.md`.
