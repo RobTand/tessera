@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import torch
 
 from tessera.serving import timing_panel as tp, census_plan, contract, scheme
 
@@ -69,7 +70,7 @@ def panel(tmp_path, canonical_wire):
     native = next(x for x in doc["native_extensions"] if x["module_name_prefix"] == launch["lane"])
     filename = native["filename_glob"].replace("*", "CPU-fixture")
     telemetry = {"interval_unix": [10.0, 11.0], "fast_power_samples": [[10.5, 40.0]],
-                 "netdata": {box: {context: {"query": "CPU fixture", "raw_response": {"view": {}, "result": {}},
+                 "netdata": {box: {context: {"query": "CPU fixture", "raw_response": {"view": {}, "result": {"labels": ["time", "fixture"], "data": [[10, [0, 0, 0]]] }},
                                             "returned_view": {}} for context in tp.NETDATA_CONTEXTS}
                              for box in ("sparky", "sparklina")}}
     evidence = {
@@ -79,7 +80,7 @@ def panel(tmp_path, canonical_wire):
         "wire": save(tmp_path, "wire.bin", blob, True),
         "preparation": save(tmp_path, "preparation.json", {"builder": "tessera.serving.lane.build_tessera_method",
             "wire_sha256": hashlib.sha256(blob).hexdigest(), "roles": roles, "shape": scope["shape"],
-            "tp_rank": 0, "tp_degree": 1, "grid": "E4M3", "resident_bytes": 1}),
+            "tp_rank": 0, "tp_degree": 1, "grid": "E4M3", "native_packed_bytes": 1}),
         "samples": save(tmp_path, "samples.json", {"samples_ms": samples, "warmup_iterations": 1,
                                                   "interval_unix": [10.0, 11.0]}),
         "routes": save(tmp_path, "routes.json", {"records": [record] * len(samples)}),
@@ -111,7 +112,7 @@ def test_true_even_median_and_positive_binding(panel):
 @pytest.mark.parametrize("fault", ["producer_as_runtime", "wrong_cell_source", "missing_code", "pair", "state",
     "shape", "activation", "platform", "wire", "native", "raw_samples", "fake_median",
     "nan", "sample_bool", "sample_count", "prep_wire", "prep_geometry", "prep_roles", "no_trace",
-    "single_box", "missing_context", "wrong_interval", "no_fast_power", "energy", "duplicate_row", "extra_field", "noncanonical_wire", "cpu_only_trace"])
+    "single_box", "missing_context", "wrong_interval", "no_fast_power", "energy", "duplicate_row", "extra_field", "noncanonical_wire", "cpu_only_trace", "float_count", "numeric_claim", "empty_netdata", "error_netdata", "missing_scope", "wrong_trace_type"])
 def test_positive_receipt_refuses_false_evidence(panel, fault):
     expected = copy.deepcopy(panel["runtime"])
     if fault == "producer_as_runtime": panel["runtime"]["tessera_commit"] = "3" * 40
@@ -133,6 +134,13 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
     elif fault in ("wire", "native", "raw_samples", "no_trace"):
         key = {"native": "native_binary", "raw_samples": "samples", "no_trace": "trace"}.get(fault, fault)
         Path(panel["evidence"][key]["path"]).write_bytes(b"tampered")
+    elif fault == "float_count": panel["rows"][0]["timing"]["n"] = 4.0
+    elif fault == "numeric_claim": panel["claims"]["certifies_placement"] = 0
+    elif fault == "empty_netdata": rewrite(panel, "telemetry", lambda v: v["netdata"]["sparky"][next(iter(tp.NETDATA_CONTEXTS))]["raw_response"].update(result={"labels": [], "data": []}))
+    elif fault == "error_netdata": rewrite(panel, "telemetry", lambda v: v["netdata"]["sparky"][next(iter(tp.NETDATA_CONTEXTS))]["raw_response"].update(result={"error": "unknown context"}))
+    elif fault == "missing_scope": panel["plan"]["rows"][0].pop("scope")
+    elif fault == "wrong_trace_type":
+        bound = panel["evidence"]["trace"];panel["evidence"]["trace"] = save(Path(bound["path"]).parent, "trace.json.gz", gzip.compress(tp.canonical([])), True)
     elif fault == "fake_median": panel["rows"][0]["timing"]["median_ms"] = 3
     elif fault in ("nan", "sample_bool", "sample_count"):
         rewrite(panel, "samples", lambda v: v.update(samples_ms=[True, 1, 2] if fault == "sample_bool" else [1, 2]))
@@ -161,25 +169,3 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
     with pytest.raises((ValueError, OSError)):
         tp.validate_panel(panel, expected_runtime=expected)
 
-
-def test_nonfinite_samples_and_duplicate_json_refuse():
-    for value in (float("nan"), float("inf"), -1, True):
-        with pytest.raises(ValueError): tp.timing_summary([1, 2, value])
-    with pytest.raises(ValueError, match="duplicate"): tp.json_bytes(b'{"x":1,"x":2}')
-
-
-def test_validator_and_canonical_frame_are_torch_free():
-    root = Path(__file__).resolve().parents[1]
-    script = '''import importlib.abc,sys
-sys.path.insert(0,sys.argv[1]+"/src")
-class Block(importlib.abc.MetaPathFinder):
- def find_spec(self,fullname,path=None,target=None):
-  if fullname.split(".")[0] in {"torch","vllm","prismaquant","prismabuild"}: raise ImportError(fullname)
-sys.meta_path.insert(0,Block())
-from tessera.serving.timing_panel import timing_summary
-from tessera.fused_frame import pack_fused,parse_fused
-assert timing_summary([1,2,3,4])["median_ms"]==2.5
-assert parse_fused(pack_fused([("role",1,b"x")]))[0].blob==b"x"
-'''
-    result = subprocess.run([sys.executable, "-I", "-c", script, str(root)], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr

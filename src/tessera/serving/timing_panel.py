@@ -216,11 +216,11 @@ def admitted_cell(contract, scope, runtime, pair, roles):
     return candidates[0], launches[0]["lane"]
 
 
-def validate_panel(panel, *, expected_runtime):
+def _validate_panel(panel, *, expected_runtime):
     """Replay one positive receipt; caller provides the independently frozen context."""
     _object(panel, {"schema", "status", "claims", "runtime", "plan", "rows", "evidence", "energy"}, "panel")
     canonical(panel)  # Reject nonfinite values anywhere, including cached summaries.
-    if panel["schema"] != SCHEMA or panel["status"] != "measured" or panel["claims"] != CLAIMS:
+    if panel["schema"] != SCHEMA or panel["status"] != "measured" or canonical(panel["claims"]) != canonical(CLAIMS):
         raise ValueError("panel schema/status/claims differ")
     runtime = runtime_context(panel["runtime"])
     if runtime != runtime_context(expected_runtime):
@@ -254,13 +254,13 @@ def validate_panel(panel, *, expected_runtime):
     shape = scope["shape"]
     if (declared["rows"], declared["columns"], declared["q256"]) != (shape["N"], shape["K"], scope["q256"]):
         raise ValueError("native wire differs from requested rank-local shape/rung")
-    prep = _object(json_bytes(raw["preparation"]), {"builder", "wire_sha256", "roles", "shape", "tp_rank", "tp_degree", "grid", "resident_bytes"}, "preparation")
+    prep = _object(json_bytes(raw["preparation"]), {"builder", "wire_sha256", "roles", "shape", "tp_rank", "tp_degree", "grid", "native_packed_bytes"}, "preparation")
     if prep["builder"] != "tessera.serving.lane.build_tessera_method" or prep["wire_sha256"] != evidence["wire"]["sha256"] or prep["roles"] != roles or prep["shape"] != shape or prep["grid"] != "E4M3" or (type(prep["tp_rank"]), prep["tp_rank"], type(prep["tp_degree"]), prep["tp_degree"]) != (int, 0, int, 1):
         raise ValueError("actual native preparation differs")
-    _integer(prep["resident_bytes"], "native resident bytes")
+    _integer(prep["native_packed_bytes"], "native packed tensor bytes")
     samples = _object(json_bytes(raw["samples"]), {"samples_ms", "warmup_iterations", "interval_unix"}, "samples")
     _integer(samples["warmup_iterations"], "warmup iterations")
-    if row["timing"] != timing_summary(samples["samples_ms"]):
+    if canonical(row["timing"]) != canonical(timing_summary(samples["samples_ms"])):
         raise ValueError("timing summary differs from actual raw samples")
     interval = samples["interval_unix"]
     if not isinstance(interval, list) or len(interval) != 2 or _number(interval[1], "interval end") <= _number(interval[0], "interval start"):
@@ -313,9 +313,20 @@ def validate_panel(panel, *, expected_runtime):
             raise ValueError("raw Netdata context responses are absent")
         for response in box.values():
             _object(response, {"query", "raw_response", "returned_view"}, "Netdata evidence")
-            if not isinstance(response["raw_response"], dict) or response["returned_view"] != response["raw_response"].get("view"):
-                raise ValueError("Netdata returned view differs")
-    if panel["energy"] != {"status": "hold", "reason": "cross_host_clock_alignment_unqualified", "reference_w": 140}:
+            if not isinstance(response["query"], str) or not response["query"] or not isinstance(response["raw_response"], dict) or response["returned_view"] != response["raw_response"].get("view"):
+                raise ValueError("Netdata query/returned view differs")
+            result = response["raw_response"].get("result")
+            if not isinstance(response["returned_view"], dict) or not isinstance(result, dict) or not isinstance(result.get("labels"), list) or not result["labels"] or not isinstance(result.get("data"), list) or not result["data"]:
+                raise ValueError("Netdata raw response contains no result samples")
+    if canonical(panel["energy"]) != canonical({"status": "hold", "reason": "cross_host_clock_alignment_unqualified", "reference_w": 140}):
         raise ValueError("energy remains HOLD; no work/J qualification in this slice")
     return {"scope_id": row["scope_id"], "cell_id": cell["id"], "kernel_lane": list(pair),
             "timing": row["timing"], "energy_status": "hold", "claims": dict(CLAIMS)}
+
+
+def validate_panel(panel, *, expected_runtime):
+    """Malformed receipts refuse through one stable passive validation boundary."""
+    try:
+        return _validate_panel(panel, expected_runtime=expected_runtime)
+    except (KeyError, TypeError, IndexError, AttributeError, StopIteration, TesseraError) as exc:
+        raise ValueError(f"malformed native timing receipt: {exc}") from exc
