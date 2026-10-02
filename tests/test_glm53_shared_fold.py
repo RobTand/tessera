@@ -429,3 +429,27 @@ def test_a_compiled_runner_forward_declines(shared_fold, monkeypatch, caplog, mo
 def test_an_absent_runner_declines(shared_fold, monkeypatch, caplog):
     monkeypatch.setitem(sys.modules, RUNNER, None)
     assert "is not importable" in _declined(shared_fold, monkeypatch, caplog)
+
+
+@pytest.mark.parametrize('fault',['missing_source','directory_source','invalid_path','missing_method','bad_signature','import_failure'])
+def test_uninspectable_stock_declines_without_rebinding(shared_fold,monkeypatch,fault):
+    from pathlib import Path
+    mod=shared_fold.mod;monkeypatch.setenv(mod.FLAG,'1')
+    stock=sys.modules[RUNNER]
+    if fault=='missing_source':Path(stock.__file__).unlink()
+    elif fault=='directory_source':monkeypatch.setattr(stock,'__file__',str(Path(stock.__file__).parent))
+    elif fault=='invalid_path':monkeypatch.setattr(stock,'__file__',object())
+    elif fault=='missing_method':monkeypatch.setattr(stock,'MoERunner',type('MissingRunner',(),{}))
+    elif fault=='bad_signature':
+        class BadSignature:
+            def __call__(self,*args):pass
+            @property
+            def __signature__(self):raise ValueError('uninspectable stock method')
+        monkeypatch.setattr(shared_fold.runner,'_maybe_apply_routed_scale_to_output',BadSignature())
+    else:
+        def unavailable(_):raise RuntimeError('stock dependency failed during import')
+        monkeypatch.setattr(mod.importlib,'import_module',unavailable)
+    before=shared_fold.runner._maybe_apply_routed_scale_to_output
+    assert mod.install_for_current_config() is False
+    assert shared_fold.runner._maybe_apply_routed_scale_to_output is before
+    assert not mod._STATE.get('installed')
