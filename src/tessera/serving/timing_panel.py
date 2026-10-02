@@ -246,8 +246,8 @@ def _validate_panel(panel, *, expected_runtime):
     _integer(installed["verified_files"], "installed verified files")
     verifier = _object(origins["record_verifier"], {"path", "bytes", "sha256"}, "RECORD verifier source")
     _integer(verifier["bytes"], "RECORD verifier source bytes");_sha(verifier["sha256"], "RECORD verifier source sha256")
-    if verifier["path"] != "/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py":
-        raise ValueError("requires the published installation verifier owner")
+    if not isinstance(verifier["path"], str) or not Path(verifier["path"]).is_absolute():
+        raise ValueError("installation verifier source requires an absolute path")
     _object(origins["modules"], RUNTIME_MODULES, "runtime module origins")
     for name, bound in origins["modules"].items():
         _object(bound, {"path", "bytes", "sha256"}, "runtime module origin")

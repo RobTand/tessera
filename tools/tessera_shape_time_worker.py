@@ -107,7 +107,7 @@ def observe_runtime(expected, record_verifier=None):
  actual_contract=hashlib.sha256(contract.contract_path().read_bytes()).hexdigest()
  if (declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)!=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"]):raise ValueError("runtime source/contract/version differs before device setup")
  if record_verifier is None:raise ValueError("missing sealed installation verifier")
- if record_verifier["path"]!="/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py":raise ValueError("foreign installation verifier")
+ if Path(record_verifier["path"])!=Path("/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py").resolve(strict=True):raise ValueError("foreign installation verifier")
  read_bound(record_verifier)
  origins["installation"]=runpy.run_path(record_verifier["path"])["verify_install"]("tessera",expected["tessera_commit"])
  origins["record_verifier"]=file_binding(record_verifier["path"])

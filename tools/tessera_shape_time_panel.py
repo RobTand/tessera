@@ -70,7 +70,7 @@ def read_request(path):
     raw_contract = tp.read_bound(request["contract"])
     tp.read_bound(request["runtime_python"])
     tp.read_bound(request["record_verifier"])
-    if request["record_verifier"]["path"] != "/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py":
+    if Path(request["record_verifier"]["path"]) != Path("/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py").resolve(strict=True):
         raise ValueError("requires the published installation verifier")
     tp._integer(request["worker_timeout_s"], "native worker timeout")
     if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
