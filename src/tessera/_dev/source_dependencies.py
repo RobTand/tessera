@@ -54,7 +54,8 @@ DATA_WILDCARD = "*data"
 def statement_import_requests(node, module, *, is_package=False):
     """Module spellings and requested attributes from one ordinary import.
 
-    A namespace or potential submodule requests unknown attributes (None).
+    A namespace requests unknown attributes (None); a potential submodule has
+    no attribute request until the selector resolves it to an actual module.
     This does not resolve spellings: the selector owns the ambiguity-preserving
     resolver and package-initialization edges.
     """
@@ -75,7 +76,7 @@ def statement_import_requests(node, module, *, is_package=False):
     names = {alias.name for alias in node.names}
     requests = {prefix: None if "*" in names else names}
     # A from-import may import a child module instead of reading an attribute.
-    requests.update({f"{prefix}.{name}": None for name in names})
+    requests.update({f"{prefix}.{name}": set() for name in names})
     return requests
 
 
@@ -249,12 +250,22 @@ def guarded_reexport(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             if node.id == guard and node not in allowed_guard_loads:
                 return None
-            if node.id in {"__getattr__", "globals", "locals", "eval", "exec"}:
+            if node.id in {"__getattr__", "__dict__", "globals", "locals", "eval", "exec"}:
                 return None
             if node.id == "__name__" and node not in hook_nodes:
                 return None
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
                 and node.func.id == "vars" and not node.args):
+            return None
+    # The same lexical alias owner that recognizes source execution must also
+    # retain aliased access to a module's mutable namespace.
+    scanner = _Scanner(Path("__guarded_export__.py"))
+    scanner.visit(tree)
+    for call, scope in scanner.calls:
+        symbols = _possible_symbols(call.func, scope)
+        if (_source_call(call, symbols)
+                or symbols & {"builtins.globals", "builtins.locals"}
+                or "builtins.vars" in symbols and not call.args):
             return None
     return names, imported
 

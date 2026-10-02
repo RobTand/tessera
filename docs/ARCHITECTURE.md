@@ -1,5 +1,15 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for guarded module re-exports in the impacted-test
+selector (Refs #808). The dependency owner derives a finite import condition
+only from a fully recognized, immutable-name `__getattr__` forwarding hook.
+Named imports request their attributes and Python's implicit `__path__`;
+namespace, star, explicit hook and file-load demands retain the union. Ordinary
+imports and package initialization remain unconditional. Unsupported or escaping
+hooks, guards, namespace access and aliased source execution retain the previous
+union. The source-read capability and UNKNOWN origin contract are unchanged;
+no serving interface, runtime, wire, pin, lane or promotion gate moves. See §1.1.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -2266,13 +2276,35 @@ remains diagnosed wildcard uncertainty, never erased by a retry. Callable alias
 recognition uses a finite worklist and per-path cycle guards rather than the
 Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
 generic module parameter and an import missing from the graph remain unknown.
-The #808 draft is blocked on unchanged selectivity ratchets that force full
-for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
+The frozen `202d1f07` #808 draft failed the three unchanged selectivity ratchets,
+forcing full for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
 path proving which uncertainty seed caused that escalation, so it did not
 establish the asserted GLM53-through-serving.config attribution. Selection now records resolved-file
 `uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
 reverse walk that decides escalation. These are static predecessor witnesses,
-not proof that a runtime call executes. It is not a completed external-origin contract. What this misses is a source
+not proof that a runtime call executes. It is not a completed external-origin contract.
+
+The source-dependency owner now recognizes a narrowly proved module re-export:
+`if name in <literal frozenset>: import module; return getattr(module, name)`,
+followed by a literal `AttributeError`. It accepts no hook decorators, computed
+defaults, extra effects, shadowed builtins, guard rebinding/mutation or hook,
+guard or global-namespace escape. A literal `__all__` directory hook may enumerate
+that immutable set. Every other shape retains the unconditional import union.
+Only this proved guarded import moves from a dependency of the whole module
+to a dependency of the consumers that can demand its attributes. Explicit
+from-imports request their named attributes plus Python's implicit `__path__`;
+namespace imports, stars, explicit `__getattr__` access and exact file loads
+request every branch. Re-exports inherit those dependencies, and ambiguous
+spellings still resolve to every candidate through the existing module resolver.
+All ordinary imports and package-initialization effects remain dependencies;
+the guard worklist terminates on cycles. Failed source reads cannot publish a
+summary and remain authoritative wildcard uncertainty. The real-tree causal
+probe established that the guarded slicing-to-layout edge was a complete cut
+between all recorded uncertainty seeds and conftests on frozen `202d1f07`;
+it did not prove GLM53 source external. The three real ratchets and the
+source-execution helper/refusal controls remain acceptance criteria.
+
+What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
 A conftest **reached** -- changed, or importing anything changed -- reaches its
@@ -6971,7 +7003,7 @@ raises.
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
 | `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
-| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 draft selector follows that helper call, so the generic source parameter remains unknown. Its initial receipt did not establish the path to the shared conftest; the revised receipt establishes a static predecessor path through layout's lazy slicing import, while runtime callable reachability and source origin remain unproved. |
+| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
 
 The module docstring records the decline rules and the exactness argument.
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served

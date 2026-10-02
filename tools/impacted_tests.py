@@ -100,6 +100,7 @@ from tessera._dev.source_dependencies import (  # noqa: E402
     DATA_WILDCARD,
     WILDCARD,
     file_imports,
+    guarded_reexport,
     module_import_requests,
     source_execution_modules,
 )
@@ -196,6 +197,7 @@ def _imports(
     *,
     tree: ast.Module | None = None,
     executes_source: bool | None = None,
+    statement_requests: dict | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
     """What this file depends on, split by how the dependency was established.
 
@@ -226,7 +228,8 @@ def _imports(
         # module may import anything -- and the file and its failure are
         # recorded so the operator can repair it.
         return {WILDCARD}, set(), set()
-    found = set(module_import_requests(tree, own, is_package=path.name == "__init__.py"))
+    found = set(module_import_requests(tree, own, is_package=path.name == "__init__.py")
+                if statement_requests is None else statement_requests)
     paths, unknown, unplaced = file_imports(
         tree, path, root, executes_source=executes_source)
     loaded, data = set(), set()
@@ -368,39 +371,84 @@ def import_graph(
     )
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
+    guarded = {path: summary for path, tree in trees.items()
+               if (summary := guarded_reexport(tree)) is not None}
+
+    def add_statements(requests, importer, *, loaded_target=None):
+        """Retain initialization; forward only proved guarded attribute demands.
+
+        Every spelling still uses _targets. Unknown namespaces, hook access,
+        stars and loaded files take the union. The worklist retains transitive
+        guarded re-exports without choosing an alias or recursing on cycles.
+        """
+        pending = deque([(loaded_target, None)] if loaded_target is not None else [])
+        visited = set()
+
+        def add(requests):
+            for spelling, demand in requests.items():
+                parts, matched = spelling.split("."), False
+                for cut in range(len(parts), 0, -1):
+                    candidate = ".".join(parts[:cut])
+                    known = _targets(candidate)
+                    if not known:
+                        continue
+                    for resolved in known:
+                        if not matched or by_name[resolved].name == "__init__.py":
+                            importers[resolved].add(importer)
+                            # A real child module yields a namespace, while a
+                            # fallback prefix of a possible child requests no
+                            # further attributes. The from-import's named
+                            # request was already recorded at its own prefix.
+                            requested = None if matched or (demand == set()
+                                and candidate == spelling) else demand
+                            pending.append((resolved, None if requested is None
+                                            else frozenset(requested)))
+                    matched = True
+
+        add(requests)
+        while pending:
+            target, demand = pending.popleft()
+            if (target, demand) in visited:
+                continue
+            visited.add((target, demand))
+            path = by_name[target]
+            summary = guarded.get(path)
+            if summary is None:
+                continue
+            names, imported = summary
+            # A Python from-import can ask a non-package for __path__ before
+            # fetching the requested names. Explicit hook access escapes the
+            # name restriction, including re-exported callable aliases.
+            active = names if demand is None or "__getattr__" in demand \
+                else names & (demand | {"__path__"})
+            if active:
+                add(module_import_requests(
+                    ast.Module(body=[imported], type_ignores=[]), module_of[target],
+                    is_package=path.name == "__init__.py"))
+
     for node, path in by_name.items():
         if path not in trees:
             statements, loaded, data = {WILDCARD}, set(), set()
         else:
+            omitted = {guarded[path][1]} if path in guarded else set()
+            requests = module_import_requests(
+                trees[path], module_of[node], is_package=path.name == "__init__.py",
+                omit=omitted)
             statements, loaded, data = _imports(
                 path, module_of[node], root, unreadable, nodes,
-                tree=trees[path], executes_source=path in executing)
-        for target in statements:
-            if target == WILDCARD:
-                importers[WILDCARD].add(node)
-                continue
-            # Attribute the edge to the longest known module prefix: an import
-            # of tessera.encode.foo is an edge to tessera.encode.  Importing a
-            # submodule also EXECUTES every package __init__ above it, so those
-            # are edges too.  Stopping at the longest prefix dropped them, and
-            # a package is exactly where a re-export lives: at #148 a change to
-            # src/tessera/__init__.py selected 98 of the 123 test modules that
-            # reach the package, and src/tessera/serving/__init__.py 31 of 70.
-            parts = target.split(".")
-            matched = False
-            for cut in range(len(parts), 0, -1):
-                candidate = ".".join(parts[:cut])
-                known = _targets(candidate)
-                if not known:
-                    continue
-                for resolved in known:
-                    if not matched or by_name[resolved].name == "__init__.py":
-                        importers[resolved].add(node)
-                matched = True
+                tree=trees[path], executes_source=path in executing,
+                statement_requests=requests)
+            add_statements(requests, node)
+        if WILDCARD in statements:
+            importers[WILDCARD].add(node)
         for target in loaded:
             # An exact path names an exact file.  It does not execute the
             # packages above it, so it gets no prefix edges.
             importers[target].add(node)
+            if target in by_name:
+                # Loading a file does not prove which attributes its caller
+                # can request, so it retains every possible lazy dependency.
+                add_statements({}, node, loaded_target=target)
             if _is_collection_probe(path, by_name.get(target)):
                 probes.add((target, node))
         for target in data:
