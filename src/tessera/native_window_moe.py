@@ -293,6 +293,7 @@ class WindowUnitAxis:
         self._layout: dict = {}
         self._filled: dict = {}
         self._meta: dict = {}
+        self._word_layout: dict = {}
 
     def _signature(self, unit) -> tuple:
         """What one grouped stack needs every expert of a part to share."""
@@ -305,7 +306,7 @@ class WindowUnitAxis:
         return (self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
                 int(rep.words.numel()), int(rep.runs.shape[0]),
                 tuple(int(r) for r in rep.rates), *state,
-                int(rep.tile_words), int(rep.n_tiles))
+                int(rep.tile_words), int(rep.n_tiles), str(getattr(rep, "word_layout", "legacy")))
 
     def _alloc(self, part: str, unit) -> dict:
         e = self.experts
@@ -349,6 +350,7 @@ class WindowUnitAxis:
         self._layout[part] = self._signature(unit)
         self._filled[part] = set()
         self._meta[part] = (rows, cols, L)
+        self._word_layout[part] = str(getattr(rep, "word_layout", "legacy"))
         return slot
 
     def put(self, part: str, expert: int, unit) -> None:
@@ -419,6 +421,7 @@ class WindowUnitAxis:
                 "rows": self._meta[part][0],
                 "cols": self._meta[part][1],
                 "window_bits": self._meta[part][2],
+                "word_layout": self._word_layout.get(part, "legacy"),
                 "word_off": (torch.arange(self.experts, dtype=torch.int32, device=slot["words"].device)
                              * word_width),
                 "run_off": torch.cat([
@@ -458,6 +461,11 @@ class PackedWindowMoeBundles:
     @property
     def device(self) -> torch.device:
         return self.down.device
+
+    @property
+    def word_layout(self) -> str:
+        """The resident word order every bundle shares (see WORD_LAYOUT_*)."""
+        return str(getattr(self.gate, "word_layout", "legacy"))
 
     def resident_bytes(self) -> int:
         total = 0
@@ -528,6 +536,15 @@ class PackedWindowMoeBundles:
             else:
                 object.__setattr__(self, "_fused_adapter", built)
         if built is None:
+            # The compact Triton adapter reads the legacy ``[column][chunk]``
+            # order only.  A re-laid stack cannot be re-strided by a reader that
+            # does not know the order, so an unavailable fused lane is a
+            # refusal, not a substitution (tessera#793/#739).
+            if self.word_layout != "legacy":
+                raise GrammarError(
+                    f"the {self.word_layout!r} resident word layout is served only by the fused "
+                    f"routed window lane; it is unavailable ({reason}), and the compact adapter "
+                    "reads the legacy order only. Refusing rather than mis-reading the stack.")
             _log.info("compact window MoE adapter kept for a %s stack of %d experts: %s",
                       self.family, self.experts, reason)
             built = native_window_moe_from_bundles(

@@ -827,6 +827,11 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name} lives on {b.device}; the lane is CUDA"
         if b.window_bits != WINDOW_BITS:
             return f"{name} window_bits {b.window_bits} != {WINDOW_BITS}"
+        if str(getattr(b, "word_layout", "legacy")) != "legacy":
+            # The compiled R4 reader does not yet address this order; until it
+            # does, a re-laid stack is refused here (never re-strided by the
+            # legacy reader).  tessera#739.
+            return f"{name} is {getattr(b, 'word_layout', 'legacy')!r}; the lane reads legacy words only"
         if int(b.experts) != e:
             return f"{name} has {b.experts} experts, down has {e}"
         if fam == "e4m3" and b.quantizer != "native":

@@ -97,7 +97,8 @@ not establish full-model LFM served quality or a compiled MoE forward.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 import torch
@@ -117,6 +118,17 @@ from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
 from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
                         DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED, DECODER_TORCH_STOCK,
                         emit_route, route_shape)
+
+#: Opt-in: re-lay the compact routed window body piece-major (tessera#739).
+#: Default off.  Only the single-rate rate-4 body the fused R4 reader
+#: addresses is eligible (``kernel_window_gemv.piece_major_eligible``); every
+#: other unit keeps legacy words, and no reader is re-strided to read either.
+ENV_PIECE_MAJOR = "TESSERA_ROUTED_PIECE_MAJOR"
+
+
+def _piece_major_requested() -> bool:
+    return os.environ.get(ENV_PIECE_MAJOR, "0").strip().lower() not in ("", "0", "false", "no")
+
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -592,6 +604,15 @@ class _RankLocalPackedIntake:
             name, unit = _compact_expert_units(
                 blob, self.roles[group][index], self.plans[group], target,
                 device=device, family=family, scratch=self._scratch)
+            # The resident word order is decided HERE, once, before the single
+            # stack write: an opt-in piece-major re-lay of an eligible
+            # single-rate rate-4 body, on the bounded per-unit transient.  The
+            # axis records the tag in its signature, and every reader either
+            # knows it or refuses (tessera#739).
+            from ..kernel_window_gemv import (WORD_LAYOUT_PIECE_MAJOR,
+                                              piece_major_eligible)
+            if _piece_major_requested() and piece_major_eligible(unit.rep):
+                unit = replace(unit, rep=unit.rep.with_word_layout(WORD_LAYOUT_PIECE_MAJOR))
             # The axis allocates each plane stack once and drops this unit as
             # soon as its expert slot is filled; a repeated callback refuses.
             self.axis[group].put(name, expert, unit)
@@ -636,7 +657,8 @@ class _RankLocalPackedIntake:
                     perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
                     experts=int(self.declared['experts']),
                     window_bits=slot["window_bits"], family=family,
-                    arithmetic=arithmetic)
+                    arithmetic=arithmetic,
+                    word_layout=str(slot.get("word_layout", "legacy")))
 
             self.axis = {}
             return PackedWindowMoeBundles(

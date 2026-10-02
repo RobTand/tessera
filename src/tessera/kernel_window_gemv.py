@@ -460,6 +460,47 @@ def _built_library(build: str) -> "str | None":
 # layout
 # --------------------------------------------------------------------------
 
+#: Physical word order of a repacked BODY plane.  ``legacy`` is
+#: ``[tile][column][64-row chunk]`` -- a column's 8 64-row pieces are
+#: contiguous.  ``piece_major`` regroups each tile to
+#: ``[tile][64-row piece][column]`` so a warp reading piece ``t64`` of a
+#: 32-column block reads contiguous words.  The two are the same bytes
+#: re-laid, so resident bytes are unchanged; a reader that knows only one
+#: order must refuse the other rather than re-stride it.
+WORD_LAYOUT_LEGACY = "legacy"
+WORD_LAYOUT_PIECE_MAJOR = "piece_major"
+WORD_LAYOUTS = (WORD_LAYOUT_LEGACY, WORD_LAYOUT_PIECE_MAJOR)
+
+#: The 64-row piece count inside a 512-row tile, fixed by the format.
+PICECES_PER_TILE = TILE_ROWS // 64
+
+
+def piece_major_eligible(rep: "Repacked") -> bool:
+    """Whether a repack may be re-laid piece-major.
+
+    Only the single-rate body the piece-major reader addresses is eligible:
+    one run (a uniform ``rates``) whose every column is rate 4, so the tile's
+    64-row pieces are exactly ``2 * 4`` words each and the fused R4 reader
+    computes one address form.  Anything else keeps the legacy words.
+    """
+    rates = {int(r) for r in rep.rates}
+    return len(rates) == 1 and rates == {4}
+
+
+def require_legacy_word_layout(word_layout: str, reader: str) -> None:
+    """Refuse a re-laid body in a reader that reads the legacy order only.
+
+    A legacy stride over already-reordered words reads the wrong words, so a
+    reader that does not know the order must refuse before it launches, never
+    re-stride.  Every reader that has not learned ``WORD_LAYOUT_PIECE_MAJOR``
+    calls this with its own name.
+    """
+    if str(word_layout) != WORD_LAYOUT_LEGACY:
+        raise GrammarError(
+            f"{reader} reads the legacy [column][chunk] word order; this stack is "
+            f"{word_layout!r}. It is served only by a reader that knows the order.")
+
+
 @dataclasses.dataclass
 class Repacked:
     """The BODY plane in tile order (see the module docstring)."""
@@ -473,6 +514,9 @@ class Repacked:
     perm: torch.Tensor         # int32 [cols]: permuted column -> original column
     runs: torch.Tensor         # int32 [n_runs, 4]: (rate, col0, ncols, word0), permuted columns
     rates: "tuple[int, ...]"
+    #: The physical word order of ``words`` (see WORD_LAYOUT_*).  Decided once,
+    #: before the resident stack write; every later reader reads this tag.
+    word_layout: str = WORD_LAYOUT_LEGACY
 
     @property
     def nbytes(self) -> int:
@@ -492,15 +536,53 @@ class Repacked:
         licence ``WindowGemvUnit.with_plan(share_from=)`` has to reuse one.
         The codes, the column permutation (items address permuted columns;
         ``perm`` is applied to ``x``) and the row count within the last tile are
-        deliberately absent: they change no descriptor.  Named components, so
-        a mismatch can be refused by name.
+        deliberately absent: they change no descriptor.  The word layout IS
+        present: two repacks with different physical word order address
+        different words for the same descriptor, so they must not share a
+        table.  Named components, so a mismatch can be refused by name.
         """
         return (
             ("tiles", int(self.n_tiles)),
             ("columns", int(self.cols)),
             ("runs", tuple(tuple(int(v) for v in run) for run in self.runs.tolist())),
+            ("word_layout", str(self.word_layout)),
             ("device", str(self.words.device)),
         )
+
+    def with_word_layout(self, word_layout: str) -> "Repacked":
+        """This plane re-laid in ``word_layout`` (same bytes, same counts).
+
+        ``legacy`` is returned unchanged.  ``piece_major`` regroups each
+        512-row tile from ``[column][8 pieces]`` to ``[8 pieces][column]``;
+        only a single-rate body is eligible (``piece_major_eligible``), and a
+        body that is already piece-major is returned as is.  ``tile_words``,
+        ``n_tiles``, ``perm``, ``runs``, ``rates`` and every count are
+        unchanged -- this is a bijection of ``words`` alone.
+        """
+        if word_layout not in WORD_LAYOUTS:
+            raise GrammarError(f"unknown word layout {word_layout!r}; expected one of {WORD_LAYOUTS}")
+        if word_layout == self.word_layout:
+            return self
+        if self.word_layout != WORD_LAYOUT_LEGACY:
+            raise GrammarError(
+                f"cannot re-lay a {self.word_layout!r} body to {word_layout!r}; "
+                "a body is re-laid once, from legacy")
+        if word_layout == WORD_LAYOUT_LEGACY:
+            return self
+        if not piece_major_eligible(self):
+            raise GrammarError(
+                f"piece-major needs one run at rate 4; this body has rates {tuple(self.rates)}")
+        rate = 4
+        per_piece = 2 * rate                       # words in a 64-row piece
+        per_col = 16 * rate                        # words in a 512-row column chunk
+        cols, n_tiles = int(self.cols), int(self.n_tiles)
+        if per_col * cols * n_tiles != int(self.words.numel()):
+            raise GrammarError(
+                f"word count {int(self.words.numel())} is not {n_tiles} tiles x {cols} columns "
+                f"x {per_col} words")
+        tiled = self.words.reshape(n_tiles, cols, PICECES_PER_TILE, per_piece)
+        relaid = tiled.permute(0, 2, 1, 3).reshape(-1).contiguous()
+        return dataclasses.replace(self, words=relaid, word_layout=WORD_LAYOUT_PIECE_MAJOR)
 
 
 def repack_window_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> Repacked:
