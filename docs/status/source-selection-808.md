@@ -27,8 +27,12 @@ The concrete blocker is `src/tessera/serving/glm53_prefill.py:793-802`: generic
 `module.__file__` bytes feed imported `rebuild_method`. Production installation
 calls it at line 845 using `modules[0]` after runtime interface matching.
 `tests/test_glm53_prefill.py:854,874,882,894` also pass runtime-created modules,
-not exclusively external imports. The shared conftest reaches this reader.
-Thus caller-wide external proof cannot be inferred from the production intention.
+not exclusively external imports. Separately, the retained selection diagnostic
+forces full for `tests/conftest.py`. No predecessor artifact yet joins these two
+observations: a GLM53-to-config-to-conftest attribution is unverified. A diagnostic
+must identify the actual uncertainty seed and resolved-file path before any
+source-origin redesign is priced. Caller-wide external proof also cannot be
+inferred from the production intention.
 Serving signatures/reads and the selectivity assertions must not be silently
 changed to conceal this blocker. Future options are a separately approved narrow
 caller/provenance contract or a separately priced source-interface change; this
@@ -62,7 +66,7 @@ inventory does not assert complete arbitrary-Python read discovery.
 | `src/tessera/historical_producer.py:115` | Namespace-root guard; no new historical producer behavior |
 | `src/tessera/serving/ext.py:551` | Header-directory discovery from torch install; not Python source execution |
 | `src/tessera/serving/glm53_nope.py:63,73` | Package-relative pinned stock-source hashes; generic external-origin inference not implemented; serving owner |
-| `src/tessera/serving/glm53_prefill.py:289,793` | Generic source hash and read-to-imported-executor boundary; concrete #808 selectivity blocker, Astra follow-on |
+| `src/tessera/serving/glm53_prefill.py:289,793` | Generic source hash and read-to-imported-executor boundary; relation to the conftest selectivity block unverified, Astra follow-on |
 | `src/tessera/serving/mtp_draft_lifetime.py:148` | Generic digest-only read, no Python execution of these bytes; retain data-reader semantics, serving owner |
 | `tests/test_audit_byte_baseline.py:103,110,112` (two at 110) | In-tree source mutation/exec and synthetic module metadata; conservative selection, no wire changes |
 | `tests/test_audit_container_accounting.py:117,202`, `tests/test_audit_sec2.py:222`, `tests/test_compensate.py:83` | Package/text assertion reads; existing plain-reader rules |
