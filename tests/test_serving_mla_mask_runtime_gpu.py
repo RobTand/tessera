@@ -1,20 +1,32 @@
 """Small actual vLLM SM120 implementation gate; no model/serve window."""
 from types import SimpleNamespace
 from pathlib import Path
-import os
+import importlib.util
 import pytest
 import torch
 pytest.importorskip('vllm')
 from tessera.serving import mla_sparse_sm120 as module
 from tessera.serving.mla_prefill import MlaPrefillLibrary
 
+@pytest.fixture(scope="module")
+def workload():
+    # Match the repository's file-based experiment loading convention. Do not
+    # add the experiment directory to sys.path or expose its generic library.
+    path = Path(__file__).resolve().parents[1] / "experiments/mla_prefill/d1_bench.py"
+    spec = importlib.util.spec_from_file_location("_mla_prefill_workload", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(),reason='requires actual SM121 CUDA runtime')
 @pytest.mark.parametrize('T,E',[(512,512),(2048,8192)])
-def test_actual_eager_override_matches_stock_and_graph_capture_stays_stock(T,E,monkeypatch):
-    from d1_bench import make_cache,make_indices,HEADS,D_LATENT
+def test_actual_eager_override_matches_stock_and_graph_capture_stays_stock(T,E,monkeypatch,tmp_path,workload):
+    make_cache,make_indices=workload.make_cache,workload.make_indices
+    HEADS,D_LATENT=workload.HEADS,workload.D_LATENT
     module.flags.reset_for_tests(module.FLAG);monkeypatch.setenv(module.FLAG,'1')
     assert module.qualified_source_refusal() is None
-    library=MlaPrefillLibrary(Path(os.environ['MLA_RUNTIME_TEST_OUT'])/'build')
+    library=MlaPrefillLibrary(tmp_path/'build')
     monkeypatch.setattr(module,'library_for_device',lambda device:library)
     impl=object.__new__(module.TesseraMLASparseSM120Impl)
     impl.num_heads=32;impl.kv_lora_rank=512;impl.qk_nope_head_dim=256;impl.qk_rope_head_dim=0
