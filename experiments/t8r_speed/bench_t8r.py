@@ -474,6 +474,8 @@ def main():
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--power-s", type=float, default=3.0)
     ap.add_argument("--no-graph", action="store_true")
+    ap.add_argument("--outputs-only", action="store_true",
+                    help="record output bits and native/layout identity without timing, power or graph work")
     ap.add_argument("--routing", default=None,
                     help="directory with m<M>/*.pt recorded top-k ids; each file adds a "
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
@@ -640,6 +642,13 @@ def main():
                             y.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
                         cell["out_shape"] = list(y.shape)
                         del y
+                        if args.outputs_only:
+                            cell["outputs_only"] = True
+                            rec["cells"][key] = cell
+                            print(json.dumps({"group": gid, "M": key, "out_sha256": cell["out_sha256"],
+                                              "outputs_only": True}), flush=True)
+                            del x, xa
+                            continue
                         ts = time.time()
                         cell["wall"] = summarize(time_events(call, args.warmup, args.iters))
                         cell["wall_window_unix"] = [ts, time.time()]
