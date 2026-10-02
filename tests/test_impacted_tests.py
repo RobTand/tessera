@@ -20,6 +20,78 @@ impacted = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(impacted)  # type: ignore[union-attr]
 
 
+@pytest.fixture(scope="module")
+def _checkout_import_graph():
+    """Own this module's reader separately from each test's monkeypatch."""
+    return impacted.import_graph
+
+
+@pytest.fixture(autouse=True)
+def _use_checkout_import_graph(monkeypatch, _checkout_import_graph):
+    monkeypatch.setattr(impacted, "import_graph", _checkout_import_graph)
+
+
+def test_readonly_checkout_queries_do_not_repeat_source_analysis(monkeypatch):
+    """Two queries of this unchanged checkout need at most one source read."""
+    reads = []
+    original = impacted._read_python_source
+
+    def record(path, root, unreadable):
+        if path == SCRIPT:
+            reads.append(path)
+        return original(path, root, unreadable)
+
+    monkeypatch.setattr(impacted, "_read_python_source", record)
+    first = impacted.build_graph(ROOT)
+    second = impacted.build_graph(ROOT)
+
+    assert SCRIPT in first[0].values(), "the actual checkout was not analysed"
+    assert first == second
+    assert len(reads) <= 1, "repeated checkout queries rebuilt the same source graph"
+
+
+def test_checkout_graph_results_and_guard_metadata_are_isolated():
+    guards = {}
+    first = impacted.import_graph(ROOT, guarded_edges=guards)
+    expected_guards = json.loads(json.dumps(list(guards.values())))
+    first[0].clear()
+    first[1].clear()
+    first[2].add(("fixture-only", "fixture-only"))
+    first[3]["fixture-only"] = "fixture-only"
+    for fact in guards.values():
+        fact["names"].append("fixture-only")
+    guards[("fixture-only", "fixture-only")] = {"names": []}
+
+    fresh_guards = {}
+    second = impacted.import_graph(ROOT, guarded_edges=fresh_guards)
+    assert SCRIPT in second[0].values()
+    assert second[1], "caller mutation erased the reverse graph"
+    assert ("fixture-only", "fixture-only") not in second[2]
+    assert "fixture-only" not in second[3]
+    assert list(fresh_guards.values()) == expected_guards
+
+
+def test_temporary_repository_queries_still_read_changed_sources(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    source = repo / "source.py"
+    source.write_text("import first\n")
+    reads = []
+    original = impacted._read_python_source
+
+    def record(path, root, unreadable):
+        if path == source:
+            reads.append(path)
+        return original(path, root, unreadable)
+
+    monkeypatch.setattr(impacted, "_read_python_source", record)
+    impacted.build_graph(repo)
+    source.write_text("this is not valid Python !!!\n")
+    _, _, _, unreadable = impacted.import_graph(repo)
+    assert len(reads) == 2, "a mutable temporary repository reused stale analysis"
+    assert "source.py" in unreadable
+
+
 def _git(repo: Path, *args: str) -> str:
     completed = subprocess.run(
         ["git", "-C", str(repo), *args],
