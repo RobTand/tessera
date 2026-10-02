@@ -52,6 +52,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 '''
     result = subprocess.run([sys.executable, "-c", program, str(Path(__file__))],
+                            cwd=Path(__file__).resolve().parents[1],
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
 
