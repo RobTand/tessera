@@ -1,5 +1,26 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
+The existing T8R benchmark can replay one historical real-ID distribution
+against the A8SE wires through PB public pinned readers, binding the same
+owned outer bytes to publisher cached-inner digests plus exact role/rows and
+canonical TSRFUSE1 reframing before the unchanged rank-local intake. A PB-only
+sealer records outer-frame hashes for the final GPU readset; it never treats
+a cached inner-unit digest as an exported outer-frame digest.
+Only served mode0/RL4/one-run/BMT128 is profiled; the teacher-forced mode1
+interface is excluded. Seeded activation/uniform downstream weights remain
+a declared proxy; no full-model quality/speed, serving/default/pin change
+or gate promotion is delivered. A >=30s steady power loop and both-box
+Netdata supplement the one-kernel profile; energy remains held until actual
+coverage and instrument agreement. Raw timing samples are retained and the
+reported median uses the conventional odd/even sample median (#836).
+A missing counter instrument may be recovered without repeating timing/power.
+The separate retained-native counter population uses the existing build callback
+and a public SDK-held native-code FD with pre/post hashes and module-origin
+checks; this trusts the experimental native artifact owner and does not qualify
+an immutable original tensor provider. Production source and defaults stay fixed.
+See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
+
 Re-stamped 2026-10-02 for Netdata cadence attribution (Refs #840).
 The box-power owner reports native collection cadence from the returned DB
 metadata, returned bucket duration separately, and returned tier/node/instance
