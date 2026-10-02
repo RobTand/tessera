@@ -113,3 +113,10 @@ withheld, using `/home/rob/venvs/pq-pbdc4803da-tessera-b40c93cb/bin/python`.
 Normative prose also corrects the stale b40/v42 spelling to b40/v45 and states
 the separate current-worker replay job instead of pretending to reuse the
 original worker job.
+
+Master advanced during delivery to terminal-barrier merge
+`0356c2d8e9585e271eda9c6387a3548c95de8b5e` (PR #861). A second ordinary
+rebase retains that change too. Its only conflict was the issue snapshot,
+resolved by rerunning the same GitHub-backed refresh owner. The three producer
+and two domain-test blobs above remain identical; no prior receipt is
+restamped onto this new source and no GPU or full domain suite was repeated.
