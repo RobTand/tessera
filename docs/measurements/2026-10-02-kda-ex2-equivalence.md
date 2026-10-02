@@ -163,3 +163,57 @@ and receipt/payload hashes were checked; the receipt is
 `/mnt/shared/prismabuild-fleet/cas/actions/v3/5f/5f5a0fc439e7afb5f3db945f4c983443887822a8b81ff6db9c5f0037c409181f.json`.
 This is an audited composition of unchanged numerical evidence and the new
 required control, not another 24-case GPU run.
+
+## Root review correction: exact module and complete case bindings
+
+Astra's review found two concrete holes in the first audit implementation:
+the compared OLD/NEW module hashes were recorded without requiring OLD to
+equal a sealed banked identity and NEW to equal the control's actual module;
+and any nonempty subset of convolution kernels passed. The initial gate
+also trusted aggregate case summaries even if the cases were absent.
+The earlier `5f5a0fc4` composition is retained as bounded history and is
+**superseded as acceptance evidence**. The actual 24-case GPU observations
+and intermediate control remain valid and were not rerun.
+
+The corrected audit requires OLD SHA-256
+`c07aa285e63617716e40faa74fafab6fdddbdd1d9d8042f9c8f01d3e4a46cbc1`
+as an additional sealed command argument. NEW must equal the actual
+control's compiled-module SHA-256. Both extracted cubins must contain
+each mode from `KDA_PTX_MODES` exactly once: currently 0..5, without an
+extra or missing mode. All six corresponding text sections must match.
+
+The case validator requires exactly the producer's 24 cells: SD/DS,
+physical state lengths 3/6 and all six named cases, with the actual
+geometry, sequence lengths and history masks. It checks typed bounded
+raw-word difference counts, their equality flags, q/k/v slice totals,
+stock/candidate-versus-mutant consistency, and derives aggregate exactness
+and mutation observations from those cells. A fabricated aggregate word
+cannot replace absent or contradictory comparisons. Case generation and
+admission share the unchanged case definition in one home.
+
+PB `76314ecbd937c37a792a7a76648800d8761e6a3fda4a2b17e179f734b1f13b5f`
+on `91a2c8112d` is causal RED: **16 failed, 22 passed**. The failures show
+wrong OLD, wrong NEW, both swapped to an unrelated module, kernel subsets,
+extra modes, absent/subset/duplicate/wrong cases, altered inputs, false
+counts, mismatched q/k/v totals and fabricated mutation/served summaries.
+
+PB `3e9ee3a2db170724461ea52dec3978aa675069acdd92667dbba14316291d9efa`
+on `e0c7f59eb221472166197d6c5dd6c349584bfc56` is GREEN: **38 passed**,
+rc0, zero skips/missing collection. Two xdist workers/worksteal, native
+threads one, CPU-only `2.10.0+cpu`, no CUDA allocations. It compiles all
+five touched Python modules/tests and checks both shell wrappers' syntax.
+
+The corrected actual-bank audit is PB
+`2140ada679c22d5a8ad03e64761f40223535eb8caf2e4722ae676fc4cf7067be`,
+same source parent, CPU-only in the image on sparky, rc0. It records
+`gate_passed=true`, `errors=[]`, `exact_mode_roster=true`, modes 0..5,
+the required old module identity, the new control module identity,
+all six identical sections, the complete 24-case bank and the unchanged
+bound control. Artifact:
+`/mnt/shared/tessera-measurements/kda-recovery-20261002/bound-admission-v2/kernel_identity.json`.
+Its sealed snapshot is `491db3ab041faee3ceb10a0b0fa53921fbd66416`;
+the CPU test snapshot is `6336219c602014093cfa3beae3026e1764779ebe`.
+Both endings/logs and CAS claim/receipt/payload checks pass. Receipts:
+`cas/actions/v3/3e/3e9ee3a2...json` and `cas/actions/v3/21/2140ada6...json`
+under `/mnt/shared/prismabuild-fleet/`. The correction is dictionary and
+artifact validation only; no GPU numerical repetition or timing launch.

@@ -6996,11 +6996,17 @@ must differ, while the rounded `+1` denominator, FP32 SiLU and BF16 output
 remain bit-identical. Actual raw words, summaries, finite-input scope and
 current PTX/build flags/compiled module/SASS digests are checked. Missing,
 malformed, stale or vacuous control evidence fails; the entire convolution
-matrix must also observe no ex2 output/state difference. Any failure
+matrix must also observe no ex2 output/state difference. Admission requires
+the complete 24-case roster from the same `KDA_PTX_CASES` definition the
+producer uses, matched geometry/sequence lengths/history masks, typed
+raw-word comparison counts and equality flags, q/k/v slice totals and
+case-derived aggregate summaries. Any failure
 stops later parts. The original v1 failure is preserved, not re-labelled.
 Banked cases are reused only when relevant device text and test inputs
-are unchanged; the artifact audit seals expected JSON digests and checks
-the installed stock source. The screen
+are unchanged; the artifact audit seals expected JSON and old-module
+digests, requires the compared new module to equal the control's compiled
+identity, requires every mode in `KDA_PTX_MODES` exactly once in each cubin
+(no extra/missing mode), and checks the installed stock source. The screen
 explicitly does not cover recurrent output or final recurrent state, and
 cannot admit a fused serving implementation by itself. `kdafwd` is a
 separate stock-kernel timing screen; its results require PrismaBuild's
