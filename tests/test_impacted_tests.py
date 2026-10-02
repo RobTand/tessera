@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import importlib.util
 import json
 import os
@@ -22,8 +23,22 @@ _SPEC.loader.exec_module(impacted)  # type: ignore[union-attr]
 
 @pytest.fixture(scope="module")
 def _checkout_import_graph():
-    """Own this module's reader separately from each test's monkeypatch."""
-    return impacted.import_graph
+    """Analyse the read-only checkout once; mutable fixture repos stay fresh."""
+    original = impacted.import_graph
+    graph = None
+    guards = {}
+
+    def read(root, *, guarded_edges=None):
+        nonlocal graph
+        if root != ROOT:
+            return original(root, guarded_edges=guarded_edges)
+        if graph is None:
+            graph = original(root, guarded_edges=guards)
+        if guarded_edges is not None:
+            guarded_edges.update(deepcopy(guards))
+        return deepcopy(graph)
+
+    return read
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +68,7 @@ def test_readonly_checkout_queries_do_not_repeat_source_analysis(monkeypatch):
 def test_checkout_graph_results_and_guard_metadata_are_isolated():
     guards = {}
     first = impacted.import_graph(ROOT, guarded_edges=guards)
-    expected_guards = json.loads(json.dumps(list(guards.values())))
+    expected_guards = deepcopy(guards)
     first[0].clear()
     first[1].clear()
     first[2].add(("fixture-only", "fixture-only"))
@@ -68,7 +83,7 @@ def test_checkout_graph_results_and_guard_metadata_are_isolated():
     assert second[1], "caller mutation erased the reverse graph"
     assert ("fixture-only", "fixture-only") not in second[2]
     assert "fixture-only" not in second[3]
-    assert list(fresh_guards.values()) == expected_guards
+    assert fresh_guards == expected_guards
 
 
 def test_temporary_repository_queries_still_read_changed_sources(tmp_path, monkeypatch):
@@ -797,8 +812,8 @@ def test_this_repository_narrows_for_a_leaf_source_edit():
     leaves = _leaves_outside_the_shared_conftest(ROOT)
     assert leaves, "no source file is outside the shared conftest's closure"
 
-    # One graph build per select, so this samples the ends and the middle of
-    # the derived list rather than paying for all of it.
+    # Sample the ends and the middle of the derived list to exercise distinct
+    # paths through the selector with the same checkout graph.
     for leaf in {leaves[0], leaves[len(leaves) // 2], leaves[-1]}:
         result = impacted.select(ROOT, [leaf])
         assert result["verdict"] == "narrowed", (leaf, result["forces_full"])
