@@ -149,3 +149,17 @@ Receipt roots are `cas/actions/v3/70/70c62ea9...json`,
 under `/mnt/shared/prismabuild-fleet/`. No full-suite integration was
 launched. No stock timing or serving window is claimed by this packet;
 the timing submission still awaits Astra's final evidence review.
+
+The final digest-sealed composition is PB
+`5f5a0fc439e7afb5f3db945f4c983443887822a8b81ff6db9c5f0037c409181f`,
+source parent `42e59048e04da40ed46b9c5c6754b49aff37f708`, sealed snapshot
+`10a93585bd18b8a14fc8a2f80bfab69ce0f86576`. It ran CPU-only inside the
+pinned image on sparklina and exited zero, with `gate_passed=true`,
+`errors=[]`, `stock_binding_ok=true`, and all six device-text sections
+equal. Its command binds both expected JSON hashes above. Artifact:
+`/mnt/shared/tessera-measurements/kda-recovery-20261002/sealed-admission-v2/kernel_identity.json`.
+CAS claim `78edb312447b3f61d6555fd13fa9bfc638405e85317376066cb737ae8564c7dc`
+and receipt/payload hashes were checked; the receipt is
+`/mnt/shared/prismabuild-fleet/cas/actions/v3/5f/5f5a0fc439e7afb5f3db945f4c983443887822a8b81ff6db9c5f0037c409181f.json`.
+This is an audited composition of unchanged numerical evidence and the new
+required control, not another 24-case GPU run.
