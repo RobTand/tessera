@@ -21,6 +21,13 @@ def main():
             for cell in result.get('cells', {}).values():
                 if cell.get('power', {}).get('window_unix'):
                     phases['steady-power'] = cell['power']['window_unix']
+    # Fixed paired diagnostic phases reuse the same box-side owner; ordinary
+    # legacy/single-population paths retain their existing phase names.
+    for name in ('A1', 'B1', 'B2', 'A2'):
+        arm = root / name / 'arm.json'
+        if arm.exists():
+            data = json.loads(arm.read_text())
+            phases[name] = data['steady']['window_unix']
     report = {'schema':'tessera.routed_gate_netdata.v1', 'phases':{}}
     for phase, (a,z) in phases.items():
         start,end = math.floor(a),math.ceil(z)
