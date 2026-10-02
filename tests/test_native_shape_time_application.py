@@ -387,3 +387,11 @@ def test_job_hash_is_checked_before_json_or_imports(tmp_path,monkeypatch):
     monkeypatch.setattr(worker,'json_bytes',lambda _:pytest.fail('unbound job reached JSON parser'))
     with pytest.raises(ValueError,match='owned native job'):
         worker.read_job(path,'0'*64)
+
+
+def test_repeated_runtime_observation_inserts_overlay_once(installed_origins):
+    import sys
+    root,_=installed_origins
+    worker.runtime_origins(str(root))
+    worker.runtime_origins(str(root))
+    assert sys.path.count(str(root.parent))==1, 'duplicate overlay roots make RECORD owner discovery ambiguous'
