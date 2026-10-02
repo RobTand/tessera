@@ -109,7 +109,7 @@ def options():
     return SimpleNamespace(single_routing_file='recorded.pt',
         groups='experts.R1024.L10', ms='2048', input_manifest='sealed.json',
         routing=None, no_graph=True, power_s=30, warmup=10, iters=30,
-        artifact=canonical_replay_paths()['artifact'])
+        artifact=canonical_replay_paths()['artifact'],paired_k32_numerics=False,direct_vllm_inputs=False)
 
 
 def require_options(args, **kwargs):
@@ -210,4 +210,3 @@ def test_native_input_requires_closed_counter_mode(ncu,path):
     args=options();args.ncu=ncu;args.profile_native_file=canonical_replay_paths()['native'] if path=='canonical' else path
     with pytest.raises(ValueError,match='counter-only'):
         require_options(args)
-

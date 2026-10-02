@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
-# Submitted through PrismaBuild (pbrun --measurement --gpu --container-image ...);
-# this script is the admitted action's command.  Usage:
+# Non-vLLM work is admitted through PrismaBuild. The explicit closed paired
+# mode executes stock vLLM custom ops directly under its execution exemption.
+# Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
 # dense window kernels; one profiled call per (group, M) via --profile-from-start off).
@@ -47,6 +48,8 @@ EXTRA_MOUNTS=()
 # The strict replay uses PB's public SDK from this sealed published generation,
 # and reads only ranges opened through its leases. Preserve the injected attempt.
 PB_ENV=()
+DIRECT_OPTS=()
+RUN_PREFIX=()
 [[ -z "${BENCH_EXPECT_LIBRARY_SHA256:-}" ]] || IMAGE_ENV+=(-e "BENCH_EXPECT_LIBRARY_SHA256=$BENCH_EXPECT_LIBRARY_SHA256")
 if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   for key in PRISMABUILD_ACTION_KEY PRISMABUILD_ACTION_NONCE PRISMABUILD_ACTION_SCOPE PRISMABUILD_QUEUE_ROOT PRISMABUILD_RESIDENCY_MAP PRISMABUILD_READER_HELPER_ROOT; do
@@ -60,6 +63,20 @@ if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   # exact admitted namespace, with all data reads still through pinned FDs.
   EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet
                  -v "$STAGE_ROOT":"$STAGE_ROOT" --pid=host)
+  IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
+fi
+if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
+  [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "direct vLLM mode cannot use a PB launch context" >&2; exit 2; }
+  [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]] || { echo "direct transport requires closed paired numeric mode" >&2; exit 2; }
+  [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
+  [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
+  [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
+  printf '%s\n' "$BENCH_OWNER_TOKEN" > "$OUT/owner-token.txt"
+  DIRECT_OPTS=(--cidfile "$OUT/owned.cid" --label "tessera.paired_numeric_owner=$BENCH_OWNER_TOKEN"
+               --memory 16g --memory-swap 16g --pids-limit 512 --cpus 2)
+  RUN_PREFIX=(timeout --signal=TERM --kill-after=15s 240s)
+  # Pure public manifest parsing only; no queue or residency state is mounted.
+  EXTRA_MOUNTS+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro)
   IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
 fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
@@ -119,7 +136,7 @@ ext_libs() {
 EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
-docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+"${RUN_PREFIX[@]}" docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" "${DIRECT_OPTS[@]}" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \

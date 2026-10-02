@@ -194,3 +194,34 @@ The actual builder passes TP_RANK0/TP_SIZE2 explicitly to
 The exact registered stock FP8 quantizer is still executed. Root therefore
 routes the GPU numeric run directly under the vLLM execution exemption;
 these CPU preparation and control tests continue through PrismaBuild.
+
+The approved direct-vLLM extension is at the existing StagedInputs and
+NativeCallback owners. It uses the same sealed873-range manifest, held
+nofollow regular original FDs, bounded pread, unchanged range SHA and
+canonical-outer/cached-inner checks, six-field fstat before/after reads and
+close, plus actual native FD pre/load/fence checks. There is no PB GPU action,
+private queue, fake context, lease emulation, cache, decoder or whole-model
+rehash. Every consumed range remains authenticated; unused model ranges are
+not read. Source bindings now include the sealed input manifest itself.
+
+Direct-owner RED: PB
+`e73d2521bc0423099bfdabc4f52d8b30f117a23e769c7cd78d5c8c94c1a8cd02`,
+7 failed because the direct-vLLM owner did not exist. Essential GREEN: PB
+`daa406b752cd23ecc0f2b11d6f1b4d2e1c5cda4d62d427f79c933c9328b96d37`,
+Sparky CPU2/native1/memory3GiB,101 passed in2.43s, no skips/uncollected or
+device allocations; canonical receipt
+`925703ae54707baeecde446a981241835f7b89481a87fdf55b34739e041adcce`.
+Controls cover replacement, in-place mutation, truncated range, wrong digest,
+symlink, native direct pre/load/fence ownership, closed CLI, wrapper memory/
+thread/CID bindings, low-headroom refusal, active memory/PSI/time containment
+and exact owner-label cleanup with foreign-CID/daemon-error refusal.
+
+The direct container's host memory limit is16GiB with no additional swap,
+CPU quota2/native1 and240s per arm inside a600s two-arm deadline. Existing
+`bench_routed_load._host_pressure` supplies host UMA/PSI observations:
+launch requires40GiB MemAvailable, active floor24GiB and PSI full avg10<20.
+The8GiB GPU estimate is not a hard limit: GB10 CUDA unified allocations may
+escape Docker host-memory accounting. Exact owned process group and CID/label
+cleanup contains only this numeric arm, never a name match or peer service.
+These are CPU preparation results. Actual GPU numerics and timing remain
+pending root GO.

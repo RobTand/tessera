@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import os
+import json
 from pathlib import Path
 import sys
 from types import ModuleType,SimpleNamespace
@@ -20,9 +21,19 @@ def callback_module():
     return module
 
 
-def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None):
+def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=False):
     reader,staged,opened,sdk=fixture(tmp_path,origin='/forbidden-origin/module.so',offset=0)
     module=callback_module();calls=[]
+    native_path='/forbidden-origin/module.so'
+    if direct:
+        reader.close()
+        staged=tmp_path/'original.so';staged.write_bytes(b'owned-wire')
+        native_path=str(staged)
+        manifest=tmp_path/'direct.json'
+        manifest.write_text(json.dumps({'entries':[{'path':native_path,'offset':0,'bytes':10,
+            'sha256':hashlib.sha256(b'owned-wire').hexdigest()}],'entry_count':1,'total_bytes':10}))
+        direct_sdk=SimpleNamespace(read_data_manifest=lambda p:(json.loads(Path(p).read_bytes()),'identity'))
+        reader=module.StagedInputs(manifest,sdk=direct_sdk,direct_vllm=True)
     source=ROOT/'src/tessera/serving/csrc/routed_fused_window.cu'
     def build(name,source_name,compile_fn):
         calls.append((name,source_name))
@@ -34,14 +45,15 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None):
     monkeypatch.setattr(module.importlib.util,'module_from_spec',make)
     monkeypatch.setattr(module.importlib.machinery.ExtensionFileLoader,'exec_module',
                         lambda self,lib: exec_hook(lib,staged) if exec_hook else None)
-    owner=module.NativeCallback(reader,'/forbidden-origin/module.so',rf,tmp_path/'retained',
+    owner=module.NativeCallback(reader,native_path,rf,tmp_path/'retained',
         expected_sha256=expected or hashlib.sha256(b'owned-wire').hexdigest(),
         source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
     return owner,reader,staged,rf,build,calls
 
 
-def test_retained_binary_uses_existing_owner_and_stays_held_until_fence(tmp_path,monkeypatch):
-    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch)
+@pytest.mark.parametrize('direct',[False,True])
+def test_retained_binary_uses_existing_owner_and_stays_held_until_fence(tmp_path,monkeypatch,direct):
+    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,direct=direct)
     lib=rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('must not JIT rebuild'))
     owner.bind(lib)
     assert calls==[(owner.MODULE,owner.MODULE)]
@@ -58,9 +70,10 @@ def test_retained_binary_uses_existing_owner_and_stays_held_until_fence(tmp_path
     reader.close()
 
 
-def test_wrong_native_digest_refuses_and_closes_without_callback_install(tmp_path,monkeypatch):
+@pytest.mark.parametrize('direct',[False,True])
+def test_wrong_native_digest_refuses_and_closes_without_callback_install(tmp_path,monkeypatch,direct):
     with pytest.raises(ValueError,match='digest'):
-        owner_fixture(tmp_path,monkeypatch,expected='0'*64)
+        owner_fixture(tmp_path,monkeypatch,expected='0'*64,direct=direct)
 
 
 def test_foreign_already_loaded_module_is_not_adopted(tmp_path,monkeypatch):
@@ -70,27 +83,33 @@ def test_foreign_already_loaded_module_is_not_adopted(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize('fault',['foreign_origin','file_change'])
-def test_load_mutation_refuses_and_restores_callback(tmp_path,monkeypatch,fault):
+@pytest.mark.parametrize('direct',[False,True])
+def test_load_mutation_refuses_and_restores_callback(tmp_path,monkeypatch,fault,direct):
     def corrupt(lib,staged):
         if fault=='foreign_origin':lib.__file__='/foreign/module.so'
         else:staged.write_bytes(b'other-wire')
-    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,exec_hook=corrupt)
+    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,exec_hook=corrupt,direct=direct)
     with pytest.raises(ValueError):
         rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('JIT'))
     with pytest.raises(ValueError):owner.finish(lambda:None)
     assert owner.closed and rf.build_library is original
     with pytest.raises(OSError):os.fstat(owner.fd)
-    reader.close()
+    if direct and fault=='file_change':
+        with pytest.raises(ValueError,match='identity changed'):reader.close()
+    else:reader.close()
 
 
-def test_profile_mutation_refuses_after_fence_and_restores_callback(tmp_path,monkeypatch):
-    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch)
+@pytest.mark.parametrize('direct',[False,True])
+def test_profile_mutation_refuses_after_fence_and_restores_callback(tmp_path,monkeypatch,direct):
+    owner,reader,staged,rf,original,calls=owner_fixture(tmp_path,monkeypatch,direct=direct)
     rf.build_library(owner.MODULE,owner.MODULE,lambda *a:pytest.fail('JIT'))
     staged.write_bytes(b'other-wire')
     fences=[]
     with pytest.raises(ValueError):owner.finish(lambda:fences.append(True))
     assert fences==[True] and owner.closed and rf.build_library is original
-    reader.close()
+    if direct:
+        with pytest.raises(ValueError,match='identity changed'):reader.close()
+    else:reader.close()
 
 
 def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
@@ -99,5 +118,4 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
         rf.build_library('other','other',lambda *a:pytest.fail('JIT'))
     assert calls==[]
     owner.finish(lambda:None);reader.close()
-
 

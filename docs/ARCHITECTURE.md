@@ -23,6 +23,16 @@ admission remains fixed. This preparation does not establish GPU execution.
 This closed numeric mode supplies TP0/2 directly to the packed intake and
 skips the unrelated vLLM config/world initialization; normal benchmark modes
 retain it. The native stock FP8 quantizer remains an actual vLLM dependency.
+Its numeric action therefore runs directly under the vLLM execution exemption.
+The existing input owner validates the same sealed873-range manifest with
+the public pure reader, holds original regular nofollow FDs, and checks each
+bounded range digest plus six-field file identity before/after consumption.
+The cached-inner/canonical-outer checks and native pre/load/fence bindings
+remain unchanged. No PB launch context, residency state or lease is emulated.
+The existing container wrapper has a finite owned-CID mode:16GiB host memory,
+no extra swap, two CPUs/native1,240s per arm. The existing host UMA/PSI reader
+guards40GiB launch headroom and24GiB active floor;8GiB GPU memory is an
+estimate, because Docker does not guarantee enforcement of GB10 CUDA UMA.
 CPU admission/lifetime controls and native compilation are preliminary;
 no GPU numerical, serving, timing, energy, default, cell or pin qualification
 follows. See `measurements/2026-10-02-paired-k32-compile.md`.

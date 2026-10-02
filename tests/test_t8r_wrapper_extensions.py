@@ -68,7 +68,8 @@ import pytest
 
 
 @pytest.mark.parametrize('choice', [None, '1'])
-def test_bench_wrapper_retains_paired_build_choice(tmp_path, choice):
+@pytest.mark.parametrize('direct',[False,True])
+def test_bench_wrapper_retains_paired_build_choice(tmp_path, choice,direct):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout = tmp_path/'checkout'
     (checkout/'experiments').mkdir(parents=True)
@@ -91,8 +92,21 @@ def test_bench_wrapper_retains_paired_build_choice(tmp_path, choice):
     env.pop('TESSERA_ROUTED_FUSED_PAIRED_K32',None)
     if choice is not None:
         env['TESSERA_ROUTED_FUSED_PAIRED_K32']=choice
+    extra=[]
+    if direct:
+        sdk=tmp_path/'published-sdk';(sdk/'src/prismabuild').mkdir(parents=True)
+        env.update(BENCH_DIRECT_VLLM='1',BENCH_OWNER_TOKEN='a'*32,PB_CLIENT_ROOT=str(sdk))
+        env.pop('BENCH_STRICT_STAGED',None)
+        extra=['--paired-k32-numerics','--direct-vllm-inputs']
     subprocess.run(['bash',str(wrapper),str(checkout),str(tmp_path/'out'),
-                    '--artifact',str(artifact)],env=env,check=True,capture_output=True,text=True)
+                    '--artifact',str(artifact),*extra],env=env,check=True,capture_output=True,text=True)
     args=argv_path.read_bytes().decode().rstrip('\0').split('\0')
     values=[arg for arg in args if arg.startswith('TESSERA_ROUTED_FUSED_PAIRED_K32=')]
     assert values == ([] if choice is None else ['TESSERA_ROUTED_FUSED_PAIRED_K32='+choice])
+    if direct:
+        for key,value in [('--memory','16g'),('--memory-swap','16g'),('--pids-limit','512'),('--cpus','2')]:
+            assert args[args.index(key)+1]==value
+        assert args[args.index('--cidfile')+1]==str(tmp_path/'out/owned.cid')
+        assert 'tessera.paired_numeric_owner='+'a'*32 in args
+        assert str(sdk)+':'+str(sdk)+':ro' in args
+        assert not any(x.startswith('PRISMABUILD_') for x in args)

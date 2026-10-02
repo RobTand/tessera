@@ -66,6 +66,8 @@ def report(tmp_path,build):
         control['geometry']={mode:{'paired':bool(build and (mode=='0' or K=='192')),'bm':128} for mode in ('0','2')}
         synthetic[K]=control
     return {'meta':{'paired_k32':{'input_manifest_sha256':'c'*64},
+        'direct_input_bindings':{'transport':'direct-vllm-held-original-fds','manifest_sha256':'c'*64,
+            'before':{'owned':'fingerprint'},'after':{'owned':'fingerprint'}},
         'native_code_artifact':{k:'d'*64 for k in ['before_load_sha256','after_load_sha256','after_profile_sha256']}},
         'results':[{'ok':True,'cells':cells,'synthetic_controls':synthetic}]}
 
@@ -76,7 +78,7 @@ def test_comparator_reads_exact_words(tmp_path):
     assert result['exact_words_equal'] and len(result['compared'])==9
 
 
-@pytest.mark.parametrize('fault', ['source','native','population','input','output','bytes','build','reference','dispatch'])
+@pytest.mark.parametrize('fault', ['source','native','population','input','output','bytes','build','reference','dispatch','ownership','ownership_between_arms'])
 def test_comparator_refuses_unqualified_or_changed_evidence(tmp_path,fault):
     a=report(tmp_path/'baseline',False);b=report(tmp_path/'candidate',True)
     cell=b['results'][0]['cells']['512']
@@ -88,7 +90,9 @@ def test_comparator_refuses_unqualified_or_changed_evidence(tmp_path,fault):
     elif fault=='bytes':Path(cell['outputs']['gate_up']['path']).write_bytes(b'changed after report')
     elif fault=='build':cell['native_paired_build']=False
     elif fault=='reference':cell['independent_reference']['bounded_numeric_pass']=False
-    else:cell['geometry']['0']['paired']=False
+    elif fault=='dispatch':cell['geometry']['0']['paired']=False
+    elif fault=='ownership':b['meta']['direct_input_bindings']['after']={'changed':'fingerprint'}
+    else:b['meta']['direct_input_bindings'].update(before={'other':'fingerprint'},after={'other':'fingerprint'})
     with pytest.raises(ValueError):q.compare_reports(a,b)
 
 

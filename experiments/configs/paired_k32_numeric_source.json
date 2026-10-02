@@ -1,13 +1,15 @@
 {
-  "experiments/t8r_speed/paired_k32_action.py": "035aa96caed0076139c5941b3140dcb9c6504b170bcc0e9dfcf46766613a973c",
-  "experiments/t8r_speed/paired_k32_qualification.py": "c6aa7492be4ac11d063be954954968d3dd746301ab40cdf771d4132491ba2b52",
-  "experiments/t8r_speed/bench_t8r.py": "fbab2e1a9db9b5450abeb4b9829fe65bd696fb06c956df3b74ae4e1f5d743c78",
-  "experiments/t8r_speed/bench_t8r.sh": "b9e93c48f44db9c31bd923b0c93e4f9025c1678537c14f849ed133c9c2c8535e",
-  "experiments/t8r_speed/pb_staged_store.py": "f83a9016b6168dfa8c3e806da49e57ffe69133cea3e46cffc20af482923737f5",
+  "experiments/t8r_speed/paired_k32_action.py": "d00434f29f6594edf4f7826487b19a7307373a8d62f5aabc7d5b3e4940eb5a53",
+  "experiments/t8r_speed/paired_k32_qualification.py": "1383b9468eb5852844cd836ac05ce0213bad0ea02e29e192b116226216277314",
+  "experiments/t8r_speed/bench_t8r.py": "5e593fa1819c986f94e37c07ef80a74b457489f38f9006e7ef826a8a3dcbb844",
+  "experiments/t8r_speed/bench_t8r.sh": "d5f3c3be227131086aecc64c9398ed3f7ec5eb56ce8edfe0b8dc2711f80defe6",
+  "experiments/t8r_speed/pb_staged_store.py": "eac14eadc055852c77bc657a305b7a66c9828ea7ddc675cb5b38830b71eef124",
   "experiments/routed_pair_oracle.py": "76f7850a935c4a929123a2233d201397ac3d24a3b5bb5b6972f150d219d78f6b",
   "experiments/runtime_image.sh": "41425b6ed3b8c0839bcc98c9f8cf8f6db29e49055b14af445251eb6f2cfce200",
   "src/tessera/routed_fused.py": "69d2ef0ca785c52d7eb1165dce64f258b3e10036dd0fdc40c8624da98b43c855",
   "src/tessera/serving/csrc/routed_fused_window.cu": "41414b331db7224cb79ad0ac9b9c87c1e06af80d6ea4fa6306a9384f6b10ec85",
   "tests/test_routed_fused_window.py": "ce15fed2d35891e4d85d6dcc7353eb1399bb1f19cbe309f454ab4e68e4af7051",
-  "tests/test_window_gemm_grouped.py": "d9a08fea22626443221699a88a9c33b4b7394f62a271640819f60e585374b757"
+  "tests/test_window_gemm_grouped.py": "d9a08fea22626443221699a88a9c33b4b7394f62a271640819f60e585374b757",
+  "experiments/bench_routed_load.py": "c6880d53bc97f3b0fd6f5494ce68f815f2329b50e18760d9dcf0ef42a2074556",
+  "experiments/configs/paired_k32_numeric_inputs.json": "95e4a9f2116d402cab87dee6630765ad81cd3435abedd478589fa1be345e5b9b"
 }

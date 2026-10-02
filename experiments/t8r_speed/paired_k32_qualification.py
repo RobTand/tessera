@@ -182,11 +182,18 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
 def compare_reports(baseline, candidate):
     """Compare the exact retained raw words, not worker-declared status strings."""
     for report in (baseline, candidate):
+        direct = report['meta'].get('direct_input_bindings', {})
+        if (direct.get('transport') != 'direct-vllm-held-original-fds'
+                or not direct.get('before') or direct.get('before') != direct.get('after')
+                or direct.get('manifest_sha256') != report['meta']['paired_k32']['input_manifest_sha256']):
+            raise ValueError('direct input ownership is not stable through the numeric arm')
         owner = report['meta'].get('native_code_artifact', {})
         if not owner.get('before_load_sha256') or owner.get('before_load_sha256') != owner.get('after_load_sha256') or owner.get('before_load_sha256') != owner.get('after_profile_sha256'):
             raise ValueError('native code identity is not stable through the numeric arm')
     if baseline['meta']['paired_k32']['input_manifest_sha256'] != candidate['meta']['paired_k32']['input_manifest_sha256']:
         raise ValueError('paired numeric arms have different pinned input manifests')
+    if baseline['meta']['direct_input_bindings']['before'] != candidate['meta']['direct_input_bindings']['before']:
+        raise ValueError('paired numeric arms consumed different original file identities')
     a = baseline['results']; b = candidate['results']
     if len(a) != 1 or len(b) != 1 or not a[0]['ok'] or not b[0]['ok'] or set(a[0]['cells']) != {'1','512','2048'} or set(b[0]['cells']) != {'1','512','2048'}:
         raise ValueError('paired numeric output population differs')

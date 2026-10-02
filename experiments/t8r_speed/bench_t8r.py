@@ -433,6 +433,8 @@ def kernel_profile(call, reps=5, *, full_names=False):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args,'direct_vllm_inputs',False) and not getattr(args,'paired_k32_numerics',False):
+        raise ValueError('direct-vLLM input transport requires the closed paired numeric mode')
     if getattr(args, 'paired_k32_numerics', False):
         from paired_k32_qualification import require_options
         require_options(args, stubbed=stubbed)
@@ -477,6 +479,8 @@ def main():
     ap.add_argument('--paired-k32-numerics', action='store_true',
                     help='closed-world pinned A8SE L10 TP2rank0 M1,512,2048 raw-bit qualification')
     ap.add_argument('--paired-k32-source-sha256', default=None)
+    ap.add_argument('--direct-vllm-inputs', action='store_true',
+                    help='same sealed ranges through held original FDs; vLLM execution exemption')
     args = ap.parse_args()
     require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
@@ -488,7 +492,8 @@ def main():
     native_owner = None
     if args.single_routing_file or args.paired_k32_numerics:
         from pb_staged_store import StagedInputs
-        inputs = StagedInputs(args.input_manifest)
+        inputs = (StagedInputs(args.input_manifest,direct_vllm=True)
+                  if args.direct_vllm_inputs else StagedInputs(args.input_manifest))
     try:
         store = Store(args.artifact, inputs)
         if inputs:
@@ -722,6 +727,7 @@ def main():
         if inputs:
             meta["staged_reads"] = inputs.reads
             inputs.close()
+            if inputs.direct_vllm:meta['direct_input_bindings'] = inputs.direct_record
         meta["end_unix"] = time.time()
         json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                   indent=1, default=repr)
