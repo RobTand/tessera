@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 after root review of the stock screen's progress
+publication (tessera#814 / PR #830). Partial and final JSON data are
+fsynced before atomic rename, their containing directory is fsynced,
+and only then does the PB progress helper receive measure or publish.
+A directory-sync failure prevents advancement. The historical GPU
+baseline is unchanged and is not restamped to this later harness fix.
+
 Re-stamped 2026-10-02 for the experimental stock FlashKDA measurement
 harness (Refs tessera#735). `tessera.kda_stock_screen.v1` records native
 workspace allocations, exact stock binary/harness identities, actual
@@ -7026,6 +7033,8 @@ refuses missing or ambiguous prepare/recurrence identities. It retains
 full gzip torch-profiler traces through the published PB helper,
 separates allocation/warmup, profile, settle and steady graph intervals,
 and reports cumulative completed calls only after synchronization.
+Before either measure or publish progress advances, the corresponding
+complete JSON is file-fsynced, atomically renamed and directory-fsynced.
 The existing residency policy provides distinct resident copies. Each
 window retains fast NVML samples and full unfiltered Netdata responses,
 returned views and exact intervals from both Sparks. Energy remains

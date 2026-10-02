@@ -194,3 +194,51 @@ The compact delivery packet is
 `/home/rob/tmp/codex-campaign-takeover-20261002/kda/stock-measure-summary.json`,
 `stock-pb-evidence.json` and `stock-cas-lookup.json`. Full raw telemetry
 and fast power samples are in the hash-bound raw result above.
+
+## Post-measurement root review: durable progress publication
+
+Root review found that the measured harness fsynced the partial file but
+not its directory after rename, and wrote the final result through plain
+`write_text` before publish progress. The historical `cf31e11a` telemetry,
+profiles, samples and numerical values remain bound to `e95749eb90`;
+its accepted progress counters do not establish crash-durable directory
+publication. No GPU run or old result was repeated or restamped.
+
+Fix source `4cc10d2ebef26062fc8c9eadcd27960af91f6c11` shares one
+publication path for partial measure and complete final publish JSON:
+file fsync, atomic replacement, containing-directory fsync, then the
+phase's progress helper. Directory-sync failure propagates without a
+progress report. Final JSON includes end metadata and telemetry before
+this publication sequence.
+
+Causal RED PB
+`c4e8c1a658f57c8a94963a74365565b3e35c6217395ff0005e0f6535fdbd4c9e`
+on old harness plus controls `bd40c0caba` returned 1, **3 failed / 0 passed**:
+partial ordering, complete final publication and refusal on directory-sync
+failure. It has no successful CAS result. Its immutable attempt stdout
+and terminal exit are retained in `durability-pb-evidence.json`.
+
+GREEN PB
+`8a84d90b2eec66bdeb2d8c317c2b9867d8d88dca7e787873196662afc109a35d`
+on fix source `4cc10d2ebe`, sealed snapshot
+`8859dfef97434f18726945c0b1b3b60aab84a55e`, returned 0 on dl380g10:
+**40 CPU tests passed**, 2 xdist/worksteal workers, native threads 1,
+Torch 2.10.0+cpu, zero skips/missing collection/device tests. It compiles
+the changed probe and new durability test, checks the shell wrapper and
+runs the earlier stock/gate families with all three new controls:
+
+```bash
+python -m pytest -n 2 --dist worksteal -q \
+  tests/test_kda_probe_durability.py tests/test_kda_stock_profile.py \
+  tests/test_kda_probe_gate.py
+```
+
+The sealed command is in `cas/requests/8a/8a84d90b...json`; the successful
+receipt is
+`/mnt/shared/prismabuild-fleet/cas/actions/v3/8a/8a84d90b2eec66bdeb2d8c317c2b9867d8d88dca7e787873196662afc109a35d.json`.
+Claim `00f4d10f68bdcbbf4e944ebd4487115d44497d0e5278f0ea24bc307cca8e20e7`
+binds payload `bc60ae9f890e7af40c6c174334bcae5315a5b19aa6beedfe2f3b5b60bd462c2f`.
+Claim/address/receipt/payload-hash checks and deployed full-action
+`PrismaBuildCAS.lookup` pass. Evidence and the full lookup are
+`/home/rob/tmp/codex-campaign-takeover-20261002/kda/durability-pb-evidence.json`
+and `durability-cas-lookup.json`.
