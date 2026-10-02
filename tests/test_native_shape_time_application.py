@@ -288,7 +288,7 @@ def test_software_observation_does_not_query_device(panel, monkeypatch):
     monkeypatch.setattr(contract, 'contract_path', lambda: Path(panel['evidence']['contract']['path']))
     monkeypatch.setattr(backend, 'platform_of_this_process', lambda *_: pytest.fail('CPU preflight queried CUDA'))
     verifier = app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools','pbtest_pins.py'))
-    monkeypatch.setattr(worker.runpy, 'run_path', lambda _: {'verify_install': lambda *_: {'verified_files': 1}})
+    monkeypatch.setattr(worker, 'record_verifier_bytes', lambda _: b'def verify_install(*args): return {"verified_files": 1}')
     got, _, raw = worker.observe_software_runtime(expected, verifier)
     assert 'platform' not in got
     assert got == {k: v for k, v in expected.items() if k != 'platform'}
@@ -410,6 +410,38 @@ def test_repeated_runtime_observation_inserts_overlay_once(installed_origins):
     assert sys.path.count(str(root.parent))==1, 'duplicate overlay roots make RECORD owner discovery ambiguous'
 
 
+@pytest.mark.parametrize('fault', ['none', 'bytes', 'writable', 'symlink', 'read_drift'])
+def test_historical_verifier_requires_the_same_immutable_published_bytes(tmp_path, monkeypatch, fault):
+    generations = tmp_path / 'generations'
+    old = generations / 'old' / 'tools' / 'pbtest_pins.py'
+    current = generations / 'current' / 'tools' / 'pbtest_pins.py'
+    old.parent.mkdir(parents=True); current.parent.mkdir(parents=True)
+    old.write_bytes(b'published helper bytes'); current.write_bytes(old.read_bytes())
+    if fault == 'bytes': old.write_bytes(b'other helper bytes')
+    old.chmod(0o444); current.chmod(0o444)
+    if fault == 'writable': old.chmod(0o644)
+    if fault == 'symlink':
+        old.unlink(); old.symlink_to(current)
+    binding = worker.file_binding(old)
+    if fault == 'symlink': binding['path'] = str(old)
+    monkeypatch.setattr(worker, 'PB_RECORD_VERIFIER', current)
+    monkeypatch.setattr(worker, 'PB_IMMUTABLE_GENERATIONS', generations)
+    if fault == 'read_drift':
+        real_fstat = worker.os.fstat
+        calls = []
+        def drifting(fd):
+            value = real_fstat(fd); calls.append(fd)
+            if len(calls) == 2:
+                return SimpleNamespace(**{name: getattr(value, name) + (1 if name == 'st_mtime_ns' else 0)
+                                          for name in ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')})
+            return value
+        monkeypatch.setattr(worker.os, 'fstat', drifting)
+    if fault == 'none':
+        assert worker.record_verifier_bytes(binding) == current.read_bytes()
+    else:
+        with pytest.raises(ValueError): worker.record_verifier_bytes(binding)
+
+
 def external_observation_case(tmp_path, panel, monkeypatch):
     """A genuinely verified external context for the bound-observation path.
 
@@ -456,6 +488,7 @@ def external_observation_case(tmp_path, panel, monkeypatch):
         expected_runtime=runtime, job_source=job_source, worker_source=worker_source,
         request_source=request_source, command=command, phase=phase)
     panel['runtime'] = runtime
+    panel['evidence']['producer'] = app.publish_json(job['producer'], unit / 'onecell' / 'original-producer.json')
     panel['evidence']['runtime'] = app.publish_json(runtime, unit / 'onecell' / 'external-runtime.json')
     panel['evidence']['runtime_origins'] = app.publish_json(origins, unit / 'onecell' / 'external-origins.json')
     panel['preflight'] = {'result': app.publish_json(result, unit / 'onecell' / 'external-preflight.json'),
@@ -477,6 +510,32 @@ def bound_observation(case, **overrides):
                   replay={**app.producer_source_identity(), 'tool': app.tp.file_binding(__file__)})
     kwargs.update(overrides)
     return app.tp.observation(case.panel, **kwargs)
+
+
+@pytest.mark.parametrize('fault', ['none', 'producer', 'wire_roles', 'worker'])
+def test_current_cpu_job_joins_the_unchanged_original_measurement(tmp_path, panel, monkeypatch, fault):
+    case = external_observation_case(tmp_path, panel, monkeypatch)
+    replay_job = app.tp.json_bytes(app.tp.read_bound(case.job_source))
+    if fault == 'producer': replay_job['producer']['tool_source_sha256'] = '0' * 64
+    elif fault == 'wire_roles': replay_job['wire_roles'] = []
+    replay_source = app.publish_json(replay_job, tmp_path / 'replay-job.json')
+    result = copy.deepcopy(case.result); result['job_source'] = replay_source
+    command = app.phase_command(case.request, replay_source, tmp_path / 'replay', preflight=True)
+    if fault == 'worker':
+        command[command.index(case.worker_source['path'])] = '/foreign/worker.py'
+    phase = {'phase': 'runtime-preflight', 'returncode': 0, 'command': command}
+    def validate():
+        validation = app.tp._verify_runtime_preflight(
+            result, raw_contract=app.tp.read_bound(case.request['contract']),
+            expected_runtime=case.request['expected_runtime'], job_source=replay_source,
+            worker_source=case.worker_source, request_source=case.request_source,
+            command=command, phase=phase)
+        return app.tp.validate_external_panel(case.panel, expected_runtime=case.request['expected_runtime'],
+                                               runtime_validation=validation)
+    if fault == 'none':
+        assert validate()['timing']['n'] == 4
+    else:
+        with pytest.raises(ValueError): validate()
 
 
 def test_bound_observation_records_distinct_identities_and_sampling(tmp_path, panel, monkeypatch):
@@ -534,7 +593,11 @@ def test_check_emits_bound_observation_after_verified_preflight(tmp_path, panel,
     def phase(label, command, log, timeout):
         seen.append(command)
         Path(log).parent.mkdir(parents=True, exist_ok=True)
-        (Path(log).parent / 'runtime-preflight.json').write_bytes(app.tp.canonical(case.result))
+        result = copy.deepcopy(case.result)
+        job_path = Path(command[command.index('--job') + 1])
+        result['job_source'] = app.tp.file_binding(job_path)
+        result['worker_source'] = app.tp.json_bytes(job_path.read_bytes())['worker_source']
+        (Path(log).parent / 'runtime-preflight.json').write_bytes(app.tp.canonical(result))
         return {'phase': label, 'returncode': 0, 'command': command}
     phase.__code__ = phase.__code__.replace(co_filename=str(Path(app.ROOT / 'experiments/step4_capture_launch.py')))
     monkeypatch.setattr(step4_capture_launch, 'run_phase', phase)

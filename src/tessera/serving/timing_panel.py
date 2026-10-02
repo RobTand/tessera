@@ -284,6 +284,11 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
         raise ValueError("installed CPU preflight did not successfully execute owned command")
     if "CUDA_VISIBLE_DEVICES=" not in command or "--preflight" not in command or "--job-sha256" not in command:
         raise ValueError("preflight command lacks CPU isolation/owned job binding")
+    if (command.count("--job")!=1 or command.count("--job-sha256")!=1
+            or command[command.index("--job")+1]!=job_source["path"]
+            or command[command.index("--job-sha256")+1]!=job_source["sha256"]
+            or worker_source["path"] not in command):
+        raise ValueError("preflight source invocation differs from its owned worker/job")
     expected=runtime_context(expected_runtime)
     if result["schema"]!="tessera.installed_contract_preflight.v1" or result["gpu_executed"] is not False:
         raise ValueError("requires actual installed CPU contract validation")
@@ -325,17 +330,34 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
         if raw["contract"]!=runtime_validation.raw_contract or runtime_validation.result["software"]!={k:v for k,v in runtime.items() if k!="platform"}:
             raise ValueError("external panel differs from verified installed contract")
         preflight=_object(panel["preflight"],{"result","phase"},"panel preflight")
-        if json_bytes(read_bound(preflight["result"]))!=runtime_validation.result:
+        prior_result=json_bytes(read_bound(preflight["result"]))
+        fresh_result=runtime_validation.result
+        _object(prior_result,set(fresh_result),"recorded preflight result")
+        shared=set(fresh_result)-{"job_source","worker_source"}
+        if any(prior_result[key]!=fresh_result[key] for key in shared):
             raise ValueError("panel preflight differs from actual installed validation")
+        original_job=json_bytes(read_bound(prior_result["job_source"]))
+        replay_job=json_bytes(read_bound(fresh_result["job_source"]))
+        for key in ("request","request_source","producer","wire_roles"):
+            if original_job[key]!=replay_job[key]:
+                raise ValueError("CPU replay differs from the original job: "+key)
+        if original_job["producer"]!=json_bytes(raw["producer"]):
+            raise ValueError("CPU replay producer differs from the measurement producer")
+        for result,job in ((prior_result,original_job),(fresh_result,replay_job)):
+            if result["worker_source"]!=job["worker_source"] or result["request_source"]!=job["request_source"]:
+                raise ValueError("CPU preflight job/source identity differs")
+            read_bound(result["worker_source"])
         prior_phase=json_bytes(read_bound(preflight["phase"]))
         if prior_phase.get("returncode")!=0 or type(prior_phase.get("returncode")) is not int or prior_phase.get("phase")!="runtime-preflight":
             raise ValueError("recorded preflight phase was not successful")
         prior_command=prior_phase.get("command",[])
         if "--preflight" not in prior_command or "CUDA_VISIBLE_DEVICES=" not in prior_command or "--job-sha256" not in prior_command:
             raise ValueError("recorded preflight phase lost owned CPU command")
-        job_source=runtime_validation.result["job_source"]
+        job_source=prior_result["job_source"]
         if prior_command[prior_command.index("--job-sha256")+1]!=job_source["sha256"] or prior_command[prior_command.index("--job")+1]!=job_source["path"]:
             raise ValueError("recorded preflight phase differs from owned job")
+        if prior_result["worker_source"]["path"] not in prior_command:
+            raise ValueError("recorded preflight phase differs from its original worker")
     if hashlib.sha256(raw["contract"]).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("raw contract differs from runtime")
     if json_bytes(raw["runtime"]) != runtime:

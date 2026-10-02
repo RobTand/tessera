@@ -121,8 +121,8 @@ def read_request(path, *, expected_sha256=None, producer_root=ROOT):
     raw_contract = tp.read_bound(request["contract"])
     tp.read_bound(request["runtime_python"])
     tp.read_bound(request["record_verifier"])
-    if Path(request["record_verifier"]["path"]) != Path("/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py").resolve(strict=True):
-        raise ValueError("requires the published installation verifier")
+    from tools.tessera_shape_time_worker import record_verifier_bytes
+    record_verifier_bytes(request["record_verifier"])
     tp._integer(request["worker_timeout_s"], "native worker timeout")
     if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("request requires a different immutable runtime contract")
@@ -184,10 +184,10 @@ def run_runtime_preflight(request, job_source, output, *, producer_root=ROOT):
     return validation
 
 
-def owned_job(request_path, request, wire, output, *, producer_root=ROOT):
+def owned_job(request_path, request, wire, output, *, producer_root=ROOT, worker_root=None):
     producer=producer_identity(request["producer_identity"], producer_root)
     _,roles=tp.wire_facts(wire,request["scheme"])
-    worker=producer_root/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
+    worker=(producer_root if worker_root is None else worker_root)/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
     request_source=tp.file_binding(request_path)
     if tp.json_bytes(tp.read_bound(request_source))!=request:raise ValueError("original request changed after entry")
     job={"schema":"tessera.native_shape_worker_job.v1","request":request,"request_source":request_source,
@@ -285,8 +285,12 @@ def main(argv=None):
                 job_source=prior["job_source"]
                 job=tp.json_bytes(tp.read_bound(job_source))
                 if job["request"]!=request or job["request_source"]!=tp.file_binding(args.request):raise ValueError("panel job differs from owned request")
+                if job["worker_source"]!=tp.file_binding(producer_root/"tools/tessera_shape_time_worker.py"):
+                    raise ValueError("original panel worker differs from its sealed producer")
                 output=args.preflight_output.resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
-                validation=run_runtime_preflight(request,job_source,output,producer_root=producer_root)
+                _,_,_,replay_job=owned_job(args.request,request,tp.read_bound(request["wire"]),output,
+                                          producer_root=producer_root,worker_root=ROOT)
+                validation=run_runtime_preflight(request,replay_job,output,producer_root=ROOT)
                 result=tp.validate_external_panel(panel,expected_runtime=expected,runtime_validation=validation)
                 if observation_out:
                     binding={"path":str(args.panel.resolve()),"bytes":len(raw),

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One native phase: installed runtime only; repository schema lives in parent."""
 from __future__ import annotations
-import argparse,gzip,hashlib,importlib.metadata,json,os,runpy,subprocess,sys,time
+import argparse,gzip,hashlib,importlib.metadata,json,os,stat,subprocess,sys,time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 ROOT=Path(__file__).resolve().parents[1]
@@ -10,6 +10,41 @@ sys.path.insert(0,str(ROOT))
 from tools.run_glm_cached_cpu_export import fsync_path,read_bound
 SCHEMA="tessera.native_shape_worker_result.v1"
 MODULES=("tessera", "tessera.serving.backend", "tessera.serving.ext", "tessera.serving.contract", "tessera.serving.source_identity", "tessera.serving.runtime_image", "tessera.serving.scheme", "tessera.serving.lane", "tessera.serving.telemetry")
+PB_RECORD_VERIFIER = Path('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py')
+PB_IMMUTABLE_GENERATIONS = Path('/mnt/shared/prismabuild-fleet/runtime-generations')
+
+
+def record_verifier_bytes(binding):
+    """Hold immutable helper bytes equal to the published PB owner's bytes."""
+    path = Path(binding['path'])
+    published = PB_RECORD_VERIFIER.resolve(strict=True)
+    if (not path.is_absolute() or path.resolve(strict=True) != path
+            or not path.is_relative_to(PB_IMMUTABLE_GENERATIONS)
+            or len(path.relative_to(PB_IMMUTABLE_GENERATIONS).parts) != 3
+            or path.parts[-2:] != ('tools', 'pbtest_pins.py')):
+        raise ValueError('installation verifier must name an immutable PB generation')
+
+    def held(member):
+        fd = os.open(member, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            before = os.fstat(fd)
+            if not stat.S_ISREG(before.st_mode) or before.st_mode & 0o222 or before.st_size > 64 * 1024:
+                raise ValueError('installation verifier must be a bounded read-only regular file')
+            with os.fdopen(fd, 'rb', closefd=False) as handle:
+                raw = handle.read(64 * 1024 + 1)
+            after = os.fstat(fd)
+            names = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+            if len(raw) != before.st_size or any(getattr(before, name) != getattr(after, name) for name in names):
+                raise ValueError('installation verifier changed during its owned read')
+            return raw
+        finally:
+            os.close(fd)
+
+    raw = held(path)
+    if (len(raw) != binding['bytes'] or hashlib.sha256(raw).hexdigest() != binding['sha256']
+            or raw != held(published) or PB_RECORD_VERIFIER.resolve(strict=True) != published):
+        raise ValueError('installation verifier differs from the published PB owner')
+    return raw
 
 def canonical(value):return json.dumps(value,sort_keys=True,separators=(",",":"),allow_nan=False).encode()
 def file_binding(path):
@@ -112,9 +147,11 @@ def observe_software_runtime(expected, record_verifier=None):
  actual_contract=hashlib.sha256(raw_contract).hexdigest()
  if (declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)!=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"]):raise ValueError("runtime source/contract/version differs before device setup")
  if record_verifier is None:raise ValueError("missing sealed installation verifier")
- if Path(record_verifier["path"])!=Path("/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py").resolve(strict=True):raise ValueError("foreign installation verifier")
- read_bound(record_verifier)
- origins["installation"]=runpy.run_path(record_verifier["path"])["verify_install"]("tessera",expected["tessera_commit"])
+ verifier_bytes=record_verifier_bytes(record_verifier)
+ verifier_namespace={"__file__":record_verifier["path"],"__name__":"tessera_owned_record_verifier"}
+ exec(compile(verifier_bytes,record_verifier["path"],"exec"),verifier_namespace)
+ origins["installation"]=verifier_namespace["verify_install"]("tessera",expected["tessera_commit"])
+ if record_verifier_bytes(record_verifier)!=verifier_bytes:raise ValueError("installation verifier changed during execution")
  origins["record_verifier"]=file_binding(record_verifier["path"])
  if origins["record_verifier"]!=record_verifier:raise ValueError("installation verifier source differs")
  value={"image":declaration["image"],"tessera_commit":actual_commit,

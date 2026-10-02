@@ -16,6 +16,15 @@ random-mask performance and energy remain unqualified. See
 `experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
 are not qualification evidence.
 
+Re-stamped 2026-10-02 (Refs #856): external shape-panel replay preserves
+the original request, producer, worker job and GPU evidence while creating
+a separate CPU replay job bound to the current checker worker. The existing
+installed preflight and full panel validator own both joins. An original
+immutable PB verifier path is accepted only when its held read-only regular
+bytes equal the current published verifier, under bounded stable reads;
+execution uses those held bytes and rechecks them afterwards. No fleet alias,
+original input rewrite, serving pin change or new GPU measurement is involved.
+
 Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
 slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
 dense TP1 eager/resident operator, requiring canonical wire/container

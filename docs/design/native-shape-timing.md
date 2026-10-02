@@ -176,7 +176,17 @@ contract or pin, and it is emitted only on the external-preflight path.
 
 The authoritative replay of the recorded pilot keeps its original producer
 closure: `--producer-root` points `check` at the original producer source tree,
-so the sealed producer identity and the executed worker are that producer's,
-while the observation records the replay tool's own identity separately. If
+so the sealed producer identity and original measurement worker remain that
+producer's. A separate current-source CPU job binds the unchanged original
+request and producer to the checker worker that actually performs the new
+installed preflight. The observation records the replay tool's own identity
+and actual CPU invocation separately. If
 the original replay does not succeed against that closure, `check` refuses
 rather than resealing history.
+
+The original request may name an immutable PB verifier from an older fleet
+generation. Replay requires its read-only regular file bytes to equal the
+current published PB verifier under bounded stable reads. It executes the
+held source bytes and rechecks both owners after use; location equality alone
+does not decide code identity. Changed helper bytes, a mutable helper or a
+symlink outside that immutable path refuse.
