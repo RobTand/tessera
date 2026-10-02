@@ -24,6 +24,13 @@ from tools.run_glm_cached_cpu_export import fsync_path
 if Path(tp.__file__).resolve() != ROOT / "src/tessera/serving/timing_panel.py":
     raise RuntimeError("producer schema origin differs from owned source")
 
+def require_producer_origins():
+    for name in ("timing_panel", "census_plan", "contract", "census", "scheme"):
+        module = sys.modules["tessera.serving." + name]
+        if Path(module.__file__).resolve() != ROOT / ("src/tessera/serving/" + name + ".py"):
+            raise ValueError("foreign producer schema owner: " + name)
+
+
 REQUEST_SCHEMA = "tessera.dense_shape_time_request.v1"
 
 
@@ -53,6 +60,7 @@ def producer_identity():
 
 
 def read_request(path):
+    require_producer_origins()
     request = tp.json_bytes(Path(path).read_bytes())
     tp._object(request, {"schema", "expected_runtime", "scope", "prefix", "scheme", "wire",
                          "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s"}, "dense request")
@@ -102,17 +110,19 @@ def measure(request_path, output):
     _,roles=tp.wire_facts(wire,request["scheme"])
     worker=ROOT/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
     job={"schema":"tessera.native_shape_worker_job.v1","request":request,"wire_roles":roles,"producer":producer,"worker_source":worker_source}
-    publish_json(job,output/"worker-job.json")
+    job_source=publish_json(job,output/"worker-job.json")
     # Reuse existing phase containment/owned-process cleanup; no nested PB action.
     from experiments.step4_capture_launch import run_phase
+    if Path(run_phase.__code__.co_filename).resolve()!=ROOT/"experiments/step4_capture_launch.py":
+        raise ValueError("foreign native phase helper")
     command=["env","-u","PYTHONPATH","OMP_NUM_THREADS=1","MKL_NUM_THREADS=1","OPENBLAS_NUM_THREADS=1"]
     command += [key+"="+value for key,value in request["expected_runtime"]["serve_flags"].items()]
     command += [request["runtime_python"]["path"],"-I","-B",str(worker),"--job",str(output/"worker-job.json"),"--output",str(output)]
     phase=run_phase("native-dense",command,output/"native-phase.log",request["worker_timeout_s"])
     if phase["returncode"]!=0:raise ValueError("native phase refused; inspect "+str(output/"native-phase.log"))
     result=tp.json_bytes((output/"worker-result.json").read_bytes())
-    tp._object(result,{"schema","evidence","worker_source","pair"},"native worker result")
-    if result["schema"]!="tessera.native_shape_worker_result.v1" or result["worker_source"]!=worker_source or tp.file_binding(worker)!=worker_source or producer_identity()!=producer:
+    tp._object(result,{"schema","evidence","worker_source","job_source","pair"},"native worker result")
+    if result["schema"]!="tessera.native_shape_worker_result.v1" or result["worker_source"]!=worker_source or result["job_source"]!=job_source or tp.file_binding(output/"worker-job.json")!=job_source or tp.file_binding(worker)!=worker_source or producer_identity()!=producer:
         raise ValueError("native worker or producer source identity differs")
     evidence=result["evidence"];runtime=tp.json_bytes(tp.read_bound(evidence["runtime"]))
     actual_contract=tp.json_bytes(tp.read_bound(evidence["contract"]))
@@ -122,6 +132,7 @@ def measure(request_path, output):
            "rows":[{"scope_id":plan["rows"][0]["id"],"prefix":request["prefix"],"scheme":request["scheme"],"timing":tp.timing_summary(samples),"cell_id":cell["id"]}],
            "evidence":evidence,"energy":{"status":"hold","reason":"cross_host_clock_alignment_unqualified","reference_w":140}}
     tp.validate_panel(panel,expected_runtime=request["expected_runtime"])
+    require_producer_origins()
     bound=publish_json(panel,output/"panel.json")
     helper=os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
     if helper:runpy.run_path(helper)["commit"](1,"publish")

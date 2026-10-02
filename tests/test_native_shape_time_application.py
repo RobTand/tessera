@@ -200,6 +200,9 @@ def test_phase_argv_is_isolated_and_preserves_admission(panel,monkeypatch,tmp_pa
     def phase(label,command,log,timeout):
         seen.append((label,command,timeout));return {'returncode':2}
     monkeypatch.setattr(step4_capture_launch,'run_phase',phase)
+    # Preserve the real helper origin while observing its exact sealed argv.
+    original=Path(app.ROOT/'experiments/step4_capture_launch.py')
+    phase.__code__=phase.__code__.replace(co_filename=str(original))
     with pytest.raises(ValueError,match='native phase'):app.measure(path,tmp_path/'owned-output')
     label,command,timeout=seen[0]
     assert command[:3]==['env','-u','PYTHONPATH']

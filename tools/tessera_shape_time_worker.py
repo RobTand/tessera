@@ -184,7 +184,7 @@ def profile_call(call, path):
     return file_binding(path)
 
 
-def _native_measure(job, output):
+def _native_measure(job, output, job_source):
     if set(job) != {"schema", "request", "wire_roles", "producer", "worker_source"} or job["schema"] != "tessera.native_shape_worker_job.v1":
         raise ValueError("unknown native phase job")
     request=job["request"];request["_wire_roles"]=job["wire_roles"]
@@ -255,7 +255,8 @@ def _native_measure(job, output):
     after,after_origins=observe_runtime(request["expected_runtime"])
     if after!=runtime or after_origins!=origins or file_binding(__file__)!=worker_source:
         raise ValueError("runtime, contract, module origin or worker source changed during measurement")
-    result={"schema":SCHEMA,"evidence":evidence,"worker_source":worker_source,"pair":pair}
+    if file_binding(job_source["path"])!=job_source:raise ValueError("native job changed during measurement")
+    result={"schema":SCHEMA,"evidence":evidence,"worker_source":worker_source,"job_source":job_source,"pair":pair}
     return publish_json(result,output/"worker-result.json")
 
 def native_measure(job_path, output):
@@ -270,8 +271,9 @@ def native_measure(job_path, output):
  if Path(job_path).read_bytes()!=raw:raise ValueError("native job changed during entry checks")
  import torch
  torch.set_num_threads(1);torch.set_num_interop_threads(1)
- from experiments.bench_native_operator import native_runtime_context
- with native_runtime_context():return _native_measure(job,output)
+ from experiments import bench_native_operator as instrument
+ if Path(instrument.__file__).resolve()!=ROOT/"experiments/bench_native_operator.py":raise ValueError("foreign native context/timing helper")
+ with instrument.native_runtime_context():return _native_measure(job,output,file_binding(job_path))
 
 def main(argv=None):
  ap=argparse.ArgumentParser();ap.add_argument("--job",type=Path,required=True);ap.add_argument("--output",type=Path,required=True);args=ap.parse_args(argv)
