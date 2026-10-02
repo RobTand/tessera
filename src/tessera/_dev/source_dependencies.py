@@ -81,7 +81,8 @@ def statement_import_requests(node, module, *, is_package=False):
     return requests
 
 
-def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), scanner=None):
+def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), scanner=None,
+                           forwarding_call=None):
     """Union requests without choosing between alias candidates or branches."""
     found = {}
     for node in ast.walk(tree):
@@ -101,7 +102,7 @@ def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), 
     if scanner is None:
         scanner = _Scanner(Path("__init__.py" if is_package else "module.py"), module)
         scanner.visit(tree)
-    if _namespace_access(scanner, tree):
+    if _namespace_access(scanner, tree, forwarding_call=forwarding_call):
         return {spelling: None if names else names for spelling, names in found.items()}
     parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
     for reference, scope in scanner.references:
@@ -121,7 +122,7 @@ def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), 
     return found
 
 
-def _namespace_access(scanner, tree):
+def _namespace_access(scanner, tree, *, forwarding_call=None):
     """Possible access to mutable Python namespaces, including lexical aliases."""
     if any(isinstance(node, ast.Attribute) and node.attr in
            {"__dict__", "__globals__", "__getattr__", "__builtins__", "f_globals", "f_locals"}
@@ -129,6 +130,17 @@ def _namespace_access(scanner, tree):
         return True
     for call, scope in scanner.calls:
         symbols = _possible_symbols(call.func, scope)
+        # A proved module hook forwards only its closed literal name domain.
+        # Other dynamic getattr calls or namespace attributes are unknown,
+        # including a builtin imported under a lexical alias.
+        reflected = ("builtins.getattr" in symbols
+                     or isinstance(call.func, ast.Name) and call.func.id == "getattr")
+        if reflected and call is not forwarding_call:
+            name = call.args[1] if len(call.args) > 1 else None
+            if (not isinstance(name, ast.Constant) or not isinstance(name.value, str)
+                    or name.value in {"__dict__", "__globals__", "__getattr__", "__builtins__",
+                                      "f_globals", "f_locals"}):
+                return True
         if (_source_call(call, symbols)
                 or isinstance(call.func, ast.Name) and call.func.id in {"globals", "locals"}
                 or symbols & {"builtins.globals", "builtins.locals"}
@@ -302,9 +314,9 @@ def guarded_reexport(tree):
     # retain aliased access to a module's mutable namespace.
     scanner = _Scanner(Path("__guarded_export__.py"))
     scanner.visit(tree)
-    if _namespace_access(scanner, tree):
+    if _namespace_access(scanner, tree, forwarding_call=call):
         return None
-    return names, imported, guard
+    return names, imported, guard, call
 
 
 _LOADERS = {"spec_from_file_location": (1, "location"),

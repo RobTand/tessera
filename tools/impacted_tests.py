@@ -379,7 +379,8 @@ def import_graph(
     requests_of = {
         path: module_import_requests(
             tree, module_of[nodes[path]], is_package=path.name == "__init__.py",
-            omit={guarded[path][1]} if path in guarded else set(), scanner=scanners[path])
+            omit={guarded[path][1]} if path in guarded else set(), scanner=scanners[path],
+            forwarding_call=guarded[path][3] if path in guarded else None)
         for path, tree in trees.items()
     }
     unconditional, conditional = set(), {}
@@ -435,7 +436,7 @@ def import_graph(
                     add({spelling: None if names else names
                          for spelling, names in requests_of[path].items()}, publish_edges=False)
                 continue
-            names, imported, guard = summary
+            names, imported, guard, _ = summary
             # A Python from-import can ask a non-package for __path__ before
             # fetching the requested names. Explicit hook access escapes the
             # name restriction, including re-exported callable aliases.
@@ -460,7 +461,7 @@ def import_graph(
                 statement_requests=requests)
             add_statements(requests, node)
             if path in guarded:
-                names, imported, guard = guarded[path]
+                names, imported, guard, _ = guarded[path]
                 # Preserve the original changed-file graph, including the
                 # lazy body. Only unknown-source propagation can exclude this
                 # proved conditional edge; active demands retain direct edges.

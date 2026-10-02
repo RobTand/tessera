@@ -212,3 +212,16 @@ def test_changed_lazy_implementation_keeps_the_conservative_dependency_union(tmp
     result = impacted.select(repo, ["support/impl.py"])
     assert "tests/test_safe.py" in result["tests"], result
     assert "conftest" in result["reason"], result
+
+
+@pytest.mark.parametrize("module", ["lazy", "facade"])
+def test_reflective_getattr_of_a_namespace_keeps_the_union(tmp_path, module):
+    hook = _HOOK + "from builtins import globals as namespace\n"
+    consumer = (f"from support.{module} import safe, namespace\n"
+                "context = namespace()\n"
+                "getattr(context['safe'], '__globals__')['__getattr__']('lazy')\n")
+    repo = _fixture(tmp_path, consumer, hook=hook, extra={
+        "support/facade.py": "from .lazy import safe, namespace\n",
+    })
+    assert _select(repo)["verdict"] == "full"
+

@@ -2296,9 +2296,12 @@ this guarded import. Only UNKNOWN propagation may exclude its proved conditional
 edge; active attribute demands retain direct dependencies. Explicit
 from-imports used only as direct callees (or unused) request their named
 attributes plus Python's implicit `__path__`. Passing, storing, returning or
-inspecting imported objects, mutable namespace access, namespace imports, stars,
+inspecting imported objects, mutable namespace access (including reflective or
+dynamic `getattr`), namespace imports, stars,
 explicit hook or guard access and exact file loads request every branch.
-Unknown namespace demand forwards through ordinary re-exports as a finite union.
+The proved hook's own forwarding call has a closed literal name domain;
+other reflective accesses retain the union. Unknown namespace demand forwards
+through ordinary re-exports as a finite union.
 Ambiguous
 spellings still resolve to every candidate through the existing module resolver.
 All ordinary imports and package-initialization effects remain dependencies;
