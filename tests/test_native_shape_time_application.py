@@ -260,3 +260,33 @@ def test_request_hash_and_json_share_the_same_owned_bytes(panel,monkeypatch):
     monkeypatch.setattr(app.tp,'json_bytes',parse)
     got,_,_=app.read_request(path,expected_sha256=expected)
     assert got==value and path.read_bytes()==b'concurrent replacement'
+
+
+def test_external_request_defers_contract_validation_to_installed_owner(panel, monkeypatch):
+    path, value = request_file(panel, monkeypatch)
+    def producer_validator(_):
+        raise ValueError('producer roster differs from installed runtime')
+    monkeypatch.setattr(app.census_plan, 'validate_serving_contract', producer_validator)
+    request, scope, wire = app.read_request(path)
+    assert request == value and scope == value['scope']
+    assert wire == app.tp.read_bound(value['wire'])
+
+
+def test_software_observation_does_not_query_device(panel, monkeypatch):
+    import sys
+    expected = panel['runtime']
+    origins = {'package_root': expected['package_root'], 'modules': {}}
+    monkeypatch.setattr(worker, 'runtime_origins', lambda _: origins)
+    monkeypatch.setattr(worker, 'observed_commit', lambda _: expected['tessera_commit'])
+    monkeypatch.setitem(sys.modules, 'vllm', SimpleNamespace(__version__=expected['vllm']))
+    monkeypatch.setattr(torch, '__version__', expected['torch'])
+    monkeypatch.setattr(source_identity, 'serving_source_sha256', lambda: expected['serving_source_sha256'])
+    monkeypatch.setattr(runtime_image, 'declared_reference', lambda _: {'image': expected['image']})
+    monkeypatch.setattr(contract, 'contract_path', lambda: Path(panel['evidence']['contract']['path']))
+    monkeypatch.setattr(backend, 'platform_of_this_process', lambda *_: pytest.fail('CPU preflight queried CUDA'))
+    verifier = app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py')
+    monkeypatch.setattr(worker.runpy, 'run_path', lambda _: {'verify_install': lambda *_: {'verified_files': 1}})
+    got, _, raw = worker.observe_software_runtime(expected, verifier)
+    assert 'platform' not in got
+    assert got == {k: v for k, v in expected.items() if k != 'platform'}
+    assert raw == app.tp.read_bound(panel['evidence']['contract'])
