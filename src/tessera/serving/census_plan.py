@@ -84,6 +84,17 @@ def build_census_plan(requests: Iterable[Mapping[str, Any]], *,
         validate_serving_contract(contract)
     except (OSError, ValueError, TypeError) as exc:
         raise ValueError(f"cannot read valid packaged runtime contract: {exc}") from exc
+    return _build_validated_census_plan(requests, raw_contract=raw_contract, contract=contract)
+
+
+def _build_validated_census_plan(requests: Iterable[Mapping[str, Any]], *,
+                                 raw_contract: bytes, contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Private pure planner after the owning runtime has strictly validated bytes.
+
+    Local callers enter through build_census_plan. External timing callers must
+    first obtain the source- and request-bound installed-runtime preflight proof.
+    This core neither changes admission nor loads an extension.
+    """
     contract_sha = hashlib.sha256(raw_contract).hexdigest()
     registry_sha = hashlib.sha256(_canonical({
         "routes": scheme.ROUTES, "launches": scheme.ROUTE_LAUNCHES,
