@@ -313,13 +313,25 @@ def build_routed(store, module):
                 w2_len[e] = wire.numel()
     packed = intake.finish(w13_len, w2_len)
     native = packed.adapter()
+    library = getattr(native, "library", None)
+    library_path = library_sha = None
+    if library is not None:
+        from tessera import routed_fused as rf
+        library_path = os.path.realpath(rf._ext(library).__file__)
+        with open(library_path, "rb") as handle:
+            library_sha = hashlib.file_digest(handle, "sha256").hexdigest()
+    expected_library = os.environ.get("BENCH_EXPECT_LIBRARY_SHA256")
+    if expected_library and library_sha != expected_library:
+        raise ValueError("routed adapter's loaded native library differs from the expected binary")
     per_expert_rank = wire_total / EXPERTS / TP_SIZE
     info = {"family": scheme["family"], "q256": {g: v["q256"] for g, v in scheme["groups"].items()},
             "adapter": type(native).__name__,
             "resident_word_layouts": {role: getattr(packed, role).word_layout
                                       for role in ("gate", "up", "down")},
             "native_piece_major": getattr(native, "piece_major", None),
-            "native_library": getattr(native, "library", None),
+            "native_library": library,
+            "native_library_path": library_path,
+            "native_library_sha256": library_sha,
             "requested_piece_major": os.environ.get("TESSERA_ROUTED_PIECE_MAJOR", "0"),
             "adapter_attrs": sorted(a for a in vars(native) if not a.startswith("__"))[:40]
             if hasattr(native, "__dict__") else None,
