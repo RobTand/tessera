@@ -2,12 +2,10 @@
 
 The two routes with a quantized A side -- ``TESSERA_NVFP4`` (W4A4) and
 ``TESSERA_FP8`` (W8A8); ``TESSERA_BF16`` is W16A16 and reaches none of this --
-quantize their activations with vLLM's own registered CUDA operators and
-multiply with ``torch._scaled_mm``.  Nothing here is a Tessera
-kernel: the plugin's only native code is the weight DECODER (``ext.py``), and
-the arithmetic that reaches the tensor cores is the arithmetic the stock
-compressed-tensors schemes run on this box.  That is what makes a Tessera serve
-comparable to its stock twin at all.
+quantize their activations with vLLM's own registered CUDA operators.
+Tessera's packed native GEMM routes consume those activation codes. These
+bindings share the stock compressed-tensors activation primitives; the
+weight reader and GEMM remain the route's own implementations.
 
 The convenience wrappers in ``vllm._custom_ops`` are deliberately bypassed:
 some of them carry Triton fallbacks for shapes the native kernel refuses, and a

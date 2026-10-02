@@ -69,7 +69,8 @@ def _request_scope(request: Mapping[str, Any]) -> dict[str, Any]:
     return {**dict(request), "q256": q256, "tp_degree": tp, "shape": shape}
 
 
-def build_census_plan(requests: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def build_census_plan(requests: Iterable[Mapping[str, Any]], *,
+                      raw_contract: bytes | None = None) -> dict[str, Any]:
     """Bind requested rank-local scopes to the current registry, without execution.
 
     N/K are supplied rank-local dimensions, not a TP geometry derived here.
@@ -78,11 +79,22 @@ def build_census_plan(requests: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     inferred. Every row still needs actual preparation and device evidence.
     """
     try:
-        raw_contract = contract_path().read_bytes()
+        raw_contract = contract_path().read_bytes() if raw_contract is None else raw_contract
         contract = json.loads(raw_contract)
         validate_serving_contract(contract)
     except (OSError, ValueError, TypeError) as exc:
         raise ValueError(f"cannot read valid packaged runtime contract: {exc}") from exc
+    return _build_validated_census_plan(requests, raw_contract=raw_contract, contract=contract)
+
+
+def _build_validated_census_plan(requests: Iterable[Mapping[str, Any]], *,
+                                 raw_contract: bytes, contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Private pure planner after the owning runtime has strictly validated bytes.
+
+    Local callers enter through build_census_plan. External timing callers must
+    first obtain the source- and request-bound installed-runtime preflight proof.
+    This core neither changes admission nor loads an extension.
+    """
     contract_sha = hashlib.sha256(raw_contract).hexdigest()
     registry_sha = hashlib.sha256(_canonical({
         "routes": scheme.ROUTES, "launches": scheme.ROUTE_LAUNCHES,
