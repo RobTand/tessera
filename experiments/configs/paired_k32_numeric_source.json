@@ -1,6 +1,6 @@
 {
   "experiments/t8r_speed/paired_k32_action.py": "d00434f29f6594edf4f7826487b19a7307373a8d62f5aabc7d5b3e4940eb5a53",
-  "experiments/t8r_speed/paired_k32_qualification.py": "1383b9468eb5852844cd836ac05ce0213bad0ea02e29e192b116226216277314",
+  "experiments/t8r_speed/paired_k32_qualification.py": "3269a12106e8e84d71c1d5241825618abadc213a059cf27cf3cf31d70ee412d7",
   "experiments/t8r_speed/bench_t8r.py": "5e593fa1819c986f94e37c07ef80a74b457489f38f9006e7ef826a8a3dcbb844",
   "experiments/t8r_speed/bench_t8r.sh": "d5f3c3be227131086aecc64c9398ed3f7ec5eb56ce8edfe0b8dc2711f80defe6",
   "experiments/t8r_speed/pb_staged_store.py": "eac14eadc055852c77bc657a305b7a66c9828ea7ddc675cb5b38830b71eef124",

@@ -4,6 +4,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+from dataclasses import fields, MISSING
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -134,7 +135,7 @@ def test_driver_world_startup_is_only_for_existing_vllm_modes(numeric,stubbed,ex
     assert namespace['ctx'] is (context if expected_calls else None)
 
 
-@pytest.mark.parametrize('fault', [None,'repeat','missing_role','reduction','profile'])
+@pytest.mark.parametrize('fault', [None,'repeat','missing_role','reduction','profile','foreign'])
 def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
     import torch
     from tessera import routed_fused as rf
@@ -142,19 +143,22 @@ def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
         launch_smem_bytes=lambda *args:40976,max_dynamic_smem_bytes=lambda index:101376)
     monkeypatch.setattr(rf,'_ext',lambda library:lib)
     monkeypatch.setattr(torch.cuda,'synchronize',lambda:None)
-    class FusedRoutedWindowMoE:
-        library='e4m3mma'
-        gate=SimpleNamespace(cols=128,rows=128)
-        down=SimpleNamespace(cols=128,rows=4)
-        slot_words_gate_up=slot_words_down=8
-        def _launch(self,mode,*args,**kwargs):
-            kwargs['out'].fill_(mode+1)
-    native=FusedRoutedWindowMoE();calls=0
+    # Use the actual frozen production adapter; only its CUDA launch seam is
+    # replaced by CPU tensor writes in this CPU-only control.
+    FusedRoutedWindowMoE=rf.FusedRoutedWindowMoE
+    values={field.name:None for field in fields(FusedRoutedWindowMoE) if field.default is MISSING}
+    values.update(library='e4m3mma',gate=SimpleNamespace(cols=128,rows=128),
+        down=SimpleNamespace(cols=128,rows=4),slot_words_gate_up=8,slot_words_down=8)
+    def cpu_launch(self,mode,*args,**kwargs):kwargs['out'].fill_(mode+1)
+    monkeypatch.setattr(FusedRoutedWindowMoE,'_launch',cpu_launch)
+    native=FusedRoutedWindowMoE(**values);calls=0
+    foreign=FusedRoutedWindowMoE(**values)
     def call(x,ids,w):
         nonlocal calls
         calls+=1
         act=torch.empty((4,128),dtype=torch.bfloat16,device='cpu')
         down=torch.empty((4,4),dtype=torch.bfloat16,device='cpu')
+        if fault=='foreign':foreign._launch(0,out=torch.empty_like(act))
         native._launch(0,out=act)
         if fault!='missing_role':native._launch(2,out=down)
         else:down.fill_(3)
@@ -168,7 +172,7 @@ def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
             {'count_per_call':2 if fault=='profile' else 1} for mode in (0,2)}}
     args=(call,None,torch.ones(2,128,dtype=torch.bfloat16,device='cpu'),torch.zeros(2,2,dtype=torch.int32,device='cpu'),
           torch.ones(2,2,device='cpu'),tmp_path/'words')
-    if fault is None:
+    if fault in (None,'foreign'):
         result=q.numeric_cell(*args,kernel_profile=profile,independent_reference=False)
         assert result['repeat_bits_equal'] and result['independent_token_sum_equal']
     else:

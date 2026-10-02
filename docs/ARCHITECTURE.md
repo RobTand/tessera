@@ -33,6 +33,9 @@ The existing container wrapper has a finite owned-CID mode:16GiB host memory,
 no extra swap, two CPUs/native1,240s per arm. The existing host UMA/PSI reader
 guards40GiB launch headroom and24GiB active floor;8GiB GPU memory is an
 estimate, because Docker does not guarantee enforcement of GB10 CUDA UMA.
+The numeric observer requires the exact frozen production adapter class,
+observes its launch with an exact-instance guard, and restores the class
+method before profile/reference execution; adapter fields stay immutable.
 CPU admission/lifetime controls and native compilation are preliminary;
 no GPU numerical, serving, timing, energy, default, cell or pin qualification
 follows. See `measurements/2026-10-02-paired-k32-compile.md`.

@@ -112,16 +112,21 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
     from tessera import routed_fused as rf
 
     native = fn.native_adapter
-    if type(native).__name__ != 'FusedRoutedWindowMoE' or native.library != 'e4m3mma':
+    if type(native) is not rf.FusedRoutedWindowMoE or native.library != 'e4m3mma':
         raise ValueError('paired-K32 numerics requires the actual fused E4M3 MMA adapter')
-    original = native._launch
+    owner = type(native)
+    original = owner._launch
     captured = {}
-    def observe(mode, *args, **kwargs):
-        original(mode, *args, **kwargs)
+    def observe(instance, mode, *args, **kwargs):
+        original(instance, mode, *args, **kwargs)
+        if instance is not native:return
         if mode not in (0, 2) or mode in captured:
             raise ValueError('numeric forward must launch each routed role once')
         captured[mode] = kwargs['out'].detach().clone()
-    native._launch = observe
+    # The production adapter is frozen. This one-process diagnostic observes
+    # its class seam with an exact instance guard, never changes its fields,
+    # and restores the real method before profiling or reference execution.
+    owner._launch = observe
     try:
         first = fn(x, ids, weights)
         first_stages = captured.copy()
@@ -137,7 +142,7 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
             if not torch.equal(first_stages[mode].view(torch.int16), second_stages[mode].view(torch.int16)):
                 raise ValueError('repeated intermediate bits differ')
     finally:
-        native._launch = original
+        owner._launch = original
     routes = first_stages[2].reshape(x.shape[0], ids.shape[1], native.down.rows).float()
     reduced = torch.zeros_like(routes[:, 0])
     for route in range(ids.shape[1]):

@@ -225,3 +225,24 @@ escape Docker host-memory accounting. Exact owned process group and CID/label
 cleanup contains only this numeric arm, never a name match or peer service.
 These are CPU preparation results. Actual GPU numerics and timing remain
 pending root GO.
+
+Actual direct GPU attempt1 on frozen731f5caf exited1 after23s, candidate
+not started. Original flag-off library loaded through the held FD and its
+pre/load/fence SHA remained b89ba2d6; all871 artifact reads authenticated,
+and held original file identities remained stable. The numerical observer
+failed before forward calls because the actual production adapter is frozen.
+No output/profile/performance qualification follows from this run. Raw output
+is retained at `paired-k32-direct-numeric-v1/`; no bank is replaced.
+
+The observer now requires the exact production adapter type, temporarily
+observes its class `_launch` with an exact-instance guard, forwards every
+original call unchanged, and restores the class method in finally before
+profiling or independent reference execution. Causal CPU RED against the
+ACTUAL frozen production class: PB
+`3abe115fee60b96039affd13128418bb255b4383fbcfdf199ddde6e6efe7b2f4`,
+6 failed/4 passed (five frozen-owner cases plus lowercase Docker absence).
+Focused GREEN: PB
+`1c41d0a8c793e4a6305b5ed7aaa86fe0bb50e8bb65a86f37313f84f3999dcff4`,
+50 passed in4.12s, CPU2/native1/memory3GiB, zero skips/uncollected/device
+allocations; canonical6114ac6e. A second production-class instance verifies
+the observation guard excludes foreign owners.
