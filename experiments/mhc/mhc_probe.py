@@ -812,6 +812,8 @@ def kdaptx_case_gate_errors(screen: dict) -> list[str]:
             return n
 
         for row in rows:
+            if type(row["state_len"]) is not int or type(row["layout"]) is not str or type(row["case"]) is not str:
+                return ["KDA case identity is malformed"]
             key = (row["layout"], row["state_len"], row["case"])
             if key not in expected or key in visited:
                 return ["KDA case roster contains an unexpected or duplicate cell"]
