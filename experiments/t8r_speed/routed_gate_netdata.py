@@ -25,7 +25,7 @@ def main():
     for phase, (a,z) in phases.items():
         start,end = math.floor(a),math.ceil(z)
         boxes = {}
-        for host,address in [('sparky','127.0.0.1'),('sparklina','192.168.1.110')]:
+        for host,address in [('sparky','192.168.1.180'),('sparklina','192.168.1.110')]:
             try:
                 # Preserve the owner's explicit queries, update_every and points;
                 # never infer fast cadence from an averaged returned series.

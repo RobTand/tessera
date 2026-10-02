@@ -103,3 +103,28 @@ public proof before acquiring rather than treating a lagging composed map as
 an authoritative absence. Known readset hashes still govern acquisition;
 unknown outer hashes use only the resolved, dated proof. No manual composition,
 refresh loop, fabricated consumer header, origin fallback or PB source change.
+
+
+Actual public-cover repair qualified 44 CPU tests, zero skips or uncollected,
+five compile and two shell syntax checks (`1c3d0f73ed89`, source
+`fd4b2334de0432a80c2dd748b812a17c7eaed4b2`, snapshot `2e0f4ce016bf`,
+CAS `44679342cac4d284d89b31e8a5f72a0906a9e8e8adff8b19a5a1e4d1e78edf8b`,
+463 bytes). Actual CPU public lease sealer `a01cb090aa43` completed exit 0
+on dl380g10 in 41.82 seconds, verifying all 864 canonical expert frames and
+all 872 declared ranges (3,677,315,501 bytes). Its actual result CAS
+`90eb80546eb5da3746d37c12e121923b3b991461280ceb6f5cda0722bdf1056e`
+(273,817 bytes) contains both final outer-hashed readset and per-wire inner/outer
+proof. The final readset SHA is
+`ac4606e82384c891114a4836525456c3356f04dc8b6ec4db898949454fb4f2d0`;
+proof SHA is `22b18fbfe8d6d0fc1796da8dc6ba5ad3f571f13473c2a6d71bf66ff48f279042`.
+For expert0 gate_proj the cached inner is `c19d3102460ae5c39d8ff8d10da3f9e8eaf9641f4c684bb55560e4fa39006dfb`
+(4,215,563 bytes); the outer is `c721ddc3d73dab224f26446c1209ec7d3b7cff2dafb1ab6ae9f5fd6b59935cb7`
+(4,215,596 bytes). These are the same owned bytes from public `open_pinned`,
+not an authenticated read followed by a mutable source-path read.
+
+Before GPU admission, the telemetry collector's Sparky endpoint is corrected
+from localhost to its explicit LAN address, so PB placement on either GB10 does
+not relabel the local box as Sparky. Both stable box addresses are queried.
+This is a measurement attribution correction only; its syntax qualification
+and actual both-box coverage are recorded separately. No GPU timing/profile
+or performance finding has yet been produced.
