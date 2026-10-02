@@ -50,6 +50,191 @@ evidence. Measurement requires the sealed request digest; the producer
 hashes and parses one owned byte buffer before any native phase. See
 [the bounded receipt contract](design/native-shape-timing.md).
 
+Re-stamped 2026-10-02 for shared inspected-stock interface facts. The current prefill
+guards reuse `serving.stock_interface` and keep their own pins and parameters.
+Empty-RoPE and shared-add adaptations remain separate experimental follow-ups. Complete digest tuples stay indivisible.
+Unreadable source/attributes/signatures decline to stock, with no installation
+framework, format, default, runtime pin or serving qualification change.
+
+Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
+The existing T8R benchmark can replay one historical real-ID distribution
+against the A8SE wires through PB public pinned readers, binding the same
+owned outer bytes to publisher cached-inner digests plus exact role/rows and
+canonical TSRFUSE1 reframing before the unchanged rank-local intake. A PB-only
+sealer records outer-frame hashes for the final GPU readset; it never treats
+a cached inner-unit digest as an exported outer-frame digest.
+Only served mode0/RL4/one-run/BMT128 is profiled; the teacher-forced mode1
+interface is excluded. Seeded activation/uniform downstream weights remain
+a declared proxy; no full-model quality/speed, serving/default/pin change
+or gate promotion is delivered. A >=30s steady power loop and both-box
+Netdata supplement the one-kernel profile; energy remains held until actual
+coverage and instrument agreement. Raw timing samples are retained and the
+reported median uses the conventional odd/even sample median (#836).
+A missing counter instrument may be recovered without repeating timing/power.
+The separate retained-native counter population uses the existing build callback
+and a public SDK-held native-code FD with pre/post hashes and module-origin
+checks; this trusts the experimental native artifact owner and does not qualify
+an immutable original tensor provider. Production source and defaults stay fixed.
+See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
+
+Re-stamped 2026-10-02 for Netdata cadence attribution (Refs #840).
+The box-power owner reports native collection cadence from the returned DB
+metadata, returned bucket duration separately, and returned tier/node/instance
+metadata. Missing native cadence stays unknown; bucket size cannot establish
+sensor cadence. Numeric samples, whole-group bounds and coverage are unchanged.
+This metadata correction does not qualify sensor agreement or energy.
+
+Re-stamped 2026-10-02 for the KDA experiment's scientific-independent
+admission/publication seam (Refs #814). `experiments/kda/conv_gate.py`
+owns the unchanged PTX string, case/mode roster and raw-word gates;
+`conv_progress.py` owns durable publication. The GPU driver re-exports
+and uses those owners, and the bank auditor imports the gate directly.
+Pure CI exercises raw admission and directory durability without Torch;
+actual driver/stock controls use the existing scientific dependency
+population. A source identity binds the driver and both owners and
+refuses changes before every publication/return, including NCU,
+numerics-only and partial progress. The actual driver root and both
+imported module/function origins must match the owned source files;
+cached foreign owners cannot certify their own unrelated checkout.
+This refactor changes no numerical
+inputs, CUDA bytes, profiler math or runtime execution; historical GPU
+receipts remain at their original sources and are not restamped.
+
+Re-stamped 2026-10-02 for resumed interpreter attribution (Refs #837).
+Resumed runtime metadata comes from the uniquely authenticated producer's
+effective pytest command, using the existing deadline/container parser. An
+unbound population or a console pytest entry point leaves `python` unknown;
+configured arm defaults do not establish the interpreter a past run used.
+Source, exit, image and serving gates remain unchanged.
+
+Re-stamped 2026-10-02 for the standalone integration-tool boundary
+(Refs #832). The explicit pricing-root owner and the sealed container-runner
+owner live under repository `tools/`, outside the installed `tessera` package.
+The converter, accounting gate, runner and receipt reader reuse those owners;
+the authenticated snapshot names the moved runner owner. No standalone
+allowlist, pricing rule, source-binding requirement or serving contract moves.
+
+Re-stamped 2026-10-02 (tessera#816, CPU encoder compatibility): window
+Viterbi's optimized CPU buffers explicitly use the input's device and float32
+dtype, so a meta default-device context cannot move CPU work. A non-float32
+global default dtype retains the original torch reference chain, whose branch
+costs are computed in float32 before promotion into the cost front. Exact
+state/SSE controls cover float16, bfloat16, float32 and float64 defaults plus
+meta placement. Gradient-bearing inputs with autograd enabled also retain
+the functional reference; no-grad calls keep the optimized CPU path. No
+recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
+serving, and no new throughput claim is made.
+
+Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
+(contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
+subclass for the stock `FLASHINFER_MLA_SPARSE_SM120` enum through the plugin.
+Its stock name, conversions and residency path remain inherited. Only eager
+pure-prefill BF16 queries, 32 heads, latent 512/no RoPE, page 64 packed FP8
+arbitrary-scale KV and 2176 indices can select the qualified MG masked-tile
+kernel; FlashInfer's own resolved plan must say FP8/MG/direct. Mixed, decode,
+staged, unsupported and CUDA stream-capture calls use stock. The backend and
+policy sources plus the complete sparse-MLA header tree are hash-bound to
+image5be13705. Eager host dispatch counts use the existing per-rank telemetry;
+graph replay counts are not claimed. Actual per-rank post-timing CUDA events
+must establish eager/FULL_DECODE_ONLY prefill execution before a served claim.
+The stock Q power-of-two scale rounding and arithmetic order remain intact.
+No production runtime pin, route cell, default, artifact or ship gate moves.
+
+Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
+A new top-level block, `stock_kernel_overrides`, publishes where the plugin,
+behind an opt-in flag, replaces a kernel of the stock runtime with its own,
+and an install path acts only on its own published entry. The block was empty
+at v54, so that revision installed no override and no route, cell or served byte moves. The
+native-load scanner reads both blocks. See §4.5i.
+
+Re-stamped 2026-10-02 after root review of the stock screen's progress
+publication (tessera#814 / PR #830). Partial and final JSON data are
+fsynced before atomic rename, their containing directory is fsynced,
+and only then does the PB progress helper receive measure or publish.
+A directory-sync failure prevents advancement. The historical GPU
+baseline is unchanged and is not restamped to this later harness fix.
+
+Re-stamped 2026-10-02 for the experimental stock FlashKDA measurement
+harness (Refs tessera#735). `tessera.kda_stock_screen.v1` records native
+workspace allocations, exact stock binary/harness identities, actual
+prepare/recurrence profiles, resident graph windows and full raw host
+telemetry from both Sparks. Missing or ambiguous kernel roles refuse.
+The bounded FP32-state H32 baseline establishes no fused candidate,
+serving speedup or qualified energy result. See §5.1.3 and
+[the stock profile](measurements/2026-10-02-kda-stock-native-profile.md).
+
+Re-stamped 2026-10-02 for `tessera.kda_conv_screen.v2` (tessera#814),
+reviewed by Astra after the original ex2 output witness proved impossible
+in the measured operation order. Four required mutations change actual
+output or state; ex2-ftz instead requires an active raw exponential
+difference and identical downstream denominator/FP32/BF16 bits. The
+control refuses absent, malformed, vacuous or stale source/compiled
+evidence. The original v1 failure remains history. No serving contract,
+route or default changes. See §5.1.3 and
+[the bound control and proof](measurements/2026-10-02-kda-ex2-equivalence.md).
+
+Re-stamped 2026-10-02 for the KDA convolution screen's fail-closed admission
+(the initial v1 contract, tessera#814). The experimental PTX reference follows the pinned stock
+prefill's width-minus-one history at the beginning of the physical cache,
+and compares actual q/k/v output and the entire convolution state as raw
+BF16 bits. Required mutants must differ from the unmutated candidate;
+a shared mismatch against stock is no mutation witness. A failed or
+vacuous screen returns nonzero and stops later timing parts. No serving
+override, runtime contract, format, route or default changes. See §5.1.3
+and [the recovery evidence](measurements/2026-10-02-kda-screen-recovery.md).
+
+Re-stamped 2026-10-02 for guarded module re-exports in the impacted-test
+selector (Refs #808). The dependency owner derives a finite import condition
+only from a fully recognized, immutable-name `__getattr__` forwarding hook.
+Changed files retain the conservative import union. Only UNKNOWN propagation
+may exclude that proved conditional edge; direct named calls retain named
+demand plus Python's implicit `__path__`, while object/namespace escapes,
+stars, explicit hook and file loads retain the union, including ordinary
+re-exports. Ordinary imports and package initialization remain unconditional.
+The source-read capability and UNKNOWN origin contract are unchanged;
+no serving interface, runtime, wire, pin, lane or promotion gate moves. See §1.1.
+
+Re-stamped 2026-10-02 for bounded Netdata phase evidence (Refs #819).
+`experiments/box_power_window.py` requests unaligned data and accepts only
+whole returned groups within the requested phase. It retains the raw response,
+requested and returned windows, rejected groups and actual accepted coverage;
+a straddling group is unknown for this phase and is never interpolated into
+its power statistics. This repairs provenance, without claiming that the
+coarse sensor values or any historical energy comparison are qualified.
+
+Re-stamped 2026-10-02 for the optional container GPU merge-suite arm
+(tessera#818). A source-sealed runner uses PrismaBuild's Docker ownership and
+affinity shim, immutable image and scoped dependency content identities, and
+same-path readonly source/data mounts. The coordinator's existing receipt
+reader authenticates the runner and shared argv owner from the request's
+snapshot bundle before adopting a resumed exit. Container GPU xdist spends
+the declared CPUs with native threads one; all existing source, publication,
+device-allocation and missing-artifact gates remain in force. This changes no
+wire, serving route, runtime pin or artifact.
+
+Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
+(tessera#825). The plan converter and accounting gate use one repo-tooling
+import owner, `tools/_accounting_source.py`. It binds the requested root
+to the canonical origin of both `prismaquant` and its `tessera_formats`
+module before reading prices. A foreign cached module or an unavailable
+explicit accountant refuses; no module is evicted and no pricing logic is
+copied. Same-origin cached modules retain the original accounting function.
+Different source versions need separate processes or one qualified compatible
+root; an unspecified accountant remains explicitly absent. No wire, serving
+route, runtime pin, numerical pricing rule or production default changes.
+
+Re-stamped 2026-10-02 for the dense split launch's legality bound
+(tessera#805). The E4M3 and value dense launch now refuses a K split that
+leaves an item fewer than two K chunks, and `dense_k_split` searches only up
+to that bound (`dense_split_max`, `K / 64`). This is the bound the E2M1
+launch already enforces on the same producer/consumer protocol. Two
+consecutive one-chunk items in one CTA let the producers rewrite a
+descriptor slot before the consumers read it, which leaves a partial
+unwritten. On GB10 no GLM-5.3 role's split exceeds the bound, at any M or
+rate, so no GLM-5.3 launch changes. Few-row, small-K roles take a smaller
+split; for example, 128 x 256 at M = 1 now takes 4 splits where it took 8.
+No route, cell, rung or schema changes. See §3.3 (the dense identity).
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -647,10 +832,11 @@ where the structure changes the wire. No contract cell, serving default or
 route changes.
 
 Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
-targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
-in its dependency graph but records it under `excluded_tests` with its reason,
-not in the pytest target list. Its manual CUDA gate is not executed or certified
-by that selection; pytest consumers and full-run escalation remain unchanged.
+targets (tessera#647). `tools/impacted_tests.py` retains explicit manual-only
+interfaces in its dependency graph and records configured exclusions under
+`excluded_tests` with their reasons. The A4 gate now has a pytest entry point,
+and the current exclusion map is empty. Selection alone does not execute or
+certify a manual CUDA gate; full-run escalation remains unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
@@ -1972,7 +2158,7 @@ allocator sees is `docs/tessera-one-format.md` §5.
 PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
 `--exclusive`: the deployed scheduler derives the complete GPU reservation
 from that worker's advertised capacity, rather than treating one logical slot
-as physical exclusion. The GPU arm remains serial under `--strict-cuda`,
+as physical exclusion. The native GPU arm remains serial under `--strict-cuda`,
 which has three legs since tessera#152: it refuses a device-less session
 before anything runs, refuses at the end a run in which no test allocated on
 the device (torch's own allocator counter, published as
@@ -1986,6 +2172,48 @@ Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
 defaults and preventing each xdist worker's native math or extension compiler
 from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
+An explicit `--gpu-image` enables the container GPU arm. It requires
+`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
+`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
+the finite runner grammar and Docker argv; `tools/suite_container.py` launches
+it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
+--dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
+`--gpu-mem-gb` when its population needs different CPU
+or aggregate memory reservations from the x86 arm. The pinned image must
+already be local according to PB's `--container-image` contract. Scoped
+dependencies declare their versions and every file's path, mode, length and
+SHA-256 (`tessera.suite_dependencies.v1`); changed bytes or a symlink refuse.
+The runner checks the dependency seal at entry and exit, so a host-side
+mutation during pytest cannot turn a clean summary into a successful action.
+The source and declared data roots mount readonly at their actual absolute
+paths, while the surface directory and action-owned cache mount writable.
+`--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
+these overrides are sealed, mounted and forwarded to pytest. The helper
+disables user-site imports, bytecode writes and implicit pytest plugin
+autoload, fixes the Python entrypoint/workdir and native thread limits, and
+keeps pytest temporary files and compiler caches outside the source tree.
+PB's Docker shim retains responsibility for scope ownership, affinity,
+memory containment and exact-attempt termination.
+
+For a resumed arm, `pytest_command` records the effective command from its
+uniquely authenticated producer. `python` names the explicit interpreter of
+that command's `-m pytest` form, including the container's inner interpreter.
+It is unknown for a console pytest entry point or an unbound population;
+the configured arm default is not observed runtime metadata.
+
+The receipt reader recognizes only the canonical relative runner path and
+its shared finite grammar, never arbitrary Docker tokens or shell fragments.
+It keeps the existing snapshot/stamp/request/publication/terminal checks and
+additionally reads the exact request's authenticated Git bundle (bounded to
+256 MiB), comparing the runner and shared owner blobs with the coordinator's
+sources. A receipt assembly verifies each distinct bundle once; this is
+ephemeral verification state, not a second source-identity cache. A modified
+runner, option/environment/mount shadow, worker/reservation mismatch, unknown
+producer, unverified source or different effective source remains non-green.
+Resume reads only the action keys the population's verified producer stamps
+name. It does not scan unrelated fleet history; several named producers or
+conflicting terminal records remain ambiguous, and an unstamped population
+cannot acquire an exit from another action.
 The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then
@@ -2305,7 +2533,61 @@ also create edges, including aliased readers, and for a resolved path this is
 independent of what the reader does with the bytes. Runtime-selected or shadowed
 paths remain conservative unknown edges and propagate to downstream tests when
 the reader can execute Python; a parameterized filename in a source-executing
-module is not silently treated as no dependency. What this misses is a source
+module is not silently treated as no dependency. Recognized calls to imported
+source-executing helpers now propagate that capability to their callers via a
+fixed point over top-level helper summaries, preserving relative imports,
+re-exports and ambiguous module spellings. Module and helper seeds use the same
+source-call predicate with enclosing lexical aliases. A single authoritative
+parse/read result supplies both summaries and graph edges: a first-pass failure
+remains diagnosed wildcard uncertainty, never erased by a retry. Callable alias
+recognition uses a finite worklist and per-path cycle guards rather than the
+Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
+generic module parameter and an import missing from the graph remain unknown.
+The frozen `202d1f07` #808 draft failed the three unchanged selectivity ratchets,
+forcing full for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
+path proving which uncertainty seed caused that escalation, so it did not
+establish the asserted GLM53-through-serving.config attribution. Selection now records resolved-file
+`uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
+reverse walk that decides escalation. These are static predecessor witnesses,
+not proof that a runtime call executes. It is not a completed external-origin contract.
+
+The source-dependency owner now recognizes a narrowly proved module re-export:
+`if name in <literal frozenset>: import module; return getattr(module, name)`,
+followed by a literal `AttributeError`. It accepts no hook decorators, computed
+defaults, extra effects, shadowed builtins, guard rebinding/mutation or hook,
+guard or global-namespace escape. A literal `__all__` directory hook may enumerate
+that immutable set. Every other shape retains the unconditional import union.
+The graph keeps the conservative dependency union for changed files, including
+this guarded import. Only UNKNOWN propagation may exclude its proved conditional
+edge; active attribute demands retain direct dependencies. Explicit
+from-imports used only as direct callees (or unused) request their named
+attributes plus Python's implicit `__path__`. Passing, storing, returning or
+inspecting imported objects, mutable namespace access (including reflective or
+dynamic `getattr`), namespace imports, stars,
+explicit hook or guard access and exact file loads request every branch.
+The proved hook's own forwarding call has a closed literal name domain;
+other reflective accesses retain the union. Unknown namespace demand forwards
+through ordinary re-exports as a finite union.
+Ambiguous
+spellings still resolve to every candidate through the existing module resolver.
+All ordinary imports and package-initialization effects remain dependencies;
+the guard worklist terminates on cycles. Known helper namespace effects
+(including `f_globals` and reflective access) reuse the source-execution
+helper-call fixed point and lexical resolver as a separate effect fact;
+calling such a helper refuses a guarded summary, including through a re-export.
+Star imports cannot prove unshadowed guard bindings and retain the union.
+This is bounded helper recognition, not a general evaluator. The receipt reports
+`uncertainty_guarded_imports_skipped` with provider, literal guard names and
+predecessor witnesses separately from collection-probe exclusions. Changed and
+uncertain seeds traverse the same annotated graph under their respective rules;
+their reached consumers are then combined. Failed source reads cannot publish a
+summary and remain authoritative wildcard uncertainty. The real-tree causal
+probe established that the guarded slicing-to-layout edge was a complete cut
+between all recorded uncertainty seeds and conftests on frozen `202d1f07`;
+it did not prove GLM53 source external. The three real ratchets and the
+source-execution helper/refusal controls remain acceptance criteria.
+
+What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
 A conftest **reached** -- changed, or importing anything changed -- reaches its
@@ -3935,9 +4217,16 @@ each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
 S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
-of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/32,
+of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/64,
 ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
-the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+the unsplit kernel. `K/64` is `dense_split_max`, the launch's legality bound,
+not a tuning choice: the producers write an item's descriptor slot when they
+claim it, two items ahead of the consumers at most, and the consumers read the
+slot once, at item start. So every split item keeps two K chunks
+(`floor(nk / S) >= 2`), and the library refuses a larger split by name. This
+is the E2M1 launch's bound on the same protocol (tessera#805). It binds on
+few-row, small-K roles only, and on no GLM-5.3 role on GB10. Two runs are
+bitwise equal in both regimes and a captured
 forward replays (the work counter is zeroed inside the region; the partial is
 a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not
@@ -6062,6 +6351,43 @@ tag. Until a GLM fp4 route-class cell names this image in its runtime scope,
 the attestation stays unreferenced -- published so the gate has something true
 to read, not as an admission.
 
+### 4.5i What the contract says a serve REPLACES in the stock runtime
+
+`native_extensions` publishes the libraries a Tessera route decodes its wire
+through. Since contract v54 a second top-level block, `stock_kernel_overrides`
+(`ext.STOCK_KERNEL_OVERRIDES`), publishes the other thing the plugin can do to
+a serving process: replace a kernel of the stock runtime, such as an attention
+backend's prefill call or a stock unquantized linear, with its own. Such a
+replacement reads no Tessera wire and belongs to no route. Its claim is that it
+computes the stock kernel's output bit for bit.
+
+Each entry is closed and validated by `contract._validate_stock_kernel_overrides`:
+
+| Field | Value |
+|---|---|
+| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts). |
+| `enabled_by` | The `TESSERA_*` flag that installs it. One flag per entry. |
+| `default` | `off`, the only value. An unset flag installs nothing, so a serve that did not ask is the stock serve. |
+| `loaded_by` | The `tessera.serving` module that installs it. |
+| `library` | The native library it maps, under the `native_extensions` legibility rules (`_validate_library`), or `null`. |
+| `required_identity` | `bitwise_vs_stock`, the only value. |
+| `evidence` | The gates the identity has passed, `{gate, receipt}`. Empty until one has. |
+
+The packaged contract is the install path's permission, not the install
+path's own constants. `contract.stock_kernel_override_refusal` returns `None`
+only when the contract publishes an entry under the flag and the entry names
+the same kind, stock object, loader and library prefix the install is about to
+use. Otherwise it returns the reason, which is the install line's text, and
+nothing installs.
+
+Across both blocks, no published glob may match a library name another entry's
+load path can produce, so a residency fingerprint names one library per mapped
+`.so`. `tests/test_serving_native_extensions.py` scans every native load
+reachable from `tessera.serving` against both blocks, and matches a `CDLL`,
+`LoadLibrary` or `load_library` call by its path's basename. A consumer that
+fingerprints native residency from `native_extensions` alone does not see an
+override's library; it must read this block too.
+
 ### 4.5e Per-operator presence, and the two reasons a quantized route refuses
 
 `native_ops.py` binds the two quantized routes to vLLM's own registered CUDA
@@ -7004,13 +7330,61 @@ raises.
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
 | `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
-| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file, so `tools/impacted_tests.py` does not class the module the shared conftest reaches as able to import anything. |
+| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
 
 The module docstring records the decline rules and the exactness argument.
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv
 split that A/B is the VAL787 window (arms VS, VK and VB against V0).
+
+`experiments/mhc/mhc_probe.py --parts kdaptx --numerics-only` is the
+convolution reference screen for potential future FlashKDA fusion. It is
+not a serving override. It compares actual q/k/v output and the whole
+convolution state bit for bit, including spare/speculative columns and
+unused cache slots. The logical prefill history is `KERNEL_WIDTH - 1`,
+regardless of physical cache length; for width four, stock reads and
+writes columns 0..2. Contract `tessera.kda_conv_screen.v2` requires FMA,
+division, physical-tail-read and physical-tail-write mutations to differ
+from the unmodified candidate in actual output or state. Ex2-ftz remains
+required as a separate observable: an actual subnormal FP32 exponential
+must differ, while the rounded `+1` denominator, FP32 SiLU and BF16 output
+remain bit-identical. Actual raw words, summaries, finite-input scope and
+current PTX/build flags/compiled module/SASS digests are checked. Missing,
+malformed, stale or vacuous control evidence fails; the entire convolution
+matrix must also observe no ex2 output/state difference. Admission requires
+the complete 24-case roster from the same `KDA_PTX_CASES` definition the
+producer uses, matched geometry/sequence lengths/history masks, typed
+raw-word comparison counts and equality flags, q/k/v slice totals and
+case-derived aggregate summaries. Any failure
+stops later parts. The original v1 failure is preserved, not re-labelled.
+Banked cases are reused only when relevant device text and test inputs
+are unchanged; the artifact audit seals expected JSON and old-module
+digests, requires the compared new module to equal the control's compiled
+identity, requires every mode in `KDA_PTX_MODES` exactly once in each cubin
+(no extra/missing mode), and checks the installed stock source. The screen
+explicitly does not cover recurrent output or final recurrent state, and
+cannot admit a fused serving implementation by itself. `kdafwd` is a
+separate stock-kernel timing screen; its results require PrismaBuild's
+measurement admission and both in-process and host telemetry.
+Its `tessera.kda_stock_screen.v1` output binds the installed stock module
+and executed harness by SHA-256, queries native workspace bytes, and
+refuses missing or ambiguous prepare/recurrence identities. It retains
+full gzip torch-profiler traces through the published PB helper,
+separates allocation/warmup, profile, settle and steady graph intervals,
+and reports cumulative completed calls only after synchronization.
+Before either measure or publish progress advances, the corresponding
+complete JSON is file-fsynced, atomically renamed and directory-fsynced.
+The existing residency policy provides distinct resident copies. Each
+window retains fast NVML samples and full unfiltered Netdata responses,
+returned views and exact intervals from both Sparks. Energy remains
+unqualified until coverage agreement is established. FP32 recurrent
+state is the pinned model's native default; BF16 state and H=1 are
+explicit diagnostics, and H=1 prepare still launches multiple CTAs.
+The measured T512/T2048 H32 stock baseline is recorded in
+[the stock profile](measurements/2026-10-02-kda-stock-native-profile.md);
+it does not admit a serving change or substitute for recurrent-quality
+validation of a future fused candidate.
 
 ### 5.2 What the wheel ships besides Python
 

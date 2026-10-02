@@ -933,7 +933,8 @@ def test_serve_start_imports_and_install_order(monkeypatch):
         events.append(("import", name))
         return types.ModuleType(name)  # no __file__, so no digest and no interface matches
 
-    monkeypatch.setattr(gp, "importlib", NS(import_module=fake_import))
+    from tessera.serving import stock_interface
+    monkeypatch.setattr(stock_interface, "importlib", NS(import_module=fake_import))
     for fn_name in ("enable_onorm_cuda", "install_sp_mhc", "install_kda_conv_split"):
         def wrapped(config, orig=getattr(gp, fn_name), fn_name=fn_name):
             events.append(("install", fn_name))

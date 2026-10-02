@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import calendar
 import json
+import math
 import statistics
 import time
 import urllib.parse
@@ -122,15 +123,76 @@ def split_window(text: str, now: float) -> tuple[float, float]:
         f"write both sides as ISO-8601 UTC stamps so the separator is unambiguous")
 
 
+class NetdataWindowError(ValueError):
+    """A refused response with its raw window evidence retained."""
+    def __init__(self, message, *, url, raw, after, before):
+        super().__init__(message)
+        self.evidence = {"query": url, "raw_response": raw,
+                         "requested_window_unix": [after, before]}
+
+
 def _fetch(host: str, context: str, dims, after: int, before: int, points: int) -> dict:
     q = urllib.parse.urlencode({
         "contexts": context, "after": after, "before": before, "points": points,
         "group_by": "dimension", "format": "json2",
         "time_group": "average", "dimensions": "|".join(dims),
+        "options": "unaligned",
     })
     url = f"http://{host}:19999/api/v2/data?{q}"
     with urllib.request.urlopen(url, timeout=60) as fh:
-        return {"url": url, "doc": json.loads(fh.read().decode())}
+        raw = json.loads(fh.read().decode())
+    try:
+        doc, coverage = bounded_groups(raw, after, before)
+    except ValueError as exc:
+        raise NetdataWindowError(str(exc), url=url, raw=raw, after=after, before=before) from exc
+    return {"url": url, "doc": doc, "raw_doc": raw, "coverage": coverage}
+
+
+def bounded_groups(doc: dict, after: int, before: int) -> tuple[dict, dict]:
+    """Keep only whole returned groups within (after, before].
+
+    Netdata can shift even explicit query endpoints when it groups/aligned
+    data. A returned timestamp ends its group; view.update_every gives that
+    group's duration. No portion of a straddling group is a measurement of
+    just this arm, so reject it rather than interpolate it. Query semantics:
+    https://learn.netdata.cloud/docs/developer-and-contributor-corner/rest-api/queries/
+    """
+    width = doc.get("view", {}).get("update_every")
+    if (type(width) not in (int, float) or not math.isfinite(width) or width <= 0):
+        raise ValueError("Netdata response lacks a positive returned group duration")
+    if not after < before:
+        raise ValueError("empty requested Netdata window")
+    kept, rejected, intervals = [], [], []
+    seen = set()
+    for row in doc["result"]["data"]:
+        stamp = row[0]
+        if type(stamp) not in (int, float) or not math.isfinite(stamp):
+            raise ValueError("Netdata response has an unreadable group timestamp")
+        if stamp in seen:
+            raise ValueError("Netdata response repeats a group timestamp")
+        seen.add(stamp)
+        start = stamp - width
+        if start < after or stamp > before:
+            rejected.append({"interval_unix": [start, stamp], "reason": "outside or straddling requested window"})
+            continue
+        kept.append(row)
+        intervals.append([start, stamp])
+    intervals.sort()
+    if any(left[1] > right[0] for left, right in zip(intervals, intervals[1:])):
+        raise ValueError("Netdata response has overlapping returned groups")
+    coverage = {
+        "requested_window_unix": [after, before],
+        "returned_window_unix": [doc.get("view", {}).get("after"), doc.get("view", {}).get("before")],
+        "returned_group_duration_s": width,
+        "accepted_group_intervals_unix": intervals,
+        "accepted_coverage_window_unix": [intervals[0][0], intervals[-1][1]] if intervals else None,
+        "accepted_coverage_s": sum(end - start for start, end in intervals),
+        "accepted_groups": len(kept), "rejected_groups": rejected,
+        "unobserved_requested_s": before - after - sum(end - start for start, end in intervals),
+    }
+    # Keep the original document intact beside this bounded statistical view.
+    bounded = {**doc, "result": {**doc["result"], "data": kept}}
+    return bounded, coverage
 
 
 def _stats(doc: dict, dims) -> dict:
@@ -165,11 +227,29 @@ def collect(host: str, after: int, before: int, points: int) -> dict:
         try:
             got = _fetch(host, context, dims, after, before, points)
         except Exception as exc:  # noqa: BLE001 -- a missing series is recorded, not fatal
-            series[context] = {"error": f"{type(exc).__name__}: {exc}"}
+            series[context] = {"error": f"{type(exc).__name__}: {exc}",
+                               **getattr(exc, "evidence", {})}
             continue
-        doc = got["doc"]
+        raw = got.get("raw_doc", got["doc"])
+        # The fallback also bounds recorded fixtures/older fetch adapters.
+        if "coverage" in got:
+            doc, coverage = got["doc"], got["coverage"]
+        else:
+            try:
+                doc, coverage = bounded_groups(raw, after, before)
+            except ValueError as exc:
+                series[context] = {"error": str(exc), "query": got["url"], "raw_response": raw}
+                continue
         entry = {"query": got["url"], "stats": _stats(doc, dims),
-                 "update_every_s": doc.get("view", {}).get("update_every")}
+                 "update_every_s": raw.get("db", {}).get("update_every"),
+                 "returned_bucket_s": raw.get("view", {}).get("update_every"),
+                 "collection_metadata": {
+                     "per_tier": raw.get("db", {}).get("per_tier"),
+                     "nodes": raw.get("summary", {}).get("nodes"),
+                     "instances": raw.get("summary", {}).get("instances"),
+                     "totals": raw.get("totals"),
+                 },
+                 "coverage": coverage, "raw_response": raw}
         if context == "nvidia_smi.gpu_power_draw":
             labels = doc["result"]["labels"]
             i = labels.index("power_draw") if "power_draw" in labels else None

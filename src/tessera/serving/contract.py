@@ -167,6 +167,7 @@ __all__ = [
     "lane_decoder",
     "lane_requirements",
     "load_serving_contract",
+    "stock_kernel_override_refusal",
     "route_wire_spelling",
     "validate_serving_contract",
     "ALLOWABLE_RULES",
@@ -1054,6 +1055,72 @@ def _validate_fused_module(block: Any, where: str) -> None:
             "claim from what the loader accepts and must not be inferred from it")
 
 
+#: What a computed build identity becomes when a library's glob is checked by
+#: meaning: the name a load path writes is ``<prefix><identity>.so``.
+_BUILD_IDENTITY_PLACEHOLDER = "0123456789abcdef"
+
+
+def _library_name(block: Mapping[str, Any]) -> str:
+    """A library basename the load path behind ``block`` can produce."""
+    return f"{block['module_name_prefix']}{_BUILD_IDENTITY_PLACEHOLDER}.so"
+
+
+def _validate_library(block: Mapping[str, Any], at: str) -> None:
+    """The legibility rules for a published native library, said once.
+
+    A ``native_extensions`` entry carries these four fields itself and a
+    ``stock_kernel_overrides`` entry carries them in its ``library`` block; a
+    consumer that fingerprints native residency reads both the same way, so
+    they are held to one rule.
+    """
+    import fnmatch
+    import os
+
+    from .ext import MATCH_BASENAME_FNMATCH, csrc_dir
+
+    prefix = block["module_name_prefix"]
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError(f"{at}.module_name_prefix must be a non-empty string")
+    if block["match"] != MATCH_BASENAME_FNMATCH:
+        raise ValueError(
+            f"{at}.match is {block['match']!r}; this contract publishes exactly "
+            f"{MATCH_BASENAME_FNMATCH!r} -- fnmatch the glob against the BASENAME of a "
+            "mapped .so. The rule is a value because a consumer cannot otherwise tell a "
+            "stem from a prefix from a pattern.")
+    glob = block["filename_glob"]
+    # The library a load path writes is ``<module name><LIB_EXT>`` and the
+    # module name is ``<prefix><build identity>``, so the pattern is the prefix
+    # with the identity and the suffix globbed.  Checked by MEANING, not by
+    # spelling: a name this load path can produce must match.
+    if not isinstance(glob, str) or not fnmatch.fnmatch(_library_name(block), glob):
+        raise ValueError(
+            f"{at}.filename_glob {glob!r} does not match a library name the load path can "
+            f"produce ({prefix}<build identity>.so); a glob that matches nothing a serve "
+            "maps is a fingerprint that reports every serve identical")
+    source = block["source"]
+    if not isinstance(source, str) or not source.startswith("csrc/"):
+        raise ValueError(
+            f"{at}.source must be a path under 'csrc/' relative to this package, got "
+            f"{source!r}")
+    if not os.path.isfile(os.path.join(csrc_dir(), source[len("csrc/"):])):
+        raise ValueError(
+            f"{at}.source {source!r} is not packaged with this build; a contract may not "
+            "publish an extension whose sources did not ship")
+
+
+def _validate_serving_loader(loaded_by: Any, at: str) -> None:
+    """``loaded_by`` names a module of this serving package that exists."""
+    from importlib import util as importlib_util
+
+    if not isinstance(loaded_by, str) or not loaded_by.startswith(f"{__package__}."):
+        raise ValueError(
+            f"{at}.loaded_by is {loaded_by!r}; an entry belongs in this table only when the "
+            f"library can be resident in a SERVING process, so it is loaded by a "
+            f"{__package__}.* module. A producer-side extension does not belong here.")
+    if importlib_util.find_spec(loaded_by) is None:
+        raise ValueError(f"{at}.loaded_by names no module in this build: {loaded_by!r}")
+
+
 def _validate_native_extensions(entries: Any, where: str) -> None:
     """``native_extensions`` must BE ``ext.NATIVE_EXTENSIONS``, and be legible.
 
@@ -1084,12 +1151,8 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
     ``lane`` are torch-free, but keeping the contract reader's module-level
     dependencies to ``json`` is the property that keeps that true.
     """
-    import fnmatch
-    import os
-    from importlib import util as importlib_util
-
     from .ext import FALLBACK_REFUSED, FALLBACK_STATUSES, LANE_FIELDS, \
-        LANE_REQUIREMENT_FIELDS, MATCH_BASENAME_FNMATCH, NATIVE_EXTENSIONS, csrc_dir
+        LANE_REQUIREMENT_FIELDS, NATIVE_EXTENSIONS
     from .lane import MODES
     from .scheme import ROUTES
 
@@ -1108,45 +1171,12 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
         _require_keys(entry, at,
                       required={"module_name_prefix", "filename_glob", "match", "source",
                                 "loaded_by", "routes", "lane", "when_unavailable"})
+        _validate_library(entry, at)
         prefix = entry["module_name_prefix"]
-        if not isinstance(prefix, str) or not prefix:
-            raise ValueError(f"{at}.module_name_prefix must be a non-empty string")
         if prefix in seen:
             raise ValueError(f"{at}.module_name_prefix {prefix!r} is declared twice")
         seen.add(prefix)
-        if entry["match"] != MATCH_BASENAME_FNMATCH:
-            raise ValueError(
-                f"{at}.match is {entry['match']!r}; this contract publishes exactly "
-                f"{MATCH_BASENAME_FNMATCH!r} -- fnmatch the glob against the BASENAME of a "
-                "mapped .so. The rule is a value because a consumer cannot otherwise tell a "
-                "stem from a prefix from a pattern.")
-        glob = entry["filename_glob"]
-        # The library torch writes is ``<module name><LIB_EXT>`` and the module
-        # name is ``<prefix><build identity>``, so the pattern is the prefix
-        # with the identity and the suffix globbed.  Checked by MEANING, not by
-        # spelling: a name this load path can produce must match.
-        if not isinstance(glob, str) or not fnmatch.fnmatch(f"{prefix}0123456789abcdef.so", glob):
-            raise ValueError(
-                f"{at}.filename_glob {glob!r} does not match a library name the load path can "
-                f"produce ({prefix}<build identity>.so); a glob that matches nothing a serve "
-                "maps is a fingerprint that reports every serve identical")
-        source = entry["source"]
-        if not isinstance(source, str) or not source.startswith("csrc/"):
-            raise ValueError(
-                f"{at}.source must be a path under 'csrc/' relative to this package, got "
-                f"{source!r}")
-        if not os.path.isfile(os.path.join(csrc_dir(), source[len("csrc/"):])):
-            raise ValueError(
-                f"{at}.source {source!r} is not packaged with this build; a contract may not "
-                "publish an extension whose sources did not ship")
-        loaded_by = entry["loaded_by"]
-        if not isinstance(loaded_by, str) or not loaded_by.startswith(f"{__package__}."):
-            raise ValueError(
-                f"{at}.loaded_by is {loaded_by!r}; an entry belongs in this table only when the "
-                f"library can be resident in a SERVING process, so it is loaded by a "
-                f"{__package__}.* module. A producer-side extension does not belong here.")
-        if importlib_util.find_spec(loaded_by) is None:
-            raise ValueError(f"{at}.loaded_by names no module in this build: {loaded_by!r}")
+        _validate_serving_loader(entry["loaded_by"], at)
         routes = entry["routes"]
         if not isinstance(routes, list) or not routes:
             raise ValueError(f"{at}.routes must name at least one route that needs it")
@@ -1269,6 +1299,133 @@ def _validate_native_extensions(entries: Any, where: str) -> None:
                     "tells a native serve from a fallback one")
 
 
+#: An override's flag: a ``TESSERA_*`` environment variable, parsed by
+#: ``flags.latched_bool`` at the install path.
+_OVERRIDE_FLAG = re.compile(r"TESSERA_[A-Z0-9_]+")
+
+
+def _validate_stock_kernel_overrides(entries: Any, where: str,
+                                     native_extensions: list[Mapping[str, Any]]) -> None:
+    """``stock_kernel_overrides`` must BE ``ext.STOCK_KERNEL_OVERRIDES``, and be legible.
+
+    AUTHORITY as for ``native_extensions``: the block equals the table the
+    install paths read through :func:`stock_kernel_override_refusal`, so an
+    override the contract does not publish cannot install.  LEGIBILITY: each
+    entry's ``overrides`` is validated against its own ``kind``'s closed
+    fields, its flag is unique and defaults off, the only identity it may claim
+    is ``bitwise_vs_stock``, and its ``library`` -- when it maps one -- obeys
+    the native-extension rules, with a prefix and glob that collide with no
+    library either block publishes, so a fingerprint reading both blocks names
+    one library per mapped ``.so``.
+    """
+    import fnmatch
+
+    from .ext import (IDENTITY_BITWISE_VS_STOCK, OVERRIDE_DEFAULT_OFF,
+                      STOCK_KERNEL_EVIDENCE_FIELDS, STOCK_KERNEL_LIBRARY_FIELDS,
+                      STOCK_KERNEL_OVERRIDE_FIELDS, STOCK_KERNEL_OVERRIDE_KINDS,
+                      STOCK_KERNEL_OVERRIDES)
+
+    if not isinstance(entries, list):
+        raise ValueError(f"{where} must be a JSON array")
+    if entries != list(STOCK_KERNEL_OVERRIDES):
+        raise ValueError(
+            f"{where} is not what this build installs. It must equal "
+            "tessera.serving.ext.STOCK_KERNEL_OVERRIDES, the table every override's install "
+            "path checks itself against; a document naming a different override -- or "
+            "forgetting one -- would be a claim about a serve that does not exist. "
+            f"Published {entries!r}, installed {list(STOCK_KERNEL_OVERRIDES)!r}.")
+    libraries = [(f"runtime_contract.native_extensions[{i}]", entry)
+                 for i, entry in enumerate(native_extensions)]
+    flags: set[str] = set()
+    for i, entry in enumerate(entries):
+        at = f"{where}[{i}]"
+        _require_keys(entry, at, required=set(STOCK_KERNEL_OVERRIDE_FIELDS))
+        kind = entry["kind"]
+        if kind not in STOCK_KERNEL_OVERRIDE_KINDS:
+            raise ValueError(
+                f"{at}.kind is {kind!r}; this package overrides "
+                f"{sorted(STOCK_KERNEL_OVERRIDE_KINDS)} and validates each kind's overrides "
+                "against its own fields")
+        _require_keys(entry["overrides"], f"{at}.overrides",
+                      required=set(STOCK_KERNEL_OVERRIDE_KINDS[kind]))
+        for field, value in entry["overrides"].items():
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    f"{at}.overrides.{field} must name the stock object replaced, got {value!r}")
+        flag = entry["enabled_by"]
+        if not isinstance(flag, str) or not _OVERRIDE_FLAG.fullmatch(flag):
+            raise ValueError(
+                f"{at}.enabled_by must be the TESSERA_* environment variable that installs "
+                f"the override, got {flag!r}")
+        if flag in flags:
+            raise ValueError(f"{at}.enabled_by {flag!r} installs two overrides")
+        flags.add(flag)
+        if entry["default"] != OVERRIDE_DEFAULT_OFF:
+            raise ValueError(
+                f"{at}.default is {entry['default']!r}; an override is {OVERRIDE_DEFAULT_OFF!r} "
+                "unless its flag is set, so a serve that did not ask for it is the stock serve")
+        _validate_serving_loader(entry["loaded_by"], at)
+        if entry["required_identity"] != IDENTITY_BITWISE_VS_STOCK:
+            raise ValueError(
+                f"{at}.required_identity is {entry['required_identity']!r}; the one identity "
+                f"an override behind a stock name may claim is {IDENTITY_BITWISE_VS_STOCK!r}")
+        evidence = entry["evidence"]
+        if not isinstance(evidence, list):
+            raise ValueError(f"{at}.evidence must be a JSON array ([] until a gate passes)")
+        for j, item in enumerate(evidence):
+            _require_keys(item, f"{at}.evidence[{j}]", required=set(STOCK_KERNEL_EVIDENCE_FIELDS))
+            for field in STOCK_KERNEL_EVIDENCE_FIELDS:
+                if not isinstance(item[field], str) or not item[field]:
+                    raise ValueError(f"{at}.evidence[{j}].{field} must be a non-empty string")
+        library = entry["library"]
+        if library is not None:
+            _require_keys(library, f"{at}.library", required=set(STOCK_KERNEL_LIBRARY_FIELDS))
+            _validate_library(library, f"{at}.library")
+            libraries.append((f"{at}.library", library))
+    # One library per mapped name, across both blocks: no two prefixes are
+    # equal and no glob matches a name another entry's load path can produce.
+    for spot, block in libraries:
+        for other_spot, other in libraries:
+            if other is block:
+                continue
+            if fnmatch.fnmatch(_library_name(other), block["filename_glob"]):
+                raise ValueError(
+                    f"{spot}.filename_glob {block['filename_glob']!r} also matches "
+                    f"{_library_name(other)!r}, a library {other_spot} publishes; a fingerprint "
+                    "must name one library per mapped .so")
+
+
+def stock_kernel_override_refusal(enabled_by: str, *, kind: str, overrides: Mapping[str, str],
+                                  loaded_by: str, library_prefix: str | None,
+                                  contract: Mapping[str, Any] | None = None) -> str | None:
+    """Why an install path may NOT act on its stock-kernel override, or ``None``.
+
+    The packaged contract is the authority, not the install path's own
+    constants: an override installs only when the contract publishes an entry
+    under the flag that enabled it, and that entry names exactly the stock
+    object, the loader and the library the install is about to use.  A build
+    whose contract lost the entry, or whose install drifted from it, installs
+    nothing and says why -- the reason is the install line's text.
+    """
+    payload = cached_serving_contract() if contract is None else contract
+    entry = next((e for e in payload["stock_kernel_overrides"]
+                  if e["enabled_by"] == enabled_by), None)
+    if entry is None:
+        return (f"the packaged contract publishes no stock_kernel_overrides entry enabled by "
+                f"{enabled_by}")
+    library = entry["library"]
+    published_prefix = None if library is None else library["module_name_prefix"]
+    for field, published, installing in (
+            ("kind", entry["kind"], kind),
+            ("overrides", dict(entry["overrides"]), dict(overrides)),
+            ("loaded_by", entry["loaded_by"], loaded_by),
+            ("library.module_name_prefix", published_prefix, library_prefix)):
+        if published != installing:
+            return (f"the packaged contract's {enabled_by} entry publishes {field} "
+                    f"{published!r} and this install would use {installing!r}")
+    return None
+
+
 def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     """Refuse a contract this package would not itself honour.
 
@@ -1282,7 +1439,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
 
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
-                            "native_extensions", "formats", "lane_eligibility",
+                            "native_extensions", "stock_kernel_overrides", "formats",
+                            "lane_eligibility",
                             "tensor_parallel", "expert_parallel", "fused_module",
                             "construction", "activation_quantizers",
                             "producer_interface"},
@@ -1314,6 +1472,9 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
 
     _validate_native_extensions(contract["native_extensions"],
                                 "runtime_contract.native_extensions")
+    _validate_stock_kernel_overrides(contract["stock_kernel_overrides"],
+                                     "runtime_contract.stock_kernel_overrides",
+                                     contract["native_extensions"])
     _validate_construction(contract["construction"], "runtime_contract.construction")
     validate_producer_interface(contract["producer_interface"],
                                 "runtime_contract.producer_interface")
