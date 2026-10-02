@@ -597,10 +597,11 @@ where the structure changes the wire. No contract cell, serving default or
 route changes.
 
 Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
-targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
-in its dependency graph but records it under `excluded_tests` with its reason,
-not in the pytest target list. Its manual CUDA gate is not executed or certified
-by that selection; pytest consumers and full-run escalation remain unchanged.
+targets (tessera#647). `tools/impacted_tests.py` retains explicit manual-only
+interfaces in its dependency graph and records configured exclusions under
+`excluded_tests` with their reasons. The A4 gate now has a pytest entry point,
+and the current exclusion map is empty. Selection alone does not execute or
+certify a manual CUDA gate; full-run escalation remains unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use

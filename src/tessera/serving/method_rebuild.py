@@ -6,15 +6,13 @@ module's own source.  The caller reads the source, after its digest check has
 matched the bytes to an inspected interface.  This module turns that text
 into a function and reads no file itself.
 
-The two halves stay in separate modules because of what
-``tools/impacted_tests.py`` can see.  A module that reads a file whose path
-it cannot name statically (``module.__file__``) is a plain data reader.  A
-module that also executes source is classed as able to import anything in
-the tree.  ``glm53_prefill`` reads vLLM's files for its digest checks, and
-``tests/conftest.py`` reaches it through ``serving.config``.  With the exec
-in the same module, every change forced the whole test population.  The
-source executed here is vLLM's, outside this tree and pinned by digest, so
-the split hides no in-tree dependency.
+The read and rebuild remain separate responsibilities. The #808 draft
+selector follows recognized calls across this boundary: splitting the work
+alone no longer proves that an unknown read cannot execute Python. Production
+callers digest-check inspected vLLM source, but the generic module parameter
+also accepts runtime-created modules in tests. The selector cannot yet prove
+external origin at every caller, so this path conservatively forces the shared
+conftest's population until that separate selection contract is resolved.
 """
 from __future__ import annotations
 
