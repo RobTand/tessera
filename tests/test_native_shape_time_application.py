@@ -493,7 +493,8 @@ def test_bound_observation_records_distinct_identities_and_sampling(tmp_path, pa
                                'interval_unix': [10.0, 11.0]}
     assert doc['operator_projection']['batch_size'] == 1 and doc['operator_projection']['rows'] == 512
     assert doc['producer'] == case.request['producer_identity']
-    assert doc['replay']['tool_source_sha256'] != doc['producer']['tool_source_sha256']
+    producer_identity = app.tp.json_bytes(app.tp.read_bound(case.request['producer_identity']))
+    assert doc['replay']['tool_source_sha256'] != producer_identity['tool_source_sha256']
     assert doc['replay']['tool']['sha256'] == app.tp.file_binding(__file__)['sha256']
     assert doc['evidence'] == case.panel['evidence'] and doc['preflight'] == case.panel['preflight']
 
