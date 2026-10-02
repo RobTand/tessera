@@ -100,6 +100,7 @@ from tessera._dev.source_dependencies import (  # noqa: E402
     DATA_WILDCARD,
     WILDCARD,
     file_imports,
+    module_import_requests,
     source_execution_modules,
 )
 from tessera._dev.suite_source import measured_source  # noqa: E402
@@ -225,33 +226,7 @@ def _imports(
         # module may import anything -- and the file and its failure are
         # recorded so the operator can repair it.
         return {WILDCARD}, set(), set()
-    # An ``__init__.py`` IS its package: ``from .child import VALUE`` there
-    # names ``pkg.child``, not a top-level ``child``.  Climbing from the
-    # parent instead lost every relative re-export a package initializer
-    # makes -- the form ``src/tessera/__init__.py`` is written in (#215).
-    if path.name == "__init__.py":
-        package = own
-    else:
-        package = own.rsplit(".", 1)[0] if "." in own else ""
-    found: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            found.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level:
-                # A relative import climbs from this module's package.
-                base = package.split(".") if package else []
-                climb = node.level - 1
-                base = base[:len(base) - climb] if climb else base
-                prefix = ".".join(base + ([node.module] if node.module else []))
-            else:
-                prefix = node.module or ""
-            if not prefix:
-                continue
-            found.add(prefix)
-            # "from x import y" may name a submodule rather than an attribute;
-            # both readings are recorded because only the graph can tell.
-            found.update(f"{prefix}.{alias.name}" for alias in node.names)
+    found = set(module_import_requests(tree, own, is_package=path.name == "__init__.py"))
     paths, unknown, unplaced = file_imports(
         tree, path, root, executes_source=executes_source)
     loaded, data = set(), set()

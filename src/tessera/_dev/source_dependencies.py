@@ -49,6 +49,53 @@ WILDCARD = "*"
 #: diff.  Kept apart from ``WILDCARD`` so preserving the dependency does not
 #: re-import #148's "every reader depends on every module".
 DATA_WILDCARD = "*data"
+
+
+def statement_import_requests(node, module, *, is_package=False):
+    """Module spellings and requested attributes from one ordinary import.
+
+    A namespace or potential submodule requests unknown attributes (None).
+    This does not resolve spellings: the selector owns the ambiguity-preserving
+    resolver and package-initialization edges.
+    """
+    if isinstance(node, ast.Import):
+        return {alias.name: None for alias in node.names}
+    if not isinstance(node, ast.ImportFrom):
+        return {}
+    if node.level:
+        package = module if is_package else module.rpartition(".")[0]
+        parts = package.split(".") if package else []
+        climb = node.level - 1
+        parts = parts[:len(parts) - climb] if climb else parts
+        prefix = ".".join(parts + ([node.module] if node.module else []))
+    else:
+        prefix = node.module or ""
+    if not prefix:
+        return {}
+    names = {alias.name for alias in node.names}
+    requests = {prefix: None if "*" in names else names}
+    # A from-import may import a child module instead of reading an attribute.
+    requests.update({f"{prefix}.{name}": None for name in names})
+    return requests
+
+
+def module_import_requests(tree, module, *, is_package=False, omit=frozenset()):
+    """Union requests without choosing between alias candidates or branches."""
+    found = {}
+    for node in ast.walk(tree):
+        if node in omit:
+            continue
+        for spelling, names in statement_import_requests(
+                node, module, is_package=is_package).items():
+            if spelling not in found:
+                found[spelling] = names
+            elif found[spelling] is None or names is None:
+                found[spelling] = None
+            else:
+                found[spelling] = found[spelling] | names
+    return found
+
+
 _LOADERS = {"spec_from_file_location": (1, "location"),
             "SourceFileLoader": (1, "path"), "run_path": (0, "path_name")}
 _SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
