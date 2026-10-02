@@ -19,14 +19,21 @@ def workload():
     return module
 
 
+@pytest.fixture(scope="module")
+def native_library(tmp_path_factory):
+    # The production owner is cached per process/device. Reuse that lifetime;
+    # changing the build directory for one name makes Torch version the DSO.
+    return MlaPrefillLibrary(tmp_path_factory.mktemp("mla_native") / "build")
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(),reason='requires actual SM121 CUDA runtime')
 @pytest.mark.parametrize('T,E',[(512,512),(2048,8192)])
-def test_actual_eager_override_matches_stock_and_graph_capture_stays_stock(T,E,monkeypatch,tmp_path,workload):
+def test_actual_eager_override_matches_stock_and_graph_capture_stays_stock(T,E,monkeypatch,workload,native_library):
     make_cache,make_indices=workload.make_cache,workload.make_indices
     HEADS,D_LATENT=workload.HEADS,workload.D_LATENT
     module.flags.reset_for_tests(module.FLAG);monkeypatch.setenv(module.FLAG,'1')
     assert module.qualified_source_refusal() is None
-    library=MlaPrefillLibrary(tmp_path/'build')
+    library=native_library
     monkeypatch.setattr(module,'library_for_device',lambda device:library)
     impl=object.__new__(module.TesseraMLASparseSM120Impl)
     impl.num_heads=32;impl.kv_lora_rank=512;impl.qk_nope_head_dim=256;impl.qk_rope_head_dim=0
