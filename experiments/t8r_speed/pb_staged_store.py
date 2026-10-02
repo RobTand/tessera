@@ -67,19 +67,25 @@ class StagedInputs:
         if mapping['manifest_sha256'] != self.manifest_sha256:
             raise ValueError('residency map does not bind this action/readset')
         self.keys = {(p, off): sdk.residency_map_key(p, off) for p, off in self.entries}
-        if any(k not in mapping['entries'] for k in self.keys.values()):
-            raise ValueError('residency map does not cover every declared range')
-        expected = {self.keys[k]: {'bytes':e['bytes'],
-                    'sha256':e['sha256'] or mapping['entries'][self.keys[k]]['sha256']}
-                    for k,e in self.entries.items()}
-        self.actual_digests = {k: expected[key]['sha256'] for k,key in self.keys.items()}
         epoch = mapping.get('epoch', '')
         root = self.queue.root / sdk.RESIDENCY
-        covers = sdk.covers_for_keys(root, self.ctx['action_key'], list(expected),
+        # The composed map may lag the mover's final incremental fragment.
+        # Public covers resolves dated material for the complete requested set;
+        # it owns completeness and refuses unpublished/contradictory ranges.
+        covers = sdk.covers_for_keys(root, self.ctx['action_key'], list(self.keys.values()),
                                     tier_id=mapping['tier_id'], epoch=epoch,
                                     manifest_sha256=self.manifest_sha256)
         if not covers.get('ok'):
             raise ValueError(f"pinned covers refused: {covers.get('refusal')}")
+        expected = {}
+        for identity,entry in self.entries.items():
+            key = self.keys[identity]
+            proof = covers['expected'].get(key)
+            if proof is None or proof['bytes'] != entry['bytes']:
+                raise ValueError('pinned covers do not prove every declared range')
+            expected[key] = {'bytes':entry['bytes'],
+                             'sha256':entry['sha256'] or proof['sha256']}
+        self.actual_digests = {k:expected[key]['sha256'] for k,key in self.keys.items()}
         held = sdk.acquire_for(self.ctx, tier_id=mapping['tier_id'], epoch=epoch,
                                covers=covers['covers'], expected=expected,
                                span={'start_bytes': 0, 'end_bytes': manifest['total_bytes']},

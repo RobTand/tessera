@@ -90,7 +90,8 @@ def fixture(tmp_path, payload=b'owned-wire', expected=None):
                 'bytes':entry['bytes'],'sha256':entry['sha256']}}}),
         residency_map_key=client.residency_map_key,
         PoolQueue=client.PoolQueue, RESIDENCY=client.RESIDENCY,
-        covers_for_keys=lambda *a,**k: {'ok': True, 'covers': []},
+        covers_for_keys=lambda *a,**k: {'ok': True, 'covers': [],
+            'expected':{key:{'bytes':entry['bytes'],'sha256':entry['sha256']}}},
         acquire_for=lambda *a,**k: {'ok': True, 'pin_id': 'pin', 'ref_id': 'ref',
                                   'pin': {'stage_root': str(tmp_path)}},
         release=lambda *a,**k: True,
@@ -295,3 +296,22 @@ def test_incomplete_or_foreign_roster_refuses(fault):
     cls=reader_class(); reader=cls.__new__(cls)
     with pytest.raises(ValueError,match='roster'):
         reader.bind_roles('/unused',roles)
+
+
+def test_missing_public_cover_refuses_before_acquire(tmp_path):
+    reader,staged,opened,sdk=fixture(tmp_path)
+    reader.close()
+    sdk.covers_for_keys=lambda *a,**k:{'ok':True,'covers':[],'expected':{}}
+    sdk.acquire_for=lambda *a,**k:pytest.fail('missing proof must not acquire')
+    with pytest.raises(ValueError,match='prove every'):
+        reader_class()(tmp_path/'manifest.json',sdk=sdk)
+
+
+def test_final_public_covers_can_resolve_a_lagging_composed_map(tmp_path):
+    reader,staged,opened,sdk=fixture(tmp_path)
+    reader.close()
+    old_map=sdk.read_residency_map
+    sdk.read_residency_map=lambda p:{**old_map(p),'entries':{}}
+    second=reader_class()(tmp_path/'manifest.json',sdk=sdk)
+    assert second.read('/forbidden-origin/wire',9)==b'owned-wire'
+    second.close()

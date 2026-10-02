@@ -92,3 +92,14 @@ failed (1 failed, zero skips, `3fe5d4d9b8da`) before correcting the bounded
 roster check. This changes only the experimental reader; production bytes,
 kernels and serving remain unchanged. The expanded family gate and actual
 public lease sealer follow, not inferred from those earlier unit controls.
+
+
+The first actual lease sealer (`fc1c5468bb22`) refused before reads: its composed
+map had 783/872 ranges while mover `23d9e436089d` completed all 872, zero errors,
+with all 872 in its retained fragment. The existing public `covers_for_keys`
+returns both minimal covers and expected per-range proof from the consumer's
+fragments plus dated material sidecars. The reader now uses that complete
+public proof before acquiring rather than treating a lagging composed map as
+an authoritative absence. Known readset hashes still govern acquisition;
+unknown outer hashes use only the resolved, dated proof. No manual composition,
+refresh loop, fabricated consumer header, origin fallback or PB source change.
