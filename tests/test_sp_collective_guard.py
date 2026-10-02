@@ -13,8 +13,7 @@ from tessera.serving import glm53_prefill as gp
 
 @pytest.mark.parametrize("disabled_rank", [0, 1])
 def test_disabled_stock_noop_writer_is_declined_before_any_rank_shards(disabled_rank):
-    reference_ranks, ranks = TwoRanks(), TwoRanks()
-    reference = _run(reference_ranks, stock_forward, 8)
+    ranks = TwoRanks()
     forwarded, writer_calls, availability = [], [0, 0], [0, 0]
     for rank in range(2):
         ops = _ops(ranks)
@@ -34,8 +33,7 @@ def test_disabled_stock_noop_writer_is_declined_before_any_rank_shards(disabled_
             return ranks.sp_reduce_scatter(x)
         ops.sp_available, ops.sp_reduce_scatter = available, rs
         forwarded.append(gp.make_forward(stock_forward, ops, gp.SpState("force", 8, 2), _NoCuda))
-    with pytest.raises(AssertionError, match="SP collective unavailable before activation"):
-        # The shared two-rank fixture reports its captured worker errors in an assertion.
+    with pytest.raises(RuntimeError, match="SP collective unavailable before activation"):
         _run(ranks, forwarded, 8, passes=2)
     assert writer_calls == [0, 0]
     assert availability == [1, 1]
