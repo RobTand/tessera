@@ -489,6 +489,8 @@ def main():
     ap.add_argument("--profile-native-file", default=None,
                     help="one declared retained native-code artifact for counter-only recovery")
     args = ap.parse_args()
+    if args.outputs_only and args.ncu:
+        ap.error("--outputs-only cannot be combined with --ncu")
     require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
