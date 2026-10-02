@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the experimental stock FlashKDA measurement
+harness (Refs tessera#735). `tessera.kda_stock_screen.v1` records native
+workspace allocations, exact stock binary/harness identities, actual
+prepare/recurrence profiles, resident graph windows and full raw host
+telemetry from both Sparks. Missing or ambiguous kernel roles refuse.
+The bounded FP32-state H32 baseline establishes no fused candidate,
+serving speedup or qualified energy result. See §5.1.3 and
+[the stock profile](measurements/2026-10-02-kda-stock-native-profile.md).
+
 Re-stamped 2026-10-02 for `tessera.kda_conv_screen.v2` (tessera#814),
 reviewed by Astra after the original ex2 output witness proved impossible
 in the measured operation order. Four required mutations change actual
@@ -7011,6 +7020,22 @@ explicitly does not cover recurrent output or final recurrent state, and
 cannot admit a fused serving implementation by itself. `kdafwd` is a
 separate stock-kernel timing screen; its results require PrismaBuild's
 measurement admission and both in-process and host telemetry.
+Its `tessera.kda_stock_screen.v1` output binds the installed stock module
+and executed harness by SHA-256, queries native workspace bytes, and
+refuses missing or ambiguous prepare/recurrence identities. It retains
+full gzip torch-profiler traces through the published PB helper,
+separates allocation/warmup, profile, settle and steady graph intervals,
+and reports cumulative completed calls only after synchronization.
+The existing residency policy provides distinct resident copies. Each
+window retains fast NVML samples and full unfiltered Netdata responses,
+returned views and exact intervals from both Sparks. Energy remains
+unqualified until coverage agreement is established. FP32 recurrent
+state is the pinned model's native default; BF16 state and H=1 are
+explicit diagnostics, and H=1 prepare still launches multiple CTAs.
+The measured T512/T2048 H32 stock baseline is recorded in
+[the stock profile](measurements/2026-10-02-kda-stock-native-profile.md);
+it does not admit a serving change or substitute for recurrent-quality
+validation of a future fused candidate.
 
 ### 5.2 What the wheel ships besides Python
 
