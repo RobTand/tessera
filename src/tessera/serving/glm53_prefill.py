@@ -118,8 +118,12 @@ forward and no later pass takes SP.
 The ordinary SP collective route must also have an available, active TP2
 PyNccl writer. Missing/disabled/suspended or unknown writers, custom SP and
 symmetric-memory SP are outside this inspected qualification. Both ranks
-agree through the existing TP CPU group before eager activation and each
-SP collective boundary; an unavailable writer refuses before enqueue.
+agree through the existing TP CPU group only when SP would activate. The
+qualified MP worker serializes model and lifecycle RPCs; sleep drains and
+synchronizes work, and wake resumes communicators before scheduling. Local
+boundary checks reject a violated writer scope before enqueue, without a
+CPU collective per kernel. Stock profile/small/declined/capture passes remain
+on their original path.
 Graph capture retains stock all-reduces and enters no SP control exchange.
 The additional CPU control exchanges have unmeasured runtime overhead.
 """
@@ -164,6 +168,10 @@ SP_MODULES = (
     "vllm.distributed.device_communicators.pynccl",
     "vllm.distributed.parallel_state",
     "vllm.utils.torch_utils",
+    # Writer flags cannot transition during a model RPC on this qualified lifecycle.
+    "vllm.v1.worker.gpu_worker",
+    "vllm.v1.engine.core",
+    "vllm.v1.executor.multiproc_executor",
 )
 
 #: The token tile both pinned ``compute_num_split`` call sites pass as its grid,
@@ -192,6 +200,9 @@ _INTERFACES = (
         "4c51becc2ebfd41910526b93d7bd8e9e36312df444fdfb55fa2fbc92b0f8f88e",
         "a33fc846e0f4e682a644ce712d862806ecfa12dca6e5f641806e2e7991cd0087",
         "eab9ea0a3d3b9792fd7e3076cca1a3484031b22ce662baa7709cb5a68dc2115f",
+        "d473435a9bfa30d5dc47f46245fe89d9be7cb4bcc74649e064180cb4dc30346d",
+        "f116962c35d9d312b20b0b76c34a8cdaa6d3f1d31f2036db4e123957d2d1555b",
+        "11a1554380d1efa516bb481416c798798d5839f38ac3b0f379ef4b8b547f4d1b",
     )),
 )
 
@@ -275,6 +286,8 @@ def sp_decline_reasons(config: Any) -> list[str]:
 
     if p("tensor_parallel_size") != 2:
         reasons.append(f"tensor_parallel_size {p('tensor_parallel_size')} (measured at 2 only)")
+    if p("distributed_executor_backend") != "mp":
+        reasons.append("SP writer lifecycle requires distributed_executor_backend mp")
     if p("pipeline_parallel_size", 1) != 1:
         reasons.append(f"pipeline_parallel_size {p('pipeline_parallel_size')}")
     if p("data_parallel_size", 1) != 1:
@@ -525,15 +538,15 @@ def make_forward(stock_forward: Callable, ops: Any, state: SpState, torch: Any) 
         num_tokens = positions.shape[0]
         if post is None and self.layer_idx == 0:
             capturing = torch.cuda.is_current_stream_capturing()
-            available = not capturing and ops.sp_available()
-            if not capturing and not available:
-                raise RuntimeError("SP collective unavailable before activation")
-            if state.wants_measurement() and available and state.declined is None:
+            if state.wants_measurement() and not capturing and state.declined is None \
+                    and ops.sp_available():
                 with state.lock:
                     if state.t_star is None:
                         measure_t_star(self, state, ops, torch, hidden_states.device)
             state.begin_pass(num_tokens, capturing,
-                             exact=available and ops.sp_exact(num_tokens, self.hidden_size, self.n))
+                             exact=ops.sp_exact(num_tokens, self.hidden_size, self.n))
+            if state.pass_sp and not ops.sp_available():
+                raise RuntimeError("SP collective unavailable before activation")
         if not state.prepare(self):
             return stock_forward(self, positions, hidden_states, residual, post, comb)
         sp = state.pass_sp
@@ -643,30 +656,47 @@ def sp_collective_decline(dc: Any, *, symmetric_ag_rs: Any) -> str | None:
 
 
 class SpCollectiveGuard:
-    """Agree availability on the existing TP CPU group before each SP boundary.
+    """Agree one writer scope at SP activation, then check it locally.
 
     The control group remains usable when the selected PyNccl writer is
-    disabled. A pass refuses before sharding; a transient fault after that
-    refuses both ranks before either enters a mismatched/no-op collective.
+    disabled. The pinned MP lifecycle serializes model/sleep/wake RPCs,
+    drains/synchronizes before suspension and resumes before scheduling.
+    Public lifecycle transitions therefore occur between passes. A disabled,
+    suspended or replaced writer inside an admitted pass violates that scope
+    and refuses locally before enqueue; it is not a supported alternate route.
     Capture uses stock all-reduces and never enters the SP control exchange.
     The active writer's inputs, outputs and NCCL operation order are unchanged.
     """
-    def __init__(self, *, route: Callable, agree: Callable, capturing: Callable):
+    def __init__(self, *, route: Callable, agree: Callable, capturing: Callable,
+                 owner: Callable | None = None):
         self.route, self.agree, self.capturing = route, agree, capturing
+        self.owner = owner or (lambda: None)
+        self._active = False
+        self._bound_owner = None
 
     def available(self) -> bool:
         if self.capturing():
+            self._active = False
             return False
         try:
             why = self.route()
+            owner = self.owner()
         except (AttributeError, OSError, TypeError, ValueError, AssertionError):
             why = "unavailable communicator facts"
-        return self.agree(float(why is not None)) == 0
+            owner = None
+        self._active = self.agree(float(why is not None)) == 0
+        self._bound_owner = owner if self._active else None
+        return self._active
 
     def call(self, fn: Callable, x: Any) -> Any:
         if self.capturing():
             raise RuntimeError("SP collective is unavailable under graph capture")
-        if not self.available():
+        try:
+            valid = self._active and self.route() is None and self.owner() is self._bound_owner
+        except (AttributeError, OSError, TypeError, ValueError, AssertionError):
+            valid = False
+        if not valid:
+            self._active = False
             raise RuntimeError("SP collective unavailable before writer enqueue")
         return fn(x)
 
@@ -681,7 +711,8 @@ def agree_sp_collective(torch: Any, group: Any, value: float) -> float:
 
 def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
     (model, _runner, _linear, seqpar, comm, kernels, _tilelang, _mhc_ops, deep_gemm,
-     _cuda_comm, ar_utils, _pynccl, _parallel_state, _torch_utils) = modules
+     _cuda_comm, ar_utils, _pynccl, _parallel_state, _torch_utils,
+     _gpu_worker, _engine_core, _mp_executor) = modules
     import torch
 
     from vllm.distributed import get_tp_group
@@ -698,7 +729,9 @@ def _vllm_ops(modules: tuple[Any, ...], tp_size: int) -> Any:
         return agree_sp_collective(torch, get_tp_group(), value)
 
     guard = SpCollectiveGuard(route=route, agree=agree,
-                              capturing=torch.cuda.is_current_stream_capturing)
+                              capturing=torch.cuda.is_current_stream_capturing,
+                              owner=lambda: stock_attribute(get_tp_group().device_communicator,
+                                                            "pynccl_comm"))
 
     def sp_exact(num_tokens: int, hidden: int, n: int) -> bool:
         return shard_split_exact(kernels, deep_gemm, tp_size, num_tokens, hidden, n)

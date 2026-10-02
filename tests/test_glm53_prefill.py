@@ -28,6 +28,7 @@ from tessera.serving import glm53_prefill as gp
 
 def _config(**over):
     par = dict(tensor_parallel_size=2, pipeline_parallel_size=1, data_parallel_size=1,
+               distributed_executor_backend="mp",
                enable_expert_parallel=False, use_sequence_parallel_moe=False,
                decode_context_parallel_size=1, prefill_context_parallel_size=1)
     par.update(over.pop("parallel", {}))
@@ -99,6 +100,7 @@ def test_sp_eligible_config_has_no_decline_reason(monkeypatch):
 @pytest.mark.parametrize("over, needle", [
     ({"parallel": {"tensor_parallel_size": 1}}, "tensor_parallel_size 1"),
     ({"parallel": {"tensor_parallel_size": 4}}, "tensor_parallel_size 4"),
+    ({"parallel": {"distributed_executor_backend": "ray"}}, "executor_backend mp"),
     ({"parallel": {"pipeline_parallel_size": 2}}, "pipeline_parallel_size 2"),
     ({"parallel": {"data_parallel_size": 2}}, "data_parallel_size 2"),
     ({"parallel": {"enable_expert_parallel": True}}, "expert parallelism"),
