@@ -737,8 +737,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
     // PM is only ever instantiated for the one-run rate-4 routed case; the
     // assert pins that so a future call cannot quietly read a wrong layout.
-    static_assert(!PM || (!TWO && RL == 4 && !DENSE && (MODE == 0 || MODE == 1)),
-                  "the piece-major reader is the one-run rate-4 routed body only");
+    // The piece-major reader is the one-run rate-4 ROUTED body: gate/up
+    // (MODE 0/1) or the routed down (MODE 2, not the DENSE flag).  It is the
+    // E4M3 MMA reader only.
+    static_assert(!PM || (!TWO && RL == 4 && !DENSE && FAMILY_MMA8 && FP8),
+                  "the piece-major reader is the E4M3 one-run rate-4 routed body only");
     static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
                   "wide superblocks: the launches ``has_width`` names, unsplit");
@@ -1593,7 +1596,6 @@ int max_dynamic_smem_bytes(int device) {
     return v;
 }
 
-template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
 template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT, bool PM>
 void launch_pair(const Params& p, int grid, cudaStream_t stream) {
     const int smem = launch_smem_bytes(MODE, p.slot_words, BMT);
@@ -1618,14 +1620,14 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     // One case per (r_lo, two); a two-run key is offset past every rate.
     constexpr int KEY_TWO = 16;
     static_assert(RATE_MAX < KEY_TWO, "one-run and two-run keys stay apart");
-    // The piece-major reader exists only for the one-run rate-4 routed case
-    // (tessera#739); it is a distinct instantiation, keyed on ``p.piece_major``
-    // and compiled only where its static asserts allow.
-    // Piece-major is the one-run rate-4 ROUTED body (gate/up MODE 0/1, or the
-    // routed down MODE 2 -- DENSE is the separate dense Linear flag, not
-    // MODE).  Guarded by ``if constexpr`` so the PM instantiation is never
-    // even named for a dense or unsupported pair.
-    if constexpr (!DENSE && (MODE == 0 || MODE == 1 || MODE == 2)) {
+    // Piece-major is the E4M3 MMA one-run rate-4 ROUTED body (tessera#739):
+    // gate/up MODE 0/1, or the routed down MODE 2 (DENSE is the separate dense
+    // Linear flag, not MODE).  The guard is ``if constexpr`` so the PM
+    // instantiation is never even named for another family or a dense launch;
+    // a request there is refused, never silently decoded as legacy.
+    TORCH_CHECK(!p.piece_major || (FAMILY_MMA8 && FP8),
+                "the piece-major reader is the E4M3 MMA reader only");
+    if constexpr (FAMILY_MMA8 && FP8 && !DENSE) {
         if (p.piece_major) {
             TORCH_CHECK(!k.two && k.r_lo == 4,
                         "the piece-major reader is the one-run rate-4 routed body only");
