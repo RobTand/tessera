@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the uninstalled SP mHC tile pipeline primitive
+(tessera#858, children of #783/#803; §5.1.3). Its CPU fixtures cover token
+ownership, event dependencies and failure retirement. Actual TP2 NCCL
+exactness, performance, energy and serving qualification remain unmeasured;
+no installation hook, default, wire, runtime pin or contract cell changes.
+
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
@@ -7398,6 +7404,31 @@ Every flag that rebinds a stock method or changes a stock default stays off by d
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv
 split that A/B is the VAL787 window (arms VS, VK and VB against V0).
+
+`src/tessera/serving/sp_tile_overlap.py` contains an **uninstalled** SP tile
+pipeline primitive (#858). `SpTilePlan` gives each rank its half of every
+global token tile, pads only the final tile and reconstructs gathered tiles
+in original global order. The initial residual shard and all carried mHC
+state must use that ownership for an entire pass; stock contiguous rank
+halves are incompatible. `SpTileOverlap` enqueues all tile reduce-scatters
+on one communication stream, then each tile's all-gather after its mHC
+completion event. Compute waits for each reduce-scatter and for final side
+retirement. Allocations are registered before enqueue; partial enqueue or
+consumer errors join the side stream, following #804/#847's lifetime rule.
+The output-slice adapter uses the three explicit stock post/prenorm/pre
+kernels at the full batch's `SplitForcer` value, including a one-row tail.
+This extends #802's exact tiled body without admitting its negative isolated
+timing result as a performance qualification.
+
+`experiments/mhc/sp_tile_probe.py` prepares the finite actual-vLLM TP2 screen
+at 512/2048/2049 tokens, a global tile of 1024, and both mHC sites. It uses
+the stock distributed context and inspected PyNccl SP route, checks all four
+outputs and global token identities, retains a wrong-layout control, and
+records ABBA timing, both-rank Torch traces, raw power and each host's Netdata.
+Its CPU stream fixtures do not qualify CUDA/NCCL arithmetic or a serving
+speedup. The old #804 all-reduce overlap runs with SP off; it cannot accelerate
+the SP-force A8SE baseline. Any future serving wiring needs a separate,
+default-off guarded hook plus this real TP2 screen and matched serving gates.
 
 `experiments/mhc/mhc_probe.py --parts kdaptx --numerics-only` is the
 convolution reference screen for potential future FlashKDA fusion. It is
