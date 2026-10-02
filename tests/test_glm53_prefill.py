@@ -1537,4 +1537,5 @@ def test_tile_overlap_registers_both_allocations_before_the_first_enqueue():
     overlap.run(_TileKernels(), 3, x, inputs["residual"], inputs["post_layer_mix"],
                 inputs["comb_res_mix"], inputs["fn"], inputs["hc_scale"], inputs["hc_base"],
                 inputs["rms_eps"], inputs["hc_pre_eps"], inputs["hc_sinkhorn_eps"],
-                inputs["hc_post_mult_value"], inputs["sinkhorn_repeat"])
+                inputs["hc_post_mult_value"], inputs["sinkhorn_repeat"],
+                norm_weight=inputs["norm_weight"], norm_eps=inputs["norm_eps"])
