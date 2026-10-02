@@ -34,11 +34,12 @@ The concrete blocker is `src/tessera/serving/glm53_prefill.py:793-802`: generic
 `module.__file__` bytes feed imported `rebuild_method`. Production installation
 calls it at line 845 using `modules[0]` after runtime interface matching.
 `tests/test_glm53_prefill.py:854,874,882,894` also pass runtime-created modules,
-not exclusively external imports. Separately, the retained selection diagnostic
-forces full for `tests/conftest.py`. No predecessor artifact yet joins these two
-observations: a GLM53-to-config-to-conftest attribution is unverified. A diagnostic
-must identify the actual uncertainty seed and resolved-file path before any
-source-origin redesign is priced. Caller-wide external proof also cannot be
+not exclusively external imports. Separately, the initial `021f4f2b` selection
+receipt forced full for `tests/conftest.py` without predecessor witnesses joining
+these observations. It did not establish a GLM53-to-config-to-conftest route.
+The revised receipt must identify actual uncertainty seeds and resolved-file
+paths, including collection-probe exclusions, before any source-origin redesign
+is priced; a static graph witness is not runtime call reachability. Caller-wide external proof also cannot be
 inferred from the production intention.
 Serving signatures/reads and the selectivity assertions must not be silently
 changed to conceal this blocker. Future options are a separately approved narrow

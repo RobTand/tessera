@@ -11,10 +11,10 @@ selector follows recognized calls across this boundary: splitting the work
 alone no longer proves that an unknown read cannot execute Python. Production
 callers digest-check inspected vLLM source, but the generic module parameter
 also accepts runtime-created modules in tests. The selector cannot yet prove
-external origin at every caller. Separately, the retained selector diagnostic
-forces full for the shared conftest. Its predecessor path from an uncertainty
-seed has not yet been established; this helper boundary alone does not prove
-that causal attribution.
+external origin at every caller. Separately, the initial #808 selector receipt
+forced full for the shared conftest but banked no uncertainty predecessor path.
+That receipt did not establish which seed caused the escalation; this helper
+boundary alone does not prove that causal attribution.
 """
 from __future__ import annotations
 

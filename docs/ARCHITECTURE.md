@@ -2267,9 +2267,9 @@ recognition uses a finite worklist and per-path cycle guards rather than the
 Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
 generic module parameter and an import missing from the graph remain unknown.
 The #808 draft is blocked on unchanged selectivity ratchets that force full
-for the shared conftest. The retained diagnostic has no predecessor path proving
-which uncertainty seed causes that escalation; attributing it to GLM53 through
-serving.config is unverified. Selection now records resolved-file
+for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
+path proving which uncertainty seed caused that escalation, so it did not
+establish the asserted GLM53-through-serving.config attribution. Selection now records resolved-file
 `uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
 reverse walk that decides escalation. These are static predecessor witnesses,
 not proof that a runtime call executes. It is not a completed external-origin contract. What this misses is a source
