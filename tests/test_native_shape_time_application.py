@@ -311,7 +311,10 @@ def preflight_inputs(tmp_path, panel):
     origins['record_verifier']=verifier
     request={'record_verifier':verifier}
     request_source=app.publish_json(request,tmp_path/'request-source.json')
-    job_source=app.publish_json({'request':request},tmp_path/'job.json')
+    job_source=app.publish_json({'request':request, 'request_source':request_source,
+                                'worker_source':worker_source, 'wire_roles':[],
+                                'producer':app.tp.json_bytes(app.tp.read_bound(panel['evidence']['producer']))},
+                               tmp_path/'job.json')
     command=['env','-u','PYTHONPATH','CUDA_VISIBLE_DEVICES=',str(worker.__file__),'--job',job_source['path'],
              '--job-sha256',job_source['sha256'],'--preflight']
     phase={'phase':'runtime-preflight','returncode':0,'command':command}
