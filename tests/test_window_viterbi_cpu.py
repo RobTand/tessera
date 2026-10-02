@@ -397,11 +397,13 @@ def test_cpu_inputs_keep_their_device_under_a_meta_default(arity, weighted, impl
         _same(new, old)
 
 
+@pytest.mark.parametrize("default_device", ["cpu", "meta"])
 @pytest.mark.parametrize("dtype", [
     torch.float16, torch.bfloat16, torch.float32, torch.float64])
 @pytest.mark.parametrize("arity", [1, 2])
 @pytest.mark.parametrize("weighted", [False, True])
-def test_global_float_dtype_preserves_the_reference(dtype, arity, weighted):
+def test_global_float_dtype_preserves_the_reference(
+        default_device, dtype, arity, weighted):
     # The old front inherits the default dtype, but each branch cost is
     # computed in float32 before the addition. Widening/narrowing in-place
     # branch buffers changes that arithmetic, so compare the exact SSE too.
@@ -409,6 +411,7 @@ def test_global_float_dtype_preserves_the_reference(dtype, arity, weighted):
     initial = torch.get_default_dtype()
     try:
         torch.set_default_dtype(dtype)
-        _same(*_both(targets, vectors, 8, 2, weights, 4))
+        with torch.device(default_device):
+            _same(*_both(targets, vectors, 8, 2, weights, 4))
     finally:
         torch.set_default_dtype(initial)

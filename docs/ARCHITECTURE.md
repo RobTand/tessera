@@ -1,5 +1,15 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 (tessera#816, CPU encoder compatibility): window
+Viterbi's optimized CPU buffers explicitly use the input's device and float32
+dtype, so a meta default-device context cannot move CPU work. A non-float32
+global default dtype retains the original torch reference chain, whose branch
+costs are computed in float32 before promotion into the cost front. Exact
+state/SSE controls cover float16, bfloat16, float32 and float64 defaults plus
+meta placement. No recipe, contract, native source, serving route or production
+pin changes; these CPU controls do not qualify exported containers or GPU
+serving, and no new throughput claim is made.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
