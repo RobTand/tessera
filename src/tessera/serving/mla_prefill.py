@@ -128,6 +128,10 @@ class MlaPrefillBuild:
         if Path(self.path).resolve() != self.library_path.resolve():
             raise RuntimeError('JIT returned a library outside the declared identity')
         ninja = Path(self.build_directory) / 'build.ninja'
+        # Torch writes one build.ninja per directory. Retain the recipe under
+        # its existing build ID so another selector cannot invalidate this DSO.
+        recipe = Path(self.build_directory) / f'{self.name}.ninja'
+        recipe.write_bytes(ninja.read_bytes())
         self.manifest = {
             'schema': 'tessera.mla_prefill.build.v1',
             **self.inputs,
@@ -136,7 +140,7 @@ class MlaPrefillBuild:
             'fast_math_evidence': 'explicit build declaration, not a compiler predicate',
             'nvcc': self.nvcc, 'nvcc_version': self.nvcc_version,
             'nvcc_sha256': self.inputs['nvcc_sha256'],
-            'ninja_sha256': hashlib.sha256(ninja.read_bytes()).hexdigest(),
+            'ninja_sha256': _sha256(recipe),
             'build_id': self.build_id, 'name': self.name,
             'library': str(self.library_path),
             'library_bytes': self.library_path.stat().st_size,
@@ -174,7 +178,7 @@ class MlaPrefillBuild:
             raise RuntimeError('retained MLA build path/selection mismatch')
         if (self.library_path.stat().st_size != manifest.get('library_bytes')
                 or _sha256(self.library_path) != manifest.get('library_sha256')
-                or _sha256(Path(self.build_directory) / 'build.ninja') != manifest.get('ninja_sha256')):
+                or _sha256(Path(self.build_directory) / f'{self.name}.ninja') != manifest.get('ninja_sha256')):
             raise RuntimeError('retained MLA executable/build recipe drift')
         return manifest
 

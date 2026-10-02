@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # CPU-only compile gate for the MLA pass-buffer schedule, run INSIDE the pinned
-# serving image with no GPU. It compiles the serving source twice -- once with
-# TESSERA_MLA_P0_BUFFERS=0 (the shipped L0) and once with =1 (the new schedule)
-# -- and dumps ptxas resource usage and SASS for both, so a register/spill
-# regression is visible before any GPU request.
+# serving image with no GPU. One PB campaign action selects baseline,
+# candidate or mutant and retains its final DSO plus resource/SASS evidence.
+# PrismaBuild places the independent selections; this is not a dispatcher.
 #
 # --container-image on pbrun DECLARES placement only; it does NOT run the
 # command in the image. This wrapper actually starts the
@@ -11,11 +10,18 @@
 # passes its declared identity in), the same way experiments/t8r_speed/
 # build_ext.sh does for its libraries.
 #
-#   MLA_IMAGE=<digest ref> p0_compile_row.sh <out_dir>
+#   MLA_IMAGE=<digest ref> p0_compile_row.sh <out_dir> <baseline|candidate|mutant>
 #
 # Refuses a floating image reference. Never passes --gpus.
 set -euo pipefail
 OUT=$(realpath -m "${1:?out_dir}")
+BUILD_ARGS=()
+case "${2:?baseline, candidate or mutant}" in
+  baseline) ;;
+  candidate) BUILD_ARGS=(--p0-buffers) ;;
+  mutant) BUILD_ARGS=(--p0-buffers --p0-wrong-pass) ;;
+  *) exit 2 ;;
+esac
 mkdir -p "$OUT/home" "$OUT/tmp"
 HERE=$(dirname "$(realpath "$0")")
 CHECKOUT=$(realpath "$HERE/../..")
@@ -40,10 +46,6 @@ docker run --rm --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" 
   -e PYTHONUNBUFFERED=1 "${IMAGE_ENV[@]}" -w "$OUT" --entrypoint bash "$IMAGE" -c '
     set -euo pipefail
     source /work/experiments/cuda_home_shadow.sh "$HOME"
-    # One admitted process owns these three dependent build selections.
-    # Separate directories retain each final DSO and its actual build.ninja.
-    python3 /work/experiments/mla_prefill/p0_build_only.py --out "$PWD/p0_0"
-    python3 /work/experiments/mla_prefill/p0_build_only.py --out "$PWD/p0_1" --p0-buffers
-    python3 /work/experiments/mla_prefill/p0_build_only.py --out "$PWD/p0_1m" --p0-buffers --p0-wrong-pass
-  ' | tee "$OUT/compile.log"
+    python3 /work/experiments/mla_prefill/p0_build_only.py "$@"
+  ' _ --out "$OUT" "${BUILD_ARGS[@]}" | tee "$OUT/compile.log"
 echo "end=$(date -u +%FT%TZ)"

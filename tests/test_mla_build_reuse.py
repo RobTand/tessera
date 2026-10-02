@@ -42,7 +42,7 @@ def native_build(tmp_path, monkeypatch):
         root.mkdir(parents=True, exist_ok=True)
         path = root / (kw['name'] + '.so')
         path.write_bytes(b'fake linked DSO')
-        (root / 'build.ninja').write_bytes(b'fake selected build recipe')
+        (root / 'build.ninja').write_text('fake selected build recipe '+kw['name'])
         return str(path)
 
     def native_library(path):
@@ -106,6 +106,14 @@ def test_default_cannot_adopt_experimental_build(native_build):
     with pytest.raises(RuntimeError, match='missing retained'):
         mla.MlaPrefillLibrary(native_build.root, require_retained=True)
     assert native_build.calls == []
+
+
+def test_selections_in_one_directory_retain_their_own_recipe(native_build):
+    baseline = mla.MlaPrefillLibrary(native_build.root)
+    candidate = mla.MlaPrefillLibrary(native_build.root, p0_buffers=True)
+    reused = mla.MlaPrefillLibrary(native_build.root, require_retained=True)
+    assert reused.path == baseline.path != candidate.path
+    assert native_build.calls == ['compile','dlopen','compile','dlopen','dlopen']
 
 
 @pytest.mark.parametrize('selector', ['mutation', 'p0_buffers', 'p0_wrong_pass'])
