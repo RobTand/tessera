@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T06:55:09Z",
+ "generated": "2026-10-02T09:35:36Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4116,7 +4116,7 @@
     "title": "[P3] Deliver committed Stage A forward-origin retirement slice"
    },
    "1924": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read the capture source once and the capture output never (#1896, #1887)"
    },
    "1925": {
@@ -4180,7 +4180,7 @@
     "title": "[P1] pbtest runs main's suite on a stale-PB interpreter instead of refusing it: restore the PB dev-pin resolver"
    },
    "1939": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] test_capture_layer_chain_glm CPU cases fail on GB10: the GLM hub kernel is CUDA-only"
    },
    "194": {
@@ -4196,7 +4196,7 @@
     "title": "[P2] Provision the public SDK3 lease helper for hosted CPU CI"
    },
    "1942": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Admitted profile observer sudo readiness check fails only inside PB action"
    },
    "1943": {
@@ -4216,7 +4216,7 @@
     "title": "[P2] Accept verified open-parent Refs in linked-issue metadata"
    },
    "1947": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Five tests in test_tessera_campaign_packed.py fail on GB10: the fixture's model stays on CPU, the campaign runs it on CUDA"
    },
    "1948": {
@@ -4244,7 +4244,7 @@
     "title": "[DO NOT MERGE] Merge-queue red-path probe"
    },
    "1953": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Eleven tests fail on wall-clock bounds when dl380g10 is loaded"
    },
    "1954": {
@@ -4304,7 +4304,7 @@
     "title": "[P2] Flaky test: tests/test_tessera_plan_input_binding.py::test_printed_serve_recipe_retains_exact_runtime_scope[compiled-0]"
    },
    "1967": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Profile admitted rows as same-UID children without sudo"
    },
    "1968": {
@@ -4388,7 +4388,7 @@
     "title": "[P2] Flaky test: tests/test_dsv4_layer_streaming_rename.py::test_indexer_pooling_carries_the_coff_overlap_widening"
    },
    "1986": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Bind fresh unfinished Stage B request namespaces before execution"
    },
    "1987": {
@@ -4428,23 +4428,23 @@
     "title": "[P3] Align complete forward manifests across sample groups"
    },
    "1995": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_pin_on_a_writable_mount_needs_no_reason"
    },
    "1996": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_pinned_spec_refuses_and_names_the_pins_and_the_reason_field"
    },
    "1997": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_pinned_spec_without_scratch_refuses_too"
    },
    "1998": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_reason_that_says_nothing_refuses[blank]"
    },
    "1999": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_reason_that_says_nothing_refuses[empty]"
    },
    "2": {
@@ -4460,35 +4460,35 @@
     "title": "Restore profile-detection process globals between tests (fixes #197 order dependence)"
    },
    "2000": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_reason_that_says_nothing_refuses[int]"
    },
    "2001": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_reason_that_says_nothing_refuses[list]"
    },
    "2002": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_reason_that_says_nothing_refuses[null]"
    },
    "2003": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_reason_with_nothing_pinned_refuses"
    },
    "2004": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_a_spec_cannot_declare_the_admission_stamp"
    },
    "2005": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_an_unpinned_spec_binds_under_the_scratch_root"
    },
    "2006": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Flaky test: tests/test_overlay_cache_refusal_1129.py::test_the_same_spec_with_a_reason_is_admitted_and_stamped"
    },
    "2007": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Bind unfinished campaign namespaces to owned source and storage"
    },
    "2008": {
@@ -4516,31 +4516,31 @@
     "title": "[P2] Reuse deterministic producer encodes in side-byte tests"
    },
    "2013": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Refuse unqualified automatic capture source recording before source reads"
    },
    "2014": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Recover same-UID admitted row profiling onto current main (#1942)"
    },
    "2015": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Avoid full hosted PR suites alongside the required composed PB gate"
    },
    "2016": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Recover streamed capture recording with fail-closed automatic admission (#2013)"
    },
    "2017": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Integrate namespace admission and same-UID profiling dependencies"
    },
    "2018": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Reserve full hosted CI for main and manual runs"
    },
    "2019": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Preserve dispatcher identity across budget fixture teardown"
    },
    "202": {
@@ -4548,24 +4548,72 @@
     "title": "[P2] 22 call sites still swallow the dead-vendored-override refusal one level up (#201 follow-up)"
    },
    "2020": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Compose namespace ownership and profiling before request sealing"
    },
    "2021": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Seal optional profiling before namespace request publication"
    },
    "2022": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Qualify bounded internal CPU original material with sealed PB delivery"
    },
    "2023": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Verify and seal mapped original CPU source material (#2022)"
+   },
+   "2024": {
+    "state": "CLOSED",
+    "title": "[P2] Repair recovered surrogate diagnostic loader and BF16 backward validity"
+   },
+   "2025": {
+    "state": "CLOSED",
+    "title": "Repair and qualify the recovered surrogate diagnostics"
+   },
+   "2026": {
+    "state": "CLOSED",
+    "title": "Preserve selected-source integration coverage with bounded MTP and stack fixtures"
+   },
+   "2027": {
+    "state": "CLOSED",
+    "title": "test: make reader timing causal and attribute fleet cleanup kills"
+   },
+   "2028": {
+    "state": "CLOSED",
+    "title": "[P3] Correct stale GLM profile fused-group docstring"
+   },
+   "2029": {
+    "state": "CLOSED",
+    "title": "Correct GLM profile fused-group documentation"
    },
    "203": {
     "state": "CLOSED",
     "title": "Let the dead-vendored-override refusal escape profile detection (#201)"
+   },
+   "2030": {
+    "state": "OPEN",
+    "title": "[P1] Add an existing-frontier constrained PACT solve for the matched A8S time cap"
+   },
+   "2031": {
+    "state": "CLOSED",
+    "title": "Fix campaign device and CPU GLM chain fixtures on GPU workers"
+   },
+   "2032": {
+    "state": "OPEN",
+    "title": "Qualify exact body source selection for bounded L05 replay"
+   },
+   "2033": {
+    "state": "OPEN",
+    "title": "[P2] PrismaBuild dev-pin resolver fails under Python safe-path execution"
+   },
+   "2034": {
+    "state": "CLOSED",
+    "title": "Reduce CPU integration fixture work while preserving selected-source gates"
+   },
+   "2035": {
+    "state": "OPEN",
+    "title": "Recover ordered expert routing and device projection checks with attributable proof"
    },
    "204": {
     "state": "CLOSED",
@@ -11313,9 +11361,73 @@
     "state": "OPEN",
     "title": "Bound Netdata phase evidence to complete requested-window groups"
    },
+   "823": {
+    "state": "OPEN",
+    "title": "Research opt-in sparse-MLA prefill masked-tile skip"
+   },
+   "824": {
+    "state": "OPEN",
+    "title": "Bind container GPU merge-suite populations to sealed PB source"
+   },
+   "825": {
+    "state": "OPEN",
+    "title": "Bind explicit PrismaQuant accounting roots independently of the import cache"
+   },
+   "826": {
+    "state": "OPEN",
+    "title": "Bind a single routed gate/up profile replay to A8SE inputs and PB reader leases"
+   },
+   "827": {
+    "state": "OPEN",
+    "title": "[P2] Land experimental sparse-MLA opt-in with numerical and operator latency evidence"
+   },
+   "828": {
+    "state": "OPEN",
+    "title": "Integrate reviewed encoder, qualification and test-tooling changes"
+   },
+   "829": {
+    "state": "OPEN",
+    "title": "Refuse PrismaQuant accounting from a foreign cached source root"
+   },
    "83": {
     "state": "CLOSED",
     "title": "Serve the window-GEMV lane: census, two-arm KL and latency, none of which #10 measured"
+   },
+   "830": {
+    "state": "OPEN",
+    "title": "Record qualified stock KDA profiles and native workspace allocations"
+   },
+   "831": {
+    "state": "OPEN",
+    "title": "Bind one routed gate/up diagnosis to PB-pinned A8SE inputs"
+   },
+   "832": {
+    "state": "OPEN",
+    "title": "Keep repository integration helpers outside the standalone package"
+   },
+   "833": {
+    "state": "OPEN",
+    "title": "[P2] Repair nested pytest plugin admission and native A4 route evidence"
+   },
+   "834": {
+    "state": "CLOSED",
+    "title": "Move integration tooling outside the standalone package and repair pure fixtures"
+   },
+   "835": {
+    "state": "CLOSED",
+    "title": "test: recover nested CUDA surface and native A4 gate evidence"
+   },
+   "836": {
+    "state": "OPEN",
+    "title": "[P1] Native timing summary labels a middle order statistic as the median"
+   },
+   "837": {
+    "state": "OPEN",
+    "title": "Attribute resumed interpreter metadata to the authenticated producer"
+   },
+   "838": {
+    "state": "OPEN",
+    "title": "Attribute resumed interpreter metadata to its authenticated producer"
    },
    "84": {
     "state": "CLOSED",
