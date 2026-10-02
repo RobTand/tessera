@@ -24,7 +24,8 @@ IMAGE_ENV=()
 while IFS= read -r line; do
   [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")
 done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
-mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton" "$OUT/torch-ext" "$OUT/runner-sp"
+EXT=${BENCH_EXT_DIR:-$OUT/torch-ext}
+mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton" "$EXT" "$OUT/runner-sp"
 # py.py is the one-file shim _pytest/compat.py imports (the retired ``py``
 # library's name); a runner copy without it fails at import.
 for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
@@ -32,6 +33,15 @@ for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
   rm -rf "$OUT/runner-sp/$pkg"
   cp -r "$SP/$pkg" "$OUT/runner-sp/$pkg"
 done
+XDIST=()
+if [[ "${TEST_XDIST:-0}" == 1 ]]; then
+  for pkg in xdist execnet; do
+    [[ -d "$SP/$pkg" ]] || { echo "missing $SP/$pkg" >&2; exit 2; }
+    rm -rf "$OUT/runner-sp/$pkg"
+    cp -r "$SP/$pkg" "$OUT/runner-sp/$pkg"
+  done
+  XDIST=(-p xdist.plugin)
+fi
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)}
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
@@ -40,6 +50,11 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF"
 # mounted read-only at the same path.  TEST_LOCAL_TMP=1 puts TMPDIR and pytest's
 # basetemp on a container tmpfs: flock on an NFS out directory fails with EBADF.
 EXTRA=()
+if [[ -n "${BENCH_SRC:-}" ]]; then
+  [[ -f "$BENCH_SRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "BENCH_SRC is not a tessera src tree" >&2; exit 2; }
+  EXTRA+=(-v "$BENCH_SRC":/work/src:ro)
+fi
+if [[ -n "${BENCH_EXT_DIR:-}" ]]; then EXTRA+=(-v "$EXT":"$EXT"); fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
@@ -47,7 +62,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
   -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
-  -e TORCH_EXTENSIONS_DIR="$OUT/torch-ext" -e PYTHONDONTWRITEBYTECODE=1 \
+  -e TORCH_EXTENSIONS_DIR="$EXT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e PYTHONPATH=/work/src:/work/tests:/work/experiments:"$OUT/runner-sp" \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
@@ -56,5 +71,5 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint python3 -w /work "$IMAGE_REF" \
-  -m pytest -p no:cacheprovider -q -rA --junitxml="$OUT/junit.xml" \
+  -m pytest -p no:cacheprovider "${XDIST[@]}" -q -rA --junitxml="$OUT/junit.xml" \
   -o "cache_dir=$OUT/tmp/pytest-cache" --basetemp="$BT" "$@"
