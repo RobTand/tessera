@@ -171,3 +171,45 @@ def test_late_descriptor_failure_keeps_original_owner(native_constructor, monkey
                for held, role in zip((packed.gate, packed.up, packed.down), roles))
 
 
+
+def storage_union(tensors):
+    allocations = {}
+    for tensor in tensors:
+        storage = tensor.untyped_storage()
+        allocations[(tensor.device, storage.data_ptr(), storage.nbytes())] = storage.nbytes()
+    return sum(allocations.values())
+
+
+@pytest.mark.parametrize('library', ['e4m3mma', 'e4m3', 'value'])
+def test_owner_bytes_charge_selected_storage_once_and_include_counters(
+        native_constructor, monkeypatch, library):
+    family = 'value' if library == 'value' else 'e4m3'
+    roles = [projection() for _ in range(3)]
+    if family == 'value':
+        roles = [dataclasses.replace(role, family='value', arithmetic='folded',
+                 table_all=torch.zeros(role.experts, rf.TABLE_ENTRIES, dtype=torch.bfloat16),
+                 codes_all=torch.empty(0, dtype=torch.uint8),
+                 native_all=torch.empty(0, dtype=torch.uint8)) for role in roles]
+    monkeypatch.setattr(rf, 'library_for', lambda family: library)
+    packed = nwm.PackedWindowMoeBundles(*roles, family=family)
+    adapter = packed.adapter()
+    expected_dtype = torch.uint8 if library == 'e4m3mma' else torch.int16
+    assert adapter.table_gate.dtype == expected_dtype
+    # The complete caller-held owner still has its compact inputs. Aliased
+    # BF16 table views hold one allocation, and counters are native storage.
+    expected = storage_union([t for _, t in packed.named_tensors()] + [adapter.counters])
+    assert packed.resident_bytes() == expected
+    owner = native_owner(packed)
+    expected = storage_union([t for _, t in owner.named_tensors()] + [adapter.counters])
+    assert owner.resident_bytes() == expected
+    assert dict(adapter.named_tables())['routed_fused.counters'] is adapter.counters
+
+
+def test_a_retained_slice_charges_the_whole_backing_allocation():
+    roles = [projection() for _ in range(3)]
+    gate = roles[0]
+    backing = torch.empty(3, gate.words_all.shape[1], dtype=torch.int32)
+    roles[0] = dataclasses.replace(gate, words_all=backing[:gate.experts])
+    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
+    expected = storage_union(t for _, t in packed.named_tensors())
+    assert packed.resident_bytes() == expected

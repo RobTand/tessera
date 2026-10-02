@@ -1071,9 +1071,12 @@ class FusedRoutedWindowMoE:
         yield "routed_fused.bdesc_gate", self.bdesc_gate
         yield "routed_fused.bdesc_up", self.bdesc_up
         yield "routed_fused.bdesc_down", self.bdesc_down
+        yield "routed_fused.counters", self.counters
 
     def resident_bytes(self) -> int:
-        return sum(t.numel() * t.element_size() for _n, t in self.named_tables())
+        from .serving.residency import resident_storage_bytes
+
+        return resident_storage_bytes(self.named_tables())
 
     # -- routing ------------------------------------------------------------
     def _routing(self, expert_ids: torch.Tensor, routing_weights: torch.Tensor) -> _Routing:

@@ -11,6 +11,14 @@ recomposition. Wire bytes, arithmetic and native dispatch do not change.
 CPU lifetime controls establish ownership, not GPU allocator savings or
 served throughput; the fullserve admission bounds remain unchanged pending
 matched before/after device and host measurements.
+Runtime routed-owner accounting charges the backing storage of declared
+planes once, including aliased BF16/native lookup views and the launch
+counters. The selected native table's actual dtype determines its charge;
+FP8 byte tables and 16-bit tables are not interchangeable byte estimates.
+An externally held slice still owns its whole allocation, so an owner's
+declaration does not establish process-wide reclamation. Export-time
+preparation estimates and fullserve bounds are unchanged by this runtime
+ownership report.
 
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment

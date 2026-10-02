@@ -460,25 +460,17 @@ class PackedWindowMoeBundles:
         return self.down.device
 
     def resident_bytes(self) -> int:
-        total = 0
-        for bundle in (self.gate, self.up, self.down):
-            for t in (bundle.words_all, bundle.table_all, bundle.codes_all, bundle.native_all,
-                      bundle.scale_all, bundle.runs_all, bundle.init_all, bundle.has_init,
-                      bundle.word_off, bundle.tile_words, bundle.total_words, bundle.run_off,
-                      bundle.perm_all):
-                if isinstance(t, torch.Tensor):
-                    total += t.numel() * t.element_size()
-        fused = self.__dict__.get("_fused_adapter")
-        if fused is not None:
-            total += fused.resident_bytes()
-        return total
+        from .serving.residency import resident_storage_bytes
+
+        return resident_storage_bytes(self.named_tensors())
 
     def named_tensors(self):
         """The exact retained grouped kernel tensors, for ownership observers.
 
-        Includes the composed lookup tables the fused lane holds beside the
-        bundles' planes once :meth:`adapter` has built it (the words are
-        views of ``words_all`` and are not counted twice).
+        Includes the selected lane's composed lookup tables, run pairs,
+        descriptors and counters once :meth:`adapter` has built it. Aliased
+        table views are declared by reference; :meth:`resident_bytes` charges
+        their backing allocation once.
         """
         for role in ("gate", "up", "down"):
             bundle = getattr(self, role)
