@@ -6,8 +6,9 @@ dtype, so a meta default-device context cannot move CPU work. A non-float32
 global default dtype retains the original torch reference chain, whose branch
 costs are computed in float32 before promotion into the cost front. Exact
 state/SSE controls cover float16, bfloat16, float32 and float64 defaults plus
-meta placement. No recipe, contract, native source, serving route or production
-pin changes; these CPU controls do not qualify exported containers or GPU
+meta placement. Gradient-bearing inputs with autograd enabled also retain
+the functional reference; no-grad calls keep the optimized CPU path. No
+recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
 serving, and no new throughput claim is made.
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode

@@ -1253,6 +1253,9 @@ def viterbi_window(
     default-device context. Other default dtypes retain the torch chain
     below: its branch costs are float32 before promotion into the cost front,
     which an in-place front of another dtype would change (tessera#816).
+    Gradient-bearing inputs with autograd enabled retain that chain too:
+    its functional operations support them, while optimized ``out=``
+    buffers do not. No-grad calls keep the optimized CPU path.
     Every other device runs that chain unchanged, so the definition the fused
     kernel is tested against does not move.
     """
@@ -1293,9 +1296,13 @@ def viterbi_window(
     wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
     table = vectors.float().to(device)
     if device.type == "cpu" and torch.get_default_dtype() == torch.float32:
-        states, sse = _viterbi_window_cpu(tuples, wrows, table, window_bits, rate,
-                                          cols, chunk)
-        return states, (sse if want_sse else None)
+        needs_autograd = torch.is_grad_enabled() and (
+            tuples.requires_grad or table.requires_grad
+            or (wrows is not None and wrows.requires_grad))
+        if not needs_autograd:
+            states, sse = _viterbi_window_cpu(tuples, wrows, table, window_bits, rate,
+                                              cols, chunk)
+            return states, (sse if want_sse else None)
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
     sse = 0.0
     for start in range(0, cols, chunk):
