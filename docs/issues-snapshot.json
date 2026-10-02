@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T09:35:36Z",
+ "generated": "2026-10-02T11:16:57Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4124,7 +4124,7 @@
     "title": "[P3] Retire only committed owned Stage A forward origins"
    },
    "1926": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] test_io_site_freeze fails on main: the #1899 row profile observer adds a thread site"
    },
    "1927": {
@@ -4148,7 +4148,7 @@
     "title": "[P2] linked-issue check: accept Refs to an open parent issue so slices stop filing new issues"
    },
    "1931": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] derive_per_expert_activations syncs the host once per expert: s35 census at 21% of GPU power"
    },
    "1932": {
@@ -4164,7 +4164,7 @@
     "title": "Route experts and check projected units on the device: one host sync per pass (#1931, #1935)"
    },
    "1935": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] _check_projected_unit copies every live unit to the CPU serially: census GPU idle at ~15 W"
    },
    "1936": {
@@ -4592,7 +4592,7 @@
     "title": "Let the dead-vendored-override refusal escape profile detection (#201)"
    },
    "2030": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Add an existing-frontier constrained PACT solve for the matched A8S time cap"
    },
    "2031": {
@@ -4600,11 +4600,11 @@
     "title": "Fix campaign device and CPU GLM chain fixtures on GPU workers"
    },
    "2032": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify exact body source selection for bounded L05 replay"
    },
    "2033": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] PrismaBuild dev-pin resolver fails under Python safe-path execution"
    },
    "2034": {
@@ -4612,12 +4612,32 @@
     "title": "Reduce CPU integration fixture work while preserving selected-source gates"
    },
    "2035": {
+    "state": "CLOSED",
+    "title": "Reduce packed-MoE routing and projected-check synchronization"
+   },
+   "2036": {
+    "state": "CLOSED",
+    "title": "Allow atomic selection of exact body source tensor keys"
+   },
+   "2037": {
+    "state": "CLOSED",
+    "title": "Reuse immutable real priced baselines for campaign resume test consumers"
+   },
+   "2038": {
+    "state": "CLOSED",
+    "title": "Add opt-in PACT selection under bytes and a matched baseline time cap"
+   },
+   "2039": {
     "state": "OPEN",
-    "title": "Recover ordered expert routing and device projection checks with attributable proof"
+    "title": "[P1] Attribute and reduce remaining CPU copy cost in projected-unit CUDA qualification"
    },
    "204": {
     "state": "CLOSED",
     "title": "[P0] Bind Tessera export inputs to the actual Hessian and static scales that priced the allocation"
+   },
+   "2040": {
+    "state": "CLOSED",
+    "title": "Reuse real priced baselines across private campaign resume test consumers"
    },
    "205": {
     "state": "CLOSED",
@@ -11294,7 +11314,7 @@
     "title": "[P1] Routed MoE prefill: issue words more than two chunks ahead on single-rate launches (M=2048 sits at 59% of its byte roofline)"
    },
    "808": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] impacted_tests: no way to declare an out-of-tree source read, so an exec'ing reader is WILDCARD"
    },
    "809": {
@@ -11310,7 +11330,7 @@
     "title": "[P1] Pass source digest cache through the producer CLI"
    },
    "811": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix(selector): track helper source execution (blocked #808 draft)"
    },
    "812": {
@@ -11318,31 +11338,31 @@
     "title": "[P2] Qualify an opt-in bitwise sparse-MLA masked-tile prefill override"
    },
    "813": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Publish one contract authority for default-off stock-kernel overrides"
    },
    "814": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Repair KDA PTX state indexing and fail-closed screen evidence"
    },
    "815": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Publish default-off stock-kernel override contract authority"
    },
    "816": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] CPU Viterbi must preserve reference behavior under torch defaults"
    },
    "817": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Preserve CPU Viterbi behavior under torch defaults"
    },
    "818": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Support source-bound container GPU populations in merge-suite coordinator"
    },
    "819": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bound Netdata power groups to the requested performance phase"
    },
    "82": {
@@ -11350,15 +11370,15 @@
     "title": "CI has never been green: the bytes-only job cannot import conftest, and the release tag is gated on it"
    },
    "820": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Repair KDA screen state semantics and observable mutation gates"
    },
    "821": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix(selector): retain unknown source through bounded guarded imports"
    },
    "822": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound Netdata phase evidence to complete requested-window groups"
    },
    "823": {
@@ -11366,11 +11386,11 @@
     "title": "Research opt-in sparse-MLA prefill masked-tile skip"
    },
    "824": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind container GPU merge-suite populations to sealed PB source"
    },
    "825": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind explicit PrismaQuant accounting roots independently of the import cache"
    },
    "826": {
@@ -11378,15 +11398,15 @@
     "title": "Bind a single routed gate/up profile replay to A8SE inputs and PB reader leases"
    },
    "827": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Land experimental sparse-MLA opt-in with numerical and operator latency evidence"
    },
    "828": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Integrate reviewed encoder, qualification and test-tooling changes"
    },
    "829": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse PrismaQuant accounting from a foreign cached source root"
    },
    "83": {
@@ -11402,11 +11422,11 @@
     "title": "Bind one routed gate/up diagnosis to PB-pinned A8SE inputs"
    },
    "832": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Keep repository integration helpers outside the standalone package"
    },
    "833": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Repair nested pytest plugin admission and native A4 route evidence"
    },
    "834": {
@@ -11422,16 +11442,32 @@
     "title": "[P1] Native timing summary labels a middle order statistic as the median"
    },
    "837": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Attribute resumed interpreter metadata to the authenticated producer"
    },
    "838": {
     "state": "OPEN",
     "title": "Attribute resumed interpreter metadata to its authenticated producer"
    },
+   "839": {
+    "state": "CLOSED",
+    "title": "Keep KDA raw gates and durable publication in pure CI"
+   },
    "84": {
     "state": "CLOSED",
     "title": "E4M3's window table saturates at 1.167x reach: a 4x spread request delivers 1.167x, silently"
+   },
+   "840": {
+    "state": "OPEN",
+    "title": "P2: distinguish native Netdata cadence from returned bucket duration"
+   },
+   "841": {
+    "state": "OPEN",
+    "title": "fix(measurement): report native Netdata cadence and bucket separately"
+   },
+   "842": {
+    "state": "OPEN",
+    "title": "P2: test default-off read-only LUT loads for routed Mode0 RL4 BMT128"
    },
    "85": {
     "state": "CLOSED",

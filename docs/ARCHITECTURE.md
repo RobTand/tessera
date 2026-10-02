@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for Netdata cadence attribution (Refs #840).
+The box-power owner reports native collection cadence from the returned DB
+metadata, returned bucket duration separately, and returned tier/node/instance
+metadata. Missing native cadence stays unknown; bucket size cannot establish
+sensor cadence. Numeric samples, whole-group bounds and coverage are unchanged.
+This metadata correction does not qualify sensor agreement or energy.
+
 Re-stamped 2026-10-02 for the KDA experiment's scientific-independent
 admission/publication seam (Refs #814). `experiments/kda/conv_gate.py`
 owns the unchanged PTX string, case/mode roster and raw-word gates;
