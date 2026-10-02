@@ -177,7 +177,8 @@ Each cell used two ABBA cycles (eight arms), conventional medians and resident
 CUDA graph timing. Actual arms were 32.429–33.674 s and 31.990–32.361 s,
 respectively. The separate eager Torch profiles contain three calls of
 `tessera_mla_prefill_mg_l0` per arm: old/new means 7581.785/6189.434 us and
-3999.691/3573.141 us. No new kernel or spill appears in those profiles.
+3999.691/3573.141 us. The profiles retain the same kernel identity; the
+separate codegen report above establishes no local-memory spills.
 
 Raw power and both-host Netdata CPU/power/pressure series are retained. Netdata
 power's native cadence is 10 s; its returned 1 s buckets are not 1 s sensor
@@ -212,3 +213,27 @@ results are recorded under
 `GPU-RESULT-LEAD-REVIEW.json`, `GPU-COMPLETION.json` and
 `GPU-FINAL-ARTIFACTS.json`. CPU controls cover 17 distinct cases, zero skips
 or missing collection, with causal failures before the retention fixes.
+
+## Default-off serving integration
+
+Commit `f7c8928947` selects `p0_buffers=True` through the existing cached
+`library_for_device` owner, behind `TESSERA_RESEARCH_MLA_MASK_SKIP` only.
+Dispatch telemetry identifies `mg_mask_skip_pass_buffers`; stock fallback
+still identifies `stock_mg`. The generic loader's default remains old L0,
+and the native source, builder, ABI, retained DSOs and contract are unchanged.
+The actual runtime fixture now uses that production factory and refuses any
+compiler call; the existing Torch cache must resolve to the retained candidate.
+
+CPU causal RED `0ec24cd9a71f` fails both new selector/telemetry assertions,
+with the stock control passing. GREEN `420ac63f6708` runs the whole existing
+registration boundary file in the pinned vLLM image with CUDA disabled:
+15 passed, zero skips or uncollected modules, two pytest workers/native1,
+16.77 s action elapsed. Canonical receipt:
+`dddc60a2f8d321596910d53bc116b0ebe8115ce3a8387e46a601985ea551f101`.
+This CPU population does not qualify actual native vLLM execution. The two
+runtime GPU cases and the full-model serve remain separate, pending gates.
+
+The unrelated discovered placement forwarding omission is corrected in
+`42b7c2851c`; it changes future descriptive metadata, not the historical
+operator receipt or results. The wrapper syntax and new runtime fixture were
+checked through CPU PB action `42bbab6f8d4e` without launching CUDA.
