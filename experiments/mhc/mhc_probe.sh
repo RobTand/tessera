@@ -26,12 +26,18 @@ STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n'
 echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF model=$MODEL"
 EXTRA_MOUNTS=()
 OBS_ENV=()
+declare -A OBS_MOUNTED=()
 for OBS_VAR in PRISMABUILD_PROFILE_TORCH_OUT PRISMABUILD_ACTION_PROGRESS_PATH PRISMABUILD_ACTION_PROGRESS_HELPER; do
   OBS_VALUE=${!OBS_VAR:-}
   if [[ -n "$OBS_VALUE" ]]; then
     OBS_PARENT=$(dirname "$OBS_VALUE")
     mkdir -p "$OBS_PARENT"
-    EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT")
+    if [[ -z "${OBS_MOUNTED[$OBS_PARENT]:-}" ]]; then
+      OBS_READONLY=
+      [[ "$OBS_VAR" != PRISMABUILD_ACTION_PROGRESS_HELPER ]] || OBS_READONLY=,readonly
+      EXTRA_MOUNTS+=(--mount "type=bind,src=$OBS_PARENT,dst=$OBS_PARENT$OBS_READONLY")
+      OBS_MOUNTED[$OBS_PARENT]=1
+    fi
     OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
   fi
 done
