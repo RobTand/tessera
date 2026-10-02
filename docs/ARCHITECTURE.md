@@ -174,7 +174,7 @@ to that bound (`dense_split_max`, `K / 64`). This is the bound the E2M1
 launch already enforces on the same producer/consumer protocol. Two
 consecutive one-chunk items in one CTA let the producers rewrite a
 descriptor slot before the consumers read it, which leaves a partial
-unwritten. On GB10 no GLM-5.3 role's split reaches the bound, at any M or
+unwritten. On GB10 no GLM-5.3 role's split exceeds the bound, at any M or
 rate, so no GLM-5.3 launch changes. Few-row, small-K roles take a smaller
 split; for example, 128 x 256 at M = 1 now takes 4 splits where it took 8.
 No route, cell, rung or schema changes. See §3.3 (the dense identity).
