@@ -31,7 +31,7 @@ def stock_standins(probe, monkeypatch, tmp_path):
         return fn
 
     monkeypatch.setattr(probe, "kdafwd_call", call)
-    monkeypatch.setattr(probe, "kda_steady", lambda *a: {"interval_unix": [0, 1]}, raising=False)
+    monkeypatch.setattr(probe, "kda_steady", lambda *a: {"interval_unix": [0, 1], "graph_ms_per_call": 1.0}, raising=False)
     monkeypatch.setattr(probe, "kda_raw_netdata", lambda *a: {}, raising=False)
     monkeypatch.setattr(probe, "kda_commit", lambda *a: None, raising=False)
     args = NS(out=str(tmp_path), kda_tokens=[512], kda_heads=[32], kda_state_dtypes=["float32"],

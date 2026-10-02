@@ -61,9 +61,10 @@ Three parts, each on the pinned serving image's own vLLM code:
 ``kdafwd`` FlashKDA's two kernels (``_flash_kda_fwd_prepare`` and
            ``_flash_kda_fwd_recurrence``) at the served shape: per-kernel
            device time at ``--kda-tokens`` for ``--kda-heads`` local heads and
-           both state dtypes.  ``H=1`` gives the prepare's per-CTA latency
-           with the GPU nearly empty, which bounds what fusing the prepare
-           into the recurrence CTAs can save.
+           selected state dtypes. ``H=1`` is an aggregate launch diagnostic;
+           the prepare still launches one CTA per tile, so its total device
+           time is not a single-CTA latency. Eager kernel profiles and resident
+           graph power/timing windows are reported separately; no candidate.
 
 ``--ncu`` runs only the NCU-gated mHC calls (T 1024 and 2048) between
 ``cudaProfilerStart``/``Stop`` for ``mhc_probe.sh ORACLE_NCU=1``; with
