@@ -16,6 +16,11 @@ random-mask performance and energy remain unqualified. See
 `experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
 are not qualification evidence.
 
+Re-stamped 2026-10-02 for the two small GLM-5.3 override check drivers
+(§5.1.4–5): each interleaved operator arm retains its CUDA trace and wall
+window beside the event time. Both-host telemetry, native correctness and
+served qualification remain required; trace export alone establishes no saving.
+
 Re-stamped 2026-10-02 for recovery of the default-off shared-add fold
 (tessera#799, §5.1.5) from PR #800 and its fail-closed stock-interface follow-up
 #852. Its new terminal sum is a separate kernel; existing routed kernel bodies

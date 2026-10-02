@@ -125,7 +125,7 @@ def sass_check(base_source, out_dir):
     return rec
 
 
-def screen(ext, reps):
+def screen(ext, reps, trace_root=None, library="value"):
     from torch.profiler import ProfilerActivity, profile
 
     from shared_fold_data import served_scale
@@ -136,8 +136,9 @@ def screen(ext, reps):
         fold(ext, routed, shared)
     torch.cuda.synchronize()
     result = {}
-    for form in ("stock", "fold", "stock", "fold"):
+    for order, form in enumerate(("stock", "fold", "stock", "fold")):
         fn = stock if form == "stock" else fold
+        window_start = time.time()
         with profile(activities=[ProfilerActivity.CUDA]) as prof:
             start, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
             start.record()
@@ -145,13 +146,19 @@ def screen(ext, reps):
                 fn(ext, routed, shared)
             end.record()
             torch.cuda.synchronize()
+        window_end = time.time()
+        trace = os.path.join(trace_root, f"shared-fold-{library}-{order}-{form}.trace.json") \
+            if trace_root is not None else None
+        if trace is not None:
+            prof.export_chrome_trace(trace)
         kernels = {}
         for ev in prof.key_averages():
             t = getattr(ev, "self_device_time_total", None) or getattr(ev, "self_cuda_time_total", 0)
             if t and ev.count:
                 kernels[ev.key[:120]] = dict(count=ev.count, us_per_call=t / ev.count)
         result.setdefault(form, []).append(dict(event_us_per_iter=1000 * start.elapsed_time(end) / reps,
-                                                kernels=kernels))
+                                                kernels=kernels, trace=trace,
+                                                window_unix=[window_start, window_end]))
     return result
 
 
@@ -198,7 +205,7 @@ def main():
               log["sass"].get("compare_stdout", log["sass"].get("error", "")), flush=True)
     if "value" in exts:
         try:
-            log["screen"] = {lib: screen(exts[lib], args.reps) for lib in exts}
+            log["screen"] = {lib: screen(exts[lib], args.reps, args.out, lib) for lib in exts}
             log["screen_label"] = "[S] torch.profiler and CUDA events, non-measurement row"
         except Exception as exc:
             log["screen_error"] = f"{type(exc).__name__}: {exc}"
