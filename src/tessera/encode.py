@@ -1088,30 +1088,34 @@ def _viterbi_window_cpu(tuples, wrows, table, window_bits, rate, cols, chunk):
       ``[size, n]`` tensors per step.
     """
     steps, arity, _ = tuples.shape
+    device = tuples.device
     size = table.shape[0]
     fan = 1 << rate
     low = size >> rate
-    states = torch.empty(steps, cols, dtype=torch.long)
+    states = torch.empty(steps, cols, dtype=torch.long, device=device)
     sse = 0.0
     width = max(min(chunk, cols), 0)
     tournament = (rate <= _TOURNAMENT_MAX_RATE
                   and _branch_cannot_be_nan(tuples, table, wrows))
-    front = torch.empty(size * width)
-    spare = torch.empty(size * width)
-    term = torch.empty(size * width) if arity == 2 else None
-    best_flat = torch.empty(low * width)
+    front = torch.empty(size * width, device=device, dtype=torch.float32)
+    spare = torch.empty(size * width, device=device, dtype=torch.float32)
+    term = (torch.empty(size * width, device=device, dtype=torch.float32)
+            if arity == 2 else None)
+    best_flat = torch.empty(low * width, device=device, dtype=torch.float32)
     back_dtype = torch.uint8 if fan <= 256 else torch.int32
-    back_flat = torch.empty(steps * low * width, dtype=back_dtype)
+    back_flat = torch.empty(steps * low * width, dtype=back_dtype, device=device)
     columns = [table[:, a].contiguous().unsqueeze(1) for a in range(arity)]
     if tournament:
         half = fan >> 1
-        mask_flat = torch.empty(half * low * width, dtype=torch.bool)
-        gap_flat = torch.empty(half * low * width, dtype=torch.uint8)
-        value_flat = (torch.empty(half * low * width), torch.empty(half * low * width))
-        index_flat = (torch.empty(half * low * width, dtype=torch.uint8),
-                      torch.empty(half * low * width, dtype=torch.uint8))
+        mask_flat = torch.empty(half * low * width, dtype=torch.bool, device=device)
+        gap_flat = torch.empty(half * low * width, dtype=torch.uint8, device=device)
+        value_flat = (
+            torch.empty(half * low * width, device=device, dtype=torch.float32),
+            torch.empty(half * low * width, device=device, dtype=torch.float32))
+        index_flat = (torch.empty(half * low * width, dtype=torch.uint8, device=device),
+                      torch.empty(half * low * width, dtype=torch.uint8, device=device))
     else:
-        pred = torch.empty(low * width, dtype=torch.long)
+        pred = torch.empty(low * width, dtype=torch.long, device=device)
     for start in range(0, cols, chunk):
         x = tuples[:, :, start : start + chunk]                  # [steps, arity, n]
         n = x.shape[2]
@@ -1178,7 +1182,7 @@ def _viterbi_window_cpu(tuples, wrows, table, window_bits, rate, cols, chunk):
             cost, nxt = nxt, cost
         final, state = cost.min(dim=0)                           # [n]
         sse += float(final.sum())
-        column = torch.empty(steps, n, dtype=torch.long)
+        column = torch.empty(steps, n, dtype=torch.long, device=device)
         for step in range(steps - 1, -1, -1):
             column[step] = state
             lowbits = state >> rate
@@ -1242,11 +1246,18 @@ def viterbi_window(
     asked for explicitly is still honoured above the crossover: the crossover
     governs the choice ``auto`` makes, not what the caller may demand.
 
-    On CPU the reference runs as :func:`_viterbi_window_cpu`, the same chain
-    without its per-step copies, which returns the identical states and the
-    identical sse float (tessera#795).  Every other device runs the torch
-    chain below unchanged, so the definition the fused kernel is tested
-    against does not move.
+    On CPU with the float32 default dtype, the reference runs as
+    :func:`_viterbi_window_cpu`, the same chain without its per-step copies,
+    which returns the identical states and the identical sse float
+    (tessera#795). Buffers stay on the input device even under a different
+    default-device context. Other default dtypes retain the torch chain
+    below: its branch costs are float32 before promotion into the cost front,
+    which an in-place front of another dtype would change (tessera#816).
+    Gradient-bearing inputs with autograd enabled retain that chain too:
+    its functional operations support them, while optimized ``out=``
+    buffers do not. No-grad calls keep the optimized CPU path.
+    Every other device runs that chain unchanged, so the definition the fused
+    kernel is tested against does not move.
     """
     if impl not in ("auto", "reference", "fused"):
         raise GrammarError(f"unknown viterbi_window impl {impl!r}")
@@ -1284,10 +1295,14 @@ def viterbi_window(
     tuples = targets.float().reshape(steps, arity, cols)
     wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
     table = vectors.float().to(device)
-    if device.type == "cpu":
-        states, sse = _viterbi_window_cpu(tuples, wrows, table, window_bits, rate,
-                                          cols, chunk)
-        return states, (sse if want_sse else None)
+    if device.type == "cpu" and torch.get_default_dtype() == torch.float32:
+        needs_autograd = torch.is_grad_enabled() and (
+            tuples.requires_grad or table.requires_grad
+            or (wrows is not None and wrows.requires_grad))
+        if not needs_autograd:
+            states, sse = _viterbi_window_cpu(tuples, wrows, table, window_bits, rate,
+                                              cols, chunk)
+            return states, (sse if want_sse else None)
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
     sse = 0.0
     for start in range(0, cols, chunk):

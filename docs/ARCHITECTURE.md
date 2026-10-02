@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 (tessera#816, CPU encoder compatibility): window
+Viterbi's optimized CPU buffers explicitly use the input's device and float32
+dtype, so a meta default-device context cannot move CPU work. A non-float32
+global default dtype retains the original torch reference chain, whose branch
+costs are computed in float32 before promotion into the cost front. Exact
+state/SSE controls cover float16, bfloat16, float32 and float64 defaults plus
+meta placement. Gradient-bearing inputs with autograd enabled also retain
+the functional reference; no-grad calls keep the optimized CPU path. No
+recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
+serving, and no new throughput claim is made.
+
 Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
 A new top-level block, `stock_kernel_overrides`, publishes where the plugin,
 behind an opt-in flag, replaces a kernel of the stock runtime with its own,
