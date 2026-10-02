@@ -1,5 +1,21 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the KDA experiment's scientific-independent
+admission/publication seam (Refs #814). `experiments/kda/conv_gate.py`
+owns the unchanged PTX string, case/mode roster and raw-word gates;
+`conv_progress.py` owns durable publication. The GPU driver re-exports
+and uses those owners, and the bank auditor imports the gate directly.
+Pure CI exercises raw admission and directory durability without Torch;
+actual driver/stock controls use the existing scientific dependency
+population. A source identity binds the driver and both owners and
+refuses changes before every publication/return, including NCU,
+numerics-only and partial progress. The actual driver root and both
+imported module/function origins must match the owned source files;
+cached foreign owners cannot certify their own unrelated checkout.
+This refactor changes no numerical
+inputs, CUDA bytes, profiler math or runtime execution; historical GPU
+receipts remain at their original sources and are not restamped.
+
 Re-stamped 2026-10-02 for resumed interpreter attribution (Refs #837).
 Resumed runtime metadata comes from the uniquely authenticated producer's
 effective pytest command, using the existing deadline/container parser. An

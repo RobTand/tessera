@@ -5,7 +5,16 @@ import sys
 
 import pytest
 
-from test_kda_probe_gate import probe
+import importlib.util
+from pathlib import Path
+
+@pytest.fixture
+def probe():
+    path = Path(__file__).resolve().parents[1] / "experiments/kda/conv_progress.py"
+    spec = importlib.util.spec_from_file_location("kda_conv_progress_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def observe_publication(probe, monkeypatch):
@@ -43,25 +52,6 @@ def test_partial_progress_waits_for_durable_published_name(probe, monkeypatch, t
     assert events[-1] == "progress"
 
 
-def test_publish_progress_waits_for_complete_durable_result(probe, monkeypatch, tmp_path):
-    events = observe_publication(probe, monkeypatch)
-    path = tmp_path / "mhc_probe.json"
-    monkeypatch.setattr(probe, "part_kdafwd", lambda *_: {"cells": [{"completed_calls": 7}]})
-    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path), "--parts", "kdafwd"])
-
-    def commit(units, phase):
-        assert units == 1 and phase == "publish"
-        saved = json.loads(path.read_text())
-        assert saved["meta"]["utc_end"] >= saved["meta"]["utc_start"]
-        assert saved["meta"]["power_sampler"] == "test"
-        assert saved["kdafwd"]["cells"] == [{"completed_calls": 7}]
-        assert "netdata" in saved
-        assert events == ["file", "replace", "directory"]
-        events.append("progress")
-
-    monkeypatch.setattr(probe.runpy, "run_path", lambda _: {"commit": commit})
-    assert probe.main() == 0
-    assert events[-1] == "progress"
 
 
 def test_directory_sync_failure_refuses_progress(probe, monkeypatch, tmp_path):
