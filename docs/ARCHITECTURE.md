@@ -38,6 +38,17 @@ vacuous screen returns nonzero and stops later timing parts. No serving
 override, runtime contract, format, route or default changes. See §5.1.3
 and [the recovery evidence](measurements/2026-10-02-kda-screen-recovery.md).
 
+Re-stamped 2026-10-02 for guarded module re-exports in the impacted-test
+selector (Refs #808). The dependency owner derives a finite import condition
+only from a fully recognized, immutable-name `__getattr__` forwarding hook.
+Changed files retain the conservative import union. Only UNKNOWN propagation
+may exclude that proved conditional edge; direct named calls retain named
+demand plus Python's implicit `__path__`, while object/namespace escapes,
+stars, explicit hook and file loads retain the union, including ordinary
+re-exports. Ordinary imports and package initialization remain unconditional.
+The source-read capability and UNKNOWN origin contract are unchanged;
+no serving interface, runtime, wire, pin, lane or promotion gate moves. See §1.1.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -635,10 +646,11 @@ where the structure changes the wire. No contract cell, serving default or
 route changes.
 
 Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
-targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
-in its dependency graph but records it under `excluded_tests` with its reason,
-not in the pytest target list. Its manual CUDA gate is not executed or certified
-by that selection; pytest consumers and full-run escalation remain unchanged.
+targets (tessera#647). `tools/impacted_tests.py` retains explicit manual-only
+interfaces in its dependency graph and records configured exclusions under
+`excluded_tests` with their reasons. The A4 gate now has a pytest entry point,
+and the current exclusion map is empty. Selection alone does not execute or
+certify a manual CUDA gate; full-run escalation remains unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
@@ -2293,7 +2305,61 @@ also create edges, including aliased readers, and for a resolved path this is
 independent of what the reader does with the bytes. Runtime-selected or shadowed
 paths remain conservative unknown edges and propagate to downstream tests when
 the reader can execute Python; a parameterized filename in a source-executing
-module is not silently treated as no dependency. What this misses is a source
+module is not silently treated as no dependency. Recognized calls to imported
+source-executing helpers now propagate that capability to their callers via a
+fixed point over top-level helper summaries, preserving relative imports,
+re-exports and ambiguous module spellings. Module and helper seeds use the same
+source-call predicate with enclosing lexical aliases. A single authoritative
+parse/read result supplies both summaries and graph edges: a first-pass failure
+remains diagnosed wildcard uncertainty, never erased by a retry. Callable alias
+recognition uses a finite worklist and per-path cycle guards rather than the
+Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
+generic module parameter and an import missing from the graph remain unknown.
+The frozen `202d1f07` #808 draft failed the three unchanged selectivity ratchets,
+forcing full for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
+path proving which uncertainty seed caused that escalation, so it did not
+establish the asserted GLM53-through-serving.config attribution. Selection now records resolved-file
+`uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
+reverse walk that decides escalation. These are static predecessor witnesses,
+not proof that a runtime call executes. It is not a completed external-origin contract.
+
+The source-dependency owner now recognizes a narrowly proved module re-export:
+`if name in <literal frozenset>: import module; return getattr(module, name)`,
+followed by a literal `AttributeError`. It accepts no hook decorators, computed
+defaults, extra effects, shadowed builtins, guard rebinding/mutation or hook,
+guard or global-namespace escape. A literal `__all__` directory hook may enumerate
+that immutable set. Every other shape retains the unconditional import union.
+The graph keeps the conservative dependency union for changed files, including
+this guarded import. Only UNKNOWN propagation may exclude its proved conditional
+edge; active attribute demands retain direct dependencies. Explicit
+from-imports used only as direct callees (or unused) request their named
+attributes plus Python's implicit `__path__`. Passing, storing, returning or
+inspecting imported objects, mutable namespace access (including reflective or
+dynamic `getattr`), namespace imports, stars,
+explicit hook or guard access and exact file loads request every branch.
+The proved hook's own forwarding call has a closed literal name domain;
+other reflective accesses retain the union. Unknown namespace demand forwards
+through ordinary re-exports as a finite union.
+Ambiguous
+spellings still resolve to every candidate through the existing module resolver.
+All ordinary imports and package-initialization effects remain dependencies;
+the guard worklist terminates on cycles. Known helper namespace effects
+(including `f_globals` and reflective access) reuse the source-execution
+helper-call fixed point and lexical resolver as a separate effect fact;
+calling such a helper refuses a guarded summary, including through a re-export.
+Star imports cannot prove unshadowed guard bindings and retain the union.
+This is bounded helper recognition, not a general evaluator. The receipt reports
+`uncertainty_guarded_imports_skipped` with provider, literal guard names and
+predecessor witnesses separately from collection-probe exclusions. Changed and
+uncertain seeds traverse the same annotated graph under their respective rules;
+their reached consumers are then combined. Failed source reads cannot publish a
+summary and remain authoritative wildcard uncertainty. The real-tree causal
+probe established that the guarded slicing-to-layout edge was a complete cut
+between all recorded uncertainty seeds and conftests on frozen `202d1f07`;
+it did not prove GLM53 source external. The three real ratchets and the
+source-execution helper/refusal controls remain acceptance criteria.
+
+What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
 A conftest **reached** -- changed, or importing anything changed -- reaches its
@@ -7029,7 +7095,7 @@ raises.
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
 | `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
-| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file, so `tools/impacted_tests.py` does not class the module the shared conftest reaches as able to import anything. |
+| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
 
 The module docstring records the decline rules and the exactness argument.
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
