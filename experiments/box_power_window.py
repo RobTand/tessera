@@ -241,7 +241,14 @@ def collect(host: str, after: int, before: int, points: int) -> dict:
                 series[context] = {"error": str(exc), "query": got["url"], "raw_response": raw}
                 continue
         entry = {"query": got["url"], "stats": _stats(doc, dims),
-                 "update_every_s": doc.get("view", {}).get("update_every"),
+                 "update_every_s": raw.get("db", {}).get("update_every"),
+                 "returned_bucket_s": raw.get("view", {}).get("update_every"),
+                 "collection_metadata": {
+                     "per_tier": raw.get("db", {}).get("per_tier"),
+                     "nodes": raw.get("summary", {}).get("nodes"),
+                     "instances": raw.get("summary", {}).get("instances"),
+                     "totals": raw.get("totals"),
+                 },
                  "coverage": coverage, "raw_response": raw}
         if context == "nvidia_smi.gpu_power_draw":
             labels = doc["result"]["labels"]
