@@ -1,5 +1,9 @@
 # #808 source-read selection census (blocked draft)
 
+Historical census and blocked qualification at frozen `202d1f07220834a4e813099cf4e9cf768f0b2e5f`.
+The dated [recovery record](../measurements/2026-10-02-source-selection-808-recovery.md)
+records subsequent targeted qualification; the census below remains historical.
+
 This is a bounded CPU selector change, not external-origin or serving acceptance.
 Refs #808; #769 nightly census and #790 host-I/O acceptance remain held separately.
 Astra owns review/merge and the external-origin follow-on. No runtime, wire, pin,
@@ -37,9 +41,9 @@ calls it at line 845 using `modules[0]` after runtime interface matching.
 not exclusively external imports. Separately, the initial `021f4f2b` selection
 receipt forced full for `tests/conftest.py` without predecessor witnesses joining
 these observations. It did not establish a GLM53-to-config-to-conftest route.
-The revised receipt must identify actual uncertainty seeds and resolved-file
-paths, including collection-probe exclusions, before any source-origin redesign
-is priced; a static graph witness is not runtime call reachability. Caller-wide external proof also cannot be
+The revised `202d1f07` receipt identifies actual uncertainty seeds and resolved-file
+paths, including collection-probe exclusions. Source-origin redesign still needs
+separate evidence; a static graph witness is not runtime call reachability. Caller-wide external proof also cannot be
 inferred from the production intention.
 Serving signatures/reads and the selectivity assertions must not be silently
 changed to conceal this blocker. Future options are a separately approved narrow
