@@ -1478,3 +1478,61 @@ def test_non_mhc_layer_in_the_profile_pass_keeps_later_passes_unoverlapped():
     for r in range(2):
         assert torch.equal(got[r], ref[r])
     assert reduced == [] and all(s.overlap_blocked and not s.pass_overlap for s in states)
+
+
+# Exceptional overlap paths must retire side-stream work before a caller can reuse buffers.
+# These are CPU stream/allocator stand-ins; they do not qualify CUDA allocator behavior.
+@pytest.mark.parametrize("failure", ["enqueue", "consume"])
+def test_tile_overlap_exception_joins_pending_work_before_allocation_reuse(monkeypatch, failure):
+    inputs = _tile_inputs(8)
+    x = inputs.pop("x")
+    pending, retired, retained, outputs = [], [], [], []
+    log = []
+    calls = 0
+    def reduce_into(src, dst, stream):
+        nonlocal calls
+        calls += 1
+        pending.append((src.data_ptr(), dst.data_ptr()))
+        outputs.append(dst.data_ptr())
+        if failure == "enqueue" and calls == 2:
+            raise RuntimeError("partial enqueue")
+        dst.copy_(src * 2)
+    overlap, _, _ = _overlap(log, reduce_into=reduce_into)
+    overlap.keep = lambda tensor, stream: retained.append((tensor.data_ptr(), stream.name))
+    def join():
+        retired.extend(pending)
+        pending.clear()
+    overlap.side.synchronize = join
+    if failure == "consume":
+        original = gp.tiled_fused_post_pre
+        def consume(*args, **kwargs):
+            kwargs["before_tile"](0, 3)
+            raise RuntimeError("partial consumption")
+        monkeypatch.setattr(gp, "tiled_fused_post_pre", consume)
+    with pytest.raises(RuntimeError, match="partial"):
+        overlap.run(_TileKernels(), 3, x, inputs["residual"], inputs["post_layer_mix"],
+                    inputs["comb_res_mix"], inputs["fn"], inputs["hc_scale"], inputs["hc_base"],
+                    inputs["rms_eps"], inputs["hc_pre_eps"], inputs["hc_sinkhorn_eps"],
+                    inputs["hc_post_mult_value"], inputs["sinkhorn_repeat"])
+    # Reusing any retired allocation while this list is nonempty would race a write.
+    assert pending == [], "exception returned with outstanding side-stream uses"
+    assert retired and retained[0] == (x.data_ptr(), "side")
+    assert len(retained) == 2 and retained[1][1] == "side"
+    assert retired[0][1] == retained[1][0]
+
+
+def test_tile_overlap_registers_both_allocations_before_the_first_enqueue():
+    inputs = _tile_inputs(8)
+    x = inputs.pop("x")
+    log = []
+    overlap, _, retained = _overlap(log)
+    def reduce_into(src, dst, stream):
+        assert len(retained) == 2, "input/output were not registered before asynchronous enqueue"
+        assert retained[0] == (x.data_ptr(), "side")
+        assert retained[1] == (dst.data_ptr(), "side")
+        dst.copy_(src * 2)
+    overlap.reduce_into = reduce_into
+    overlap.run(_TileKernels(), 3, x, inputs["residual"], inputs["post_layer_mix"],
+                inputs["comb_res_mix"], inputs["fn"], inputs["hc_scale"], inputs["hc_base"],
+                inputs["rms_eps"], inputs["hc_pre_eps"], inputs["hc_sinkhorn_eps"],
+                inputs["hc_post_mult_value"], inputs["sinkhorn_repeat"])
