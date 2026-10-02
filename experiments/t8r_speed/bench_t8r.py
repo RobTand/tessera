@@ -532,7 +532,10 @@ def main():
             meta["tessera_dist"] = md.version("tessera_quant")
         except Exception as exc:  # noqa: BLE001
             meta["tessera_meta_error"] = repr(exc)
-        ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
+        # The closed routed numeric mode supplies TP explicitly to the packed
+        # intake and invokes its adapter directly; no vLLM method/config/world
+        # is constructed. It still uses the exact stock native FP8 quantizer.
+        ctx = None if VLLM_STUBBED or args.paired_k32_numerics else _init_vllm_world1(args.out)  # noqa: F841 -- held open
         if args.paired_k32_numerics:
             meta['paired_k32'] = {'input_manifest_sha256': inputs.manifest_sha256,
                 'source_sha256': args.paired_k32_source_sha256,

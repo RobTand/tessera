@@ -20,6 +20,9 @@ words and observing actual native profiles. Its bounded materializing/fp64
 reference covers token0/expert0..7 only; separate synthetic one-CTA controls
 cover the K192 down boundary and K128 fallback. Historical counter replay
 admission remains fixed. This preparation does not establish GPU execution.
+This closed numeric mode supplies TP0/2 directly to the packed intake and
+skips the unrelated vLLM config/world initialization; normal benchmark modes
+retain it. The native stock FP8 quantizer remains an actual vLLM dependency.
 CPU admission/lifetime controls and native compilation are preliminary;
 no GPU numerical, serving, timing, energy, default, cell or pin qualification
 follows. See `measurements/2026-10-02-paired-k32-compile.md`.

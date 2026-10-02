@@ -110,6 +110,26 @@ def test_driver_admits_only_new_numeric_mode(monkeypatch):
         gate(args,stubbed=False)
 
 
+@pytest.mark.parametrize('numeric,stubbed,expected_calls', [
+    (True,False,0), (False,False,1), (False,True,0),
+])
+def test_driver_world_startup_is_only_for_existing_vllm_modes(numeric,stubbed,expected_calls):
+    path=ROOT/'experiments/t8r_speed/bench_t8r.py'
+    tree=ast.parse(path.read_text())
+    node=next(n for n in ast.walk(tree) if isinstance(n,ast.Assign)
+              and any(isinstance(t,ast.Name) and t.id=='ctx' for t in n.targets))
+    calls=[]
+    context=object()
+    def initialize(out):
+        calls.append(out)
+        return context
+    namespace={'args':SimpleNamespace(paired_k32_numerics=numeric,out='/owned/output'),
+               'VLLM_STUBBED':stubbed,'_init_vllm_world1':initialize}
+    exec(compile(ast.Module(body=[node],type_ignores=[]),str(path),'exec'),namespace)
+    assert len(calls)==expected_calls
+    assert namespace['ctx'] is (context if expected_calls else None)
+
+
 @pytest.mark.parametrize('fault', [None,'repeat','missing_role','reduction','profile'])
 def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
     import torch

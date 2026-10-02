@@ -179,3 +179,18 @@ CUDA allocations. An earlier attempt4bb5cd20 retained5 fixture failures
 (CPU tensors/fence not explicitly mocked) and one missing published-SDK
 collection error; the scoped CPU fixture and PYTHONPATH correction is included.
 These are CPU qualification controls only. No numeric GPU action has run yet.
+
+World-startup regression RED: PB
+`c89a6e3e9cc8d8ff095be6181fbbe1445a06b92901c840cc22d437831aa6dc89`,
+1 failed/2 passed: the exact driver assignment incorrectly initializes a
+vLLM config/world in the closed direct-adapter numeric mode. The minimal fix
+skips that initialization only for this mode. GREEN: PB
+`d53a2b0598bd80868dc9e05a09986c0b201ffbfaf8a773dcf6c5274326b99041`,
+35 passed in1.58s, CPU1/native1/memory2GiB, no skips/uncollected/CUDA
+allocations. Both normal real-vLLM startup and stubbed legacy controls remain.
+The actual builder passes TP_RANK0/TP_SIZE2 explicitly to
+`_RankLocalPackedIntake`; its compact load/finish returns packed bundles and
+`adapter()` directly, constructing no vLLM method/config/distributed world.
+The exact registered stock FP8 quantizer is still executed. Root therefore
+routes the GPU numeric run directly under the vLLM execution exemption;
+these CPU preparation and control tests continue through PrismaBuild.
