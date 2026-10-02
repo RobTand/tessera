@@ -27,18 +27,16 @@ unchanged.
 from __future__ import annotations
 
 import functools
-import hashlib
 import importlib
-import inspect
 import logging
 import os
-from pathlib import Path
 from threading import RLock
 from typing import Any
 
 import torch
 
 from .flags import latched_bool
+from .stock_interface import source_digest as _source_digest, signature_parameters
 
 __all__ = ["FLAG", "install_for_current_config", "query_without_empty_rope", "skip_reason"]
 
@@ -117,11 +115,6 @@ def _report(line: str) -> None:
         _log.warning(line)
 
 
-def _source_digest(module: Any) -> str | None:
-    path = getattr(module, "__file__", None)
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
-
-
 def _decline_reason(module: Any) -> str | None:
     digest = _source_digest(module)
     if digest is None:
@@ -131,7 +124,7 @@ def _decline_reason(module: Any) -> str | None:
     impl = getattr(module, _CLASS, None)
     if impl is None:
         return f"{_MODULE} has no {_CLASS}"
-    params = tuple(inspect.signature(impl.forward_mqa).parameters)
+    params = signature_parameters(impl,"forward_mqa")
     if params != _SIGNATURE:
         return f"{_CLASS}.forward_mqa has parameters {params}, expected {_SIGNATURE}"
     return None
