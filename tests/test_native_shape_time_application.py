@@ -207,7 +207,7 @@ def test_phase_argv_is_isolated_and_preserves_admission(panel,monkeypatch,tmp_pa
     # Preserve the real helper origin while observing its exact sealed argv.
     original=Path(app.ROOT/'experiments/step4_capture_launch.py')
     phase.__code__=phase.__code__.replace(co_filename=str(original))
-    with pytest.raises(ValueError,match='native phase'):app.measure(path,tmp_path/'owned-output')
+    with pytest.raises(ValueError,match='native phase'):app.measure(path,tmp_path/'owned-output',expected_request_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     label,command,timeout=seen[0]
     assert command[:3]==['env','-u','PYTHONPATH']
     assert '-I' in command and '-B' in command and 'OMP_NUM_THREADS=1' in command
@@ -242,3 +242,21 @@ def test_binary_observation_uses_existing_maps_and_never_loader(tmp_path,monkeyp
     assert worker.loaded_fused_binary(native,'TESSERA_FP8',raw)==worker.file_binding(binary)
     monkeypatch.setattr(bench_native_operator,'_mapped_shared_libraries',lambda:set())
     with pytest.raises(ValueError,match='already-loaded'):worker.loaded_fused_binary(native,'TESSERA_FP8',raw)
+
+
+def test_sealed_request_hash_is_checked_before_json(panel,monkeypatch):
+    path,_=request_file(panel,monkeypatch)
+    monkeypatch.setattr(app.tp,'json_bytes',lambda *a:pytest.fail('unmatched request reached JSON parser'))
+    with pytest.raises(ValueError,match='owned request bytes'):
+        app.read_request(path,expected_sha256='0'*64)
+
+
+def test_request_hash_and_json_share_the_same_owned_bytes(panel,monkeypatch):
+    path,value=request_file(panel,monkeypatch);raw=path.read_bytes();expected=hashlib.sha256(raw).hexdigest()
+    real_json=app.tp.json_bytes
+    def parse(owned):
+        if owned==raw:path.write_bytes(b'concurrent replacement')
+        return real_json(owned)
+    monkeypatch.setattr(app.tp,'json_bytes',parse)
+    got,_,_=app.read_request(path,expected_sha256=expected)
+    assert got==value and path.read_bytes()==b'concurrent replacement'

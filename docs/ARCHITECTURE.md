@@ -30,7 +30,8 @@ those bytes and records `commit_source=sealed_checkout`. Installed runtime
 metadata remains separate. The first ELF receipt requires the actual
 prepared fused lane and observes existing process mappings before/after
 sampling; it refuses Triton preparation and never builds a library for
-evidence. See
+evidence. Measurement requires the sealed request digest; the producer
+hashes and parses one owned byte buffer before any native phase. See
 [the bounded receipt contract](design/native-shape-timing.md).
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode

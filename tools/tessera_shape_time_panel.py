@@ -93,9 +93,14 @@ def producer_identity(binding):
     return value
 
 
-def read_request(path):
+def read_request(path, *, expected_sha256=None):
     require_producer_origins()
-    request = tp.json_bytes(Path(path).read_bytes())
+    raw = Path(path).read_bytes()
+    if expected_sha256 is not None:
+        tp._sha(expected_sha256, "expected request sha256")
+        if hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise ValueError("owned request bytes differ from the sealed SHA-256")
+    request = tp.json_bytes(raw)
     tp._object(request, {"schema", "expected_runtime", "scope", "prefix", "scheme", "wire",
                          "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "record_verifier", "producer_identity"}, "dense request")
     if request["schema"] != REQUEST_SCHEMA:
@@ -141,8 +146,8 @@ def read_request(path):
     return request, plan, wire
 
 
-def measure(request_path, output):
-    request, plan, wire = read_request(request_path)
+def measure(request_path, output, *, expected_request_sha256):
+    request, plan, wire = read_request(request_path, expected_sha256=expected_request_sha256)
     producer = producer_identity(request["producer_identity"])
     output = Path(output).resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
     _,roles=tp.wire_facts(wire,request["scheme"])
@@ -187,7 +192,8 @@ def main(argv=None):
     seal = sub.add_parser("seal-producer")
     seal.add_argument("--output", type=Path, required=True)
     run = sub.add_parser("measure")
-    run.add_argument("--request", type=Path, required=True);run.add_argument("--output", type=Path, required=True)
+    run.add_argument("--request", type=Path, required=True);run.add_argument("--request-sha256", required=True)
+    run.add_argument("--output", type=Path, required=True)
     args = ap.parse_args(argv)
     try:
         if args.action == "seal-producer": result = seal_producer(args.output)
@@ -195,7 +201,7 @@ def main(argv=None):
             result = tp.validate_panel(tp.json_bytes(args.panel.read_bytes()), expected_runtime=tp.json_bytes(args.expected_runtime.read_bytes()))
         elif args.action == "check-request":
             _, plan, _ = read_request(args.request);result = {"scope_id": plan["rows"][0]["id"], "status": "unmeasured", "gpu_executed": False}
-        else: result = measure(args.request, args.output)
+        else: result = measure(args.request, args.output, expected_request_sha256=args.request_sha256)
         print(json.dumps(result, sort_keys=True));return 0
     except (ValueError, OSError, RuntimeError) as exc:
         print(f"[native-dense-panel] REFUSED: {exc}", file=sys.stderr);return 2

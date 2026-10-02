@@ -54,7 +54,7 @@ CPU stand-ins validate this contract without claiming GPU execution.
 
 `tools/tessera_shape_time_panel.py` is the supported repository application.
 `check-request REQUEST.json` performs a CPU preflight without preparation or
-measurement. `measure --request REQUEST.json --output NEW_DIRECTORY` calls
+measurement. `measure --request REQUEST.json --request-sha256 SHA256 --output NEW_DIRECTORY` calls
 `lane.build_tessera_method`, `create_weights`, loads the exact owned wire into
 the plugin parameter, and calls `process_weights_after_loading` and `apply`.
 It clears the latest route before every call so retained records cannot stand
@@ -129,3 +129,8 @@ owner's published extension. The existing process-map observer binds those
 already-loaded bytes before and after sampling; it never calls a library
 loader merely to obtain evidence. Triton preparation is explicitly unsupported
 by this first ELF receipt slice, without changing that serving lane's admission.
+
+The measurement command requires the externally sealed request SHA-256.
+The producer reads one owned byte buffer, checks that digest and parses
+that same buffer; a separate launcher hash followed by a second read is
+not a sealed request boundary.
