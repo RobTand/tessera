@@ -10,10 +10,15 @@ def eq(a,b):return torch.equal(a.view(torch.uint8),b.view(torch.uint8))
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--out',required=True)
-    p.add_argument('--mutation',action='store_true');p.add_argument('--shapes',default=SHAPES);p.add_argument('--edges-only',action='store_true');args=p.parse_args()
+    p.add_argument('--mutation',action='store_true');p.add_argument('--shapes',default=SHAPES);p.add_argument('--edges-only',action='store_true')
+    p.add_argument('--build-dir');p.add_argument('--build-manifest-sha256')
+    p.add_argument('--p0-buffers',action='store_true');p.add_argument('--p0-wrong-pass',action='store_true');args=p.parse_args()
+    if bool(args.build_dir) != bool(args.build_manifest_sha256):p.error('retained build requires directory AND manifest SHA-256')
     root=Path(args.out);root.mkdir(parents=True,exist_ok=True)
     from flashinfer.decode import trtllm_batch_decode_with_kv_cache_mla as stock
-    library=Library(root/'build',mutation=args.mutation)
+    library=Library(args.build_dir or root/'build',mutation=args.mutation,
+                    p0_buffers=args.p0_buffers,p0_wrong_pass=args.p0_wrong_pass,
+                    require_retained=bool(args.build_dir),retained_manifest_sha256=args.build_manifest_sha256)
     ws=torch.zeros(128*1024*1024,dtype=torch.uint8,device='cuda')
     shapes=[tuple(map(int,s.split('@'))) for s in args.shapes.split(',')]
     rows=[];passed=True
@@ -53,7 +58,8 @@ def main():
         rows.append(row);print(json.dumps(row),flush=True)
     report={'schema':'tessera.mla_mask_gate.v1','passed':passed,'rows':rows,'library':library.path,
             'source_sha256':library.source_sha256,'native_identity':library.identity,'build_manifest':library.build_manifest,
-            'mutation':args.mutation,'mutation_detected': args.mutation and any(not r['variants']['1']['output_bitwise'] or not r['variants']['1']['lse_bitwise'] for r in rows),
+            'mutation':args.mutation,'p0_buffers':args.p0_buffers,'p0_wrong_pass':args.p0_wrong_pass,
+            'mutation_detected': (args.mutation or args.p0_wrong_pass) and any(not r['variants']['1']['output_bitwise'] or not r['variants']['1']['lse_bitwise'] for r in rows),
             'host':os.environ.get('HOST_NAME'),'finished_unix':time.time()}
     (root/'gate.json').write_text(json.dumps(report,indent=2)+'\n')
     return 0 if passed else 1

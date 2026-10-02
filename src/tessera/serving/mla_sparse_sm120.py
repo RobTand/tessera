@@ -74,7 +74,7 @@ def install():
 def library_for_device(device):
     # One compiled owner per process/device, shared by attention instances.
     with torch.cuda.device(device):
-        return MlaPrefillLibrary(None)
+        return MlaPrefillLibrary(None, p0_buffers=True)
 
 
 class TesseraMLASparseSM120Backend(FlashInferMLASparseSM120Backend):
@@ -137,7 +137,7 @@ class TesseraMLASparseSM120Impl(FlashInferMLASparseSM120Impl):
             shape=f"T{q.shape[0]}:H{self.num_heads}:D{self.kv_lora_rank}",
             contract="stock_kernel_overrides", state="served", reason=reason,
             decoder="stock" if reason else "native_mg_mask_skip",
-            kernel_schedule="stock_mg" if reason else "mg_mask_skip_l0")
+            kernel_schedule="stock_mg" if reason else "mg_mask_skip_pass_buffers")
 
     def _run_mqa_kernel(self, q, kv_cache, topk_indices_physical):
         refusal = self._refusal(q, kv_cache, topk_indices_physical)

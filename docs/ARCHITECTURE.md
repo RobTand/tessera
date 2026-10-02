@@ -1,5 +1,21 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
+The existing MLA loader now shares one build owner with the CPU experiment
+row. It retains the final DSO and verifies source, selector, flags, compiler,
+header, image declaration and artifact identity before reuse. A required
+retained build cannot silently compile; runtime loading still requires SM121.
+The generic loader retains the original schedule by default. The existing
+default-off `TESSERA_RESEARCH_MLA_MASK_SKIP` backend explicitly selects the
+pass-buffer schedule and emits `mg_mask_skip_pass_buffers`; no new flag or
+stock/default route is introduced. The wrong-pass mutant stays experiment-only.
+The bounded operator gate passed 17 exact
+output/LSE cases and two causal mutants; pooled-mask old-L0 comparisons reduced
+operator time 18.97% at 2048@8192 and 13.50% at 2048@2048. Full-model serving,
+random-mask performance and energy remain unqualified. See
+`experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
+are not qualification evidence.
+
 Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
 slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
 dense TP1 eager/resident operator, requiring canonical wire/container
@@ -138,6 +154,12 @@ image5be13705. Eager host dispatch counts use the existing per-rank telemetry;
 graph replay counts are not claimed. Actual per-rank post-timing CUDA events
 must establish eager/FULL_DECODE_ONLY prefill execution before a served claim.
 The stock Q power-of-two scale rounding and arithmetic order remain intact.
+The opt-in native call uses the pass-buffer schedule; decode, mixed and
+capture guards remain unchanged. Its runtime GPU fixture exercises the actual
+cached factory with a retained DSO and refuses compilation. Full-model and
+actual vLLM-runtime validation are separate gates: the two-case eager/stock-
+capture fixture passed on the retained candidate; full-model serving remains
+unqualified.
 No production runtime pin, route cell, default, artifact or ship gate moves.
 
 Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
