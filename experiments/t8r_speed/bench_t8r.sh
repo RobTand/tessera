@@ -33,13 +33,19 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF sta
 free -g | sed -n 2p
 # BENCH_SRC: an A/B arm's Tessera source tree, mounted over the checkout's src
 # (the harness stays the checkout's); unset runs the checkout's own src.
+CONTAINER_SRC=${NATIVE_CONTAINER_SRC:-/work/src}
+CONTAINER_EXT=${NATIVE_CONTAINER_EXT:-${BENCH_EXT_DIR:-$OUT/home/torch_extensions}}
+[[ "$CONTAINER_SRC" == /* && "$CONTAINER_EXT" == /* ]] || { echo "native benchmark paths must be absolute" >&2; exit 2; }
+KSRC=${BENCH_SRC:-$CHECKOUT/src}
+[[ -f "$KSRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "not a tessera src tree: $KSRC" >&2; exit 2; }
 SRC_MOUNT=()
-if [[ -n "${BENCH_SRC:-}" ]]; then
-  [[ -f "$BENCH_SRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "BENCH_SRC is not a tessera src tree: $BENCH_SRC" >&2; exit 2; }
-  SRC_MOUNT=(-v "$BENCH_SRC":/work/src:ro)
-  KSRC="$BENCH_SRC"
-else
-  KSRC="$CHECKOUT/src"
+if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
+  SRC_MOUNT=(-v "$KSRC":"$CONTAINER_SRC":ro)
+fi
+if [[ "$CONTAINER_SRC" != /work/src ]]; then
+  PROJECT_FILE=${BENCH_PROJECT_FILE:-$CHECKOUT/pyproject.toml}
+  [[ -f "$PROJECT_FILE" ]] || { echo "missing native source version declaration: $PROJECT_FILE" >&2; exit 2; }
+  SRC_MOUNT+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
@@ -60,7 +66,7 @@ if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   # exact admitted namespace, with all data reads still through pinned FDs.
   EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet
                  -v "$STAGE_ROOT":"$STAGE_ROOT" --pid=host)
-  IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
+  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$PB_CLIENT_ROOT/src")
 fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
 # model, recorded activations), mounted read-only at the same path.
@@ -107,7 +113,9 @@ EXT_DIR=$OUT/home/torch_extensions
 if [[ -n "${BENCH_EXT_DIR:-}" ]]; then
   EXT_DIR=$(realpath -m "$BENCH_EXT_DIR")
   [[ -d "$EXT_DIR" ]] || { echo "missing BENCH_EXT_DIR: $EXT_DIR" >&2; exit 2; }
-  EXTRA_MOUNTS+=(-v "$EXT_DIR":"$EXT_DIR")
+fi
+if [[ -n "${BENCH_EXT_DIR:-}" || "$CONTAINER_EXT" != "$EXT_DIR" ]]; then
+  EXTRA_MOUNTS+=(-v "$EXT_DIR":"$CONTAINER_EXT")
 fi
 ext_libs() {
   local lib
@@ -124,8 +132,8 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
-  -e TORCH_EXTENSIONS_DIR="$EXT_DIR" \
-  -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \
+  -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
+  -e PYTHONPATH="$CONTAINER_SRC":/work/tests -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \

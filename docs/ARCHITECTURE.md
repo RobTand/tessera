@@ -1,7 +1,7 @@
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
-(#739, `sol/routed-piece-major-r4-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
+(#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
 selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
 that choice before loading; each eligible one-run R4 unit is permuted from
 `[tile][column][64-row piece][word]` to `[tile][64-row piece][column][word]`

@@ -106,34 +106,29 @@ def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
 
 
 @pytest.mark.parametrize('selection', ['0', '1'])
-def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection):
-    """Execute the real wrapper; only image inspection and Docker are inert."""
+@pytest.mark.parametrize('canonical', [False, True])
+def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, canonical):
+    """Execute the real wrapper; image inspection and Docker only are inert."""
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
-    checkout = tmp_path / 'checkout'
-    experiments = checkout / 'experiments'
-    experiments.mkdir(parents=True)
-    (experiments / 'runtime_image.sh').write_text(
-        'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; }\n')
-    kernel = checkout / 'src/tessera/serving/csrc/routed_fused_window.cu'
-    kernel.parent.mkdir(parents=True)
-    kernel.write_text('// inert source for wrapper argv inspection\n')
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     artifact = tmp_path / 'artifact'
     artifact.mkdir()
     (artifact / 'config.json').write_text('{}')
-    binaries = tmp_path / 'bin'
-    binaries.mkdir()
-    docker = binaries / 'docker'
-    docker.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$DOCKER_ARGV_PATH"\n')
-    docker.chmod(0o755)
-    argv_path = tmp_path / 'docker-argv'
-    env = {k: v for k, v in os.environ.items()
-           if not k.startswith(('BENCH_', 'TESSERA_ROUTED_', 'TESSERA_FUSED_'))}
-    env.update(PATH=str(binaries) + os.pathsep + env['PATH'],
-               ORACLE_IMAGE='inert-inspected-image', DOCKER_ARGV_PATH=str(argv_path),
-               TESSERA_ROUTED_PIECE_MAJOR=selection)
+    extensions.mkdir()
+    env['TESSERA_ROUTED_PIECE_MAJOR'] = selection
+    container_source = '/tessera/src' if canonical else '/work/src'
+    container_extensions = '/ext' if canonical else str(extensions)
+    if canonical:
+        env.update(NATIVE_CONTAINER_SRC=container_source, NATIVE_CONTAINER_EXT=container_extensions)
     subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                     '--artifact', str(artifact), '--groups', 'experts.R1024.L10'],
                    env=env, check=True, capture_output=True, text=True)
     args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
     forwarded = [args[i + 1] for i, value in enumerate(args[:-1]) if value == '-e']
     assert 'TESSERA_ROUTED_PIECE_MAJOR=' + selection in forwarded
+    assert str(source) + ':' + container_source + ':ro' in args
+    assert str(extensions) + ':' + container_extensions in args
+    assert 'TORCH_EXTENSIONS_DIR=' + container_extensions in forwarded
+    assert 'PYTHONPATH=' + container_source + ':/work/tests' in forwarded
+    if canonical:
+        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args

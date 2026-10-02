@@ -145,3 +145,24 @@ Both-host telemetry was recovered read-only for that same elapsed window;
 `netdata.json` SHA-256 is `76695da04c862923cf4d636d95c5758cf92a7ae4c564e9a153ca428e6cd1b2f8`.
 Those observations do not address the subsequently investigated terminal-barrier
 race (#855), intermediate outputs, other shapes/routes, serving or performance.
+
+## Common-source continuation
+
+The continuation uses `sol/739-piece-major-common-20261002`, rebased onto
+`09cdb22f6cd4a51e7d480531fde82376c785f4f7` (merged MLA plus #855). Duplicate
+terminal fixes were dropped, and the canonical version/identity support was
+carried from the reviewed standalone branch. The routed CUDA source still
+hashes to `c236b7aa340c74c9b965d84133d54c16c1488cecc6781d996ee14cc4d4068522`,
+identical to the earlier four-family compile. Its old build paths do not match
+the canonical `/tessera/src` and `/ext` namespace, so those ELFs cannot establish
+no-rebuild reuse under the new protocol.
+
+The existing benchmark wrapper now honors the same canonical source, extension
+and version-metadata mounts as the existing build and test wrappers. Its actual
+Docker-argument regression failed before the fix: PB
+`3ecfad8584102424bd01ecffef6153ce178914ad6348c7d6626df58dc4b0efb2` recorded
+2 failures / 8 passes at the `/tessera/src` mount assertion. The corrected wrapper
+and unchanged output-screen argument tests passed PB
+`a0628a8108cd15b114c256e3e663aadf4a9c93a913296192c9723aa4ec53aded`: 25 passes,
+zero skips or missing collection, two xdist workers, CUDA disabled. This is
+wrapper evidence only. It establishes no GPU numeric or performance result.
