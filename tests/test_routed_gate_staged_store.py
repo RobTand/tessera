@@ -193,3 +193,30 @@ def test_single_options_refuse_menu_or_unqualified_inputs(field, value):
 def test_single_options_refuse_stubbed_runtime():
     with pytest.raises(ValueError, match='stubbed'):
         require_options(options(), stubbed=True)
+
+
+def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType
+    path = ROOT / 'experiments/t8r_speed/bench_t8r.py'
+    tree = ast.parse(path.read_text())
+    node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
+    args = options()
+    args.out = str(tmp_path/'out')
+    closed = []
+    reader = SimpleNamespace(close=lambda: closed.append(True))
+    module = ModuleType('pb_staged_store')
+    module.StagedInputs = lambda p: reader
+    monkeypatch.setitem(sys.modules, 'pb_staged_store', module)
+    parser = SimpleNamespace(add_argument=lambda *a,**k: None, parse_args=lambda: args)
+    def failed_store(*args):
+        raise ValueError('metadata admission refused')
+    scope = {'argparse':SimpleNamespace(ArgumentParser=lambda:parser),
+        'ARTIFACT':'/legacy', 'VLLM_STUBBED':False,
+        'require_single_replay_options':lambda *a,**k:None,
+        'os':os, 'torch':SimpleNamespace(manual_seed=lambda *a:None,device=lambda *a:None),
+        'Store':failed_store}
+    exec(compile(ast.Module(body=[node], type_ignores=[]),str(path),'exec'),scope)
+    with pytest.raises(ValueError,match='metadata admission refused'):
+        scope['main']()
+    assert closed == [True]
