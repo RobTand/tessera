@@ -376,10 +376,22 @@ def test_external_final_panel_replay_uses_verified_owner_and_refuses_drift(panel
         app.tp.validate_external_panel(panel,expected_runtime=panel['runtime'],runtime_validation=verified)
 
 
+def test_local_public_plan_rejects_external_b40_contract(panel):
+    raw=Path('/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera/serving/runtime_contract.json').read_bytes()
+    # This is the unchanged historical document, not a producer-schema upgrade.
+    # New required fields may refuse it before the loader-roster comparison.
+    with pytest.raises(ValueError,match='cannot read valid packaged runtime contract'):
+        app.census_plan.build_census_plan([panel['plan']['rows'][0]['scope']],raw_contract=raw)
+
+
 def test_local_public_plan_rejects_external_b40_loader_roster(panel):
     raw=Path('/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera/serving/runtime_contract.json').read_bytes()
+    # Isolate the historical roster in a current-schema CPU fixture so this
+    # assertion proves roster strictness independently of schema precedence.
+    doc=copy.deepcopy(contract.load_serving_contract())
+    doc['native_extensions']=json.loads(raw)['native_extensions']
     with pytest.raises(ValueError,match='native_extensions'):
-        app.census_plan.build_census_plan([panel['plan']['rows'][0]['scope']],raw_contract=raw)
+        app.census_plan.build_census_plan([panel['plan']['rows'][0]['scope']],raw_contract=app.tp.canonical(doc))
 
 
 def test_job_hash_is_checked_before_json_or_imports(tmp_path,monkeypatch):
