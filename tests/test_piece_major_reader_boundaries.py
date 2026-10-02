@@ -191,8 +191,19 @@ def test_e2m1_dense_refuses_before_build(monkeypatch, layout):
 def test_e2m1_routed_refuses_layout(monkeypatch, layout):
     from tessera import routed_fused_e2m1 as fe
     monkeypatch.setattr(fe, "_ext", bomb)
-    b = SimpleNamespace(family="e2m1", word_layout=layout, experts=2)
+    monkeypatch.setattr(fe, "smem_reason", bomb)
+    b = e2m1_bundle()
+    b.word_layout = layout
     assert "word order" in fe.fused_routed_e2m1_supported(b, b, b)
+
+
+def e2m1_bundle():
+    b = bundle(cols=256)
+    b.family, b.rows = "e2m1", 256
+    b.scale_plane_all = torch.zeros(2, 256 * 256 // 32, dtype=torch.uint8)
+    b.scale_lut_all = torch.zeros(2, 16, dtype=torch.uint8)
+    b.global_all = torch.ones(2)
+    return b
 
 
 def test_e2m1_legacy_positive_controls(monkeypatch):
@@ -201,11 +212,7 @@ def test_e2m1_legacy_positive_controls(monkeypatch):
     monkeypatch.setattr(fe, "smem_reason", lambda *a: None)
     u = SimpleNamespace(rep=unit(cols=256).rep, window_bits=14, arity=2, cols=256, rows=256)
     assert fe.dense_role_reason(u) is None
-    b = bundle(cols=256)
-    b.family, b.rows = "e2m1", 256
-    b.scale_plane_all = torch.zeros(2, 256 * 256 // 32, dtype=torch.uint8)
-    b.scale_lut_all = torch.zeros(2, 16, dtype=torch.uint8)
-    b.global_all = torch.ones(2)
+    b = e2m1_bundle()
     assert fe.fused_routed_e2m1_supported(b, b, b) is None
 
 
