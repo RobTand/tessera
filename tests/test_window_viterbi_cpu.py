@@ -379,3 +379,36 @@ def test_the_refusals_are_the_references():
             encode.viterbi_window(*args, impl="reference")
         with pytest.raises(GrammarError):
             viterbi_window(*args, impl="reference")
+
+
+@pytest.mark.parametrize("arity", [1, 2])
+@pytest.mark.parametrize("weighted", [False, True])
+@pytest.mark.parametrize("impl", ["auto", "reference"])
+def test_cpu_inputs_keep_their_device_under_a_meta_default(arity, weighted, impl):
+    # Inputs already on CPU must keep the reference's explicit placement,
+    # even when a caller constructs unrelated tensors on meta by default.
+    targets, vectors, weights = _problem(8, arity, 18, 7, weighted, False, 91)
+    with torch.device("meta"):
+        old = viterbi_window(targets, vectors, 8, 2, weights, 4,
+                             impl="reference")
+        new = encode.viterbi_window(targets, vectors, 8, 2, weights, 4,
+                                    impl=impl)
+        assert old[0].device.type == new[0].device.type == "cpu"
+        _same(new, old)
+
+
+@pytest.mark.parametrize("dtype", [
+    torch.float16, torch.bfloat16, torch.float32, torch.float64])
+@pytest.mark.parametrize("arity", [1, 2])
+@pytest.mark.parametrize("weighted", [False, True])
+def test_global_float_dtype_preserves_the_reference(dtype, arity, weighted):
+    # The old front inherits the default dtype, but each branch cost is
+    # computed in float32 before the addition. Widening/narrowing in-place
+    # branch buffers changes that arithmetic, so compare the exact SSE too.
+    targets, vectors, weights = _problem(8, arity, 18, 7, weighted, False, 91)
+    initial = torch.get_default_dtype()
+    try:
+        torch.set_default_dtype(dtype)
+        _same(*_both(targets, vectors, 8, 2, weights, 4))
+    finally:
+        torch.set_default_dtype(initial)
