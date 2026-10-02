@@ -541,11 +541,16 @@ def _with_overrides(monkeypatch, *entries):
     return contract
 
 
-def test_a_legible_override_is_admitted(monkeypatch):
-    validate_serving_contract(_with_overrides(monkeypatch, _override()))
-    validate_serving_contract(_with_overrides(monkeypatch, _override(library=None)))
-    validate_serving_contract(_with_overrides(monkeypatch, _override(
-        evidence=[{"gate": "served TR3", "receipt": "docs/measurements/x.md"}])))
+@pytest.mark.parametrize("changes", [
+    {},
+    {"library": None},
+    {"evidence": [{"gate": "served TR3", "receipt": "docs/measurements/x.md"}]},
+])
+def test_a_legible_override_is_admitted(monkeypatch, changes):
+    # Each synthetic installed table needs a fresh monkeypatch scope. Reading
+    # the real empty packaged contract while a prior synthetic table is still
+    # installed correctly fails its authority check.
+    validate_serving_contract(_with_overrides(monkeypatch, _override(**changes)))
 
 
 def test_a_missing_overrides_block_is_refused():
