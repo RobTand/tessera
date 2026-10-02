@@ -127,6 +127,9 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
         panel["runtime"]["contract_sha256"] = panel["evidence"]["contract"]["sha256"]
         expected["contract_sha256"] = panel["runtime"]["contract_sha256"]
         rewrite(panel, "runtime", lambda v: v.update(panel["runtime"]))
+        if fault == "missing_code":
+            with pytest.raises(ValueError): census_plan.build_census_plan([panel["plan"]["rows"][0]["scope"]], raw_contract=tp.read_bound(panel["evidence"]["contract"]))
+            return
         panel["plan"] = census_plan.build_census_plan([panel["plan"]["rows"][0]["scope"]], raw_contract=tp.read_bound(panel["evidence"]["contract"]))
         panel["rows"][0]["scope_id"] = panel["plan"]["rows"][0]["id"]
     elif fault in ("pair", "state", "shape", "activation", "platform"):
