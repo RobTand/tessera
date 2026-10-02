@@ -316,6 +316,11 @@ def build_routed(store, module):
     per_expert_rank = wire_total / EXPERTS / TP_SIZE
     info = {"family": scheme["family"], "q256": {g: v["q256"] for g, v in scheme["groups"].items()},
             "adapter": type(native).__name__,
+            "resident_word_layouts": {role: getattr(packed, role).word_layout
+                                      for role in ("gate", "up", "down")},
+            "native_piece_major": getattr(native, "piece_major", None),
+            "native_library": getattr(native, "library", None),
+            "requested_piece_major": os.environ.get("TESSERA_ROUTED_PIECE_MAJOR", "0"),
             "adapter_attrs": sorted(a for a in vars(native) if not a.startswith("__"))[:40]
             if hasattr(native, "__dict__") else None,
             "resident_bytes": int(packed.resident_bytes()) if hasattr(packed, "resident_bytes") else None,
