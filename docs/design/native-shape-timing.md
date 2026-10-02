@@ -49,7 +49,7 @@ uses `statistics.median`, and quartiles use
 to the raw samples. Profiler evidence requires actual CUDA kernel events.
 Both Sparks' raw power/CPU/load/swap/available-memory contexts and fast
 power samples retain the timed interval. Energy remains `hold` for
-cross-host clock alignment (PB #1440); no work/J claim is accepted.
+cross-host clock alignment ([PrismaBuild clock alignment](https://github.com/RobTand/prismabuild/issues/1440)); no work/J claim is accepted.
 
 Deploying these new Python sources as a runtime changes its package identity.
 The repository producer instead loads its own passive schema in a separate
