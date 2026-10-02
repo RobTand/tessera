@@ -470,7 +470,17 @@ OVERRIDE_DEFAULT_OFF = "off"
 #: ``{gate, receipt}``; it is ``[]`` until one has.
 STOCK_KERNEL_EVIDENCE_FIELDS = ("gate", "receipt")
 
-STOCK_KERNEL_OVERRIDES: list[dict] = []
+STOCK_KERNEL_OVERRIDES: list[dict] = [{
+    "kind": "attention_backend",
+    "overrides": {"backend": "FLASHINFER_MLA_SPARSE_SM120", "kernel": "sparse_mla_prefill_mg_kernel"},
+    "enabled_by": "TESSERA_RESEARCH_MLA_MASK_SKIP",
+    "default": OVERRIDE_DEFAULT_OFF,
+    "loaded_by": "tessera.serving.mla_sparse_sm120",
+    "library": {"module_name_prefix": "tessera_mla_prefill_", "filename_glob": "tessera_mla_prefill_*.so",
+                "match": MATCH_BASENAME_FNMATCH, "source": "csrc/mla_prefill_mg.cu"},
+    "required_identity": IDENTITY_BITWISE_VS_STOCK,
+    "evidence": [],
+}]
 
 
 def _nvcc_root(nvcc: str) -> str:
@@ -764,7 +774,9 @@ def native_source_path(module_name_prefix: str) -> str:
     the file is not in this install. Every contract-published JIT loader takes
     its source from here, so what the contract says is built is what is built.
     """
-    for entry in NATIVE_EXTENSIONS:
+    libraries = [*NATIVE_EXTENSIONS,
+                 *(entry["library"] for entry in STOCK_KERNEL_OVERRIDES if entry["library"])]
+    for entry in libraries:
         if entry["module_name_prefix"] == module_name_prefix:
             source = entry["source"]
             break

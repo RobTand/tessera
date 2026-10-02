@@ -1,10 +1,25 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
+(contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
+subclass for the stock `FLASHINFER_MLA_SPARSE_SM120` enum through the plugin.
+Its stock name, conversions and residency path remain inherited. Only eager
+pure-prefill BF16 queries, 32 heads, latent512/no RoPE, page64 packed FP8
+arbitrary-scale KV and2176 indices can select the qualified MG masked-tile
+kernel; FlashInfer's own resolved plan must say FP8/MG/direct. Mixed, decode,
+staged, unsupported and CUDA stream-capture calls use stock. The backend and
+policy sources plus the complete sparse-MLA header tree are hash-bound to
+image5be13705. Eager host dispatch counts use the existing per-rank telemetry;
+graph replay counts are not claimed. Actual per-rank post-timing CUDA events
+must establish eager/FULL_DECODE_ONLY prefill execution before a served claim.
+The stock Q power-of-two scale rounding and arithmetic order remain intact.
+No production runtime pin, route cell, default, artifact or ship gate moves.
+
 Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
 A new top-level block, `stock_kernel_overrides`, publishes where the plugin,
 behind an opt-in flag, replaces a kernel of the stock runtime with its own,
-and an install path acts only on its own published entry. The block is empty
-at v54, so no override installs and no route, cell or served byte moves. The
+and an install path acts only on its own published entry. The block was empty
+at v54, so that revision installed no override and no route, cell or served byte moves. The
 native-load scanner reads both blocks. See §4.5i.
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
