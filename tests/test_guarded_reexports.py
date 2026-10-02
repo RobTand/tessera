@@ -225,3 +225,12 @@ def test_reflective_getattr_of_a_namespace_keeps_the_union(tmp_path, module):
     })
     assert _select(repo)["verdict"] == "full"
 
+
+@pytest.mark.parametrize("module", ["helper", "facade"])
+def test_called_namespace_helper_cannot_publish_a_guarded_summary(tmp_path, module):
+    hook = _HOOK + f"from support.{module} import touch\ntouch()\n"
+    repo = _fixture(tmp_path, hook=hook, extra={
+        "support/helper.py": "import sys\ndef touch():\n    sys._getframe(1).f_globals['_NAMES'] = frozenset({'__path__', 'lazy'})\n",
+        "support/facade.py": "from .helper import touch\n",
+    })
+    assert _select(repo)["verdict"] == "full"

@@ -2305,7 +2305,12 @@ through ordinary re-exports as a finite union.
 Ambiguous
 spellings still resolve to every candidate through the existing module resolver.
 All ordinary imports and package-initialization effects remain dependencies;
-the guard worklist terminates on cycles. The receipt reports
+the guard worklist terminates on cycles. Known helper namespace effects
+(including `f_globals` and reflective access) reuse the source-execution
+helper-call fixed point and lexical resolver as a separate effect fact;
+calling such a helper refuses a guarded summary, including through a re-export.
+Star imports cannot prove unshadowed guard bindings and retain the union.
+This is bounded helper recognition, not a general evaluator. The receipt reports
 `uncertainty_guarded_imports_skipped` with provider, literal guard names and
 predecessor witnesses separately from collection-probe exclusions. Changed and
 uncertain seeds traverse the same annotated graph under their respective rules;

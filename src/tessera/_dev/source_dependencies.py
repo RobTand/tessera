@@ -122,13 +122,13 @@ def module_import_requests(tree, module, *, is_package=False, omit=frozenset(), 
     return found
 
 
-def _namespace_access(scanner, tree, *, forwarding_call=None):
+def _namespace_access(scanner, tree, *, forwarding_call=None, calls=None):
     """Possible access to mutable Python namespaces, including lexical aliases."""
     if any(isinstance(node, ast.Attribute) and node.attr in
            {"__dict__", "__globals__", "__getattr__", "__builtins__", "f_globals", "f_locals"}
            for node in ast.walk(tree)):
         return True
-    for call, scope in scanner.calls:
+    for call, scope in scanner.calls if calls is None else calls:
         symbols = _possible_symbols(call.func, scope)
         # A proved module hook forwards only its closed literal name domain.
         # Other dynamic getattr calls or namespace attributes are unknown,
@@ -239,6 +239,10 @@ def guarded_reexport(tree):
 
     bindings = defaultdict(list)
     for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names):
+            # Star imports cannot prove that the guard's builtins or bindings
+            # stayed unshadowed, even if no explicit rebinding is written.
+            return None
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             bindings[node.id].append(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -878,7 +882,8 @@ def _helper_capability(capable, edges):
         capable = expanded
 
 
-def source_execution_modules(trees, modules, targets, *, scanners=None):
+def source_execution_modules(trees, modules, targets, *, scanners=None,
+                             namespace_modules=None, forwarding_calls=None):
     """Files that call a source executor, including known imported helpers.
 
     ``targets`` is the selector's authoritative, ambiguity-preserving module
@@ -888,11 +893,13 @@ def source_execution_modules(trees, modules, targets, *, scanners=None):
     Unknown external origins and generic read parameters remain unknown.
     """
     functions = {}
+    owners = {}
     scopes = {}
     calls = {}
     for path, tree in trees.items():
         scanner = _Scanner(path, modules[path])
         scanner.visit(tree)
+        owners[path] = scanner
         if scanners is not None:
             scanners[path] = scanner
         functions[path] = scanner.functions
@@ -932,6 +939,29 @@ def source_execution_modules(trees, modules, targets, *, scanners=None):
         for path, defined in functions.items() for name, alternatives in defined.items()
     }
     capable = _helper_capability(capable, edges)
+    if namespace_modules is not None:
+        forwarding_calls = forwarding_calls or {}
+
+        def namespace_effect(path, subtree):
+            nodes = set(ast.walk(subtree))
+            scoped_calls = ((call, scope) for call, scope in owners[path].calls if call in nodes)
+            return _namespace_access(
+                owners[path], subtree, forwarding_call=forwarding_calls.get(path), calls=scoped_calls)
+
+        # The same function roster, lexical symbols, resolver and call edges
+        # carry this second conservative effect. No returned-callable, runtime
+        # origin or general Python evaluation is inferred.
+        namespace_helpers = _helper_capability({
+            (path, name) for path, defined in functions.items()
+            for name, alternatives in defined.items()
+            if any(namespace_effect(path, function) for function in alternatives)
+        }, edges)
+        namespace_modules.update({
+            path for path, tree in trees.items()
+            if namespace_effect(path, tree)
+            or any(helper in namespace_helpers for symbols in calls[path].values()
+                   for helper in helpers(symbols))
+        })
     return {
         path for path, tree in trees.items()
         if any(_source_call(call, symbols) for call, symbols in calls[path].items())

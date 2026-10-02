@@ -366,16 +366,20 @@ def import_graph(
         tree = _read_python_source(path, root, unreadable)
         if tree is not None:
             trees[path] = tree
-    scanners = {}
+    provisional = {path: summary for path, tree in trees.items()
+                   if (summary := guarded_reexport(tree)) is not None}
+    scanners, namespace_modules = {}, set()
     executing = source_execution_modules(
         trees, {path: module_of[node] for node, path in by_name.items()},
         lambda spelling: tuple(by_name[node] for node in _targets(spelling)),
         scanners=scanners,
+        namespace_modules=namespace_modules,
+        forwarding_calls={path: summary[3] for path, summary in provisional.items()},
     )
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()
-    guarded = {path: summary for path, tree in trees.items()
-               if path not in executing and (summary := guarded_reexport(tree)) is not None}
+    guarded = {path: summary for path, summary in provisional.items()
+               if path not in executing and path not in namespace_modules}
     requests_of = {
         path: module_import_requests(
             tree, module_of[nodes[path]], is_package=path.name == "__init__.py",
