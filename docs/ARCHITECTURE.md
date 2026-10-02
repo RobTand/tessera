@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for bounded Netdata phase evidence (Refs #819).
+`experiments/box_power_window.py` requests unaligned data and accepts only
+whole returned groups within the requested phase. It retains the raw response,
+requested and returned windows, rejected groups and actual accepted coverage;
+a straddling group is unknown for this phase and is never interpolated into
+its power statistics. This repairs provenance, without claiming that the
+coarse sensor values or any historical energy comparison are qualified.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
