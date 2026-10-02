@@ -82,8 +82,10 @@ def test_token_sum_shared_refuses_a_cpu_output_even_for_an_empty_workload(lib):
     Zero tokens make the pre-fix control safe: its vecs==0 return precedes
     the CUDA launch. Nonempty CPU output would give the kernel a host pointer.
     """
-    routed = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")
-    shared = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")
+    # Retain real device allocations so a selected strict-CUDA run observes
+    # device work even though the binding receives zero-token views.
+    routed = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")[:0]
+    shared = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")[:0]
     out = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cpu")
     with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
         rf._ext(lib).token_sum_shared(routed, shared, out, GLM_TOP_K)
@@ -93,7 +95,7 @@ def test_token_sum_shared_refuses_a_cpu_output_even_for_an_empty_workload(lib):
 @pytest.mark.parametrize("lib", tuple(rf.LIBRARIES))
 def test_original_token_sum_refuses_a_cpu_output_even_for_an_empty_workload(lib):
     """#859: zero tokens expose the original binding's device hole safely."""
-    routed = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")
+    routed = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")[:0]
     out = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cpu")
     with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
         rf._ext(lib).token_sum(routed, out, GLM_TOP_K)
