@@ -37,7 +37,7 @@ its source digest if deployed as a runtime. The repository producer owns
 its stdlib schema separately from an isolated subprocess using an accepted
 installed runtime, whose original cell source remains strict. This code
 publishes bounded operator measurements, never cells or runtimes, and cannot
-restamp old b40/v42 evidence. The repository application
+restamp original b40/contract-v45 evidence. The repository application
 `tools/tessera_shape_time_panel.py` preflights that context and uses the
 public native create/load/finalize/apply path, fresh route telemetry and
 existing CUDA-event/box instruments. It independently observes imported
@@ -57,7 +57,8 @@ producer then uses the existing planner's extracted private pure core, retaining
 its explicit registry hash. Local public planning and panel validation still
 strictly validate against their own package. External final panel validation
 requires the verified installed object and bound phase evidence; CLI replay
-reruns CPU preflight from the original request and job. The first b508 pilot
+reruns CPU preflight in a separate current-worker job bound to the original
+request, producer and wire roles. The first b508 pilot
 failed at producer-owned validation before CUDA, so it supplied no timings.
 The same CLI emits a versioned, input-bound handoff
 `tessera.shape_time_observation.v1` when `check` is given an externally

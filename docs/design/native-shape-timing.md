@@ -55,7 +55,7 @@ Deploying these new Python sources as a runtime changes its package identity.
 The repository producer instead loads its own passive schema in a separate
 process while the native worker imports an independently pinned installed
 runtime. An unchanged b40/v45 runtime retains its original cells; current
-b40/v42 panels are not rewritten or relabeled. A GPU pilot still requires
+original b40/v45 panels are not rewritten or relabeled. A GPU pilot still requires
 separate acceptance of the exact observed runtime and requested cell.
 CPU stand-ins validate this contract without claiming GPU execution.
 
@@ -127,7 +127,7 @@ The first accepted native GPU pilot and independent fresh installed CPU replay
 qualify the bounded execution path at q896/M512/N=K256/TP1 under b40/raw0869/f8.
 They establish no full-menu, serving, numerical/quality, compiled or cell qualification. The producer commit and schema origin are independent from the worker
 runtime's source; no unchanged pinned runtime requires requalification solely
-for a new producer checkout. No existing b40/v42 or other cell is relabeled, no census
+for a new producer checkout. No existing b40/v45 or other cell is relabeled, no census
 is published, and no PrismaQuant timing consumer or pin changes in this slice.
 
 The installed runtime uses its owning noneditable Git VCS metadata and full

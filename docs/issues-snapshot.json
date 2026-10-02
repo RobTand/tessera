@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T20:36:16Z",
+ "generated": "2026-10-02T21:00:08Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4958,6 +4958,22 @@
    "2112": {
     "state": "OPEN",
     "title": "Bind shape-time prices to reviewed PB checker completions"
+   },
+   "2113": {
+    "state": "OPEN",
+    "title": "[P2] Own-process skipped test proxy has no line location and crashes pytest reporting"
+   },
+   "2114": {
+    "state": "OPEN",
+    "title": "Validate measured activation metadata when reusing campaign rows"
+   },
+   "2115": {
+    "state": "OPEN",
+    "title": "[P3] Compact and bound remaining Stage B read-plan metadata"
+   },
+   "2116": {
+    "state": "OPEN",
+    "title": "Preserve source locations for own-process skipped tests"
    },
    "212": {
     "state": "CLOSED",
@@ -11810,7 +11826,7 @@
     "title": "GLM-5.3 MLA: reuse FP8 pass buffers with retained native build identity"
    },
    "855": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Possible persistent-kernel terminal FULL barrier reuse before consumer acknowledgment"
    },
    "856": {
@@ -11838,7 +11854,7 @@
     "title": "Add an uninstalled SP mHC tile pipeline and finite TP2 probe"
    },
    "861": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Drain the reused terminal barrier in persistent kernels"
    },
    "862": {

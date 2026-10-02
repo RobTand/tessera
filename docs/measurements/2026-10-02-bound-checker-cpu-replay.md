@@ -79,3 +79,37 @@ CAS receipt `cb09d4f7283e011e624e1849cb4a57529aa3ca8cdd1167b8f42b187df45ad33c`.
 It reserved one CPU and 1 GiB on dl380g10. A prior submission stopped before
 publication because the results document was added during snapshotting;
 it produced no action or execution result and is superseded by this check.
+
+## Root Review Rebase
+
+The delivery branch was ordinarily rebased onto master
+`5133f84625c4deb34fc5812b3132cb40611aac8d`, including MLA pass-buffer PR #854.
+Only the architecture provenance insertion conflicted; both the MLA and
+shape-checker blocks were retained. The three producer modules and both
+domain test files have identical Git blobs before and after the rebase:
+
+| File | Git blob |
+| --- | --- |
+| `src/tessera/serving/timing_panel.py` | `3e6ec647a89bd28474ea5b93c3f338f1c00686a0` |
+| `tools/tessera_shape_time_panel.py` | `cb3b15fbf9e2f3f174dc59f7aa3f9bf168bb0497` |
+| `tools/tessera_shape_time_worker.py` | `057e8db099da298e0a00726ad7fa48273394843b` |
+| `tests/test_native_shape_time_application.py` | `b2887f0f4a572f272c2397d5bab4e86c16cdc2fc` |
+| `tests/test_native_timing_panel.py` | `234ef09a9a6d3800dd267e1444c8600a508d92df` |
+
+The prior 102-test and compile receipts above remain attributable to their
+original sealed source. They were not rerun solely for this rebase. No new
+installed-runtime or GPU qualification is asserted. PQ's independent checker
+config still selects the original qualified `d28f1df...` snapshot with parent
+`c7f6d1a...`; rebasing this delivery branch does not repoint that approval.
+
+The existing `tools/refresh_issues.py` refreshed the actual issue snapshot.
+PB action `ac0eddb39786c8711a039368d5f2f385918c52c4d2cef0bf1b1723add3282089`
+ran `pytest -q -n 2 tests/test_issue_refs.py tests/test_refresh_issues.py` on
+dl380g10: rc0, eight passed, zero skips or missing modules and no CUDA
+allocations. Its CAS receipt is
+`cccf7bb9cd741db9d62d5d94bc84b27c202060a64448d7f5d3b790f7fcc0eeb7`.
+Published pbrun reserved two CPUs and 3 GiB with native threads one and CUDA
+withheld, using `/home/rob/venvs/pq-pbdc4803da-tessera-b40c93cb/bin/python`.
+Normative prose also corrects the stale b40/v42 spelling to b40/v45 and states
+the separate current-worker replay job instead of pretending to reuse the
+original worker job.
