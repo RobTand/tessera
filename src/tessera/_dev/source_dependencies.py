@@ -3,8 +3,9 @@
 The supported expressions are finite Path constructions, not arbitrary Python.
 A resolved target inside the tree is an exact edge whatever its suffix: a
 ``.py`` file is a module dependency, anything else is the data dependency it
-is.  A resolved target outside the tree is neither -- this repository's diff
-cannot change it.  An unresolved target is a wildcard edge instead of no edge.
+is. A boundary refusal retains module or data uncertainty; an outside spelling
+does not prove independence from this tree. An unresolved target retains the
+consumer's corresponding uncertainty instead of silently dropping its edge.
 
 **An unresolved target is a wildcard over Python only when the reader can run
 Python.**  A loader always can, by definition.  A plain read cannot: bytes are
