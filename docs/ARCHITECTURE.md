@@ -7458,6 +7458,8 @@ installs `serving.glm53_shared_fold`:
   path's two roundings in the same order, with the same `cvt.rn.bf16.f32`
   instruction ATen's bf16 store uses. GPU bitwise equality, unchanged
   existing-kernel SASS and served TR3 equality remain required qualification.
+  The shared-fold driver requires identical existing instruction sequences;
+  the generic SASS comparator's weaker multiset match cannot qualify this fold.
   `token_sum` and every other kernel are unchanged.
   `FusedRoutedWindowMoE.__call__` takes a keyword-only `shared=`.
 - The routed method's `_apply_native` calls the adapter through

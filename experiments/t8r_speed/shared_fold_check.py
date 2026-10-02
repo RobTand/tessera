@@ -18,7 +18,7 @@ add). With ``TESSERA_GLM53_FOLD_SHARED_ADD=1`` one kernel,
 2. **SASS.** With ``--base-source`` (the parent commit's
    ``routed_fused_window.cu``), ``experiments/t4_code/sass_dump.py`` compares
    every kernel of all four libraries built from it (the E2M1 one too). Every pre-existing kernel must be
-   identical or the same instruction multiset; the new kernel is the only one
+   identical instruction sequences; the new kernel is the only one
    added.
 3. **Screen.** ``torch.profiler`` at T 2048: stock (token_sum + add)
    against the fold, alternating, plus CUDA-event time per iteration. It runs
@@ -117,7 +117,9 @@ def sass_check(base_source, out_dir):
     added = sorted({k for r in rows.values() for k in r.get("only_after", [])})
     rec["only_after"] = added
     rec["passed"] = (cmp.returncode == 0 and set(rows) == set(SASS_LIBRARIES)
-                     and all(len(r.get("only_after", [])) == 1
+                     and all(not r.get("multiset") and not r.get("differs")
+                             and not r.get("only_before")
+                             and len(r.get("only_after", [])) == 1
                              and "token_sum_shared_kernel" in r["only_after"][0]
                              for r in rows.values()))
     return rec
