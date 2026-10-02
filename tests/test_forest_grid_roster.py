@@ -35,6 +35,28 @@ from tessera.alphabet import (
 from tessera.errors import GrammarError
 
 
+def test_importing_the_grid_roster_does_not_fit_lloyd_grids():
+    """Collection may discover grid cases without fitting unrequested grids."""
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    program = '''
+import importlib.util, sys
+from tessera import alphabet
+def refuse_collection_fit(*args, **kwargs):
+    raise AssertionError("Lloyd grid fitting happened during module import")
+alphabet.lloyd_max_grid = refuse_collection_fit
+spec = importlib.util.spec_from_file_location("grid_roster_probe", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+'''
+    result = subprocess.run([sys.executable, "-c", program, str(Path(__file__))],
+                            cwd=Path(__file__).resolve().parents[1],
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_build_forest_refuses_bf16_by_name_before_it_allocates():
     """R=1 is the cheapest BF16 cell (108 MiB) and is refused like every other.
 
@@ -88,15 +110,22 @@ def test_the_refused_set_is_what_the_recipe_table_calls_window_only():
     assert window_only - refused == {"E4M3"}
 
 
+@pytest.fixture
+def grid(request):
+    """Construct a grid only when its buildability case is selected."""
+    return request.param()
+
+
 @pytest.mark.parametrize(
     "grid",
     [
-        pytest.param(E2M1_GRID, id="E2M1"),
-        pytest.param(E4M3_GRID, id="E4M3"),
-        pytest.param(tuple_grid(E2M1_GRID, 2), id="E2M1x2"),
-        pytest.param(lloyd_max_grid(16), id="free-scalar-16"),
-        pytest.param(tuple_grid(lloyd_max_grid(32), 2), id="free-tuple-1024"),
+        pytest.param(lambda: E2M1_GRID, id="E2M1"),
+        pytest.param(lambda: E4M3_GRID, id="E4M3"),
+        pytest.param(lambda: tuple_grid(E2M1_GRID, 2), id="E2M1x2"),
+        pytest.param(lambda: lloyd_max_grid(16), id="free-scalar-16"),
+        pytest.param(lambda: tuple_grid(lloyd_max_grid(32), 2), id="free-tuple-1024"),
     ],
+    indirect=True,
 )
 def test_every_other_grid_still_builds(grid):
     """Measuring on an unregistered grid stays open, however wide it is.

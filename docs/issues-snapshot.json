@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-02T21:00:08Z",
+ "generated": "2026-10-02T21:38:41Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4975,9 +4975,37 @@
     "state": "OPEN",
     "title": "Preserve source locations for own-process skipped tests"
    },
+   "2117": {
+    "state": "OPEN",
+    "title": "Prepare genuine checkpoint export component for PB905 pacing A/B"
+   },
+   "2118": {
+    "state": "OPEN",
+    "title": "[P2] Bind checkpoint streaming to immutable executable input phases"
+   },
+   "2119": {
+    "state": "OPEN",
+    "title": "Prepare original source copy lifetime controls and owned identity intake"
+   },
    "212": {
     "state": "CLOSED",
     "title": "Bind Tessera export inputs to the payload and values that priced the allocation (#204)"
+   },
+   "2120": {
+    "state": "OPEN",
+    "title": "Compact bounded Stage B read-plan metadata"
+   },
+   "2121": {
+    "state": "OPEN",
+    "title": "Prepare original copy lifetimes and bind owned source identities"
+   },
+   "2122": {
+    "state": "OPEN",
+    "title": "Integrate accepted B32 repairs with source-bound focused qualification"
+   },
+   "2123": {
+    "state": "OPEN",
+    "title": "Bind checkpoint streaming to sealed consuming input phases"
    },
    "213": {
     "state": "CLOSED",
@@ -11866,7 +11894,7 @@
     "title": "[P0] Exact SP can consume an unwritten reduce-scatter output when PyNccl is disabled"
    },
    "864": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: reuse immutable checkout graph in impacted-selector test fixture"
    },
    "865": {
@@ -11876,6 +11904,14 @@
    "866": {
     "state": "OPEN",
     "title": "Refuse exact SP before unavailable PyNccl writers"
+   },
+   "867": {
+    "state": "CLOSED",
+    "title": "test: remove repeated pure CI fixture work"
+   },
+   "868": {
+    "state": "OPEN",
+    "title": "Add opt-in R4 piece-major placement for routed E4M3 MMA"
    },
    "87": {
     "state": "CLOSED",
