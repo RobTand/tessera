@@ -1,8 +1,8 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-02 for shared inspected-stock interface facts. Prefill,
-empty-RoPE and shared-add guards reuse `serving.stock_interface`; each lever
-keeps its own pins and parameters. Complete digest tuples stay indivisible.
+Re-stamped 2026-10-02 for shared inspected-stock interface facts. The current prefill
+guards reuse `serving.stock_interface` and keep their own pins and parameters.
+Empty-RoPE and shared-add adaptations remain separate experimental follow-ups. Complete digest tuples stay indivisible.
 Unreadable source/attributes/signatures decline to stock, with no installation
 framework, format, default, runtime pin or serving qualification change.
 
