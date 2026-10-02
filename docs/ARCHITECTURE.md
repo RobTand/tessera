@@ -18,6 +18,26 @@ and an install path acts only on its own published entry. The block is empty
 at v54, so no override installs and no route, cell or served byte moves. The
 native-load scanner reads both blocks. See §4.5i.
 
+Re-stamped 2026-10-02 for `tessera.kda_conv_screen.v2` (tessera#814),
+reviewed by Astra after the original ex2 output witness proved impossible
+in the measured operation order. Four required mutations change actual
+output or state; ex2-ftz instead requires an active raw exponential
+difference and identical downstream denominator/FP32/BF16 bits. The
+control refuses absent, malformed, vacuous or stale source/compiled
+evidence. The original v1 failure remains history. No serving contract,
+route or default changes. See §5.1.3 and
+[the bound control and proof](measurements/2026-10-02-kda-ex2-equivalence.md).
+
+Re-stamped 2026-10-02 for the KDA convolution screen's fail-closed admission
+(the initial v1 contract, tessera#814). The experimental PTX reference follows the pinned stock
+prefill's width-minus-one history at the beginning of the physical cache,
+and compares actual q/k/v output and the entire convolution state as raw
+BF16 bits. Required mutants must differ from the unmutated candidate;
+a shared mismatch against stock is no mutation witness. A failed or
+vacuous screen returns nonzero and stops later timing parts. No serving
+override, runtime contract, format, route or default changes. See §5.1.3
+and [the recovery evidence](measurements/2026-10-02-kda-screen-recovery.md).
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -7016,6 +7036,36 @@ Every flag that rebinds a stock method or changes a stock default stays off by d
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv
 split that A/B is the VAL787 window (arms VS, VK and VB against V0).
+
+`experiments/mhc/mhc_probe.py --parts kdaptx --numerics-only` is the
+convolution reference screen for potential future FlashKDA fusion. It is
+not a serving override. It compares actual q/k/v output and the whole
+convolution state bit for bit, including spare/speculative columns and
+unused cache slots. The logical prefill history is `KERNEL_WIDTH - 1`,
+regardless of physical cache length; for width four, stock reads and
+writes columns 0..2. Contract `tessera.kda_conv_screen.v2` requires FMA,
+division, physical-tail-read and physical-tail-write mutations to differ
+from the unmodified candidate in actual output or state. Ex2-ftz remains
+required as a separate observable: an actual subnormal FP32 exponential
+must differ, while the rounded `+1` denominator, FP32 SiLU and BF16 output
+remain bit-identical. Actual raw words, summaries, finite-input scope and
+current PTX/build flags/compiled module/SASS digests are checked. Missing,
+malformed, stale or vacuous control evidence fails; the entire convolution
+matrix must also observe no ex2 output/state difference. Admission requires
+the complete 24-case roster from the same `KDA_PTX_CASES` definition the
+producer uses, matched geometry/sequence lengths/history masks, typed
+raw-word comparison counts and equality flags, q/k/v slice totals and
+case-derived aggregate summaries. Any failure
+stops later parts. The original v1 failure is preserved, not re-labelled.
+Banked cases are reused only when relevant device text and test inputs
+are unchanged; the artifact audit seals expected JSON and old-module
+digests, requires the compared new module to equal the control's compiled
+identity, requires every mode in `KDA_PTX_MODES` exactly once in each cubin
+(no extra/missing mode), and checks the installed stock source. The screen
+explicitly does not cover recurrent output or final recurrent state, and
+cannot admit a fused serving implementation by itself. `kdafwd` is a
+separate stock-kernel timing screen; its results require PrismaBuild's
+measurement admission and both in-process and host telemetry.
 
 ### 5.2 What the wheel ships besides Python
 

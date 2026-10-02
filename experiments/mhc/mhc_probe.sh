@@ -6,7 +6,8 @@
 #   mhc_probe.sh <checkout> <out_dir> <mhc_probe.py args...>
 # The container mounts the checkout and the served checkpoint read-only and
 # writes only under <out_dir>.  ORACLE_NCU=1 runs the NCU-gated mHC calls under
-# Nsight Compute instead, filtered to the three stock mHC kernels.
+# Nsight Compute instead, filtered to the three stock mHC kernels (ORACLE_NCU_KERNELS
+# overrides the filter, e.g. 'regex:_flash_kda_fwd' with --ncu-part kda).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
@@ -31,7 +32,7 @@ if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
   EXTRA_MOUNTS=(--mount "type=bind,src=$NCU_ROOT,dst=$NCU_ROOT,readonly")
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all
-    --kernel-name 'regex:mhc_post|hc_prenorm_gemm|mhc_pre_big_fuse'
+    --kernel-name "${ORACLE_NCU_KERNELS:-regex:mhc_post|hc_prenorm_gemm|mhc_pre_big_fuse}"
     --section LaunchStats --section Occupancy --section SpeedOfLight
     --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Tables
     --section WarpStateStats --section SchedulerStats
@@ -47,6 +48,7 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e PYTHONPATH=/work/src:/work/tests:/work/experiments -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
+  -e MAX_JOBS="${MAX_JOBS:-2}" \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${PREFIX[0]}" -w /work "$IMAGE_REF" \
