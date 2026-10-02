@@ -453,3 +453,16 @@ def test_uninspectable_stock_declines_without_rebinding(shared_fold,monkeypatch,
     assert mod.install_for_current_config() is False
     assert shared_fold.runner._maybe_apply_routed_scale_to_output is before
     assert not mod._STATE.get('installed')
+
+
+@pytest.mark.parametrize('exception',[OSError,ValueError,TypeError])
+def test_unavailable_stock_class_declines_without_rebinding(shared_fold,monkeypatch,exception):
+    mod=shared_fold.mod;monkeypatch.setenv(mod.FLAG,'1')
+    stock=sys.modules[RUNNER]
+    class UnavailableClassModule(types.ModuleType):
+        def __getattribute__(self,name):
+            if name=='MoERunner':raise exception('stock class unavailable')
+            return super().__getattribute__(name)
+    broken=UnavailableClassModule(stock.__name__);broken.__file__=stock.__file__
+    monkeypatch.setitem(sys.modules,RUNNER,broken)
+    assert mod.install_for_current_config() is False
