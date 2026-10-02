@@ -1146,6 +1146,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
                 self._native = prepared.adapter()
+                self._packed = prepared.native_owner()
                 if research_selected is not None:
                     self._research_phase = 'ready'
                 # The adapter names its own launch: the compact Triton pair

@@ -490,6 +490,24 @@ class PackedWindowMoeBundles:
         if fused is not None:
             yield from fused.named_tables()
 
+    def native_owner(self):
+        """The retained owner after selection; caller-held compact inputs stay intact.
+
+        Construction/refusal is still owned by ``adapter``. A compact fallback
+        returns this original owner, while a successful fused selection keeps
+        its projection views plus the already-prepared native tables.
+        """
+        selected = self.adapter()
+        fused = self.__dict__.get("_fused_adapter")
+        if fused is None or selected is not fused:
+            return self
+        if self.gate is fused.gate and self.up is fused.up and self.down is fused.down:
+            return self
+        owner = dataclasses.replace(self, gate=fused.gate, up=fused.up, down=fused.down)
+        object.__setattr__(owner, "_adapter", selected)
+        object.__setattr__(owner, "_fused_adapter", fused)
+        return owner
+
     def adapter(self):
         """The routed-expert compute over these bundles, built once.
 

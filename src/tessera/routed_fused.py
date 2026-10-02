@@ -819,6 +819,8 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     want_arith = "folded" if fam == "value" else "epilogue"
     e = int(down.experts)
     for name, b in bundles.items():
+        if b.perm_all is None:
+            return f"{name} compact planes were retired; use its already-prepared fused owner"
         if b.family != fam:
             return f"{name} family {b.family!r} differs from down's {fam!r}"
         if b.arithmetic != want_arith:
@@ -1011,7 +1013,16 @@ class FusedRoutedWindowMoE:
         runs_gate, bdesc_gate, tw_gate, sw_gate = projection_tables(gate)
         runs_up, bdesc_up, _tw_up, sw_up = projection_tables(up)
         runs_down, bdesc_down, tw_down, sw_down = projection_tables(down)
-        return cls(gate=gate, up=up, down=down, family=down.family, arithmetic=down.arithmetic,
+        # All compact inputs stay valid for their caller. The native owner keeps
+        # independent frozen views of only the planes its launch still reads;
+        # lookup/permutation/run composition above has already succeeded.
+        def native_view(bundle):
+            return dataclasses.replace(bundle, table_all=None, codes_all=None, native_all=None,
+                runs_all=None, word_off=None, tile_words=None, total_words=None,
+                run_off=None, perm_all=None)
+
+        return cls(gate=native_view(gate), up=native_view(up), down=native_view(down),
+                   family=down.family, arithmetic=down.arithmetic,
                    library=library,
                    table_gate=compose_table(gate, library), table_up=compose_table(up, library),
                    table_down=compose_table(down, library),

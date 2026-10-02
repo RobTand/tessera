@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
+The selected fused owner retains immutable projection views of the words,
+scale and initial-state planes plus its composed native tables, run pairs,
+descriptors and counters. The resident route replaces its compact preparation
+owner only after native selection succeeds. Caller-held compact bundles and
+views remain intact; a refused or unavailable native lane keeps the complete
+compact fallback. Retired projection views refuse compact execution and
+recomposition. Wire bytes, arithmetic and native dispatch do not change.
+CPU lifetime controls establish ownership, not GPU allocator savings or
+served throughput; the fullserve admission bounds remain unchanged pending
+matched before/after device and host measurements.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,
