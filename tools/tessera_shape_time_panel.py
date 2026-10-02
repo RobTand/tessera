@@ -185,12 +185,27 @@ def owned_job(request_path, request, wire, output):
     return producer,roles,worker_source,job_source
 
 
-def measure(request_path, output, *, expected_request_sha256):
+def prepare_request_phase(request_path, output, expected_request_sha256):
     request,scope,wire=read_request(request_path,expected_sha256=expected_request_sha256)
     output=Path(output).resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
     producer,roles,worker_source,job_source=owned_job(request_path,request,wire,output)
     if tp.json_bytes(tp.read_bound(job_source))["request_source"]["sha256"]!=expected_request_sha256:
         raise ValueError("owned original request changed")
+    return request,scope,wire,output,producer,roles,worker_source,job_source
+
+
+def preflight_request(request_path, output, *, expected_request_sha256):
+    request,scope,_,output,_,_,_,job_source=prepare_request_phase(request_path,output,expected_request_sha256)
+    validation=run_runtime_preflight(request,job_source,output)
+    plan=census_plan._build_validated_census_plan([scope],raw_contract=validation.raw_contract,
+                                                contract=tp.json_bytes(validation.raw_contract))
+    return publish_json({"status":"unmeasured","gpu_executed":False,"plan":plan,
+                         "preflight":{"result":tp.file_binding(output/"runtime-preflight.json"),
+                                      "phase":tp.file_binding(output/"runtime-preflight-phase.json")}},output/"preflight-plan.json")
+
+
+def measure(request_path, output, *, expected_request_sha256):
+    request,scope,wire,output,producer,roles,worker_source,job_source=prepare_request_phase(request_path,output,expected_request_sha256)
     validation=run_runtime_preflight(request,job_source,output)
     plan=census_plan._build_validated_census_plan([scope],raw_contract=validation.raw_contract,
                                                 contract=tp.json_bytes(validation.raw_contract))
@@ -227,12 +242,16 @@ def main(argv=None):
     preflight.add_argument("request", type=Path)
     seal = sub.add_parser("seal-producer")
     seal.add_argument("--output", type=Path, required=True)
+    installed=sub.add_parser("preflight-request")
+    installed.add_argument("--request",type=Path,required=True);installed.add_argument("--request-sha256",required=True)
+    installed.add_argument("--output",type=Path,required=True)
     run = sub.add_parser("measure")
     run.add_argument("--request", type=Path, required=True);run.add_argument("--request-sha256", required=True)
     run.add_argument("--output", type=Path, required=True)
     args = ap.parse_args(argv)
     try:
         if args.action == "seal-producer": result = seal_producer(args.output)
+        elif args.action == "preflight-request":result=preflight_request(args.request,args.output,expected_request_sha256=args.request_sha256)
         elif args.action == "check":
             panel=tp.json_bytes(args.panel.read_bytes());expected=tp.json_bytes(args.expected_runtime.read_bytes())
             if "preflight" in panel:
