@@ -21,7 +21,7 @@ class Identity(ctypes.Structure):
                 ('stock_smem',ctypes.c_longlong),('l0_smem',ctypes.c_longlong)]
 
 class MlaPrefillLibrary:
-    def __init__(self, build_directory, *, mutation=False):
+    def __init__(self, build_directory, *, mutation=False, p0_buffers=False):
         from flashinfer.jit.env import FLASHINFER_INCLUDE_DIR, CCCL_INCLUDE_DIRS
         report = ext.toolchain_report(torch)
         nvcc = report['nvcc']
@@ -36,7 +36,13 @@ class MlaPrefillLibrary:
             build_directory = _get_build_directory('tessera_mla_prefill', verbose=False)
         self.source = Path(ext.native_source_path('tessera_mla_prefill_'))
         self.source_sha256 = hashlib.sha256(self.source.read_bytes()).hexdigest()
-        self.flags = FLAGS + (['-DTESSERA_MLA_MASK_GATE_DROP_LAST=1'] if mutation else [])
+        # p0_buffers selects the experiment-private W_SUM pass-buffer schedule
+        # (see experiments/mla_prefill/P0_BUFFERS_PACKET.md). It is NOT a serving
+        # flag: the default build has TESSERA_MLA_P0_BUFFERS=0 and is the shipped
+        # L0 kernel. Sealed into the build identity below, so the two kernels
+        # never share a cached .so -- the same pattern as `mutation`.
+        self.flags = FLAGS + (['-DTESSERA_MLA_MASK_GATE_DROP_LAST=1'] if mutation else []) \
+            + (['-DTESSERA_MLA_P0_BUFFERS=1'] if p0_buffers else [])
         self.build_id = hashlib.sha256((self.source_sha256 + repr(self.flags)).encode()).hexdigest()
         name = f'tessera_mla_prefill_{self.build_id[:16]}'
         Path(build_directory).mkdir(parents=True,exist_ok=True)
@@ -51,7 +57,7 @@ class MlaPrefillLibrary:
             'library_sha256': hashlib.sha256(Path(self.path).read_bytes()).hexdigest(),
             'stock_prefill_header_sha256': hashlib.sha256((Path(FLASHINFER_INCLUDE_DIR)/
                 'flashinfer/attention/sparse_mla_sm120/kernels/fp8_prefill/prefill_mg.cuh').read_bytes()).hexdigest(),
-            'mutation': mutation}
+            'mutation': mutation, 'p0_buffers': p0_buffers}
         library_path = f'{build_directory}/tessera_mla_prefill_{self.build_id[:16]}.so'
         if Path(self.path).resolve() != Path(library_path).resolve():
             raise RuntimeError('JIT returned a library outside the declared identity')

@@ -82,6 +82,25 @@ namespace tessera_mla_prefill {
 constexpr int MASK_IO_BARRIER = 6;     // the 128 IO threads, after each warp's partial mask
 constexpr int MASK_READY_BARRIER = 7;  // IO arrives, math syncs: the mask is published
 
+// P0_BUFFERS (experiment-private, not a serving flag). 0 is the current
+// qualified L0 schedule, byte-for-byte the kernel that shipped. 1 reuses the
+// two W_SUM parities as pass0/pass1 storage of a single V chunk, so one
+// publication barrier covers both residual passes. See the PR packet for the
+// ownership proof; the serving default selects 0 until later acceptance.
+#ifndef TESSERA_MLA_P0_BUFFERS
+#define TESSERA_MLA_P0_BUFFERS 0
+#endif
+#if TESSERA_MLA_P0_BUFFERS != 0 && TESSERA_MLA_P0_BUFFERS != 1
+#error "TESSERA_MLA_P0_BUFFERS must be 0 (L0) or 1 (W_SUM parity reuse)"
+#endif
+// Qualification-only causal mutant for the pass-buffer schedule. When set with
+// TESSERA_MLA_P0_BUFFERS=1, pass1's PV reads pass0's bytes, so the result is
+// deterministically wrong regardless of timing -- a negative control that a
+// bitwise gate must catch. Never selected by the plugin.
+#ifndef TESSERA_MLA_P0_WRONG_PASS
+#define TESSERA_MLA_P0_WRONG_PASS 0
+#endif
+
 constexpr ModelType MODEL = ModelType::GLM53_NOPE;
 constexpr QkComputeMode QK_MODE = QkComputeMode::FP8;
 constexpr int NUM_HEADS = 32;
@@ -89,6 +108,23 @@ constexpr int PAGE_BLOCK = 64;
 constexpr int GROUPS = 2;  // MG_N_HG_DEFAULT
 
 using Layout = SmemLayoutMG<MODEL, QK_MODE>;
+// The two W_SUM parities this schedule owns: WFP8_PARITY_STRIDE bytes each,
+// N_HG*HPB*(BI+16) = 2*16*80 = 2560, total 5120 (cf. smem_layout.cuh).
+constexpr size_t WFP8_PARITY_STRIDE = 2560;
+static_assert(Layout::SMEM_W_FP8_MG == 2 * WFP8_PARITY_STRIDE,
+              "the pass-buffer schedule assumes exactly two 2560-byte parities");
+static_assert(2 * WFP8_PARITY_STRIDE == 5120, "W_SUM is 5120 bytes");
+// Closed scope: one model, FP8 QK, 32 heads, 64-key tiles, two 16-head groups,
+// no V RoPE, arbitrary FP32 inline scales. Nothing here generalizes.
+static_assert(NUM_HEADS == 32 && PAGE_BLOCK == 64 && GROUPS == 2);
+static_assert(Layout::N_HG == 2);
+static_assert(BI == 64, "the pass-buffer schedule assumes 64-key tiles");
+static_assert(KVCacheTraits<MODEL>::QUANT_TILE == 128, "128-wide V quant groups");
+static_assert(KVCacheTraits<MODEL>::D_NOPE / KVCacheTraits<MODEL>::QUANT_TILE == 4,
+              "four V chunks");
+static_assert(KVCacheTraits<MODEL>::D_NOPE == 512 && KVCacheTraits<MODEL>::D_ROPE == 0);
+static_assert(KVCacheTraits<MODEL>::SCALE_FORMAT == ScaleFormat::ARBITRARY_FP32);
+static_assert(KVCacheTraits<MODEL>::SCALE_IN_KV_SMEM && !KVCacheTraits<MODEL>::V_HAS_ROPE);
 constexpr size_t STOCK_SMEM = Layout::TOTAL;
 // Four per-IO-warp partial masks, after FlashInfer's layout.
 constexpr size_t MASK_OFFSET = (Layout::TOTAL + 7) / 8 * 8;
@@ -478,9 +514,80 @@ __device__ __forceinline__ void prefill_mg_l0_impl(const bf16* __restrict__ Q,
         sm.w_head_sc_all()[i] = fmaxf(sm.w_head_sc_all()[i], 1e-10f) / FP8_MAX;
       bar_sync_t<Fp8PrefillSync::MATH, MATH_THREADS>();
 
-      // ── XV nope MMA (per-vc barrier, D2 direct B), arbitrary FP32 scales ──
+      // ── XV nope MMA (D2 direct B), arbitrary FP32 scales ──
+      // TESSERA_MLA_P0_BUFFERS==0 is L0: per-vc, both passes share one parity,
+      // with a between-pass retirement barrier. ==1 reuses the two W_SUM
+      // parities as pass0/pass1 of this one V chunk, so a single publication
+      // barrier covers both passes. The PV per-accumulator sequence and the
+      // expression association are identical in both schedules.
 #pragma unroll
       for (int vc = 0; vc < CT::N_V_CHUNKS; vc++) {
+#if TESSERA_MLA_P0_BUFFERS
+        // Pass p lives in parity p; an all-math retirement barrier retires the
+        // previous V chunk's readers before either parity is rewritten.
+        uint8_t* wfp8_parities[MG_N_HG][2];
+#pragma unroll
+        for (int wp = 0; wp < 2; wp++)
+#pragma unroll
+          for (int g = 0; g < MG_N_HG; g++)
+            wfp8_parities[g][wp] =
+                sm.w_fp8() + wp * SMG::WFP8_PARITY_STRIDE + g * SMG::WFP8_GRP_SIZE;
+        if (vc > 0) bar_sync_t<Fp8PrefillSync::MATH, MATH_THREADS>();
+        float vsc0 = vsc_cache[vc][0], vsc1 = vsc_cache[vc][1];
+        float xv_acc[MG_N_HG][CT::NT_PER_WARP_XV][4] = {0};
+#pragma unroll
+        for (int wp = 0; wp < 2; wp++)
+#pragma unroll
+          for (int g = 0; g < MG_N_HG; g++) {
+            float* vc_sc = sm.w_head_sc_all() + g * SMG::WSC_GRP_STRIDE + vc * HPB;
+            uint8_t* p_vscale_fp8 = wfp8_parities[g][wp];
+            float si0 = 1.f / vc_sc[gid], si1 = 1.f / vc_sc[gid + 8];
+            float w0 = p[g][0], w1 = p[g][1];
+            float w2 = p[g][2], w3 = p[g][3];
+            float wn00 = w0 * vsc0 * si0, wn01 = w1 * vsc1 * si0;
+            float wn10 = w2 * vsc0 * si1, wn11 = w3 * vsc1 * si1;
+            Fp8WeightQuad wq =
+                quantize_weight_quad_for_pass<KV::SCALE_FORMAT>(wn00, wn01, wn10, wn11, wp);
+            int wrow0 = gid, wrow1 = gid + 8;
+            if constexpr (USE_WFP8_ROW_XOR) {
+              wrow0 = wfp8_row_xor(wrow0);
+              wrow1 = wfp8_row_xor(wrow1);
+            }
+            p_vscale_fp8[wrow0 * (BI + 16) + e0i] = wq.h0_e0;
+            p_vscale_fp8[wrow0 * (BI + 16) + e1i] = wq.h0_e1;
+            p_vscale_fp8[wrow1 * (BI + 16) + e0i] = wq.h1_e0;
+            p_vscale_fp8[wrow1 * (BI + 16) + e1i] = wq.h1_e1;
+          }
+        bar_sync_t<Fp8PrefillSync::MATH, MATH_THREADS>();
+
+#pragma unroll
+        for (int wp = 0; wp < 2; wp++)
+#pragma unroll
+          for (int g = 0; g < MG_N_HG; g++) {
+            // Wrong-pass mutant: read parity 0 for both passes.
+            uint8_t* p_vscale_fp8 =
+                wfp8_parities[g][TESSERA_MLA_P0_WRONG_PASS ? 0 : wp];
+#pragma unroll
+            for (int nt = 0; nt < CT::NT_PER_WARP_XV; nt++) {
+              int dim = vc * CT::V_CHUNK + mwarp * (CT::NT_PER_WARP_XV * 8) + nt * 8;
+              pv_fp8_d2_16x8<KV::KV_SMEM_STRIDE, BI + 16, CT::XV_KSTEPS, USE_WFP8_ROW_XOR>(
+                  xv_acc[g][nt], p_vscale_fp8, kv_smem, dim, lane);
+            }
+          }
+#pragma unroll
+        for (int g = 0; g < MG_N_HG; g++) {
+          float* vc_sc = sm.w_head_sc_all() + g * SMG::WSC_GRP_STRIDE + vc * HPB;
+#pragma unroll
+          for (int nt = 0; nt < CT::NT_PER_WARP_XV; nt++) {
+            int ti_acc = vc * CT::NT_PER_WARP_XV + nt;
+            float sc0 = vc_sc[gid], sc1 = vc_sc[gid + 8];
+            acc_o[g][ti_acc][0] += xv_acc[g][nt][0] * sc0;
+            acc_o[g][ti_acc][1] += xv_acc[g][nt][1] * sc0;
+            acc_o[g][ti_acc][2] += xv_acc[g][nt][2] * sc1;
+            acc_o[g][ti_acc][3] += xv_acc[g][nt][3] * sc1;
+          }
+        }
+#else
         uint8_t* wfp8_parity = sm.w_fp8() + (vc & 1) * SMG::WFP8_PARITY_STRIDE;
         float vsc0 = vsc_cache[vc][0], vsc1 = vsc_cache[vc][1];
         float xv_acc[MG_N_HG][CT::NT_PER_WARP_XV][4] = {0};
@@ -535,6 +642,7 @@ __device__ __forceinline__ void prefill_mg_l0_impl(const bf16* __restrict__ Q,
             acc_o[g][ti_acc][3] += xv_acc[g][nt][3] * sc1;
           }
         }
+#endif
       }
 
       Fp8PrefillSync::KvFree<IO_THREADS, MATH_THREADS>::release(slot);
