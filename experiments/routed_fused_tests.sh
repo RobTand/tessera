@@ -80,6 +80,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e NATIVE_CONTAINER_SRC="$CONTAINER_SRC" \
+  -e TERMINAL_NATIVE_IDENTITY_DIR="$OUT/native-identities" \
   -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp" \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
@@ -89,4 +90,4 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   "${IMAGE_ENV[@]}" "${EXTRA[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint python3 -w /work "$IMAGE_REF" \
   -m pytest -p no:cacheprovider "${SOURCE_PLUGIN[@]}" "${XDIST[@]}" -q -rA --junitxml="$OUT/junit.xml" \
-  -o "cache_dir=$OUT/tmp/pytest-cache" --basetemp="$BT" "$@"
+  --basetemp="$BT" "$@"
