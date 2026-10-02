@@ -7462,6 +7462,8 @@ installs `serving.glm53_shared_fold`:
   the generic SASS comparator's weaker multiset match cannot qualify this fold.
   `token_sum` and every other kernel are unchanged.
   `FusedRoutedWindowMoE.__call__` takes a keyword-only `shared=`.
+  The new binding refuses an output outside the routed tensor's CUDA device
+  before returning or launching, including zero-token requests.
 - The routed method's `_apply_native` calls the adapter through
   `native_call`. It passes `shared=` only when the shared experts ran on the
   current stream before the routed call (`NO_OVERLAP`), the routed input is
