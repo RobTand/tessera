@@ -12,25 +12,15 @@ from dataclasses import dataclass
 import threading
 from typing import Any, Callable
 
-from .stock_interface import InspectedInterface, import_modules, match_modules, stock_attribute
+from . import glm53_prefill as gp
+from .stock_interface import InspectedInterface, import_modules, match_modules
 
 
-# Reuse the communicator read set inspected for #804; the route below reads
-# the same CUDA/PyNccl owners for SP's dim-0 gather/reduce-scatter branches.
-COMM_MODULES = (
-    "vllm.distributed.device_communicators.cuda_communicator",
-    "vllm.distributed.device_communicators.all_reduce_utils",
-    "vllm.distributed.device_communicators.pynccl",
-    "vllm.distributed.parallel_state",
-    "vllm.utils.torch_utils",
-)
-COMM_INTERFACES = (InspectedInterface("nightly-20260929", (
-    "2a0695d8b46757be83b38fe657df605ba0bfb2ef2dfa690c78c57419bbad0762",
-    "b41e3ab17e21d81c7516cbef29850b0096ad3efd73d23538300af652ffce42d6",
-    "4c51becc2ebfd41910526b93d7bd8e9e36312df444fdfb55fa2fbc92b0f8f88e",
-    "a33fc846e0f4e682a644ce712d862806ecfa12dca6e5f641806e2e7991cd0087",
-    "eab9ea0a3d3b9792fd7e3076cca1a3484031b22ce662baa7709cb5a68dc2115f",
-)),)
+# Reuse the SP guard's single pin and route policy. The subset covers the
+# CUDA/PyNccl owners for SP's dim-0 gather/reduce-scatter branches.
+COMM_MODULES = gp.SP_MODULES[9:14]
+COMM_INTERFACES = tuple(InspectedInterface(row.name, row.digests[9:14])
+                        for row in gp._INTERFACES)
 
 
 def inspected_communication() -> tuple[Any, str]:
@@ -48,21 +38,9 @@ def pynccl_sp_decline(dc: Any, *, symmetric_ag_rs: bool, rocm: bool = False) -> 
     ordinary gather/scatter branches also select symmetric memory, and gather
     selects the base class on ROCm. Unknown facts decline before any enqueue.
     """
-    if dc is None or stock_attribute(dc, "world_size") != 2:
-        return "no TP2 CUDA communicator"
-    if stock_attribute(dc, "ca_comm", object()) is not None:
-        return "custom SP communicator present or unknown"
-    if type(symmetric_ag_rs) is not bool or symmetric_ag_rs:
-        return "symmetric-memory SP enabled or unknown"
     if type(rocm) is not bool or rocm:
         return "ROCm/base-class gather selected or unknown"
-    nccl = stock_attribute(dc, "pynccl_comm")
-    if (nccl is None or stock_attribute(nccl, "disabled") is not False
-            or stock_attribute(nccl, "world_size") != 2):
-        return "no active TP2 pynccl communicator"
-    if any(not callable(stock_attribute(nccl, name)) for name in ("reduce_scatter", "all_gather")):
-        return "pynccl SP methods unavailable"
-    return None
+    return gp.sp_collective_decline(dc, symmetric_ag_rs=symmetric_ag_rs)
 
 
 @dataclass(frozen=True)
@@ -295,15 +273,18 @@ class SpTileOverlap:
             return SiteOutputs(local.residual, local.post, local.comb, gathered[:plan.tokens])
 
 
-def make_pynccl_runner(torch: Any, nccl: Any, full_split: Callable) -> SpTileOverlap:
-    """Bind an already-inspected active stock PyNccl owner; do not select a route.
+def make_pynccl_runner(torch: Any, nccl: Any, full_split: Callable, *,
+                       guard: gp.SpCollectiveGuard) -> SpTileOverlap:
+    """Bind an inspected owner in the caller's admitted SP writer scope.
 
     PyNccl.reduce_scatter's third positional argument is the reduction op,
     whereas all_gather's is the stream. Bind stream by name for both methods.
     """
     return SpTileOverlap(torch=torch,
-        reduce_scatter_into=lambda out, x, stream: nccl.reduce_scatter(out, x, stream=stream),
-        all_gather_into=lambda out, x, stream: nccl.all_gather(out, x, stream=stream),
+        reduce_scatter_into=lambda out, x, stream: guard.call(
+            lambda value: nccl.reduce_scatter(out, value, stream=stream), x),
+        all_gather_into=lambda out, x, stream: guard.call(
+            lambda value: nccl.all_gather(out, value, stream=stream), x),
         side=torch.cuda.Stream(), compute=torch.cuda.current_stream,
         new_event=torch.cuda.Event, keep=lambda t, s: t.record_stream(s),
         full_split=full_split, capturing=torch.cuda.is_current_stream_capturing)

@@ -323,7 +323,8 @@ def test_stock_adapter_uses_explicit_kernels_and_full_batch_split_for_one_row_ta
 @pytest.mark.parametrize("case", ["ok", "custom", "missing_custom", "symm", "unknown_symm",
                                   "rocm", "missing_nccl", "disabled", "tp4", "missing_method"])
 def test_sp_route_matches_pinned_pynccl_branch_or_declines(case):
-    nccl = NS(world_size=2, disabled=False, reduce_scatter=lambda *a: None, all_gather=lambda *a: None)
+    nccl = NS(world_size=2, available=True, disabled=False, _suspended=False,
+              reduce_scatter=lambda *a: None, all_gather=lambda *a: None)
     dc = NS(world_size=2, ca_comm=None, pynccl_comm=nccl)
     symm, rocm = False, False
     if case == "custom": dc.ca_comm = object()
@@ -341,7 +342,9 @@ def test_sp_route_matches_pinned_pynccl_branch_or_declines(case):
 @pytest.mark.parametrize("extra", [["--tokens", "8192"], ["--tile", "512"],
                                     ["--iterations", "65"], ["--pairs", "3"],
                                     ["--tokens", "2048", "2048"],
-                                    ["--timeout-seconds", "181"]])
+                                    ["--timeout-seconds", "181"],
+                                    ["--control-iterations", "0"],
+                                    ["--control-iterations", "129"]])
 def test_gpu_probe_refuses_protocol_expansion(extra):
     from experiments.mhc.sp_tile_probe import parse_args
     base = ["--rank", "0", "--init-method", "tcp://127.0.0.1:39951",
@@ -355,8 +358,8 @@ def test_gpu_probe_retains_explicit_pair_and_finite_work():
     from experiments.mhc.sp_tile_probe import parse_args
     args = parse_args(["--rank", "1", "--init-method", "tcp://10.0.0.1:39951",
                        "--model", "/model", "--out", "/output"])
-    assert (args.rank, args.tokens, args.tile, args.iterations, args.pairs) == (
-        1, [512, 2048, 2049], 1024, 32, 2)
+    assert (args.rank, args.tokens, args.tile, args.iterations, args.pairs,
+            args.control_iterations) == (1, [512, 2048, 2049], 1024, 32, 2, 64)
 
 
 def test_pynccl_binding_keeps_reduce_op_default_and_passes_stream_by_name():
@@ -367,7 +370,9 @@ def test_pynccl_binding_keeps_reduce_op_default_and_passes_stream_by_name():
         calls.append(("ag", out, x, stream))
     cuda = NS(Stream=lambda: side, current_stream=lambda: compute, Event=lambda: None,
               is_current_stream_capturing=lambda: False)
-    runner = make_pynccl_runner(NS(cuda=cuda), NS(reduce_scatter=rs, all_gather=ag), lambda t: None)
+    guard = NS(call=lambda fn, x: fn(x))
+    runner = make_pynccl_runner(NS(cuda=cuda), NS(reduce_scatter=rs, all_gather=ag),
+                               lambda t: None, guard=guard)
     runner.reduce_scatter_into("out", "in", side)
     runner.all_gather_into("out", "in", side)
     assert calls == [("rs", "out", "in", "SUM", side), ("ag", "out", "in", side)]
@@ -378,4 +383,77 @@ def test_unreadable_route_facts_decline():
         @property
         def world_size(self):
             raise OSError("unreadable")
-    assert pynccl_sp_decline(Unreadable(), symmetric_ag_rs=False) == "no TP2 CUDA communicator"
+    assert pynccl_sp_decline(Unreadable(), symmetric_ag_rs=False) == "no TP2 device communicator"
+
+
+def test_concrete_runner_uses_the_admitted_guard_before_each_pynccl_enqueue():
+    calls = []
+    cuda = NS(Stream=lambda: object(), current_stream=lambda: object(), Event=lambda: None,
+              is_current_stream_capturing=lambda: False)
+    nccl = NS(reduce_scatter=lambda *a, **k: calls.append("RS"),
+              all_gather=lambda *a, **k: calls.append("AG"))
+    def refuse(fn, x):
+        raise RuntimeError("invalid writer scope")
+    runner = make_pynccl_runner(NS(cuda=cuda), nccl, lambda t: None, guard=NS(call=refuse))
+    for fn in (runner.reduce_scatter_into, runner.all_gather_into):
+        with pytest.raises(RuntimeError, match="invalid writer scope"):
+            fn("out", "input", runner.side)
+    assert calls == []
+
+
+def test_gpu_probe_disabled_writer_control_uses_both_rank_refusal_and_restores_scope():
+    from experiments.mhc.sp_tile_probe import disabled_writer_refusal
+    from tessera.serving.glm53_prefill import SpCollectiveGuard
+    ranks = TwoRanks()
+    owners = [NS(disabled=False), NS(disabled=False)]
+    calls = []
+    for rank, owner in enumerate(owners):
+        owner.reduce_scatter = lambda *a, rank=rank, **k: calls.append(rank)
+    # GPU allocation/stream names are translated only in this CPU fixture.
+    # The actual initialized PyNccl writer remains a separate GPU acceptance.
+    def allocate(fn):
+        return lambda *a, **k: fn(*a, **{key: val for key, val in k.items() if key != "device"})
+    fixture_torch = NS(full=allocate(torch.full), zeros=allocate(torch.zeros),
+                       equal=torch.equal, uint8=torch.uint8, bfloat16=torch.bfloat16,
+                       cuda=NS(synchronize=lambda: None, current_stream=lambda: None))
+    def work(rank):
+        ranks.local.rank = rank
+        owner = owners[rank]
+        guard = SpCollectiveGuard(route=lambda: "disabled" if owner.disabled else None,
+                                  owner=lambda: owner, agree=ranks.max_across_tp,
+                                  capturing=lambda: False)
+        assert guard.available()
+        return disabled_writer_refusal(fixture_torch, owner, guard, rank)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(work, rank) for rank in (0, 1)]
+        results = [future.result(timeout=10) for future in futures]
+    assert calls == []
+    assert all(row["writer_invocations"] == 0 and row["poison_bytes_unchanged"]
+               and not row["admitted"] and row["restored_and_readmitted"] for row in results)
+    assert [row["this_rank_disabled"] for row in results] == [False, True]
+    assert [owner.disabled for owner in owners] == [False, False]
+
+
+def test_gpu_probe_refusal_control_never_invokes_writer_if_admission_is_broken():
+    from experiments.mhc.sp_tile_probe import disabled_writer_refusal
+    calls = []
+    owner = NS(disabled=False, reduce_scatter=lambda *a, **k: calls.append("writer"))
+    guard = NS(available=lambda: True, call=lambda fn, value: fn(value))
+    def allocate(fn):
+        return lambda *a, **k: fn(*a, **{key: val for key, val in k.items() if key != "device"})
+    fixture_torch = NS(full=allocate(torch.full), zeros=allocate(torch.zeros),
+                       uint8=torch.uint8, bfloat16=torch.bfloat16,
+                       cuda=NS(synchronize=lambda: None))
+    with pytest.raises(RuntimeError, match="disabled-peer writer was admitted"):
+        disabled_writer_refusal(fixture_torch, owner, guard, 1)
+    assert calls == [] and owner.disabled is False
+
+
+def test_gpu_probe_activation_timing_counts_only_actual_agreements():
+    from experiments.mhc.sp_tile_probe import activation_timings
+    calls = []
+    guard = NS(available=lambda: calls.append("agree") or True)
+    row = activation_timings(guard, 4, lambda: calls.append("barrier"))
+    assert calls == ["barrier"] + ["agree"] * 4
+    assert row["iterations"] == len(row["host_ms_samples"]) == 4
+    assert 0 <= row["host_ms_min"] <= row["host_ms_median"] <= row["host_ms_max"]

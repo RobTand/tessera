@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the private #860/#866 SP probe composition.
+The tile runner reuses the SP writer guard and its pin/policy. The existing
+finite TP2 probe adds disabled-peer refusal before enqueue, guard activation
+control timing and raw-versus-guarded stock timing. These are prepared screens;
+no GPU execution, latency, energy or served qualification is asserted.
+
 Re-stamped 2026-10-02 for the uninstalled SP mHC tile pipeline primitive
 (tessera#858, children of #783/#803; §5.1.3). Its CPU fixtures cover token
 ownership, event dependencies and failure retirement. Actual TP2 NCCL
@@ -7425,6 +7431,14 @@ at 512/2048/2049 tokens, a global tile of 1024, and both mHC sites. It uses
 the stock distributed context and inspected PyNccl SP route, checks all four
 outputs and global token identities, retains a wrong-layout control, and
 records ABBA timing, both-rank Torch traces, raw power and each host's Netdata.
+The private #860/#866 composition uses the same production
+`SpCollectiveGuard` for every tile writer. The probe disables one initialized
+writer at a quiescent boundary, requires both ranks to refuse before any writer
+callback and leave poison output bytes intact, then restores and re-admits the
+scope before further NCCL work. It records one activation CPU-group agreement
+separately from raw-versus-guarded stock SP ABBA timing; the control is once per
+SP pass, not once per site. Both timing comparisons and all three arms' traces
+share the finite harness. These additional checks remain unexecuted on GPU.
 Its CPU stream fixtures do not qualify CUDA/NCCL arithmetic or a serving
 speedup. The old #804 all-reduce overlap runs with SP off; it cannot accelerate
 the SP-force A8SE baseline. Any future serving wiring needs a separate,
