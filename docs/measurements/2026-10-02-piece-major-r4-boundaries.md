@@ -99,3 +99,49 @@ M1/2048 using the existing loader/benchmark, with explicit legacy/PM selection
 and the same retained ELF. Shared wrapper forwarding and exact root GPU GO
 are required. It does not replace the remaining TP cuts, intermediate outputs,
 layer45 BF16, remaining M values, graph, quality and matched performance gates.
+
+## Follow-up: bounded output observations and failed execution contract
+
+The first approved action `7c0c5fd30d29738bc17c8e9346ce738941653c1b3c60f21061cee4403af5af98`
+failed before device setup: the benchmark's ordinary path refused the A8SE
+artifact override. Commit `08828c6154` admits only the exact L10/M1,2048,
+outputs-only, non-graph case, with no staged/routing/native override. The
+strict historical replay and ordinary default admission remain unchanged.
+Actual causal CPU action `726c68b8e6e2ab9f86278a2b350fca81745f2b841b8f34d5ff73710a8892607b`
+was 1 failed / 1 passed. Final focused action
+`3c1dfa7028fbe86300c7bd66ed7d2a061988b33d3ba8a45ddc22eb4eaa462398`
+was 38 passed / zero skips on DL380 CPU, `-n2 --dist worksteal`, 2 CPU / 4 GiB,
+native threads 1, portable `pb-cpu` interpreter. Full CAS verification accepted
+receipt `ffd2e81d27db2798c4c02815357d25b325399891b80bd81afe0d5f65b957ccbc`.
+The intervening `129fbe10...` failed before tests because a shell hid a
+nonportable interpreter path from placement; `55ea3a4e...` was 37 passed / one
+stale mock-parser fixture failure, corrected in `0d63b68f4b`.
+
+The single corrected GPU action
+`affe687f7b7fe6eda700b2ed82964075cb900aa71440a23d54001856a922d83b`
+used source `0d63b68f4b964c9640725c04c266792012cc2919`, production overlay
+`5f366b45d2`, the retained `ac004831...` ELF and image `5be13705...` on Sparklina.
+Both arm programs exited zero. Actual gate/up/down layouts were all legacy
+with the toggle off and all piece-major with it on; native flags matched.
+Both reported 1,872,827,160 resident bytes. The final output hashes matched:
+
+| M | Shape | Both arms' SHA-256 |
+|---|---|---|
+| 1 | 1 x 4096 | `f77e4b5afcd4137c51ccc998e8f6e88b24feb871e0464a9f3f533c5f28cc8f84` |
+| 2048 | 2048 x 4096 | `ccd39f30c733d7cb1a317b0e3c3b7ca6859e175a94f528c9e0e27b22c774d192` |
+
+**The outer action failed (exit 1), and has no success CAS receipt.** Its final
+no-rebuild check caught an ELF timestamp change. The retained `.ninja_log`
+shows one linker invocation in the legacy arm; CUDA object bytes and timestamp
+did not change, and the ELF hash remained `ac004831...` in both arms and after
+the action. This is a failed execution-contract check alongside two limited
+numeric observations, not a passed screen or performance qualification.
+No timing run or GPU retry followed.
+
+The original before-state, both JSONs, action window, copied Ninja evidence,
+and explicit failed-status `OBSERVATION.json` are retained at
+`/mnt/shared/astra-resume-20261002/t8_performance/routed-screen-0d63b68f-v2/`.
+Both-host telemetry was recovered read-only for that same elapsed window;
+`netdata.json` SHA-256 is `76695da04c862923cf4d636d95c5758cf92a7ae4c564e9a153ca428e6cd1b2f8`.
+Those observations do not address the subsequently investigated terminal-barrier
+race (#855), intermediate outputs, other shapes/routes, serving or performance.
