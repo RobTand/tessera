@@ -254,9 +254,25 @@ _SOURCE_ATTRIBUTES = {"run_path", "run_module", "spec_from_file_location",
 _SOURCE_QUALIFIED = {"ast": {"parse"}, "py_compile": {"compile"}}
 
 
+def _source_call(call, symbols):
+    """One conservative recognition predicate for module and helper facts."""
+    function = call.func
+    if isinstance(function, ast.Name) and function.id in _SOURCE_BUILTINS:
+        return True
+    if isinstance(function, ast.Attribute) and function.attr in _SOURCE_ATTRIBUTES:
+        return True
+    for symbol in symbols:
+        module, _, name = symbol.rpartition(".")
+        if (name in _SOURCE_ATTRIBUTES
+                or name in _SOURCE_QUALIFIED.get(module, ())
+                or module == "builtins" and name in _SOURCE_BUILTINS):
+            return True
+    return False
+
+
 def _executes_python_source(tree):
     """Whether this module can turn file bytes into Python it runs or parses."""
-    direct, modules = set(), {}
+    direct, modules = {}, {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -266,22 +282,20 @@ def _executes_python_source(tree):
             owned = _SOURCE_QUALIFIED.get(node.module or "", set())
             for alias in node.names:
                 if alias.name in owned or alias.name in _SOURCE_ATTRIBUTES:
-                    direct.add(alias.asname or alias.name)
+                    direct[alias.asname or alias.name] = f"{node.module}.{alias.name}"
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         function = node.func
-        if isinstance(function, ast.Name):
-            if function.id in _SOURCE_BUILTINS or function.id in direct:
-                return True
-        elif isinstance(function, ast.Attribute):
-            if function.attr in _SOURCE_ATTRIBUTES:
-                return True
-            owner = function.value
-            if (isinstance(owner, ast.Name)
-                    and function.attr in _SOURCE_QUALIFIED.get(
-                        modules.get(owner.id, ""), set())):
-                return True
+        symbols = set()
+        if isinstance(function, ast.Name) and function.id in direct:
+            symbols.add(direct[function.id])
+        elif isinstance(function, ast.Attribute) and isinstance(function.value, ast.Name):
+            module = modules.get(function.value.id)
+            if module is not None:
+                symbols.add(module + "." + function.attr)
+        if _source_call(node, symbols):
+            return True
     return False
 
 

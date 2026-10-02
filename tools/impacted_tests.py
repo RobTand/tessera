@@ -175,6 +175,18 @@ def _package_name(path: Path, root: Path) -> str | None:
     return alias or None
 
 
+def _read_python_source(
+    path: Path, root: Path, unreadable: dict[str, str] | None = None,
+) -> ast.Module | None:
+    """Read once; failure states unknown dependencies, never an empty source."""
+    try:
+        return ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, OSError) as exc:
+        if unreadable is not None:
+            unreadable[str(path.relative_to(root))] = f"{type(exc).__name__}: {exc}"
+        return None
+
+
 def _imports(
     path: Path,
     own: str,
@@ -199,10 +211,9 @@ def _imports(
     can belong to another file (#317), so deriving the node from the name
     would attribute the edge to the wrong one.
     """
-    try:
-        if tree is None:
-            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except (SyntaxError, OSError) as exc:
+    if tree is None:
+        tree = _read_python_source(path, root, unreadable)
+    if tree is None:
         # Three sets, like every other return here: answering with one made
         # the caller's unpack raise, and a selector that raises selects
         # nothing.  But three EMPTY sets state that this module imports
@@ -214,8 +225,6 @@ def _imports(
         # WILDCARD case the unresolved-loader path already models -- this
         # module may import anything -- and the file and its failure are
         # recorded so the operator can repair it.
-        if unreadable is not None:
-            unreadable[str(path.relative_to(root))] = f"{type(exc).__name__}: {exc}"
         return {WILDCARD}, set(), set()
     # An ``__init__.py`` IS its package: ``from .child import VALUE`` there
     # names ``pkg.child``, not a top-level ``child``.  Climbing from the
