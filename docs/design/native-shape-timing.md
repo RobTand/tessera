@@ -24,7 +24,11 @@ bound to the same wire and actual runtime. The validator does not expand
 weights or simulate a device.
 
 A positive row requires exactly one backed cell matching image, package
-commit/source, versions, platform, regime, residency and rung. It must
+versions, platform, regime, residency and rung. A declared cell code pair
+must be complete and match; a legacy cell with neither code field uses the
+independently frozen expected runtime commit/package digest/raw contract,
+checked against actual installation and RECORD at entry and exit. No expected
+identity is derived from the observed receipt. It must
 declare Tessera's plugin, satisfy required flags and name the actual
 `(symbol, decoder)` pair. The shared lane wire predicate and the existing
 census launch-agreement rule must both pass with positive coverage.
@@ -61,7 +65,9 @@ quality or end-to-end serving correctness.
 
 The request schema is `tessera.dense_shape_time_request.v1`, with exactly
 `schema`, `expected_runtime`, `scope`, `prefix`, `scheme`, `wire`, `sampling`,
-`netdata_hosts`, `contract`, `runtime_python` and `worker_timeout_s`. The
+`netdata_hosts`, `contract`, `runtime_python`, `worker_timeout_s` and
+`record_verifier`. The latter binds the published PB stdlib installation
+checker; it is repository tooling, not a package dependency. The
 contract and runtime interpreter are absolute bound files; the contract is
 the pinned runtime's raw bytes. The timeout is an explicit positive integer. `scope` uses the existing native census request fields;
 `scheme` is the existing dense wire declaration and `wire` is a bound file.
@@ -72,7 +78,9 @@ Preflight requires the exact independently bound runtime contract digest and a p
 backed cell/wire join; the actual native pair must join again after preparation.
 
 `expected_runtime.package_root` explicitly binds the actual installed package
-path. A bound `runtime_origins` artifact records its required module files.
+path. A bound `runtime_origins` artifact records its required module files
+and the reused installation checker's complete VCS/RECORD proof. Source
+digests are refreshed at each boundary rather than trusting a cached value.
 The actual imported Tessera package supplies its commit through a clean,
 tracked Git checkout or VCS installation metadata owning that imported file.
 The launcher image declaration, package source digest, raw contract digest,

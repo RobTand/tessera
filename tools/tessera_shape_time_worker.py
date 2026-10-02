@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One native phase: installed runtime only; repository schema lives in parent."""
 from __future__ import annotations
-import argparse,gzip,hashlib,importlib.metadata,json,os,subprocess,sys,time
+import argparse,gzip,hashlib,importlib.metadata,json,os,runpy,subprocess,sys,time
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 ROOT=Path(__file__).resolve().parents[1]
@@ -95,15 +95,23 @@ def runtime_origins(expected_root):
  return {"package_root":str(root),"modules":files}
 
 
-def observe_runtime(expected):
+def observe_runtime(expected, record_verifier=None):
  origins=runtime_origins(expected["package_root"])
  import torch,vllm,tessera
  from tessera.serving import backend,contract,source_identity,runtime_image
  declaration=runtime_image.declared_reference(expected["image"])
  actual_commit=observed_commit(tessera)
+ cache=getattr(source_identity,"_cached_digest",None)
+ if cache is not None:cache.cache_clear()
  actual_source=source_identity.serving_source_sha256()
  actual_contract=hashlib.sha256(contract.contract_path().read_bytes()).hexdigest()
  if (declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)!=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"]):raise ValueError("runtime source/contract/version differs before device setup")
+ if record_verifier is None:raise ValueError("missing sealed installation verifier")
+ if record_verifier["path"]!="/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py":raise ValueError("foreign installation verifier")
+ read_bound(record_verifier)
+ origins["installation"]=runpy.run_path(record_verifier["path"])["verify_install"]("tessera",expected["tessera_commit"])
+ origins["record_verifier"]=file_binding(record_verifier["path"])
+ if origins["record_verifier"]!=record_verifier:raise ValueError("installation verifier source differs")
  value={"image":declaration["image"],"tessera_commit":actual_commit,
   "serving_source_sha256":actual_source,
   "contract_sha256":actual_contract,
@@ -197,7 +205,7 @@ def _native_measure(job, output, job_source):
     from experiments.bench_native_operator import time_apply
     from experiments.routed_pair_oracle import PowerSampler
 
-    runtime, origins = observe_runtime(request["expected_runtime"])
+    runtime, origins = observe_runtime(request["expected_runtime"],request["record_verifier"])
     producer=job["producer"]
     worker_source=file_binding(__file__)
     if not torch.cuda.is_available():
@@ -254,7 +262,7 @@ def _native_measure(job, output, job_source):
         fsync_path(path.parent);evidence[name] = file_binding(path)
     if layer.tessera_native.fingerprints() != fingerprints:
         raise ValueError("prepared native weights changed during measurement")
-    after,after_origins=observe_runtime(request["expected_runtime"])
+    after,after_origins=observe_runtime(request["expected_runtime"],request["record_verifier"])
     if after!=runtime or after_origins!=origins or file_binding(__file__)!=worker_source:
         raise ValueError("runtime, contract, module origin or worker source changed during measurement")
     if file_binding(job_source["path"])!=job_source:raise ValueError("native job changed during measurement")
@@ -266,10 +274,10 @@ def native_measure(job_path, output):
  raw=Path(job_path).read_bytes();job=json_bytes(raw)
  if set(job)!={"schema","request","wire_roles","producer","worker_source"} or job["schema"]!="tessera.native_shape_worker_job.v1":raise ValueError("unknown native phase job")
  if file_binding(__file__)!=job["worker_source"]:raise ValueError("native worker source differs")
- for key in ("wire","contract","runtime_python"):
+ for key in ("wire","contract","runtime_python","record_verifier"):
   bound=job["request"][key];data=read_bound(bound)
   if len(data)!=bound["bytes"]:raise ValueError("native input bytes differ")
- observe_runtime(job["request"]["expected_runtime"])
+ observe_runtime(job["request"]["expected_runtime"],job["request"]["record_verifier"])
  if Path(job_path).read_bytes()!=raw:raise ValueError("native job changed during entry checks")
  import torch
  torch.set_num_threads(1);torch.set_num_interop_threads(1)

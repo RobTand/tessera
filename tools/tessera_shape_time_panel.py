@@ -63,12 +63,15 @@ def read_request(path):
     require_producer_origins()
     request = tp.json_bytes(Path(path).read_bytes())
     tp._object(request, {"schema", "expected_runtime", "scope", "prefix", "scheme", "wire",
-                         "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s"}, "dense request")
+                         "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "record_verifier"}, "dense request")
     if request["schema"] != REQUEST_SCHEMA:
         raise ValueError("unknown dense request schema")
     runtime = tp.runtime_context(request["expected_runtime"])
     raw_contract = tp.read_bound(request["contract"])
     tp.read_bound(request["runtime_python"])
+    tp.read_bound(request["record_verifier"])
+    if request["record_verifier"]["path"] != "/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py":
+        raise ValueError("requires the published installation verifier")
     tp._integer(request["worker_timeout_s"], "native worker timeout")
     if hashlib.sha256(raw_contract).hexdigest() != runtime["contract_sha256"]:
         raise ValueError("request requires a different immutable runtime contract")

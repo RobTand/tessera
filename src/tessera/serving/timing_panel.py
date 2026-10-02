@@ -193,7 +193,8 @@ def admitted_cell(contract, scope, runtime, pair, roles):
             continue
         if not cell_is_device_backed(cell) or not cell_covers_rung(cell, scope["q256"], fmt):
             continue
-        if cell_runtime_code(cell) != (runtime["tessera_commit"], runtime["serving_source_sha256"]):
+        code = cell_runtime_code(cell)
+        if code is not None and code != (runtime["tessera_commit"], runtime["serving_source_sha256"]):
             continue
         if cell_runtime_versions(cell) != (runtime["vllm"], runtime["torch"]):
             continue
@@ -236,9 +237,17 @@ def _validate_panel(panel, *, expected_runtime):
         raise ValueError("raw contract differs from runtime")
     if json_bytes(raw["runtime"]) != runtime:
         raise ValueError("runtime identity evidence differs")
-    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules"}, "runtime origins")
+    origins = _object(json_bytes(raw["runtime_origins"]), {"package_root", "modules", "installation", "record_verifier"}, "runtime origins")
     if origins["package_root"] != runtime["package_root"]:
         raise ValueError("runtime origin root differs")
+    installed = _object(origins["installation"], {"module", "distribution", "expected_commit", "installed_commit", "origin", "verified_files"}, "installed RECORD proof")
+    if installed["module"] != "tessera" or installed["expected_commit"] != runtime["tessera_commit"] or installed["installed_commit"] != runtime["tessera_commit"] or installed["origin"] != str(Path(runtime["package_root"]) / "__init__.py") or not isinstance(installed["distribution"], str) or not installed["distribution"]:
+        raise ValueError("installed RECORD proof differs from independent runtime")
+    _integer(installed["verified_files"], "installed verified files")
+    verifier = _object(origins["record_verifier"], {"path", "bytes", "sha256"}, "RECORD verifier source")
+    _integer(verifier["bytes"], "RECORD verifier source bytes");_sha(verifier["sha256"], "RECORD verifier source sha256")
+    if verifier["path"] != "/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py":
+        raise ValueError("requires the published installation verifier owner")
     _object(origins["modules"], RUNTIME_MODULES, "runtime module origins")
     for name, bound in origins["modules"].items():
         _object(bound, {"path", "bytes", "sha256"}, "runtime module origin")

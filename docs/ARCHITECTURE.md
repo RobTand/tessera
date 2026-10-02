@@ -20,7 +20,10 @@ reports committed progress only after durable artifact publication. The
 application remains GPU-unqualified; no pilot or census is published.
 The versioned native phase uses existing containment, TP1 context and
 single-apply event sampling; actual package/module origins, raw contract
-and source identities are checked at entry before device setup and exit. See
+and source identities are checked at entry before device setup and exit.
+Legacy cells without a code pair retain external exact-runtime binding;
+partial or mismatched pairs refuse. The repository worker reuses the
+published stdlib VCS/RECORD checker and refreshes cached package hashes. See
 [the bounded receipt contract](design/native-shape-timing.md).
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode

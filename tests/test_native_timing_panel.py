@@ -75,7 +75,7 @@ def panel(tmp_path, canonical_wire):
                              for box in ("sparky", "sparklina")}}
     evidence = {
         "runtime": save(tmp_path, "runtime.json", runtime),
-        "runtime_origins": save(tmp_path, "origins.json", {"package_root": runtime["package_root"], "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")), "bytes": 1, "sha256": "a"*64} for name in tp.RUNTIME_MODULES}}),
+        "runtime_origins": save(tmp_path, "origins.json", {"package_root": runtime["package_root"], "installation": {"module": "tessera", "distribution": "tessera-quant", "expected_commit": runtime["tessera_commit"], "installed_commit": runtime["tessera_commit"], "origin": runtime["package_root"]+"/__init__.py", "verified_files": 43}, "record_verifier": {"path": "/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py", "bytes": 1, "sha256": "a"*64}, "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")), "bytes": 1, "sha256": "a"*64} for name in tp.RUNTIME_MODULES}}),
         "producer": save(tmp_path, "producer.json", {"commit": "3" * 40, "tool_source_sha256": "4" * 64}),
         "contract": save(tmp_path, "contract.json", packed_contract, True),
         "wire": save(tmp_path, "wire.bin", blob, True),
@@ -121,7 +121,7 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
         def change(doc):
             cell = next(c for c in doc["lane_eligibility"]["cells"] if c["id"] == panel["rows"][0]["cell_id"])
             if fault == "missing_code":
-                cell["runtime"].pop("tessera_commit");cell["runtime"].pop("serving_source_sha256")
+                cell["runtime"].pop("tessera_commit")
             else: cell["runtime"]["serving_source_sha256"] = "5" * 64
         rewrite(panel, "contract", change)
         panel["runtime"]["contract_sha256"] = panel["evidence"]["contract"]["sha256"]
@@ -170,3 +170,17 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
     with pytest.raises((ValueError, OSError)):
         tp.validate_panel(panel, expected_runtime=expected)
 
+
+
+def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel):
+    def change(doc):
+        cell=next(c for c in doc["lane_eligibility"]["cells"] if c["id"]==panel["rows"][0]["cell_id"])
+        cell["runtime"].pop("tessera_commit");cell["runtime"].pop("serving_source_sha256")
+    rewrite(panel,"contract",change)
+    panel["runtime"]["contract_sha256"]=panel["evidence"]["contract"]["sha256"]
+    rewrite(panel,"runtime",lambda v:v.update(panel["runtime"]))
+    panel["plan"]=census_plan.build_census_plan([panel["plan"]["rows"][0]["scope"]],raw_contract=tp.read_bound(panel["evidence"]["contract"]))
+    panel["rows"][0]["scope_id"]=panel["plan"]["rows"][0]["id"]
+    assert tp.validate_panel(panel,expected_runtime=copy.deepcopy(panel["runtime"]))["cell_id"]==panel["rows"][0]["cell_id"]
+    rewrite(panel,"runtime_origins",lambda v:v["installation"].update(installed_commit="9"*40))
+    with pytest.raises(ValueError,match="RECORD"):tp.validate_panel(panel,expected_runtime=panel["runtime"])

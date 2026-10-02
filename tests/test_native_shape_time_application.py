@@ -20,7 +20,7 @@ def request_file(panel, monkeypatch):
     value = {'schema': app.REQUEST_SCHEMA, 'expected_runtime': copy.deepcopy(panel['runtime']),
              'scope': copy.deepcopy(panel['plan']['rows'][0]['scope']), 'prefix': 'test.dense',
              'scheme': copy.deepcopy(panel['rows'][0]['scheme']), 'wire': panel['evidence']['wire'],
-             'contract': panel['evidence']['contract'], 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
+             'contract': panel['evidence']['contract'], 'record_verifier': app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py'), 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
              'sampling': {'samples': 4, 'warmup_iterations': 1, 'steady_s': 20.0, 'seed': 688},
              'netdata_hosts': {'sparky': 'sparky', 'sparklina': 'sparklina'}}
     path = Path(panel['evidence']['wire']['path']).parent / 'request.json'
