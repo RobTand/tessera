@@ -96,6 +96,169 @@ def module_import_requests(tree, module, *, is_package=False, omit=frozenset()):
     return found
 
 
+def _literal_strings(expression):
+    if not isinstance(expression, (ast.Set, ast.List, ast.Tuple)):
+        return None
+    if not all(isinstance(item, ast.Constant) and isinstance(item.value, str)
+               for item in expression.elts):
+        return None
+    return frozenset(item.value for item in expression.elts)
+
+
+def _plain_hook(function, parameters):
+    args = function.args
+    return (isinstance(function, ast.FunctionDef)
+            and not function.decorator_list and not getattr(function, "type_params", ())
+            and len(args.posonlyargs + args.args) == parameters
+            and not args.kwonlyargs and args.vararg is None and args.kwarg is None
+            and not args.defaults and not args.kw_defaults
+            and function.returns is None
+            and all(arg.annotation is None
+                    or isinstance(arg.annotation, ast.Name) and arg.annotation.id == "str"
+                    for arg in args.posonlyargs + args.args))
+
+
+def _body_without_docstring(function):
+    body = function.body
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) \
+            and isinstance(body[0].value.value, str):
+        body = body[1:]
+    return body
+
+
+def guarded_reexport(tree):
+    """Prove one finite guarded module hook, or keep the unconditional union.
+
+    Only ``if name in <immutable literal names>: import ...; return
+    getattr(module, name)`` followed by a literal AttributeError is admitted.
+    The hook and guard must not be rebound, mutated or escape. A literal
+    ``__all__`` directory hook may enumerate the immutable guard without
+    invoking it. This proves an import condition, never source provenance or
+    general callable reachability. It uses the selector's authoritative AST.
+    """
+    hooks = [node for node in tree.body
+             if isinstance(node, ast.FunctionDef) and node.name == "__getattr__"]
+    if len(hooks) != 1 or not _plain_hook(hooks[0], 1):
+        return None
+    hook = hooks[0]
+    body = _body_without_docstring(hook)
+    if len(body) != 2 or not isinstance(body[0], ast.If) or not isinstance(body[1], ast.Raise):
+        return None
+    branch, refusal = body
+    parameter = (hook.args.posonlyargs + hook.args.args)[0].arg
+    test = branch.test
+    if (branch.orelse or not isinstance(test, ast.Compare)
+            or not isinstance(test.left, ast.Name) or test.left.id != parameter
+            or len(test.ops) != 1 or not isinstance(test.ops[0], ast.In)
+            or len(test.comparators) != 1 or not isinstance(test.comparators[0], ast.Name)
+            or len(branch.body) != 2):
+        return None
+    guard = test.comparators[0].id
+    imported, returned = branch.body
+    if (not isinstance(imported, (ast.Import, ast.ImportFrom)) or len(imported.names) != 1
+            or imported.names[0].name == "*" or not isinstance(returned, ast.Return)):
+        return None
+    alias = imported.names[0]
+    local = alias.asname or alias.name
+    call = returned.value
+    if (not isinstance(call, ast.Call) or not isinstance(call.func, ast.Name)
+            or call.func.id != "getattr" or call.keywords or len(call.args) != 2
+            or not isinstance(call.args[0], ast.Name) or call.args[0].id != local
+            or not isinstance(call.args[1], ast.Name) or call.args[1].id != parameter):
+        return None
+    exception = refusal.exc
+    if (refusal.cause is not None or not isinstance(exception, ast.Call)
+            or not isinstance(exception.func, ast.Name) or exception.func.id != "AttributeError"
+            or exception.keywords or len(exception.args) > 1):
+        return None
+    for message in exception.args:
+        if isinstance(message, ast.Constant) and isinstance(message.value, str):
+            continue
+        if (not isinstance(message, ast.JoinedStr)
+                or any(not (isinstance(item, ast.Constant) and isinstance(item.value, str)
+                            or isinstance(item, ast.FormattedValue)
+                            and isinstance(item.value, ast.Name)
+                            and item.value.id in {parameter, "__name__"}
+                            and item.format_spec is None)
+                       for item in message.values)):
+            return None
+
+    bindings = defaultdict(list)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            bindings[node.id].append(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings[node.name].append(node)
+        elif isinstance(node, ast.arg):
+            bindings[node.arg].append(node)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                bindings[alias.asname or (alias.name.split(".")[0]
+                         if isinstance(node, ast.Import) else alias.name)].append(node)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            for name in node.names:
+                bindings[name].append(node)
+    if bindings["__getattr__"] != [hook] or any(bindings[name] for name in
+            ("frozenset", "getattr", "AttributeError", "str", "set", "sorted")):
+        return None
+    declarations = [node for node in tree.body if isinstance(node, ast.Assign)
+                    and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == guard]
+    if len(declarations) != 1 or bindings[guard] != [declarations[0].targets[0]]:
+        return None
+    declaration = declarations[0]
+    value = declaration.value
+    if (not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name)
+            or value.func.id != "frozenset" or value.keywords or len(value.args) != 1):
+        return None
+    names = _literal_strings(value.args[0])
+    if names is None:
+        return None
+
+    allowed_guard_loads = {test.comparators[0]}
+    # The directory hook in this grammar enumerates names only. Any other
+    # use of the guard is an escape, including calls through an alias.
+    directories = [node for node in tree.body
+                   if isinstance(node, ast.FunctionDef) and node.name == "__dir__"]
+    if directories:
+        if len(directories) != 1 or not _plain_hook(directories[0], 0):
+            return None
+        directory = directories[0]
+        directory_body = _body_without_docstring(directory)
+        if len(directory_body) != 1 or not isinstance(directory_body[0], ast.Return):
+            return None
+        expected = ast.parse(f"sorted(set(__all__) | {guard})", mode="eval").body
+        expression = directory_body[0].value
+        if ast.dump(expression) != ast.dump(expected) or bindings["__dir__"] != [directory]:
+            return None
+        exports = [node for node in tree.body if isinstance(node, ast.Assign)
+                   and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                   and node.targets[0].id == "__all__"]
+        if (len(exports) != 1 or bindings["__all__"] != [exports[0].targets[0]]
+                or _literal_strings(exports[0].value) is None):
+            return None
+        allowed_guard_loads.update(node for node in ast.walk(expression)
+                                   if isinstance(node, ast.Name) and node.id == guard)
+        export_loads = {node for node in ast.walk(expression)
+                        if isinstance(node, ast.Name) and node.id == "__all__"}
+        if any(isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+               and node.id == "__all__" and node not in export_loads for node in ast.walk(tree)):
+            return None
+    hook_nodes = set(ast.walk(hook))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if node.id == guard and node not in allowed_guard_loads:
+                return None
+            if node.id in {"__getattr__", "globals", "locals", "eval", "exec"}:
+                return None
+            if node.id == "__name__" and node not in hook_nodes:
+                return None
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "vars" and not node.args):
+            return None
+    return names, imported
+
+
 _LOADERS = {"spec_from_file_location": (1, "location"),
             "SourceFileLoader": (1, "path"), "run_path": (0, "path_name")}
 _SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
