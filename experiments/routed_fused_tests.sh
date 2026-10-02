@@ -66,6 +66,11 @@ if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
   EXTRA+=(-v "$SOURCE_HOST":"$CONTAINER_SRC":ro)
 fi
 if [[ -n "${BENCH_EXT_DIR:-}" || "$CONTAINER_EXT" != "$EXT" ]]; then EXTRA+=(-v "$EXT":"$CONTAINER_EXT"); fi
+if [[ "$CONTAINER_SRC" != /work/src ]]; then
+  PROJECT_FILE=${BENCH_PROJECT_FILE:-$CHECKOUT/pyproject.toml}
+  [[ -f "$PROJECT_FILE" ]] || { echo "missing source version metadata: $PROJECT_FILE" >&2; exit 2; }
+  EXTRA+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
+fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi

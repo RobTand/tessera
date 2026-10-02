@@ -34,6 +34,7 @@ def wrapper_environment(tmp_path):
     (checkout / 'experiments').mkdir(parents=True)
     (checkout / 'experiments/runtime_image.sh').write_text(
         'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; }\n')
+    (checkout / 'pyproject.toml').write_text('[project]\nname="tessera-quant"\nversion="0.0.0"\n')
     source = tmp_path / 'frozen-src'
     kernel = source / 'tessera/serving/csrc/routed_fused_window.cu'
     kernel.parent.mkdir(parents=True)
@@ -76,6 +77,7 @@ def test_gpu_test_wrapper_reuses_native_namespace_and_xdist(tmp_path, canonical)
     assert 'NATIVE_CONTAINER_SRC=' + container_source in args
     if canonical:
         assert 'native_test_source' in args
+        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
     assert 'xdist.plugin' in args
     assert args[-5:] == ['-n', '2', '--dist', 'worksteal', 'owned-case']
 
@@ -99,3 +101,5 @@ def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
     assert 'PYTHONPATH=' + container_source in args
     assert 'HOME=' + str(work / 'home') in args
     assert 'TMPDIR=' + str(work / 'tmp') in args
+    if canonical:
+        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args

@@ -33,6 +33,11 @@ SRC_MOUNT=()
 if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
   SRC_MOUNT=(-v "$KSRC":"$CONTAINER_SRC":ro)
 fi
+if [[ "$CONTAINER_SRC" != /work/src ]]; then
+  PROJECT_FILE=${BENCH_PROJECT_FILE:-$CHECKOUT/pyproject.toml}
+  [[ -f "$PROJECT_FILE" ]] || { echo "missing source version metadata: $PROJECT_FILE" >&2; exit 2; }
+  SRC_MOUNT+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
+fi
 mkdir -p "$EXT" "$BUILD_WORK/home" "$BUILD_WORK/tmp"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 NCPU=$(python3 -c 'import os; print(len(os.sched_getaffinity(0)))')
