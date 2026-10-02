@@ -72,17 +72,24 @@ def fixture(tmp_path, payload=b'owned-wire', expected=None):
     manifest = {'entries': [entry], 'entry_count': 1, 'total_bytes': entry['bytes']}
     path = tmp_path / 'manifest.json'
     path.write_text(json.dumps(manifest))
-    key = f'{origin}@9'
+    import sys
+    sys.path.insert(0, '/mnt/shared/prismabuild-fleet/runtime-generations/5b6b97c0f717-1790877039-dcd8ea6496f1/src')
+    from prismabuild import client
+    key = client.residency_map_key(origin, 9)
     action = 'a'*64
     opened = []
     sdk = SimpleNamespace(
         read_data_manifest=lambda p: (json.loads(Path(p).read_text()), 'identity'),
         injected_context=lambda: {'ok': True, 'ctx': {'action_key': action,
-            'queue_root': str(tmp_path/'queue'), 'map_path': str(tmp_path/'maps/map.json')}},
-        read_residency_map=lambda p: {'consumer_action_key': action,
+            'queue_root': str(tmp_path/'queue'), 'map_path': str(tmp_path/'queue'/client.RESIDENCY/'a.map.json')}},
+        read_residency_map=lambda p: client.validate_residency_map({
+            'schema': client.RESIDENCY_MAP_SCHEMA_V1, 'stage_root': str(tmp_path),
             'manifest_sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
-            'tier_id': 'fixture', 'entries': {key: entry}},
-        residency_map_key=lambda p,o: f'{p}@{o}',
+            'tier_id': 'fixture', 'leads': ['f'*64],
+            'entries': {key: {'stage_path':str(staged),'offset':9,
+                'bytes':entry['bytes'],'sha256':entry['sha256']}}}),
+        residency_map_key=client.residency_map_key,
+        PoolQueue=client.PoolQueue, RESIDENCY=client.RESIDENCY,
         covers_for_keys=lambda *a,**k: {'ok': True, 'covers': []},
         acquire_for=lambda *a,**k: {'ok': True, 'pin_id': 'pin', 'ref_id': 'ref',
                                   'pin': {'stage_root': str(tmp_path)}},
