@@ -43,3 +43,13 @@ def test_main_propagates_numerical_admission_failure(probe, monkeypatch, tmp_pat
     assert saved["kdaptx"]["served_bit_equal_all"] == result["served_bit_equal_all"]
     assert saved["kdaptx"]["mutants_seen"] == result["mutants_seen"]
     assert (rc == 0) is (failed_field is None)
+
+
+def test_failed_screen_stops_later_timing(probe, monkeypatch, tmp_path):
+    result = {"served_bit_equal_all": False, "mutants_seen": {}}
+    monkeypatch.setattr(probe, "part_kdaptx", lambda _: result)
+    monkeypatch.setattr(probe, "part_kdafwd", lambda *_: pytest.fail("timing ran after failed numerics"))
+    monkeypatch.setattr(sys, "argv", ["mhc_probe.py", "--out", str(tmp_path), "--parts", "kdaptx,kdafwd"])
+    assert probe.main() != 0
+    saved = json.loads((tmp_path / "mhc_probe.json").read_text())
+    assert "kdafwd" not in saved
