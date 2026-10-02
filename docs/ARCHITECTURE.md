@@ -36,6 +36,11 @@ estimate, because Docker does not guarantee enforcement of GB10 CUDA UMA.
 The numeric observer requires the exact frozen production adapter class,
 observes its launch with an exact-instance guard, and restores the class
 method before profile/reference execution; adapter fields stay immutable.
+The fixed timing mode reuses the accepted numeric receipt and stored output
+words: ABBA flag0/1/1/0, M1/512/2048,10 warmups/30 unprofiled CUDA events,
+then separate full-name profiles and3s raw board-power windows. Both-host
+Netdata uses the existing box-power owner. It repeats no independent numeric
+or synthetic gates and makes no full-model throughput or qualified energy claim.
 CPU admission/lifetime controls and native compilation are preliminary;
 no GPU numerical, serving, timing, energy, default, cell or pin qualification
 follows. See `measurements/2026-10-02-paired-k32-compile.md`.

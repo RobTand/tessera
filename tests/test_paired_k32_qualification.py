@@ -28,6 +28,13 @@ def test_exact_scope_admits():
     q.require_options(options(),stubbed=False)
 
 
+def test_fixed_timing_scope_requires_exact_event_and_power_counts():
+    args=options();args.paired_k32_timing=True;args.warmup=10;args.iters=30;args.power_s=3.0
+    q.require_options(args,stubbed=False)
+    args.iters=31
+    with pytest.raises(ValueError):q.require_options(args,stubbed=False)
+
+
 @pytest.mark.parametrize('key,value',[
     ('artifact','/arbitrary/model'),('groups','experts.R1024.L11'),('ms','1,2048'),
     ('no_graph',False),('ncu',True),('power_s',30),('warmup',1),('iters',1),
@@ -180,3 +187,44 @@ def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
             q.numeric_cell(*args,kernel_profile=profile,independent_reference=False)
     # Observation must always restore the real owner, including errors.
     assert native._launch.__func__ is FusedRoutedWindowMoE._launch
+
+
+@pytest.mark.parametrize('fault',[None,'output','stored'])
+def test_timing_guards_accepted_words_before_unprofiled_events(tmp_path,monkeypatch,fault):
+    import torch
+    from tessera import routed_fused as rf
+    values={f.name:None for f in fields(rf.FusedRoutedWindowMoE) if f.default is MISSING}
+    values.update(library='e4m3mma',gate=SimpleNamespace(cols=128,rows=128),
+                  down=SimpleNamespace(cols=128,rows=4),slot_words_gate_up=8,slot_words_down=8)
+    native=rf.FusedRoutedWindowMoE(**values)
+    original=torch.ones((1,4),dtype=torch.bfloat16,device='cpu')
+    raw=q._words(original);digest=hashlib.sha256(raw).hexdigest()
+    monkeypatch.setattr(q,'NUMERIC_RECEIPT',str(tmp_path/'RESULT.json'))
+    stored=tmp_path/'baseline/numeric-words/1/out.bin';stored.parent.mkdir(parents=True)
+    stored.write_bytes(raw if fault!='stored' else b'changed')
+    def fn(*args):return original+1 if fault=='output' else original
+    fn.native_adapter=native
+    lib=SimpleNamespace(PAIRED_K32_BUILD=False,paired_k32_scope=lambda *a:False,
+        launch_smem_bytes=lambda *a:40976,max_dynamic_smem_bytes=lambda *a:101376)
+    monkeypatch.setattr(rf,'_ext',lambda *a:lib)
+    phases=[]
+    def events(call,warm,iters):
+        assert (warm,iters)==(10,30);phases.append('events');return [1.0]*30
+    def profile(call,**kwargs):
+        assert kwargs=={'reps':3,'full_names':True};phases.append('profile')
+        return {'top':{f'routed_fused_kernel<true, {m}, false, false, 4, false, 64, false>':
+                       {'count_per_call':1} for m in (0,2)}}
+    def sample(call,seconds,**kwargs):
+        assert seconds==3 and kwargs['capture_series'];phases.append('power')
+        return {'calls_per_j':123,'source':'control','power_series_unix_w':[]}
+    args=(fn,torch.ones(1,128,device='cpu'),torch.zeros(1,2,dtype=torch.int32,device='cpu'),torch.ones(1,2,device='cpu'))
+    kwargs=dict(certificate={'compared':[{'M':1,'role':'out','bytes':len(raw),'sha256':digest}]},
+                time_events=events,summarize=lambda x:{'median_ms':1},kernel_profile=profile,
+                power=SimpleNamespace(sample_during=sample))
+    if fault:
+        with pytest.raises(ValueError,match='stored numeric words'):q.timing_cell(*args,**kwargs)
+        assert phases==[]
+    else:
+        result=q.timing_cell(*args,**kwargs)
+        assert phases==['events','profile','power'] and len(result['raw_events_ms'])==30
+        assert result['power']['calls_per_j'] is None

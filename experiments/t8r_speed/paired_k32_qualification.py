@@ -12,12 +12,16 @@ import json
 REPLAY_ARTIFACT = '/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported'
 GROUP = 'experts.R1024.L10'
 MODULE = 'model.language_model.layers.10.mlp.experts'
+NUMERIC_RECEIPT = '/mnt/shared/astra-resume-20261002/t8_performance/paired-k32-direct-numeric-v3/RESULT.json'
+NUMERIC_RECEIPT_SHA = 'a5a8e479a8ab6e9ad26944d554aa7c88e2dda41423b4882e7eaeac9ae129c9d9'
 
 
 def require_options(args, *, stubbed):
+    timing = getattr(args,'paired_k32_timing',False)
+    expected = (10,30,3.0) if timing else (0,0,0)
     if (args.artifact != REPLAY_ARTIFACT or args.groups != GROUP or args.ms != '1,512,2048'
-            or not args.no_graph or args.ncu or args.power_s != 0
-            or args.warmup != 0 or args.iters != 0 or not args.input_manifest
+            or not args.no_graph or args.ncu
+            or (args.warmup,args.iters,args.power_s) != expected or not args.input_manifest
             or args.routing is not None or args.single_routing_file is not None
             or not args.profile_native_file or not args.paired_k32_source_sha256
             or len(args.paired_k32_source_sha256) != 64
@@ -26,6 +30,16 @@ def require_options(args, *, stubbed):
                          'pinned inputs/native, no graph/routing/timing/profiling overrides')
     if stubbed:
         raise ValueError('paired-K32 numerics refuses stubbed vLLM')
+
+
+def numeric_certificate():
+    raw=Path(NUMERIC_RECEIPT).read_bytes()
+    if hashlib.sha256(raw).hexdigest()!=NUMERIC_RECEIPT_SHA:
+        raise ValueError('accepted numeric receipt differs')
+    receipt=json.loads(raw)
+    if not receipt['exact_words_equal'] or len(receipt['compared'])!=9 or len(receipt['synthetic_compared'])!=6:
+        raise ValueError('numeric qualification is incomplete')
+    return receipt
 
 
 def _words(tensor):
@@ -160,7 +174,19 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
         records[name] = {**_tensor_record(tensor), 'path': str(path)}
     lib = rf._ext('e4m3mma')
     profile = kernel_profile(lambda: fn(x, ids, weights), reps=1, full_names=True)
-    geometry = {}
+    geometry = profile_geometry(native,x,ids,lib,profile)
+    result = {'outputs': records, 'repeat_bits_equal': True, 'independent_token_sum_equal': True,
+              'input_hashes': {name: _tensor_record(t) for name,t in [('x',x),('ids',ids),('weights',weights)]},
+              'profile': profile, 'geometry': geometry, 'native_paired_build': bool(lib.PAIRED_K32_BUILD)}
+    if independent_reference:
+        result['independent_reference'] = _reference_prefix(fn, store, x, ids, weights, first,
+            reference_holder if reference_holder is not None else {})
+    return result
+
+
+def profile_geometry(native,x,ids,lib,profile):
+    from tessera import routed_fused as rf
+    geometry={}
     for mode, bundle, slot in ((0, native.gate, native.slot_words_gate_up),
                               (2, native.down, native.slot_words_down)):
         bm = rf.superblock_rows('e4m3mma', mode, x.shape[0])
@@ -175,13 +201,38 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
                               'bm': bm, 'paired': paired, 'slot_words': slot,
                               'dynamic_shared_bytes': int(lib.launch_smem_bytes(mode,slot,bm,paired)),
                               'live_max_dynamic_shared_bytes': int(lib.max_dynamic_smem_bytes(x.device.index))}
-    result = {'outputs': records, 'repeat_bits_equal': True, 'independent_token_sum_equal': True,
-              'input_hashes': {name: _tensor_record(t) for name,t in [('x',x),('ids',ids),('weights',weights)]},
-              'profile': profile, 'geometry': geometry, 'native_paired_build': bool(lib.PAIRED_K32_BUILD)}
-    if independent_reference:
-        result['independent_reference'] = _reference_prefix(fn, store, x, ids, weights, first,
-            reference_holder if reference_holder is not None else {})
-    return result
+    return geometry
+
+
+def timing_cell(fn,x,ids,weights,*,certificate,time_events,summarize,kernel_profile,power):
+    """Accepted numerics reused; raw guard outside the existing event owner."""
+    import torch
+    import time
+    from tessera import routed_fused as rf
+    native=fn.native_adapter
+    if type(native) is not rf.FusedRoutedWindowMoE or native.library!='e4m3mma':
+        raise ValueError('timing requires the qualified actual adapter')
+    call=lambda:fn(x,ids,weights)
+    raw=_words(call())
+    expected=next(v for v in certificate['compared'] if v['M']==x.shape[0] and v['role']=='out')
+    stored=(Path(NUMERIC_RECEIPT).parent/'baseline/numeric-words'/str(x.shape[0])/'out.bin').read_bytes()
+    if (len(raw)!=expected['bytes'] or hashlib.sha256(raw).hexdigest()!=expected['sha256']
+            or hashlib.sha256(stored).hexdigest()!=expected['sha256'] or raw!=stored):
+        raise ValueError('timing output differs from accepted stored numeric words')
+    started=time.time()
+    samples=time_events(call,10,30)
+    wall_window=[started,time.time()]
+    # Profiling and power runs are separate from all unprofiled CUDA events.
+    profile=kernel_profile(call,reps=3,full_names=True)
+    lib=rf._ext('e4m3mma')
+    geometry=profile_geometry(native,x,ids,lib,profile)
+    sampled=power.sample_during(call,3.0,capture_series=True)
+    sampled['calls_per_j']=None
+    sampled['energy_status']='HOLD: numeric operator timing; clock/sample attribution not accepted'
+    return {'wall':summarize(samples),'raw_events_ms':samples,'wall_window_unix':wall_window,
+            'profile':profile,'geometry':geometry,'power':sampled,
+            'out_sha256':expected['sha256'],'numeric_receipt_sha256':NUMERIC_RECEIPT_SHA,
+            'native_paired_build':bool(lib.PAIRED_K32_BUILD)}
 
 
 def compare_reports(baseline, candidate):

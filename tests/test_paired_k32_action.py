@@ -1,6 +1,7 @@
 """Finite direct-vLLM bounds and exact owned-container cleanup, no real Docker."""
 import importlib.util
 import json
+import copy
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -76,3 +77,27 @@ def test_active_bound_stops_only_its_owned_process_group_and_cleans_up(tmp_path,
     assert killed==[(child.pid,module.signal.SIGTERM)]
     assert cleanup==[tmp_path/'arm']
     assert json.loads((tmp_path/'arm-cleanup.json').read_text())['state']=='controlled'
+
+
+@pytest.mark.parametrize('fault',[None,'population','event_count','dispatch','native','owner','output'])
+def test_abba_summary_checks_qualified_population(monkeypatch,fault):
+    module=action(monkeypatch);reports={}
+    cert={'compared':[{'M':int(m),'role':'out','sha256':m} for m in ('1','512','2048')]}
+    for arm in ('A1','B1','B2','A2'):
+        reports[arm]={'meta':{'direct_input_bindings':{'before':{'owned':1},'after':{'owned':1}},
+            'native_code_artifact':{k:'sha' for k in ('before_load_sha256','after_load_sha256','after_profile_sha256')}},
+            'results':[{'ok':True,'cells':{m:{'raw_events_ms':[1]*30,'out_sha256':m,
+                'numeric_receipt_sha256':module.NUMERIC_RECEIPT_SHA,'native_paired_build':arm.startswith('B'),
+                'wall':{'median_ms':1 if arm.startswith('B') else 2},
+                'geometry':{mode:{'paired':arm.startswith('B') and m!='1'} for mode in ('0','2')}}
+                for m in ('1','512','2048')}}]}
+    r=reports['B1'];cell=r['results'][0]['cells']['512']
+    if fault=='population':reports.pop('A2')
+    elif fault=='event_count':cell['raw_events_ms'].pop()
+    elif fault=='dispatch':cell['geometry']['0']['paired']=False
+    elif fault=='native':r['meta']['native_code_artifact']['after_profile_sha256']='other'
+    elif fault=='owner':r['meta']['direct_input_bindings']['after']={'changed':1}
+    elif fault=='output':cell['out_sha256']='wrong'
+    if fault:
+        with pytest.raises(ValueError):module.timing_summary(reports,cert)
+    else:assert module.timing_summary(reports,cert)['cells']['512']['operator_speedup']==2

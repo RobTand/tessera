@@ -15,8 +15,9 @@ import re
 import secrets
 import signal
 import time
+import statistics
 
-from paired_k32_qualification import compare_reports
+from paired_k32_qualification import compare_reports,numeric_certificate,NUMERIC_RECEIPT,NUMERIC_RECEIPT_SHA
 
 
 def owned_cleanup(arm_out, *, run=subprocess.run):
@@ -92,6 +93,45 @@ def identities(paths):
     return result
 
 
+def timing_summary(reports,certificate):
+    if set(reports)!={'A1','B1','B2','A2'}:raise ValueError('ABBA population differs')
+    cells={}
+    owners=[]
+    for arm in ('A1','B1','B2','A2'):
+        r=reports[arm]
+        if len(r['results'])!=1 or not r['results'][0]['ok']:raise ValueError('timing arm failed')
+        owners.append(r['meta']['direct_input_bindings']['before'])
+        if owners[-1]!=r['meta']['direct_input_bindings']['after']:raise ValueError('timing input ownership changed')
+        native=r['meta']['native_code_artifact']
+        if not native['before_load_sha256']==native['after_load_sha256']==native['after_profile_sha256']:
+            raise ValueError('timing native owner changed')
+        if set(r['results'][0]['cells'])!={'1','512','2048'}:raise ValueError('timing cases differ')
+        for m,c in r['results'][0]['cells'].items():
+            expected=next(v for v in certificate['compared'] if v['M']==int(m) and v['role']=='out')
+            if (len(c['raw_events_ms'])!=30 or c['numeric_receipt_sha256']!=NUMERIC_RECEIPT_SHA
+                    or c['native_paired_build'] is not arm.startswith('B') or c['out_sha256']!=expected['sha256']):
+                raise ValueError('timing lacks exact events/numeric binding')
+            for mode in ('0','2'):
+                if c['geometry'][mode]['paired'] is not (arm.startswith('B') and m!='1'):
+                    raise ValueError('timing dispatch differs from qualified scope')
+            cells.setdefault(m,{})[arm]=c['wall']['median_ms']
+    if any(owner!=owners[0] for owner in owners):raise ValueError('ABBA original file identities differ')
+    for c in cells.values():
+        c['baseline_median_ms']=statistics.median([c['A1'],c['A2']])
+        c['candidate_median_ms']=statistics.median([c['B1'],c['B2']])
+        c['operator_speedup']=c['baseline_median_ms']/c['candidate_median_ms']
+    return {'order':['A1','B1','B2','A2'],'cells':cells,'energy_status':'HOLD',
+            'scope':'balanced real A8SE L10 TP2rank0 eager operator; no full-model throughput claim'}
+
+
+def netdata_window(after,before):
+    path=Path(__file__).resolve().parent.parent/'box_power_window.py'
+    spec=importlib.util.spec_from_file_location('_paired_existing_box_power_owner',path)
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+    return {host:module.collect(addr,int(after),int(before),max(4,int(before-after)))
+            for host,addr in [('sparky','127.0.0.1'),('sparklina','192.168.1.110')]}
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--out',required=True)
@@ -101,6 +141,7 @@ def main():
     parser.add_argument('--baseline-sha256',required=True)
     parser.add_argument('--candidate-so',required=True)
     parser.add_argument('--candidate-sha256',required=True)
+    parser.add_argument('--timing',action='store_true')
     args=parser.parse_args()
     if os.environ.get('PRISMABUILD_ACTION_KEY') or os.environ.get('BENCH_STRICT_STAGED'):
         raise ValueError('stock vLLM numeric execution must run directly, outside PB admission')
@@ -116,30 +157,48 @@ def main():
     natives=[Path(args.baseline_so),Path(args.candidate_so)]
     paths=[p for native in natives for p in (native,native.parent/'routed_fused_window.cuda.o',native.parent/'build.ninja',native.parent/'.ninja_log')]
     before=identities(paths)
+    if args.timing:
+        certificate=numeric_certificate()
+        if certificate['native_files']!=before:
+            raise ValueError('timing native banks differ from accepted numerics')
+        for name in ('src/tessera/routed_fused.py','src/tessera/serving/csrc/routed_fused_window.cu'):
+            if certificate['source_bindings'][name]!=bindings[name]:
+                raise ValueError('timing native/source differs from accepted numerics')
+        if certificate['input_manifest_sha256']!=hashlib.sha256(Path(args.input_manifest).read_bytes()).hexdigest():
+            raise ValueError('timing readset differs from accepted numerics')
     for path,digest in [(args.baseline_so,args.baseline_sha256),(args.candidate_so,args.candidate_sha256)]:
         if before[path]['sha256']!=digest:
             raise ValueError('original native bank differs before numeric action')
     (out/'native-before.json').write_text(json.dumps(before,indent=2)+'\n')
     results={}
-    for arm,choice,path,digest in [('baseline','0',args.baseline_so,args.baseline_sha256),
-                                 ('candidate','1',args.candidate_so,args.candidate_sha256)]:
+    started=time.time()
+    jobs=([('A1','0',args.baseline_so,args.baseline_sha256),('B1','1',args.candidate_so,args.candidate_sha256),
+           ('B2','1',args.candidate_so,args.candidate_sha256),('A2','0',args.baseline_so,args.baseline_sha256)]
+          if args.timing else [('baseline','0',args.baseline_so,args.baseline_sha256),
+                                ('candidate','1',args.candidate_so,args.candidate_sha256)])
+    for arm,choice,path,digest in jobs:
         env=dict(os.environ,TESSERA_ROUTED_FUSED_PAIRED_K32=choice,
                  BENCH_EXPECT_LIBRARY_SHA256=digest,BENCH_DIRECT_VLLM='1',
                  BENCH_OWNER_TOKEN=secrets.token_hex(16),
-                 BENCH_RO_MOUNTS=' '.join(str(p.parent) for p in natives))
+                 BENCH_RO_MOUNTS=' '.join([*(str(p.parent) for p in natives),str(Path(NUMERIC_RECEIPT).parent)]))
         argv=['bash','experiments/t8r_speed/bench_t8r.sh','.',str(out/arm),
             '--paired-k32-numerics','--direct-vllm-inputs','--paired-k32-source-sha256',bindings['src/tessera/serving/csrc/routed_fused_window.cu'],
             '--artifact','/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported',
             '--groups','experts.R1024.L10','--ms','1,512,2048','--no-graph',
-            '--power-s','0','--warmup','0','--iters','0','--input-manifest',args.input_manifest,
+            '--power-s','3' if args.timing else '0','--warmup','10' if args.timing else '0',
+            '--iters','30' if args.timing else '0','--input-manifest',args.input_manifest,
             '--profile-native-file',path]
+        if args.timing:argv.append('--paired-k32-timing')
         with (out/(arm+'.log')).open('xb') as log:
             rc=run_direct_arm(argv,env,log,out/arm,out/(arm+'-memory.jsonl'))
         if rc:
             raise RuntimeError(arm+' numeric arm exited '+str(rc))
         source_check()
         results[arm]=json.loads((out/arm/'bench_t8r.json').read_bytes())
-    result=compare_reports(results['baseline'],results['candidate'])
+    result=timing_summary(results,certificate) if args.timing else compare_reports(results['baseline'],results['candidate'])
+    if args.timing:
+        (out/'netdata-both-hosts.json').write_text(json.dumps(netdata_window(started,time.time()),indent=2)+'\n')
+        result['numeric_receipt_sha256']=NUMERIC_RECEIPT_SHA
     after=identities(paths)
     if before!=after:
         raise ValueError('native ELF/object/flags/ninja bank changed during numeric action')
@@ -147,7 +206,7 @@ def main():
     result['source_bindings']=bindings
     result['native_files']=before
     result['input_manifest_sha256']=hashlib.sha256(Path(args.input_manifest).read_bytes()).hexdigest()
-    result['gpu_timing_claim']=None
+    result['gpu_timing_claim']='ABBA L10 operator only' if args.timing else None
     (out/'RESULT.json').write_text(json.dumps(result,indent=2)+'\n')
     print(json.dumps(result,sort_keys=True))
     return 0

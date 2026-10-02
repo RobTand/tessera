@@ -276,3 +276,22 @@ allocations, canonical2633688a. An optional CPU import preflight using a
 host-class selector refused before publication (that selector requires
 measurement transport); no action/test ran, and the prior actual shipping
 runner qualification is reused rather than repeated.
+
+Actual direct attempt3 on3c3b73ca exited0: all9 real and6 synthetic retained
+outputs matched flag0/1 exactly. Accepted RESULT digest
+`a5a8e479a8ab6e9ad26944d554aa7c88e2dda41423b4882e7eaeac9ae129c9d9`.
+Profiles bind candidate paired MODE0/2 BMT128 atM512/M2048 and original
+fallback atM1; both held native hashes and original file identities stayed
+stable, both owned CIDs were already absent. This is the declared numerical
+operator population, not full-model quality or measured speed improvement.
+
+Minimal timing preparation reuses this accepted receipt and guards stored
+raw output words outside10 warmups/30 CUDA events; separate3-call profiles
+and3s power windows follow. ABBA uses the same source/native/readset/flags.
+PB902c7059f928566dcbf57e6982ef9fee2d773f825b65d12850a09bd94a6721b7:
+68 passed in3.84s, CPU2/native1/memory3GiB, no skips/uncollected/device
+allocations, canonical5aa231b1. Actual pinned-image import-only CPU vLLM
+preparation exited0 with CUDA hidden, stock vLLM unstubbed, required owners
+and the accepted receipt imported; its exact CID was already absent. This
+uses the vLLM exemption; source/control tests remain PB-routed. Timing is
+pending root GO; raw power/clock and both-host Netdata are retained, energy HOLD.

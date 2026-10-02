@@ -433,6 +433,8 @@ def kernel_profile(call, reps=5, *, full_names=False):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args,'paired_k32_timing',False) and not getattr(args,'paired_k32_numerics',False):
+        raise ValueError('paired timing requires the closed qualified mode')
     if getattr(args,'direct_vllm_inputs',False) and not getattr(args,'paired_k32_numerics',False):
         raise ValueError('direct-vLLM input transport requires the closed paired numeric mode')
     if getattr(args, 'paired_k32_numerics', False):
@@ -481,6 +483,8 @@ def main():
     ap.add_argument('--paired-k32-source-sha256', default=None)
     ap.add_argument('--direct-vllm-inputs', action='store_true',
                     help='same sealed ranges through held original FDs; vLLM execution exemption')
+    ap.add_argument('--paired-k32-timing',action='store_true',
+                    help='reuse accepted numeric receipt; fixed10 warmup/30 events plus separate profile/power')
     args = ap.parse_args()
     require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
@@ -513,6 +517,12 @@ def main():
                 raise ValueError('paired-K32 actual source differs from sealed expected source')
             if not native_owner:
                 raise ValueError('paired-K32 numerics requires held native artifact owner')
+        timing_certificate=None
+        if args.paired_k32_timing:
+            from paired_k32_qualification import numeric_certificate
+            timing_certificate=numeric_certificate()
+            if timing_certificate['input_manifest_sha256']!=inputs.manifest_sha256:
+                raise ValueError('timing inputs differ from qualified numerics')
         power = PowerSampler()
         import tessera
         meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
@@ -544,7 +554,9 @@ def main():
         if args.paired_k32_numerics:
             meta['paired_k32'] = {'input_manifest_sha256': inputs.manifest_sha256,
                 'source_sha256': args.paired_k32_source_sha256,
-                'scope': 'balanced seeded inputs, real A8SE wire TP2rank0; no full-model quality/timing',
+                'scope': ('balanced seeded real A8SE TP2rank0; accepted numeric reuse and operator timing only'
+                          if args.paired_k32_timing else
+                          'balanced seeded inputs, real A8SE wire TP2rank0; no full-model quality/timing'),
                 'sdk_version': inputs.sdk.SDK_VERSION}
         elif inputs:
             meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
@@ -628,11 +640,17 @@ def main():
                             xa = (x, *recorded_routing(rfile, m, dev))
                         call = lambda: fn(*xa)  # noqa: E731
                         if args.paired_k32_numerics:
-                            from paired_k32_qualification import numeric_cell
-                            rec['cells'][key] = numeric_cell(fn, store, *xa,
-                                os.path.join(args.out, 'numeric-words', key), kernel_profile=kernel_profile,
-                                reference_holder=paired_reference_holder)
-                            print(json.dumps({'group': gid, 'M': key, 'numeric_words': rec['cells'][key]['outputs']}), flush=True)
+                            if args.paired_k32_timing:
+                                from paired_k32_qualification import timing_cell
+                                rec['cells'][key]=timing_cell(fn,*xa,certificate=timing_certificate,
+                                    time_events=time_events,summarize=summarize,kernel_profile=kernel_profile,power=power)
+                                print(json.dumps({'group':gid,'M':key,'wall':rec['cells'][key]['wall']}),flush=True)
+                            else:
+                                from paired_k32_qualification import numeric_cell
+                                rec['cells'][key] = numeric_cell(fn, store, *xa,
+                                    os.path.join(args.out, 'numeric-words', key), kernel_profile=kernel_profile,
+                                    reference_holder=paired_reference_holder)
+                                print(json.dumps({'group': gid, 'M': key, 'numeric_words': rec['cells'][key]['outputs']}), flush=True)
                             del x, xa
                             continue
                         if args.ncu:
@@ -704,7 +722,7 @@ def main():
                                           "GBps_kernel": round(cell["eff_gbps_kernel"] or 0, 1),
                                           "W": round(cell["power"].get("mean_w") or 0, 1)}), flush=True)
                         del x, xa
-                if args.paired_k32_numerics:
+                if args.paired_k32_numerics and not args.paired_k32_timing:
                     from paired_k32_qualification import synthetic_controls
                     rec['synthetic_controls'] = synthetic_controls(os.path.join(args.out, 'synthetic-words'),
                                                                    kernel_profile=kernel_profile)

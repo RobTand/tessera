@@ -1,7 +1,7 @@
 {
-  "experiments/t8r_speed/paired_k32_action.py": "2db1c8e09950322cbd1e028c9f9f84dbbbea0b6c0f79fce59dbbddb833e1bd0c",
-  "experiments/t8r_speed/paired_k32_qualification.py": "3269a12106e8e84d71c1d5241825618abadc213a059cf27cf3cf31d70ee412d7",
-  "experiments/t8r_speed/bench_t8r.py": "5e593fa1819c986f94e37c07ef80a74b457489f38f9006e7ef826a8a3dcbb844",
+  "experiments/t8r_speed/paired_k32_action.py": "d5297bce2a1c8a51e056412b93d708da685b77a5454a0f3306bb6922abae53f0",
+  "experiments/t8r_speed/paired_k32_qualification.py": "446e2a2a3c02b1e11f4ec5e9f72d196a2fce22b47abb18e223a12876bcd44f12",
+  "experiments/t8r_speed/bench_t8r.py": "30c050dc843a9e1d87d6d1155ad5aa42c9bf35f02d2931a76d35ed443602329d",
   "experiments/t8r_speed/bench_t8r.sh": "1f7da4937a7c037c4a48888f30e734710ee0988a27034abd67c5342703f42935",
   "experiments/t8r_speed/pb_staged_store.py": "eac14eadc055852c77bc657a305b7a66c9828ea7ddc675cb5b38830b71eef124",
   "experiments/routed_pair_oracle.py": "76f7850a935c4a929123a2233d201397ac3d24a3b5bb5b6972f150d219d78f6b",
@@ -11,5 +11,6 @@
   "tests/test_routed_fused_window.py": "ce15fed2d35891e4d85d6dcc7353eb1399bb1f19cbe309f454ab4e68e4af7051",
   "tests/test_window_gemm_grouped.py": "d9a08fea22626443221699a88a9c33b4b7394f62a271640819f60e585374b757",
   "experiments/bench_routed_load.py": "c6880d53bc97f3b0fd6f5494ce68f815f2329b50e18760d9dcf0ef42a2074556",
-  "experiments/configs/paired_k32_numeric_inputs.json": "95e4a9f2116d402cab87dee6630765ad81cd3435abedd478589fa1be345e5b9b"
+  "experiments/configs/paired_k32_numeric_inputs.json": "95e4a9f2116d402cab87dee6630765ad81cd3435abedd478589fa1be345e5b9b",
+  "experiments/box_power_window.py": "e56e704d671bd0e629ddfbf9374de122009cc454f59f011371c59119aef3bb7c"
 }
