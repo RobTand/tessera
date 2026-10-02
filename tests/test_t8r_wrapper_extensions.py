@@ -142,7 +142,8 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
     extensions.mkdir()
     sdk = tmp_path / 'published'; (sdk / 'src/prismabuild').mkdir(parents=True)
     env.update(BENCH_DIRECT_VLLM='1', BENCH_OWNER_TOKEN='e' * 32,
-               PB_CLIENT_ROOT=str(sdk), NATIVE_CONTAINER_SRC='/tessera/src',
+               PB_CLIENT_ROOT=str(sdk), BENCH_FIXTURE_RUNNER_SP=env['TEST_RUNNER_SP'],
+               NATIVE_CONTAINER_SRC='/tessera/src',
                NATIVE_CONTAINER_EXT='/ext')
     subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
                     '--artifact', str(artifact), '--comparison-protocol', '/owned/protocol.json',
@@ -153,5 +154,6 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
     assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
     assert args[args.index('--cpus') + 1] == '2'
     assert str(sdk) + ':' + str(sdk) + ':ro' in args
-    assert 'PYTHONPATH=/tessera/src:/work/tests:' + str(sdk) + '/src' in args
+    assert 'PYTHONPATH=/tessera/src:/work/tests:' + str(sdk) + '/src:' + env['TEST_RUNNER_SP'] in args
+    assert env['TEST_RUNNER_SP'] + ':' + env['TEST_RUNNER_SP'] + ':ro' in args
     assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32
