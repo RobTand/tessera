@@ -23,6 +23,8 @@ def request_file(panel, monkeypatch):
              'contract': panel['evidence']['contract'], 'record_verifier': app.tp.file_binding('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py'), 'runtime_python': app.tp.file_binding(__import__('sys').executable), 'worker_timeout_s': 120,
              'sampling': {'samples': 4, 'warmup_iterations': 1, 'steady_s': 20.0, 'seed': 688},
              'netdata_hosts': {'sparky': 'sparky', 'sparklina': 'sparklina'}}
+    source = {'schema': app.PRODUCER_SCHEMA, 'commit': 'a'*40, 'commit_source': 'sealed_checkout', **app.producer_source_identity()}
+    value['producer_identity'] = app.publish_json(source, Path(panel['evidence']['wire']['path']).parent / 'producer-input.json')
     path = Path(panel['evidence']['wire']['path']).parent / 'request.json'
     path.write_bytes(app.tp.canonical(value))
     return path, value

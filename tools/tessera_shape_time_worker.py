@@ -43,8 +43,11 @@ def publish_json(value, path):
 def observed_commit(package):
     """The actual imported package's repository or installed VCS metadata."""
     location = Path(package.__file__).resolve().parent
-    result = subprocess.run(["git", "-C", str(location), "rev-parse", "--show-toplevel"],
-                            capture_output=True, text=True)
+    try:
+        result = subprocess.run(["git", "-C", str(location), "rev-parse", "--show-toplevel"],
+                                capture_output=True, text=True)
+    except FileNotFoundError:
+        result = subprocess.CompletedProcess([], 1, "", "")
     if result.returncode == 0:
         root = Path(result.stdout.strip()).resolve()
         if location.is_relative_to(root):

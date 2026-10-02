@@ -66,7 +66,12 @@ quality or end-to-end serving correctness.
 The request schema is `tessera.dense_shape_time_request.v1`, with exactly
 `schema`, `expected_runtime`, `scope`, `prefix`, `scheme`, `wire`, `sampling`,
 `netdata_hosts`, `contract`, `runtime_python`, `worker_timeout_s` and
-`record_verifier`. The latter binds the published PB stdlib installation
+`record_verifier` and `producer_identity`. The latter binds an independently
+host-attested clean Git checkout plus the existing source-tree and tool-closure
+identities. `seal-producer --output FILE` runs on the host before submission;
+the container recomputes the exact source hashes and records
+`commit_source=sealed_checkout`, without claiming an in-container Git observation.
+`record_verifier` binds the published PB stdlib installation
 checker; it is repository tooling, not a package dependency. The
 contract and runtime interpreter are absolute bound files; the contract is
 the pinned runtime's raw bytes. The timeout is an explicit positive integer. `scope` uses the existing native census request fields;
@@ -113,3 +118,7 @@ GPU pilot qualifies the complete path. The producer commit and schema origin are
 runtime's source; no unchanged pinned runtime requires requalification solely
 for a new producer checkout. No existing b40/v42 or other cell is relabeled, no census
 is published, and no PrismaQuant timing consumer or pin changes in this slice.
+
+The installed runtime uses its owning noneditable Git VCS metadata and full
+RECORD proof even when the image has no Git binary. Producer Git metadata
+never substitutes for that runtime commit.

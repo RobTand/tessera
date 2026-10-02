@@ -76,7 +76,7 @@ def panel(tmp_path, canonical_wire):
     evidence = {
         "runtime": save(tmp_path, "runtime.json", runtime),
         "runtime_origins": save(tmp_path, "origins.json", {"package_root": runtime["package_root"], "installation": {"module": "tessera", "distribution": "tessera-quant", "expected_commit": runtime["tessera_commit"], "installed_commit": runtime["tessera_commit"], "origin": runtime["package_root"]+"/__init__.py", "verified_files": 43}, "record_verifier": {"path": "/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.py", "bytes": 1, "sha256": "a"*64}, "modules": {name: {"path": str(Path(runtime["package_root"]) / ("__init__.py" if name == "tessera" else name.removeprefix("tessera.").replace(".", "/") + ".py")), "bytes": 1, "sha256": "a"*64} for name in tp.RUNTIME_MODULES}}),
-        "producer": save(tmp_path, "producer.json", {"commit": "3" * 40, "tool_source_sha256": "4" * 64}),
+        "producer": save(tmp_path, "producer.json", {"schema": "tessera.native_panel_producer_identity.v1", "commit": "3" * 40, "commit_source": "sealed_checkout", "source_tree_sha256": "6"*64, "source_tree_members": 1, "tool_source_sha256": "4" * 64}),
         "contract": save(tmp_path, "contract.json", packed_contract, True),
         "wire": save(tmp_path, "wire.bin", blob, True),
         "preparation": save(tmp_path, "preparation.json", {"builder": "tessera.serving.lane.build_tessera_method",

@@ -47,25 +47,60 @@ def publish_json(value, path):
     return tp.file_binding(path)
 
 
-def producer_identity():
-    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"], capture_output=True,
-                            text=True, check=True).stdout.strip()
-    owners = [__file__, ROOT / "tools/tessera_shape_time_worker.py", ROOT / "experiments/bench_native_operator.py", ROOT / "experiments/step4_capture_launch.py", ROOT / "tools/run_glm_cached_cpu_export.py",
-              ROOT / "experiments/box_power_window.py", ROOT / "experiments/routed_pair_oracle.py"]
+PRODUCER_SCHEMA = "tessera.native_panel_producer_identity.v1"
+
+
+def producer_source_identity():
+    """Existing source-tree and tool-closure owners; no in-container Git required."""
+    from experiments.full_engine_plugin_install import source_tree_identity
     from tessera.source_profiles import source_profiles
+    tree_sha, members = source_tree_identity(ROOT)
+    owners = [__file__, ROOT / "tools/tessera_shape_time_worker.py",
+              ROOT / "experiments/bench_native_operator.py", ROOT / "experiments/step4_capture_launch.py",
+              ROOT / "experiments/full_engine_plugin_install.py", ROOT / "tools/run_glm_cached_cpu_export.py",
+              ROOT / "experiments/box_power_window.py", ROOT / "experiments/routed_pair_oracle.py"]
     profile = "tessera.shape_panel.tools.v1"
     value = source_profiles(((str(Path(p).relative_to(ROOT)), Path(p).read_bytes()) for p in owners),
                             legacy_profile=profile, legacy_prefix=profile.encode() + b"\0")
-    return {"commit": commit, "tool_source_sha256": value[profile]}
+    return {"source_tree_sha256": tree_sha, "source_tree_members": members,
+            "tool_source_sha256": value[profile]}
+
+
+def seal_producer(path):
+    """Host-only attestation, sealed as a request input before the admitted launch."""
+    require_producer_origins()
+    commit = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+                            capture_output=True, text=True, check=True).stdout.strip()
+    tp._sha(commit, "host producer commit", 40)
+    dirty = subprocess.run(["git", "-C", str(ROOT), "status", "--porcelain", "--untracked-files=all"],
+                           capture_output=True, text=True, check=True).stdout
+    if dirty.strip():raise ValueError("host producer checkout is dirty; seal only an immutable source")
+    value = {"schema": PRODUCER_SCHEMA, "commit": commit, "commit_source": "sealed_checkout",
+             **producer_source_identity()}
+    return publish_json(value, path)
+
+
+def producer_identity(binding):
+    """The source is independently host-attested; this process verifies every byte."""
+    value = tp.json_bytes(tp.read_bound(binding))
+    tp._object(value, {"schema", "commit", "commit_source", "source_tree_sha256", "source_tree_members", "tool_source_sha256"}, "sealed producer")
+    tp._sha(value["commit"], "sealed producer commit", 40)
+    if value["schema"] != PRODUCER_SCHEMA or value["commit_source"] != "sealed_checkout":
+        raise ValueError("requires an independent sealed host checkout identity")
+    observed = producer_source_identity()
+    if any(value[k] != observed[k] for k in observed):
+        raise ValueError("producer source differs from independent sealed checkout")
+    return value
 
 
 def read_request(path):
     require_producer_origins()
     request = tp.json_bytes(Path(path).read_bytes())
     tp._object(request, {"schema", "expected_runtime", "scope", "prefix", "scheme", "wire",
-                         "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "record_verifier"}, "dense request")
+                         "sampling", "netdata_hosts", "contract", "runtime_python", "worker_timeout_s", "record_verifier", "producer_identity"}, "dense request")
     if request["schema"] != REQUEST_SCHEMA:
         raise ValueError("unknown dense request schema")
+    producer_identity(request["producer_identity"])
     runtime = tp.runtime_context(request["expected_runtime"])
     raw_contract = tp.read_bound(request["contract"])
     tp.read_bound(request["runtime_python"])
@@ -108,7 +143,7 @@ def read_request(path):
 
 def measure(request_path, output):
     request, plan, wire = read_request(request_path)
-    producer = producer_identity()
+    producer = producer_identity(request["producer_identity"])
     output = Path(output).resolve();output.mkdir(parents=True,exist_ok=False);fsync_path(output.parent)
     _,roles=tp.wire_facts(wire,request["scheme"])
     worker=ROOT/"tools/tessera_shape_time_worker.py";worker_source=tp.file_binding(worker)
@@ -125,7 +160,7 @@ def measure(request_path, output):
     if phase["returncode"]!=0:raise ValueError("native phase refused; inspect "+str(output/"native-phase.log"))
     result=tp.json_bytes((output/"worker-result.json").read_bytes())
     tp._object(result,{"schema","evidence","worker_source","job_source","pair"},"native worker result")
-    if result["schema"]!="tessera.native_shape_worker_result.v1" or result["worker_source"]!=worker_source or result["job_source"]!=job_source or tp.file_binding(output/"worker-job.json")!=job_source or tp.file_binding(worker)!=worker_source or producer_identity()!=producer:
+    if result["schema"]!="tessera.native_shape_worker_result.v1" or result["worker_source"]!=worker_source or result["job_source"]!=job_source or tp.file_binding(output/"worker-job.json")!=job_source or tp.file_binding(worker)!=worker_source or producer_identity(request["producer_identity"])!=producer:
         raise ValueError("native worker or producer source identity differs")
     evidence=result["evidence"];runtime=tp.json_bytes(tp.read_bound(evidence["runtime"]))
     actual_contract=tp.json_bytes(tp.read_bound(evidence["contract"]))
@@ -149,11 +184,14 @@ def main(argv=None):
     check.add_argument("panel", type=Path);check.add_argument("--expected-runtime", type=Path, required=True)
     preflight = sub.add_parser("check-request")
     preflight.add_argument("request", type=Path)
+    seal = sub.add_parser("seal-producer")
+    seal.add_argument("--output", type=Path, required=True)
     run = sub.add_parser("measure")
     run.add_argument("--request", type=Path, required=True);run.add_argument("--output", type=Path, required=True)
     args = ap.parse_args(argv)
     try:
-        if args.action == "check":
+        if args.action == "seal-producer": result = seal_producer(args.output)
+        elif args.action == "check":
             result = tp.validate_panel(tp.json_bytes(args.panel.read_bytes()), expected_runtime=tp.json_bytes(args.expected_runtime.read_bytes()))
         elif args.action == "check-request":
             _, plan, _ = read_request(args.request);result = {"scope_id": plan["rows"][0]["id"], "status": "unmeasured", "gpu_executed": False}

@@ -256,9 +256,13 @@ def _validate_panel(panel, *, expected_runtime):
             raise ValueError("runtime module origin differs: " + name)
         _integer(bound["bytes"], "runtime module source bytes")
         _sha(bound["sha256"], "runtime module source sha256")
-    producer = _object(json_bytes(raw["producer"]), {"commit", "tool_source_sha256"}, "producer")
+    producer = _object(json_bytes(raw["producer"]), {"schema", "commit", "commit_source", "source_tree_sha256", "source_tree_members", "tool_source_sha256"}, "producer")
     _sha(producer["commit"], "producer.commit", 40)
     _sha(producer["tool_source_sha256"], "producer.tool_source_sha256")
+    _sha(producer["source_tree_sha256"], "producer.source_tree_sha256")
+    _integer(producer["source_tree_members"], "producer source members")
+    if producer["schema"] != "tessera.native_panel_producer_identity.v1" or producer["commit_source"] != "sealed_checkout":
+        raise ValueError("producer source must be independently host-attested")
     if not isinstance(panel["rows"], list) or len(panel["rows"]) != 1:
         raise ValueError("first slice requires exactly one dense row; duplicates refuse")
     row = _object(panel["rows"][0], {"scope_id", "prefix", "scheme", "timing", "cell_id"}, "row")

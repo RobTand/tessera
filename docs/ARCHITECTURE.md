@@ -23,7 +23,11 @@ single-apply event sampling; actual package/module origins, raw contract
 and source identities are checked at entry before device setup and exit.
 Legacy cells without a code pair retain external exact-runtime binding;
 partial or mismatched pairs refuse. The repository worker reuses the
-published stdlib VCS/RECORD checker and refreshes cached package hashes. See
+published stdlib VCS/RECORD checker and refreshes cached package hashes.
+A host-only clean-checkout seal supplies the independent producer commit
+and existing source-tree/tool closures; the Gitless container verifies
+those bytes and records `commit_source=sealed_checkout`. Installed runtime
+metadata remains separate. See
 [the bounded receipt contract](design/native-shape-timing.md).
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
