@@ -4,6 +4,11 @@ The native entry is called even at M=0, so the empty-work case exercises
 terminal CTAs instead of a Python fast return. Work counters independently
 bind completed item claims plus one terminal claim per launched CTA.
 """
+import hashlib
+import json
+import os
+from pathlib import Path
+
 import pytest
 import torch
 
@@ -25,6 +30,26 @@ CASES = [
     pytest.param(1, 6, 2, 3, id='odd-split'),
     pytest.param(129, 5, 1, 2, id='mixed-odd-even'),
 ]
+
+
+def record_loaded_native(lib, library):
+    path = Path(lib.__file__).resolve()
+    with path.open('rb') as handle:
+        stat = os.fstat(handle.fileno())
+        digest = hashlib.file_digest(handle, 'sha256').hexdigest()
+    matches = []
+    for line in Path('/proc/self/maps').read_text().splitlines():
+        fields = line.split(None, 5)
+        if len(fields) == 6 and fields[5] == str(path) and 'x' in fields[1]:
+            major, minor = (int(value, 16) for value in fields[3].split(':'))
+            if (major, minor, int(fields[4])) == (os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino):
+                matches.append(line)
+    assert matches, 'returned native module is not mapped from the hashed file inode'
+    source = Path(rf.__file__).parent / 'serving/csrc/routed_fused_window.cu'
+    print('TERMINAL_NATIVE_IDENTITY ' + json.dumps(dict(
+        library=library, path=str(path), sha256=digest, pid=os.getpid(),
+        source=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        executable_mappings=matches)), flush=True)
 
 
 @pytest.mark.parametrize('library', ['value', 'e4m3', 'e4m3mma', 'e2m1'])
@@ -77,6 +102,7 @@ def test_dense_terminal_ctas(monkeypatch, library, m, chunks, split, grid):
                 role.runs, role.bdesc, role.tile_words, role.slot_words,
                 counter, split, partial, out, grid, rf.BM)
 
+    record_loaded_native(lib, library)
     previous = None
     items = ((m + rf.BM - 1) // rf.BM) * split
     for repeat in range(2):
