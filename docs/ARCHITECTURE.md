@@ -407,8 +407,9 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   experiments/t4_code/pb_875_cpu_preflight.json and pb_875_synthetic_{numeric,
   native,sanitizers}.json. pb_875_finite_campaign.json concatenates those exact
   reviewed15 rows without changing any row. After admission gates release, use
-  published pbcampaign.py --max-inflight1 --wait-s97200
-  --require-data-manifest pb_875_finite_campaign.json: its supported bounded
+  published pbcampaign.py --max-inflight 1 --wait-s 97200
+  --require-data-manifest experiments/t4_code/pb_875_finite_campaign.json:
+  its supported bounded
   window stops on the first actual failure and preserves the unpublished
   suffix. This is PB-owned publication, not a second dispatcher or retries.
   The GPU campaign remains UNSUBMITTED pending root admission conditions.
