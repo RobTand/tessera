@@ -77,6 +77,7 @@ def build(out: Path, prefetch: int = 0):
 def retained_banks(path: str):
     """Load the exact CPU-built banks; a GPU gate must not silently rebuild."""
     record = json.loads(Path(path).read_text())
+    from tessera._dev.native_identity import loaded_native_identity
     if record["source_sha256"] != hashlib.sha256(SRC.read_bytes()).hexdigest():
         raise ValueError("retained bank CUDA source identity changed")
     if record["torch"] != torch.__version__ or record["image"] != os.environ.get("ORACLE_IMAGE"):
@@ -95,6 +96,10 @@ def retained_banks(path: str):
         spec.loader.exec_module(module)
         if module.A_PREFETCH != arm or module.BK != 64 or not module.FAMILY_FP4:
             raise ValueError(f"retained bank FP4 ABI changed: {elf}")
+        identity = loaded_native_identity(module, SRC, expected_sha256=row["sha256"])
+        if identity["source_sha256"] != record["source_sha256"]:
+            raise ValueError("retained bank source changed during load")
+        print("RETAINED_NATIVE_IDENTITY " + json.dumps(identity), flush=True)
         banks[arm] = module
     if set(banks) != {0, 4}:
         raise ValueError("retained qualification needs both baseline and candidate banks")
@@ -222,6 +227,10 @@ def bf16_ulp(v):
 def compare(got, ref, bound, exact):
     """got bf16, ref float64 (pre-rounding), bound float64 accumulation bound."""
     g = got.double()
+    nonfinite = {name: int((~torch.isfinite(t)).sum())
+                 for name, t in (("got", g), ("reference", ref), ("bound", bound))}
+    if any(nonfinite.values()):
+        return {"mismatch": sum(nonfinite.values()), "nonfinite": nonfinite, "ok": False}
     err = (g - ref).abs()
     if exact:
         want = ref.float().to(torch.bfloat16).double()   # the reference's one rounding sequence

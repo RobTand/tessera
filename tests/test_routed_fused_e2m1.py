@@ -80,6 +80,28 @@ def test_activation_prefetch_refuses_invalid_arms(monkeypatch, value):
         fe.activation_prefetch()
 
 
+@pytest.mark.parametrize("field", ["got", "reference", "bound"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+@pytest.mark.parametrize("exact", [False, True])
+def test_numeric_bound_refuses_nonfinite_values(field, value, exact):
+    from experiments.t4_code.fused_e2m1_check import compare
+
+    values = dict(got=torch.zeros(1, dtype=torch.bfloat16),
+                  reference=torch.zeros(1, dtype=torch.float64), bound=torch.zeros(1, dtype=torch.float64))
+    values[field][0] = value
+    result = compare(values["got"], values["reference"], values["bound"], exact)
+    assert not result["ok"] and result["nonfinite"][field] == 1
+
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_numeric_bound_accepts_finite_exact_product(exact):
+    from experiments.t4_code.fused_e2m1_check import compare
+
+    result = compare(torch.ones(1, dtype=torch.bfloat16), torch.ones(1, dtype=torch.float64),
+                     torch.zeros(1, dtype=torch.float64), exact)
+    assert result["ok"]
+
+
 @pytest.fixture
 def extension_boundary(monkeypatch):
     """Instrument only the compiler boundary; exercise the real _ext consumer."""
