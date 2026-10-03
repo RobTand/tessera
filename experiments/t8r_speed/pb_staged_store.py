@@ -22,7 +22,7 @@ def verify_cached_frame(raw, role):
     export_serving.pack_cached_expert_unit adds canonical TSRFUSE1 framing;
     its cached_blob_sha256 covers the inner unit, not the outer wire tensor.
     """
-    from tessera.fused import parse_fused, pack_fused
+    from tessera.fused_frame import parse_fused, pack_fused
     members = parse_fused(raw)
     if len(members) != 1:
         raise ValueError('cached expert wire must have exactly one member')
