@@ -67,3 +67,14 @@ completed28 CPU controls, zero skips/uncollected/CUDA allocations onDL380G10:
 the full paired-action file and the existing torch-free canonical timing owner
 controls. No GPU smoke, numeric replay, real-data reduction or new native build
 ran. This repair closes only the raw-event integrity defect, not #857 or #855.
+
+The child PRs actual hosted pure run then exposed11 inherited missing-Torch
+failures inside mixed pure/Torch test files. Only those four tensor/helper
+test functions now report the absent optional dependency with importorskip;
+the remaining pure C++/admission controls stay collected. PB
+`13967d2d5fe15b739cfb8a3174f7b0bfd1ce4f3515acc05547c578bfb9adddbb`
+executed all11 affected cases with real CPU Torch:11 passes, zero skips,
+zero uncollected modules/CUDA allocations. Canonical receipt
+`2478d7ca8960f8702def8a56ccee6f15b8b88e05a058bb46cb4400cf5afa6941`.
+This includes the source-extracted host C++ resource probe, not a new CUDA
+native build or native numerical qualification.

@@ -96,6 +96,7 @@ def test_unsupported_call_uses_original(native_owner, field, value):
 
 
 def test_python_resource_helper_matches_native(native_owner):
+    pytest.importorskip("torch")
     from tessera import routed_fused as rf
     for mode in (0,2):
         for paired in (False,True):
@@ -108,6 +109,7 @@ def test_python_resource_helper_matches_native(native_owner):
 
 
 def test_compile_gate_is_scoped_and_default_off(monkeypatch):
+    pytest.importorskip("torch")
     from tessera import routed_fused as rf
     flag='-DTESSERA_ROUTED_FUSED_PAIRED_K32=1'
     monkeypatch.delenv(rf.ENV_PAIRED_K32, raising=False)

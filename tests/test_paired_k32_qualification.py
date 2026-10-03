@@ -144,7 +144,7 @@ def test_driver_world_startup_is_only_for_existing_vllm_modes(numeric,stubbed,ex
 
 @pytest.mark.parametrize('fault', [None,'repeat','missing_role','reduction','profile','foreign'])
 def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
-    import torch
+    torch = pytest.importorskip("torch")
     from tessera import routed_fused as rf
     lib=SimpleNamespace(PAIRED_K32_BUILD=False,paired_k32_scope=lambda *args:False,
         launch_smem_bytes=lambda *args:40976,max_dynamic_smem_bytes=lambda index:101376)
@@ -191,7 +191,7 @@ def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
 
 @pytest.mark.parametrize('fault',[None,'output','stored'])
 def test_timing_guards_accepted_words_before_unprofiled_events(tmp_path,monkeypatch,fault):
-    import torch
+    torch = pytest.importorskip("torch")
     from tessera import routed_fused as rf
     values={f.name:None for f in fields(rf.FusedRoutedWindowMoE) if f.default is MISSING}
     values.update(library='e4m3mma',gate=SimpleNamespace(cols=128,rows=128),
