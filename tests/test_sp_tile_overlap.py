@@ -384,4 +384,4 @@ def test_unreadable_route_facts_decline():
         @property
         def world_size(self):
             raise OSError("unreadable")
-    assert pynccl_sp_decline(Unreadable(), symmetric_ag_rs=False) == "no TP2 CUDA communicator"
+    assert pynccl_sp_decline(Unreadable(), symmetric_ag_rs=False) == "no TP2 device communicator"
