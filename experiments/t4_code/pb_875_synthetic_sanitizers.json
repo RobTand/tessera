@@ -7,6 +7,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -36,6 +39,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -65,6 +71,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -94,6 +103,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -123,6 +135,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -152,6 +167,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -181,6 +199,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -210,6 +231,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -239,6 +263,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -268,6 +295,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -297,6 +327,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
@@ -326,6 +359,9 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
+    "snapshot_ref": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+    "max_attempts": 1,
+    "retry_safe": false,
     "demand": {
       "gpu": 1,
       "cpu": 2,
