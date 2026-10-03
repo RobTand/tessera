@@ -71,7 +71,7 @@ not full-model throughput or served activation replay. Energy/work-per-joule
 remains HOLD pending independent clock, coverage and instrument agreement.
 
 
-## Terminal result and independent CPU evidence assessment
+## Terminal result and CPU-only PB evidence analysis
 
 The single measurement finished with program and outer PB exit 0 in 279.934
 seconds (finished Unix 1790997378.9244442). No retry, repeated qualification or
@@ -80,7 +80,7 @@ follow-up GPU action was launched. The qualified owner verified exact container
 already absent after cleanup, with token `99cd5da71437b7926ee5965778e4a9c1`.
 The attempt preserved its assigned CPU affinity [5, 6].
 
-Independent CPU-only assessment action
+CPU-only PB evidence analysis action
 `e728845b7495184a468f1c56b9d4d5d47d72dbbd939c010918e8a8258f2bfcfe`
 finished on DL380G10 with exit 0 in 1.00 second, no visible GPU. It verified
 all eight cells, 30 finite positive raw CUDA events each, exact conventional
@@ -151,7 +151,7 @@ no native bank, result or historical evidence was removed.
   `3ce7df07c5acc2646174f8296c401a1e2e119ddd0dba736249d4404290403fe2`.
 - Both-host raw collector `pb-timing-v1-99cd5da71437/netdata.json`:
   `586d00f298bbc7a9983b2265f3293f586022cacbb275c4d4d5c5741a7303410c`.
-- Independent assessment `pb-timing-v1-99cd5da71437/TIMING-REVIEW.json`:
+- Owner CPU-only PB evidence analysis `pb-timing-v1-99cd5da71437/TIMING-REVIEW.json`:
   `499374194aec6d04d70ebf38395630dc8548d6d7a25425d309af30a1ed6a577e`.
 - Measurement local CAS claim:
   `df67ce906da9468acd4379f5557d306fc1473511ad9df10c813b9680b945daee`,
@@ -169,3 +169,32 @@ The source-sealed original harness is intentionally preserved, including its
 historical direct-mode terminology; current execution policy is the PB-only
 contract above. Root owns independent critical QA, draft PR acceptance and merge.
 No merged/default-on or deployment claim is made by this record.
+
+
+## Independent reviewer disposition
+
+The owner-run `e728845b...` action above is CPU-only PB evidence analysis, not
+an independent reviewer. A separate performance reviewer rederived the primary
+receipt hashes, all CUDA events and raw traces in PB action
+`934597c6b6b74c89f6383dc2f174075223d44a340c757e393a08dbfdcdfc2976`
+(DL380G10, exit 0). The reviewer then verified the measurement, owner analysis
+and reviewer action through full published SDK CAS lookup in action
+`24c72e6ca2a460364f7a62b4242f6f8c549b14c8aae83b7db5981f1e792166ea`
+(DL380G10, exit 0).
+
+Reviewer evidence:
+`/mnt/shared/astra-resume-20261002/t8_performance/INDEPENDENT-PM-ANALYSIS.json`,
+SHA-256 `47e874a8874639f7f5ca6e13f365de036426233bf1e1763c212ebfb04b98ced9`;
+CAS evidence `INDEPENDENT-PM-CAS-VERIFIED.json`, SHA-256
+`ea811c4a451ad400768761d0554921784b92ae2b199f5d61a7adf7d5057608fe`.
+
+The reviewer accepts sealed numeric/identity evidence and the scoped
+single-window operator observations. It does not accept stable, served or
+clock-controlled speedup, energy results or default promotion. M1's early/late
+paired latency reductions are 1.804% / 10.379%, versus 9.825% legacy drift;
+M2048 paired reductions are 9.218% / 10.840%. Native mode0/mode2 profile savings
+corroborate a layout-specific kernel effect, but warming/DVFS through 84 C is
+still a confound. The reviewer identifies mode0 gate/up (7.14-7.18 ms, roughly
+58% of PM self-device time), then down (4.14-4.16 ms), as the next measured
+performance priorities. This is prioritization, not authorization for another
+GPU run. Energy remains HOLD; defaults remain off.
