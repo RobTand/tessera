@@ -409,3 +409,64 @@ Actual logs, claim/payload and full published SDK CAS lookup were verified.
 No prior31/5-case suite, numeric/profile or GPU population was repeated.
 Source-corrected packets supersede the unlaunched beeb bundle; exact new hashes,
 independent review and rootGO remain required before any six-block submission.
+
+
+## Six exact descriptive blocks: actual terminal and containment evidence
+
+The reviewed final executable source is `0a3ddc70da489264446c626e0928f4bd05b7997e`.
+The ready bundle SHA is
+`e2e6005d5584a4ac2b035daa7c60bf5a6e787322c800688819f5f1e8194f1161`;
+it supersedes the retained unlaunched source-corrected packets above. The real
+per-block Root GO records are bound in `AUTHORIZED-CAMPAIGN.json`, SHA
+`c709cd4fcc8d704866751cd4c83a9cb5fd91a3ed39b20059f0fcfac71b28c06d`.
+Root's conditional GO was exercised only after supported disk recovery, a fresh
+Sparky root-free floor of at least5%, owned holds OPEN, fresh memory/PSI fit,
+quiet both Sparks and the Original CUDA campaign's actual terminal cleanup.
+No source/kernel/native/default/clock mutation or diagnostic replay was added.
+
+The six existing-PB campaign actions each completed in one attempt,
+program/PB return0 on Sparky, with a retained benchmark receipt:
+
+| Pair/block | Action key | Canonical CAS receipt SHA |
+|---|---|---|
+| 1/1 | `69c48d7605636730070b23707563b5933a21a8845100d840e0ab660f46238b55` | `87212035021be46814dbc8fa91afdb2273666a7634d33f584715aca645bfbe73` |
+| 1/2 | `f514036155b8fa0b0555a3efaa3661185686af4fa4d9029af496473a2faf37aa` | `6523240bdcae1239389c9e9564f7522fe7c479ca180caf069f0f42662aee359b` |
+| 2/1 | `8366197f6088017b2876bbd127aef5ee736988413204716da11eb6e50c1f83b3` | `a02dfc88c59fd8990e93f49857cd609e63d6c9d546da1c668f42b24f179b2d52` |
+| 2/2 | `893ad64f99b0ddc32eae3c5f3fc811090fe76123af65b5aefa60a1e3b2817c4c` | `5cced0ef0ea41a052638f31d6fe9bc86e7e3ae970c7531555e7ac6cf78d5cf53` |
+| 3/1 | `0a7534583346f4aa765698844752b675b80fb81566a1f26756cf65ccafcc1b1a` | `0e24736244ceb54a2157508fe30e36bac4ffa83ec8e6a8a2ae63e299602a003e` |
+| 3/2 | `e70a2b9745ef7fc8ef910b039e1f7f5e58092c8960f1b3d2ab6244f222441a68` | `5d5f56842719ad8e0bc8f38c280e38d0700b3fb1858ca9cfe74a287c2e3903a0` |
+
+The immutable evidence directory is
+`/mnt/shared/astra-resume-20261002/t8_performance/piece-major-common-c236b7aa/repeatability-ready-0a3ddc70/`.
+`SIX-ACTUAL-CAS-VERIFIED.json`, SHA
+`7b0e5e8c1f1c31e153db096527045054bb60d3a7e4f3d49882aa34beb72cf7be`,
+preserves all six actual action records, full published-generation CAS lookups,
+and local-claim/payload hash checks. The full lookup verifies the receipt's
+attestation; a hash-only claim check is not substituted for that verification.
+The attempts used unchanged published generation `d028dfee920b-1790960385-1d815cff72d1`,
+not the subsequently selected c437 SDK4 maintenance generation. SDK3 suffices
+for this held-original-FD manifest-reader transport; no SDK4 injected lease is claimed.
+
+PB actually executed blocks in chronological order1/1,3/1,1/2,3/2,2/1,2/2.
+The predefined pair identities remain intact, but pairs1 and3 are nonadjacent.
+Fresh contained processes and fixed60s conditioning do not erase that shared
+physical device's intervening thermal history or establish independent clocks.
+Do not relabel this as three adjacent paired windows.
+
+All six exact owned CIDs were already absent; all six PB process-live counts
+were zero, and their exact broker cgroup directories were absent. The complete
+queue showed no remaining owned READY/CLAIMED row. A fresh Docker/GPU-process
+inventory was empty; Sparky root availability remained98,664,050,688 bytes of
+1,968,362,958,848 bytes, above the standing5% floor. The both-Spark measurement
+interval was explicitly released to the coordinator and other owners, without
+retry, cancellation or another measurement window. Root's subsequent SDK4
+maintenance holds new submissions; that is distinct from a scientific result.
+
+Terminal success establishes retained population and containment, not the
+preregistered raw-event/paired contrast or fresh telemetry coverage. Those
+claims require the single independently owned receipt-only CPU reduction of
+these exact six blocks; no duplicate owner reduction, numeric qualification,
+Torch/NCU profile or new GPU population is authorized by this record. The
+original13.835448→12.447416ms observation keeps its original single-window
+scope. Issue739 remains open, PR868 remains draft, PM remains default off,
+and clock qualification, served/general speed and energy remain HOLD.
