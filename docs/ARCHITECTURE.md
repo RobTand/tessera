@@ -1,12 +1,11 @@
 # Tessera plan-to-serve architecture
 
-<<<<<<< HEAD
 Re-stamped 2026-10-02 for the uninstalled SP mHC tile pipeline primitive
 (tessera#858, children of #783/#803; §5.1.3). Its CPU fixtures cover token
 ownership, event dependencies and failure retirement. Actual TP2 NCCL
 exactness, performance, energy and serving qualification remain unmeasured;
 no installation hook, default, wire, runtime pin or contract cell changes.
-=======
+
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
@@ -40,7 +39,6 @@ immutable PB verifier path is accepted only when its held read-only regular
 bytes equal the current published verifier, under bounded stable reads;
 execution uses those held bytes and rechecks them afterwards. No fleet alias,
 original input rewrite, serving pin change or new GPU measurement is involved.
->>>>>>> origin/master
 
 Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
 slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
