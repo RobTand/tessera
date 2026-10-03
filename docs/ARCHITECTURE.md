@@ -405,8 +405,13 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   zero STACK/LOCAL allocation (FP4 maximum128 registers).
 * Persisted next actions are published-client campaign manifests under
   experiments/t4_code/pb_875_cpu_preflight.json and pb_875_synthetic_{numeric,
-  native,sanitizers}.json. Run them through the published pbcampaign.py;
-  synthetic numeric/native/sanitizer rows remain UNSUBMITTED and root-GO-only.
+  native,sanitizers}.json. pb_875_finite_campaign.json concatenates those exact
+  reviewed15 rows without changing any row. After admission gates release, use
+  published pbcampaign.py --max-inflight1 --wait-s97200
+  --require-data-manifest pb_875_finite_campaign.json: its supported bounded
+  window stops on the first actual failure and preserves the unpublished
+  suffix. This is PB-owned publication, not a second dispatcher or retries.
+  The GPU campaign remains UNSUBMITTED pending root admission conditions.
   The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
   guard the PB snapshot parent as executable source4e17907d, max_attempts1
   and retry_safe=false, unchanged
