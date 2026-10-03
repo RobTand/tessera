@@ -1,0 +1,23 @@
+{
+  "schema":"tessera.stageprev.claim_semantics_revision.v1",
+  "issue":793,
+  "priority":"P1",
+  "pr":904,
+  "author":"Tessera paired-K32 continuation",
+  "review_parent":"Tessera piece-major performance",
+  "parent_feedback":{"pending_cycle":1,"consecutive_failed_revisions":0,"finding":"Old event-only gate overconstrained RootDecisionA; initial actionable feedback opens pendingcycle1 but is not a failed corrective assessment"},
+  "admission_revision":"experiments/configs/stageprev_793_admission_revision_v3.json",
+  "parent_packet":{"path":"experiments/configs/stageprev_793_numeric_packet_v2.json","sha256":"e0276553a1a6b6a326e5f6fd567acb8e467a015fed45a282ceb1f1fd44b27400","unchanged":true},
+  "original_packet":{"commit":"7763d38ff8d5c50ffe928d4e906a986232d4b809","sha256":"bd93b379eb8ea0fe93169a28913cd7b9191711f7e50447cd9e679eafb99c467d","unchanged":true},
+  "preserved_actual_previous_result":"6651db4772177ec9b6db81bf8d792fd6c37e7d084b4dadd908019578d0649e7c /47P0S0uncollected0CUDA +oldcheckerHOLD; raw CAS/metadata in 2026-10-03-stageprev-operative-cpu-result.json. No replay or restamp.",
+  "corrected_proof_contract":"Fresh COMPLETE actual excluded-host claim-ledger effective capacity0, bound to verified CURRENT loaded public PoolQueue.claim source identity and its positive reservation-kind refusal semantics. Current denial events remain truthful observed-only metadata, not a mandatory new event.",
+  "actual_public_chain":["PoolQueue.claim","PoolQueue._claim","PoolQueue._claim_pass"],
+  "source_verification":"Read loaded method source without invoking it; check public wrappers call the actual callee; AST requires any(total.get(kind,0)<need for kind,need in reservation_demand.items()), self.record_denial(...never_fits_capacity...), and fail-closed continue in the same branch. Loaded pool source bytes must match current published RUNTIME_VERSION files digest before/after capture.",
+  "observed_framework_source":"Current pool SHAebf0835beddab49ac892af2748d6d287c933994a2f3e947e15d2117109249730 matched its actual published manifest during source research. This historical observation is not a future freshness assertion.",
+  "gate_unknowns":"HOLD for stale/incomplete/changed census, positive effective capacity, unknown/mismatched current source identity, unverified predicate or caller chain, fake resource kind, missing operative revision binding or used-filesystem/aggregate budget uncertainty.",
+  "unchanged":"Real /tmp +/home/rob/tmp +/var/lib/docker ROOT/MAX3GiB ->publicspool_gb3; all actual used-filesystem5%+aggregate reservations, source/native/image/class/public-reader/quiet/BOTH-Spark telemetry/fixed9cases/oneworker4arms and separate exact numeric GPU decision.",
+  "never_performed":["claim","acquire","ensure","retire","record_denial","GPU/native/profiler/readset-sealer execution","CPU event-forcing replay","SP writes/fetch/cleanup"],
+  "changed_cpu_only":"Select the new source/conditional admission tests, not original47/16/73/scientific proof. Actual ending/counts/receipt/metadata will be recorded from completion without polling/wait loops.",
+  "authority_scope":"Routine designated-parent correction under existing RootDecisionA, not new RootGO or source-bank/served/default/pin acceptance",
+  "gpu_status":"HOLD_FOR_SEPARATE_EXACT_NUMERIC_DECISION"
+}
