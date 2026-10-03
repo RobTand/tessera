@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the opt-in mHC overlap exception lifetime.
+`TileOverlap` registers its input and reduction output on the side stream
+before the first enqueue and synchronizes outstanding side work before
+propagating any enqueue/consumer error. Successful per-tile event ordering
+and arithmetic remain unchanged. CPU event/allocator controls establish
+this exception contract; they do not qualify CUDA allocator reuse or a
+served override, and all opt-in/default/source gates remain unchanged.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -6947,13 +6955,15 @@ raises.
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file, so `tools/impacted_tests.py` does not class the module the shared conftest reaches as able to import anything. |
 | `TESSERA_GLM53_MHC_TILE` | `off` | A token count: the two `hc_fused_post_pre` calls of each layer run the same three stock kernels over token tiles of that size, so each tile's new residual is still in L2 when the pre-norm GEMM and the pre kernel read it. The tiles run at the full batch's split-k, which makes them bitwise equal to the untiled call. It combines with SP: an SP pass tiles its shard. A pass tiles only on the split-k path and never under graph capture. |
+| `TESSERA_GLM53_COMM_OVERLAP` | `off` | `on`, on a tiled pass without SP, all-reduces each tile's part of an mHC site's input on a side stream while the previous tile's mHC kernels run. Each layer's attention and MLP all-reduces move into the next mHC site. At TP 2 every element is still one two-operand sum, so each tile's input is bitwise the stock all-reduce's. It needs `TESSERA_GLM53_MHC_TILE`, and it declines to the stock all-reduces when `OVERLAP_MODULES` do not match an inspected interface or when an input would take another backend than pynccl. |
 
 The module docstring records the decline rules and the exactness argument.
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv split that A/B is the VAL787 window (arms VS, VK
 and VB against V0). For the mHC tiles it is the prefill lead window's VBMC arm
-(VB plus tiles) against V0.
+(VB plus tiles) against V0. The all-reduce overlap never runs on an SP pass, so
+an SP arm cannot measure it; it needs an arm with SP off, and none is scheduled.
 
 ### 5.2 What the wheel ships besides Python
 
