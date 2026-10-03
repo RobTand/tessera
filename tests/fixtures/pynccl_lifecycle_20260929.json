@@ -1,0 +1,19 @@
+{
+  "image": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "license": "Apache-2.0; Copyright contributors to the vLLM project",
+  "methods": {
+    "resume": {
+      "first_line": 598,
+      "last_line": 603,
+      "source": "def resume(self):\n    \"\"\"Restore a suspended comm (collective); no-op unless suspended.\"\"\"\n    if self.disabled or not self._suspended:\n        return\n    self.nccl.ncclCommResume(self.comm)\n    self._suspended = False\n"
+    },
+    "suspend": {
+      "first_line": 584,
+      "last_line": 596,
+      "source": "def suspend(self):\n    \"\"\"Release comm GPU memory (collective, idempotent); keeps topology.\"\"\"\n    if self.disabled or self._suspended:\n        return\n    if not self.nccl.has_symbol(\"ncclCommSuspend\"):\n        logger.warning_once(\n            \"ncclCommSuspend is not available in the loaded NCCL/RCCL \"\n            \"library (requires NCCL >= 2.29.7); skipping communicator \"\n            \"memory suspension.\"\n        )\n        return\n    self.nccl.ncclCommSuspend(self.comm, _NCCL_SUSPEND_MEM)\n    self._suspended = True\n"
+    }
+  },
+  "schema": "tessera.pinned_pynccl_lifecycle_fixture.v1",
+  "source_path": "vllm/distributed/device_communicators/pynccl.py",
+  "source_sha256": "4c51becc2ebfd41910526b93d7bd8e9e36312df444fdfb55fa2fbc92b0f8f88e"
+}

@@ -4,7 +4,7 @@ The exporter lives at ``src/tessera/export_serving.py`` and its supported
 entry is ``python -m tessera.export_serving``.  This shim keeps three legacy
 caller shapes working -- the research drivers that import the bare
 module by sibling path (``full_model_research_selected_checkpoint.py``,
-``tessera_producer_plan.py``, ``moce_source_encode_preflight.py``,
+``moce_source_encode_preflight.py``,
 ``original_wire_checkpoint.py``, ``full_model_original_wire_checkpoint.py``,
 ``qualify_historical_selected_wires.py``), the research shell scripts that
 invoke ``python experiments/export_tessera_serving.py``, and the tests that
