@@ -262,9 +262,25 @@ def sanitize(bank, manifest, out):
         reader.close()
 
 
+def staged_read(manifest):
+    reader = StagedInputs(manifest)
+    total = 0
+    try:
+        for path, offset in reader.entries:
+            total += len(reader.read(path, offset))
+        if total != reader.manifest["total_bytes"]:
+            raise ValueError("whole-bank staged read byte total differs")
+        print(json.dumps({"scope": SCOPE + " CPU staged-read only",
+                          "readset_sha256": reader.manifest_sha256,
+                          "read_count": len(reader.reads), "total_bytes": total,
+                          "pin_id": reader.held["pin_id"]}))
+    finally:
+        reader.close()
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset"])
+    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read"])
     ap.add_argument('--bank', type=Path, required=True)
     ap.add_argument('--native-root', type=Path)
     ap.add_argument("--runner", type=Path)
@@ -274,6 +290,8 @@ def main():
     a = ap.parse_args()
     if a.operation == 'prepare':
         prepare(a.bank, a.native_root, a.sanitizer, a.runner)
+    elif a.operation == "staged-read":
+        staged_read(a.manifest)
     elif a.operation == "repair-readset":
         repair_readset(a.manifest, a.out)
     elif a.operation == "sanitize":
