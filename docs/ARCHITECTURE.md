@@ -420,7 +420,8 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   /var/lib/docker. Their 192+832MiB forecast totals1GiB; PB rounds each pair
   separately, deriving2GiB spool reservation. These are operational forecasts,
   not quotas or verified GPU peaks. The no-retag clause remains unchanged;
-  actual fresh settled zero on unsafe SP must exclude it before publication.
+  Root decisionA requires fresh complete unsafe-SP claim ledger0 plus verified
+  native-positive2GiB refusal, not a stale zero offer or a fresh floor claim.
   This proposal alone does not authorize publication or qualify new common banks.
   The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
   guard the PB snapshot parent as executable source4e17907d, max_attempts1

@@ -57,7 +57,7 @@ def test_proposal_requires_fresh_zero_not_the_observed_stale_zero():
     contract = load("pb_875_sl_capacity_contract.json")
     assert contract["scratch_forecast"]["derived_spool_gb"] == 2
     assert contract["scratch_forecast"]["forecast_total_bytes"] == 1024**3
-    assert "fresh settled unsafeSP offer0" in contract["capacity_dependency"]["literal_parent_clause"]
+    assert "fresh complete unsafeSP claim-ledger0" in contract["capacity_dependency"]["literal_parent_clause"]
     assert "not an unknown/stale offer assumption" in contract["capacity_dependency"]["literal_parent_clause"]
     assert contract["changed_fields"] == [
         "PRISMABUILD_LOCAL_SCRATCH_PAIRS and four REAL ROOT/MAX environment declarations"
