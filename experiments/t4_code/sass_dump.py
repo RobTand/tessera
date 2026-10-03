@@ -234,6 +234,27 @@ def compare(args) -> int:
     return 1 if any(r["differs"] or r["only_before"] for r in report.values()) else 0
 
 
+def inspect(args) -> int:
+    """Disassemble an already compiled bank; never rebuild just for tooling."""
+    result = subprocess.run(["cuobjdump", "-sass", args.cubin], capture_output=True, text=True)
+    if result.returncode:
+        print(result.stdout + result.stderr, flush=True)
+        result.check_returncode()
+    kernels = parse_sass(result.stdout)
+    if not kernels:
+        raise RuntimeError(f"no kernels disassembled from {args.cubin}")
+    resources = subprocess.run(["cuobjdump", "-res-usage", args.cubin],
+                               capture_output=True, text=True, check=True).stdout
+    with open(args.cubin, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    record = {"cubin": os.path.abspath(args.cubin), "cubin_sha256": digest,
+              "kernels": kernels, "resource_usage": resources}
+    with open(args.out, "w") as f:
+        json.dump(record, f)
+    print(f"{args.cubin}: {len(kernels)} kernels; sha256={digest}", flush=True)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -249,7 +270,12 @@ def main(argv=None) -> int:
     c.add_argument("before")
     c.add_argument("after")
     c.add_argument("--json")
+    i = sub.add_parser("inspect")
+    i.add_argument("cubin")
+    i.add_argument("--out", required=True)
     args = ap.parse_args(argv)
+    if args.cmd == "inspect":
+        return inspect(args)
     return dump(args) if args.cmd == "dump" else compare(args)
 
 
