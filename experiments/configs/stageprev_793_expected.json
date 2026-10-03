@@ -1,0 +1,47 @@
+{
+  "schema": "tessera.stageprev.expected.v1",
+  "phase": "numeric",
+  "arms": ["master", "fix"],
+  "require_intermediates": true,
+  "launch": {
+    "AB_STEPS": "routed", "AB_MS": "1,2048",
+    "AB_ROUTED": "experts.R1024.L10,experts.R1088.L11,experts.R832.L42",
+    "BENCH_STRICT_STAGED": "1",
+    "AB_BENCH_ARGS": ["--stageprev-numerics", "--hash-only", "--no-graph",
+      "--warmup", "0", "--iters", "0", "--power-s", "0",
+      "--artifact", "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported"]
+  },
+  "kernel_sha": {
+    "master-routed": "71fe64f23d304156faf95f30157321989a4195428f6cb073efccb924fc1247f4",
+    "master-routedb": "71fe64f23d304156faf95f30157321989a4195428f6cb073efccb924fc1247f4",
+    "fix-routed": "526223a275426aa57deb7f2efc8023fb9b430c1a8367ed9ce8e830689962a252",
+    "fix-routedb": "526223a275426aa57deb7f2efc8023fb9b430c1a8367ed9ce8e830689962a252"
+  },
+  "native_files": {
+    "master": {
+      "path": "/mnt/shared/astra-resume-20261002/t8_performance/terminal-855-shipping-71fe64f2/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_mma_e4m3.so",
+      "sha256": "d68633d236bab421e574f6b5fc73bbcf3bf0a87141ad833690d4dba308f223c1",
+      "source_sha256": "71fe64f23d304156faf95f30157321989a4195428f6cb073efccb924fc1247f4",
+      "build_action_key": "050ee84e4bf9e735eaf20a52dd515ddc31a864ceb21c38178cdd5318554a7e7e",
+      "build_receipt_sha256": "ecfacdae268e8fecc91a52dfe94a87d95b51e9fb748582bcde7da02397a1d6c6"
+    },
+    "fix": {
+      "path": "/mnt/shared/astra-resume-20261002/t8_performance/history793-current-native/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_mma_e4m3.so",
+      "sha256": "8cd95a5bfc46ea5084595fd55f17ef7b39eb1797df3e223e1c02cc2d310e67ec",
+      "source_sha256": "526223a275426aa57deb7f2efc8023fb9b430c1a8367ed9ce8e830689962a252",
+      "build_action_key": "05252751e3121db9edc56df00c7f62efad6aa2719738fe08435bf7d6d345eee7",
+      "build_receipt_sha256": "5e4c031df63b821daf1351987ff5ebe9f29899a661301b2322fd7114513f0519"
+    }
+  },
+  "cases": [
+    {"family": "routed", "group": "experts.R1024.L10", "M": "1", "rates": [4]},
+    {"family": "routed", "group": "experts.R1024.L10", "M": "2048", "rates": [4]},
+    {"family": "routed", "group": "experts.R1024.L10", "M": "2048@ids-414-000000", "rates": [4]},
+    {"family": "routed", "group": "experts.R1088.L11", "M": "1", "rates": [4, 5]},
+    {"family": "routed", "group": "experts.R1088.L11", "M": "2048", "rates": [4, 5]},
+    {"family": "routed", "group": "experts.R1088.L11", "M": "2048@ids-414-000000", "rates": [4, 5]},
+    {"family": "routed", "group": "experts.R832.L42", "M": "1", "rates": [3, 4]},
+    {"family": "routed", "group": "experts.R832.L42", "M": "2048", "rates": [3, 4]},
+    {"family": "routed", "group": "experts.R832.L42", "M": "2048@ids-414-000000", "rates": [3, 4]}
+  ]
+}

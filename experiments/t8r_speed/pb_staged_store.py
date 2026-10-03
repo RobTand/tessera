@@ -22,7 +22,7 @@ def verify_cached_frame(raw, role):
     export_serving.pack_cached_expert_unit adds canonical TSRFUSE1 framing;
     its cached_blob_sha256 covers the inner unit, not the outer wire tensor.
     """
-    from tessera.fused import parse_fused, pack_fused
+    from tessera.fused_frame import parse_fused, pack_fused
     members = parse_fused(raw)
     if len(members) != 1:
         raise ValueError('cached expert wire must have exactly one member')
@@ -134,14 +134,14 @@ class StagedInputs:
     def json(self, path):
         return json.loads(self.read(path))
 
-    def bind_roles(self, root, roles):
-        """Publisher metadata is already pinned; retain its cached-unit authority."""
+    def bind_roles(self, root, roles, *, module):
+        """Publisher metadata binds one explicit complete expert-role roster."""
         self.roles = {r['tensor'].removesuffix('.weight')+'.wire':r for r in roles}
         roster = {(r['expert'],r['role']) for r in roles}
-        if (len(roles)!=864 or len(self.roles)!=864 or
-            roster != {(e,r) for e in range(288) for r in ('gate_proj','up_proj','down_proj')} or
-            any(not n.startswith('model.language_model.layers.10.mlp.experts.') for n in self.roles)):
-            raise ValueError('single replay requires exactly the L10 expert-role roster')
+        expected = {(e,r) for e in range(288) for r in ('gate_proj','up_proj','down_proj')}
+        if (len(roles)!=864 or len(self.roles)!=864 or roster != expected or
+                any(r['tensor'] != f"{module}.{r['expert']}.{r['role']}.weight" for r in roles)):
+            raise ValueError('declared module requires exactly its expert-role roster')
 
     def wire(self, root, name, *, index):
         """One authenticated outer frame and its independently checked inner unit."""
@@ -288,7 +288,24 @@ class NativeCallback:
             module.__spec__.origin!=origin):
             raise ValueError('actual native module origin/identity differs')
 
-    def finish(self, fence):
+
+    def attest_mapped(self, module):
+        """Diagnostic mapping proof using the held artifact FD, never path rereads."""
+        self.bind(module)
+        info = os.fstat(self.fd)
+        matches = []
+        for line in Path("/proc/self/maps").read_text().splitlines():
+            fields = line.split(None, 5)
+            if len(fields) >= 5 and "x" in fields[1]:
+                major, minor = (int(v, 16) for v in fields[3].split(":"))
+                if (major, minor, int(fields[4])) == (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino):
+                    matches.append(line)
+        if not matches:
+            raise ValueError("native module is not mapped from its held ELF inode")
+        self.record["executable_mappings"] = matches
+        self.record["mapped_sha256"] = self._hash()
+
+    def finish(self, fence, *, keep_load_fd=False):
         if self.closed: return
         try:
             if self.module is not None:
@@ -297,8 +314,14 @@ class NativeCallback:
                 self.record['after_profile_sha256']=self._hash()
                 if self.record['after_profile_sha256']!=self.record['expected_sha256']:
                     raise ValueError('native artifact changed during profile')
+                self.record["final_fence_complete"] = True
         finally:
             self.rf.build_library=self.original
-            os.close(self.fd);self.closed=True
+            # Reuse reviewed #874 lifecycle: loaded /proc/self/fd paths remain
+            # distinct through the finite diagnostic process lifetime.
+            if not keep_load_fd or self.module is None:
+                os.close(self.fd)
+                self.record["load_fd_closed_after_fence"] = self.record.get("final_fence_complete", False)
+            self.closed=True
             if self.module is not None and sys.modules.get(self.MODULE) is self.module:
                 del sys.modules[self.MODULE]

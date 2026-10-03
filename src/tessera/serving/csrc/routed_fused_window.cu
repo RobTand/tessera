@@ -733,6 +733,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT>;
     constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
+    // #793: only single-run MMA8 launches stage stream history.
+    // Keep PREV_REGION_BYTES allocated so layout/ABI and bank mapping stay fixed.
+    constexpr bool STAGE_PREV = PREV_STAGED && !TWO;
     // One A tile of BMT rows, and the consumers' rows: two warp rows of
     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
     // tile, two per row.
@@ -746,7 +749,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
-    int32_t* Ps = reinterpret_cast<int32_t*>(smem + L::OFF_PREV);   // PREV_STAGED only
+    int32_t* Ps = reinterpret_cast<int32_t*>(smem + L::OFF_PREV);   // STAGE_PREV only
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
     int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
     int32_t* claim = reinterpret_cast<int32_t*>(smem + L::OFF_CLAIM);
@@ -946,7 +949,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int ih = (tid >> 6) & 1;
             const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
             const int t64_i = ih ? t64_h[1] : t64_h[0];
-            // ... and where its stream history comes from (PREV_STAGED).
+            // ... and where its stream history comes from (STAGE_PREV).
             const int g_i = ih ? g_h[1] : g_h[0];
             const int32_t* init_i = ih ? init_h[1] : init_h[0];
             const int hasinit_i = ih ? hasinit_h[1] : hasinit_h[0];
@@ -1075,8 +1078,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         }
                         // The staged stream history: the 32 bits before the
                         // half, in the same commit group as its words (see
-                        // PREV_STAGED and ``load_prev``, whose cases these are).
-                        if constexpr (PREV_STAGED) {
+                        // STAGE_PREV and ``load_prev``, whose cases these are).
+                        if constexpr (STAGE_PREV) {
                             if (q == 1) {
                                 int32_t* pd = Ps + (kc % WS) * PREV_STAGE_INTS + ih * BK + mm;
                                 const int wr0 = 2 * c.rate * t64_i;
@@ -1100,7 +1103,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // reads it instead of mapping the column again.  A two-run
                 // chunk maps from the descriptor ring (``ring``; see its
                 // schedule below).
-                // With PREV_STAGED the word comes from its stage instead
+                // With STAGE_PREV the word comes from its stage instead
                 // (``issue_words``; read in the chunk body) and this maps the
                 // columns only.
                 auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2], bool ring) {
@@ -1109,7 +1112,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         // MODE 2 reads one projection: both halves map alike.
                         cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
-                        if (PREV_STAGED || 8 * j * c.rate >= 32) continue;
+                        if (STAGE_PREV || 8 * j * c.rate >= 32) continue;
                         const int wr0 = 2 * c.rate * t64_h[h];
                         const int32_t* wcol = tbase_h[h] + c.cw0;
                         int32_t v;
@@ -1194,7 +1197,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 // loop's scoreboard waits on a toolchain change.
                 {
                     const int32_t zero = p.K >> 31;
-                    if constexpr (!PREV_STAGED) { prev_cur[0] ^= zero; prev_cur[1] ^= zero; }
+                    if constexpr (!STAGE_PREV) { prev_cur[0] ^= zero; prev_cur[1] ^= zero; }
                     a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
                     a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
                 }
@@ -1236,13 +1239,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         chunk[h] = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
                         ws[h] = wsc + slot * BN + chunk[h] * 8;
                     }
-                    // The chunk's stream history: from its stage (PREV_STAGED;
+                    // The chunk's stream history: from its stage (STAGE_PREV;
                     // zero for the row groups ``load_prev`` skips, as the
                     // carried registers held), or carried from ``load_prev``.
                     int32_t pv[2];
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
-                        if constexpr (PREV_STAGED)
+                        if constexpr (STAGE_PREV)
                             pv[h] = (8 * j * cm_cur[h].rate < 32) ? Ps[(kc % WS) * PREV_STAGE_INTS + h * BK + m] : 0;
                         else
                             pv[h] = prev_cur[h];
@@ -1275,7 +1278,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                 make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
                     }
                     bar_arrive(BAR_FULL0 + stage, THREADS);
-                    if constexpr (!PREV_STAGED) { prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1]; }
+                    if constexpr (!STAGE_PREV) { prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1]; }
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
                     a_cur = a_nxt;
                 }
