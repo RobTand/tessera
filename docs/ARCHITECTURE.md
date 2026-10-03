@@ -408,13 +408,18 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   native,sanitizers}.json. Run them through the published pbcampaign.py;
   synthetic numeric/native/sanitizer rows remain UNSUBMITTED and root-GO-only.
   The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
-  bind executable source4e17907d, max_attempts1 and retry_safe=false, unchanged
+  guard the PB snapshot parent as executable source4e17907d, max_attempts1
+  and retry_safe=false, unchanged
   native1 ELFs/readsets/image/resources/deadlines and exact expected counts.
   Root authorizes numeric/safety only after independent review and a compatible
   quiet window; the PM owner's both-Spark interval must finish first. No prior
-  CPU proofs are rerun to repin source. The measurement flag pins submission
-  to its eligible GB10 coordinator, so these GPU packets are not submitted
-  from DL380. This seal is not real calibrated, performance or serving proof.
+  CPU proofs are rerun to repin source. The published client refuses
+  measurement+anywhere, and snapshot_ref advertises branches rather than
+  pinning source: these fields are absent. Stage the existing NAS checkout at
+  source4e17907d; each payload checks HEAD^ and its executable file hashes.
+  Root requires an eligible GB10 coordinator, not DL380; explicit class
+  measurement lets PB place matching workers. This seal is not real calibrated,
+  performance or serving proof.
   Native numeric/native rows bind native1-readset-staged.json; sanitizers bind
   native1-sanitizer-readset-staged.json, explicit helper/test hashes and the
   same immutable image. Public manifest/phase sealing actually passed in
