@@ -1,0 +1,46 @@
+{
+  "schema": "tessera.stageprev.operative_successor_contract.v1",
+  "issue": 793,
+  "priority": "P1",
+  "author": "Tessera paired-K32 continuation",
+  "review_parent": "Tessera piece-major performance",
+  "resumption_owner": "Tessera piece-major performance",
+  "policy": "local://agent-delegation-policy-v3-20261003.md",
+  "approval": "local://tessera-k32-floor-scope-approval-20261003.json",
+  "approval_scope": "RootDecisionA operative admission wording only, not numeric GPU publication/execution",
+  "original_packet": {"commit":"7763d38ff8d5c50ffe928d4e906a986232d4b809","path":"experiments/configs/stageprev_793_numeric_packet.json","sha256":"bd93b379eb8ea0fe93169a28913cd7b9191711f7e50447cd9e679eafb99c467d","immutable":true},
+  "successor_packet": "experiments/configs/stageprev_793_numeric_packet_v2.json",
+  "semantic_delta": {
+    "physical_floor": "Every actually used coordinator/worker/storage filesystem >=5%, plus aggregate real ROOT/MAX reservations on used roots; unused SP physical headroom is not declared restored",
+    "sp_exclusion": "Fresh complete actual public claim-ledger zero plus current actual normal positive-kind never_fits_capacity refusal; no omitted/stale-offer inference, scalar-source-predicate substitute or fabricated denial",
+    "preserved": "BOTH-Spark CPU/power/clocks/residency, quiet, all original image/class/source/native/input/reader/numerical thresholds, fixed nine cases and one-worker master/fix/fix/master sequence",
+    "source_and_bank_qualification": "No new common bank or numeric/native/served/performance qualification follows"
+  },
+  "actual_roots": [
+    {"root":"/tmp","role":"Actual coordinator Git-sealer default temporary directory","root_env":"TESSERA_793_SEAL_ROOT","max_env":"TESSERA_793_SEAL_MAX_BYTES","max_bytes":1073741824},
+    {"root":"/home/rob/tmp","role":"Existing worker checkout/default TMPDIR and owned frozen source context","root_env":"TESSERA_793_WORK_ROOT","max_env":"TESSERA_793_WORK_MAX_BYTES","max_bytes":1073741824},
+    {"root":"/var/lib/docker","role":"Actual SL DockerRootDir from docker info, without starting a container","root_env":"TESSERA_793_DOCKER_ROOT","max_env":"TESSERA_793_DOCKER_MAX_BYTES","max_bytes":1073741824}
+  ],
+  "root_declaration_scope": "Conservative 1GiB envelope per real path, total3GiB. The public API rounds each positive ceiling and sums them; reservation is not a quota/measured peak. No ROOT/MAX variable redirects an operation. Root fields are annotations, not a fake resource kind.",
+  "derived_demand": {"cpu":2,"mem_gb":16,"gpu":1,"spool_gb":3},
+  "derivation_owner": "Actual published prismabuild.local_scratch.scratch_pairs/scratch_terms, carried by ordinary pbrun; never type --demand spool_gb",
+  "root_filesystem_observation": "The three SL paths were observed on device66306; collector groups actual st_dev and sums all path ceilings plus conservative current host Root/spool reservations before applying5%. No SP filesystem probe/writes/fetch/cleanup.",
+  "implementation": ["experiments/t8r_speed/stageprev_793_prepare.py","experiments/t8r_speed/stageprev_793_prerequisites.py"],
+  "read_only_collection": {
+    "owner":"Actual public SDK4 PoolQueue",
+    "calls":["ledger(host).capacity_census()","ledger(host).available()","latest_denials({real_action_key},include_local=False)","offers(max_age_s=120)"],
+    "ledger_paths":["/mnt/shared/prismabuild-fleet/pb-queue/reservations/sparky/free","/mnt/shared/prismabuild-fleet/pb-queue/reservations/sparky/held"],
+    "actual_refusal_snapshot":"/mnt/shared/prismabuild-fleet/pb-queue/reservations/sparky/adaptive/claim-denials.json",
+    "missing_or_unreadable":"HOLD, never infer zero from absent offer/partial census",
+    "not_used":["claim","acquire","ensure","retire","record_denial","private alternate ledger"]
+  },
+  "verification_reuse": {
+    "accepted_original16":"c9c7cecaa498673e9f32ae9c505b21a18425fc65672ce5963ed45a0d87584388 atbd09f7cd, parent accepted actual current-Core full attestation",
+    "unchanged14":"Retained, not automatically rerun or restamped to successor",
+    "changed_controls":"Select the two changed preparation/hold tests plus new operative metadata/refusal controls; actual results must be reported separately",
+    "old_scientific_proof":"73 controls, original native build/audit/readset sealer and all historic science remain immutable and unrerun"
+  },
+  "gpu_status":"HOLD_FOR_SEPARATE_EXACT_DECISION",
+  "required_later": ["Substantive exact-head parent review","Fresh real exclusion and used-filesystem read-set with raw actual denial","Actual selected-worker image/platform/driver, complete public reader/tier namespace, quiet and both-Spark telemetry","Separate exact numeric GPU authorization"],
+  "review_cycles":{"pending_cycle":0,"consecutive_failed_revisions":0,"github_approved_claim":false}
+}
