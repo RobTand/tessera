@@ -550,7 +550,7 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   or replay a failed row without a real source fix and supported supersession.
   Historical source4e native/sanitizer rows bound the original native1 readsets;
   those accepted CPU identities below do not attest the current composed rows.
-  same immutable image. Public manifest/phase sealing actually passed in
+  Historical public manifest/phase sealing actually passed in
   PBa67d342f: three files/3780084 bytes, and12 files/31445460 bytes, original
   native entries unchanged. After supported admission recovered, existing rows
   PBc8c24e35/PB5c429a8a acquired/read/released both exact SDK readsets on DL380
