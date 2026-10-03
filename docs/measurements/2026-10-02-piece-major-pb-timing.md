@@ -387,3 +387,25 @@ configured NVIDIA Sync identity with strict known-host checking, no vault-agent
 retry, credential copying, administrator bypass or deletion. The earlier8e1/c073
 bundle is retained unlaunched and superseded by new source-bound packets; it must
 not be launched against changed helper bytes. No new GPU authority is implied.
+
+
+## Exact normal-nonzero terminal classification
+
+A second reviewer check found that the explicit measurement-retention label
+covered raised exceptions but not an ordinary nonzero benchmark return code.
+The classifier now runs in `finally` before terminal publication for all normal
+and exceptional endings. It states receipt-present versus unpublished partial
+in-process data without converting a failed return into success or retry.
+
+Actual controller-main causal CPU action
+`456e29cb21213931cb6b115bbf74fe7341142ccbadfdd97ee7bad53be223d575`
+was1 failed/1 passed: ordinary return1 omitted the required retention label,
+while the exception case had it. After the repair, exact main-entry controls
+passed `07efd0a030a9ebc62585aead82fc91781068cd65384e5a9e13009a90e8028dc3`:
+2 passes, zero skips/uncollected/CUDA allocations on healthySparklina,
+CPU2/native1/xdist, 2.50s outer/1.70s pytest. Owner calls were inert CPU fixtures;
+this is terminal-contract evidence, not actual CUDA/benchmark qualification.
+Actual logs, claim/payload and full published SDK CAS lookup were verified.
+No prior31/5-case suite, numeric/profile or GPU population was repeated.
+Source-corrected packets supersede the unlaunched beeb bundle; exact new hashes,
+independent review and rootGO remain required before any six-block submission.
