@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _producer_stubs() -> tuple[ModuleType, ModuleType]:
     """Separate geometry and plan reading from real source-seal/cache behavior."""
-    geometry = ModuleType("export_tessera_serving")
+    geometry = ModuleType("tessera.export_serving")
     geometry.__dict__.update(
         quantizable=lambda src: ([], {}, {}, {}),
         project_expert_plan=lambda *args: {"projection": "control"},
@@ -33,7 +33,7 @@ def producer(monkeypatch):
     for dependency in _producer_stubs():
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
     spec = importlib.util.spec_from_file_location(
-        "producer_plan_cache_cli", ROOT / "experiments" / "tessera_producer_plan.py")
+        "producer_plan_cache_cli", ROOT / "src" / "tessera" / "producer_plan.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -151,3 +151,5 @@ def test_cli_cache_keeps_directory_refusals(producer, source, tmp_path, kind, me
         directory.chmod(0o777)
     with pytest.raises(ValueError, match=message):
         _call(producer, source, tmp_path, directory)
+
+
