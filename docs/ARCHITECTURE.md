@@ -16,7 +16,11 @@ Any other value is refused by name.
 
 The two settings split K differently at decode (M <= 192 on the GLM-5.3 MLP
 shapes) and so give different bits there. The default holds until #778's
-decode measurement on the served artifact clears the module launch.
+decode measurement on the served artifact clears the module launch. The named
+merge-gating PB action `1acf652f` was withdrawn with zero attempts because
+it was submitted non-exclusive; it is not a completed timing result. Earlier
+kernel tests and the pre-rebase calibration retain their historical source
+scope, not qualification of the current default-off head.
 
 The `STAGES + 1` chunk floor binds only the in-kernel fixup (its library
 check, and `dense_forward_roles`). The one-role launch keeps its old range.
