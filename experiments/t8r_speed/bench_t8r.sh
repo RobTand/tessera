@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
-# Submitted through PrismaBuild (pbrun --measurement --gpu --container-image ...);
-# this script is the admitted action's command.  Usage:
+# Batch benchmarks use PrismaBuild, including stock vLLM custom ops. The
+# closed comparison retains its qualified held-original-FD transport. Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
 # dense window kernels; one profiled call per (group, M) via --profile-from-start off).
@@ -17,6 +17,7 @@ while IFS= read -r line; do
   [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")
 done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ -z "${TESSERA_ROUTED_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED=$TESSERA_ROUTED_FUSED")
+[[ -z "${TESSERA_ROUTED_PIECE_MAJOR:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_PIECE_MAJOR=$TESSERA_ROUTED_PIECE_MAJOR")
 [[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_WIDE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WIDE=$TESSERA_ROUTED_FUSED_WIDE")
 ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
@@ -32,13 +33,19 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD state=[$STATE] image=$IMAGE_REF sta
 free -g | sed -n 2p
 # BENCH_SRC: an A/B arm's Tessera source tree, mounted over the checkout's src
 # (the harness stays the checkout's); unset runs the checkout's own src.
+CONTAINER_SRC=${NATIVE_CONTAINER_SRC:-/work/src}
+CONTAINER_EXT=${NATIVE_CONTAINER_EXT:-${BENCH_EXT_DIR:-$OUT/home/torch_extensions}}
+[[ "$CONTAINER_SRC" == /* && "$CONTAINER_EXT" == /* ]] || { echo "native benchmark paths must be absolute" >&2; exit 2; }
+KSRC=${BENCH_SRC:-$CHECKOUT/src}
+[[ -f "$KSRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "not a tessera src tree: $KSRC" >&2; exit 2; }
 SRC_MOUNT=()
-if [[ -n "${BENCH_SRC:-}" ]]; then
-  [[ -f "$BENCH_SRC/tessera/serving/csrc/routed_fused_window.cu" ]] || { echo "BENCH_SRC is not a tessera src tree: $BENCH_SRC" >&2; exit 2; }
-  SRC_MOUNT=(-v "$BENCH_SRC":/work/src:ro)
-  KSRC="$BENCH_SRC"
-else
-  KSRC="$CHECKOUT/src"
+if [[ -n "${BENCH_SRC:-}" || "$CONTAINER_SRC" != /work/src ]]; then
+  SRC_MOUNT=(-v "$KSRC":"$CONTAINER_SRC":ro)
+fi
+if [[ "$CONTAINER_SRC" != /work/src ]]; then
+  PROJECT_FILE=${BENCH_PROJECT_FILE:-$CHECKOUT/pyproject.toml}
+  [[ -f "$PROJECT_FILE" ]] || { echo "missing native source version declaration: $PROJECT_FILE" >&2; exit 2; }
+  SRC_MOUNT+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
@@ -46,6 +53,8 @@ EXTRA_MOUNTS=()
 # The strict replay uses PB's public SDK from this sealed published generation,
 # and reads only ranges opened through its leases. Preserve the injected attempt.
 PB_ENV=()
+DIRECT_OPTS=()
+RUN_PREFIX=()
 [[ -z "${BENCH_EXPECT_LIBRARY_SHA256:-}" ]] || IMAGE_ENV+=(-e "BENCH_EXPECT_LIBRARY_SHA256=$BENCH_EXPECT_LIBRARY_SHA256")
 if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   for key in PRISMABUILD_ACTION_KEY PRISMABUILD_ACTION_NONCE PRISMABUILD_ACTION_SCOPE PRISMABUILD_QUEUE_ROOT PRISMABUILD_RESIDENCY_MAP PRISMABUILD_READER_HELPER_ROOT; do
@@ -59,7 +68,32 @@ if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   # exact admitted namespace, with all data reads still through pinned FDs.
   EXTRA_MOUNTS+=(-v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet
                  -v "$STAGE_ROOT":"$STAGE_ROOT" --pid=host)
-  IMAGE_ENV+=(-e "PYTHONPATH=/work/src:/work/tests:$PB_CLIENT_ROOT/src")
+  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$PB_CLIENT_ROOT/src")
+fi
+# Reuse the qualified direct benchmark containment contract. Numeric phase
+# and separately reviewed finite timing/repeatability resource windows.
+if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
+  [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
+  [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol" >&2; exit 2; }
+  if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
+  elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
+  else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
+  [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
+  [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
+  [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
+  printf '%s\n' "$BENCH_OWNER_TOKEN" > "$OUT/owner-token.txt"
+  # The existing containment owner reads this same label key and a unique token.
+  DIRECT_OPTS=(--cidfile "$OUT/owned.cid" --label "tessera.paired_numeric_owner=$BENCH_OWNER_TOKEN"
+               --memory 16g --memory-swap 16g --pids-limit 512 --cpus 2)
+  RUN_PREFIX=(timeout --signal=TERM --kill-after=15s "${DIRECT_TIMEOUT}s")
+  EXTRA_MOUNTS+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro)
+  # Reuse the qualified pure-Python fixture runner; image torch/vLLM stay first.
+  FIXTURE_SP=${BENCH_FIXTURE_RUNNER_SP:?closed numeric fixtures require the qualified pure-Python runner}
+  for pkg in pytest _pytest pluggy iniconfig packaging py.py; do
+    [[ -e "$FIXTURE_SP/$pkg" ]] || { echo "missing fixture dependency $FIXTURE_SP/$pkg" >&2; exit 2; }
+  done
+  EXTRA_MOUNTS+=(-v "$FIXTURE_SP":"$FIXTURE_SP":ro)
+  IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$PB_CLIENT_ROOT/src:$FIXTURE_SP")
 fi
 # BENCH_RO_MOUNTS: space-separated host directories a script reads (a source
 # model, recorded activations), mounted read-only at the same path.
@@ -106,7 +140,9 @@ EXT_DIR=$OUT/home/torch_extensions
 if [[ -n "${BENCH_EXT_DIR:-}" ]]; then
   EXT_DIR=$(realpath -m "$BENCH_EXT_DIR")
   [[ -d "$EXT_DIR" ]] || { echo "missing BENCH_EXT_DIR: $EXT_DIR" >&2; exit 2; }
-  EXTRA_MOUNTS+=(-v "$EXT_DIR":"$EXT_DIR")
+fi
+if [[ -n "${BENCH_EXT_DIR:-}" || "$CONTAINER_EXT" != "$EXT_DIR" ]]; then
+  EXTRA_MOUNTS+=(-v "$EXT_DIR":"$CONTAINER_EXT")
 fi
 ext_libs() {
   local lib
@@ -118,13 +154,13 @@ ext_libs() {
 EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
-docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+"${RUN_PREFIX[@]}" docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" "${DIRECT_OPTS[@]}" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
-  -e TORCH_EXTENSIONS_DIR="$EXT_DIR" \
-  -e PYTHONPATH=/work/src:/work/tests -e HOST_NAME="$(hostname)" \
+  -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
+  -e PYTHONPATH="$CONTAINER_SRC":/work/tests -e HOST_NAME="$(hostname)" \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   -e NUMEXPR_NUM_THREADS=1 -e MAX_JOBS=1 -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \

@@ -754,6 +754,20 @@ def block_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     return desc.to(torch.int32).contiguous()
 
 
+def has_one_rate_four_run(b, e: int) -> bool:
+    """Whether a bundle is the bounded one-run rate-4 body (tessera#739).
+
+    The piece-major resident layout is scoped to exactly this shape: one run,
+    rate 4, covering every column.  ``run_pair`` already validates that shape;
+    this reads its result rather than the raw table.
+    """
+    pair, why = run_pair(b.runs_all.reshape(e, -1, 4)[0], int(b.cols))
+    if why is not None or pair is None:
+        return False
+    r_lo, _c0, n_lo, _w0, _r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
+    return n_hi == 0 and r_lo == 4 and n_lo == int(b.cols)
+
+
 def _run_stack_reason(name: str, b, e: int) -> "str | None":
     """The wire checks every fused window lane makes on one projection's
     stack: words by expert, one run table for the stack that is the kernel's
@@ -827,6 +841,32 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name} lives on {b.device}; the lane is CUDA"
         if b.window_bits != WINDOW_BITS:
             return f"{name} window_bits {b.window_bits} != {WINDOW_BITS}"
+        # The word layout must be an EXACT tag this lane reads: 'legacy' for
+        # every stack, or 'piece_major' for the bounded E4M3 one-run rate-4
+        # routed body only (tessera#739).  An unknown tag is refused, and the
+        # three bundles must agree -- never inferred from one of them.
+        lays = {str(getattr(x, "word_layout", "legacy")) for x in bundles.values()}
+        if len(lays) != 1:
+            return f"the gate/up/down bundles disagree on their word layout: {sorted(lays)}"
+        layout = lays.pop()
+        if layout not in ("legacy", "piece_major"):
+            return f"{name} carries unknown word layout {layout!r}"
+        if layout == "piece_major":
+            if fam != "e4m3":
+                return (f"{name} is piece_major; the lane reads piece-major only for the "
+                        f"E4M3 family, not {fam!r}")
+            # The piece-major reader is instantiated only in the MMA E4M3
+            # library.  An explicit TESSERA_FUSED_E4M3_MMA=f16 selects the
+            # f16-byte reader, which reads legacy words only: refuse here, before
+            # the device query or any smem/extension build below.
+            lib = library_for(fam)
+            if not library_mma8(lib):
+                return (f"{name} is piece_major, which the lane reads only on the MMA E4M3 "
+                        f"reader ({ENV_E4M3_MMA}={os.environ.get(ENV_E4M3_MMA, E4M3_MMA_DEFAULT)!r} "
+                        f"selects {lib!r})")
+            if not has_one_rate_four_run(b, e):
+                return (f"{name} is piece_major, which the lane reads only for a single run at "
+                        f"rate 4; its run table is not one rate-4 run over {b.cols} columns")
         if int(b.experts) != e:
             return f"{name} has {b.experts} experts, down has {e}"
         if fam == "e4m3" and b.quantizer != "native":
@@ -994,6 +1034,16 @@ class FusedRoutedWindowMoE:
     counters: torch.Tensor
     activation: str = "silu"
 
+    @property
+    def piece_major(self) -> bool:
+        """Whether the resident words are the piece-major order (tessera#739).
+
+        Read off the bundles' shared tag (``word_layout``), never recomputed
+        from the run table: the reader must agree with how the stack was
+        actually written.
+        """
+        return str(getattr(self.down, "word_layout", "legacy")) != "legacy"
+
     @classmethod
     def from_bundles(cls, gate, up, down, *, activation: str = "silu") -> "FusedRoutedWindowMoE":
         reason = fused_routed_window_supported(gate, up, down)
@@ -1099,6 +1149,7 @@ class FusedRoutedWindowMoE:
             b0.scale_all, b1.scale_all,
             r0, r1, d0, d1,
             int(tile_words), int(slot_words),
+            bool(self.piece_major),
             routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
@@ -1238,6 +1289,12 @@ def fused_dense_window_supported(bundle) -> "str | None":
     ``tessera::window_gemm_dense``, and the reason is the string returned
     here so a load log can say which.
     """
+    from .kernel_window_gemv import require_legacy_word_layout
+    try:
+        require_legacy_word_layout(getattr(bundle, "word_layout", "legacy"),
+                                   "the fused dense window reader")
+    except GrammarError as exc:
+        return str(exc)
     if not fused_dense_window_enabled():
         return f"disabled by {ENV_TOGGLE_DENSE}=0"
     fam = bundle.family

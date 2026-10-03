@@ -89,10 +89,18 @@ def canonical_replay_paths():
     def argument(n, name):
         return (isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
                 and n.value.id == 'args' and n.attr == name)
-    artifacts = [n.comparators[0].value for n in ast.walk(owner)
+    constants = {n.targets[0].id: n.value.value for n in tree.body
+                 if isinstance(n, ast.Assign) and len(n.targets) == 1
+                 and isinstance(n.targets[0], ast.Name) and isinstance(n.value, ast.Constant)
+                 and isinstance(n.value.value, str)}
+    artifacts = {n.comparators[0].value if isinstance(n.comparators[0], ast.Constant)
+                 else constants[n.comparators[0].id] for n in ast.walk(owner)
                  if isinstance(n, ast.Compare) and argument(n.left, 'artifact')
-                 and len(n.comparators) == 1 and isinstance(n.comparators[0], ast.Constant)
-                 and isinstance(n.comparators[0].value, str)]
+                 and len(n.comparators) == 1
+                 and ((isinstance(n.comparators[0], ast.Constant)
+                       and isinstance(n.comparators[0].value, str))
+                      or (isinstance(n.comparators[0], ast.Name)
+                          and n.comparators[0].id == 'REPLAY_ARTIFACT'))}
     native_names = [n.comparators[0].id for n in ast.walk(owner)
                     if isinstance(n, ast.Compare) and argument(n.left, 'profile_native_file')
                     and len(n.comparators) == 1 and isinstance(n.comparators[0], ast.Name)]
@@ -102,7 +110,7 @@ def canonical_replay_paths():
                and isinstance(n.targets[0], ast.Name) and n.targets[0].id == native_names[0]
                and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str)]
     assert len(natives) == 1, 'closed native owner changed'
-    return {'artifact': artifacts[0], 'native': natives[0]}
+    return {'artifact': next(iter(artifacts)), 'native': natives[0]}
 
 
 def options():
@@ -117,7 +125,7 @@ def require_options(args, **kwargs):
     tree = ast.parse(path.read_text())
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
                 and n.name == 'require_single_replay_options')
-    scope = {'ARTIFACT': '/legacy'}
+    scope = {'ARTIFACT': '/legacy', 'REPLAY_ARTIFACT': canonical_replay_paths()['artifact']}
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec'), scope)
     scope[node.name](args, **kwargs)
 
@@ -149,6 +157,7 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
     args = options()
     args.out = str(tmp_path/'out')
+    args.outputs_only = False
     closed = []
     reader = SimpleNamespace(close=lambda: closed.append(True))
     module = ModuleType('pb_staged_store')
@@ -210,4 +219,3 @@ def test_native_input_requires_closed_counter_mode(ncu,path):
     args=options();args.ncu=ncu;args.profile_native_file=canonical_replay_paths()['native'] if path=='canonical' else path
     with pytest.raises(ValueError,match='counter-only'):
         require_options(args)
-

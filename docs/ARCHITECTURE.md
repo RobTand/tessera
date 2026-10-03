@@ -1,5 +1,59 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
+(#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
+selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
+that choice before loading; each eligible one-run R4 unit is permuted from
+`[tile][column][64-row piece][word]` to `[tile][64-row piece][column][word]`
+before its one `WindowUnitAxis.put`. Serialized bytes, word counts, scales,
+column permutation and TP-cut initial states stay unchanged. The owner carries
+the layout through its signature and finished SoA; finish copies no word plane.
+BF16 (including A8SE layer45), forced f16 and routed opt-out retain legacy
+placement. A prepared PM stack refuses an incompatible reader or fallback.
+Dense Triton/fused/custom-op owners, GEMV argument extraction and E2M1 WINDOW
+readers require legacy words before dropping their layout metadata. Native PM
+dispatch is limited to routed E4M3 MMA, one-run R4, modes 0/1/2; history reads
+the same column's preceding piece/tile or its incoming state. This opt-in has
+no numerical, performance, graph or serving qualification from CPU checks or
+compilation alone. No serving cell, default, precision menu or pin is promoted.
+
+The finite PM experiment extends the existing benchmark, StagedInputs and
+NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
+ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
+source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
+and final output bits must agree before a content-bound numeric receipt can
+admit ABBA timing. This vLLM-backed batch operator runs through PrismaBuild;
+only inference-serving services are exempt. `piece_major_pb_action.py` binds the
+sealed timing packet and explicit coordinator GPU GO inside an exclusive
+measurement attempt, importing the existing containment owner rather than
+launching a second dispatcher. Held original FDs retain the existing outer/inner
+checks, native load/fence checks and close-before-publication behavior. CPU
+checks and builds also use PB. Seeded activations and uniform routing weights
+are geometry
+controls, not served decode or quality measurements. Every timed arm retains
+raw events, Torch profiler traces and power windows; both-host Netdata and
+clock review are required, and energy remains HOLD. Defaults and serving cells
+are unchanged.
+
+
+The separate `tessera.routed_piece_major_repeatability.v1` experiment admits
+only M2048, three predeclared balanced ABBA/BAAB block pairs, 10 warmups and
+30 raw events per cell. Each independently started block first executes fixed
+60-second unscored alternating resident forwards. It requires the original
+numeric proof and content-bound passing mechanism-profile receipt, with exact
+input/source/native identities; it does not repeat numeric or Torch/NCU
+qualification. All raw events, temperatures, reported-SM/throttle observations
+and errors remain: no outlier deletion, adaptive plateau or result-based retry.
+Host-polled timestamps are not native-update proof and clocks remain explicitly
+unqualified; these are descriptive repeatability observations, not fixed-clock
+causality, served speed or energy. Existing Netdata owners retain fresh both-host
+action, conditioning and event windows, including coarse/empty coverage and
+per-series errors. Six science-defined finite block actions use supported PB
+campaign admission, exclusive same-Sparky resources and existing exact-CID
+containment; no application dispatcher or source/controller main bypass is
+added. The obsolete historical benchmark exemption does not authorize batch
+execution. No default, cell, pin or precision menu is promoted.
+
 Re-stamped 2026-10-02 for the uninstalled SP mHC tile pipeline primitive
 (tessera#858, children of #783/#803; §5.1.3). Its CPU fixtures cover token
 ownership, event dependencies and failure retirement. Actual TP2 NCCL

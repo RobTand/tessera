@@ -126,6 +126,13 @@ ROOTS: dict[str, Root] = {
             "the published PrismaBuild installation verifier used by native preflight",
         ),
         Root(
+            "piece_major_execution",
+            "TESSERA_PIECE_MAJOR_EXECUTION_DIR",
+            "/mnt/shared/astra-resume-20261002/t8_performance/"
+            "piece-major-common-c236b7aa/execution-owner-timing600",
+            "the retained piece-major containment owner used by timeout controls",
+        ),
+        Root(
             "b40_runtime",
             "TESSERA_B40_RUNTIME_DIR",
             "/mnt/shared/tessera-suite-envs/pq1934-pb95-tessera-b40-py312/site-packages/tessera",

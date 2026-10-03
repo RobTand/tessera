@@ -97,7 +97,8 @@ not establish full-model LFM served quality or a compiled MoE forward.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 import torch
@@ -117,6 +118,39 @@ from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
 from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
                         DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED, DECODER_TORCH_STOCK,
                         emit_route, route_shape)
+
+#: Opt-in: re-lay the compact routed window body piece-major (tessera#739).
+#: Default off.  Only the single-rate rate-4 body the fused R4 reader
+#: addresses is eligible (``kernel_window_gemv.piece_major_eligible``); every
+#: other unit keeps legacy words, and no reader is re-strided to read either.
+ENV_PIECE_MAJOR = "TESSERA_ROUTED_PIECE_MAJOR"
+
+
+def _piece_major_requested() -> bool:
+    return os.environ.get(ENV_PIECE_MAJOR, "0").strip().lower() not in ("", "0", "false", "no")
+
+
+def _piece_major_admissible(family: str) -> bool:
+    """The full intake gate for the piece-major resident layout (tessera#739).
+
+    All four must hold, and each is checked before the transient is re-laid:
+
+    * the flag is on (opt-in, default off);
+    * the family is E4M3 -- a BF16 (value) unit stays legacy;
+    * the fused routed window lane is enabled;
+    * the E4M3 library this process builds is the MMA one, since the
+      piece-major reader is instantiated only there.  ``library_for`` reads
+      ``TESSERA_FUSED_E4M3_MMA``: an explicit ``f16`` keeps every body legacy.
+    """
+    if not _piece_major_requested():
+        return False
+    if family != "e4m3":
+        return False
+    from ..routed_fused import fused_routed_window_enabled, library_for, library_mma8
+    if not fused_routed_window_enabled():
+        return False
+    return library_mma8(library_for(family))
+
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -545,6 +579,9 @@ class _RankLocalPackedIntake:
             from ..native_window_moe import WindowUnitAxis
 
             window_family = "value" if self.family == TESSERA_BF16 else "e4m3"
+            # Freeze the reader choice for this resident owner. A later env
+            # change cannot cause two callbacks to place different layouts.
+            self._piece_major = _piece_major_admissible(window_family)
             self.axis = {g: WindowUnitAxis(
                 int(declared['experts']),
                 tuple(str(role['roles'][0][0]) for role in self.roles[g]),
@@ -592,6 +629,19 @@ class _RankLocalPackedIntake:
             name, unit = _compact_expert_units(
                 blob, self.roles[group][index], self.plans[group], target,
                 device=device, family=family, scratch=self._scratch)
+            # The resident word order is decided HERE, once, before the single
+            # stack write: an opt-in piece-major re-lay of an eligible
+            # single-rate rate-4 body, on the bounded per-unit transient.  The
+            # axis records the tag in its signature, and every reader either
+            # knows it or refuses (tessera#739).
+            from ..kernel_window_gemv import (WORD_LAYOUT_PIECE_MAJOR,
+                                              piece_major_eligible)
+            # Bounded to the E4M3 MMA one-run rate-4 routed body: A8SE also
+            # carries BF16 layer45 units, whose (value) reader stays legacy, and
+            # an explicit TESSERA_FUSED_E4M3_MMA=f16 keeps every body legacy.
+            # Never tag by rate alone.
+            if self._piece_major and piece_major_eligible(unit.rep):
+                unit = replace(unit, rep=unit.rep.with_word_layout(WORD_LAYOUT_PIECE_MAJOR))
             # The axis allocates each plane stack once and drops this unit as
             # soon as its expert slot is filled; a repeated callback refuses.
             self.axis[group].put(name, expert, unit)
@@ -636,7 +686,8 @@ class _RankLocalPackedIntake:
                     perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
                     experts=int(self.declared['experts']),
                     window_bits=slot["window_bits"], family=family,
-                    arithmetic=arithmetic)
+                    arithmetic=arithmetic,
+                    word_layout=str(slot.get("word_layout", "legacy")))
 
             self.axis = {}
             return PackedWindowMoeBundles(

@@ -213,6 +213,13 @@ def fused_routed_e2m1_supported(gate, up, down) -> "str | None":
     columns a multiple of 64 (one FP4 instruction's K) and at least 256, the
     intermediate size a multiple of 128 rows and the hidden size of 256.
     """
+    from .kernel_window_gemv import require_legacy_word_layout
+    try:
+        for b in (gate, up, down):
+            require_legacy_word_layout(getattr(b, "word_layout", "legacy"),
+                                       "the E2M1 routed window reader")
+    except GrammarError as exc:
+        return str(exc)
     if not fused_routed_window_enabled():
         return f"disabled by {ENV_TOGGLE}=0"
     bundles = {"gate": gate, "up": up, "down": down}
@@ -515,6 +522,12 @@ def dense_role_reason(unit) -> "str | None":
     the scale plane); they need not fill the last 256-row block, so GLM-5.3's
     DSA indexer ``wk`` (128 rows) and ``weights_proj`` (32) and a vocab-parallel
     ``lm_head`` (77,440 rows per rank at TP2) are in."""
+    from .kernel_window_gemv import require_legacy_word_layout
+    try:
+        require_legacy_word_layout(getattr(unit.rep, "word_layout", "legacy"),
+                                   "the E2M1 dense window reader")
+    except GrammarError as exc:
+        return str(exc)
     if unit.window_bits != WINDOW_BITS:
         return f"window_bits {unit.window_bits} != {WINDOW_BITS}"
     if unit.arity != 2:

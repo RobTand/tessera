@@ -246,6 +246,11 @@ class PreparedGroupedWindowGemm:
     block_k: int
     quantizer: str | None = "native"
     arithmetic: str = "epilogue"
+    #: The resident word order of ``words_all`` (``kernel_window_gemv``
+    #: ``WORD_LAYOUT_*``).  The compact Triton kernel reads the legacy
+    #: ``[column][chunk]`` order only; a stack in any other order is refused
+    #: at ``__call__`` rather than mis-read.
+    word_layout: str = "legacy"
     #: The ``e2m1`` family's scale (E2M1x2 window body over LUT16): per expert,
     #: the group-16 nibble plane (uint8 ``[E, rows * cols / 32]``), the
     #: 16-entry UE4M3 table (uint8 ``[E, 16]``) and the fp32 global.  ``None``
@@ -272,6 +277,8 @@ class PreparedGroupedWindowGemm:
             raise GrammarError(
                 "the e2m1 family has no grouped Triton GEMM; its stacks are served by the "
                 "fused routed window lane (tessera.routed_fused) only")
+        from .kernel_window_gemv import require_legacy_word_layout
+        require_legacy_word_layout(self.word_layout, "the compact Triton grouped GEMM")
         if x.dim() != 2 or x.shape[1] != self.cols or x.device != self.device:
             raise GrammarError(
                 f"x must be a [T, {self.cols}] tensor on {self.device}, got "
@@ -426,6 +433,7 @@ def prepare_grouped_window_gemm_from_soa(
     scale_plane_all: "torch.Tensor | None" = None,
     scale_lut_all: "torch.Tensor | None" = None,
     global_all: "torch.Tensor | None" = None,
+    word_layout: str = "legacy",
 ) -> PreparedGroupedWindowGemm:
     """A prebuilt SoA stack -- what a loader fills incrementally -- validated
     once and wrapped.  Shapes, dtypes and the per-expert offsets must already
@@ -500,6 +508,7 @@ def prepare_grouped_window_gemm_from_soa(
         family=family, block_m=block_m, block_n=block_n, block_k=block_k,
         quantizer=quantizer if family == "e4m3" else "native", arithmetic=arithmetic,
         scale_plane_all=scale_plane_all, scale_lut_all=scale_lut_all, global_all=global_all,
+        word_layout=str(word_layout),
     )
 
 
@@ -560,6 +569,11 @@ def prepare_grouped_window_gemm(
                     f"expert {e}: {name}={getattr(p, name)} differs from expert 0's "
                     f"{getattr(first, name)}; a grouped stack is homogeneous"
                 )
+        if str(getattr(p, "word_layout", "legacy")) != str(getattr(first, "word_layout", "legacy")):
+            raise GrammarError(
+                f"expert {e}: word_layout {getattr(p, 'word_layout', 'legacy')!r} differs from "
+                f"expert 0's {getattr(first, 'word_layout', 'legacy')!r}; one grouped stack "
+                "needs one resident word order")
     device = first.device
     if arithmetic == "folded" and first.family != "value":
         raise GrammarError(
@@ -595,4 +609,5 @@ def prepare_grouped_window_gemm(
         block_k=block_k,
         quantizer=quantizer if first.family == "e4m3" else "native",
         arithmetic=arithmetic,
+        word_layout=str(getattr(first, "word_layout", "legacy")),
     )

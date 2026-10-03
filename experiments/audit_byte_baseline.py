@@ -517,6 +517,41 @@ def _release_shard(blob: bytes, label: str, cut, q256: int) -> "dict[str, bytes]
     }
 
 
+
+def resident_hashes() -> dict:
+    """Reach the R4 resident relay on real encoded bytes, including a second tile."""
+    from tessera.encode import encode_unit
+    from tessera.export import _plan_for
+    from tessera.kernel_window_gemv import repack_window_body, PIECES_PER_TILE, WORD_LAYOUT_PIECE_MAJOR
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    label = "r4-two-tiles"
+    recipe = wire_recipe(E4M3_GRID, 1024)
+    rates, forests = _plan_for(E4M3_GRID, 1024, 256, recipe.body, recipe.channel_sigma)
+    if set(rates) != {4}:
+        raise ValueError("resident byte corpus no longer reaches one-run R4")
+    torch.manual_seed(zlib.crc32(label.encode()))
+    unit = encode_unit(torch.randn(520, 256) * 0.02, forests, rates,
+                       completion=0, span=recipe.span, scale_plane=recipe.scale_plane,
+                       body=recipe.body, window_bits=recipe.window_bits,
+                       window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
+                       channel_sigma=recipe.channel_sigma, scale_refit=2)
+    _m, _r, blob = build_unit_artifact(unit, label, forests, 1024, ConvCode())
+    parsed = parse_unit_artifact(blob)
+    rep = repack_window_body(parsed.unit.body_bits, tuple(parsed.unit.rates))
+    pm = rep.with_word_layout(WORD_LAYOUT_PIECE_MAJOR)
+    restored = pm.words.reshape(rep.n_tiles, PIECES_PER_TILE, rep.cols, 8).permute(0, 2, 1, 3).contiguous()
+    if not torch.equal(restored.reshape(-1), rep.words):
+        raise ValueError("resident relay does not preserve every encoded word")
+    _m, _r, after = build_unit_artifact(parsed.unit, label, parsed.forests, 1024, parsed.code)
+    payloads = {"serialized_legacy": blob, "serialized_piece_major": after,
+                "original_words": rep.words.numpy().tobytes(),
+                "piece_major_words": pm.words.numpy().tobytes(),
+                "restored_words": restored.numpy().tobytes()}
+    return {label + "/" + key: hashlib.sha256(value).hexdigest() for key, value in payloads.items()}
+
+
 def decode_hashes() -> dict:
     from tessera.unit_artifact import read_unit_artifact  # late: keeps import cheap
 
@@ -566,6 +601,7 @@ def main() -> int:
         "encode": encode_hashes(),
         "layout": layout_hashes(),
         "release": release_hashes(),
+        "resident": resident_hashes(),
     }
     if not a.encode_only:
         report["decode"] = decode_hashes()
@@ -583,6 +619,7 @@ def main() -> int:
               f"({len(report['encode']) - value} shape, {value} value), "
               f"{len(report['layout'])} layout rows, "
               f"{len(report['release'])} release rows, "
+              f"{len(report['resident'])} resident rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)

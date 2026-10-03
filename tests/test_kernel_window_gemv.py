@@ -908,7 +908,7 @@ def test_item_tables_are_shared_only_between_replicas():
 
 def test_the_layout_is_exactly_what_the_planner_reads():
     """``Repacked.layout`` names the tile count, the column count, the run
-    table and the device -- and nothing the item tables do not depend on.  Two
+    table, resident word order and device. Two
     repacks of one rate multiset in another column order have equal layouts
     (items address permuted columns; the permutation is applied to ``x``), so
     do bodies differing only in their codes; a body one tile taller does not."""
@@ -923,7 +923,8 @@ def test_the_layout_is_exactly_what_the_planner_reads():
     c = kg.repack_window_body(body ^ 1, rates_a)
     assert not torch.equal(a.perm, b.perm)
     assert a.layout == b.layout == c.layout
-    assert tuple(name for name, _ in a.layout) == ("tiles", "columns", "runs", "device")
+    assert tuple(name for name, _ in a.layout) == ("tiles", "columns", "runs", "word_layout", "device")
+    assert dict(a.layout)["word_layout"] == kg.WORD_LAYOUT_LEGACY
     assert dict(a.layout)["runs"] == tuple(tuple(r) for r in a.runs.tolist())
     for u in (a, b, c):
         assert torch.equal(kg.items_for(u, kg.Plan(blocks=3, cols_per_item=8), 1),

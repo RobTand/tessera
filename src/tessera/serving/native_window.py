@@ -258,6 +258,12 @@ class PreparedDenseNativeModule:
                  family: str, lane: str = LANE_TRITON, fused_roles=None,
                  lane_reason: "str | None" = None):
         self.__roles = tuple(roles)
+        # Both dense custom ops carry legacy words without a layout argument.
+        # Admit that invariant while roles still carry their immutable tags.
+        from ..kernel_window_gemv import require_legacy_word_layout
+        for role in self.__roles:
+            require_legacy_word_layout(getattr(role.bundle, "word_layout", "legacy"),
+                                       "the native dense custom-op owner")
         self.__rows = int(rows)
         self.__columns = int(columns)
         self.__device = device
