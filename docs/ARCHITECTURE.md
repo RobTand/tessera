@@ -30,7 +30,14 @@ public staged SDK and loads each actual value DSO once through the existing
 checks exported family/geometry/distance, before/mapped/post hashes, unchanged
 serving builder/cache and closes FDs before releasing the reader. This explicit
 CPU diagnostic does not call kernels, replace the serving gate/cache, or claim a
-CUDA fence, serving admission or numeric/sanitizer qualification.
+CUDA fence, serving admission or numeric/sanitizer qualification. The fresh
+admitted CPU preflight `85bfd750` completed once with three new negative gates
+passing and actual distance0/distance4 DSO mappings retaining matching hashes
+before load, in executable mappings and after inspection. The original serving
+builder/cache stayed unchanged; both load FDs and the reader were released.
+Exact current-bank sealer, staged270-unit/108-history proof, native-FD receipt
+and the still-unapproved GPU numeric/sanitizer proposal are frozen in
+`experiments/configs/value_prefetch_874_combined_safety_protocol.json`.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
