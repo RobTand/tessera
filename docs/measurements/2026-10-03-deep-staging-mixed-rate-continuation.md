@@ -34,12 +34,21 @@ DL CPU1/memory1GiB/native1 PB `025a4809f4ee2b1a3cfc14bae8a8ca353b65e3ded86dcf8a6
 | --- | ---: | ---: | ---: |
 | MODE0 duration ms |7.977152|7.973536|8.036160|
 | MODE2 duration ms |4.553888|4.610240|4.670336|
-| MODE0 shared-pipe %peak elapsed |57.170900|57.182498|56.645574|
+| MODE0 L1TEX shared-memory LSU wavefront throughput % peak elapsed |57.170900|57.182498|56.645574|
 | MODE0 barrier stalls/issue-active ratio |5.392552|5.317478|5.593714|
 | MODE0 long-scoreboard stalls/issue-active ratio |0.465702|0.462248|0.497495|
 | MODE0 MIO throttle stalls/issue-active ratio |1.361138|1.299204|1.447979|
 
 These single NCU launches locate continuing barrier/shared-pipe pressure; they do not identify which barrier owns all stall samples or price a realizable speedup. Deeper words do not remove the M2048 MODE0 term. Do not substitute the current PM R4 profiles for this source/shape. T4/T16 owners were informed of the negative scope; their default-off activation-prefetch mechanisms are different and receive no benefit claim from this experiment.
+The exact throughput counter is
+`l1tex__data_pipe_lsu_wavefronts_mem_shared.sum.pct_of_peak_sustained_elapsed`;
+it is not an SM shared-cycle utilization measurement. Independent review
+`INDEPENDENT-DEEP-STAGING-REVIEW.json`, SHA256
+`762b9889db1a1213a32934081f4a03cc730f97b3d9175ad096a280cd6cdb23ee`,
+PB `6b6e81bd`, authenticated the raw stop proof, source/SASS bridge and five
+CAS records and accepted measured-negative/not-planned #807 disposition.
+Root authorized closing #807 not planned and PR809 unmerged; #750 remains
+open and #793 stays active. No fixed/speed/served/all-rung claim follows.
 
 ## #793 / PR794: source remedy exists, mixed proof does not
 
