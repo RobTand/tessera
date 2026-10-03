@@ -52,3 +52,34 @@ def test_explicit_module_roster_binds_without_foreign_layer_alias(layer):
     roles[-1]=dict(roles[-1],tensor=f'{name}.0.gate_proj.weight')
     with pytest.raises(ValueError,match='roster'):
         reader.bind_roles('/unused',roles,module=name)
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, monkeypatch, failure):
+    import torch
+    from tessera.routed_fused import FusedRoutedWindowMoE
+    native=FusedRoutedWindowMoE.__new__(FusedRoutedWindowMoE)
+    object.__setattr__(native,"library","e4m3mma")
+    object.__setattr__(native,"runs_gate",torch.tensor([[4,0,1,0,0,0,0,0]]))
+    object.__setattr__(native,"runs_down",torch.tensor([[4,0,1,0,0,0,0,0]]))
+    def launch(self,mode,*args,**kwargs):
+        kwargs["out"].fill_(mode+1)
+        if failure:raise RuntimeError("owned launch failure")
+    monkeypatch.setattr(FusedRoutedWindowMoE,"_launch",launch)
+    monkeypatch.setattr(FusedRoutedWindowMoE,"resident_bytes",lambda self:64)
+    monkeypatch.setattr(torch.cuda,"synchronize",lambda:None)
+    def fn(*unused):
+        for mode in (0,2):
+            out=torch.empty(1,2,dtype=torch.bfloat16)
+            native._launch(mode,out=out)
+        return out.clone()
+    fn.native_adapter=native
+    if failure:
+        with pytest.raises(RuntimeError,match="owned launch failure"):
+            probe().observe(fn,(),tmp_path/"words")
+    else:
+        result=probe().observe(fn,(),tmp_path/"words")
+        assert set(result["outputs"])=={"gate_up","down_routes","out"}
+        assert result["repeat_equal"] is True
+    assert FusedRoutedWindowMoE._launch is launch
+
