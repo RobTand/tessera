@@ -134,14 +134,14 @@ class StagedInputs:
     def json(self, path):
         return json.loads(self.read(path))
 
-    def bind_roles(self, root, roles):
-        """Publisher metadata is already pinned; retain its cached-unit authority."""
+    def bind_roles(self, root, roles, *, module):
+        """Publisher metadata binds one explicit complete expert-role roster."""
         self.roles = {r['tensor'].removesuffix('.weight')+'.wire':r for r in roles}
         roster = {(r['expert'],r['role']) for r in roles}
-        if (len(roles)!=864 or len(self.roles)!=864 or
-            roster != {(e,r) for e in range(288) for r in ('gate_proj','up_proj','down_proj')} or
-            any(not n.startswith('model.language_model.layers.10.mlp.experts.') for n in self.roles)):
-            raise ValueError('single replay requires exactly the L10 expert-role roster')
+        expected = {(e,r) for e in range(288) for r in ('gate_proj','up_proj','down_proj')}
+        if (len(roles)!=864 or len(self.roles)!=864 or roster != expected or
+                any(r['tensor'] != f"{module}.{r['expert']}.{r['role']}.weight" for r in roles)):
+            raise ValueError('declared module requires exactly its expert-role roster')
 
     def wire(self, root, name, *, index):
         """One authenticated outer frame and its independently checked inner unit."""

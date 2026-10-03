@@ -326,6 +326,7 @@ def build_routed(store, module):
 
     def fn(x, ids, w):
         return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+    fn.native_adapter = native  # exact production owner for finite numeric observation
     return fn, info, packed, touched
 
 
@@ -432,6 +433,12 @@ def kernel_profile(call, reps=5, *, full_names=False):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args, "stageprev_numerics", False):
+        from stageprev_probe import require_options
+        require_options(args, stubbed=stubbed)
+        return
+    if getattr(args, "hash_only", False):
+        raise ValueError("hash-only requires the closed stageprev numeric mode")
     if getattr(args,"profile_native_file",None):
         expected = "/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so"
         if not args.single_routing_file or not args.ncu or args.profile_native_file!=expected:
@@ -457,6 +464,9 @@ def main():
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--power-s", type=float, default=3.0)
     ap.add_argument("--no-graph", action="store_true")
+    ap.add_argument("--stageprev-numerics", action="store_true",
+                    help="closed #793 original three-group numeric qualification only")
+    ap.add_argument("--hash-only", action="store_true", help="numeric-only; no timing/power")
     ap.add_argument("--routing", default=None,
                     help="directory with m<M>/*.pt recorded top-k ids; each file adds a "
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
@@ -478,7 +488,7 @@ def main():
     dev = torch.device("cuda")
     inputs = None
     native_owner = None
-    if args.single_routing_file:
+    if args.single_routing_file or args.stageprev_numerics:
         from pb_staged_store import StagedInputs
         inputs = StagedInputs(args.input_manifest)
     try:
@@ -486,7 +496,9 @@ def main():
         if inputs:
             # Bind publisher declarations to the exact staged bytes intake reads.
             published = store.metadata("tessera_serving_manifest.json")
-            inputs.bind_roles(store.root, published["modules"][P + "10.mlp.experts"]["roles"])
+            if not args.stageprev_numerics:
+                inputs.bind_roles(store.root, published["modules"][P + "10.mlp.experts"]["roles"],
+                                  module=P + "10.mlp.experts")
             if args.profile_native_file:
                 from pb_staged_store import NativeCallback
                 from tessera import routed_fused as rf
@@ -536,6 +548,8 @@ def main():
             try:
                 with torch.inference_mode():
                     if kind == "routed":
+                        if args.stageprev_numerics:
+                            inputs.bind_roles(store.root, published["modules"][module]["roles"], module=module)
                         fn, info, holder, bytes_for = build_routed(store, module)
                         width = int(store.schemes[module]["groups"]["w13"]["columns"])
                     elif kind == "bf16":
@@ -564,7 +578,7 @@ def main():
                             xa = (x,)
                         elif rfile is None:
                             xa = (x, *balanced_routing(m, dev))
-                        elif inputs:
+                        elif inputs and args.single_routing_file:
                             loaded = torch.load(io.BytesIO(inputs.read(rfile)), map_location="cpu", weights_only=True)
                             ids = loaded["ids"]
                             if tuple(ids.shape) != (2048, TOP_K) or ids.dtype != torch.int32:
@@ -597,8 +611,27 @@ def main():
                             if expected_library and meta["single_replay"]["library_sha256"] != expected_library:
                                 raise ValueError("profile recovery native binary differs from measured library")
                             meta["single_replay"]["build_platform"] = token
+                        elif args.stageprev_numerics and inputs:
+                            loaded = torch.load(io.BytesIO(inputs.read(rfile)), map_location="cpu", weights_only=True)
+                            ids = loaded["ids"]
+                            if tuple(ids.shape) != (m, TOP_K) or ids.dtype != torch.int32:
+                                raise ValueError("stageprev recorded routing shape/dtype differs")
+                            if int(ids.min()) < 0 or int(ids.max()) >= EXPERTS:
+                                raise ValueError("stageprev recorded expert ids out of range")
+                            xa = (x, ids.to(device=dev),
+                                  torch.full((m, TOP_K), 1.0/TOP_K, dtype=torch.float32, device=dev))
                         else:
                             xa = (x, *recorded_routing(rfile, m, dev))
+                        if args.stageprev_numerics:
+                            from stageprev_probe import observe
+                            cell = observe(fn, xa, os.path.join(args.out, gid, key))
+                            cell["out_sha256"] = cell["outputs"]["out"]["sha256"]
+                            cell["out_sha256_repeat"] = cell["out_sha256"]
+                            # Native names/counts only, outside numeric observation.
+                            cell["profile"] = kernel_profile(lambda: fn(*xa), reps=1, full_names=True)
+                            rec["cells"][key] = cell
+                            del x, xa
+                            continue
                         call = lambda: fn(*xa)  # noqa: E731
                         if args.ncu:
                             # ncu --profile-from-start off: exactly one profiled call per (group, M).
@@ -627,7 +660,7 @@ def main():
                         cell["wall"] = summarize(time_events(call, args.warmup, args.iters))
                         cell["wall_window_unix"] = [ts, time.time()]
                         cell["profile"] = kernel_profile(call, full_names=bool(inputs))
-                        if inputs:
+                        if inputs and args.single_routing_file:
                             wanted_kernel = "routed_fused_kernel<true, 0, false, false, 4, false, 128>"
                             mode0 = [v for k,v in cell["profile"]["top"].items() if wanted_kernel in k]
                             if len(mode0) != 1 or mode0[0]["count_per_call"] != 1:
