@@ -464,9 +464,113 @@ maintenance holds new submissions; that is distinct from a scientific result.
 
 Terminal success establishes retained population and containment, not the
 preregistered raw-event/paired contrast or fresh telemetry coverage. Those
-claims require the single independently owned receipt-only CPU reduction of
-these exact six blocks; no duplicate owner reduction, numeric qualification,
+claims required the single independently owned receipt-only CPU reduction
+completed below; no duplicate owner reduction, numeric qualification,
 Torch/NCU profile or new GPU population is authorized by this record. The
 original13.835448→12.447416ms observation keeps its original single-window
 scope. Issue739 remains open, PR868 remains draft, PM remains default off,
 and clock qualification, served/general speed and energy remain HOLD.
+
+
+## Completed independent descriptive repeatability acceptance
+
+The independent reviewer accepted the exact6-block/24-cell/720-event population
+for **scoped descriptive M2048 repeatability**, not a causal clock-controlled,
+served, energy or production-adoption result. One receipt-only CPU action,
+`1ca9902c1b64f0b9e03142020ab533530dec42bb4383e6d493e8df0362513ce5`,
+actually executed return0 onDL380G10 in3.395695s, CPU1/mem1GiB/native1. No
+Torch dependency, newGPU work, duplicate owner analysis, numeric qualification,
+Torch/NCU profile or old CPU control population was executed for this reduction.
+
+The reducer is source-bound at Git
+`4426ac34a5b37469d86f38691ffbf356850d4aa2`, file
+`t8_performance/independent-pm-review/repeatability_review.py`, SHA
+`b6425bddf5f08714b4ea3f7c8705f09c1b454ad3de4a08bfa3696f3e8f191b06`.
+Its exact219-range retained-metadata manifest SHA is
+`5b00b91f9f366d4af32967b0f997220de06fee1ad57574569df884c327eb2b5c`.
+It used the actualSDK4 injected context/current c437 helper and public
+covers/acquire/openFD/close/release, with pin
+`752af8d11c87be2e13af9de8d8b3f303` and ref
+`78521c6a03bc4f64828435a16ad9f03a`, closed/released. This proves the completed
+metadata reader's public lease, not a retroactive SDK4 lease for the six original
+SDK3/direct-held-FD GPU attempts, nor immutable original tensor-provider authority
+for an experimental trusted native-code artifact.
+
+It verified all six original full CoreCAS attestations/canonical claims/payloads,
+source/protocol/numeric/input/final-bit bindings, retained native ELF4d693c,
+nine stable original file identities per block, and1,872,827,160 resident bytes
+per arm. The original eight accepted Torch profiles are explicitly reused;
+their old durations are not called fresh-window profiles.
+
+| Pair/block | Order | Legacy mean of two cell medians (ms) | PM mean of two cell medians (ms) | Descriptive latency reduction |
+|---|---|---|---|---|
+| 1/1 | ABBA | 13.606424 | 12.363664 | 9.133626% |
+| 1/2 | BAAB | 13.596272 | 12.522104 | 7.900460% |
+| 2/1 | BAAB | 13.656608 | 12.501448 | 8.458615% |
+| 2/2 | ABBA | 13.563072 | 12.226640 | 9.853461% |
+| 3/1 | ABBA | 13.668440 | 12.369192 | 9.505459% |
+| 3/2 | BAAB | 13.773632 | 12.262216 | 10.973258% |
+
+Here A=legacy andB=piece-major. Every cell's statistic is the conventional
+median of its30 retained raw CUDA events; each arm's block mean is the
+arithmetic mean of its two cell medians. The preregistered pair statistic is
+**the mean of the ABBA and BAAB block percentage reductions**, not the ratio
+of pooled arm medians:
+
+| Predefined pair | Mean block percentage reduction | ABBA-minus-BAAB order contrast (percentage points) |
+|---|---|---|
+| 1 | 8.517043% | +1.233167 |
+| 2 | 9.156038% | +1.394845 |
+| 3 | 10.239359% | −1.467799 |
+
+Mean of the three pair contrasts is **9.304147%**; descriptive sampleSD is
+**0.870658 percentage points**, pair range8.517043–10.239359%. All six blocks
+favoredPM, with block reductions7.900460–10.973258%. These are descriptive
+sampled operator contrasts, not a confidence interval or guaranteed significance.
+The720 events are not720 independent runs. Actual chronological order remains
+1/1,3/1,1/2,3/2,2/1,2/2: pairs1/3 are nonadjacent and correlated physical
+thermal/device history is retained. No hypothetical adjacent pairing or
+thermal/clock normalization replaces the actual observations. The earlier
+13.835448→12.447416ms result remains its separate original single-window result.
+
+### Fresh telemetry and non-promotion boundary
+
+Scored host-polled temperatures span75–79C and reported SM clocks2281–2431MHz;
+PB action temperature peaks span76–80C. Conditioning block2/2 retains five
+throttle-mask4 observations. All captured NVML observation-error arrays were
+empty, but requested100ms host polling and repeated reported clocks do not
+establish native sensor-update cadence, lag bounds, matched effective clocks,
+thermal equilibrium or absence of unobserved throttle events. Raw timestamps,
+reason masks and readings remain in the accepted packet, without exclusions.
+CPU-PSI peak11.92 is retained as host evidence, not subtracted from timing.
+Sparklina had noGPU workload in the reviewed interval and reported7–8W;
+that is explicit both-host context, not a fabricated zero-power measurement.
+
+Both-host raw Netdata includes each action, conditioning and scored window,
+actual collection/group cadence, errors and rejected/empty groups. **Accepted
+Netdata power coverage is0s for every subsecond scored cell on both hosts.**
+That is unobserved native-bucket coverage, not0W, not an interpolated
+per-cell energy estimate, and not proof that high-rate NVML and Netdata agree.
+Energy/work-per-joule therefore remainsHOLD. No GPU-utilization percentage is
+called saturation; resident bytes, scope accounting and sensor domains are not
+silently conflated. Clock qualification, general/served throughput, full-model
+quality/activation replay, graph qualification and production adoption remain
+unqualified/HOLD. PM stays defaultOFF, PR868 draft and issue739 OPEN.
+
+### Actual acceptance and analysis evidence
+
+Accepted independent report:
+`/mnt/shared/astra-resume-20261002/t8_performance/INDEPENDENT-PM-REPEATABILITY-REVIEW.json`,
+SHA `d479eb81d02765d2b441402ea99ed2e35c27b38db88eb53eef885f14938a6977`.
+It retains all720 raw events, per-cell observations, all six source/input/CAS
+bindings, both-host coverage/errors and chronology. Canonical analysis CAS
+receipt `c2667e269ae45c868feaf27094287529f0c9a7ba5acb5d4de14fc44f611acd2e`
+binds payload `052317229dd63013ae99578fd4c903a66f9784d50ae40510f399c1c74f83cdb1`
+and local claim `944f966481ef14d61ddc35a36599758045316076c71d8641f2f245c8394af1ec`.
+The reviewer's MCP claim check reported attestation_verified=null and was not
+represented as attestation verification. A separate **read-only current
+published CoreCAS lookup** verified this analysis's full attestation
+`2dd85ce55ce4377b4fae81efdc83ed12690cd36809eedd52dbfad6e293b8f5fe`.
+That lookup is evidence inspection, not a duplicate reduction or qualification.
+Its record is `repeatability-ready-0a3ddc70/ANALYSIS-ACTUAL-FULL-CORE-VERIFIED.json`,
+SHA `98ae3dae0341aab114e9050a28408cf82974cb1b654c295d6188deb6f7e6ac55` under the existing piece-major evidence root.
