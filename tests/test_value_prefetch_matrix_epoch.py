@@ -15,8 +15,7 @@ import test_routed_fused_window as helpers
 @pytest.mark.parametrize('fail', [False, True], ids=['two-whole-arm-epochs', 'failure-fences-before-release'])
 def test_matrix_epoch_loads_each_arm_once_and_releases_after_fences(tmp_path, monkeypatch, fail):
     bank, out = tmp_path / 'bank', tmp_path / 'out'
-    qs = [256, 384, 512]
-    monkeypatch.setattr(numeric, 'Q256_CASES', qs)
+    qs = list(numeric.Q256_CASES)
     monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
     monkeypatch.setattr(torch.Tensor, 'cuda', lambda value: value)
     monkeypatch.setattr(helpers, '_bundles', lambda *args: None)
@@ -52,7 +51,7 @@ def test_matrix_epoch_loads_each_arm_once_and_releases_after_fences(tmp_path, mo
             directory.mkdir(parents=True)
             self.fd = os.open(__file__, os.O_RDONLY)
             self.module = None
-            self.record = {'expected_sha256': kwargs['expected_sha256']}
+            self.record = {"expected_sha256": kwargs["expected_sha256"], "proof_scope": "CPU orchestration model, not native ELF proof"}
             owners.append(self)
         def attest_mapped(self, module):
             assert module is self.module
@@ -86,8 +85,10 @@ def test_matrix_epoch_loads_each_arm_once_and_releases_after_fences(tmp_path, mo
         numeric.consume(bank, tmp_path / 'manifest.json', out)
         result = json.loads((out / 'numeric.json').read_text())
         assert len(loads) == len(owners) == 2
-        assert len(result['results']) == 9
-        assert len(result['owners']) == 2
-        assert all(len(owner['completed_cases']) == 9 for owner in result['owners'])
+        assert len(result["results"]) == 54
+        assert {(r["q256"], r["m"]) for r in result["results"]} == {(q, m) for q in qs for m in numeric.MS}
+        assert all(r["stages"] == ["mode1", "activation", "mode2", "mode0"] and r["bitwise"] for r in result["results"])
+        assert len(result["owners"]) == 2
+        assert all(len(owner["completed_cases"]) == 54 for owner in result["owners"])
     assert events[-2:] == ['fence', 'release']
     assert events.count('finish') == len(owners)
