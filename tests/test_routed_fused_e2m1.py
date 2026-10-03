@@ -104,22 +104,20 @@ def test_numeric_bound_accepts_finite_exact_product(exact):
 
 def test_native_identity_hashes_real_executable_mapping():
     import hashlib
-    import math
     from tessera._dev.native_identity import loaded_native_identity
 
-    path = Path(math.__file__).resolve()
+    path = Path(torch._C.__file__).resolve()
     expected = hashlib.sha256(path.read_bytes()).hexdigest()
-    identity = loaded_native_identity(math, fe.__file__, expected_sha256=expected)
+    identity = loaded_native_identity(torch._C, fe.__file__, expected_sha256=expected)
     assert identity["path"] == str(path) and identity["sha256"] == expected
     assert identity["executable_mappings"]
 
 
 def test_native_identity_refuses_wrong_declared_bytes():
-    import math
     from tessera._dev.native_identity import loaded_native_identity
 
     with pytest.raises(RuntimeError, match="loaded native bytes changed"):
-        loaded_native_identity(math, fe.__file__, expected_sha256="0" * 64)
+        loaded_native_identity(torch._C, fe.__file__, expected_sha256="0" * 64)
 
 
 def test_native_identity_refuses_unmapped_python_module():
