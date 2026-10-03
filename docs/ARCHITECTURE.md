@@ -24,6 +24,13 @@ ELF, source-owner, finalization, image and CAS identities are retained in
 `experiments/configs/combined_native_874_875_739_cpu_evidence.json`. This is not
 a GPU or performance pass. The current T16 synthetic producer binds only the
 new value0/value4 ELFs; the old `51f6` protocol remains historical, not new proof.
+The T16 `native-preflight` operation reads the complete fresh bank through the
+public staged SDK and loads each actual value DSO once through the existing
+`NativeCallback`, retaining both original FD pathnames until final teardown. It
+checks exported family/geometry/distance, before/mapped/post hashes, unchanged
+serving builder/cache and closes FDs before releasing the reader. This explicit
+CPU diagnostic does not call kernels, replace the serving gate/cache, or claim a
+CUDA fence, serving admission or numeric/sanitizer qualification.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads

@@ -318,9 +318,79 @@ def state_proof(bank, manifest, out, *, loader=False):
         raise SystemExit(code)
 
 
+def native_preflight(bank, manifest, out):
+    """CPU staged read and held-DSO mapping, never CUDA/serving admission."""
+    if torch.cuda.is_available():
+        raise ValueError("native-FD preflight is CPU-only")
+    out.mkdir(parents=True, exist_ok=False)
+    reader = StagedInputs(manifest)
+    owners, results = [], []
+    original_builder = rf.build_library
+
+    def cpu_boundary():
+        # No kernel is invoked; do not represent this as a CUDA fence.
+        if torch.cuda.is_available():
+            raise ValueError("CPU preflight unexpectedly has CUDA visibility")
+
+    try:
+        total = sum(len(reader.read(path, offset)) for path, offset in reader.entries)
+        if total != reader.manifest["total_bytes"]:
+            raise ValueError("whole-bank staged read byte total differs")
+        source_bytes = reader.read(bank / "routed_fused_window.cu")
+        if hashlib.sha256(source_bytes).hexdigest() != SOURCE_SHA:
+            raise ValueError("retained source differs")
+        packet = json.loads(reader.read(bank / "packet.json"))
+        if packet["source_sha256"] != SOURCE_SHA or packet["arms"] != {k: list(v) for k, v in ARMS.items()}:
+            raise ValueError("actual current-source packet differs")
+        source = ROOT / "src/tessera/serving/csrc/routed_fused_window.cu"
+        for arm, (module, distance, expected) in ARMS.items():
+            owner = NativeCallback(reader, bank / (arm + "-" + module + ".so"), rf,
+                                   out / arm, expected_sha256=expected,
+                                   source_sha256=SOURCE_SHA, module=module,
+                                   source_module="tessera_routed_fused_value",
+                                   install_build_callback=False)
+            owners.append(owner)
+            try:
+                lib = owner.load_declared(source)
+                owner.attest_mapped(lib)
+                if lib.VALUE_A_PREFETCH != distance or lib.FAMILY_FP8 or lib.FAMILY_MMA8:
+                    raise ValueError("actual value family/distance differs")
+                geometry = {name: getattr(lib, name) for name in ("BM", "BN", "HALF", "BK")}
+                if geometry != {name: getattr(rf, name) for name in geometry}:
+                    raise ValueError("actual native geometry differs")
+                owner.record.update(arm=arm, resolved_distance=lib.VALUE_A_PREFETCH, geometry=geometry)
+            finally:
+                owner.finish(cpu_boundary, keep_load_fd=True)
+            results.append(dict(owner.record))
+        if rf.build_library is not original_builder or rf._ext.cache_info().currsize:
+            raise ValueError("CPU diagnostic changed the serving owner/cache")
+    finally:
+        try:
+            for owner in owners:
+                if not owner.closed:
+                    owner.finish(cpu_boundary, keep_load_fd=True)
+        finally:
+            try:
+                for owner in owners:
+                    # An unmapped artifact is closed by finish itself.
+                    if owner.module is not None:
+                        os.close(owner.fd)
+            finally:
+                reader.close()
+    if len(results) != len(ARMS):
+        raise ValueError("incomplete actual native-FD preflight")
+    report = dict(scope="CPU staged read and actual held-FD mapping only; no CUDA or serving admission",
+                  source_sha256=SOURCE_SHA, readset_sha256=reader.manifest_sha256,
+                  total_read_bytes=total, owners=results, all_load_fds_closed=True,
+                  serving_builder_unchanged=True, serving_cache_empty=True)
+    (out / "native-fd-preflight.json").write_text(json.dumps(report, indent=2) + "\n")
+    print(json.dumps(report, sort_keys=True))
+
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read", "state-proof", "loader-proof"])
+    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read", "state-proof", "loader-proof", "native-preflight"])
     ap.add_argument('--bank', type=Path, required=True)
     ap.add_argument('--native-root', type=Path)
     ap.add_argument("--runner", type=Path)
@@ -334,6 +404,8 @@ def main():
         state_proof(a.bank, a.manifest, a.out, loader=True)
     elif a.operation == "state-proof":
         state_proof(a.bank, a.manifest, a.out)
+    elif a.operation == "native-preflight":
+        native_preflight(a.bank, a.manifest, a.out)
     elif a.operation == "staged-read":
         staged_read(a.manifest)
     elif a.operation == "repair-readset":

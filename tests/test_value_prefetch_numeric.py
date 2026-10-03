@@ -7,6 +7,33 @@ import torch
 from experiments.t8r_speed import value_prefetch_numeric as numeric
 
 
+@pytest.mark.parametrize("bad_source", [False, True], ids=["short-phase", "foreign-source"])
+def test_native_preflight_rejects_input_before_native_load_and_releases_reader(tmp_path, monkeypatch, bad_source):
+    """CPU gate model only; actual DSO FD mapping is a separate admitted action."""
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    class Reader:
+        entries = {("source", 0): {}}
+        manifest = {"total_bytes": 4 if bad_source else 5}
+        closed = False
+        def read(self, path, offset=0):
+            return b"bad!"
+        def close(self):
+            self.closed = True
+    reader = Reader()
+    monkeypatch.setattr(numeric, "StagedInputs", lambda manifest: reader)
+    with pytest.raises(ValueError, match="retained source" if bad_source else "byte total"):
+        numeric.native_preflight(tmp_path / "bank", tmp_path / "readset", tmp_path / "out")
+    assert reader.closed
+
+
+def test_native_preflight_rejects_visible_cuda_before_output(tmp_path, monkeypatch):
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    with pytest.raises(ValueError, match="CPU-only"):
+        numeric.native_preflight(tmp_path / "bank", tmp_path / "readset", tmp_path / "out")
+    assert not (tmp_path / "out").exists()
+
+
+
 def test_exact_comparator_rejects_signed_zero_and_metadata():
     numeric.compare_bits(torch.tensor([1.0]), torch.tensor([1.0]))
     with pytest.raises(ValueError, match='bits'):
