@@ -1,5 +1,25 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
+The selected fused owner retains immutable projection views of the words,
+scale and initial-state planes plus its composed native tables, run pairs,
+descriptors and counters. The resident route replaces its compact preparation
+owner only after native selection succeeds. Caller-held compact bundles and
+views remain intact; a refused or unavailable native lane keeps the complete
+compact fallback. Retired projection views refuse compact execution and
+recomposition. Wire bytes, arithmetic and native dispatch do not change.
+CPU lifetime controls establish ownership, not GPU allocator savings or
+served throughput; the fullserve admission bounds remain unchanged pending
+matched before/after device and host measurements.
+Runtime routed-owner accounting charges the backing storage of declared
+planes once, including aliased BF16/native lookup views and the launch
+counters. The selected native table's actual dtype determines its charge;
+FP8 byte tables and 16-bit tables are not interchangeable byte estimates.
+An externally held slice still owns its whole allocation, so an owner's
+declaration does not establish process-wide reclamation. Export-time
+preparation estimates and fullserve bounds are unchanged by this runtime
+ownership report.
+
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
