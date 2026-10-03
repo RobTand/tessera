@@ -10449,6 +10449,10 @@
     "state": "CLOSED",
     "title": "_fit_lut's stop test is a bare relative-improvement literal, not derived from the cost dtype"
    },
+   "796": {
+    "state": "OPEN",
+    "title": "[P2] GLM-5.3 sparse MLA: skip the zero-width RoPE query cat (bitwise, about 6.4 ms per prefill chunk)"
+   },
    "8": {
     "state": "CLOSED",
     "title": "runtime_contract declares a rung set that nothing enforces"
@@ -10488,6 +10492,10 @@
    "88": {
     "state": "CLOSED",
     "title": "The A-side doc forbids the dispatch master already ships: window-gemv-a-side.md \u00a75 item 1 vs 6c521ea"
+   },
+   "887": {
+    "state": "OPEN",
+    "title": "[P1] Empty-RoPE qualification probe must not replace a failed stock cache writer"
    },
    "89": {
     "state": "CLOSED",
