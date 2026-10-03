@@ -25,7 +25,7 @@ ELF, source-owner, finalization, image and CAS identities are retained in
 a GPU or performance pass. The current T16 synthetic producer binds only the
 new value0/value4 ELFs; the old `51f6` protocol remains historical, not new proof.
 
-The #875 composed qualifier binds exactly the two finalized production FP4
+The #875 composed qualifier (source-only prerequisite #906 / PR900) binds
 banks from common source `bcdd43f6`, immutable image `5be13705`, and the actual
 PB compile actions `b70ff504`/`b45dfd00`. Each arm declares its compile record,
 no-pending-work finalization and ELF in that order (six whole-file inputs),
@@ -51,6 +51,9 @@ members. Distinct current image-owner source1b90 controls `d8e19943` also
 passed 27 with zero skips/CUDA allocations. Each receipt and exact snapshot
 parent is recorded separately in the composed qualification contract; neither
 is current held-native-FD/tool execution or GPU/scientific qualification.
+Source/CPU engineering acceptance permits only the complete owned consumer
+three-way composition into the common branch; normal source/pure CI and mainline
+approval remain separate. Closing #906 does not close #875 family qualification.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
