@@ -41,9 +41,15 @@ before load, in executable mappings and after inspection. The original serving
 builder/cache stayed unchanged; both load FDs and the reader were released.
 Exact current-bank sealer, staged270-unit/108-history proof, native-FD receipt
 and the original unapproved GPU numeric/sanitizer proposal are retained in
-`experiments/configs/value_prefetch_874_combined_safety_protocol.json`. Its
+`experiments/results/value_prefetch_874_combined_safety_protocol_v2.json`. Its
 `5aba4096` source48a6 identity remains historical; it does not authorize the
-corrected source. Post-acquire sanitizer setup is inside the same reader-release
+corrected source. The same54-cell corrected-source successor, composing the
+parent-accepted4392 T4 prerequisite lineage and the actual #902 release proof,
+is `experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
+It preserves the exact bank/ELF/image/readset and numeric16/GPU8/600 plus
+memcheck32/GPU24/1800 bounds. Parent901/normal/all-used-filesystem/scientific
+authorization gates remain held; no old protocol or ELF is restamped.
+Post-acquire sanitizer setup is inside the same reader-release
 `finally` as staging and tool execution (#902); filesystem refusal propagates.
 The admitted sourceb9b155b3 causal CPU action1b7076bb passed three selected
 controls (two real filesystem refusal lease models and tool subprocess failure),
