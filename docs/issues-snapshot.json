@@ -12105,6 +12105,10 @@
     "state": "CLOSED",
     "title": "At R=8 a non-dyadic window-table sigma costs one dense unit 1.36x h error, at identical reach"
    },
+   "893": {
+    "state": "OPEN",
+    "title": "[P1] Default-off T8 mode0 dual-B source and build-choice contract"
+   },
    "9": {
     "state": "CLOSED",
     "title": "BF16 has a wire and no serving route"
