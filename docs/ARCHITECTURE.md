@@ -1,5 +1,19 @@
 # Tessera plan-to-serve architecture
 
+The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
+experiment (Refs #739) schedules both independent B column-group fragment loads
+before the first MMA on routed E4M3-MMA mode0, one-run R4 only. Both64/128-route
+widths and legacy/piece-major words retain the accumulator K/G/mi/even/odd order.
+Producer decode/history, barriers, shared allocation, wire/layout/Params,
+mode1/2, dense/two-run and other families retain their scheduling paths.
+The exact0/1 choice is frozen at Python module import, emitted only into MMA8
+compile flags, and checked against the loaded native export. Off/on arms require
+distinct processes/build directories; changing an environment variable after
+import does not retarget the cached extension. Fresh native build/SASS, changed
+source numerical and matched before/after profile/Netdata/work-per-joule evidence
+are required: source/CPU controls alone make no speed/energy claim. Neither this
+flag nor PM is promoted as a default, serving cell or pin.
+
 Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
 (#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
 selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
