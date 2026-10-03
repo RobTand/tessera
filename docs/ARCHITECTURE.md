@@ -7414,6 +7414,22 @@ and retains the stock all-reduces. The active SP writer's tensor
 arguments, results and NCCL reduction order are unchanged; the added CPU
 activation control has unmeasured latency and energy overhead.
 
+The #863 completion merges master `15d9378e1d` without changing the
+qualified serving module, either targeted test module, or the pinned
+PyNccl lifecycle fixture. Their SHA256 bindings retain the accepted
+92-test CPU qualification (`2e52573116e3`, receipt `0efd4bd14bba`).
+PrismaBuild action `bf74cc45d85b` (receipt `fe82ab9cfd28`) additionally
+executes the 28 writer-guard behavior tests on the merged source:
+either-rank disabled-writer refusal before sharding, active writer
+arguments/order, stock non-SP fallback, and pinned suspend/resume
+method slices with CPU NCCL stand-ins. It passed on dl380g10 with
+Torch 2.11.0+cpu, native threads one, zero skips and zero CUDA
+allocations. Refusing an unsupported candidate must not bypass this
+ordinary-SP admission guard and return to the unsafe stock SP writer.
+This is source/CPU qualification only, not actual NCCL execution,
+capture replay, concurrent teardown containment, or a performance claim;
+defaults and GPU qualification remain unchanged.
+
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
 TR3 A/B against stock, on the same pin and in the same window, shows identical
 KL. For SP mHC and the conv
