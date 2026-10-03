@@ -352,18 +352,24 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   TP2 cuts and carried states are unchanged; no new distributed, MLA absorbed
   BMM, embedding-gather or quantizer ABI is implied.
 * Applicability: mixed-run decode, descriptor rings, staged stream history and
-  terminal FULL drain already exist on FP4. The E4M3 paired-K32 proposal is
-  structurally different: FP4 already uses native m16n8k64 with per16 block
-  scales. E4M3 piece-major indexing cannot be copied into FP4's tuple/nibble,
-  padded16-column group geometry. #807's measured negative gives no T4 speed
-  credit. Only activation L1 prefetch transfers as a memory hint; its distance
-  and benefit are hypotheses requiring a T4 baseline measurement.
-* First numeric gate: experiments/t4_code/fused_e2m1_check.py
-  --compare-prefetch builds both variants in one process, reuses each encoded
-  bundle and routing table, seeds identical random activations and compares
-  exact mode0/1/2/chain hashes as well as the existing fp64 dtype bounds and
-  eager/graph checks. It covers every uniform/adjacent producer run table;
-  existing native tests additionally cover dense row tails and rank cuts.
+  terminal FULL drain already exist on FP4. Dense split admission still keeps
+  at least two K64 chunks per item (dense_split_max = K/128); this experiment
+  does not relax the descriptor lifetime guard or add one-chunk items.
+  E4M3 paired-K32 is structurally different: FP4 already executes native
+  m16n8k64 with per16 block scales. E4M3 piece-major indexing cannot be copied
+  into FP4's tuple/nibble, padded16-column group geometry. #807's measured
+  negative gives no T4 speed credit. Only the activation L1 memory hint transfers;
+  its distance and benefit remain hypotheses requiring a T4 baseline measurement.
+* First numeric gate: experiments/t4_code/fused_e2m1_check.py with
+  --compare-prefetch --retained-banks <native_compile.json> reuses the exact
+  CPU-built 0/4 ELFs without rebuilding, refuses source/image/torch/ELF identity
+  drift and binds each loaded bank to its hashed executable-mapped inode.
+  Both banks reuse each encoded bundle/routing table and identical seeded
+  activations; mode0/1/2/chain AND dense/split controls compare exact hashes,
+  dtype-derived fp64 bounds and eager/graph identity. The bound refuses
+  nonfinite outputs, references or bounds (real pre-fix NaN false-pass: PB62e3e5ee).
+  Full nonquick coverage is every uniform/adjacent producer table; native
+  consumer tests additionally cover row tails and legal rank cuts.
 * Before GPU qualification, root must authorize the resource/readset. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
@@ -373,15 +379,41 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   forward/reverse paired windows with profiler and NCU; align both Spark
   Netdata power/clocks/temperatures/CPU/memory to every window. No T8 baseline
   or cross-precision credit, speed/energy claim, cell/menu/pin/default change.
-  CPU contract and native compile/SASS gates require PrismaBuild. GPU GO is
-  pending; no test pass, build receipt or measurement is claimed by this text.
-  CPU qualification: PB ee35ca77 on DL380 returned rc0, 77 passed and42
-  CUDA-gated skips (no GPU allocations). Actual master red control f0e9b8ce
-  refuses the missing activation_prefetch import. Native compilation found
-  missing cu13 vendor headers in the immutable image; the qualifier uses the
-  existing cuda_home_shadow.sh (only missing header names) and CUDA torch
-  include paths rather than putting the whole incompatible wheel include
-  directory on nvcc's path. SASS dumps now retain and hash their cubins.
+  No GPU qualification or speed/energy evidence is claimed yet.
+* Actual CPU/native preparation (not GPU proof): PB86450d1c on DL380 returned
+  rc0, 96 passed/66 CUDA-gated skips. Consumer tests exercise distinct compiler
+  flags/names/build identities, exported ABI refusal, cached reuse and post-load
+  mutation refusal. New real-inode tests initially found math builtin on DL;
+  the fixture now uses the actual Torch DSO and requires its own corrected run.
+  PBd5837c31 compiled/loaded both retained native1 ELFs with GPU visibility off;
+  PB8b96ac6b proved both executable mappings match their hashed file inodes.
+  PBe242d198: master50127b9 to default-OFF is exact SASS for all422 kernels
+  (value101, E4M3-f16107, E4M3-MMA137, E2M177). PB8b342b0f: opt-in changes
+  exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
+  all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
+  zero STACK/LOCAL allocation (FP4 maximum128 registers).
+* Persisted next actions are published-client campaign manifests under
+  experiments/t4_code/pb_875_cpu_preflight.json and pb_875_synthetic_{numeric,
+  native,sanitizers}.json. Run them through the published pbcampaign.py;
+  synthetic numeric/native/sanitizer rows remain UNSUBMITTED and root-GO-only.
+  The full nonquick paired oracle and both native-consumer arms bind the same
+  sealed native1-readset.json, explicit helper/test hashes and immutable image.
+  Each sanitizer (memcheck/racecheck/synccheck/initcheck) carries
+  --error-exitcode86, bounded time/resources and the actual readonly CUDA13.0
+  toolkit dependency. PBcef66493 attests those mounted tool/library hashes,
+  Compute Sanitizer2025.3.1 and pytest9.1.1 on the pinned image; the image alone
+  lacks compute-sanitizer. Compile preparation reuses cuda_home_shadow.sh
+  for missing vendor headers rather than adding the incompatible whole wheel
+  include directory. Failed missing-header/nvdisasm/ownership attempts are
+  not reported as passes; successful cubins/ELFs are retained, never rebuilt
+  merely to recover disassembly.
+* Real speed/quality qualification still needs a compatible captured/calibrated
+  T4 WINDOW readset. Historical T4 TCQ banks are not substitute inputs for this
+  producer kernel. Before any timed row, require root isolation/admission and
+  healthy storage floors. Both Sparks expose power_draw (Watts), sm/mem clocks
+  (MHz), temperature (Celsius) and frame-buffer used/free/reserved (bytes) in
+  nvidia_smi contexts; save aligned raw intervals on both hosts, not utilization
+  percentages or an unqualified T8 cross-precision comparison.
 
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
