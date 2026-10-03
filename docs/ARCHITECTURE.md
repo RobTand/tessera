@@ -413,6 +413,23 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   window stops on the first actual failure and preserves the unpublished
   suffix. This is PB-owned publication, not a second dispatcher or retries.
   The GPU campaign remains UNSUBMITTED pending root admission conditions.
+  A separate proposed operational refreeze lives in
+  pb_875_sl_capacity_campaign.json and pb_875_sl_capacity_contract.json. It
+  preserves every numerical row, original class and absence of host tags; it
+  only adds real ROOT/MAX reservations for /home/rob/tmp and
+  /var/lib/docker. Their 192+832MiB forecast totals1GiB; PB rounds each pair
+  separately, deriving2GiB spool reservation. These are operational forecasts,
+  not quotas or verified GPU peaks. The no-retag clause remains unchanged;
+  Root decisionA requires fresh complete unsafe-SP claim ledger0 plus verified
+  native-positive2GiB refusal, not a stale zero offer or a fresh floor claim.
+  This proposal alone does not authorize publication or qualify new common banks.
+  PB3d65783a5ed4 exercised the operational packet at sourcecff6469d on
+  Sparklina:18 CPU metadata tests passed, zero skips, no CUDA. The real public
+  scratch API derived2GiB per row and the complete campaign parser accepted
+  all15; stripping only the five environment additions restored every
+  original row. This is not runtime GPU/floor qualification. The earlier
+  DL-only CPU request16e742ba never fit its scratch kind, was withdrawn while
+  unattempted, and replaced with preserved supersession history.
   The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
   guard the PB snapshot parent as executable source4e17907d, max_attempts1
   and retry_safe=false, unchanged

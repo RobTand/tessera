@@ -1,0 +1,51 @@
+{
+  "status": "PROPOSED_OPERATIONAL_REFREEZE_NOT_PUBLISHED_OR_SCIENTIFIC_SCOPE_CHANGE",
+  "parent_contract_sha256": "34e8b8c920312ff2981c4a8328eeda7bfee467f4eea65a8da045f54e767e3b85",
+  "parent_combined_manifest_sha256": "fa86ab872389c42a15713df2dcba3f9e16fe863a29c4fc588f671108771a6957",
+  "source_revision": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+  "immutable_image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+  "changed_fields": [
+    "PRISMABUILD_LOCAL_SCRATCH_PAIRS and four REAL ROOT/MAX environment declarations"
+  ],
+  "unchanged": "All15 action argv, source/byte guards, owners, ELF/readset/image identities, numeric/native populations and thresholds, paired-in-one-process requirement,2CPU,40/80GiBmemory,32/64GiBGPU,3600/7200s,exclusive,classgb10,max_attempts1/retryfalse remain exactly from parent.",
+  "scratch_forecast": {
+    "physical_device": "/dev/nvme0n1p2",
+    "mount": "/",
+    "actual_root_paths": {
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_DOCKER_ROOT": "/var/lib/docker"
+    },
+    "maximum_forecast_bytes": {
+      "T4_HOST_TMP_MAX_BYTES": 201326592,
+      "T4_DOCKER_MAX_BYTES": 872415232
+    },
+    "forecast_total_bytes": 1073741824,
+    "derived_spool_gb": 2,
+    "semantics": "Actual existing sealer/defaultPBcheckout/tmp roots and Docker overlay/tmp/log root are reserved. Existing PB rounds EACH pair toGiB:2GiB reservation for1GiB operational forecast. This is NOT a quota/enforcedcap or verifiedGPUpeak; uncertainpeak remainsexplicit. No path redirection, alternate scratch framework, dummy root/kind, typedspool demand, new hardcap or scientific fallback."
+  },
+  "capacity_dependency": {
+    "reason": "Unchangedclassgb10 has no whole-host diskfloor filter. Real positive scratch reservation is used; no hostname constraint/tag, cleanup, path redirection or performance hostsplit is added.",
+    "literal_parent_clause": "Parent No new tier, retag and all named numerical/source/backend/driver/image/native/stage conditions are preserved. Only additional honest scratch reservation changes sealed resource identity. Root decisionA accepts actual fresh complete unsafeSP claim-ledger0 plus qualified native positive2GiB scratch refusal as exclusion; not an unknown/stale offer assumption or fresh floor measurement. Eligible coordinator/everyusedworker must be above5percent plus allowance, with normal atomic claim and fresh complete ledger at execution.",
+    "admission": "Actualcoordinator and everyusedworker>=5%PLUSactualforecasts/derivedreservations and otheradmittedallowances; exact image/driver/model/source/ABI/SDK/stage/capacity match; published PB owns claim andaffinity; NO GPU publication before accepted operationalrefreeze.",
+    "decision_A_authority": "Kernel lead reported Root decisionA acceptance of actual fresh complete claim-ledgerSP0 and verified c437 native-positive2GiB refusal. This permits no new GPU/scientific/performance/default/deployment/cleanup or retag; GPU still requires its own exact gates."
+  },
+  "observed_sl": {
+    "root_available_bytes": 175400443904,
+    "root_size_bytes": 982819848192,
+    "mem_available_kib": 120958052,
+    "gpu": "NVIDIA GB10 cc12.1 driver595.91.07",
+    "bash_sha256": "af955ef55333c8fc9c5aa50df91ad1a629d9a79a9afa125cd5e9629585f78015",
+    "docker_and_gpu_processes": "none at observation",
+    "spool_offer_gib": 117,
+    "spool_offer_measured_unix": 1791054408.9651222,
+    "spool_offer_detail": "175401234432 B free - 49140992410 B (5%) floor = 126260242022 B on /home/rob"
+  },
+  "source_proof": [
+    "supervise floor computes spool_gb only; zero offer does not closeCPU/GPU workers",
+    "worker_loop1240/1291 onlyreplaces spoolcapacity; rowswithoutspool canclaimSP",
+    "pbrun1237-1275 derivesceil(MAX/GiB)eachrealpair; typedspool_gb rejects",
+    "local_scratch1-21/80-149 validatesrealcanonicalROOT/MAX; reservationnotquota"
+  ],
+  "consumer_scope": "OLDsource4e/61image pair safety only. Newcurrentmaster/T4/T16/PMcommon5be source requires freshnativebanks and its own newqualification—not covered bythis operationalrefreeze.",
+  "state": "No submissions, cleanup or SP writes. Old accepted packets remain immutable."
+}
