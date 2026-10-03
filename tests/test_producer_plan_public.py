@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 import torch
 
@@ -12,7 +13,7 @@ def test_public_producer_api_and_safe_path_cli_use_real_expert_geometry(tmp_path
     import subprocess
     import torch
     from safetensors.torch import save_file
-    from tessera.producer_plan import producer_projection
+    from tessera import producer_plan
 
     stack = "model.layers.2.feed_forward.experts"
     source = tmp_path / "checkpoint"
@@ -25,7 +26,7 @@ def test_public_producer_api_and_safe_path_cli_use_real_expert_geometry(tmp_path
     plan = tmp_path / "plan.json"
     plan.write_text(json.dumps({stack: {"grid": "E4M3", "q256": 1024,
                                         "source_layout": "unpacked_per_expert"}}))
-    expected = producer_projection(source, plan)
+    expected = producer_plan.producer_projection(source, plan)
     assert expected["schema"] == "tessera.expert_projection.v1"
     assert [u["projection"] for u in expected["stacks"][stack]["units"]] == [
         "gate_proj", "up_proj", "down_proj"] * 2
@@ -36,8 +37,14 @@ def test_public_producer_api_and_safe_path_cli_use_real_expert_geometry(tmp_path
     env = {key: value for key, value in os.environ.items()
            if key not in {"TESSERA_REPO", "PRISMAQUANT_REPO", "PRISMABUILD_REPO"}}
     env["PYTHONSAFEPATH"] = "1"
-    subprocess.run([sys.executable, "-m", "tessera.producer_plan", str(source),
-                    "--stack-plan", str(plan), "--out", str(output)],
-                   check=True, cwd=tmp_path, env=env, capture_output=True, text=True)
+    # Keep API and CLI on the same package after cwd changes. In an installed
+    # qualifier this is site-packages; in a source run it is the PB snapshot.
+    # Do not inherit relative paths or experiment/sibling repository roots.
+    env["PYTHONPATH"] = str(Path(producer_plan.__file__).resolve().parent.parent)
+    result = subprocess.run(
+        [sys.executable, "-m", "tessera.producer_plan", str(source),
+         "--stack-plan", str(plan), "--out", str(output)],
+        cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr or result.stdout
     # tensor_names returns a set; JSON object member order is not the v1 contract.
     assert json.loads(output.read_text()) == expected

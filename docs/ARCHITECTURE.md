@@ -3925,6 +3925,10 @@ The experiment entry point is removed, not shimmed: an installed producer needs
 neither this repository's `experiments/` directory nor PrismaQuant/PrismaBuild
 checkouts. Producer source/package selection remains explicit; this packaging
 cutover does not qualify a serving runtime or change a consumer's runtime pin.
+The real-geometry API/CLI regression binds its subprocess to the parent-loaded
+producer package root before changing cwd (Refs #881). Source-tree runs select
+their snapshot; installed qualifiers select their installed package, with no
+experiment/sibling roots inherited and child refusal stderr retained.
 
 The producer tool hashes source shard bodies by default. Its optional
 `--source-digest-cache DIRECTORY` passes an existing trusted `SourceDigestCache`
@@ -3934,6 +3938,10 @@ library owns directory, fingerprint, quiescence, mutation and corrupt-entry
 checks; config, auxiliaries and complete header coverage are still read.
 A reuse receipt names previously fenced shard digests, not a fresh body read
 by this process, and confers no serving or campaign qualification.
+The CPU regression in `tests/test_tessera_producer_plan.py` compares the
+serialized public projection byte-for-byte across uncached, cold-cache and
+fresh-instance cache-hit calls, and checks that only shard-body hashing is
+elided. CLI receipts deliberately remain separate from that projection.
 
 `tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
 per-unit Hessian plus capture identity and full activation settings, resolved
