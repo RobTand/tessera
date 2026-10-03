@@ -551,6 +551,13 @@ def _ext(library: str):
         raise GrammarError(f"the fused routed lane builds the libraries {sorted(LIBRARIES)}, got {library!r}")
     module, family, mma8 = LIBRARIES[library]
     fp8 = family == "e4m3"
+    # Experimental selection is frozen by the existing per-library owner cache.
+    value_prefetch = os.environ.get("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "0") if library == "value" else "0"
+    if value_prefetch not in ("0", "4"):
+        raise GrammarError("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH must be 0 or 4")
+    source_module = module
+    if value_prefetch == "4":
+        module = "tessera_routed_fused_value_prefetch4"
 
     def compile_fn(src, build, token, verbose):
         if mma8:
@@ -563,12 +570,20 @@ def _ext(library: str):
                 name="tessera_routed_fused_e4m3",   # literal: the contract scanner reads it
                 sources=[src], build_directory=build,
                 extra_cuda_cflags=_cflags(token, True), verbose=verbose)
+        if value_prefetch == "4":
+            return load(
+                name="tessera_routed_fused_value_prefetch4",
+                sources=[src], build_directory=build,
+                extra_cuda_cflags=_cflags(token, False) + ["-DTESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=4"],
+                verbose=verbose)
         return load(
             name="tessera_routed_fused_value",  # literal: the contract scanner reads it
             sources=[src], build_directory=build,
             extra_cuda_cflags=_cflags(token, False), verbose=verbose)
 
-    lib = build_library(module, module, compile_fn)
+    lib = build_library(module, source_module, compile_fn)
+    if library == "value" and lib.VALUE_A_PREFETCH != int(value_prefetch):
+        raise GrammarError("the value library prefetch distance differs from its frozen selection")
     dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
                        ("DENSE_ROW_QUANTUM", DENSE_ROW_QUANTUM),

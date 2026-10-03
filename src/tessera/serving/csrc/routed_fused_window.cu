@@ -180,6 +180,14 @@ constexpr int WORD_STAGES_MIN = 2;
 #endif
 constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
 static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
+// Folded BF16 qualification arm (tessera#874), never enabled by default.
+// Reuses load_a addressing; no additional shared-memory allocation.
+#ifndef TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH 0
+#endif
+constexpr int VALUE_A_PREFETCH = TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH;
+static_assert(VALUE_A_PREFETCH == 0 || VALUE_A_PREFETCH >= 2,
+              "value prefetch distance 1 is the load itself");
 
 // One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
 // E4M3 instruction.
@@ -748,7 +756,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT>;
-    constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
+    constexpr int PREFETCH_DISTANCE = FAMILY_MMA8 ? A_PREFETCH
+        : (!FAMILY_FP8 && !FAMILY_FP4 ? VALUE_A_PREFETCH : 0);
+    constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO;
     // One A tile of BMT rows, and the consumers' rows: two warp rows of
     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
     // tile, two per row.
@@ -1233,7 +1243,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 load_a(kc0, a_cur);
                 if constexpr (PREFETCH_A) {
                     #pragma unroll
-                    for (int d = 2; d < A_PREFETCH; ++d)
+                    for (int d = 2; d < PREFETCH_DISTANCE; ++d)
                         if (d < nkc) prefetch_a(kc0 + d);
                 }
                 // Settle the first chunk's loads here, before the chunk loop.
@@ -1265,7 +1275,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
                     if constexpr (PREFETCH_A) {
-                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                        if (ic + PREFETCH_DISTANCE < nkc) prefetch_a(kc + PREFETCH_DISTANCE);
                     }
                     // Chunk kc's words (and the tables) have landed ...
                     if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
@@ -3187,6 +3197,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("THREADS") = THREADS;
     m.attr("FAMILY_FP8") = FAMILY_FP8;
     m.attr("FAMILY_MMA8") = FAMILY_MMA8;
+    m.attr("VALUE_A_PREFETCH") = VALUE_A_PREFETCH;
 #else
     // The E2M1 family's library: its own entries and geometry.
     m.def("routed_fused_forward_fp4", &routed_fused_forward_fp4);
