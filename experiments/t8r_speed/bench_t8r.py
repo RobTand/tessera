@@ -518,6 +518,14 @@ def main():
                 "e4m3_mma": os.environ.get("TESSERA_FUSED_E4M3_MMA"),
                 "start_unix": time.time()}
         recorded = routing_files(args.routing, ms) if args.routing else {}
+        if args.stageprev_numerics:
+            # The frozen readset, not an origin directory scan, owns capture selection.
+            recorded = {}
+            for path in inputs.manifest["annotations"].get("routing_files", []):
+                m = int(os.path.basename(os.path.dirname(path)).removeprefix("m"))
+                if m not in ms or (path, 0) not in inputs.entries:
+                    raise ValueError("undeclared stageprev routing capture")
+                recorded.setdefault(m, []).append(path)
         if args.routing and not any(recorded.values()):
             raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
                              "(is the directory mounted into the container?)")
@@ -625,6 +633,7 @@ def main():
                         if args.stageprev_numerics:
                             from stageprev_probe import observe
                             cell = observe(fn, xa, os.path.join(args.out, gid, key))
+                            native_owner.attest_mapped(native_owner.module)
                             cell["out_sha256"] = cell["outputs"]["out"]["sha256"]
                             cell["out_sha256_repeat"] = cell["out_sha256"]
                             # Native names/counts only, outside numeric observation.
@@ -716,7 +725,7 @@ def main():
             json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                       indent=1, default=repr)
         if native_owner:
-            native_owner.finish(torch.cuda.synchronize)
+            native_owner.finish(torch.cuda.synchronize, keep_load_fd=args.stageprev_numerics)
             meta["native_code_artifact"] = native_owner.record
         if inputs:
             meta["staged_reads"] = inputs.reads
@@ -730,7 +739,7 @@ def main():
     finally:
         try:
             if native_owner:
-                native_owner.finish(torch.cuda.synchronize)
+                native_owner.finish(torch.cuda.synchronize, keep_load_fd=args.stageprev_numerics)
         finally:
             if inputs:
                 inputs.close()
