@@ -3925,6 +3925,10 @@ The experiment entry point is removed, not shimmed: an installed producer needs
 neither this repository's `experiments/` directory nor PrismaQuant/PrismaBuild
 checkouts. Producer source/package selection remains explicit; this packaging
 cutover does not qualify a serving runtime or change a consumer's runtime pin.
+The real-geometry API/CLI regression binds its subprocess to the parent-loaded
+producer package root before changing cwd (Refs #881). Source-tree runs select
+their snapshot; installed qualifiers select their installed package, with no
+experiment/sibling roots inherited and child refusal stderr retained.
 
 The producer tool hashes source shard bodies by default. Its optional
 `--source-digest-cache DIRECTORY` passes an existing trusted `SourceDigestCache`
