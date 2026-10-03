@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-03T03:41:08Z",
+ "generated": "2026-10-03T15:20:04Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5043,13 +5043,109 @@
     "state": "OPEN",
     "title": "Consume public installed Tessera projection CLI instead of experiment paths"
    },
+   "2132": {
+    "state": "OPEN",
+    "title": "Full-domain ledger must retain wholly unmeasured per-Linear family cells"
+   },
+   "2133": {
+    "state": "OPEN",
+    "title": "fix: retain absent per-Linear full-domain coverage"
+   },
+   "2134": {
+    "state": "OPEN",
+    "title": "Retain failed original H2D completion in the source owner beyond exception traceback"
+   },
+   "2135": {
+    "state": "OPEN",
+    "title": "fix: source-owned fatal CUDA completion containment"
+   },
+   "2136": {
+    "state": "OPEN",
+    "title": "[P2] Repair full composed-suite legacy numeric and adaptive progress fixture contracts"
+   },
+   "2137": {
+    "state": "OPEN",
+    "title": "[P1] Restore PACT feasibility and replay regressions after JSON shape receipt cutover"
+   },
+   "2138": {
+    "state": "OPEN",
+    "title": "Repair adaptive progress fixture and classify authenticated pilot guards"
+   },
+   "2139": {
+    "state": "OPEN",
+    "title": "Bind full-domain acquisition to attested joint AURA rows and partial shape domains"
+   },
    "214": {
     "state": "CLOSED",
     "title": "fill-route-census accepts a flat legacy census that verify then refuses under the pinned scoped table"
    },
+   "2140": {
+    "state": "OPEN",
+    "title": "Restore PACT feasibility and replay regression receipt contract"
+   },
+   "2141": {
+    "state": "OPEN",
+    "title": "feat: attested joint AURA full-domain research acquisition"
+   },
+   "2142": {
+    "state": "OPEN",
+    "title": "Prepare nonactivating Tessera v11 run-table reader compatibility"
+   },
+   "2143": {
+    "state": "OPEN",
+    "title": "Guard original quantum source authority before profile discovery"
+   },
+   "2144": {
+    "state": "OPEN",
+    "title": "[P1] Native MoE source qualification uses LFM bias identity for valid GLM routing"
+   },
+   "2145": {
+    "state": "CLOSED",
+    "title": "Preserve GLM correction bias identity in qualified source joins"
+   },
+   "2146": {
+    "state": "OPEN",
+    "title": "Bind GLM source replay to its original correction bias (#2144)"
+   },
+   "2147": {
+    "state": "OPEN",
+    "title": "Implement nonactivating current-original first-sequence routed capture intake"
+   },
+   "2148": {
+    "state": "OPEN",
+    "title": "Original A6: independently bound same-owner authority CPU intake"
+   },
+   "2149": {
+    "state": "OPEN",
+    "title": "Validate acyclic render-free original diagnostic context and owned session issuance"
+   },
    "215": {
     "state": "CLOSED",
     "title": "One home for text-only staging (fixes #210)"
+   },
+   "2150": {
+    "state": "OPEN",
+    "title": "Original A6: strict nonactivating source authority and native receipt joins"
+   },
+   "2151": {
+    "state": "OPEN",
+    "title": "Implement nonactivating original first-sequence routed intake"
+   },
+   "2152": {
+    "state": "OPEN",
+    "title": "[P1] Original-source admission must bind observations to selected CAS results"
+   },
+   "2153": {
+    "state": "OPEN",
+    "title": "Bind original render-free diagnostic context to its real artifact session"
+   },
+   "2154": {
+    "state": "OPEN",
+    "title": "[P2] Original completion history overwrites same-generation stream witnesses"
+   },
+   "2155": {
+    "state": "OPEN",
+    "title": "[P1] Original copy receipts must snapshot coherent pending/completed transitions"
    },
    "216": {
     "state": "CLOSED",
@@ -11674,7 +11770,7 @@
     "title": "[P2] Bitwise cuBLASLt algorithm picks for the GLM-5.3 BF16 projection GEMMs (opt-in)"
    },
    "807": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Routed MoE prefill: issue words more than two chunks ahead on single-rate launches (M=2048 sits at 59% of its byte roofline)"
    },
    "808": {
@@ -11682,7 +11778,7 @@
     "title": "[P2] impacted_tests: no way to declare an out-of-tree source read, so an exec'ing reader is WILDCARD"
    },
    "809": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "routed_fused: deep word staging on single-rate launches, opt-in (#807)"
    },
    "81": {
@@ -11958,7 +12054,7 @@
     "title": "Retire compact routed metadata after native selection"
    },
    "871": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Expert projection CLI requires repository experiment and deprecated exporter shim"
    },
    "872": {
@@ -11966,12 +12062,44 @@
     "title": "Served U4 matched A/B discards generation choices; teacher forcing is not generation correctness"
    },
    "873": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Expose expert projection as public installed producer API and CLI"
+   },
+   "874": {
+    "state": "OPEN",
+    "title": "T16 folded native routed activation prefetch qualification (#750)"
+   },
+   "875": {
+    "state": "OPEN",
+    "title": "[P1] T4 analogue: qualify default-off packed activation L1 prefetch against its own FP4 baseline"
+   },
+   "876": {
+    "state": "OPEN",
+    "title": "Default-off T16 native activation prefetch qualification (#874)"
+   },
+   "877": {
+    "state": "OPEN",
+    "title": "Experiment: default-off T4 packed activation L1 prefetch (#875)"
+   },
+   "878": {
+    "state": "OPEN",
+    "title": "Qualify retained original token_sum safety without kernel duplication (#859)"
+   },
+   "879": {
+    "state": "OPEN",
+    "title": "routed: terminal-safe mixed history continuation and explicit numeric acceptance (#793)"
    },
    "88": {
     "state": "CLOSED",
     "title": "The A-side doc forbids the dispatch master already ships: window-gemv-a-side.md \u00a75 item 1 vs 6c521ea"
+   },
+   "880": {
+    "state": "OPEN",
+    "title": "Pin byte-identical public producer digest-cache reuse"
+   },
+   "881": {
+    "state": "OPEN",
+    "title": "[P1] Public producer subprocess regression loses PB snapshot import root after cwd change"
    },
    "89": {
     "state": "CLOSED",
