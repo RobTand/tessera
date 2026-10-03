@@ -26,4 +26,4 @@ docker run --rm "${DEVICE[@]}" --network=none --pid=host --cpuset-cpus "$CPUS" -
   -e PYTHONPATH="/work:$PB_CLIENT_ROOT/src" -e TORCH_EXTENSIONS_DIR="$OUT/owner-build" \
   -e MAX_JOBS=1 -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   "${CTX[@]}" "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE" \
-  experiments/t8r_speed/token_sum_859.py "$MODE" --manifest "$MANIFEST" --out "$OUT/diagnostic"
+  experiments/t8r_speed/token_sum_859.py "$MODE" --manifest "$MANIFEST" --out "$OUT/diagnostic" "${@:4}"

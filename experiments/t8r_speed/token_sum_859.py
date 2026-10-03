@@ -14,13 +14,21 @@ LIBS = {
     'e4m3mma': ('tessera_routed_fused_mma_e4m3', '6abdcac9505614b15ee78ddb0add804f3eaff260c85d262e9eb0bb7b83845e8d', 1, 1, 0),
     'e2m1': ('tessera_routed_fused_e2m1', '15098c6e73cf95ac9b8be735f65467e26bec46cd3becb83b35d88b052758fb2f', 0, 0, 1),
 }
+BEFORE = False
+SOURCE_DIRECTORY = "frozen-candidate-source"
+BASELINE_HASHES = {
+    "value": "97c5f4ca8a722721c114f8bca43eb04e755b9eacfafa3c6689411fdb229abbef",
+    "e4m3": "dc2bc9e08752c013319c1c638798a8ea019e2fa7a830e523b7e380512a52099e",
+    "e4m3mma": "d68633d236bab421e574f6b5fc73bbcf3bf0a87141ad833690d4dba308f223c1",
+    "e2m1": "597cab7e707df53c77cf0e8406093ac14410964b03eecdf9565890ecc7de402b",
+}
 
 def binding(path):
     raw = path.read_bytes()
     return dict(path=str(path), offset=0, bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
 
 def prepare(out):
-    source_root = BANK / 'frozen-candidate-source'
+    source_root = BANK / SOURCE_DIRECTORY
     hashes = json.loads((source_root / 'SOURCE-SHA256.json').read_bytes())
     entries = []
     for name, expected in hashes.items():
@@ -65,7 +73,7 @@ def consume(manifest, out, gpu):
         local_source = out / 'source'
         for path, offset in reader.entries:
             original = Path(path)
-            source_root = BANK / 'frozen-candidate-source'
+            source_root = BANK / SOURCE_DIRECTORY
             if original.is_relative_to(source_root):
                 target = local_source / original.relative_to(source_root)
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -74,8 +82,11 @@ def consume(manifest, out, gpu):
         if binding(kernel)['sha256'] != SOURCE:
             raise ValueError('wrong original binding source')
         body = kernel.read_text().split('void token_sum(', 1)[1].split('void token_sum_shared(', 1)[0]
-        if not (body.index('out.is_cuda() && out.device() == routed.device()') < body.index('if (vecs == 0) return;') < body.index('token_sum_kernel<<<')):
-            raise ValueError('output device gate does not precede return/launch')
+        if BEFORE:
+            if "out.is_cuda()" in body or "out.device() == routed.device()" in body:
+                raise ValueError("causal-before original binding already has a device guard")
+        elif not (body.index("out.is_cuda() && out.device() == routed.device()") < body.index("if (vecs == 0) return;") < body.index("token_sum_kernel<<<")):
+            raise ValueError("output device gate does not precede return/launch")
         sys.path.insert(0, str(local_source / 'src'))
         from tessera import routed_fused as rf
         from tessera.serving.backend import PlatformMismatchError
@@ -125,6 +136,15 @@ def consume(manifest, out, gpu):
                 checks = {'cpu_routed_refusal': refusal(lib, cpu, cpu, 'routed must be')}
                 if gpu:
                     routed = torch.empty((1, 16), dtype=torch.bfloat16, device=device)[:0]
+                    if BEFORE:
+                        # Safe historical acceptance: zero vectors return before
+                        # any kernel receives the CPU output pointer.
+                        lib.token_sum(routed, cpu, 8)
+                        torch.cuda.synchronize(device)
+                        checks["zero_cpu_output_accepted_before"] = True
+                        results.append(dict(library=library, checks=checks, platform_refusal=platform_refusal,
+                                            native_finalization=finalization, build_ninja_sha256=hashlib.sha256(flags.encode()).hexdigest()))
+                        continue
                     checks['zero_cpu_output_refusal'] = refusal(lib, routed, cpu, "on routed's CUDA device")
                     good = torch.empty((0, 16), dtype=torch.bfloat16, device=device)
                     lib.token_sum(routed, good, 8)
@@ -134,6 +154,14 @@ def consume(manifest, out, gpu):
                     # reference without tolerance or shared-fold arithmetic.
                     data = (torch.arange(8 * 16, device=device).reshape(8, 16) % 8 - 4).bfloat16()
                     output = torch.empty((1, 16), dtype=torch.bfloat16, device=device)
+                    for name, bad in [("out_contiguity", torch.empty((1, 32), dtype=torch.bfloat16, device=device)[:, ::2]),
+                                      ("out_rows", torch.empty((2, 16), dtype=torch.bfloat16, device=device))]:
+                        checks[name + "_refusal"] = refusal(lib, data, bad, "out must be")
+                    for name, bad in [("routed_rank", data.reshape(-1)), ("routed_dtype", data.float()),
+                                      ("routed_contiguity", torch.empty((8, 32), dtype=torch.bfloat16, device=device)[:, ::2])]:
+                        checks[name + "_refusal"] = refusal(lib, bad, output, "routed must be")
+                    short = torch.empty((0, 12), dtype=torch.bfloat16, device=device)
+                    checks["width_quantum_refusal"] = refusal(lib, short, short, "H must be a multiple of 8")
                     lib.token_sum(data, output, 8)
                     torch.cuda.synchronize(device)
                     expected_output = data.float().sum(0, keepdim=True).bfloat16()
@@ -156,6 +184,7 @@ def consume(manifest, out, gpu):
         if len(results) != 4 or len(set(live_fds)) != 4:
             raise AssertionError('incomplete distinct four-library population')
         report = dict(schema='tessera.token_sum_859_qualification.v1', action_key=os.environ['PRISMABUILD_ACTION_KEY'],
+                      arm="before" if BEFORE else "fixed",
                       gpu=gpu, source_sha256=SOURCE, readset_sha256=reader.manifest_sha256,
                       results=results, native_owners=owners, source_reads=reader.reads,
                       serving_qualification=False, performance_qualification=False)
@@ -174,8 +203,19 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=['prepare', 'cpu', 'gpu'])
     parser.add_argument('--manifest', type=Path)
+    parser.add_argument("--before", action="store_true")
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
+    global BANK, SOURCE, SOURCE_DIRECTORY, BEFORE
+    BEFORE = args.before
+    if BEFORE:
+        if args.mode == "cpu":
+            raise ValueError("historical causal-before population is GPU-zero-only")
+        BANK = BANK.parent / "terminal-855-shipping-71fe64f2"
+        SOURCE = "71fe64f23d304156faf95f30157321989a4195428f6cb073efccb924fc1247f4"
+        SOURCE_DIRECTORY = "frozen-common-source"
+        for name, fields in LIBS.items():
+            LIBS[name] = (fields[0], BASELINE_HASHES[name], *fields[2:])
     if args.mode == 'prepare':
         prepare(args.out)
     else:
