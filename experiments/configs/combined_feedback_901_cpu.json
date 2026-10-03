@@ -2,16 +2,9 @@
   {
     "cwd": "/home/rob/tmp/sol-t16-fd-preflight-20261003",
     "argv": [
-      "/home/rob/venvs/pb-cpu/bin/python",
-      "-m",
-      "pytest",
-      "-q",
-      "-rA",
-      "-p",
-      "no:cacheprovider",
-      "tests/test_runtime_image_pin.py::test_the_pin_is_the_contract_field_and_nothing_else_holds_it",
-      "tests/test_t4_prefetch_staged_qualification.py::test_post_acquire_directory_failure_releases_reader[native]",
-      "tests/test_t4_prefetch_staged_qualification.py::test_public_manifest_validator_enforces_exact_whole_file_members"
+      "bash",
+      "-lc",
+      "mkdir -p \"$TESSERA_CPU_TMP\" && export TMPDIR=\"$TESSERA_CPU_TMP\" && exec '/home/rob/venvs/pb-cpu/bin/python' '-m' 'pytest' '-q' '-rA' '-p' 'no:cacheprovider' 'tests/test_runtime_image_pin.py::test_the_pin_is_the_contract_field_and_nothing_else_holds_it' 'tests/test_t4_prefetch_staged_qualification.py::test_post_acquire_directory_failure_releases_reader[native]' 'tests/test_t4_prefetch_staged_qualification.py::test_public_manifest_validator_enforces_exact_whole_file_members'"
     ],
     "demand": {
       "cpu": 1,
@@ -27,7 +20,8 @@
       "PYTHONPATH": "/mnt/shared/prismabuild-fleet/runtime-generations/c43700f9d1d0-1791018557-b6c96bc4bbbb/src:src:tests",
       "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
       "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
-      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648"
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_CPU_TMP": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-feedback901-v1-tmp"
     }
   }
 ]
