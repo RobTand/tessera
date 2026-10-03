@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-02 for the empty-RoPE inspected-stock guard. Shared
+`serving.stock_interface` supplies source/signature facts; this lever's source
+pins and expected parameters remain local and unchanged. Unreadable source,
+missing method, signature or import failures decline before rebinding. The
+lever remains opt-in and its CUDA/TR3/served gates remain independent.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`

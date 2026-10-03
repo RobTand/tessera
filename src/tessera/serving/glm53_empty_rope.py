@@ -27,18 +27,16 @@ unchanged.
 from __future__ import annotations
 
 import functools
-import hashlib
 import importlib
-import inspect
 import logging
 import os
-from pathlib import Path
 from threading import RLock
 from typing import Any
 
 import torch
 
 from .flags import latched_bool
+from .stock_interface import source_digest as _source_digest, signature_parameters, stock_attribute
 
 __all__ = ["FLAG", "install_for_current_config", "query_without_empty_rope", "skip_reason"]
 
@@ -117,24 +115,20 @@ def _report(line: str) -> None:
         _log.warning(line)
 
 
-def _source_digest(module: Any) -> str | None:
-    path = getattr(module, "__file__", None)
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
+def _inspect(module: Any):
+    """Return the inspected class/method/digest with the existing decline policy."""
+    digest=_source_digest(module)
+    if digest is None:return None,None,digest,f"{_MODULE} has no source file to inspect"
+    if digest not in _INSPECTED_SHA256:return None,None,digest,f"{_MODULE} sha256 {digest[:12]} is not an inspected source"
+    impl=stock_attribute(module,_CLASS)
+    if impl is None:return None,None,digest,f"{_MODULE} has no {_CLASS}"
+    params=signature_parameters(impl,"forward_mqa")
+    if params!=_SIGNATURE:return None,None,digest,f"{_CLASS}.forward_mqa has parameters {params}, expected {_SIGNATURE}"
+    return impl,stock_attribute(impl,"forward_mqa"),digest,None
 
 
 def _decline_reason(module: Any) -> str | None:
-    digest = _source_digest(module)
-    if digest is None:
-        return f"{_MODULE} has no source file to inspect"
-    if digest not in _INSPECTED_SHA256:
-        return f"{_MODULE} sha256 {digest[:12]} is not an inspected source"
-    impl = getattr(module, _CLASS, None)
-    if impl is None:
-        return f"{_MODULE} has no {_CLASS}"
-    params = tuple(inspect.signature(impl.forward_mqa).parameters)
-    if params != _SIGNATURE:
-        return f"{_CLASS}.forward_mqa has parameters {params}, expected {_SIGNATURE}"
-    return None
+    return _inspect(module)[3]
 
 
 def _wrap(original: Any) -> Any:
@@ -168,21 +162,20 @@ def install_for_current_config() -> bool:
     with _LOCK:
         try:
             module = importlib.import_module(_MODULE)
-        except ImportError as exc:
+        except Exception as exc:
             reason = f"{_MODULE} is not importable ({exc})"
             module = None
         else:
-            impl = getattr(module, _CLASS, None)
-            if impl is not None and getattr(impl.forward_mqa, _MARK, False):
+            impl = stock_attribute(module,_CLASS)
+            if impl is not None and stock_attribute(stock_attribute(impl,"forward_mqa"),_MARK,False):
                 return True
-            reason = _decline_reason(module)
+            impl,original,digest,reason = _inspect(module)
         if reason is not None:
             _report(f"{_LEVER} declined, stock {_CLASS}.forward_mqa: {reason}")
             return False
-        impl = getattr(module, _CLASS)
-        impl.forward_mqa = _wrap(impl.forward_mqa)
+        impl.forward_mqa = _wrap(original)
         image = os.environ.get("TESSERA_CENSUS_RUNTIME_IMAGE", "").rpartition("@sha256:")[2][:12]
-        _report(f"{_LEVER} installed (stock source sha256 {_source_digest(module)[:12]}, "
+        _report(f"{_LEVER} installed (stock source sha256 {digest[:12]}, "
                 f"image sha {image or 'unstated'}): {_CLASS}.forward_mqa passes a "
                 "zero-width-RoPE query without torch.cat")
         return True

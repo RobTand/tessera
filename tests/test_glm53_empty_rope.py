@@ -209,3 +209,38 @@ def test_an_absent_backend_declines(empty_rope, monkeypatch):
     monkeypatch.setenv(empty_rope.mod.FLAG, "1")
     monkeypatch.setitem(sys.modules, STOCK, None)
     assert empty_rope.mod.install_for_current_config() is False
+
+
+@pytest.mark.parametrize('fault',['missing_source','directory_source','invalid_path','missing_method','bad_signature','import_failure'])
+def test_uninspectable_stock_declines_without_rebinding(empty_rope,monkeypatch,fault):
+    mod=empty_rope.mod;monkeypatch.setenv(mod.FLAG,'1')
+    stock=sys.modules[STOCK]
+    if fault=='missing_source':empty_rope.source.unlink()
+    elif fault=='directory_source':monkeypatch.setattr(stock,'__file__',str(empty_rope.source.parent))
+    elif fault=='invalid_path':monkeypatch.setattr(stock,'__file__',object())
+    elif fault=='missing_method':monkeypatch.delattr(empty_rope.impl,'forward_mqa')
+    elif fault=='bad_signature':
+        class BadSignature:
+            def __call__(self,*args):pass
+            @property
+            def __signature__(self):raise ValueError('uninspectable stock method')
+        monkeypatch.setattr(empty_rope.impl,'forward_mqa',BadSignature())
+    else:
+        def unavailable(_):raise RuntimeError('stock dependency failed during import')
+        monkeypatch.setattr(mod.importlib,'import_module',unavailable)
+    before=getattr(empty_rope.impl,'forward_mqa',None)
+    assert mod.install_for_current_config() is False
+    assert getattr(empty_rope.impl,'forward_mqa',None) is before
+
+
+@pytest.mark.parametrize('exception',[OSError,ValueError,TypeError])
+def test_unavailable_stock_class_declines_without_rebinding(empty_rope,monkeypatch,exception):
+    mod=empty_rope.mod;monkeypatch.setenv(mod.FLAG,'1')
+    stock=sys.modules[STOCK]
+    class UnavailableClassModule(types.ModuleType):
+        def __getattribute__(self,name):
+            if name=='FlashInferMLASparseSM120Impl':raise exception('stock class unavailable')
+            return super().__getattribute__(name)
+    broken=UnavailableClassModule(stock.__name__);broken.__file__=stock.__file__
+    monkeypatch.setitem(sys.modules,STOCK,broken)
+    assert mod.install_for_current_config() is False
