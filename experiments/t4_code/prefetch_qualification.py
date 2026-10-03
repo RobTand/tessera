@@ -184,6 +184,32 @@ def leased_banks(manifest_path, out, *, gpu):
                 reader.close()
 
 
+class NativePopulation:
+    """Frozen diagnostic scope: 42 FP4 native cases plus six terminal patterns."""
+    def __init__(self):
+        self.expected, self.passed, self.skipped = set(), set(), set()
+
+    def pytest_collection_finish(self, session):
+        reasons = {"the block-scaled FP4 instruction is sm_121a", "native terminal CUDA coverage"}
+        self.expected = {item.nodeid for item in session.items
+                         if any(mark.kwargs.get("reason") in reasons for mark in item.iter_markers("skipif"))}
+        if len(self.expected) != 48:
+            raise ValueError("the frozen 48-case native diagnostic population changed")
+
+    def pytest_runtest_logreport(self, report):
+        if report.nodeid in self.expected:
+            if report.skipped:
+                self.skipped.add(report.nodeid)
+            if report.when == "call" and report.passed:
+                self.passed.add(report.nodeid)
+
+    def require_complete(self):
+        if self.skipped or self.passed != self.expected:
+            raise ValueError("incomplete native diagnostic execution; skips are not qualification")
+        print(json.dumps({"native_expected": len(self.expected), "native_passed": len(self.passed),
+                          "native_skipped": len(self.skipped)}), flush=True)
+
+
 def consume(args):
     with leased_banks(args.manifest, args.out, gpu=not args.cpu_map) as banks:
         if args.cpu_map:
@@ -198,8 +224,12 @@ def consume(args):
         fe._LIB, fe._LIB_PREFETCH = banks[args.arm], args.arm
         if fe._ext() is not banks[args.arm]:
             raise ValueError("native consumer did not preserve its exact selected bank")
-        return pytest.main(["-q", "-ra", "tests/test_routed_fused_e2m1.py",
-                            "tests/test_routed_terminal_cuda.py", "-k", "e2m1"])
+        population = NativePopulation()
+        code = pytest.main(["-q", "-ra", "tests/test_routed_fused_e2m1.py",
+                            "tests/test_routed_terminal_cuda.py", "-k", "e2m1"], plugins=[population])
+        if code == 0:
+            population.require_complete()
+        return code
 
 
 def sanitize(args):
