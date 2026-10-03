@@ -4,9 +4,15 @@ Re-stamped 2026-10-03 for the retained original token-sum qualification
 controls (#859): the frozen PB proposal reads its published-client path
 from the existing box-artifact registry. The SASS-control test imports its
 actual checker at collection so the standard no-torch probe reports the
-missing dependency, rather than six fixture errors. Protocol, sealed readsets,
-CUDA source and native ELF identities are unchanged; this portability repair
-adds no native or GPU qualification and leaves the original-binding gate held.
+missing dependency, rather than six fixture errors. The subsequent actual
+native CPU attempt `66a2766e` failed on the E2M1 source prefix; qualification
+now uses the production E2M1-to-value source mapping instead of an invented
+same-name owner. Corrected CPU attempt `ddea9e0a` loaded all four retained
+ARM native ELFs through the real build owner, recorded mapped-inode/hash and
+CPU-input refusal evidence, retained absent-platform serving refusal, and
+released its SDK lease. CUDA source, sealed readsets and ELF identities are
+unchanged. This is four actual CPU native diagnostics, not CUDA output-device
+qualification; the original zero-token before/fixed GPU gate remains held.
 
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment

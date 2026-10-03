@@ -213,7 +213,7 @@ class NativeCallback:
             ("tessera_routed_fused_mma_e4m3", "tessera_routed_fused_mma_e4m3"),
             ("tessera_routed_fused_value", "tessera_routed_fused_value"),
             ("tessera_routed_fused_e4m3", "tessera_routed_fused_e4m3"),
-            ("tessera_routed_fused_e2m1", "tessera_routed_fused_e2m1"),
+            ("tessera_routed_fused_e2m1", "tessera_routed_fused_value"),
             ("tessera_routed_fused_value_prefetch4", "tessera_routed_fused_value"),
         }:
             raise ValueError("unqualified retained native family")

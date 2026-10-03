@@ -114,16 +114,22 @@ def test_value_retained_arms_keep_production_source_owner(tmp_path, monkeypatch,
     reader.close()
 
 
-@pytest.mark.parametrize("module", ["tessera_routed_fused_e4m3", "tessera_routed_fused_e2m1"])
-def test_original_token_sum_owners_require_matching_source(tmp_path, monkeypatch, module):
+@pytest.mark.parametrize("module,source_module", [
+    ("tessera_routed_fused_e4m3", "tessera_routed_fused_e4m3"),
+    ("tessera_routed_fused_e2m1", "tessera_routed_fused_value"),
+])
+def test_original_token_sum_owners_require_matching_source(tmp_path, monkeypatch, module, source_module):
+    from tessera.serving.ext import native_source_path
+    assert native_source_path(source_module).name == "routed_fused_window.cu"
     owner, reader, staged, rf, original, calls = owner_fixture(
-        tmp_path, monkeypatch, owner_args={"module": module, "source_module": module})
+        tmp_path, monkeypatch, owner_args={"module": module, "source_module": source_module})
     try:
+        wrong_source = module if module != source_module else "tessera_routed_fused_value"
         with pytest.raises(ValueError, match="foreign"):
-            rf.build_library(module, "tessera_routed_fused_value", lambda *a: pytest.fail("no JIT"))
-        lib = rf.build_library(module, module, lambda *a: pytest.fail("no JIT"))
+            rf.build_library(module, wrong_source, lambda *a: pytest.fail("no JIT"))
+        lib = rf.build_library(module, source_module, lambda *a: pytest.fail("no JIT"))
         owner.bind(lib)
-        assert calls == [(module, module)]
+        assert calls == [(module, source_module)]
     finally:
         owner.finish(lambda: None)
         reader.close()

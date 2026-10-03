@@ -110,20 +110,22 @@ def consume(manifest, out, gpu):
                     raise ValueError('native family flags differ')
             if fp4 and '-DTESSERA_ROUTED_FUSED_FP4=1' not in flags:
                 raise ValueError('FP4 native flag absent')
-            owner = NativeCallback(reader, directory / (module + '.so'), rf, out / library,
+            # E2M1 reuses the value source owner, exactly as routed_fused_e2m1._ext.
+            source_module = rf.MODULE_NAME_VALUE if fp4 else module
+            owner = NativeCallback(reader, directory / (module + ".so"), rf, out / library,
                                    expected_sha256=expected, source_sha256=SOURCE,
-                                   module=module, source_module=module)
+                                   module=module, source_module=source_module)
             try:
                 def no_compile(*args):
                     raise AssertionError('qualification must not rebuild retained native code')
                 if gpu:
-                    lib = rf.build_library(module, module, no_compile)
+                    lib = rf.build_library(module, source_module, no_compile)
                     platform_refusal = None
                 else:
                     # The real build owner loads the retained compile-gate artifact,
                     # then MUST refuse serving handoff on the absent platform.
                     try:
-                        rf.build_library(module, module, no_compile)
+                        rf.build_library(module, source_module, no_compile)
                     except PlatformMismatchError as exc:
                         platform_refusal = str(exc)
                     else:

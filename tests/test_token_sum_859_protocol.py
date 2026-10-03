@@ -42,7 +42,9 @@ def test_root_gpu_proposal_has_two_concrete_exclusive_single_attempt_commands():
 
 
 def test_single_gpu_corner_and_separate_native_arms_remain_unqualified():
-    assert PROTOCOL['native_cpu_gate']['not_qualified_yet']
+    assert not PROTOCOL['native_cpu_gate']['not_qualified_yet']
+    assert PROTOCOL['native_cpu_gate']['passed'] == len(DRIVER['LIBS'])
+    assert PROTOCOL['native_cpu_gate']['gpu'] is False
     assert 'different CUDA devices unobservable' in ' '.join(PROTOCOL['limitations'])
     for arm in ['t4_prefetch_877', 't16_prefetch_876', 'piece_major']:
         assert 'excluded' in PROTOCOL['source_reconciliation'][arm]

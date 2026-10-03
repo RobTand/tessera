@@ -1,6 +1,6 @@
 {
   "schema": "tessera.token_sum_859_protocol.v1",
-  "status": "HOLD_CPU_NATIVE_RESIDENCY_AND_ROOT_GPU_GO",
+  "status": "CPU_NATIVE_PASSED_HOLD_ROOT_GPU_GO",
   "gpu_authorized": false,
   "implementation_owner": {
     "historical_branch": "sol/t8-small-perf-20261002",
@@ -24,11 +24,18 @@
     "before_source_seal": "a0878a0d0d3144a889a9af7df4e01148c10faa677cc050125e5618531e663f54"
   },
   "native_cpu_gate": {
-    "action": "66a2766ebd36595c2a8cdea30d3ec8056c7a67850f4496ca5733cc9d3113b825",
-    "state_at_freeze": "READY_ZERO_ATTEMPTS_RESIDENCY_LEAD_NOT_RESIDENT",
+    "action": "ddea9e0afbdb5413a8cf9b38dc9616903f99e4bf3e5d3eeade3b9405448d5ed9",
+    "state_at_freeze": "EXECUTED_RC0_ONE_ATTEMPT_FOUR_CPU_NATIVE_LIBRARIES",
     "expected": "four actually loaded ELF inode/hash proofs; CPU routed-input refusal by original token_sum; unchanged real absent-platform serving refusal; no CUDA initialization; four load FDs held through teardown then SDK release",
-    "not_qualified_yet": true,
-    "blocker": "Only DL residency tiers are published; named DL below-5-percent host-local disk hold prevents new mover claims. No manual staging or pin adoption."
+    "not_qualified_yet": false,
+    "passed": 4,
+    "gpu": false,
+    "receipt_sha256": "d9e496ef34c7f2be5093dd7e181ba887deddcd27d3d759caef43fa09691b7479",
+    "report_path": "sparklina:/home/rob/tmp/ts859-native-cpu-mapping-20261003/diagnostic/result.json",
+    "report_sha256": "9ece81a1fb99b2b536b409a0bacc5b0c1789654bc580d06da230e47a9a26db68",
+    "sdk_released": true,
+    "previous_failure": {"action": "66a2766ebd36595c2a8cdea30d3ec8056c7a67850f4496ca5733cc9d3113b825", "state": "FAILED_RC1_ONE_ATTEMPT", "reason": "E2M1 incorrectly used its module as source owner; production maps it to MODULE_NAME_VALUE"},
+    "blocker": "CPU qualification is complete; actual original zero-token CUDA before/fixed controls still require root GPU GO. No CUDA or serving qualification is inferred."
   },
   "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
   "libraries": [
@@ -116,7 +123,7 @@
       "python3",
       "/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py",
       "--cwd",
-      "/home/rob/tmp/ts859-qualification",
+      "/home/rob/tmp/ts878-ci-20261003",
       "--gpu",
       "--exclusive",
       "--tag",
@@ -157,7 +164,7 @@
       "python3",
       "/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py",
       "--cwd",
-      "/home/rob/tmp/ts859-qualification",
+      "/home/rob/tmp/ts878-ci-20261003",
       "--gpu",
       "--exclusive",
       "--tag",
