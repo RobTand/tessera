@@ -4,7 +4,7 @@
     "argv": [
       "bash",
       "-lc",
-      "bash -n experiments/routed_fused_tests.sh experiments/t8r_speed/build_ext.sh experiments/t8r_speed/bench_t8r.sh && bash experiments/routed_fused_tests.sh . /mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/cpu-controls tests/test_value_prefetch.py tests/test_routed_fused_e2m1.py tests/test_routed_gate_native_artifact.py tests/test_native_fd_loader_lifetime.py tests/test_native_pybind_owner_epoch.py tests/test_value_prefetch_matrix_epoch.py tests/test_value_prefetch_numeric.py tests/test_piece_major_reader_boundaries.py tests/test_routed_gate_staged_store.py tests/test_routed_mma8_bprefetch_config.py"
+      "bash -n experiments/routed_fused_tests.sh experiments/t8r_speed/build_ext.sh experiments/t8r_speed/bench_t8r.sh && bash experiments/routed_fused_tests.sh . /mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/cpu-controls tests/test_value_prefetch.py tests/test_routed_fused_e2m1.py tests/test_routed_gate_native_artifact.py tests/test_native_fd_loader_lifetime.py tests/test_native_pybind_owner_epoch.py tests/test_value_prefetch_matrix_epoch.py tests/test_value_prefetch_numeric.py tests/test_piece_major_reader_boundaries.py tests/test_routed_gate_staged_store.py tests/test_routed_mma8_bprefetch_config.py tests/test_t8r_wrapper_extensions.py"
     ],
     "demand": {
       "cpu": 1,

@@ -12067,7 +12067,7 @@
    },
    "874": {
     "state": "OPEN",
-    "title": "T16 folded native routed activation prefetch qualification (#750)"
+    "title": "[P2+] T16 folded native routed activation prefetch qualification (#750)"
    },
    "875": {
     "state": "OPEN",
@@ -12108,6 +12108,10 @@
    "893": {
     "state": "OPEN",
     "title": "[P1] Default-off T8 mode0 dual-B source and build-choice contract"
+   },
+   "897": {
+    "state": "OPEN",
+    "title": "[P1] Preserve strict T16/FP4 build choices in the combined native cohort"
    },
    "9": {
     "state": "CLOSED",

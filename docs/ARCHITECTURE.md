@@ -1,11 +1,14 @@
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
-(#868/#875/#874). The current PM `piece_major` argument stays after the two
+(#868/#875/#874; independently scoped source/cohort child #897). The current PM `piece_major` argument stays after the two
 word counts in every caller; direct legacy geometry callers pass false.
 E2M1 routed/dense readers retain both legacy-layout refusals. Default-off
 BF16 and FP4 activation hints use independent selectors and the same native
-build/source owner; E2M1 variants resolve the published value source. Each
+build/source owner; E2M1 variants resolve the published value source. Actual
+wrappers preserve unset versus explicitly empty choices for all three families,
+so malformed values reach the strict Python gate instead of silently selecting
+baseline zero. Each
 CPU build retains a source/image/selector/ELF/finalization record in its own
 extension directory. A changed common translation unit requires fresh matched
 family builds and numeric/sanitizer evidence: neither the original 51f6 T16
