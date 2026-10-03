@@ -43,7 +43,7 @@ the hashed actual compile record, never a copied default pin; the default is
 still owned by runtime_contract.json and is not changed by this experiment.
 New composed source/image/readset/capacity identities require their own parent
 review and actual CPU stage/mapping evidence before the separately held GPU
-science/admission gate. No 15-GPU-payload submissions have been made; metadata
+synthetic-safety admission gate. No 15-GPU-payload submissions have been made; metadata
 CPU action `3d65783a` separately passed 18 no-retag capacity controls.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
@@ -542,7 +542,7 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   `pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
   full numeric/native/sanitizer population and real local-scratch contract
   is `pb_875_composed_qualification_contract.json`. The GPU packet stays
-  unpublished until the exact current scientific/provider/parent/admission
+  unpublished until the exact current source/SDK-stage/parent/admission
   tuple is accepted; no old source4e/image61 allowance or CPU pass transfers.
   Old packet bytes remain available in commit `5bbd050e` and the old NAS
   checkout, not as obsolete runnable recipes in this tree. Supported PB
