@@ -54,6 +54,13 @@ def validate_readset(path):
     required = {str(NATIVE_RECORD): (852, "b8b242cbbb2901320942e87a273cbce024e86276ad72ab66b23fe5778eb6d9d0")}
     for arm, (module, digest) in ARMS.items():
         required[str(NATIVE_ROOT / f"build_apf{arm}" / (module + ".so"))] = (1889616, digest)
+    ordered = [e["path"] for e in manifest["entries"]]
+    if any(e["offset"] != 0 for e in manifest["entries"]) or len(set(ordered)) != len(ordered):
+        raise ValueError("native1 needs unique whole-file offset-zero members")
+    native_order = list(required)
+    tool_order = [str(TOOLS_ROOT / name) for name in TOOLS_SHA]
+    if ordered not in (native_order, tool_order + native_order):
+        raise ValueError("native1 exact normalized member order differs")
     entries = {e["path"]: e for e in manifest["entries"]}
     for name, (size, digest) in required.items():
         entry = entries.get(name)
@@ -116,6 +123,41 @@ def staged_read(path):
         reader.close()
 
 
+def finish_banks(reader, owners, fence, *, primary=None):
+    """Attempt every held-artifact closure before releasing the SDK reader."""
+    errors = []
+    for owner in owners:
+        loaded = owner.module is not None
+        try:
+            if loaded:
+                owner.attest_mapped(owner.module)
+        except BaseException as error:
+            errors.append(error)
+        try:
+            owner.finish(fence, keep_load_fd=True)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            if loaded or not owner.closed:
+                try:
+                    os.close(owner.fd)
+                    owner.closed = True
+                except BaseException as error:
+                    errors.append(error)
+    try:
+        reader.close()
+    except BaseException as error:
+        errors.append(error)
+    if errors:
+        if primary is not None:
+            for error in errors:
+                primary.add_note(f"staged cleanup failure: {error!r}")
+        elif len(errors) == 1:
+            raise errors[0]
+        else:
+            raise BaseExceptionGroup("staged native teardown failures", errors)
+
+
 @contextmanager
 def leased_banks(manifest_path, out, *, gpu):
     import torch
@@ -131,9 +173,9 @@ def leased_banks(manifest_path, out, *, gpu):
     reader = StagedInputs(manifest_path)
     owners, banks = [], {}
     out = Path(out)
-    out.mkdir(parents=True, exist_ok=True)
     fence = torch.cuda.synchronize if gpu else lambda: None
     try:
+        out.mkdir(parents=True, exist_ok=True)
         record = reader.json(NATIVE_RECORD)
         if (record["source_sha256"], record["torch"], record["image"]) != (
                 SOURCE_SHA, torch.__version__, os.environ.get("ORACLE_IMAGE")):
@@ -158,30 +200,19 @@ def leased_banks(manifest_path, out, *, gpu):
             banks[arm] = bank
         yield banks
     finally:
-        # Both original load-FD names stay distinct and alive through every
-        # call/graph/reduction. No nested build callbacks or per-case reloads.
-        try:
-            fence()
-            for owner in owners:
-                if owner.module is not None:
-                    owner.attest_mapped(owner.module)
-                owner.finish(fence, keep_load_fd=True)
-                print("T4_STAGED_NATIVE_IDENTITY " + json.dumps(owner.record), flush=True)
+        primary = sys.exc_info()[1]
+        if any(fe._LIB is bank for bank in banks.values()):
+            fe._LIB, fe._LIB_PREFETCH = None, None
+        # The shared owner fences each mapped bank; cleanup never stops at the
+        # first failed bind/hash/fence and always releases after every FD attempt.
+        finish_banks(reader, owners, fence, primary=primary)
+        if primary is None:
             (out / "native-identities.json").write_text(json.dumps([o.record for o in owners], indent=2))
+            for owner in owners:
+                print("T4_STAGED_NATIVE_IDENTITY " + json.dumps(owner.record), flush=True)
             print(json.dumps({"readset_sha256": reader.manifest_sha256,
                               "pin_id": reader.held["pin_id"], "ref_id": reader.held["ref_id"],
                               "kind": "diagnostic code banks; not serving _ext admission"}), flush=True)
-        finally:
-            if any(fe._LIB is bank for bank in banks.values()):
-                fe._LIB, fe._LIB_PREFETCH = None, None
-            try:
-                for owner in owners:
-                    if owner.closed and owner.module is not None:
-                        os.close(owner.fd)
-                    elif not owner.closed:
-                        owner.finish(fence)
-            finally:
-                reader.close()
 
 
 class NativePopulation:
@@ -239,8 +270,8 @@ def sanitize(args):
     reader = StagedInputs(args.manifest)
     out = Path(args.out)
     tool_dir = out / "staged-sanitizer"
-    tool_dir.mkdir(parents=True, exist_ok=False)
     try:
+        tool_dir.mkdir(parents=True, exist_ok=False)
         for name, expected in TOOLS_SHA.items():
             target = tool_dir / name
             target.write_bytes(reader.read(TOOLS_ROOT / name))
