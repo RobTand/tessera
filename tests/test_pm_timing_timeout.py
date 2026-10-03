@@ -9,7 +9,11 @@ import signal
 
 import pytest
 
-OWNER = Path('/mnt/shared/astra-resume-20261002/t8_performance/piece-major-common-c236b7aa/execution-owner-timing600/experiments/t8r_speed/paired_k32_action.py')
+from box_artifacts import path, require
+
+OWNER_PARTS = ("experiments", "t8r_speed", "paired_k32_action.py")
+OWNER = path("piece_major_execution", *OWNER_PARTS)
+pytestmark = require("piece_major_execution", *OWNER_PARTS)
 
 
 @pytest.mark.parametrize('deadline,refuses', [(240, True), (600, False)])

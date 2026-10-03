@@ -7,8 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from box_artifacts import ROOTS
+
 ROOT = Path(__file__).resolve().parents[1]
-A8SE = '/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported'
+A8SE = str(Path(ROOTS["shared_runs"].default) /
+           "moe/glm53-a8-bf16menu-20260930/release/exported")
 
 
 class DeviceBoundaryReached(Exception):
@@ -88,6 +91,8 @@ def test_default_benchmark_admission_is_unchanged(monkeypatch, tmp_path):
 
 
 def test_finite_comparison_parser_exists_before_device(monkeypatch, tmp_path):
+    # The AST-isolated main must resolve siblings as direct script execution does.
+    monkeypatch.syspath_prepend(str(ROOT / "experiments/t8r_speed"))
     argv = ['--out', str(tmp_path / 'out'), '--comparison-protocol', 'missing.json',
             '--comparison-phase', 'numeric']
     monkeypatch.setattr('sys.argv', ['bench_t8r.py', *argv])

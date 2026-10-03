@@ -574,3 +574,26 @@ published CoreCAS lookup** verified this analysis's full attestation
 That lookup is evidence inspection, not a duplicate reduction or qualification.
 Its record is `repeatability-ready-0a3ddc70/ANALYSIS-ACTUAL-FULL-CORE-VERIFIED.json`,
 SHA `98ae3dae0341aab114e9050a28408cf82974cb1b654c295d6188deb6f7e6ac55` under the existing piece-major evidence root.
+
+## Current-base implementation review, 2026-10-03
+
+The current-master merge at `3f2974fc` resolved only the additive architecture
+stamp conflict; native kernel source remains `c236b7aa`, with no change to the
+qualified PM reader, layout, build flags or benchmark caller. This is review
+for a bounded default-off implementation landing, not a new scientific gate.
+The frozen numeric and six-block evidence above retains its exact identities
+and scope. Issue739, serving/default/pin adoption and energy remain OPEN/HOLD.
+
+Current-base PB CPU `725e6454` recorded 209 passed, 60 skipped, one failure:
+the AST-isolated parser test did not put its real sibling protocol on its
+import path. The skips were 53 CUDA kernels, two dual-CUDA-device cases and
+five absent checkpoint cases; zero tests allocated CUDA. The test-only repair
+also routed its frozen artifact spelling through the existing root registry.
+`8102c9ce` then passed all parser and issue-reference cases (24 passes) but
+found the separately retained timeout-owner path bypassing that registry.
+The timeout control now uses a named box artifact and truthfully skips where
+that original owner is absent. PB `ec5f1cd3` exercised the actual retained
+owner and box-root gate: 8 passed, zero skips/uncollected/CUDA allocations.
+These overlapping CPU runs are not added into a fictitious full-suite result.
+The earlier draft/no-merge statements describe the historical review stage;
+normal required checks and exact-head acceptance still govern any landing.
