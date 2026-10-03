@@ -13,6 +13,7 @@
 #   ORACLE_IMAGE      the immutable image reference (required)
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
 #   TEST_RO_MOUNTS    host directories mounted read-only at the same path
+#   TEST_CPU_ONLY    1: admitted CPU controls, no GPU request inside the container
 #   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
 #   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
 set -euo pipefail
@@ -74,7 +75,9 @@ fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
-docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
+GPU_ARGS=(--gpus all)
+if [[ "${TEST_CPU_ONLY:-0}" == 1 ]]; then GPU_ARGS=(); fi
+docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro -v "$OUT":"$OUT" \
   -e HOME="$OUT/home" -e TMPDIR="$TD" -e TRITON_CACHE_DIR="$OUT/triton" \
