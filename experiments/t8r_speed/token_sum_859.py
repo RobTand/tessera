@@ -188,7 +188,11 @@ def consume(manifest, out, gpu):
                       gpu=gpu, source_sha256=SOURCE, readset_sha256=reader.manifest_sha256,
                       results=results, native_owners=owners, source_reads=reader.reads,
                       serving_qualification=False, performance_qualification=False)
-        (out / 'result.json').write_text(json.dumps(report, indent=2) + '\n')
+        raw_report = json.dumps(report, indent=2) + "\n"
+        retained_bytes = sum(p.stat().st_size for p in out.rglob("*") if p.is_file())
+        if len(raw_report.encode()) > 1 << 20 or retained_bytes + len(raw_report.encode()) > 32 << 20:
+            raise ValueError("finite qualification output bound exceeded")
+        (out / "result.json").write_text(raw_report)
     finally:
         try:
             if gpu:

@@ -1,0 +1,197 @@
+{
+  "schema": "tessera.token_sum_859_protocol.v1",
+  "status": "HOLD_CPU_NATIVE_RESIDENCY_AND_ROOT_GPU_GO",
+  "gpu_authorized": false,
+  "implementation_owner": {
+    "historical_branch": "sol/t8-small-perf-20261002",
+    "historical_fix": "dae8765f80175793c81adaf915f4f50356fd5329",
+    "historical_head": "a643841afcbc70aa369176391413d7f69484a4e6",
+    "common_review": "6f1ca0fdfae33fdc0c23c11e61d5767c8b834ccd",
+    "common_compiled": "ce8251f8a1e4ca1cb70b2c79f69bdf55f91eba42",
+    "kernel_sha256": "d620660e4702b7798b0a695bdbde4c82993582bcc7469de8e304734c77257618",
+    "held_fd_fix": "3bc0cc1e6cc6be75b74b3b6705374c8798478f92",
+    "held_fd_prior_14_cpu_scope": "two generic real CPU DSOs plus callback guards; not CUDA or ARM native gate qualification"
+  },
+  "qualified_cpu": {
+    "callback_controls": {
+      "action": "66f62f17ce5f2444c008dc12709387f0f9cb5a3d6dcae5582f5a491fe4319db3",
+      "receipt": "f966e88b897db1099d6c38460f6cd0211f841041873d24c150f0c0de8b698ff2",
+      "passed": 16,
+      "skipped": 0,
+      "gpu_allocations": 0
+    },
+    "fixed_source_seal": "eda3cc9e746be9958d1b0be1dc2f21e403537548e8ee4335cf2f38b5a9284c54",
+    "before_source_seal": "a0878a0d0d3144a889a9af7df4e01148c10faa677cc050125e5618531e663f54"
+  },
+  "native_cpu_gate": {
+    "action": "66a2766ebd36595c2a8cdea30d3ec8056c7a67850f4496ca5733cc9d3113b825",
+    "state_at_freeze": "READY_ZERO_ATTEMPTS_RESIDENCY_LEAD_NOT_RESIDENT",
+    "expected": "four actually loaded ELF inode/hash proofs; CPU routed-input refusal by original token_sum; unchanged real absent-platform serving refusal; no CUDA initialization; four load FDs held through teardown then SDK release",
+    "not_qualified_yet": true,
+    "blocker": "Only DL residency tiers are published; named DL below-5-percent host-local disk hold prevents new mover claims. No manual staging or pin adoption."
+  },
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "libraries": [
+    "value",
+    "e4m3",
+    "e4m3mma",
+    "e2m1"
+  ],
+  "source_flags": {
+    "value": "FP8=0 MMA8=0 sm121; all postflags empty",
+    "e4m3": "FP8=1 MMA8=0 sm121; all postflags empty",
+    "e4m3mma": "FP8=1 MMA8=1 sm121; all postflags empty",
+    "e2m1": "FP8=0 MMA8=0 FP4=1 sm121a; all postflags empty"
+  },
+  "source_reconciliation": {
+    "safe_common_855": "before71fe64 source has actual PB58da6a54 43P/0skip/24mapped-native receipts; fixed d620 preserves422 existing SASS sequences. Neither substitutes for original zero-output refusal.",
+    "t4_prefetch_877": "separate c2d56fc8 CUDA and candidate9a33c215/17f0f390 ELF arms excluded",
+    "t16_prefetch_876": "separate51f6f7d7 CUDA and value_prefetch4 ELF arm excluded",
+    "piece_major": "PMM1/M2048 excluded; no PM or paired-K32 source changes"
+  },
+  "root_go_prerequisites": [
+    "native_cpu_gate completed and actual logs/ELF/readset/source/flags/refusals accepted",
+    "fresh PB residency and broker offers for eligible GB10 image holder",
+    "at least5percent local disk headroom; preserve current SP/DL holds until named owner releases them",
+    "exact before/fixed readsets and implementation source pins unchanged",
+    "root explicitly authorizes this two-row exclusive GPU matrix"
+  ],
+  "resources_each": {
+    "cpu": 1,
+    "mem_gib": 5,
+    "gpu_memory_gib": 2,
+    "gpu": 1,
+    "exclusive": true,
+    "native_threads": 1,
+    "deadline_seconds": 180,
+    "queue_wait_seconds": 180,
+    "max_attempts": 1,
+    "output_max_bytes": 33554432
+  },
+  "campaign_max_inflight": 1,
+  "readsets": {
+    "before": {
+      "path": "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-before.json",
+      "sha256": "459c4107ab76aa7f38587d422e001126e179d721d586167766d6e98f457730ba",
+      "ranges": 128,
+      "bytes": 13401536
+    },
+    "fixed": {
+      "path": "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-v2.json",
+      "sha256": "7b1abb47e492af38d0e3fac00c2c3970c004e8d93915cb3bed436875fe370539",
+      "ranges": 130,
+      "bytes": 13570924
+    }
+  },
+  "gpu_rows": [
+    {
+      "arm": "before",
+      "args": [
+        "gpu",
+        "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-before.json",
+        "/home/rob/tmp/ts859-gpu-before-attempt1",
+        "--before"
+      ],
+      "expected": "4 original bindings accept CUDA zero-token routed plus CPU zero-token output before launch; 4 exact mapped ELF identities; no nonempty CPU output pointer is ever launched"
+    },
+    {
+      "arm": "fixed",
+      "args": [
+        "gpu",
+        "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-v2.json",
+        "/home/rob/tmp/ts859-gpu-fixed-attempt1"
+      ],
+      "expected": "4 original bindings refuse CPU routed and safe zero CPU output; exact same-device CUDA nonempty sum bit equality, zero valid CUDA output, rank/dtype/contiguity/row/width/quantum refusals; 4 exact mapped ELF identities"
+    }
+  ],
+  "limitations": [
+    "GPU matrix unsubmitted",
+    "different CUDA devices unobservable on single-GPU GB10; no GPU1/index inference",
+    "CPU original-output-device guard cannot be exercised without actual CUDA routed input",
+    "no serving, performance, energy, PACT rate, default, menu or contract promotion"
+  ],
+  "cleanup": "PB scope owns container/descendants and deadline; --rm removes normal container; callback restore, final fence, close all held load FDs, then SDK release execute in finally blocks",
+  "submission_argv": [
+    [
+      "python3",
+      "/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py",
+      "--cwd",
+      "/home/rob/tmp/ts859-qualification",
+      "--gpu",
+      "--exclusive",
+      "--tag",
+      "gb10",
+      "--cpus",
+      "1",
+      "--demand",
+      "mem_gb=5",
+      "--gpu-memory-gb",
+      "2",
+      "--max-attempts",
+      "1",
+      "--timeout-s",
+      "180",
+      "--wait-s",
+      "180",
+      "--data-manifest",
+      "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-before.json",
+      "--residency",
+      "stage",
+      "--residency-ram",
+      "off",
+      "--container-image",
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "--env",
+      "ORACLE_IMAGE=localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "--env",
+      "PB_CLIENT_ROOT=/mnt/shared/prismabuild-fleet/repo",
+      "--",
+      "bash",
+      "experiments/t8r_speed/token_sum_859_action.sh",
+      "gpu",
+      "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-before.json",
+      "/home/rob/tmp/ts859-gpu-before-attempt1",
+      "--before"
+    ],
+    [
+      "python3",
+      "/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py",
+      "--cwd",
+      "/home/rob/tmp/ts859-qualification",
+      "--gpu",
+      "--exclusive",
+      "--tag",
+      "gb10",
+      "--cpus",
+      "1",
+      "--demand",
+      "mem_gb=5",
+      "--gpu-memory-gb",
+      "2",
+      "--max-attempts",
+      "1",
+      "--timeout-s",
+      "180",
+      "--wait-s",
+      "180",
+      "--data-manifest",
+      "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-v2.json",
+      "--residency",
+      "stage",
+      "--residency-ram",
+      "off",
+      "--container-image",
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "--env",
+      "ORACLE_IMAGE=localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "--env",
+      "PB_CLIENT_ROOT=/mnt/shared/prismabuild-fleet/repo",
+      "--",
+      "bash",
+      "experiments/t8r_speed/token_sum_859_action.sh",
+      "gpu",
+      "/mnt/shared/tessera-measurements/token-sum-859-20261003/readset-v2.json",
+      "/home/rob/tmp/ts859-gpu-fixed-attempt1"
+    ]
+  ]
+}
