@@ -7,13 +7,16 @@ from types import SimpleNamespace
 import pytest
 
 
+path = Path(__file__).resolve().parents[1] / "experiments/t8r_speed/shared_fold_check.py"
+spec = importlib.util.spec_from_file_location("shared_fold_check_under_test", path)
+_checker = importlib.util.module_from_spec(spec)
+# Expose the actual driver dependency to the existing no-torch collection probe.
+spec.loader.exec_module(_checker)
+
+
 @pytest.fixture
 def checker():
-    path = Path(__file__).resolve().parents[1] / "experiments/t8r_speed/shared_fold_check.py"
-    spec = importlib.util.spec_from_file_location("shared_fold_check_under_test", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return _checker
 
 
 @pytest.mark.parametrize("nonidentical", [None, "multiset", "only_before", "differs"])

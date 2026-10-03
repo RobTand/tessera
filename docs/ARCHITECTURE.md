@@ -1,5 +1,24 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-03 for the retained original token-sum qualification
+controls (#859): the frozen PB proposal reads its published-client path
+from the existing box-artifact registry. The SASS-control test imports its
+actual checker at collection so the standard no-torch probe reports the
+missing dependency, rather than six fixture errors. The subsequent actual
+native CPU attempt `66a2766e` failed on the E2M1 source prefix; qualification
+now uses the production E2M1-to-value source mapping instead of an invented
+same-name owner. Corrected CPU attempt `ddea9e0a` loaded all four retained
+ARM native ELFs through the real build owner, recorded mapped-inode/hash and
+CPU-input refusal evidence, retained absent-platform serving refusal, and
+released its SDK lease. CUDA source, sealed readsets and ELF identities are
+unchanged. This is four actual CPU native diagnostics, not CUDA output-device
+qualification; the original zero-token before/fixed GPU gate remains held.
+The initial new mapping assertion assumed the source resolver returned a Path;
+PB `f86b5dd5` retained two failures/17 passes. Wrapping its actual string
+result in Path and updating the CPU-success protocol controls passed PB
+`a72b1037`: five passes, zero skips/uncollected/CUDA allocations. Its receipt
+is `9128737052c94a3319350dc0423844c68d406cc7def22edc7be28182c89fe9da`.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,
@@ -7473,6 +7492,18 @@ installs `serving.glm53_shared_fold`:
   before returning or launching, including zero-token requests.
   The original `token_sum` binding applies the same output-device guard
   (tessera#859); its device-kernel arithmetic remains unchanged.
+  The finite `experiments/t8r_speed/token_sum_859.py` diagnostic seals the
+  existing common `d620660e4702` four-library bank without recompilation.
+  CPU mode uses the real build callback and records its absent-platform
+  serving refusal, then checks the loaded original binding with CPU inputs;
+  this is diagnostic-only, not CUDA or serving qualification. SDK-pinned
+  source, build flags, mapped ELF inode and pre/post ELF hashes are retained.
+  Loaded `/proc/self/fd` names remain held through whole-experiment teardown
+  using the existing T16 held-load fix, before releasing the SDK pin.
+  Root-GO-only GPU mode checks zero-token CPU-output refusal and a small
+  actual same-device original sum on each library. A single-device GB10
+  cannot prove a different-CUDA-device corner; separate prefetch T4/T16
+  candidates and PM M1/M2048 receipts do not inherit this qualification.
 - The routed method's `_apply_native` calls the adapter through
   `native_call`. It passes `shared=` only when the shared experts ran on the
   current stream before the routed call (`NO_OVERLAP`), the routed input is
