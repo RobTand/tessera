@@ -80,6 +80,65 @@ def test_activation_prefetch_refuses_invalid_arms(monkeypatch, value):
         fe.activation_prefetch()
 
 
+@pytest.fixture
+def extension_boundary(monkeypatch):
+    """Instrument only the compiler boundary; exercise the real _ext consumer."""
+    from types import SimpleNamespace
+    from torch.utils import cpp_extension
+
+    fields = dict(BM=rf.BM, BN=fe.BN, HALF_ROWS=fe.HALF_ROWS, BK=fe.BK,
+                  RATE_MIN=rf.RATE_MIN, RATE_MAX=rf.RATE_MAX, SLOT_WORDS_MAX=rf.SLOT_WORDS_MAX,
+                  WORD_STAGES=fe.WORD_STAGES, DESC_WORDS=fe.DESC_WORDS, WINDOW_BITS=rf.WINDOW_BITS,
+                  SMEM_FIXED_GATE_UP=fe.SMEM_FIXED[0], SMEM_FIXED_DOWN=fe.SMEM_FIXED[2],
+                  FAMILY_FP8=False, FAMILY_MMA8=False, FAMILY_FP4=True, A_PREFETCH=0)
+    compiled = SimpleNamespace(**fields)
+    builds, loads = [], []
+
+    def compile_boundary(**kwargs):
+        loads.append(kwargs)
+        return compiled
+
+    def build_boundary(module, source_module, compile_fn):
+        builds.append((module, source_module))
+        return compile_fn("routed_fused_window.cu", f"owner-build/{module}", "sm_121", False)
+
+    monkeypatch.setattr(cpp_extension, "load", compile_boundary)
+    monkeypatch.setattr(fe, "build_library", build_boundary)
+    monkeypatch.setattr(fe, "_LIB", None)
+    monkeypatch.setattr(fe, "_LIB_PREFETCH", None)
+    return compiled, builds, loads
+
+
+@pytest.mark.parametrize("arm", [0, 4])
+def test_extension_consumer_freezes_distinct_compiled_arm(monkeypatch, extension_boundary, arm):
+    compiled, builds, loads = extension_boundary
+    compiled.A_PREFETCH = arm
+    monkeypatch.setenv(fe.PREFETCH_ENV, str(arm))
+    assert fe._ext() is compiled
+    module = fe.MODULE_NAME + ("_apf4" if arm else "")
+    assert builds == [(module, fe.MODULE_NAME_VALUE)]
+    assert loads[0]["name"] == module and loads[0]["build_directory"] == f"owner-build/{module}"
+    flags = loads[0]["extra_cuda_cflags"]
+    assert "-DTESSERA_ROUTED_FUSED_FP4=1" in flags
+    assert [f for f in flags if "FP4_A_PREFETCH" in f] == (
+        ["-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH=4"] if arm else [])
+    assert fe._ext() is compiled and len(builds) == len(loads) == 1
+    monkeypatch.setenv(fe.PREFETCH_ENV, str(4 if arm == 0 else 0))
+    with pytest.raises(GrammarError, match="changed after"):
+        fe._ext()
+    assert len(builds) == len(loads) == 1
+
+
+@pytest.mark.parametrize("field,value", [("A_PREFETCH", 4), ("BK", 32), ("FAMILY_FP4", False)])
+def test_extension_consumer_refuses_incompatible_binary(monkeypatch, extension_boundary, field, value):
+    compiled, builds, loads = extension_boundary
+    monkeypatch.setenv(fe.PREFETCH_ENV, "0")
+    setattr(compiled, field, value)
+    with pytest.raises(GrammarError, match=f"built with {field}"):
+        fe._ext()
+    assert fe._LIB is None and len(builds) == len(loads) == 1
+
+
 def _brute_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     out = torch.zeros(cols // 64, 4, dtype=torch.int64)
     hi = set(perm.tolist()[n_lo:])

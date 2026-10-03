@@ -409,6 +409,7 @@ def routed_case(lib, gate, up, down, R, kind, dev, seed):
 
 def dense_case(lib, role, M, k_split, kind, dev, seed):
     K, N = role["cols"], role["rows"]
+    torch.manual_seed(seed)   # candidate dense controls use identical activation bytes
     x = onehot_x(M, K, seed, dev) if kind == "onehot" else torch.randn(M, K, dtype=torch.bfloat16, device=dev)
     xq, sfa, A, gs = quantize(x, dev)
     ratio = (role["global"] / gs).float().to(dev)
@@ -431,6 +432,7 @@ def dense_case(lib, role, M, k_split, kind, dev, seed):
     r = compare(out, ref, absacc * float(ratio[0]) * K * 2.0 ** -23, exact)
     r["graph"] = graph_equal(f, out)
     r["ok"] = r["ok"] and r["graph"]
+    r["output_sha256"] = hashlib.sha256(out.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
     return r
 
 
@@ -541,8 +543,18 @@ def main():
                         # 1, a middle split, and the cap (every item two chunks)
                         for ks in (1, 3, nk // 2):
                             for kind in ("onehot", "random"):
-                                case[f"dense_M{M}_S{ks}_{kind}"] = dense_case(lib, role, M, ks, kind, dev, seed + M)
+                                name = f"dense_M{M}_S{ks}_{kind}"
+                                baseline = dense_case(lib, role, M, ks, kind, dev, seed + M)
+                                case[name] = baseline
+                                if paired is not None:
+                                    other = dense_case(paired, role, M, ks, kind, dev, seed + M)
+                                    case[f"paired_{name}"] = {"ok": baseline["ok"] and other["ok"]
+                                        and baseline["output_sha256"] == other["output_sha256"],
+                                        "baseline_sha256": baseline["output_sha256"],
+                                        "candidate_sha256": other["output_sha256"]}
                     case["dense_split_cap_refused"] = dense_refuses(lib, role, nk // 2 + 1, dev)
+                    if paired is not None:
+                        case["paired_dense_split_cap_refused"] = dense_refuses(paired, role, nk // 2 + 1, dev)
                 case["ok"] = all(v.get("ok", True) for v in case.values() if isinstance(v, dict))
             except Exception as exc:  # noqa: BLE001 -- recorded, counted as a failure
                 import traceback
