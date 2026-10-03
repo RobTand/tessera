@@ -19,7 +19,6 @@ ROOT = HERE.parent.parent
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments/t8r_speed"), str(ROOT / "tests")]
 
 SOURCE_SHA = "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40"
-IMAGE = "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
 NATIVE_ROOT = Path("/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6")
 BANKS = {
     0: {"module": "tessera_routed_fused_e2m1", "bytes": 1889544,
@@ -71,9 +70,11 @@ def validate_bank_record(record, finalization, arm, *, source_module):
             "tessera.native_build_cohort.v1", bank["action_key"], SOURCE_SHA):
         raise ValueError("common native compile source/action identity differs")
     image = record["image"]
+    from tessera.serving.contract import require_runtime_image
+    reference = require_runtime_image(image["required"], "qualified native compile image")
     if (image.get("schema"), image.get("required"), image.get("requested"), image.get("resolved_reference"),
             image.get("present"), image.get("refused")) != (
-            "tessera.runtime_image/1", IMAGE, IMAGE, IMAGE, True, False):
+            "tessera.runtime_image/1", reference, reference, reference, True, False):
         raise ValueError("common native compile image identity differs")
     selectors = {"TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
                  "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": str(arm),
@@ -95,6 +96,7 @@ def validate_bank_record(record, finalization, arm, *, source_module):
         raise ValueError("finalization source binding differs")
     if (bindings[str(bank["path"])]["sha256"], bindings[str(bank["path"])]["bytes"]) != (bank["sha256"], bank["bytes"]):
         raise ValueError("finalization ELF binding differs")
+    return reference
 
 
 def validate_readset(path):
@@ -226,12 +228,12 @@ def leased_banks(manifest_path, out, *, gpu):
     try:
         out.mkdir(parents=True, exist_ok=True)
         source = ext.native_source_path(fe.MODULE_NAME_VALUE)
-        if os.environ.get("ORACLE_IMAGE") != IMAGE:
-            raise ValueError("the T4 consumer must use the exact common compile image")
         for arm, expected_bank in BANKS.items():
             record = reader.json(expected_bank["record_path"])
             finalization = reader.json(expected_bank["finalization_path"])
-            validate_bank_record(record, finalization, arm, source_module=fe.MODULE_NAME_VALUE)
+            reference = validate_bank_record(record, finalization, arm, source_module=fe.MODULE_NAME_VALUE)
+            if os.environ.get("ORACLE_IMAGE") != reference:
+                raise ValueError("the T4 consumer must use its exact recorded common compile image")
             owner = NativeCallback(reader, expected_bank["path"], fe, out / f"arm{arm}",
                                    expected_sha256=expected_bank["sha256"], source_sha256=SOURCE_SHA,
                                    module=expected_bank["module"], source_module=fe.MODULE_NAME_VALUE,

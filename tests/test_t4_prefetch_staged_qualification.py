@@ -82,6 +82,7 @@ def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, m
     monkeypatch.setattr(qualified, "validate_readset", lambda path: None)
     monkeypatch.setattr(pb_staged_store, "StagedInputs", lambda path: reader)
     if mode == "native":
+        pytest.importorskip("torch", reason="native FD owner control requires Torch; pure metadata tests do not")
         target = tmp_path / "not-a-directory"
         target.write_bytes(b"real directory-creation failure")
         with pytest.raises(FileExistsError):
@@ -101,6 +102,7 @@ def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, m
 def test_public_manifest_validator_enforces_exact_whole_file_members(tmp_path, fault):
     import json
     from experiments.t4_code import prefetch_qualification as qualified
+    pytest.importorskip("prismabuild", reason="exact public manifest/phase control requires the published PB SDK")
 
     entries = [{"path": path, "offset": 0, "bytes": size, "sha256": digest}
                for path, (size, digest) in qualified.native_members().items()]
@@ -134,10 +136,10 @@ def test_actual_finalized_production_bank_metadata_fails_closed(arm, fault):
     from pathlib import Path
     from experiments.t4_code import prefetch_qualification as qualified
 
-    fixture_root = Path(__file__).parent / "data"
+    fixture_root = Path(__file__).resolve().parents[1] / "experiments/results"
     payloads = []
     for name in ("record", "finalization"):
-        raw = (fixture_root / f"t4_composed_{name}{arm}.json").read_bytes()
+        raw = (fixture_root / f"t4_875_composed_{name}{arm}.json").read_bytes()
         assert len(raw) == qualified.BANKS[arm][name + "_bytes"]
         assert hashlib.sha256(raw).hexdigest() == qualified.BANKS[arm][name + "_sha256"]
         payloads.append(json.loads(raw))
