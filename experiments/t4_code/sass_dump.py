@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -42,7 +43,7 @@ LIBRARIES = {
 }
 
 
-def _flags(library: str, token: str) -> list:
+def _flags(library: str, token: str, fp4_a_prefetch: int = 0) -> list:
     fp8, mma8, fp4 = LIBRARIES[library]
     digits = token[len("sm_"):] + ("a" if fp4 else "")
     flags = ["-O3", "-lineinfo", "-std=c++17",
@@ -50,6 +51,8 @@ def _flags(library: str, token: str) -> list:
              f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}"]
     if fp4:
         flags.append("-DTESSERA_ROUTED_FUSED_FP4=1")
+        if fp4_a_prefetch:
+            flags.append(f"-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH={fp4_a_prefetch}")
     return flags + ["-gencode", f"arch=compute_{digits},code=sm_{digits}"]
 
 
@@ -92,7 +95,7 @@ def parse_sass(text: str) -> dict:
 def _dump_one(args, library: str, version: str, torch_version: str) -> str:
     nvcc = os.environ.get("NVCC", "nvcc")
     cubin = os.path.join(args.out, f"{library}.cubin")
-    cmd = [nvcc, "-cubin", "-o", cubin, *_flags(library, args.token), *_includes(),
+    cmd = [nvcc, "-cubin", "-o", cubin, *_flags(library, args.token, args.fp4_a_prefetch), *_includes(),
            "-D_GLIBCXX_USE_CXX11_ABI=1", "-DTORCH_EXTENSION_NAME=sass_dump", args.source]
     if args.ptxas_verbose:
         cmd[1:1] = ["-Xptxas", "-v"]
@@ -105,8 +108,10 @@ def _dump_one(args, library: str, version: str, torch_version: str) -> str:
     sass = subprocess.run(["cuobjdump", "-sass", cubin], capture_output=True, text=True, check=True).stdout
     kernels = parse_sass(sass)
     rec = {"library": library, "source": os.path.abspath(args.source), "token": args.token,
-           "flags": _flags(library, args.token), "nvcc": version, "torch": torch_version,
-           "kernels": kernels, "resources": resources}
+           "flags": _flags(library, args.token, args.fp4_a_prefetch), "nvcc": version, "torch": torch_version,
+           "kernels": kernels, "resources": resources,
+           "source_sha256": hashlib.sha256(open(args.source, "rb").read()).hexdigest(),
+           "cubin_sha256": hashlib.sha256(open(cubin, "rb").read()).hexdigest()}
     for name, r in sorted(resources.items()):
         print(f"  {library} {name[:110]}: {r}", flush=True)
     with open(os.path.join(args.out, f"{library}.json"), "w") as f:
@@ -238,6 +243,7 @@ def main(argv=None) -> int:
     d.add_argument("--out", required=True)
     d.add_argument("--libraries", default="value,e4m3,e4m3mma")
     d.add_argument("--token", default="sm_121")
+    d.add_argument("--fp4-a-prefetch", type=int, choices=(0, 4), default=0)
     d.add_argument("--ptxas-verbose", action="store_true",
                    help="also record each kernel's registers and spill bytes (-Xptxas -v)")
     c = sub.add_parser("compare")

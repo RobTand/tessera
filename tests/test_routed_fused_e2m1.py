@@ -62,6 +62,24 @@ E2M1 = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
 
 
 # ----------------------------------------------------------------------------- CPU
+def test_activation_prefetch_defaults_off(monkeypatch):
+    monkeypatch.delenv(fe.PREFETCH_ENV, raising=False)
+    assert fe.activation_prefetch() == 0
+
+
+@pytest.mark.parametrize("value", ["0", "4"])
+def test_activation_prefetch_selects_only_declared_arms(monkeypatch, value):
+    monkeypatch.setenv(fe.PREFETCH_ENV, value)
+    assert fe.activation_prefetch() == int(value)
+
+
+@pytest.mark.parametrize("value", ["", "1", "2", "04", "-1", "true", "8"])
+def test_activation_prefetch_refuses_invalid_arms(monkeypatch, value):
+    monkeypatch.setenv(fe.PREFETCH_ENV, value)
+    with pytest.raises(GrammarError, match=fe.PREFETCH_ENV):
+        fe.activation_prefetch()
+
+
 def _brute_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     out = torch.zeros(cols // 64, 4, dtype=torch.int64)
     hi = set(perm.tolist()[n_lo:])

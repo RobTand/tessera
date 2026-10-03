@@ -60,14 +60,15 @@ E2M1 = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
 SRC = ROOT / "src" / "tessera" / "serving" / "csrc" / "routed_fused_window.cu"
 
 
-def build(out: Path):
+def build(out: Path, prefetch: int = 0):
     from torch.utils.cpp_extension import load
 
-    b = out / "build"
+    b = out / f"build_apf{prefetch}"
     b.mkdir(parents=True, exist_ok=True)
-    return load(name="tessera_routed_fused_e2m1_dev", sources=[str(SRC)], build_directory=str(b),
+    return load(name=f"tessera_routed_fused_e2m1_dev_apf{prefetch}", sources=[str(SRC)], build_directory=str(b),
                 extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17", "-DTESSERA_ROUTED_FUSED_FP8=0",
                                    "-DTESSERA_ROUTED_FUSED_MMA8=0", "-DTESSERA_ROUTED_FUSED_FP4=1",
+                                   f"-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH={prefetch}",
                                    "-gencode", "arch=compute_121a,code=sm_121a"],
                 verbose=False)
 
@@ -266,6 +267,7 @@ def routed_case(lib, gate, up, down, R, kind, dev, seed):
     E = len(gate["wref"])
     K1, I = gate["cols"], gate["rows"]
     T, top_k, P = R["T"], R["top_k"], R["P"]
+    torch.manual_seed(seed)   # paired arms consume identical random activations
     x = onehot_x(T, K1, seed, dev) if kind == "onehot" else torch.randn(T, K1, dtype=torch.bfloat16, device=dev)
     xq, sfa, A, gs = quantize(x, dev)
     rg = (gate["global"] / gs).float().to(dev)
@@ -372,6 +374,8 @@ def routed_case(lib, gate, up, down, R, kind, dev, seed):
     res["a_side_rel_err"] = float(((A / gs) - x.double()).norm() / x.double().norm().clamp_min(1e-30))
     res["ok"] = all(v["ok"] if isinstance(v, dict) else bool(v) for k, v in res.items()
                     if k != "a_side_rel_err")
+    res["output_sha256"] = {name: hashlib.sha256(t.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
+                            for name, t in (("mode1", out1), ("mode0", out0), ("mode2", out2), ("chain", out3))}
     return res
 
 
@@ -424,16 +428,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--prefetch", type=int, choices=(0, 4), default=0)
+    ap.add_argument("--compare-prefetch", action="store_true",
+                    help="build both FP4 arms and compare exact stage bits in this process")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     dev = "cuda"
     t0 = time.time()
-    lib = build(out)
+    lib = build(out, a.prefetch)
+    paired = build(out, 4 if a.prefetch == 0 else 0) if a.compare_prefetch else None
     report = {"device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
               "torch": torch.__version__, "tessera_head": os.environ.get("TESSERA_HEAD"),
               "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
               "source_sha256": hashlib.sha256(SRC.read_bytes()).hexdigest(),
+              "activation_prefetch": a.prefetch, "paired_prefetch": bool(paired),
               "build_secs": round(time.time() - t0, 1), "cases": []}
     path = out / "fused_e2m1_check.json"
     # Shapes: gate/up I = 1280 rows (two tiles, the second partial) over H = 512;
@@ -441,7 +450,7 @@ def main():
     # 64 and 130 (a single route, partial and whole superblocks), top_k 2.
     E, H, I = 4, 512, 1280
     counts = [1, 37, 64, 130]
-    q256s = [512, 448, 384, 960, 1024, 128, 576] if not a.quick else [512, 448]
+    q256s = list(range(128, 1025, 64)) if not a.quick else [512, 448]
     failures = 0
     for q in q256s:
         for cut_name in (("whole", "rank1") if q in (448, 512) else ("whole",)):
@@ -465,6 +474,13 @@ def main():
                 R = routing(counts, 2, q, dev)
                 for kind in ("onehot", "random"):
                     case[f"routed_{kind}"] = routed_case(lib, gate, up, down, R, kind, dev, seed)
+                    if paired is not None:
+                        other = routed_case(paired, gate, up, down, R, kind, dev, seed)
+                        baseline = case[f"routed_{kind}"]
+                        case[f"paired_{kind}"] = {"ok": baseline["ok"] and other["ok"]
+                            and baseline["output_sha256"] == other["output_sha256"],
+                            "baseline_sha256": baseline["output_sha256"],
+                            "candidate_sha256": other["output_sha256"]}
                 if cut_name == "whole":
                     role = stack([db[0]], None, dev)
                     nk = role["cols"] // 64            # one FP4 instruction's K per chunk

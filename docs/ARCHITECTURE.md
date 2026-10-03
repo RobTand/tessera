@@ -332,6 +332,50 @@ instruction-identical to master's (value 101/101, E4M3-f16 107/107,
 E4M3-instruction 137/137; PB `0ab25e95` against `ac4fb3e4`). See the fused
 lane's section.
 
+T4 activation-prefetch experiment (2026-10-02, #875):
+
+* TESSERA_ROUTED_FUSED_FP4_A_PREFETCH=4 selects an explicit default-OFF
+  producer compile variant (unset/0 retains baseline). It uses the existing
+  build owner with an isolated JIT name/directory, checks the exported distance,
+  refuses invalid selection and refuses changes after the library is loaded.
+* One-run routed modes0/1/2 use the existing shared L1 hint four FP4 K64 chunks
+  ahead. Packed A codes and linear per16 UE4M3 scales use exactly issue_a's
+  addresses, bounded by the live route row and remaining chunks. The existing
+  two-ahead cp.async schedule, wire, quantizer, residency, MMA/reduction order
+  and scales do not change. Dense and adjacent two-run launches remain controls.
+* Scope stays producer-only: the served T4 TCQ span2 route is not relabeled as
+  fused WINDOW. Intake still refuses wrong family/window/run order, K not a
+  multiple of64 or below256, hidden rows not a multiple of256, intermediate
+  rows not a multiple of128, incompatible gate/up tile strides and insufficient
+  device shared memory. Producer rates1..8 and all adjacent pairs remain;
+  WINDOW oracle q128..1024 step64 is not a promoted public recipe gamut.
+  TP2 cuts and carried states are unchanged; no new distributed, MLA absorbed
+  BMM, embedding-gather or quantizer ABI is implied.
+* Applicability: mixed-run decode, descriptor rings, staged stream history and
+  terminal FULL drain already exist on FP4. The E4M3 paired-K32 proposal is
+  structurally different: FP4 already uses native m16n8k64 with per16 block
+  scales. E4M3 piece-major indexing cannot be copied into FP4's tuple/nibble,
+  padded16-column group geometry. #807's measured negative gives no T4 speed
+  credit. Only activation L1 prefetch transfers as a memory hint; its distance
+  and benefit are hypotheses requiring a T4 baseline measurement.
+* First numeric gate: experiments/t4_code/fused_e2m1_check.py
+  --compare-prefetch builds both variants in one process, reuses each encoded
+  bundle and routing table, seeds identical random activations and compares
+  exact mode0/1/2/chain hashes as well as the existing fp64 dtype bounds and
+  eager/graph checks. It covers every uniform/adjacent producer run table;
+  existing native tests additionally cover dense row tails and rank cuts.
+* Before GPU qualification, root must authorize the resource/readset. Use the
+  same real captured/calibrated T4 bundle bank, input/global scales, residency,
+  recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
+  chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
+  incoming states, route tails, M1..8/512/2048/2049/8192, eager and graph.
+  Preserve baseline/candidate source and native ELF hashes. Measure in-process
+  forward/reverse paired windows with profiler and NCU; align both Spark
+  Netdata power/clocks/temperatures/CPU/memory to every window. No T8 baseline
+  or cross-precision credit, speed/energy claim, cell/menu/pin/default change.
+  CPU contract and native compile/SASS gates require PrismaBuild. GPU GO is
+  pending; no test pass, build receipt or measurement is claimed by this text.
+
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
 `TESSERA_BF16_K1` at one rung of every run table: `t16d1` covers [1] to [8] and
