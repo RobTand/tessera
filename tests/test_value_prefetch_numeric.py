@@ -48,4 +48,23 @@ def test_synthetic_matrix_covers_every_routed_run_pair():
     assert numeric.MS == [1, 7, 71]
     assert {q // 256 for q in numeric.Q256_CASES if q % 256 == 0} == set(range(1, 9))
     assert {q // 256 for q in numeric.Q256_CASES if q % 256} == set(range(1, 8))
-    assert numeric.SCOPE == 'syntheticgeometry/nonshipping'
+    assert numeric.SCOPE == "syntheticgeometry/nonshipping"
+
+
+@pytest.mark.parametrize("complete_phase", [False, True])
+def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phase):
+    import json
+    manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
+                "produced_by": {"tool": "test"}, "mount_prefix": "/mnt/shared",
+                "annotations": {"phases": [{"name": "whole-synthetic-bank", "bytes": 32, "cumulative_bytes": 32 if complete_phase else 31}]},
+                "entries": [{"path": "/mnt/shared/synthetic.pt", "offset": 0, "bytes": 32, "sha256": "0" * 64}],
+                "entry_count": 1, "total_bytes": 32}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(manifest))
+    if complete_phase:
+        checked, phases = numeric.validate_readset(path)
+        assert checked == manifest
+        assert phases == [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": 32}]
+    else:
+        with pytest.raises(ValueError, match="staging phase"):
+            numeric.validate_readset(path)

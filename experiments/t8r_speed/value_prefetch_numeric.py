@@ -116,14 +116,40 @@ def prepare(bank, native_root, sanitizer, runner):
     packet_path = bank / 'packet.json'
     packet_path.write_text(json.dumps(packet, indent=2) + '\n')
     records.append(entry(packet_path))
-    manifest = {'schema': 'prismaquant.prismabuild.data_manifest.v1',
-                'produced_by': {'tool': 'T16 synthetic fixture sealer', 'action_key': os.environ.get('PRISMABUILD_ACTION_KEY')},
-                'mount_prefix': '/mnt/shared', 'entries': records,
-                'entry_count': len(records), 'total_bytes': sum(e['bytes'] for e in records)}
+    total = sum(e["bytes"] for e in records)
+    manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
+                "produced_by": {"tool": "T16 synthetic fixture sealer", "action_key": os.environ.get("PRISMABUILD_ACTION_KEY")},
+                "annotations": {"scope": SCOPE, "phases": [{"name": "whole-synthetic-bank", "bytes": total, "cumulative_bytes": total}]},
+                "mount_prefix": "/mnt/shared", "entries": records,
+                "entry_count": len(records), "total_bytes": total}
     path = bank / 'readset.json'
     path.write_text(json.dumps(manifest, indent=2) + '\n')
-    print(json.dumps({'scope': SCOPE, 'readset': str(path), 'sha256': digest(path),
+    validate_readset(path)
+    print(json.dumps({"scope": SCOPE, "readset": str(path), "sha256": digest(path),
                       'packet_sha256': digest(packet_path), 'entry_count': len(records), 'total_bytes': manifest['total_bytes']}))
+
+
+def validate_readset(path):
+    from prismabuild import client, storage_tiers
+    manifest, encoding = client.read_data_manifest(path)
+    expected = [{"name": "whole-synthetic-bank", "start_bytes": 0, "end_bytes": manifest["total_bytes"]}]
+    if encoding != "identity" or storage_tiers.manifest_phase_ranges(manifest) != expected:
+        raise ValueError("synthetic whole-bank staging phase differs")
+    if client.manifest_read_entries(manifest) != manifest["entries"]:
+        raise ValueError("synthetic staging read order differs")
+    return manifest, expected
+
+
+def repair_readset(original, output):
+    if digest(original) != "f8f880774c06a4bb8fa0f99d73469645f5521827b34928c8983d0dd33fe20dc5":
+        raise ValueError("original frozen readset differs")
+    manifest = json.loads(original.read_bytes())
+    manifest["annotations"] = {"scope": SCOPE, "phases": [{"name": "whole-synthetic-bank", "bytes": manifest["total_bytes"], "cumulative_bytes": manifest["total_bytes"]}]}
+    with output.open("x") as stream:
+        json.dump(manifest, stream, indent=2)
+        stream.write("\n")
+    checked, phases = validate_readset(output)
+    print(json.dumps({"scope": SCOPE, "readset": str(output), "sha256": digest(output), "entry_count": checked["entry_count"], "total_bytes": checked["total_bytes"], "phases": phases, "retained_entries_unchanged": checked["entries"] == json.loads(original.read_bytes())["entries"]}))
 
 
 def move(value):
@@ -238,7 +264,7 @@ def sanitize(bank, manifest, out):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("operation", choices=["prepare", "consume", "sanitize"])
+    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset"])
     ap.add_argument('--bank', type=Path, required=True)
     ap.add_argument('--native-root', type=Path)
     ap.add_argument("--runner", type=Path)
@@ -248,6 +274,8 @@ def main():
     a = ap.parse_args()
     if a.operation == 'prepare':
         prepare(a.bank, a.native_root, a.sanitizer, a.runner)
+    elif a.operation == "repair-readset":
+        repair_readset(a.manifest, a.out)
     elif a.operation == "sanitize":
         sanitize(a.bank, a.manifest, a.out)
     else:

@@ -43,6 +43,10 @@ prefetch distance, executable mapped inode and held-ELF digest are recorded per
 arm. `experiments/configs/value_prefetch_874_protocol.json` freezes staging,
 single-attempt admission, finite numeric/sanitizer deadlines and cleanup;
 it is an authorization proposal, not permission to execute GPU work.
+Readset publication validates the actual PB v1 schema and whole-bank staging
+phase. The corrected readset is a separate `readset-v3.json`; original bank-v2
+bytes are preserved. The action takes that frozen manifest as its fourth
+argument, identically to PB admission, rather than silently reading an old file.
 
 The results show why this combination is interesting: **Tessera-8 reaches
 EXL3-like reconstruction quality while using FP8 activations**, and a

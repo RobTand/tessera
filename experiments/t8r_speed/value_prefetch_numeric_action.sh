@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # GPU-only PB action; submission requires explicit root GO. All evidence nonshipping.
 set -euo pipefail
-BANK=${1:?synthetic bank}; OUT=${2:?output}; MODE=${3:?consume or sanitize}
+BANK=${1:?synthetic bank}; OUT=${2:?output}; MODE=${3:?consume or sanitize}; MANIFEST=${4:?frozen readset}
 [[ "$MODE" == consume || "$MODE" == sanitize ]] || exit 2
 IMAGE=${ORACLE_IMAGE:?immutable image required}
 PB_CLIENT_ROOT=${PB_CLIENT_ROOT:?published PB SDK required}
@@ -28,4 +28,4 @@ docker run --rm --gpus all --ipc=host --network=none --pid=host --cpuset-cpus "$
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   "${CTX[@]}" "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE" \
   experiments/t8r_speed/value_prefetch_numeric.py "$MODE" --bank "$BANK" \
-  --manifest "$BANK/readset.json" --out "$OUT/syntheticgeometry-nonshipping"
+  --manifest "$MANIFEST" --out "$OUT/syntheticgeometry-nonshipping"
