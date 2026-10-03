@@ -431,6 +431,8 @@ def main():
     ap.add_argument("--prefetch", type=int, choices=(0, 4), default=0)
     ap.add_argument("--compare-prefetch", action="store_true",
                     help="build both FP4 arms and compare exact stage bits in this process")
+    ap.add_argument("--build-only", action="store_true",
+                    help="compile/load retained numeric banks without touching a CUDA device")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -438,6 +440,23 @@ def main():
     t0 = time.time()
     lib = build(out, a.prefetch)
     paired = build(out, 4 if a.prefetch == 0 else 0) if a.compare_prefetch else None
+    if a.build_only:
+        banks = []
+        for bank in (lib, paired):
+            if bank is None:
+                continue
+            assert bank.BK == 64 and bank.FAMILY_FP4 and not bank.FAMILY_MMA8
+            assert bank.A_PREFETCH in (0, 4)
+            elf = Path(bank.__file__)
+            banks.append({"path": str(elf), "sha256": hashlib.sha256(elf.read_bytes()).hexdigest(),
+                          "bytes": elf.stat().st_size, "activation_prefetch": bank.A_PREFETCH})
+        report = {"kind": "cpu_compile_only_not_gpu_qualification", "banks": banks,
+                  "source_sha256": hashlib.sha256(SRC.read_bytes()).hexdigest(),
+                  "torch": torch.__version__, "image": os.environ.get("ORACLE_IMAGE"),
+                  "secs": time.time() - t0}
+        (out / "native_compile.json").write_text(json.dumps(report, indent=1))
+        print(json.dumps(report), flush=True)
+        return 0
     report = {"device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
               "torch": torch.__version__, "tessera_head": os.environ.get("TESSERA_HEAD"),
               "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
