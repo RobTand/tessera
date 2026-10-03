@@ -3912,13 +3912,23 @@ can only break the deliberate verification run, never a default encode.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
-`experiments/tessera_producer_plan.py` reads source headers and an explicit
+`python -m tessera.producer_plan` reads source headers and an explicit
 stack plan, then calls the exporter's existing expert planners. Its JSON names
 the physical source tensor, logical tensor, source slice, expert, canonical
 role and both unit/group dimensions. PrismaQuant can invoke this producer tool
 without importing the serving runtime or restating its expert grammar. Source
 tensor names retain their actual suffix; logical tensors include `.weight`,
 and allocation/cache keys remove exactly that suffix via `ActivationSource`.
+The public installed-package API is `tessera.producer_plan.producer_projection`
+and its JSON contract remains `tessera.expert_projection.v1` (Refs #871).
+The experiment entry point is removed, not shimmed: an installed producer needs
+neither this repository's `experiments/` directory nor PrismaQuant/PrismaBuild
+checkouts. Producer source/package selection remains explicit; this packaging
+cutover does not qualify a serving runtime or change a consumer's runtime pin.
+The real-geometry API/CLI regression binds its subprocess to the parent-loaded
+producer package root before changing cwd (Refs #881). Source-tree runs select
+their snapshot; installed qualifiers select their installed package, with no
+experiment/sibling roots inherited and child refusal stderr retained.
 
 The producer tool hashes source shard bodies by default. Its optional
 `--source-digest-cache DIRECTORY` passes an existing trusted `SourceDigestCache`
@@ -3928,6 +3938,10 @@ library owns directory, fingerprint, quiescence, mutation and corrupt-entry
 checks; config, auxiliaries and complete header coverage are still read.
 A reuse receipt names previously fenced shard digests, not a fresh body read
 by this process, and confers no serving or campaign qualification.
+The CPU regression in `tests/test_tessera_producer_plan.py` compares the
+serialized public projection byte-for-byte across uncached, cold-cache and
+fresh-instance cache-hit calls, and checks that only shard-body hashing is
+elided. CLI receipts deliberately remain separate from that projection.
 
 `tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
 per-unit Hessian plus capture identity and full activation settings, resolved
