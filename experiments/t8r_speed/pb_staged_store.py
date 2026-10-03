@@ -205,7 +205,16 @@ class NativeCallback:
     """
     MODULE = 'tessera_routed_fused_mma_e4m3'
 
-    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256):
+    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256,
+                 module=None, source_module=None):
+        self.MODULE = self.MODULE if module is None else module
+        self.source_module = self.MODULE if source_module is None else source_module
+        if (self.MODULE, self.source_module) not in {
+            ("tessera_routed_fused_mma_e4m3", "tessera_routed_fused_mma_e4m3"),
+            ("tessera_routed_fused_value", "tessera_routed_fused_value"),
+            ("tessera_routed_fused_value_prefetch4", "tessera_routed_fused_value"),
+        }:
+            raise ValueError("unqualified retained native family")
         self.reader,self.rf,self.out = reader,rf,Path(out)
         self.original = rf.build_library
         self.fd,self.entry,self.serving = reader.native_artifact(path)
@@ -256,7 +265,7 @@ class NativeCallback:
         return digest.hexdigest()
 
     def _build(self, module, source_module, compile_fn):
-        if (module,source_module)!=(self.MODULE,self.MODULE):
+        if (module,source_module)!=(self.MODULE,self.source_module):
             raise ValueError('foreign native library requested')
         def retained(src,build,token,verbose):
             if hashlib.sha256(Path(src).read_bytes()).hexdigest()!=self.source_sha256:

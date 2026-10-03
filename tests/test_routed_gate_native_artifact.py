@@ -20,7 +20,7 @@ def callback_module():
     return module
 
 
-def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None):
+def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,owner_args=None):
     reader,staged,opened,sdk=fixture(tmp_path,origin='/forbidden-origin/module.so',offset=0)
     module=callback_module();calls=[]
     source=ROOT/'src/tessera/serving/csrc/routed_fused_window.cu'
@@ -36,7 +36,7 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None):
                         lambda self,lib: exec_hook(lib,staged) if exec_hook else None)
     owner=module.NativeCallback(reader,'/forbidden-origin/module.so',rf,tmp_path/'retained',
         expected_sha256=expected or hashlib.sha256(b'owned-wire').hexdigest(),
-        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), **(owner_args or {}))
     return owner,reader,staged,rf,build,calls
 
 
@@ -101,3 +101,14 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
     owner.finish(lambda:None);reader.close()
 
 
+@pytest.mark.parametrize("module", ["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4"])
+def test_value_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module):
+    source_module = "tessera_routed_fused_value"
+    owner, reader, staged, rf, original, calls = owner_fixture(
+        tmp_path, monkeypatch, owner_args={"module": module, "source_module": source_module})
+    lib = rf.build_library(module, source_module, lambda *a: pytest.fail("no JIT"))
+    owner.bind(lib)
+    assert calls == [(module, source_module)]
+    owner.finish(lambda: None)
+    assert rf.build_library is original
+    reader.close()
