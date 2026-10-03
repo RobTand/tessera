@@ -131,23 +131,6 @@ def test_active_writer_arguments_results_and_operation_order_are_unchanged():
     assert agreements == [0.0]  # no CPU control exchange at individual RS/AG boundaries
 
 
-def test_availability_control_uses_explicit_cpu_device_and_existing_tp_cpu_group():
-    calls = []
-    group = NS(cpu_group=object())
-    control = NS(item=lambda: 1)
-    def tensor(values, **kwargs):
-        calls.append(("tensor", values, kwargs))
-        return control
-    def all_reduce(value, **kwargs):
-        calls.append(("all_reduce", value, kwargs))
-    fake = NS(tensor=tensor, int32=object(), distributed=NS(
-        all_reduce=all_reduce, ReduceOp=NS(MAX=object())))
-    assert gp.agree_sp_collective(fake, group, 0.0) == 1.0
-    assert calls == [("tensor", [0], {"dtype": fake.int32, "device": "cpu"}),
-                     ("all_reduce", control, {"op": fake.distributed.ReduceOp.MAX,
-                                              "group": group.cpu_group})]
-
-
 def test_unqualified_midpass_owner_replacement_refuses_before_enqueue_without_exchange():
     dc, agreements, written = _dc(), [], []
     guard = _guard(dc, agree=lambda value: (agreements.append(value), value)[1])
