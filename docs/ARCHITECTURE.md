@@ -375,6 +375,13 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   or cross-precision credit, speed/energy claim, cell/menu/pin/default change.
   CPU contract and native compile/SASS gates require PrismaBuild. GPU GO is
   pending; no test pass, build receipt or measurement is claimed by this text.
+  CPU qualification: PB ee35ca77 on DL380 returned rc0, 77 passed and42
+  CUDA-gated skips (no GPU allocations). Actual master red control f0e9b8ce
+  refuses the missing activation_prefetch import. Native compilation found
+  missing cu13 vendor headers in the immutable image; the qualifier uses the
+  existing cuda_home_shadow.sh (only missing header names) and CUDA torch
+  include paths rather than putting the whole incompatible wheel include
+  directory on nvcc's path. SASS dumps now retain and hash their cubins.
 
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as

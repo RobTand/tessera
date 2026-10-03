@@ -62,7 +62,7 @@ def _includes() -> list:
     from torch.utils.cpp_extension import include_paths
 
     out = []
-    for p in include_paths() + [sysconfig.get_paths()["include"]]:
+    for p in include_paths(device_type="cuda") + [sysconfig.get_paths()["include"]]:
         out += ["-I", p]
     return out
 
@@ -116,7 +116,6 @@ def _dump_one(args, library: str, version: str, torch_version: str) -> str:
         print(f"  {library} {name[:110]}: {r}", flush=True)
     with open(os.path.join(args.out, f"{library}.json"), "w") as f:
         json.dump(rec, f)
-    os.remove(cubin)
     return f"{library}: {len(kernels)} kernels, {sum(len(v) for v in kernels.values())} instructions"
 
 
