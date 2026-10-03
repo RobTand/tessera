@@ -47,6 +47,7 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$CONTAINER_EXT" -v "$BUILD_WORK":"$BUILD_WORK" \
   -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
+  -e TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH="${TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH:-0}" \
   -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, os, sys, time

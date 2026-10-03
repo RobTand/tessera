@@ -597,3 +597,52 @@ owner and box-root gate: 8 passed, zero skips/uncollected/CUDA allocations.
 These overlapping CPU runs are not added into a fictitious full-suite result.
 The earlier draft/no-merge statements describe the historical review stage;
 normal required checks and exact-head acceptance still govern any landing.
+
+
+## Next concrete lever: default-off mode0 dual-B fragment scheduling (#739)
+
+On accepted base7437b569e16b42a7bf2ca13c25f343ab77ac6c42, the retained
+PM M2048 Torch profile identifies mode0 gate/up at roughly58% of native device
+time (~7.14–7.18ms). This selects a measured kernel priority, not an unmeasured
+bandwidth diagnosis. The next implementation loads both independent B column
+groups into consumer registers before the first group's MMA. It applies only to
+MMA8 routed mode0, one-run R4, retaining each accumulator's K/G/mi/even/odd order,
+with no producer/history/barrier/shared layout, wire/Params, mode1/2 or dense/two-run
+schedule change. Additional operand register lifetime is an explicit possible
+cost; no speedup is inferred before new source/ELF/numeric/profile evidence.
+
+`TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH` is exact0/1, default0 and frozen
+at routed_fused import. Only MMA8 receives its compiler define, and the loader
+checks the actual native export. Off/on use separate processes/extension roots;
+no common cache API, native module name, decoder/default or contract row changes.
+Build/benchmark wrappers forward that build-scoped choice. The architecture and
+`experiments/t8r_speed/mma8_gate_up_dual_b_design.json` keep the scope and matched
+numeric/profile/both-host/work-per-joule requirements explicit.
+
+Causal CPU action
+`68c5cc0fc7e3dd1712fd4b79adb832669eca147b955e89739442cbcb82e80fc4`
+ran on the original owner and failed10/passed5: the new frozen choice was absent,
+unknown choices were accepted, and wrong compiled scheduling was not refused.
+This real red run is not relabeled a pass; full successful CoreCAS lookup returns
+null for its failed action. Changed controls passed once in action
+`45f91e8022f390901845c0be46e18cf4ed303390e4da1d606bee8cd2349362ed`:
+15passes/0skips/0uncollected/0CUDA-allocated, CPU2/native1/xdistworksteal on actual
+capacity-eligibleSparklina, pytest1.71s/outer2.604418s. The deliberate worker
+constraint records the below-floorSparky exclusion and existing healthy CPU
+interpreter dependency, not arbitrary GPU load. Actual logs/terminal plus full
+published CoreCAS verified canonical receipt
+`222717a34a9992b694dcb39d770cc9ce853dfb100f849308a9e29dbc1101a836`,
+payload `57f35d2d224e0a73c320d05d2de6b78aceaa518e44dcc85a6a1f8e2529d824d4`
+and attestation `844bb9d043b01c2fdee25abb11b80e15a5adea4466fa4f6d9adb8d8a9556297f`.
+These CPU controls qualify the changed build-choice/refusal contract only.
+
+T16 remains the sole common PM/T4/T16/T8 composition/native-build owner. Fresh
+unique all-family banks, actual compiler/recipe/source/PyInit/SASS identities and
+changed-source correctness are required before any matched performance quantum;
+oldc236/4d/51f6 evidence is never restamped onto the new composition. Numeric/safety
+admission must preserve approved science and actual coordinator/worker5%floor
+plus honest working allowance; Root's explicit conditional CPU-build decision
+requires real canonical ROOT/MAX positive scratch demands and settled unsafeSP
+zero-offer proof. Stale/unknown/refused predicates stop that launch. No cleanup,
+image pull, old numeric/profile/control replay, new GPU/performance/energy/default/
+serving/deployment authorization is implied by this source/CPU milestone.

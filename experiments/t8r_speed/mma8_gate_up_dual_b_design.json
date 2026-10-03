@@ -1,0 +1,134 @@
+{
+  "schema": "tessera.mma8_gate_up_dual_b_measurement_design.v1",
+  "issue": 739,
+  "lever": "MMA8 MODE0 one-run R4: load both independent B fragment groups before first MMA; preserve accumulator K/G/mi/even-odd order",
+  "choice": {
+    "environment": "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH",
+    "default": 0,
+    "arms": [
+      0,
+      1
+    ],
+    "frozen_at": "routed_fused Python import",
+    "process_policy": "distinct process and extension directory per arm; never reload same PyInit name in one process"
+  },
+  "source_policy": {
+    "composition_owner": "Tessera T-16 analogous kernel improvements",
+    "base": "7437b569e16b42a7bf2ca13c25f343ab77ac6c42",
+    "same_final_source_both_arms": true,
+    "same_compiler_image_platform": true,
+    "new_native_banks_required": true,
+    "old_c236_4d_acceptance": "historical scoped evidence, not new composed-source qualification"
+  },
+  "input": {
+    "artifact": "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported",
+    "module": "model.layers.10.mlp.experts",
+    "group": "experts.R1024.L10",
+    "TP": [
+      0,
+      2
+    ],
+    "routing": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000007.pt",
+    "routing_sha256": "41ab82c0433f9f228ba13d2bf45070f4b52f8eaee24e836eb26bdee33d4caf97",
+    "activations": "same CRC32 group:M seed and BF16 x as existing qualified benchmark owner",
+    "weights": "float32 uniform1/8",
+    "resident_bytes_per_arm": 1872827160
+  },
+  "changed_source_correctness": {
+    "M": [
+      1,
+      2048
+    ],
+    "width_environment_values": [
+      "0",
+      "1"
+    ],
+    "word_layouts": [
+      "legacy",
+      "piece_major"
+    ],
+    "observed_outputs": [
+      "mode0",
+      "mode1",
+      "mode2",
+      "forward"
+    ],
+    "comparison": "exact bits and input hashes between compile0/compile1 at each geometry/layout; do not compare two different prepared layouts as the scheduling contrast",
+    "transport": "existing public readset/original-FD containment only; fresh source/recipe/ELF actual loaded origin/pre-post identity and native exported flag mandatory",
+    "old_numeric_v4": "reuse input identity and historical proof only; changed-source numeric must actually execute after concrete scientific GO"
+  },
+  "matched_profile_and_timing": {
+    "M": 2048,
+    "width_environment_value": "1",
+    "word_layout": "piece_major",
+    "graphs": false,
+    "block_orders": [
+      [
+        0,
+        1,
+        1,
+        0
+      ],
+      [
+        1,
+        0,
+        0,
+        1
+      ]
+    ],
+    "fresh_process_per_cell": true,
+    "conditioning": {
+      "seconds": 60,
+      "fixed_work": "unscored real operator forwards; retain physical prior history and all sensor readings, no adaptive plateau or clock mutation"
+    },
+    "cell": {
+      "warmup_calls": 10,
+      "raw_cuda_events": 30,
+      "profile_calls": 5,
+      "profile": "same operator owner Torch CPU/CUDA raw trace with full kernel names and per-call counts; timings separate from profiler overhead",
+      "energy_loop_seconds": 30,
+      "energy_loop_work": "same full operator with actual completed-call count; keep energy loop distinct from CUDA-event cell"
+    },
+    "outliers": "retain every raw event/sample/error; no outcome-driven retries/extensions/filtering",
+    "preregistered_statistic": "median30 percell, arithmetic means of arm cellmedians in each balanced block; report eachblock contrast/order effect, no pooled-event independent significance"
+  },
+  "both_host_measurement": {
+    "hosts": [
+      "sparky",
+      "sparklina"
+    ],
+    "phases": [
+      "action",
+      "conditioning",
+      "cuda_events",
+      "torch_profile",
+      "steady_power"
+    ],
+    "retain": "raw power, reportedSM, temperature, throttle masks, host wall/monotonic read intervals, CPU/memory/fullPSI/swapIO/diskIO, queries/source cadence/accepted-rejected-empty groups/errors",
+    "coverage_policy": "native buckets must be entirely within declared windows; empty percell coverage is unobserved, not0W; no interpolation",
+    "work_per_joule": "completed operator calls / duration-weighted attributable power integral only when instrument coverage, host-clock attribution and NVML/Netdata agreement actually accepted; otherwise HOLD with no fabricated denominator",
+    "clock_policy": "host polling is not native update/effective-clock/thermal-equilibrium qualification"
+  },
+  "admission": {
+    "GPU_GO": false,
+    "proof_supplier": "T4 admission owner + kernel lead",
+    "coordinator_and_every_used_worker": "actual>=5%rootfree PLUS honest writable working allowance; unsafeSP cannot be selected",
+    "resource_filter": "existing supported eligible-worker constraint if frozen contract permits, and real canonical ROOT/MAX positive scratch demand with fresh settled offers; no hidden retag/dummy root/typed spool",
+    "same_worker_pairing": true,
+    "no_image_pull": true,
+    "no_cleanup": true,
+    "bind_before_any_GPU": [
+      "final composed source/harness digests",
+      "each newly built ELF/source recipe/compiler flags/PyInit mapping",
+      "exact allowed image/driver/platform/stage/readset",
+      "numeric/safety scientific GO and actual capacity",
+      "separate explicit performance/energy protocol approval"
+    ]
+  },
+  "limits": [
+    "No new GPU submission is authorized by this design",
+    "No general/served/default/pin/energy promotion from CPU/build proof",
+    "Old720-event piece-major repeatability is not rerun to reconstruct history",
+    "Common other-family old proof is not relabeled as composed-native qualification"
+  ]
+}
