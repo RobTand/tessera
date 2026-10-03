@@ -1,0 +1,32 @@
+[
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = 31667ae5c2c131bd2b45979267d18e024879e62f; printf '%s\\n' 'e7aa22b11c7a5ccefb3c964e190bcda7c4fb4b6d6cdcb0d11b86b17736df19be  experiments/t4_code/prefetch_qualification.py' '9c2623b94579944808fae5cafade6c76e474a3dc0c61cdd775d8bf7bc19c2757  experiments/t4_code/prefetch_qualification_action.sh' '23731086412410435d92b33a1ae9ef5ff81b9d27ea1be8d55e5a8563abfad358  experiments/t8r_speed/pb_staged_store.py' '688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' 'bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40  src/tessera/serving/csrc/routed_fused_window.cu' '0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash -n experiments/t4_code/prefetch_qualification_action.sh; /home/rob/venvs/pb-cpu/bin/python -m pytest tests/test_t4_prefetch_staged_qualification.py; /home/rob/venvs/pb-cpu/bin/python experiments/t4_code/prefetch_qualification.py prepare-readset --out /mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/native-readset.json; /home/rob/venvs/pb-cpu/bin/python experiments/t4_code/prefetch_qualification.py prepare-readset --include-tools --out /mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/sanitizer-readset.json"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/source-controls",
+    "tags": [
+      "sparklina"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 2
+    },
+    "env": {
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "T4_HOST_TMP_ROOT:T4_HOST_TMP_MAX_BYTES,T4_DOCKER_ROOT:T4_DOCKER_MAX_BYTES",
+      "T4_HOST_TMP_ROOT": "/home/rob/tmp",
+      "T4_HOST_TMP_MAX_BYTES": "201326592",
+      "T4_DOCKER_ROOT": "/var/lib/docker",
+      "T4_DOCKER_MAX_BYTES": "872415232",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "PYTHONPATH": "/mnt/shared/prismabuild-fleet/repo/src",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1"
+    },
+    "max_attempts": 1,
+    "retry_safe": false,
+    "timeout_s": 180
+  }
+]
