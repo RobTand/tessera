@@ -71,6 +71,7 @@ def observe(fn, xa, directory):
     runs = {}
     for role, table in [('gate_up', native.runs_gate), ('down_routes', native.runs_down)]:
         runs[role] = table.cpu().tolist()
-    return {'outputs': outputs, 'repeat_equal': True, 'run_tables': runs,
-            'resident_bytes': int(native.resident_bytes()),
+    inputs = {name: record(tensor)[1] for name, tensor in zip(("x", "ids", "weights"), xa)}
+    return {'outputs': outputs, 'repeat_equal': True, 'run_tables': runs, 'inputs': inputs,
+            'native_extra_resident_bytes': int(native.resident_bytes()),
             'scope': 'original selected mixed operator words only; not all-rung/served quality'}

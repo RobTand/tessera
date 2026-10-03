@@ -151,6 +151,11 @@ for fam in families:
                     if set(outputs) != {"gate_up", "down_routes", "out"}:
                         raise ValueError("intermediate role population differs")
                     signature = {}
+                    if set(c["inputs"]) != {"x", "ids", "weights"}:
+                        raise ValueError("numeric input population differs")
+                    signature["inputs"] = c["inputs"]
+                    signature["run_tables"] = c["run_tables"]
+                    signature["native_extra_resident_bytes"] = c["native_extra_resident_bytes"]
                     for role, item in outputs.items():
                         raw = pathlib.Path(item["path"]).read_bytes()
                         if len(raw) != item["bytes"] or __import__("hashlib").sha256(raw).hexdigest() != item["sha256"]:
