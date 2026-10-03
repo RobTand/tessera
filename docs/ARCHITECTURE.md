@@ -421,7 +421,7 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   separately, deriving2GiB spool reservation. These are operational forecasts,
   not quotas or verified GPU peaks. The no-retag clause remains unchanged;
   actual fresh settled zero on unsafe SP must exclude it before publication.
-  publication or qualify new common-source/image/native banks.
+  This proposal alone does not authorize publication or qualify new common banks.
   The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
   guard the PB snapshot parent as executable source4e17907d, max_attempts1
   and retry_safe=false, unchanged
