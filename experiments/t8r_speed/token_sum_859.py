@@ -39,6 +39,7 @@ def prepare(out):
             entries.append(binding(directory / name))
     manifest = dict(schema='prismaquant.prismabuild.data_manifest.v1',
                     produced_by=dict(tool='TS859 existing-bank qualification', action_key=os.environ['PRISMABUILD_ACTION_KEY']),
+                    annotations=dict(row_id="token-sum-859-original-binding", phases=[dict(name="four-native-libraries", bytes=sum(e["bytes"] for e in entries), cumulative_bytes=sum(e["bytes"] for e in entries))]),
                     mount_prefix='/mnt/shared', entries=entries, entry_count=len(entries),
                     total_bytes=sum(e['bytes'] for e in entries))
     out.parent.mkdir(parents=True, exist_ok=True)
