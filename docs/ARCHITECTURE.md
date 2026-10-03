@@ -45,6 +45,12 @@ New composed source/image/readset/capacity identities require their own parent
 review and actual CPU stage/mapping evidence before the separately held GPU
 synthetic-safety admission gate. No 15-GPU-payload submissions have been made; metadata
 CPU action `3d65783a` separately passed 18 no-retag capacity controls.
+Actual notified current-cohort CPU preparation `274f5db4` passed 27 controls,
+zero skips/CUDA allocations, and sealed the six native / fifteen tool+native
+members. Distinct current image-owner source1b90 controls `d8e19943` also
+passed 27 with zero skips/CUDA allocations. Each receipt and exact snapshot
+parent is recorded separately in the composed qualification contract; neither
+is current held-native-FD/tool execution or GPU/scientific qualification.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads

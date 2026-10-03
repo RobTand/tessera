@@ -55,7 +55,8 @@
         "name": "t4-composed-whole",
         "start_bytes": 0,
         "end_bytes": 3788794
-      }
+      },
+      "sha256": "4000d93c40e7d00a33779297f6c7be86d77096e967274ed04eac87baffe7416c"
     },
     {
       "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/sanitizer-readset.json",
@@ -65,7 +66,8 @@
         "name": "t4-composed-whole",
         "start_bytes": 0,
         "end_bytes": 31454170
-      }
+      },
+      "sha256": "60dccdebeeaa169865d556c4533e85583b3108f270e21e37522cd884a82695b5"
     }
   ],
   "immutable_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
@@ -252,18 +254,32 @@
       "skips": 0,
       "cause": "Fixture transfer omitted actual final LF; source31667ae5 restores exact bytes without loosening assertions. No CUDA work."
     },
-    "consumer_acceptance": "Current owner-image/pure-dependency source1b90b813 requires its own changed CPU control proof and current-source stage/held-bank/tool proof; source31667 metadata preparation is separate, not whole current execution.",
+    "consumer_acceptance": "Current source1b90 changed controls actually27pass0skip; current actual stage/nativeFD/tool proof still required and no scientific/GPU pass inferred.",
     "changed_owner_controls": {
       "source": "1b90b813125932c0b27ec19a68fc56389271f963",
       "action_key": "d8e19943e96ffb7806550f9f0648fb241d6dd3369fef9c68bc6e75405683d17c",
-      "state": "submitted; terminal/pass not observed",
-      "scope": "Only genuinely changed recorded-image and pure-dependency CPU controls; not replay of original CI failure or compiled banks."
+      "state": "DONE rc0, one attempt, actual SL c437",
+      "passed": 27,
+      "failed": 0,
+      "skips": 0,
+      "cuda_allocating_tests": 0,
+      "receipt_sha256": "46eb192a0c46e3a4ff805f4d1937ba03ffb50f0f666cbb13629ab9adaf4eec3b",
+      "result_sha256": "553eaf65ad3d84f6c48e97aebad5d2f14b802694be0038eb04f454c812e0d8c8",
+      "checkout_snapshot_parent": "1b90b813125932c0b27ec19a68fc56389271f963",
+      "scope": "Actual changed recorded-image/pure dependency controls with real publicSDK available; not native bank/GPU execution."
     },
     "corrected_fixture_prepare": {
       "source": "31667ae5c2c131bd2b45979267d18e024879e62f",
       "action_key": "274f5db4823c25e9432fedd19500d48259173cb370d501010b392fbea3e25cf3",
-      "state": "submitted; terminal/pass not observed",
-      "scope": "Prior source metadata preparation, separately owned; not whole current-owner execution."
+      "state": "DONE rc0, one attempt, actual SL c437",
+      "passed": 27,
+      "failed": 0,
+      "skips": 0,
+      "cuda_allocating_tests": 0,
+      "receipt_sha256": "47e2964d6b0a359cc5153b552f68ef7d1b83c44f6e5693dcc57d5d60e01c7e88",
+      "result_sha256": "0aca47d2234a3a9701f8db77338c02cd15c17af2a6146d89472b0ba14bb37abb",
+      "checkout_snapshot_parent": "31667ae5c2c131bd2b45979267d18e024879e62f",
+      "scope": "Actual metadata/test preparation and exact6/15 readsets; separately not whole current1b90 execution."
     }
   },
   "admission": "Current source 1b90b813125932c0b27ec19a68fc56389271f963/nativebcdd43f6/image5be/cohort: CPU controls/stage rows authorized with the real SL image/bank dependency. NO GPU permission inherited from historical feature-base protocol or CPU acceptance. Before any of the unchanged full15 exclusive gb10 synthetic safety measurement rows: exact parent review and normal source/CI closure, actual current CPU metadata/stage/native-FD/tool compatibility proof, standing exact Root safety GO and controlled-window cleanup, fresh COMPLETE execution claim-ledger SP0 plus verified c437 positive2GiB scratch refusal basis, eligible coordinator and admitted workers>=5% floor+allowance, current public SDK stage/ref/pin/image/platform compatibility. Every actually used storage filesystem must meet fresh floor+aggregate allowance, including coordinator/worker root, NAS and actual assigned DL stage/prewarm whenever used. No retag/retry/alternate runtime/default promotion; PB owns placement/atomic claim/affinity/container scope. Authentic calibrated original-model/provider capture is a separate later scientific/adoption requirement, NOT a prerequisite added to these explicitly synthetic15 safety rows.",
@@ -287,5 +303,51 @@
       "/mnt/shared": "NAS"
     },
     "gpu_gate": "Not reused as future admission. Every used filesystem, including actual selected stage/prewarm storage, requires fresh floor+allowance before publication."
+  },
+  "cpu_stage_filesystem_observation": {
+    "observed_for": "two authorized CPU-stage proof rows only; not future GPU-floor approval",
+    "sl_root": {
+      "size_bytes": 982819848192,
+      "available_bytes": 175526023168,
+      "aggregate_native_scratch_gib": 4
+    },
+    "nas": {
+      "size_bytes": 42334674747392,
+      "available_bytes": 18718502420480
+    },
+    "dl_netdata": {
+      "sample_utc": "2026-10-03T21:48:50Z",
+      "root": {
+        "available_gib": 8.3252106,
+        "total_gib": 128
+      },
+      "storage_pool": {
+        "available_gib": 17432.9637451,
+        "used_gib": 3857.6763916
+      },
+      "stage_parent": {
+        "available_gib": 20.1337891,
+        "used_gib": 0.0009766
+      },
+      "ram_prewarm": {
+        "available_gib": 207.713665,
+        "total_gib": 240
+      }
+    },
+    "actual_stage_offer": {
+      "sampled_unix": 1791064270.5833068,
+      "tier": "prismabuild-stage:dl380g10",
+      "mountpoint": "/stage/prewarm",
+      "dataset": "prismabuild-stage/prewarm",
+      "pool_size_bytes": 798863917056,
+      "physical_free_bytes": 98884157440,
+      "zfs_capacity_bytes": 21619113984,
+      "held_gib": 430,
+      "in_flight_gib": 2,
+      "ledger_capacity_stage_gib": 448
+    },
+    "requested_readset_bytes": 35242964,
+    "residency_ram": "off",
+    "limits": "Stage pool physical free is distinct from dataset available and ledger. Actual PB owns atomic staging/mover resource admission; before execution/future GPU refresh all used floors plus aggregate allowances. RAM stage not requested; observed for mapping only."
   }
 }
