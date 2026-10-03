@@ -164,3 +164,34 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
     assert 'PYTHONPATH=/tessera/src:/work/tests:' + str(sdk) + '/src:' + env['TEST_RUNNER_SP'] in args
     assert env['TEST_RUNNER_SP'] + ':' + env['TEST_RUNNER_SP'] + ':ro' in args
     assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32
+
+
+@pytest.mark.parametrize('kind', ['build', 'benchmark'])
+@pytest.mark.parametrize('selection', [None, '', '0', '1', 'bad'],
+                         ids=['unset', 'empty', 'off', 'on', 'invalid'])
+def test_mma8_build_choice_wrapper_preserves_declared_value(tmp_path, kind, selection):
+    """Real shell paths preserve strict Python choice; only Docker/image are inert."""
+    key = 'TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH'
+    root = Path(__file__).resolve().parents[1]
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    env.pop(key, None)
+    if selection is not None:
+        env[key] = selection
+    if kind == 'build':
+        wrapper = root / 'experiments/t8r_speed/build_ext.sh'
+        command = ['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma']
+    else:
+        wrapper = root / 'experiments/t8r_speed/bench_t8r.sh'
+        artifact = tmp_path / 'artifact'; artifact.mkdir()
+        (artifact / 'config.json').write_text('{}')
+        extensions.mkdir()
+        command = ['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+                   '--artifact', str(artifact), '--groups', 'experts.R1024.L10']
+    subprocess.run(command, env=env, check=True, capture_output=True, text=True)
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    forwarded = [args[i + 1] for i, arg in enumerate(args[:-1]) if arg == '-e']
+    choices = [value for value in forwarded if value.startswith(key + '=')]
+    if selection is None:
+        assert choices == ([key + '=0'] if kind == 'build' else [])
+    else:
+        assert choices == [key + '=' + selection]
