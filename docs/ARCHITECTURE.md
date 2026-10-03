@@ -3934,6 +3934,10 @@ library owns directory, fingerprint, quiescence, mutation and corrupt-entry
 checks; config, auxiliaries and complete header coverage are still read.
 A reuse receipt names previously fenced shard digests, not a fresh body read
 by this process, and confers no serving or campaign qualification.
+The CPU regression in `tests/test_tessera_producer_plan.py` compares the
+serialized public projection byte-for-byte across uncached, cold-cache and
+fresh-instance cache-hit calls, and checks that only shard-body hashing is
+elided. CLI receipts deliberately remain separate from that projection.
 
 `tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
 per-unit Hessian plus capture identity and full activation settings, resolved
