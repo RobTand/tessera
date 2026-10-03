@@ -40,11 +40,17 @@ passing and actual distance0/distance4 DSO mappings retaining matching hashes
 before load, in executable mappings and after inspection. The original serving
 builder/cache stayed unchanged; both load FDs and the reader were released.
 Exact current-bank sealer, staged270-unit/108-history proof, native-FD receipt
-and the still-unapproved GPU numeric/sanitizer proposal are frozen in
-`experiments/configs/value_prefetch_874_combined_safety_protocol.json`. Post-
-acquire sanitizer output initialization is inside the same reader-release
-`finally` as staging and tool execution (#902); existing output or filesystem
-refusal propagates, rather than leaking the public reader lease.
+and the original unapproved GPU numeric/sanitizer proposal are retained in
+`experiments/configs/value_prefetch_874_combined_safety_protocol.json`. Its
+`5aba4096` source48a6 identity remains historical; it does not authorize the
+corrected source. Post-acquire sanitizer setup is inside the same reader-release
+`finally` as staging and tool execution (#902); filesystem refusal propagates.
+The admitted sourceb9b155b3 causal CPU action1b7076bb passed three selected
+controls (two real filesystem refusal lease models and tool subprocess failure),
+with twelve deselected and no CUDA. Exact receipt, source, scope and complete
+OOM0/processes-live0 telemetry are retained in
+`experiments/results/value_prefetch_902_cpu_cleanup_evidence.json`; specific
+cleanup correction acceptance is not whole901/source/GPU acceptance.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
