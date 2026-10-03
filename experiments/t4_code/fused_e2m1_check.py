@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import math
 import os
@@ -72,38 +71,6 @@ def build(out: Path, prefetch: int = 0):
                                    f"-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH={prefetch}",
                                    "-gencode", "arch=compute_121a,code=sm_121a"],
                 verbose=False)
-
-
-def retained_banks(path: str):
-    """Load the exact CPU-built banks; a GPU gate must not silently rebuild."""
-    record = json.loads(Path(path).read_text())
-    from tessera._dev.native_identity import loaded_native_identity
-    if record["source_sha256"] != hashlib.sha256(SRC.read_bytes()).hexdigest():
-        raise ValueError("retained bank CUDA source identity changed")
-    if record["torch"] != torch.__version__ or record["image"] != os.environ.get("ORACLE_IMAGE"):
-        raise ValueError("retained bank torch/image identity changed")
-    banks = {}
-    for row in record["banks"]:
-        arm = row["activation_prefetch"]
-        if arm not in (0, 4) or arm in banks:
-            raise ValueError("retained banks must uniquely name the declared 0/4 arms")
-        elf = Path(row["path"])
-        raw = elf.read_bytes()
-        if len(raw) != row["bytes"] or hashlib.sha256(raw).hexdigest() != row["sha256"]:
-            raise ValueError(f"retained bank bytes changed: {elf}")
-        spec = importlib.util.spec_from_file_location(elf.stem, elf)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        if module.A_PREFETCH != arm or module.BK != 64 or not module.FAMILY_FP4:
-            raise ValueError(f"retained bank FP4 ABI changed: {elf}")
-        identity = loaded_native_identity(module, SRC, expected_sha256=row["sha256"])
-        if identity["source_sha256"] != record["source_sha256"]:
-            raise ValueError("retained bank source changed during load")
-        print("RETAINED_NATIVE_IDENTITY " + json.dumps(identity), flush=True)
-        banks[arm] = module
-    if set(banks) != {0, 4}:
-        raise ValueError("retained qualification needs both baseline and candidate banks")
-    return banks
 
 
 # ----------------------------------------------------------------------------- units
@@ -463,7 +430,7 @@ def dense_refuses(lib, role, k_split, dev):
 
 
 # ----------------------------------------------------------------------------- driver
-def main():
+def main(argv=None, *, banks=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--quick", action="store_true")
@@ -472,14 +439,12 @@ def main():
                     help="build both FP4 arms and compare exact stage bits in this process")
     ap.add_argument("--build-only", action="store_true",
                     help="compile/load retained numeric banks without touching a CUDA device")
-    ap.add_argument("--retained-banks", help="native_compile.json: require exact banks, no rebuilding")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     dev = "cuda"
     t0 = time.time()
-    if a.retained_banks:
-        banks = retained_banks(a.retained_banks)
+    if banks is not None:
         lib = banks[a.prefetch]
         paired = banks[4 if a.prefetch == 0 else 0] if a.compare_prefetch else None
     else:
@@ -514,10 +479,13 @@ def main():
     # 64 and 130 (a single route, partial and whole superblocks), top_k 2.
     E, H, I = 4, 512, 1280
     counts = [1, 37, 64, 130]
-    q256s = list(range(128, 1025, 64)) if not a.quick else [512, 448]
+    q256s = list(range(128 * rf.RATE_MIN, 128 * rf.RATE_MAX + 1, 64)) if not a.quick else [512, 448]
     failures = 0
+    report["expected_population"] = {"tensor_cases": 2 * len(q256s),
+                                     "paired_routed_oracles": 4 * len(q256s) if paired is not None else 0,
+                                     "paired_dense_oracles": len(q256s) * 5 * 3 * 2 if paired is not None else 0}
     for q in q256s:
-        for cut_name in (("whole", "rank1") if q in (448, 512) else ("whole",)):
+        for cut_name in ("whole", "rank1"):
             case = {"q256": q, "cut": cut_name}
             try:
                 seed = 1000 * q
@@ -526,7 +494,7 @@ def main():
                 db = [encode(H, I, q, seed + 200 + e, dev) for e in range(E)]
                 # A mixed-rate unit cuts its columns only on 256-column
                 # superblocks, so q448's rank starts at 512, not TP2's I / 2.
-                cut_gu = (((512, I) if q % 256 else (I // 2, I)) if cut_name == "rank1" else None)
+                cut_gu = (((512, I) if q % 128 else (I // 2, I)) if cut_name == "rank1" else None)
                 case["cut_rows"] = list(cut_gu) if cut_gu else None
                 gate, up = stack(gb, cut_gu, dev), stack(ub, cut_gu, dev)
                 # rank 1 of the down cuts the same intermediate range from its
@@ -583,6 +551,8 @@ def main():
             report["failures"] = failures
             report["secs"] = round(time.time() - t0, 1)
             path.write_text(json.dumps(report, indent=1))
+    if len(report["cases"]) != report["expected_population"]["tensor_cases"]:
+        raise ValueError("incomplete admitted-rate/topology oracle population")
     print(f"failures={failures} secs={report['secs']}", flush=True)
     return 1 if failures else 0
 

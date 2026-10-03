@@ -141,6 +141,19 @@ def activation_prefetch() -> int:
     return int(value)
 
 
+def _check_library(lib, prefetch: int) -> None:
+    """The producer owner's single ABI rule, including retained diagnostic banks."""
+    for name, want in (("BM", BM), ("BN", BN), ("HALF_ROWS", HALF_ROWS), ("BK", BK),
+                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
+                       ("WORD_STAGES", WORD_STAGES), ("DESC_WORDS", DESC_WORDS),
+                       ("WINDOW_BITS", WINDOW_BITS), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
+                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]), ("FAMILY_FP8", False),
+                       ("FAMILY_MMA8", False), ("FAMILY_FP4", True), ("A_PREFETCH", prefetch)):
+        if getattr(lib, name) != want:
+            raise GrammarError(
+                f"{MODULE_NAME} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
+
+
 def _ext():
     """The library, built on first use from the source the contract publishes
     for the fused window libraries."""
@@ -167,16 +180,7 @@ def _ext():
 
     module = MODULE_NAME + ("_apf4" if prefetch else "")
     lib = build_library(module, MODULE_NAME_VALUE, compile_fn)
-    for name, want in (("BM", BM), ("BN", BN), ("HALF_ROWS", HALF_ROWS), ("BK", BK),
-                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
-                       ("WORD_STAGES", WORD_STAGES), ("DESC_WORDS", DESC_WORDS),
-                       ("WINDOW_BITS", WINDOW_BITS), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
-                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]), ("FAMILY_FP8", False),
-                       ("FAMILY_MMA8", False), ("FAMILY_FP4", True),
-                       ("A_PREFETCH", prefetch)):
-        if getattr(lib, name) != want:
-            raise GrammarError(
-                f"{MODULE_NAME} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
+    _check_library(lib, prefetch)
     _LIB = lib
     _LIB_PREFETCH = prefetch
     return lib
