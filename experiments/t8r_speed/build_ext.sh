@@ -52,6 +52,7 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -e NATIVE_BUILD_IMAGE_RECORD="$RUNTIME_IMAGE_JSON" \
   -e TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH="${TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH:-0}" \
   -e TESSERA_ROUTED_FUSED_FP4_A_PREFETCH="${TESSERA_ROUTED_FUSED_FP4_A_PREFETCH:-0}" \
+  -e TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH="${TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH:-0}" \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, json, os, sys, time
 from pathlib import Path
