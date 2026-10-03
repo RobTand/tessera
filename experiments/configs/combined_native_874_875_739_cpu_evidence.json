@@ -2,7 +2,244 @@
   "schema": "tessera.combined_native_qualification_cohort.v1",
   "scope": "CPU source control and fresh native compile only; no CUDA numeric, sanitizer, serving, latency or energy acceptance",
   "issue": 897,
-  "source_commit": "8db1360e",
+  "source_commit": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+  "review_closure": {
+    "review_parent": "Tessera piece-major performance",
+    "github_approval_not_claimed": true,
+    "sealed_source_parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+    "recipe_hashes": {
+      "build_campaign": "c6b4336f739a30b9bcd048d2591b41497bfc33f7e2c3cc9613898161cc53c680",
+      "control_campaign": "4c39e97c1f2875625ec69369e4986864f5491b075b70e01c71763e265d9c33cb",
+      "build_wrapper": "ce44e3d8287e8214dea452ccf415c07fd57c7440cd9d6686a06f858be1f03dea",
+      "value_mma_caller": "b600ac34db89dc07ca7ac0fb9b64538fd59e6f2b2a5f158b2dd17c7868b5bdef",
+      "fp4_caller": "688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4"
+    },
+    "actual_native_attempts": [
+      {
+        "action_key": "c2a5a8c001a9071ad19551089441c9a7e0fa0597e412d9408c32d2e1ebd3ded5",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "a16f0cb9c04da3122f7e5a2ac6c68ad836330f26",
+          "input": {
+            "bytes": 13335632,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "4dc485609918a8c0539896ee8d51d03da5be19afdd060c9436e692aaf16ad929"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3676704768
+      },
+      {
+        "action_key": "aaf5cf7649b29050e5616b67bf9857185b3b615ea6fcdd5096c65ca66b95655f",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "cc74d8abd318b596eb3e0c1e60724feff2064841",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "e538257fb986513f9d1a6488e408cf6647f3eb9a07e96c2d648cea90c266b88f"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3675451392
+      },
+      {
+        "action_key": "656d063b8d23b94d609828312c10c502fbe634c700676ee90dc2e9da0f103a42",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "f7f24a42c74ee7c32c12aa31411ca731652ca002",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "1deb96cc001ab1e4c4ff28087de653dc0c69c78a152040b14f958094f846c88e"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3699716096
+      },
+      {
+        "action_key": "8c133cd214fdb30eb6b1eed26741c440f5a01b16eaf0314740ad1b5f8507e2b8",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "d277f10e5434acc7163c2e598afea83f8c5aa127",
+          "input": {
+            "bytes": 13335629,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "e651a6956bde2b52304780d72e2db6ab2e80fe88f863b9c700019b7fafd6e730"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3821355008
+      },
+      {
+        "action_key": "c6b4c6bb25ab2e518842e493913f605edd2d7527b9b225e49559b0ca58f2e68f",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "5d0486d68ac607cbf41781e5ab80728ce5b36417",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "8e169e0e5765ca8bff9d840e97483ecda6c8cd7b11ebf877a4c92cf909c60839"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3825688576
+      },
+      {
+        "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "218849c545406a3d4ea951dde9998021d8cdea27",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "cf4669b3421e2462402f63fc0fb80718c936b8b6e19191995fb902d72e943ca4"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3694772224
+      },
+      {
+        "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "a5e910a225b4004bec03db9602ab375efda257ce",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "164a8a02dd82d5699c222887111c36e93f3cf584c0993fbc582e5b3a00778b30"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3696713728
+      }
+    ],
+    "applicability": "Exact common native source and current caller composition at sealed8db. Later T16 numeric fixture constants bind these fresh value ELFs; they do not change compiled math or restamp old ELF. Existing historical T16/T4/PM CUDA proofs remain historical. CPU native scopes are reaped; runtime FD-pinned staged loads, CUDA numeric and sanitizer lifetimes require fresh qualification.",
+    "admission": {
+      "observation_unix": 1791059012.3725328,
+      "published_generation": "c43700f9d1d0-1791018557-b6c96bc4bbbb",
+      "sparky_effective_spool_total_free": 0,
+      "sparky_positive_2_gib_source_predicate_refuses": true,
+      "actual_denial_record_claimed": false,
+      "sparklina_spool_total_free": 117,
+      "local_available_kib": 171467868,
+      "local_total_kib": 959785008,
+      "all_named_local_roots_max_bytes": 2147483648,
+      "compiler_objects_elf_home_tmp_xdg_on_nas": true
+    }
+  },
   "native_source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
   "image": {
     "fix": null,
