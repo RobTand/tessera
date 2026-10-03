@@ -19,6 +19,7 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ -z "${TESSERA_ROUTED_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED=$TESSERA_ROUTED_FUSED")
 [[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_WIDE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WIDE=$TESSERA_ROUTED_FUSED_WIDE")
+[[ -z "${TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=$TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH")
 ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
 for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == --artifact ]]; then j=$((i+1)); ART=${!j}; fi

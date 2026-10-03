@@ -48,6 +48,7 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
   -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
+  -e TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH="${TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH:-0}" \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, os, sys, time
 from pathlib import Path
@@ -61,6 +62,8 @@ for lib in sys.argv[1:]:
         module, build = fe.MODULE_NAME, fe._ext
     else:
         module = rf.LIBRARIES[lib][0]
+        if lib == "value" and os.environ.get("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "0") == "4":
+            module = "tessera_routed_fused_value_prefetch4"
         build = lambda: rf._ext(lib)
     t0 = time.time()
     try:

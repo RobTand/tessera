@@ -18,6 +18,64 @@ That opens a useful middle ground: a finely adjustable memory budget with
 hardware-native arithmetic. The encoder does the expensive search once;
 the decoder uses the resulting bits, lookup tables, and scales repeatedly.
 
+Experimental native T16 activation prefetch (#874) is **off by default**.
+`TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=4` freezes a separate prefetch4
+native build at first value-library use; only 0 and 4 are accepted. It applies
+only to one-run folded BF16 routed launches (BM64, modes 0/1/2, rates 1–8),
+not dense or two-run launches. The existing ABI, wire layout, BF16 folding,
+accumulation order and resident bytes are unchanged. No T16 speedup, energy
+benefit, serving cell, or PACT price is established by this experimental arm.
+Qualification must use the same frozen T16 wire/calibration and input/routing
+bytes in both arms, retain native ELF/source/image/readset digests, check
+mode0/1/2 and final output bits, then collect interleaved before/after timing
+and in-process profiles with both Sparks’ Netdata power/residency records.
+GPU qualification requires root authorization; T8 timing is not T16 proof.
+`experiments/t8r_speed/value_prefetch_numeric.py` seals CPU-generated
+syntheticgeometry/nonshipping fixtures and both retained native binaries. Its
+two-arm consumer reuses PB pinned reads and the existing native callback,
+compares every stage and final output by bytes on identical input tensors,
+and supplements this with the existing derived-bound oracle. Its sanitizer
+operation executes only the digest-bound retained tool and runtime files.
+This preparation does not replace actual calibrated T16 release acceptance.
+The two-arm diagnostic holds every loaded native FD through experiment teardown
+to prevent `/proc/self/fd` pathname reuse in CPython/dlopen caches. Resolved
+prefetch distance, executable mapped inode and held-ELF digest are recorded per
+arm. `experiments/configs/value_prefetch_874_protocol.json` freezes staging,
+single-attempt admission, finite numeric/sanitizer deadlines and cleanup;
+it is an authorization proposal, not permission to execute GPU work.
+Readset publication validates the actual PB v1 schema and whole-bank staging
+phase. The corrected readset is a separate `readset-v3.json`; original bank-v2
+bytes are preserved. The action takes that frozen manifest as its fourth
+argument, identically to PB admission, rather than silently reading an old file.
+Fixture transfer resolves the native window reader's existing initial-state
+precedence into the declared unit field before copying tensors, so legacy
+repack-attached row-cut history is not discarded by dataclass replacement.
+No bound, accumulation order, bank tensor or native kernel is changed by this
+qualification-harness correction. Each retained native arm is initialized once
+per process and reused through the existing owner/cache over the complete
+frozen matrix. Baseline output snapshots are compared against the candidate
+on the same authenticated inputs; origin guards are never loosened to accept
+re-imported PyBind module metadata.
+
+At source `849b039b`, root-authorized PB numeric action `710528c296ab`
+completed all 54 frozen synthetic pairs with all four stages byte-exact and
+all 324 gate/up/down bound ratios below one (largest reported 0.9786).
+The same full matrix under memcheck (`4b442767b2f8`) returned zero errors;
+both actual mapped native owners retained the expected source/ELF identities.
+Independent review accepted this **synthetic-only** safety evidence. Earlier
+history-transfer and repeated-PyBind-import failures remain failed history.
+This is not model, arbitrary-address, stream/graph/race, or performance proof.
+
+`experiments/configs/value_prefetch_874_real_input_readiness.json` records the
+bounded real-corpus search, authenticated historical atomic BF16 wires, and
+the existing original-a6 capture/materialization entry points. Actual atomic
+routing/probability/session capture is blocked on original G64 source/provider
+adoption and an admitted overlap envelope. The protocol binds the full
+512-by-512 calibration; its existing sample-zero operator acquisition must
+not be described as full-draw quality or autoregressive decode. Historical
+DEV/derivative records cannot be restamped current, and no new GPU execution
+is authorized by that readiness document.
+
 The results show why this combination is interesting: **Tessera-8 reaches
 EXL3-like reconstruction quality while using FP8 activations**, and a
 **roughly four-bit Tessera NVFP4 artifact has matched a production NVFP4
