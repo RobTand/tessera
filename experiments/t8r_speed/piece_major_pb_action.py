@@ -86,6 +86,8 @@ def main():
                                                    root / "pressure-guard.jsonl", deadline_s=600)
     except BaseException as error:
         result["error"] = type(error).__name__ + ": " + str(error)
+        result["measurement_retention"] = ("benchmark_receipt_present" if (out / "bench_t8r.json").is_file()
+            else "benchmark_not_published_partial_inprocess_events_not_retained")
         raise
     finally:
         result["end_unix"] = time.time()

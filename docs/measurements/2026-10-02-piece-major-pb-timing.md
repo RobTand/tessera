@@ -356,3 +356,34 @@ reference dependency is needed because these blocks make no clock-matching
 claim. Exact source-bound per-block packets and real-input CPU preflight precede
 independent review and explicit rootGPU GO. Nothing here authorizes a new GPU
 submission, deployment/default/pin/cell change or automatic issue739 closure.
+
+
+## Reviewer-found boundary-observer retention repair
+
+The independent reviewer accepted the executable descriptive design, not
+clock/thermal-equilibrium/served/energy/default qualification, and found that
+initial/final NVML query failures could discard already captured event arrays.
+The observation owner now uses one guarded recording path for boundary and
+background queries. Query failures remain timestamped diagnostic errors;
+completed event arrays are returned unchanged, not suppressed or rerun. The
+controller also labels a failed block whose benchmark receipt was never published:
+partial in-process events were not retained. A failure does not authorize retry.
+
+Actual causal CPU action
+`eb0ad81ecd2104e0f960e26ff2de7df460b9a22c1fae35c1d9d1e32d75b0228f`
+failed both initial/final-query cases on the old owner. The repaired observation,
+thread cleanup and conditioning controls passed action
+`94bc0f7eb17344828fdd0c70b045e3e31c83d616c96125ee0dc6f3ffbb32e519`:
+5 passes, zero skips/uncollected/CUDA allocations, CPU2/native1/xdist on healthy
+Sparklina, 2.61s outer/1.76s pytest. Actual logs, claim/payload and full published
+SDK CAS lookup were verified. This narrowly checks the changed error path,
+not a repeated31-case suite or numeric/profile/GPU population.
+
+Sparky and DL root filesystems fell below the standing5% free-space floor;
+their durable maintenance holds remain operative. SharedNAS source/evidence
+storage remains healthy (~44.25% free), so this reachable source repair was
+made there and CPU validation submitted from healthySparklina using an existing
+configured NVIDIA Sync identity with strict known-host checking, no vault-agent
+retry, credential copying, administrator bypass or deletion. The earlier8e1/c073
+bundle is retained unlaunched and superseded by new source-bound packets; it must
+not be launched against changed helper bytes. No new GPU authority is implied.

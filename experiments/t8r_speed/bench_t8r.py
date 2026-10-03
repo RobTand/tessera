@@ -231,14 +231,18 @@ class PowerSampler:
 
     def observe_while(self, work):
         """Record host-polled evidence, never claim native sensor cadence."""
-        readings = [self.observation(include_throttle=True)]
+        def record():
+            before = time.monotonic()
+            try:
+                return self.observation(include_throttle=True)
+            except Exception as error:
+                return {"unix": time.time(), "observation_error": repr(error),
+                        "host_monotonic_read_interval": [before, time.monotonic()]}
+        readings = [record()]
         stop = threading.Event()
         def observe():
             while not stop.wait(0.1):
-                try:
-                    readings.append(self.observation(include_throttle=True))
-                except Exception as error:
-                    readings.append({"unix": time.time(), "observation_error": repr(error)})
+                readings.append(record())
         thread = threading.Thread(target=observe, daemon=True)
         start_unix, start_monotonic = time.time(), time.monotonic()
         thread.start()
@@ -248,7 +252,7 @@ class PowerSampler:
             end_monotonic, end_unix = time.monotonic(), time.time()
             stop.set()
             thread.join()
-        readings.append(self.observation(include_throttle=True))
+        readings.append(record())
         return result, {"window_unix": [start_unix, end_unix],
             "window_monotonic": [start_monotonic, end_monotonic],
             "source": self.source, "requested_poll_interval_s": 0.1,

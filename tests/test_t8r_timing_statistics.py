@@ -90,3 +90,24 @@ def test_repeatability_conditioning_uses_both_resident_arms_without_profiling():
     assert result['calls_by_arm']['legacy'] == result['calls_by_arm']['piece_major']
     assert result['seconds'] >= 0.001
     assert result['scope'].endswith('not thermal equilibration proof')
+
+
+
+@pytest.mark.parametrize('failure_at', [1, 2])
+def test_repeatability_retains_events_on_boundary_observation_failure(failure_at):
+    sampler, threads = polling_owner()
+    count = 0
+    def observation(**kwargs):
+        nonlocal count
+        count += 1
+        if count == failure_at:
+            raise RuntimeError('injected boundary observer failure')
+        return {'unix': 1.0, 'temperature_c': 60}
+    sampler.observation = observation
+    raw = [1.0]*30
+    result, captured = sampler.observe_while(lambda: raw)
+    assert result is raw
+    assert any('injected boundary observer failure' in row.get('observation_error','')
+               for row in captured['observations'])
+    assert captured['clock_status'].startswith('unqualified')
+    assert not any(thread.is_alive() for thread in threads)
