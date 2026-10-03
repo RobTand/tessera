@@ -19,5 +19,16 @@
   "never_performed":["claim","acquire","ensure","retire","record_denial","GPU/native/profiler/readset-sealer execution","CPU event-forcing replay","SP writes/fetch/cleanup"],
   "changed_cpu_only":"Select the new source/conditional admission tests, not original47/16/73/scientific proof. Actual ending/counts/receipt/metadata will be recorded from completion without polling/wait loops.",
   "authority_scope":"Routine designated-parent correction under existing RootDecisionA, not new RootGO or source-bank/served/default/pin acceptance",
-  "gpu_status":"HOLD_FOR_SEPARATE_EXACT_NUMERIC_DECISION"
+  "gpu_status":"HOLD_FOR_SEPARATE_EXACT_NUMERIC_DECISION",
+  "normal_pure_portability":{
+    "issue":908,
+    "reported_required_gate":"111311474595 FAILED:37F/2828P/162S/260.18s; not rerun to confirm",
+    "scope":"Separate normal-gate fixture portability/dependency repair after PR904 source/CPU cycle1 ACCEPT; failedrevisioncount remains0",
+    "pure_contract":"evaluate checks the closed reviewed three-1GiB-root positive-kind requirement without importing the SDK; real collect/proposal still derive reservation terms through the actual public SDK, and the actual SDK case asserts the exact same3",
+    "pure_controls":"All conditional positive/negative/event-independent controls remain collected; an explicit public-SDK import-refusal regression checks positive and wrong-reservation negative metadata",
+    "actual_dependencies":"Only actual public SDK/proposal/current loaded claim-source/frozen coordinator cases use case-local dependency and existing BOX gates; the two CPU observer fixtures use case-local Torch availability. No module-wide skip, hidden ignorelist, fake SDK or broadened allowlist",
+    "paths":"Synthetic negative fixture paths are outside box address space; calibrated artifact comes from the unchanged original expected launch argv; actual published roots use existing BOX owner",
+    "preserved":"Original7763 packet/native/science and actual29/47 evidence unchanged; no actual collect/claim replay, GPU, sharedTU/bank, defaults/pins, source-hash rewrite or unsafeSP mutation",
+    "verification":"Changed narrow CPU proof through published PB only; main/integrator owns one normal pure gate after land; no result yet"
+  }
 }

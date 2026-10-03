@@ -1,5 +1,6 @@
 """Closed #793 preparation controls. CPU fixtures do not qualify CUDA numerics."""
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +16,9 @@ def probe():
 
 
 def options():
-    return SimpleNamespace(artifact='/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported',
+    expected = json.loads((ROOT / "experiments/configs/stageprev_793_expected.json").read_text())
+    argv = expected["launch"]["AB_BENCH_ARGS"]
+    return SimpleNamespace(artifact=argv[argv.index("--artifact") + 1],
         groups='experts.R1024.L10,experts.R1088.L11,experts.R832.L42', ms='1,2048', no_graph=True,
         ncu=False, hash_only=True, input_manifest='sealed.json', profile_native_file='declared.so',
         single_routing_file=None, warmup=0, iters=0, power_s=0, routing=None)
@@ -57,7 +60,7 @@ def test_explicit_module_roster_binds_without_foreign_layer_alias(layer):
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, monkeypatch, failure):
-    import torch
+    torch = pytest.importorskip("torch")
     from tessera.routed_fused import FusedRoutedWindowMoE
     native=FusedRoutedWindowMoE.__new__(FusedRoutedWindowMoE)
     object.__setattr__(native,"library","e4m3mma")

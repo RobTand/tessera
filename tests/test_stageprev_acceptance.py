@@ -40,7 +40,7 @@ def numeric_population():
     records = {}
     for arm in expected["arms"]:
         sha = expected["kernel_sha"][arm+"-routed"]
-        native = {"path":f"/mnt/shared/fixture-{arm}.so", "sha256":sha, "source_sha256":sha,
+        native = {"path":f"/fixtures/native-{arm}.so", "sha256":sha, "source_sha256":sha,
                   "build_action_key":"d"*64, "build_receipt_sha256":"e"*64}
         expected["native_files"][arm] = native
         record = {"declared_path":native["path"], "source_sha256":sha,
