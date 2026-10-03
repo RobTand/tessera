@@ -2259,7 +2259,7 @@ Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
 plan, off the supported path since tessera#687 -- the producer writes the plan),
 `tessera.export_serving` (`python -m tessera.export_serving`; plan to checkpoint),
 `tools/tessera_route_census.py` (checkpoint to route), and `tessera.control`
-plus `experiments/uniform_control.py` (the gate that judges the result).
+plus the installed `python -m tessera.uniform_control` gate that judges the result.
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
 allocator sees is `docs/tessera-one-format.md` §5.
 
@@ -7002,9 +7002,16 @@ served comparison is one encode under two servings rather than two encodes.
 
 ### 4.7 The verdict is served KL against the byte-matched control
 
-`experiments/uniform_control.py verify` asserts the match on the bytes that
+`python -m tessera.uniform_control verify` asserts the match on the bytes that
 shipped and, given both KLs, states whether the candidate beat its control.
 `tessera.control.control_block` carries that verdict beside the bpp.
+The CLI is packaged rather than loaded from `experiments/` (Refs #886). Its
+`plan --model` branch uses the public exporter's `quantizable` source classifier
+for the unchanged dense/unpacked logical population, not the retired experiment
+converter. The public handoff remains `tessera.uniform_control.v1`; neither
+integer accounting/slack/KL rules nor shipping/serving admission changes.
+An installed producer needs no PrismaQuant checkout to plan or verify a control.
+Historical measurement drivers remain bound to their historical revisions.
 
 **The verdict is published only over evidence the gate validated**
 (tessera#225). `ByteMatch` is where the four numbers a match reads have their
