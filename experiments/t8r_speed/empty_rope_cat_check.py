@@ -50,21 +50,11 @@ def build_cache(dev, log):
     latent = (latent * 0.5).to(torch.bfloat16)
     rope = torch.zeros((CONTEXT, ROPE_PAD), dtype=torch.bfloat16, device=dev)
     slots = torch.arange(CONTEXT, device=dev, dtype=torch.int64)
-    try:
-        from vllm import _custom_ops as ops
-        ops.concat_and_cache_mla(latent, rope, cache, slots, "fp8_ds_mla",
-                                 torch.ones(1, device=dev, dtype=torch.float32))
-        torch.cuda.synchronize()
-        log["cache_writer"] = "vllm._custom_ops.concat_and_cache_mla(fp8_ds_mla)"
-    except Exception as exc:  # a legal synthetic cache still tests the query identity
-        log["cache_writer"] = f"synthetic (writer raised {type(exc).__name__}: {exc})"
-        body = torch.randint(0, 0x7F, (pages, PAGE, LATENT), generator=gen, device=dev,
-                             dtype=torch.int32).to(torch.uint8)
-        sign = torch.randint(0, 2, (pages, PAGE, LATENT), generator=gen, device=dev,
-                             dtype=torch.int32).to(torch.uint8) << 7
-        cache[..., :LATENT] = body | sign
-        scales = torch.rand((pages, PAGE, 4), generator=gen, device=dev) * 0.01 + 1e-3
-        cache[..., LATENT:LATENT + 16] = scales.view(torch.uint8).view(pages, PAGE, 16)
+    from vllm import _custom_ops as ops
+    ops.concat_and_cache_mla(latent, rope, cache, slots, "fp8_ds_mla",
+                             torch.ones(1, device=dev, dtype=torch.float32))
+    torch.cuda.synchronize()
+    log["cache_writer"] = "vllm._custom_ops.concat_and_cache_mla(fp8_ds_mla)"
     log["cache_sha256"] = hashlib.sha256(cache.cpu().numpy().tobytes()).hexdigest()
     return cache
 
