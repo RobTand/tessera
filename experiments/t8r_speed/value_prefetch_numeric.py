@@ -19,8 +19,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'tests'))
 sys.path.insert(0, str(ROOT / 'src'))
-from test_window_gemm_grouped import Expert
-from test_routed_fused_window import Q256_CASES, _sched, _init, _bundles, _staged_check
+Q256_CASES = [256, 384, 512, 640, 768, 832, 928, 960, 1024, 1088, 1152, 1280, 1408, 1536, 1600, 1792, 1920, 2048]
 from tessera import routed_fused as rf
 from experiments.t8r_speed.pb_staged_store import NativeCallback, StagedInputs
 
@@ -50,7 +49,10 @@ def compare_bits(left, right):
         raise ValueError('two-arm output bits differ')
 
 
-def prepare(bank, native_root, sanitizer):
+def prepare(bank, native_root, sanitizer, runner):
+    import zipfile
+    from test_window_gemm_grouped import Expert
+    from test_routed_fused_window import _sched, _init
     bank.mkdir(parents=True, exist_ok=False)
     if digest(sanitizer) != SANITIZER_SHA:
         raise ValueError('sanitizer tool identity differs')
@@ -75,6 +77,17 @@ def prepare(bank, native_root, sanitizer):
             records.append(entry(target))
         if digest(bank / (arm + "-" + module + ".so")) != expected:
             raise ValueError("retained native arm differs")
+    runner_zip = bank / "runner.zip"
+    with zipfile.ZipFile(runner_zip, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for package in ["pytest", "_pytest", "pluggy", "iniconfig", "packaging", "py.py"]:
+            root = runner / package
+            if not root.exists():
+                raise ValueError(f"missing runner package {root}")
+            paths = [root] if root.is_file() else sorted(root.rglob("*"))
+            for path in paths:
+                if path.is_file() and "__pycache__" not in path.parts:
+                    archive.write(path, path.relative_to(runner))
+    records.append(entry(runner_zip))
     cases = []
     for q in Q256_CASES:
         stacks = []
@@ -128,8 +141,14 @@ def consume(bank, manifest, out):
         raise ValueError('synthetic numeric consumer requires admitted CUDA')
     out.mkdir(parents=True, exist_ok=False)
     reader = StagedInputs(manifest)
-    reports = []
+    reports, owners = [], []
     try:
+        import zipfile
+        runner_dir = out / "runner"
+        with zipfile.ZipFile(io.BytesIO(reader.read(bank / "runner.zip"))) as archive:
+            archive.extractall(runner_dir)
+        sys.path.insert(0, str(runner_dir))
+        from test_routed_fused_window import _bundles, _staged_check
         packet = json.loads(reader.read(bank / 'packet.json'))
         if packet['scope'] != SCOPE or packet['source_sha256'] != SOURCE_SHA or packet['arms'] != {k: list(v) for k,v in ARMS.items()}:
             raise ValueError("frozen synthetic packet differs")
@@ -171,10 +190,11 @@ def consume(bank, manifest, out):
                             reports.append({'q256': case['q256'], 'm': sample['m'], 'stages': ['mode1', 'activation', 'mode2', 'mode0'], 'bitwise': True})
                 finally:
                     owner.finish(torch.cuda.synchronize)
+                    owners.append(dict(owner.record, q256=case["q256"], arm=arm))
                     rf._ext.cache_clear()
         if len(reports) != len(Q256_CASES) * len(MS):
             raise ValueError("incomplete synthetic numeric result")
-        (out / "numeric.json").write_text(json.dumps({"scope": SCOPE, "results": reports, "readset_sha256": reader.manifest_sha256}, indent=2) + "\n")
+        (out / "numeric.json").write_text(json.dumps({"scope": SCOPE, "results": reports, "owners": owners, "readset_sha256": reader.manifest_sha256}, indent=2) + "\n")
     finally:
         reader.close()
 
@@ -207,12 +227,13 @@ def main():
     ap.add_argument("operation", choices=["prepare", "consume", "sanitize"])
     ap.add_argument('--bank', type=Path, required=True)
     ap.add_argument('--native-root', type=Path)
-    ap.add_argument('--sanitizer', type=Path)
+    ap.add_argument("--runner", type=Path)
+    ap.add_argument("--sanitizer", type=Path)
     ap.add_argument('--manifest', type=Path)
     ap.add_argument('--out', type=Path)
     a = ap.parse_args()
     if a.operation == 'prepare':
-        prepare(a.bank, a.native_root, a.sanitizer)
+        prepare(a.bank, a.native_root, a.sanitizer, a.runner)
     elif a.operation == "sanitize":
         sanitize(a.bank, a.manifest, a.out)
     else:

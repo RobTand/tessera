@@ -23,8 +23,7 @@ docker run --rm --gpus all --ipc=host --network=none --pid=host --cpuset-cpus "$
   --user "$(id -u):$(id -g)" -v "$PWD":/work:ro -v "$BANK":"$BANK":ro \
   -v "$OUT":"$OUT" -v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet \
   -v "$STAGE_ROOT":"$STAGE_ROOT" -e HOME="$OUT" -e PYTHONDONTWRITEBYTECODE=1 \
-  -e PYTHONPATH="/work/src:/work/tests:/work:$PB_CLIENT_ROOT/src:${TEST_RUNNER_SP:?runner required}" \
-  -v "$TEST_RUNNER_SP":"$TEST_RUNNER_SP":ro \
+  -e PYTHONPATH="/work/src:/work/tests:/work:$PB_CLIENT_ROOT/src" \
   -e TORCH_EXTENSIONS_DIR="$OUT/owner-build" -e MAX_JOBS=1 \
   -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 \
   "${CTX[@]}" "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE" \
