@@ -244,3 +244,56 @@ def test_unavailable_stock_class_declines_without_rebinding(empty_rope,monkeypat
     broken=UnavailableClassModule(stock.__name__);broken.__file__=stock.__file__
     monkeypatch.setitem(sys.modules,STOCK,broken)
     assert mod.install_for_current_config() is False
+
+
+# CPU stand-ins establish probe refusal, not actual CUDA cache-writer arithmetic.
+@pytest.mark.parametrize("failure", ["import", "writer", "completion"])
+def test_qualification_cache_producer_failures_are_not_synthetic_passes(monkeypatch, failure):
+    from experiments.t8r_speed import empty_rope_cat_check as probe
+
+    monkeypatch.setattr(probe, "CONTEXT", probe.PAGE)
+    error = RuntimeError("stock cache production failed")
+    def writer(*args):
+        if failure == "writer":
+            raise error
+    def synchronize():
+        if failure == "completion":
+            raise error
+    runtime = types.ModuleType("vllm")
+    runtime._custom_ops = types.SimpleNamespace(concat_and_cache_mla=writer)
+    monkeypatch.setitem(sys.modules, "vllm", None if failure == "import" else runtime)
+    monkeypatch.setattr(torch.cuda, "synchronize", synchronize)
+    log = {}
+    expected = ModuleNotFoundError if failure == "import" else RuntimeError
+    with pytest.raises(expected) as caught:
+        probe.build_cache(torch.device("cpu"), log)
+    if failure != "import":
+        assert caught.value is error
+    assert "cache_writer" not in log and "cache_sha256" not in log
+
+
+def test_qualification_cache_keeps_stock_writer_bytes_and_completion_order(monkeypatch):
+    from experiments.t8r_speed import empty_rope_cat_check as probe
+
+    monkeypatch.setattr(probe, "CONTEXT", probe.PAGE)
+    calls = []
+    def writer(latent, rope, cache, slots, dtype, scale):
+        assert latent.shape == (probe.CONTEXT, probe.LATENT)
+        assert latent.dtype == torch.bfloat16
+        assert rope.shape == (probe.CONTEXT, probe.ROPE_PAD)
+        assert torch.count_nonzero(rope).item() == 0
+        assert torch.equal(slots, torch.arange(probe.CONTEXT, dtype=torch.int64))
+        assert dtype == "fp8_ds_mla" and torch.equal(scale, torch.ones(1))
+        cache.fill_(17)
+        calls.append("write")
+    runtime = types.ModuleType("vllm")
+    runtime._custom_ops = types.SimpleNamespace(concat_and_cache_mla=writer)
+    monkeypatch.setitem(sys.modules, "vllm", runtime)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: calls.append("complete"))
+    log = {}
+    cache = probe.build_cache(torch.device("cpu"), log)
+    assert calls == ["write", "complete"]
+    assert torch.equal(cache, torch.full_like(cache, 17))
+    assert log["cache_writer"] == "vllm._custom_ops.concat_and_cache_mla(fp8_ds_mla)"
+    assert log["cache_sha256"] == hashlib.sha256(cache.numpy().tobytes()).hexdigest()
+

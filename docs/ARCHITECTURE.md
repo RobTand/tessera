@@ -6956,6 +6956,13 @@ whether the first tuple query skipped the cat.
 
 The flag is off by default. No route, contract or artifact changes.
 
+The GPU qualification probe `experiments/t8r_speed/empty_rope_cat_check.py`
+requires the stock `concat_and_cache_mla` producer and successful CUDA
+completion before recording cache provenance. Import, writer and completion
+failures propagate; synthetic cache bytes never replace a failed stock writer
+(tessera#887). CPU failure controls cover this refusal only, not GPU arithmetic
+or the matched served TR3/cat-trace gate required by #796.
+
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in
