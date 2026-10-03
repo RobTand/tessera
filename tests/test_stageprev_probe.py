@@ -27,7 +27,8 @@ def test_exact_original_three_group_numeric_mode_admits():
 
 @pytest.mark.parametrize('field,value', [('groups','experts.R1024.L10'), ('groups','all'),
     ('artifact','unqualified-current-model'), ('ms','512,2048'), ('no_graph',False), ('ncu',True),
-    ('hash_only',False), ('input_manifest',None), ('profile_native_file',None), ('iters',30), ('power_s',3)])
+    ('hash_only',False), ('input_manifest',None), ('profile_native_file',None), ('iters',30), ('power_s',3),
+    ('routing','unbound-origin-directory')])
 def test_numeric_mode_refuses_menu_or_timing_or_unbound_native(field, value):
     args=options(); setattr(args,field,value)
     with pytest.raises(ValueError,match='stageprev'):
@@ -61,6 +62,7 @@ def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, 
     native=FusedRoutedWindowMoE.__new__(FusedRoutedWindowMoE)
     object.__setattr__(native,"library","e4m3mma")
     object.__setattr__(native,"runs_gate",torch.tensor([[4,0,1,0,0,0,0,0]]))
+    object.__setattr__(native,"runs_up",torch.tensor([[4,0,1,0,0,1,0,64]]))
     object.__setattr__(native,"runs_down",torch.tensor([[4,0,1,0,0,0,0,0]]))
     def launch(self,mode,*args,**kwargs):
         kwargs["out"].fill_(mode+1)
@@ -74,12 +76,20 @@ def test_observer_restores_actual_frozen_class_on_success_and_failure(tmp_path, 
             native._launch(mode,out=out)
         return out.clone()
     fn.native_adapter=native
+    xa = (torch.ones(1,2,dtype=torch.bfloat16), torch.zeros(1,8,dtype=torch.int32),
+          torch.full((1,8),1/8,dtype=torch.float32))
     if failure:
         with pytest.raises(RuntimeError,match="owned launch failure"):
-            probe().observe(fn,(),tmp_path/"words")
+            probe().observe(fn,xa,tmp_path/"words")
     else:
-        result=probe().observe(fn,(),tmp_path/"words")
+        result=probe().observe(fn,xa,tmp_path/"words")
         assert set(result["outputs"])=={"gate_up","down_routes","out"}
         assert result["repeat_equal"] is True
+        assert set(result["inputs"])=={"x","ids","weights"}
+        assert result["inputs"]["x"]["shape"]==[1,2]
+        assert result["run_tables"]=={"gate_proj":[[4,0,1,0,0,0,0,0]],
+                                      "up_proj":[[4,0,1,0,0,1,0,64]],
+                                      "down_proj":[[4,0,1,0,0,0,0,0]]}
+        assert result["native_extra_resident_bytes"]==64
     assert FusedRoutedWindowMoE._launch is launch
 

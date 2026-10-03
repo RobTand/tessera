@@ -517,7 +517,8 @@ def main():
                 "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
                 "e4m3_mma": os.environ.get("TESSERA_FUSED_E4M3_MMA"),
                 "start_unix": time.time()}
-        recorded = routing_files(args.routing, ms) if args.routing else {}
+        meta["phase"] = "numeric" if args.stageprev_numerics else "timing"
+        recorded = {}
         if args.stageprev_numerics:
             # The frozen readset, not an origin directory scan, owns capture selection.
             recorded = {}
@@ -526,6 +527,8 @@ def main():
                 if m not in ms or (path, 0) not in inputs.entries:
                     raise ValueError("undeclared stageprev routing capture")
                 recorded.setdefault(m, []).append(path)
+        else:
+            recorded = routing_files(args.routing, ms) if args.routing else {}
         if args.routing and not any(recorded.values()):
             raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
                              "(is the directory mounted into the container?)")
@@ -540,7 +543,12 @@ def main():
         except Exception as exc:  # noqa: BLE001
             meta["tessera_meta_error"] = repr(exc)
         ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
-        if inputs:
+        if args.stageprev_numerics:
+            meta["stageprev_numerics"] = {
+                "scope": "original three-group operator words; seeded x and uniform weights, not a served capture",
+                "reference_baseline_source": "b770727c50eef822132518bdc4fd6efe84359c9e",
+                "manifest_sha256": inputs.manifest_sha256, "sdk_version": inputs.sdk.SDK_VERSION}
+        elif inputs:
             meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
                                       "reference_baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
                                       "manifest_sha256": inputs.manifest_sha256,
@@ -636,8 +644,7 @@ def main():
                             native_owner.attest_mapped(native_owner.module)
                             cell["out_sha256"] = cell["outputs"]["out"]["sha256"]
                             cell["out_sha256_repeat"] = cell["out_sha256"]
-                            # Native names/counts only, outside numeric observation.
-                            cell["profile"] = kernel_profile(lambda: fn(*xa), reps=1, full_names=True)
+                            cell["packed_resident_bytes"] = info["resident_bytes"]
                             rec["cells"][key] = cell
                             del x, xa
                             continue
@@ -725,7 +732,9 @@ def main():
             json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                       indent=1, default=repr)
         if native_owner:
-            native_owner.finish(torch.cuda.synchronize, keep_load_fd=args.stageprev_numerics)
+            # One arm per finite fresh process: no subsequent native load/use.
+            # Final fence/hash, then close the held FD before releasing its lease.
+            native_owner.finish(torch.cuda.synchronize)
             meta["native_code_artifact"] = native_owner.record
         if inputs:
             meta["staged_reads"] = inputs.reads
@@ -739,7 +748,7 @@ def main():
     finally:
         try:
             if native_owner:
-                native_owner.finish(torch.cuda.synchronize, keep_load_fd=args.stageprev_numerics)
+                native_owner.finish(torch.cuda.synchronize)
         finally:
             if inputs:
                 inputs.close()

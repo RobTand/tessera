@@ -30,10 +30,17 @@ if [[ -z "${ORACLE_IMAGE:-}" ]]; then
 fi
 : "${AB_EXPECTED_CASES:?declare the expected case/rate/source population}"
 python3 - "$AB_EXPECTED_CASES" <<'PY' || exit 2
-import sys
+import os, shlex, sys
 sys.path.insert(0, "experiments/t8r_speed")
 from ab_stageprev_accept import load, expected_population
-expected_population(load(sys.argv[1]))
+expected = load(sys.argv[1]); expected_population(expected)
+if expected["phase"] == "numeric":
+    for key, value in expected["launch"].items():
+        actual = os.environ.get(key, "")
+        if (shlex.split(actual) != value if isinstance(value, list) else actual != value):
+            raise ValueError("numeric launch differs from its frozen manifest: " + key)
+    if not os.environ.get("AB_INPUT_MANIFEST") or os.environ.get("AB_ROUTING"):
+        raise ValueError("numeric launch requires staged inputs and no origin routing discovery")
 PY
 FAILED=()
 for arm in "${ARMS[@]}"; do
@@ -96,7 +103,7 @@ python3 - "$OUT" "${ARMS[@]}" <<'PY'
 import json, pathlib, sys
 root, arms = pathlib.Path(sys.argv[1]), sys.argv[2:]
 sys.path.insert(0, "experiments/t8r_speed")
-from ab_stageprev_accept import load, expected_population
+from ab_stageprev_accept import load, expected_population, validate_native_record, observed_rates
 expected = load(__import__("os").environ["AB_EXPECTED_CASES"])
 expected_cases = expected_population(expected)
 if arms != expected["arms"]:
@@ -105,7 +112,7 @@ ref = arms[0]
 def cells(name):
     p = root / name / "bench_t8r.json"
     if not p.exists():
-        return {}, None
+        return {}, {}
     d = load(p)
     result = {}
     for row in d["results"]:
@@ -114,13 +121,21 @@ def cells(name):
             if key in result:
                 raise ValueError(f"duplicate observed case: {name} {key}")
             result[key] = cell
-    return result, d["meta"].get("kernel_sha")
-data, shas = {}, {}
+    return result, d["meta"]
+data, shas, phases, natives = {}, {}, {}, {}
 families = tuple(dict.fromkeys(f for f, _, _ in expected_cases))
 for fam in families:
     for a in arms:
         for p in ("", "b"):
-            data[(fam, a, p)], shas[f"{a}-{fam}{p}"] = cells(f"{a}-{fam}{p}")
+            name = f"{a}-{fam}{p}"
+            data[(fam, a, p)], meta = cells(name)
+            shas[name] = meta.get("kernel_sha")
+            phases[name] = meta.get("phase")
+            if phases[name] != expected["phase"]:
+                raise ValueError("observed bench phase differs: " + name)
+            if expected.get("require_intermediates"):
+                natives[name] = meta.get("native_code_artifact", {})
+                validate_native_record(natives[name], expected["native_files"][a])
 rows = []
 for fam in families:
     keys = [(g, m) for f, g, m in expected_cases if f == fam]
@@ -135,8 +150,9 @@ for fam in families:
         for a in arms:
             for p in ("", "b"):
                 c = data[(fam, a, p)].get(k) or {}
-                r[f"{a}{p}_us"] = c.get("profile", {}).get("kernel_us_per_call")
-                r[f"{a}{p}_W"] = c.get("power", {}).get("mean_w")
+                if expected["phase"] == "timing":
+                    r[f"{a}{p}_us"] = c.get("profile", {}).get("kernel_us_per_call")
+                    r[f"{a}{p}_W"] = c.get("power", {}).get("mean_w")
                 sha[f"{a}{p}"] = c.get("out_sha256")
         r["bitwise"] = None not in sha.values() and len(set(sha.values())) == 1
         r["missing"] = sorted(n for n, v in sha.items() if v is None)
@@ -156,6 +172,13 @@ for fam in families:
                     signature["inputs"] = c["inputs"]
                     signature["run_tables"] = c["run_tables"]
                     signature["native_extra_resident_bytes"] = c["native_extra_resident_bytes"]
+                    signature["packed_resident_bytes"] = c["packed_resident_bytes"]
+                    if any(type(signature[n]) is not int or signature[n] <= 0
+                           for n in ("packed_resident_bytes", "native_extra_resident_bytes")):
+                        raise ValueError("numeric resident byte evidence differs")
+                    rates = observed_rates(c["run_tables"])
+                    if rates != {role:sorted(expected_cases[(fam,*k)]) for role in rates}:
+                        raise ValueError("observed projection rates differ from frozen case")
                     for role, item in outputs.items():
                         raw = pathlib.Path(item["path"]).read_bytes()
                         if len(raw) != item["bytes"] or __import__("hashlib").sha256(raw).hexdigest() != item["sha256"]:
@@ -163,12 +186,17 @@ for fam in families:
                         signature[role] = (item["shape"], item["dtype"], item["bytes"], item["sha256"])
                     signatures.append(signature)
             r["role_words_equal"] = all(s == signatures[0] for s in signatures)
-        for a in arms[1:]:
-            for p in ("", "b"):
-                b, x = r[f"{ref}{p}_us"], r[f"{a}{p}_us"]
-                r[f"{a}{p}_ratio"] = round(x / b, 4) if b and x else None
+            r["numeric_signature"] = signatures[0]
+            r["observed_rates"] = observed_rates(signatures[0]["run_tables"])
+        if expected["phase"] == "timing":
+            for a in arms[1:]:
+                for p in ("", "b"):
+                    b, x = r[f"{ref}{p}_us"], r[f"{a}{p}_us"]
+                    r[f"{a}{p}_ratio"] = round(x / b, 4) if b and x else None
         rows.append(r)
-json.dump({"ref": ref, "arms": arms, "kernel_sha": shas, "rows": rows}, open(root / "ab_summary.json", "w"), indent=1)
+json.dump({"phase":expected["phase"], "ref": ref, "arms": arms, "kernel_sha": shas,
+           "native_code_artifact":natives, "native_build_identity":expected.get("native_files"),
+           "rows": rows}, open(root / "ab_summary.json", "w"), indent=1)
 print(json.dumps(shas))
 for r in rows:
     print(json.dumps({k: v for k, v in r.items() if not k.endswith("_W")}))

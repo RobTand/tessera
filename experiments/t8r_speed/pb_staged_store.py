@@ -314,12 +314,14 @@ class NativeCallback:
                 self.record['after_profile_sha256']=self._hash()
                 if self.record['after_profile_sha256']!=self.record['expected_sha256']:
                     raise ValueError('native artifact changed during profile')
+                self.record["final_fence_complete"] = True
         finally:
             self.rf.build_library=self.original
             # Reuse reviewed #874 lifecycle: loaded /proc/self/fd paths remain
             # distinct through the finite diagnostic process lifetime.
             if not keep_load_fd or self.module is None:
                 os.close(self.fd)
+                self.record["load_fd_closed_after_fence"] = self.record.get("final_fence_complete", False)
             self.closed=True
             if self.module is not None and sys.modules.get(self.MODULE) is self.module:
                 del sys.modules[self.MODULE]

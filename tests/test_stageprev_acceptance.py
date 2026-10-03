@@ -29,7 +29,33 @@ def population():
         ratio = 1.0 if len(case['rates']) == 1 else (0.92 if case['M'] == '2048' else 0.97)
         rows.append({**{k: case[k] for k in ('family', 'group', 'M')},
                      'bitwise': True, 'missing': [], 'fix_ratio': ratio, 'fixb_ratio': ratio})
-    summary = {'ref': 'master', 'arms': ['master', 'fix'], 'kernel_sha': hashes, 'rows': rows}
+    summary = {"phase":"timing", 'ref': 'master', 'arms': ['master', 'fix'], 'kernel_sha': hashes, 'rows': rows}
+    return expected, summary
+
+
+def numeric_population():
+    expected, summary = population()
+    expected.update(phase="numeric", require_intermediates=True, native_files={})
+    expected["launch"] = json.loads((ROOT/"experiments/configs/stageprev_793_expected.json").read_text())["launch"]
+    records = {}
+    for arm in expected["arms"]:
+        sha = expected["kernel_sha"][arm+"-routed"]
+        native = {"path":f"/mnt/shared/fixture-{arm}.so", "sha256":sha, "source_sha256":sha,
+                  "build_action_key":"d"*64, "build_receipt_sha256":"e"*64}
+        expected["native_files"][arm] = native
+        record = {"declared_path":native["path"], "source_sha256":sha,
+                  "executable_mappings":["CPU fixture, not ELF/GPU evidence"], "pin_id":"fixture",
+                  "ref_id":"fixture", "final_fence_complete":True, "load_fd_closed_after_fence":True}
+        for name in ("expected_sha256","before_load_sha256","after_load_sha256","mapped_sha256","after_profile_sha256"):
+            record[name] = sha
+        for suffix in ("","b"): records[arm+"-routed"+suffix] = deepcopy(record)
+    summary.update(phase="numeric", native_code_artifact=records, native_build_identity=expected["native_files"])
+    for case, row in zip(expected["cases"], summary["rows"]):
+        rates = case["rates"]; lo=rates[0]; hi=rates[1] if len(rates)>1 else 0
+        pair = [lo,0,1,0,hi,1,int(bool(hi)),16*lo]
+        tables = {role:[pair.copy() for _ in range(288)] for role in ("gate_proj","up_proj","down_proj")}
+        row.update(fix_ratio=None, fixb_ratio=None, role_words_equal=True,
+                   observed_rates={role:rates for role in tables}, numeric_signature={"run_tables":tables})
     return expected, summary
 
 
@@ -91,9 +117,7 @@ def test_uniform_rate_is_declared_not_inferred_from_r1024_label(tmp_path):
 
 
 def test_numeric_phase_does_not_claim_timing(tmp_path):
-    expected, summary = population(); expected['phase'] = 'numeric'
-    for row in summary['rows']:
-        row['fix_ratio'] = row['fixb_ratio'] = None
+    expected, summary = numeric_population()
     result = run_checker(tmp_path, expected, summary)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'numeric' in result.stdout
@@ -113,7 +137,7 @@ def test_actual_kernel_guards_mixed_history_without_changing_layout():
 
 @pytest.mark.parametrize("defect", ["missing", "duplicate"])
 def test_current_ab_owner_rejects_omissions_and_duplicate_results(tmp_path, defect):
-    expected, _ = population(); expected["phase"] = "numeric"
+    expected, _ = population()
     # Real shell owner, fake bench only: no Docker/CUDA/device operation.
     for arm in expected["arms"]:
         source = tmp_path / f"src-{arm}/src/tessera/serving/csrc/routed_fused_window.cu"
@@ -131,7 +155,7 @@ def test_current_ab_owner_rejects_omissions_and_duplicate_results(tmp_path, defe
                     "if os.environ['DEFECT']=='duplicate':rows.append(rows[0])\n" +
                     "arm=out.name.split('-')[0];suffix='b' if out.name.endswith('routedb') else ''\n" +
                     "key=arm+'-routed'+suffix\n" +
-                    "json.dump({'meta':{'kernel_sha':expected['kernel_sha'][key]},'results':rows},open(out/'bench_t8r.json','w'))\nPY\n")
+                    "json.dump({'meta':{'phase':'timing','kernel_sha':expected['kernel_sha'][key]},'results':rows},open(out/'bench_t8r.json','w'))\nPY\n")
     env = dict(os.environ, AB_EXPECTED_CASES=str(manifest), AB_BENCH=str(fake),
                AB_STEPS="routed", AB_MS="1,2048", ORACLE_IMAGE="CPU-test-only", DEFECT=defect)
     result = subprocess.run(["bash", str(ROOT / "experiments/t8r_speed/ab_arms.sh"),
@@ -139,3 +163,18 @@ def test_current_ab_owner_rejects_omissions_and_duplicate_results(tmp_path, defe
                             capture_output=True, text=True, timeout=20)
     assert result.returncode != 0, result.stdout
 
+
+
+@pytest.mark.parametrize("defect",["phase","native_missing","native_sha","native_source","mapping","fence","rates","ratio"])
+def test_numeric_provenance_cannot_be_relabelled_or_omitted(tmp_path,defect):
+    expected, summary = numeric_population()
+    if defect=="phase": expected["phase"]="timing"
+    elif defect=="native_missing": summary["native_code_artifact"]={}
+    elif defect=="native_sha": summary["native_code_artifact"]["fix-routed"]["after_load_sha256"]="c"*64
+    elif defect=="native_source": expected["native_files"]["fix"]["source_sha256"]="c"*64
+    elif defect=="mapping": summary["native_code_artifact"]["fix-routed"]["executable_mappings"]=[]
+    elif defect=="fence": summary["native_code_artifact"]["fix-routed"]["final_fence_complete"]=False
+    elif defect=="rates": summary["rows"][0]["observed_rates"]["up_proj"]=[3]
+    elif defect=="ratio": summary["rows"][0]["fix_ratio"]=1.0
+    result=run_checker(tmp_path,expected,summary)
+    assert result.returncode!=0,result.stdout

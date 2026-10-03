@@ -143,7 +143,8 @@ def main():
             modules=MODULES)
     else:
         manifest,proof = seal(args.manifest)
-    files = {'routed_gate_826_inputs.json':json.dumps(manifest,indent=2).encode()+b'\n',
+    manifest_name = 'stageprev_793_inputs.json' if args.stageprev else 'routed_gate_826_inputs.json'
+    files = {manifest_name:json.dumps(manifest,indent=2).encode()+b'\n',
              'sealed-wire-proof.json':json.dumps(proof,indent=2).encode()+b'\n'}
     stream = io.BytesIO()
     with tarfile.open(fileobj=stream,mode='w:gz') as archive:
@@ -152,7 +153,7 @@ def main():
             archive.addfile(info,io.BytesIO(raw))
     print(json.dumps({'wire_count':proof['wire_count'],'entries':proof['entries'],
                       'bytes':proof['total_bytes'],
-                      'manifest_sha256':hashlib.sha256(files['routed_gate_826_inputs.json']).hexdigest()}))
+                      'manifest_sha256':hashlib.sha256(files[manifest_name]).hexdigest()}))
     print('ROUTED_GATE_SEAL_BEGIN')
     print(base64.b64encode(stream.getvalue()).decode())
     print('ROUTED_GATE_SEAL_END')

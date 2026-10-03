@@ -10,7 +10,7 @@ def require_options(args, *, stubbed):
     if (args.artifact != '/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported'
             or args.groups != GROUPS or args.ms != '1,2048' or not args.no_graph
             or args.ncu or not args.hash_only or not args.input_manifest
-            or not args.profile_native_file or args.single_routing_file
+            or not args.profile_native_file or args.single_routing_file or args.routing
             or (args.warmup, args.iters, args.power_s) != (0, 0, 0)
             or stubbed):
         raise ValueError('stageprev numeric qualification requires the exact original three-group '
@@ -31,6 +31,8 @@ def observe(fn, xa, directory):
     native = fn.native_adapter
     if type(native) is not FusedRoutedWindowMoE or native.library != 'e4m3mma':
         raise ValueError('stageprev numeric owner is not the production MMA8 routed adapter')
+    if len(xa) != 3:
+        raise ValueError('stageprev requires exactly x, ids and weights')
     owner = type(native)
     original = owner._launch
     captured = {}
@@ -69,7 +71,8 @@ def observe(fn, xa, directory):
             handle.write(raw)
         outputs[role] = dict(entry, path=str(path))
     runs = {}
-    for role, table in [('gate_up', native.runs_gate), ('down_routes', native.runs_down)]:
+    for role, table in [('gate_proj', native.runs_gate), ('up_proj', native.runs_up),
+                        ('down_proj', native.runs_down)]:
         runs[role] = table.cpu().tolist()
     inputs = {name: record(tensor)[1] for name, tensor in zip(("x", "ids", "weights"), xa)}
     return {'outputs': outputs, 'repeat_equal': True, 'run_tables': runs, 'inputs': inputs,

@@ -42,6 +42,8 @@ def expected_population(expected):
         raise ValueError('expected manifest schema differs')
     if expected.get('phase') not in ('numeric', 'timing'):
         raise ValueError('expected phase must be numeric or timing')
+    if expected["phase"] == "numeric" and expected.get("require_intermediates") is not True:
+        raise ValueError("numeric phase requires actual intermediate words/native evidence")
     arms = expected['arms']
     if (not isinstance(arms, list) or len(arms) != 2 or len(set(arms)) != 2
             or any(not isinstance(a, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', a) for a in arms)):
@@ -67,15 +69,72 @@ def expected_population(expected):
                        for arm in arms for suffix in ('', 'b')}
     if set(hashes) != required_hashes:
         raise ValueError('expected source population differs from case families/arms')
+    if expected.get("require_intermediates"):
+        natives = expected.get("native_files", {})
+        if set(natives) != set(arms):
+            raise ValueError("declared native arm population differs")
+        for arm, native in natives.items():
+            if (not isinstance(native.get("path"), str) or not native["path"].startswith("/mnt/shared/")
+                    or not native["path"].endswith(".so")):
+                raise ValueError("declared native path differs")
+            for name in ("sha256", "source_sha256", "build_action_key", "build_receipt_sha256"):
+                if not isinstance(native.get(name), str) or not re.fullmatch("[0-9a-f]{64}", native[name]):
+                    raise ValueError("declared native/source/build identity is incomplete")
+            if any(v != native["source_sha256"] for k, v in hashes.items() if k.startswith(arm + "-")):
+                raise ValueError("native build source differs from declared arm source")
     return cases
+
+
+def validate_native_record(record, native):
+    if record.get("declared_path") != native["path"] or record.get("source_sha256") != native["source_sha256"]:
+        raise ValueError("observed native source/path differs from reviewed build identity")
+    for name in ("expected_sha256", "before_load_sha256", "after_load_sha256", "mapped_sha256", "after_profile_sha256"):
+        if record.get(name) != native["sha256"]:
+            raise ValueError("observed native digest differs or is incomplete")
+    if (not record.get("executable_mappings") or not record.get("pin_id") or not record.get("ref_id")
+            or record.get("final_fence_complete") is not True
+            or record.get("load_fd_closed_after_fence") is not True):
+        raise ValueError("native mapping/final-fence/lease boundary evidence is incomplete")
+
+
+def observed_rates(tables):
+    roles = ("gate_proj", "up_proj", "down_proj")
+    if set(tables) != set(roles):
+        raise ValueError("observed projection run-table population differs")
+    populations = {}
+    for role in roles:
+        if len(tables[role]) != 288:
+            raise ValueError("observed expert run-table population differs")
+        rates = set()
+        for pair in tables[role]:
+            if (len(pair) != 8 or any(type(v) is not int for v in pair)
+                    or not 1 <= pair[0] <= 8 or pair[2] <= 0 or pair[1] != 0 or pair[3] != 0
+                    or pair[5] != pair[2] or pair[6] < 0 or pair[7] != 16*pair[2]*pair[0]
+                    or (pair[6] == 0 and pair[4] != 0)
+                    or (pair[6] > 0 and (pair[4] != pair[0]+1 or pair[4] > 8))):
+                raise ValueError("observed run pair differs from production grammar")
+            rates.add(pair[0])
+            if pair[6]: rates.add(pair[4])
+        populations[role] = sorted(rates)
+    return populations
 
 
 def accept(summary, expected, *, old=None, tol_same=0.02, slack=0.01):
     cases = expected_population(expected)
+    if summary.get("phase") != expected["phase"]:
+        raise ValueError("observed phase differs; numeric evidence cannot promote timing")
     if summary['arms'] != expected['arms'] or summary['ref'] != expected['arms'][0]:
         raise ValueError('observed arm population differs')
     if summary['kernel_sha'] != expected['kernel_sha']:
         raise ValueError('observed source hashes differ')
+    if expected.get("require_intermediates"):
+        if summary.get("native_build_identity") != expected["native_files"]:
+            raise ValueError("observed reviewed native build identity differs")
+        if set(summary.get("native_code_artifact", {})) != set(expected["kernel_sha"]):
+            raise ValueError("observed native artifact population differs")
+        for key, record in summary["native_code_artifact"].items():
+            arm_name = next(a for a in expected["arms"] if key.startswith(a + "-"))
+            validate_native_record(record, expected["native_files"][arm_name])
     observed = {}
     for row in summary['rows']:
         key = case_key(row)
@@ -109,6 +168,15 @@ def accept(summary, expected, *, old=None, tol_same=0.02, slack=0.01):
             why.append('not bitwise or missing arm output')
         if expected.get('require_intermediates') and row.get('role_words_equal') is not True:
             why.append('intermediate role words not qualified')
+        if expected.get("require_intermediates"):
+            actual_rates = observed_rates(row["numeric_signature"]["run_tables"])
+            if row.get("observed_rates") != actual_rates:
+                why.append("reported projection rates differ from actual run tables")
+        if expected.get("require_intermediates") and row.get("observed_rates") != {
+                role: sorted(rates) for role in ("gate_proj", "up_proj", "down_proj")}:
+            why.append("observed projection rates differ from declaration")
+        if expected["phase"] == "numeric" and any(row.get(k) is not None for k in row if k.endswith("_ratio")):
+            why.append("numeric evidence includes promotable timing ratios")
         values = [row.get(f'{arm}{suffix}_ratio') for suffix in ('', 'b')]
         if expected['phase'] == 'timing':
             if any(type(v) not in (int, float) or not math.isfinite(v) or v <= 0 for v in values):
