@@ -42,6 +42,26 @@ def test_exact_comparator_rejects_signed_zero_and_metadata():
         numeric.compare_bits(torch.tensor([1.0]), torch.tensor([1.0], dtype=torch.float64))
 
 
+@pytest.mark.parametrize("failure", ["existing-directory", "file-parent"])
+def test_sanitizer_output_initialization_failure_releases_reader(tmp_path, monkeypatch, failure):
+    """Causal CPU lease model with real filesystem refusal, not GPU proof."""
+    class Reader:
+        closed = False
+        def close(self):
+            self.closed = True
+    reader = Reader()
+    monkeypatch.setattr(numeric, "StagedInputs", lambda manifest: reader)
+    out = tmp_path / "out"
+    if failure == "existing-directory":
+        (out / "sanitizer").mkdir(parents=True)
+    else:
+        out.write_text("not a directory")
+    with pytest.raises(OSError):
+        numeric.sanitize(tmp_path / "bank", tmp_path / "manifest.json", out)
+    assert reader.closed
+
+
+
 def test_sanitizer_uses_only_pinned_bytes_and_propagates_failure(tmp_path, monkeypatch):
     bank = Path('/forbidden/synthetic-bank')
     tool_bytes = b'sealed sanitizer control'

@@ -37,7 +37,10 @@ before load, in executable mappings and after inspection. The original serving
 builder/cache stayed unchanged; both load FDs and the reader were released.
 Exact current-bank sealer, staged270-unit/108-history proof, native-FD receipt
 and the still-unapproved GPU numeric/sanitizer proposal are frozen in
-`experiments/configs/value_prefetch_874_combined_safety_protocol.json`.
+`experiments/configs/value_prefetch_874_combined_safety_protocol.json`. Post-
+acquire sanitizer output initialization is inside the same reader-release
+`finally` as staging and tool execution (#902); existing output or filesystem
+refusal propagates, rather than leaking the public reader lease.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
