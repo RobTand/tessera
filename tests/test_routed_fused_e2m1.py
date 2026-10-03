@@ -102,6 +102,34 @@ def test_numeric_bound_accepts_finite_exact_product(exact):
     assert result["ok"]
 
 
+def test_native_identity_hashes_real_executable_mapping():
+    import hashlib
+    import math
+    from tessera._dev.native_identity import loaded_native_identity
+
+    path = Path(math.__file__).resolve()
+    expected = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity = loaded_native_identity(math, fe.__file__, expected_sha256=expected)
+    assert identity["path"] == str(path) and identity["sha256"] == expected
+    assert identity["executable_mappings"]
+
+
+def test_native_identity_refuses_wrong_declared_bytes():
+    import math
+    from tessera._dev.native_identity import loaded_native_identity
+
+    with pytest.raises(RuntimeError, match="loaded native bytes changed"):
+        loaded_native_identity(math, fe.__file__, expected_sha256="0" * 64)
+
+
+def test_native_identity_refuses_unmapped_python_module():
+    import json
+    from tessera._dev.native_identity import loaded_native_identity
+
+    with pytest.raises(RuntimeError, match="not mapped from the hashed file inode"):
+        loaded_native_identity(json, fe.__file__)
+
+
 @pytest.fixture
 def extension_boundary(monkeypatch):
     """Instrument only the compiler boundary; exercise the real _ext consumer."""
