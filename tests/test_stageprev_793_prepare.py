@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 
 import pytest
 
@@ -24,7 +25,7 @@ def test_actual_frozen_sl_coordinator_preparation(contracts):
     assert record["frozen_commit"] == preparation.FROZEN_COMMIT
     assert record["gpu_submitted"] is False
     assert record["status"] == "GPU_HOLD"
-    assert record["coordinator_temp_directory"] == "/tmp"
+    assert record["coordinator_temp_directory"] == tempfile.gettempdir()
     assert record["requires_before_publication"] == contracts[0]["requires_before_publication"]
 
 
