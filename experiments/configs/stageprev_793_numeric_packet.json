@@ -156,8 +156,9 @@
     "AB_BENCH_ARGS": "--stageprev-numerics --hash-only --no-graph --warmup 0 --iters 0 --power-s 0 --artifact /mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported",
     "AB_EXPECTED_CASES": "experiments/configs/stageprev_793_expected.json",
     "AB_INPUT_MANIFEST": "/mnt/shared/astra-resume-20261002/t8_performance/history793-readset-ee3e2046/sealed-b0a7b243/stageprev_793_inputs.json",
+    "BENCH_RO_MOUNTS": "/mnt/shared/astra-resume-20261002/t8_performance/history793-readset-ee3e2046/sealed-b0a7b243",
     "TESSERA_ROUTED_FUSED": "1",
-    "TESSERA_FUSED_E4M3_MMA": "1",
+    "TESSERA_FUSED_E4M3_MMA": "e4m3",
     "TESSERA_ROUTED_FUSED_WIDE": "auto"
   },
   "entrypoint": [
