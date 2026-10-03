@@ -69,3 +69,103 @@ calls with a raw Torch trace, and a 30-second power/clock/temperature series.
 CUDA graphs are disabled. Scope is the real A8SE L10 TP2 rank-0 operator,
 not full-model throughput or served activation replay. Energy/work-per-joule
 remains HOLD pending independent clock, coverage and instrument agreement.
+
+
+## Terminal result and independent CPU evidence assessment
+
+The single measurement finished with program and outer PB exit 0 in 279.934
+seconds (finished Unix 1790997378.9244442). No retry, repeated qualification or
+follow-up GPU action was launched. The qualified owner verified exact container
+`8e0c2c90a1124e8428bc00caa5f7c04a345a22d7ca8dd11e9645aba6d19c16eb`
+already absent after cleanup, with token `99cd5da71437b7926ee5965778e4a9c1`.
+The attempt preserved its assigned CPU affinity [5, 6].
+
+Independent CPU-only assessment action
+`e728845b7495184a468f1c56b9d4d5d47d72dbbd939c010918e8a8258f2bfcfe`
+finished on DL380G10 with exit 0 in 1.00 second, no visible GPU. It verified
+all eight cells, 30 finite positive raw CUDA events each, exact conventional
+medians, eight raw trace hashes and five calls for each routed native kernel
+in each trace, 30-second raw power/clock series, accepted input hashes, nine
+unchanged held original file identities and one unchanged native bank.
+The bound successful benchmark checks every cell's final output bits against
+the accepted numeric proof before timing; intermediate numeric qualification
+was deliberately not repeated. Both arms retained 1,872,827,160 resident bytes.
+
+| M | Legacy cell medians (ms) | PM cell medians (ms) | Mean-of-cell-medians legacy / PM (ms) | Observed operator latency delta | Observed operator calls/s ratio |
+|---|---|---|---|---|---|
+| 1 | 0.506304, 0.556048 | 0.497168, 0.498336 | 0.531176 / 0.497752 | -6.29% | 1.06715x |
+| 2048 | 13.780048, 13.890848 | 12.509808, 12.385024 | 13.835448 / 12.447416 | -10.03% | 1.11151x |
+
+These are observations of this bounded ABBA operator window, not a statistical
+population, clock-controlled promotion or served speedup. M1's legacy arms
+show a 9.83% first-to-last median increase; the 6.29% mean contrast must not
+hide that drift. M2048's legacy first-to-last drift is 0.80%. There is no
+served activation replay, full-model throughput, graph or quality claim.
+
+Before/after in-process profiler self-device times, preserving both control
+and both candidate cells, are:
+
+| M | Legacy us/call | PM us/call | Mean self-device-time delta |
+|---|---|---|---|
+| 1 | 395.5110, 395.7124 | 335.0932, 334.4342 | -15.38% |
+| 2048 | 13640.8354, 13774.4708 | 12320.4646, 12239.8368 | -10.41% |
+
+Raw traces retain full kernel names and per-call counts; the profiler is not
+substituted for raw CUDA-event operator timing. The event and profile contrasts
+are directionally consistent, but host/launch overhead and thermal/clock drift
+are visible rather than normalized away.
+
+## Host, clock and energy disposition
+
+All eight steady-power cell windows and the action window retain both-Spark
+power, CPU, memory and swap-I/O raw HTTP Netdata responses, queries, native
+collection cadence and accepted/rejected bucket intervals. Supplemental MCP
+provider responses retain action-wide disk I/O and SM clocks on both Sparks.
+No GPU-utilization percentage is interpreted as saturation.
+
+Typical per-cell Netdata accepted coverage is 24 seconds of the 31-second
+integer-bounded request (three 8-second groups); straddling groups are rejected.
+Action-wide coverage is 270 of 281 requested seconds (27 10-second groups).
+The raw responses expose these gaps: successful collection is not complete
+coverage. Event-phase SM clocks and the 10 Hz in-process clocks vary by cell;
+M1 power-loop clocks range 2444-2535 MHz, and M2048 clocks range 2190-2431 MHz.
+Temperature spans 46-84 C across the measured steady loops. Sparklina's
+supplemental SM-clock response stays at 2145 MHz, unlike Sparky's varying clocks.
+There is no clock-controlled A/B or independently qualified cross-instrument
+agreement. **Energy and work-per-joule remain HOLD.** No loop power quotient
+is promoted to an energy result.
+
+The pressure guard retained 279 samples, minimum MemAvailable
+112,758,484,992 bytes and maximum full memory PSI avg10 8.51, inside the approved
+24 GiB / <20 bounds. PB's cgroup scope peak was 5,374,832,640 bytes, with
+3,963,170,816 current bytes in its terminal observation; process I/O covered
+nine observed processes, 4,180,303,872 read bytes and 9,052,160 write bytes.
+Box-level UVM residual peak was 7,873,806,336 bytes. These are different accounting
+domains: none alone is an attributed GPU allocation peak or proof of a leak.
+The root-owned reboot occurred only after terminal/cleanup/evidence preservation;
+no native bank, result or historical evidence was removed.
+
+## Exact evidence and receipts
+
+- Benchmark receipt `timing-v1-99cd5da71437/bench_t8r.json`:
+  `3ce7df07c5acc2646174f8296c401a1e2e119ddd0dba736249d4404290403fe2`.
+- Both-host raw collector `pb-timing-v1-99cd5da71437/netdata.json`:
+  `586d00f298bbc7a9983b2265f3293f586022cacbb275c4d4d5c5741a7303410c`.
+- Independent assessment `pb-timing-v1-99cd5da71437/TIMING-REVIEW.json`:
+  `499374194aec6d04d70ebf38395630dc8548d6d7a25425d309af30a1ed6a577e`.
+- Measurement local CAS claim:
+  `df67ce906da9468acd4379f5557d306fc1473511ad9df10c813b9680b945daee`,
+  payload `5d2d40806a8087180e66bdebbc6ac846a17ddfcd823c1273b94bb29dba65a154`.
+- CPU-assessment local CAS claim:
+  `568897d9fbc09a00e6cf2933becbf0cb9f022bf3141f3bdc7522989611e4bfcc`,
+  payload `87d247c966ed4b1bafa5aac80b58f67ad778d3f0f314008713cb4d70fa51ef4c`.
+- `pb-timing-v1-99cd5da71437/CAS-VERIFIED.json` retains actual receipts,
+  resource observations and supplemental Netdata hashes. All three actions'
+  actual logs, claim/payload checks and full published-generation
+  `PrismaBuildCAS.lookup` were verified. A submission acknowledgement was not
+  treated as completion.
+
+The source-sealed original harness is intentionally preserved, including its
+historical direct-mode terminology; current execution policy is the PB-only
+contract above. Root owns independent critical QA, draft PR acceptance and merge.
+No merged/default-on or deployment claim is made by this record.
