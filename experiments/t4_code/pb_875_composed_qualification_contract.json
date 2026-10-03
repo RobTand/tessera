@@ -254,7 +254,7 @@
       "skips": 0,
       "cause": "Fixture transfer omitted actual final LF; source31667ae5 restores exact bytes without loosening assertions. No CUDA work."
     },
-    "consumer_acceptance": "Current source1b90 changed controls actually27pass0skip; current actual stage/nativeFD/tool proof still required and no scientific/GPU pass inferred.",
+    "consumer_acceptance": "Current source1b90 changed controls27pass0skip and actual current-image stagedNative0/4 load/PyInit/fullABI/inode maps/pre-load/post-load/mapped/post-fence hashes plus9 staged toolkit --version completed rc0 separately. These are CPU code-bank/tool compatibility proofs, not original-tensor-provider admission, GPU numeric/performance/sanitizer, all-used-FS standardguard adoption or mainline approval.",
     "changed_owner_controls": {
       "source": "1b90b813125932c0b27ec19a68fc56389271f963",
       "action_key": "d8e19943e96ffb7806550f9f0648fb241d6dd3369fef9c68bc6e75405683d17c",
@@ -280,6 +280,120 @@
       "result_sha256": "0aca47d2234a3a9701f8db77338c02cd15c17af2a6146d89472b0ba14bb37abb",
       "checkout_snapshot_parent": "31667ae5c2c131bd2b45979267d18e024879e62f",
       "scope": "Actual metadata/test preparation and exact6/15 readsets; separately not whole current1b90 execution."
+    },
+    "current_stage_native_map": {
+      "action_key": "9ac5effb5b3cce882dc615aa32b9ba2712d914d66e4bd98bab24ac403732705d",
+      "state": "DONE",
+      "returncode": 0,
+      "attempts": 1,
+      "host": "sparklina",
+      "source_parent": "1b90b813125932c0b27ec19a68fc56389271f963",
+      "snapshot_commit": "150694cd4dbf60dd635ab84cd9581241b9e494b1",
+      "receipt_sha256": "96cdf7fa4085fdf1c467c99eda9d75917ee7fcdf7723e927d687a6806a1f686e",
+      "result_sha256": "6e48db37b61e345f3c27f5b0eff64dfd7f64df4360774b5d916197dec3ece02a",
+      "scope": "CPU two production banks loaded/mapped/hash-fenced through actual public SDK staged FDs and existing full ABI checker, not serving _ext/GPU",
+      "readset_sha256": "4000d93c40e7d00a33779297f6c7be86d77096e967274ed04eac87baffe7416c",
+      "banks": [
+        {
+          "code_artifact_contract": "experimental trusted binary owner; not immutable original tensor provider",
+          "declared_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
+          "expected_sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+          "serving_tier": {
+            "tier_id": "prismabuild-stage:dl380g10",
+            "epoch": "",
+            "pin_id": "24de38e7ca4fc481bf1a48fc53d617e0",
+            "range_ref": "0:/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so"
+          },
+          "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+          "pin_id": "24de38e7ca4fc481bf1a48fc53d617e0",
+          "ref_id": "caf36b21af4bff03f139d88ce3078e98",
+          "before_load_sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+          "retained_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/cpu-cpu-map/diagnostic/arm0/tessera_routed_fused_e2m1.so",
+          "module_origin": "/proc/self/fd/4",
+          "stage_fd_target": "/stage/prewarm/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so.pbrange/0-1889544",
+          "after_load_sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+          "through_build_owner": false,
+          "executable_mappings": [
+            "f5dc69410000-f5dc695a5000 r-xp 00000000 00:4f 281729                     /stage/prewarm/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so.pbrange/0-1889544"
+          ],
+          "mapped_sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+          "after_profile_sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff"
+        },
+        {
+          "code_artifact_contract": "experimental trusted binary owner; not immutable original tensor provider",
+          "declared_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
+          "expected_sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+          "serving_tier": {
+            "tier_id": "prismabuild-stage:dl380g10",
+            "epoch": "",
+            "pin_id": "24de38e7ca4fc481bf1a48fc53d617e0",
+            "range_ref": "0:/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so"
+          },
+          "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+          "pin_id": "24de38e7ca4fc481bf1a48fc53d617e0",
+          "ref_id": "caf36b21af4bff03f139d88ce3078e98",
+          "before_load_sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+          "retained_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/cpu-cpu-map/diagnostic/arm4/tessera_routed_fused_e2m1_apf4.so",
+          "module_origin": "/proc/self/fd/21",
+          "stage_fd_target": "/stage/prewarm/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so.pbrange/0-1889584",
+          "after_load_sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+          "through_build_owner": false,
+          "executable_mappings": [
+            "f5dc69250000-f5dc693e8000 r-xp 00000000 00:4f 278726                     /stage/prewarm/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so.pbrange/0-1889584"
+          ],
+          "mapped_sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+          "after_profile_sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508"
+        }
+      ],
+      "pyinit_modules": [
+        "tessera_routed_fused_e2m1",
+        "tessera_routed_fused_e2m1_apf4"
+      ],
+      "source_module": "tessera_routed_fused_value",
+      "cuda_visibility": "disabled by actual hashed CPU wrapper; no GPU demand"
+    },
+    "current_tool_preflight": {
+      "action_key": "e1cd2861019caf30f7e8cfd6d5888a72a00b34dcb6d8b29e4cec54cdd57a52d7",
+      "state": "DONE",
+      "returncode": 0,
+      "attempts": 1,
+      "host": "sparklina",
+      "source_parent": "1b90b813125932c0b27ec19a68fc56389271f963",
+      "snapshot_commit": "836c65056fe2b9ffe0b649c9da51bbe6eb6212e3",
+      "receipt_sha256": "9564c80cc251d490fcc49b3f72ce321a26fa994e96fa3d76678afb8804687edb",
+      "result_sha256": "0e3cb9b5a9146dc12cf47446606d77a6c32a0b41281879c8ac720f87c45a54a7",
+      "scope": "CPU actual9 staged toolkit files27665376B and ComputeSanitizer2025.3.1 --version only, not GPU sanitizer findings",
+      "readset_sha256": "60dccdebeeaa169865d556c4533e85583b3108f270e21e37522cd884a82695b5",
+      "pin_id": "6d21a28470968bf85d40ca0e20565fdb",
+      "ref_id": "4b051cae1906c6849cc7e3d427af070c",
+      "actual_tool_members": 9,
+      "actual_tool_read_bytes": 27665376,
+      "version": "2025.3.1.0 build36400806",
+      "cuda_visibility": "disabled; no GPU demand"
+    },
+    "completion_client": {
+      "name": "t4-current-stage-completion-9ac5-e1cd",
+      "daemon_id": "e3b41532-32e2-495a-9b14-76575e7d7f3f",
+      "pid": 491251,
+      "exitcode": 0,
+      "published_command": "pbwait.py --wait-s3600 --json both full keys",
+      "scope": "ONE named managed async observer; actualexit event then boundedauthentication; no duplicate/resubmit/poll loop"
+    },
+    "reference_cleanup_observation": {
+      "native_cursor": "pb_cursors completefalse timeout cursors+repo-link; not treated as drained",
+      "tool_cursor": "complete true0filedrows; separately not historicalrelease proof",
+      "existing_sdk_census": {
+        "schema": "t4.completed_reader_ref_census.v1",
+        "observed_unix": 1791070908.2094584,
+        "complete": true,
+        "keys": [
+          "9ac5effb5b3cce882dc615aa32b9ba2712d914d66e4bd98bab24ac403732705d",
+          "e1cd2861019caf30f7e8cfd6d5888a72a00b34dcb6d8b29e4cec54cdd57a52d7"
+        ],
+        "live_refs": [],
+        "method": "existing reader_lease.refs_for_holder for actualsparklina, exactconsumer keys; unknown/unreadable raises, no release/reap/mutation"
+      },
+      "limits": "Proves no currently lingering matchingSDKreferences after notifiedterminal; actualfinally ownerFDclose-before-readerclose also enforced by unchanged executedsource+27qualifiedcontrols. Not allFSadmission/GPU proof."
     }
   },
   "admission": "Current source 1b90b813125932c0b27ec19a68fc56389271f963/nativebcdd43f6/image5be/cohort: CPU controls/stage rows authorized with the real SL image/bank dependency. NO GPU permission inherited from historical feature-base protocol or CPU acceptance. Before any of the unchanged full15 exclusive gb10 synthetic safety measurement rows: exact parent review and normal source/CI closure, actual current CPU metadata/stage/native-FD/tool compatibility proof, standing exact Root safety GO and controlled-window cleanup, fresh COMPLETE execution claim-ledger SP0 plus verified c437 positive2GiB scratch refusal basis, eligible coordinator and admitted workers>=5% floor+allowance, current public SDK stage/ref/pin/image/platform compatibility. Every actually used storage filesystem must meet fresh floor+aggregate allowance, including coordinator/worker root, NAS and actual assigned DL stage/prewarm whenever used. No retag/retry/alternate runtime/default promotion; PB owns placement/atomic claim/affinity/container scope. Authentic calibrated original-model/provider capture is a separate later scientific/adoption requirement, NOT a prerequisite added to these explicitly synthetic15 safety rows.",

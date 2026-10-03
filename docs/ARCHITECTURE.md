@@ -51,6 +51,13 @@ members. Distinct current image-owner source1b90 controls `d8e19943` also
 passed 27 with zero skips/CUDA allocations. Each receipt and exact snapshot
 parent is recorded separately in the composed qualification contract; neither
 is current held-native-FD/tool execution or GPU/scientific qualification.
+Current source1b90 CPU rows `9ac5effb` / `e1cd2861` independently completed
+rc0, one attempt each on SL/image5be: both production FP4 banks loaded once
+from actual held stage FDs with matching executable inode maps and all four
+before/load/mapped/post-fence hashes; the tool row read nine staged members
+and ran Compute Sanitizer2025.3.1 --version with GPU visibility disabled.
+They do not exercise GPU tensors, sanitizer findings, performance or serving
+admission, and do not supply PB1483 operative all-used-filesystem floor proof.
 Source/CPU engineering acceptance permits only the complete owned consumer
 three-way composition into the common branch; normal source/pure CI and mainline
 approval remain separate. Closing #906 does not close #875 family qualification.
