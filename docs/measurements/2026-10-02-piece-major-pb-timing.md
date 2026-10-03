@@ -198,3 +198,111 @@ still a confound. The reviewer identifies mode0 gate/up (7.14-7.18 ms, roughly
 58% of PM self-device time), then down (4.14-4.16 ms), as the next measured
 performance priorities. This is prioritization, not authorization for another
 GPU run. Energy remains HOLD; defaults remain off.
+
+
+## Next controlled M2048 preregistration (no GPU authority)
+
+`docs/measurements/2026-10-02-piece-major-controlled-latency-protocol.json`
+contains a complete conditional experimental design, SHA-256
+`556859fb5552b2a26a449a6f6cf1af25ee6b289358f29ed60eac56d61bb2caee`.
+It is explicitly **not a runnable or qualified action and not GPU GO**.
+The independent reviewer accepts the design conditionally, not execution.
+The current eight-cell harness is preserved; it does not accept this M2048-only
+latency phase, and narrow versioned adaptation plus CPU qualification are launch
+prerequisites rather than falsely inherited from the old controls.
+
+The causal question is reported-SM-matched, thermally equilibrated M2048 layout
+latency independent of arm order. Three balanced ABBA/BAAB block pairs produce
+six independently conditioned processes, 24 cells and 720 raw CUDA events.
+The second pair reverses block order. Each cell retains the original 10 warmups
+and 30 observations. Original numeric V4, native bank and eight Torch profiles
+are reused; no per-cell 30-second power heaters, numeric rerun or duplicate
+five-call profiler/NCU population is included.
+
+Proposed experimental predicates are predeclared, not historical facts:
+preceding 30-second valid sensor window, all reported-SM samples within 1% of
+a frozen reference, temperature span <=2 C, first/last10s temperature median
+difference <=1 C; scored cells maintain that bound, matched arm mean clocks
+within 1% and temperature medians within 2 C, unchanged throttle reasons and
+no newly asserted thermal throttle. Unscored alternating-arm conditioning is
+capped at 180 seconds per block; failure is retained, not retried or excluded.
+No ad-hoc NTP, GPU-clock, driver or power-policy changes are authorized.
+
+The reference rule uses the pooled median from the first qualifying unscored
+30-second window before any scoring. The first ABBA block commits the frozen
+reference through PB's produced-output contract; subsequent five actions require
+supported `--after PRODUCER:TEMPLATE_ID` and its manifest-bound identity. They
+never poll an unsealed shared file, mint their own target or add a scheduler.
+All blocks keep the same reference/device/driver/source/input/native identity.
+Fresh processes do not erase common physical-device thermal history.
+
+Native sensor cadence and delivery lag must be qualified against the actual
+subsecond scored cells (historically about 0.4-0.6 seconds), not merely the
+conditioning window. The design's proposed sampling-resolution objective is
+at least ten genuine native timestamped observations per cell, with maximum
+native update interval plus delivery lag <=one tenth of the shortest cell and
+native history bracketing both boundaries. Polled duplicates/interpolated 1s
+series or before/after NVML values cannot satisfy that proof. These predicates
+support sampled *reported* SM matching only; they do not establish effective
+cycle frequency or exclude all between-sample DVFS changes. An unavailable
+qualified instrument is an explicit readiness failure, not a fallback claim.
+
+CUDA events/same-host monotonic time are the primary latency domains. PB#1440
+postboot diagnosis still has gateway-only NTP192.168.1.1/reference481E2358 and
+no trusted independent fleet-clock alignment; energy remains HOLD. The design
+keeps cross-host telemetry diagnostic, recording true source cadence, clock
+mapping and accepted/rejected coverage rather than inventing energy precision.
+All block/pair contrasts and ABBA-minus-BAAB interactions will be reported.
+Three pairs are minimum descriptive variance/order controls, not guaranteed95%
+significance. No pooled-event bootstrap or outcome-driven extension is allowed.
+
+### Exact separate counter question and capability evidence
+
+A separate, unauthorized counter question asks why PM M2048 mode0 gate/up still
+accounts for about58% of device time. It is not bundled into latency scoring;
+profiler-instrumented durations never enter the CUDA-event statistics.
+
+CPU-only PB preparation
+`344d23228906e59db6353b18889254e466613e2f7e0d4d801c20e27722eb1056`
+finished on DL380G10, exit0, 2.37 seconds. It decoded the existing CAS archive
+of historical sm121 action `7ae4bc6c8ce2312a85636e33ed39658953a88fcb640f25df2e317bb091fabb2f`,
+without any kernel/profile rerun. Actual named metrics were recovered from its
+wide raw CSV, SHA `eccb437abf39fcdbd3ad700d1c78d37ac250902359d7b5ea4414ec43fe574f6a`.
+Inventory `pb-timing-v1-99cd5da71437/RETAINED-SM121-COUNTER-NAMES.json` has SHA
+`d4944d0c20635f449aedfc562a261fa61e1cdab65acfeaec3d4691f70a5af01a`;
+preparation receipt `d79d8fa1ad2636b3dcbcadf61515cf3b5c60dd15844b0bf878397c201048a59d`
+was checked with actual logs/payload and full published SDK CAS lookup.
+This is capability evidence from distinct `0f953b69...` ELF, not PM performance.
+The old and PM populations share GB10/sm121 and driver595.91.07, but exact
+current metric/tool support remains a prelaunch check.
+
+The sealed metric names include L2 read/write sectors, sysmem-sector proxies,
+tensor activity, achieved occupancy, executed instructions and barrier/long-
+scoreboard/short-scoreboard/MIO/wait attribution. **No `dram__` transaction
+metric occurs in the retained raw inventory.** L2/sysmem proxies are not renamed
+DRAM counters; true supported DRAM evidence is a prerequisite for such a claim.
+The exact selected names are in the JSON protocol, not guessed aliases.
+NCU logical launch/replay/cache/pass identity must be recorded separately under
+its own exact GO; one logical launch may entail multiple physical tool replays.
+
+Initial CPU preparations `b961c174...` (missing published SDK on PYTHONPATH)
+and `c5ffea08...` (expected long-form metric header, actual CSV is wide) both
+failed before producing capability evidence. Their actual negatives are retained;
+explicit SDK injection and wide-header inspection produced the valid result above.
+These are CPU inspection repairs, not GPU measurement retries.
+
+CPU static design check
+`1ecdb9d486759d1cf40a0bc9bc75c8e48409508ba90606ac2545430f9d56aae8`
+finished on DL380G10, exit0, 0.94 seconds; full SDK CAS receipt
+`bb332a87fee4402205388767c6392c96695aeed054e6389f987c927e73294f7a` verified.
+It checked the original design's six balanced orders/720 observations, exact
+M2048 seed1605385075/accepted input and final-bit hashes, actual selected metric
+membership and absent DRAM names. Its output
+`pb-timing-v1-99cd5da71437/CONTROLLED-LATENCY-PLAN-CPU-CHECKED.json` has SHA
+`43dbd3ac2e14a39d03a3490b6527fec2c5da0a1dab2f36f1650b9bf6ca3f2569`.
+That check binds the preserved v1 design SHA
+`9053ff5be285c7a329c088408c838b128b59be93378ce493d5dcad3bba2e8598`;
+subsequent reviewer sealing constraints add PB reference dependencies and explicit
+subsecond resolution to v2 above. It is not new harness/sensor qualification.
+No controlled GPU submission has occurred; the parent issue remains open,
+the PR remains draft, and PM remains default off.
