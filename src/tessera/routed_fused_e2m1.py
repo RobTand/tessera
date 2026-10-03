@@ -45,6 +45,7 @@ cells come with the route change that admits the window body.
 from __future__ import annotations
 
 import dataclasses
+import os
 
 import torch
 
@@ -129,35 +130,64 @@ def dense_split_max(cols: int) -> int:
     return int(cols) // BK // 2
 
 
-def _ext():
-    """The library, built on first use from the source the contract publishes
-    for the fused window libraries."""
-    global _LIB
-    if _LIB is not None:
-        return _LIB
-    from torch.utils.cpp_extension import load
+PREFETCH_ENV = "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH"
 
-    def compile_fn(src, build, token, verbose):
-        return load(
-            name="tessera_routed_fused_e2m1",   # literal: a scanner reads it
-            sources=[src], build_directory=build,
-            extra_cuda_cflags=_cflags(token, False, False, True), verbose=verbose)
 
-    lib = build_library(MODULE_NAME, MODULE_NAME_VALUE, compile_fn)
+def activation_prefetch() -> int:
+    """Default-off #875 experiment; invalid arms fail before compilation."""
+    value = os.environ.get(PREFETCH_ENV, "0")
+    if value not in ("0", "4"):
+        raise GrammarError(f"{PREFETCH_ENV} must be 0 (baseline) or 4 (experimental)")
+    return int(value)
+
+
+def _check_library(lib, prefetch: int) -> None:
+    """The producer owner's single ABI rule, including retained diagnostic banks."""
     for name, want in (("BM", BM), ("BN", BN), ("HALF_ROWS", HALF_ROWS), ("BK", BK),
                        ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
                        ("WORD_STAGES", WORD_STAGES), ("DESC_WORDS", DESC_WORDS),
                        ("WINDOW_BITS", WINDOW_BITS), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
                        ("SMEM_FIXED_DOWN", SMEM_FIXED[2]), ("FAMILY_FP8", False),
-                       ("FAMILY_MMA8", False), ("FAMILY_FP4", True)):
+                       ("FAMILY_MMA8", False), ("FAMILY_FP4", True), ("A_PREFETCH", prefetch)):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{MODULE_NAME} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
+
+
+def _ext():
+    """The library, built on first use from the source the contract publishes
+    for the fused window libraries."""
+    global _LIB, _LIB_PREFETCH
+    prefetch = activation_prefetch()
+    if _LIB is not None:
+        if prefetch != _LIB_PREFETCH:
+            raise GrammarError(f"{PREFETCH_ENV} changed after the E2M1 library was loaded")
+        return _LIB
+    from torch.utils.cpp_extension import load
+
+    def compile_fn(src, build, token, verbose):
+        flags = _cflags(token, False, False, True)
+        if prefetch:
+            flags.append(f"-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH={prefetch}")
+            return load(
+                name="tessera_routed_fused_e2m1_apf4",
+                sources=[src], build_directory=build,
+                extra_cuda_cflags=flags, verbose=verbose)
+        return load(
+            name="tessera_routed_fused_e2m1",   # literal: a scanner reads it
+            sources=[src], build_directory=build,
+            extra_cuda_cflags=flags, verbose=verbose)
+
+    module = MODULE_NAME + ("_apf4" if prefetch else "")
+    lib = build_library(module, MODULE_NAME_VALUE, compile_fn)
+    _check_library(lib, prefetch)
     _LIB = lib
+    _LIB_PREFETCH = prefetch
     return lib
 
 
 _LIB = None
+_LIB_PREFETCH = None
 
 
 def smem_reason(mode: int, slot_words: int, device: torch.device) -> "str | None":

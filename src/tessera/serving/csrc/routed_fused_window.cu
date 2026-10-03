@@ -1792,6 +1792,13 @@ void check_run_tables(const torch::Tensor& runs, const torch::Tensor& bdesc, int
 // waits on a global load of its history.
 namespace fp4 {
 
+// #875: default-off FP4 hypothesis, sharing only the L1 hint primitive.
+#ifndef TESSERA_ROUTED_FUSED_FP4_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_FP4_A_PREFETCH 0
+#endif
+constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_FP4_A_PREFETCH;
+static_assert(A_PREFETCH == 0 || A_PREFETCH == 4, "FP4 activation prefetch is 0 or 4");
+
 constexpr int BK = 64;                          // columns per chunk: one m16n8k64 step
 constexpr int HALF_T = 64;                      // tuples per half
 constexpr int HALF_ROWS = 2 * HALF_T;           // weight rows per half
@@ -1988,6 +1995,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
     static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
     using L = Layout<MODE>;
+    constexpr bool PREFETCH_A = A_PREFETCH > 0 && !DENSE && !TWO;
     constexpr int SW = pair_slot_words(RL, TWO);
     constexpr int SS = slot_stride(SW);
     constexpr int GI = group_ints(SW);
@@ -2236,6 +2244,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                         cp_async4(A + BM * A_ROW + (tid - 128) * A_SF, p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
                     }
                 };
+                // Exactly issue_a's packed-code / linear-UE4M3 addresses.
+                // Callers bound kc to this item's chunks; arow excludes every
+                // partial-superblock tail. These hints write no data, retain no
+                // pointer beyond the launch, and do not change cp.async timing.
+                auto prefetch_a = [&](int kc) {
+                    if (arow < 0) return;
+                    if (tid < 128)
+                        prefetch_l1(p.x + arow * (long)(p.K >> 1) + kc * A_ROW + 16 * (tid & 1));
+                    else
+                        prefetch_l1(p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
+                };
                 // Chunk kc's decode into B stage ``stage``: two tuples (rows
                 // 4 s2 .. + 3 of half dh) at the 16 columns of group kg, from
                 // table ``TOFF`` (a compile-time offset: the lookups address
@@ -2361,9 +2380,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                 cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
                 uint32_t m_cur = mask_of(kc0), m_nxt = 0;
+                if constexpr (PREFETCH_A) {
+                    #pragma unroll
+                    for (int d = 2; d < A_PREFETCH; ++d)
+                        if (d < nkc) prefetch_a(kc0 + d);
+                }
                 for (int ic = 0; ic < nkc; ++ic, ++gc) {
                     const int kc = kc0 + ic;
                     if (ic + 1 < nkc) m_nxt = mask_of(kc + 1);
+                    if constexpr (PREFETCH_A) {
+                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                    }
                     cp_async_wait<1>();                // chunk kc's group has landed ...
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; stage (kc - 1) is free
                     if (ic + 2 < nkc) issue_words(kc + 2, TWO);
@@ -3206,6 +3233,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("BN") = fp4::BN;
     m.attr("HALF_ROWS") = fp4::HALF_ROWS;
     m.attr("BK") = fp4::BK;
+    m.attr("A_PREFETCH") = fp4::A_PREFETCH;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
