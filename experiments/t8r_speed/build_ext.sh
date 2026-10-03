@@ -45,7 +45,8 @@ echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT star
 echo "arm src=$KSRC kernel_sha=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)"
 docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$CONTAINER_EXT" -v "$BUILD_WORK":"$BUILD_WORK" \
-  -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
+  -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e XDG_CACHE_HOME="$BUILD_WORK/home/.cache" \
+  -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
   -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e PYTHONDONTWRITEBYTECODE=1 -e TESSERA_SERVE_MODE=resident \
   -e PRISMABUILD_ACTION_KEY="${PRISMABUILD_ACTION_KEY:?PB admission required}" \
