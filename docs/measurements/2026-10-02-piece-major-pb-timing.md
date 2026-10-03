@@ -646,3 +646,22 @@ requires real canonical ROOT/MAX positive scratch demands and settled unsafeSP
 zero-offer proof. Stale/unknown/refused predicates stop that launch. No cleanup,
 image pull, old numeric/profile/control replay, new GPU/performance/energy/default/
 serving/deployment authorization is implied by this source/CPU milestone.
+
+
+### Exact wrapper empty-choice repair (independently closable child #893)
+
+Commissioned parent review found that shell `${choice:-0}` and `-z` forwarding
+coerced/dropped explicitly empty declarations while the Python owner refuses
+empty choices. Both real wrapper paths now distinguish unset from empty:
+build defaults only unset to0, benchmark forwards every set value (including
+empty/invalid) to the strict owner. No code/native/performance change is inferred.
+Ten new actual-shell-path CPU controls (inert image/Docker only) caused
+`752355d9398c5da924f149087cc8e0767d10ab2a0ec420fca93389ca5c7065f1`
+to fail the two explicit-empty cases/passed8. After the two-line repair,
+`c5f2f2722968e88d539bf4f0c2a1bfcaf513b928ab19d4de9c5cb2274ff0eadd`
+actually passed10/0skip/0uncollected/0CUDAallocated onSparklina, CPU2/native1/
+xdist; pytest1.82s. Full current published CoreCAS verified the actual ending,
+manifest/payload and attestation. The prior15 Python-owner controls and all
+historic native/profile/numeric populations were not repeated. Source-only
+child893 may close independently; parent739/native/performance/serving outcome
+remains OPEN and all native/GPU/performance/default/pin/energy gates remain.
