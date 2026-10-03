@@ -16,7 +16,14 @@ family builds and numeric/sanitizer evidence: neither the original 51f6 T16
 builds declare real local scratch through the published PB ledger and keep
 compiler objects, HOME and temporary state on the shared measurement volume;
 observed worker floor and immutable-image compatibility remain admission gates.
-No default, serving cell, price, PACT or energy claim is promoted.
+No default, serving cell, price, PACT or energy claim is promoted. The combined
+`bcdd43f6` cohort now has one published CPU control action (207 passed, 43
+explicitly skipped CUDA/bank cases) and seven fresh CPU-native build actions,
+all returncode zero, one attempt each, in the explicit `5be13705` image. Exact
+ELF, source-owner, finalization, image and CAS identities are retained in
+`experiments/configs/combined_native_874_875_739_cpu_evidence.json`. This is not
+a GPU or performance pass. The current T16 synthetic producer binds only the
+new value0/value4 ELFs; the old `51f6` protocol remains historical, not new proof.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
