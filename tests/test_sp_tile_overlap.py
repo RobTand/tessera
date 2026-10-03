@@ -321,9 +321,11 @@ def test_stock_adapter_uses_explicit_kernels_and_full_batch_split_for_one_row_ta
 
 
 @pytest.mark.parametrize("case", ["ok", "custom", "missing_custom", "symm", "unknown_symm",
-                                  "rocm", "missing_nccl", "disabled", "tp4", "missing_method"])
+                                  "rocm", "missing_nccl", "disabled", "tp4", "missing_method",
+                                  "unavailable", "missing_available", "suspended", "missing_suspended"])
 def test_sp_route_matches_pinned_pynccl_branch_or_declines(case):
-    nccl = NS(world_size=2, disabled=False, reduce_scatter=lambda *a: None, all_gather=lambda *a: None)
+    nccl = NS(world_size=2, available=True, disabled=False, _suspended=False,
+              reduce_scatter=lambda *a: None, all_gather=lambda *a: None)
     dc = NS(world_size=2, ca_comm=None, pynccl_comm=nccl)
     symm, rocm = False, False
     if case == "custom": dc.ca_comm = object()
@@ -333,6 +335,10 @@ def test_sp_route_matches_pinned_pynccl_branch_or_declines(case):
     if case == "rocm": rocm = True
     if case == "missing_nccl": del dc.pynccl_comm
     if case == "disabled": nccl.disabled = True
+    if case == "unavailable": nccl.available = False
+    if case == "missing_available": del nccl.available
+    if case == "suspended": nccl._suspended = True
+    if case == "missing_suspended": del nccl._suspended
     if case == "tp4": nccl.world_size = 4
     if case == "missing_method": del nccl.all_gather
     assert (pynccl_sp_decline(dc, symmetric_ag_rs=symm, rocm=rocm) is None) == (case == "ok")
