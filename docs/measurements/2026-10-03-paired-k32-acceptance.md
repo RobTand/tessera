@@ -43,3 +43,38 @@ The PM controller `experiments/t8r_speed/piece_major_pb_action.py` at commit `88
 Paired-specific controller/source/protocol/bit/native qualification is still required before a new action. Bind the owner hash, current published helper generation, immutable image, exact accepted numeric result/input/source/ELFs, fresh output namespace, and explicit root GO. Proposed resources: published pbrun, `--exclusive`, GPU demand1, CPU2/native1, total UMA memory16GiB with GPU subset8GiB, bounded600s owner deadline, preserved PB-assigned affinity and container scope. Native thread variables OMP/MKL/OPENBLAS/NUMEXPR/MAX_JOBS all1. This is a compatibility contract, not a ready-to-run or authorized command; paired main cannot inherit PM proof without its own bound wrapper.
 
 Independent performance reviewer currently owns PM #868 only; no independent paired approval is implied. Root retains final acceptance/GO. Existing TS857 remains open for this outstanding performance proof; PR862 remains draft and opt-in. No additional paired measurement was submitted.
+
+## Source-only summary integrity repair (#889), 2026-10-03
+
+Review found that the existing reducer checked the count of raw events but
+trusted a separately advertised median. Its CPU fixture even supplied30 raw
+ones for every arm while advertising baseline2/candidate1. The new control
+uses consistent even-length samples and rejects invented medians, NaN,
+infinity, zero, negative or boolean samples, and boolean advertised medians.
+The existing `serving.timing_panel.timing_summary` owns finite-positive
+validation and the conventional median; no second statistical rule is added.
+
+Causal PB `a61f802516772ca79521191c2e8ed837e6bd595dfa6524efef770fdcf8c81c4f`
+on the old reducer recorded7 failed/7 passed, with all seven new corruptions
+accepted when they should refuse. This is a synthetic CPU-control population,
+not replay of the accepted15 numeric outputs or the historical ABBA data.
+Frozen source/input manifests and native banks retain their original hashes;
+changed controller code needs its own bound source qualification before any
+future GPU action. Historical results above are neither recomputed nor promoted.
+
+Corrected PB `4d6418a789c0df1c0e00a06ab2e810f800985d91ec389dd01c0e887a0eb21aec`
+completed28 CPU controls, zero skips/uncollected/CUDA allocations onDL380G10:
+the full paired-action file and the existing torch-free canonical timing owner
+controls. No GPU smoke, numeric replay, real-data reduction or new native build
+ran. This repair closes only the raw-event integrity defect, not #857 or #855.
+
+The child PRs actual hosted pure run then exposed11 inherited missing-Torch
+failures inside mixed pure/Torch test files. Only those four tensor/helper
+test functions now report the absent optional dependency with importorskip;
+the remaining pure C++/admission controls stay collected. PB
+`13967d2d5fe15b739cfb8a3174f7b0bfd1ce4f3515acc05547c578bfb9adddbb`
+executed all11 affected cases with real CPU Torch:11 passes, zero skips,
+zero uncollected modules/CUDA allocations. Canonical receipt
+`2478d7ca8960f8702def8a56ccee6f15b8b88e05a058bb46cb4400cf5afa6941`.
+This includes the source-extracted host C++ resource probe, not a new CUDA
+native build or native numerical qualification.

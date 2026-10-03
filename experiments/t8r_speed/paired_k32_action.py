@@ -1,7 +1,8 @@
 """One finite baseline/candidate run through existing bench/native/input owners.
 
-Stock vLLM custom ops run directly under its execution exemption. Preparation
-and CPU controls use PrismaBuild. This is not a dispatcher or residency cache.
+The historical direct launcher is not a qualified PrismaBuild controller.
+Batch custom-op work is not covered by the vLLM service exemption; the
+paired acceptance packet governs any future PB-bound controller.
 """
 import argparse
 import hashlib
@@ -18,6 +19,7 @@ import time
 import statistics
 
 from paired_k32_qualification import compare_reports,numeric_certificate,NUMERIC_RECEIPT,NUMERIC_RECEIPT_SHA
+from tessera.serving.timing_panel import timing_summary as event_summary
 
 
 def owned_cleanup(arm_out, *, run=subprocess.run):
@@ -111,10 +113,14 @@ def timing_summary(reports,certificate):
             if (len(c['raw_events_ms'])!=30 or c['numeric_receipt_sha256']!=NUMERIC_RECEIPT_SHA
                     or c['native_paired_build'] is not arm.startswith('B') or c['out_sha256']!=expected['sha256']):
                 raise ValueError('timing lacks exact events/numeric binding')
+            observed_median = event_summary(c['raw_events_ms'])['median_ms']
+            if (type(c['wall']['median_ms']) not in (int, float)
+                    or c['wall']['median_ms'] != observed_median):
+                raise ValueError('timing median differs from exact finite positive raw events')
             for mode in ('0','2'):
                 if c['geometry'][mode]['paired'] is not (arm.startswith('B') and m!='1'):
                     raise ValueError('timing dispatch differs from qualified scope')
-            cells.setdefault(m,{})[arm]=c['wall']['median_ms']
+            cells.setdefault(m,{})[arm]=observed_median
     if any(owner!=owners[0] for owner in owners):raise ValueError('ABBA original file identities differ')
     for c in cells.values():
         c['baseline_median_ms']=statistics.median([c['A1'],c['A2']])
