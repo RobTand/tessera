@@ -21,7 +21,11 @@ No default, serving cell, price, PACT or energy claim is promoted. The combined
 explicitly skipped CUDA/bank cases) and seven fresh CPU-native build actions,
 all returncode zero, one attempt each, in the explicit `5be13705` image. Exact
 ELF, source-owner, finalization, image and CAS identities are retained in
-`experiments/configs/combined_native_874_875_739_cpu_evidence.json`. This is not
+`experiments/results/combined_native_874_875_739_cpu_evidence.json`. This is not
+an active runtime-image owner or placement recipe: the byte-preserved observed
+receipt belongs to the established results namespace (#903), while acting
+code and generated execution recipes retain the canonical runtime-image owner.
+This is not
 a GPU or performance pass. The current T16 synthetic producer binds only the
 new value0/value4 ELFs; the old `51f6` protocol remains historical, not new proof.
 The T16 `native-preflight` operation reads the complete fresh bank through the
