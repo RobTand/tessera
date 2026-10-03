@@ -120,7 +120,7 @@ def test_value_retained_arms_keep_production_source_owner(tmp_path, monkeypatch,
 ])
 def test_original_token_sum_owners_require_matching_source(tmp_path, monkeypatch, module, source_module):
     from tessera.serving.ext import native_source_path
-    assert native_source_path(source_module).name == "routed_fused_window.cu"
+    assert Path(native_source_path(source_module)).name == "routed_fused_window.cu"
     owner, reader, staged, rf, original, calls = owner_fixture(
         tmp_path, monkeypatch, owner_args={"module": module, "source_module": source_module})
     try:

@@ -13,6 +13,11 @@ CPU-input refusal evidence, retained absent-platform serving refusal, and
 released its SDK lease. CUDA source, sealed readsets and ELF identities are
 unchanged. This is four actual CPU native diagnostics, not CUDA output-device
 qualification; the original zero-token before/fixed GPU gate remains held.
+The initial new mapping assertion assumed the source resolver returned a Path;
+PB `f86b5dd5` retained two failures/17 passes. Wrapping its actual string
+result in Path and updating the CPU-success protocol controls passed PB
+`a72b1037`: five passes, zero skips/uncollected/CUDA allocations. Its receipt
+is `9128737052c94a3319350dc0423844c68d406cc7def22edc7be28182c89fe9da`.
 
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
