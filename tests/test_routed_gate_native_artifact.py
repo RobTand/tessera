@@ -112,3 +112,51 @@ def test_value_retained_arms_keep_production_source_owner(tmp_path, monkeypatch,
     owner.finish(lambda: None)
     assert rf.build_library is original
     reader.close()
+
+
+def test_multi_arm_load_path_fds_remain_distinct_until_teardown(tmp_path, monkeypatch):
+    held, readers = [], []
+    try:
+        for index, module in enumerate(["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4"]):
+            path = tmp_path / str(index)
+            path.mkdir()
+            owner, reader, staged, rf, original, calls = owner_fixture(
+                path, monkeypatch, owner_args={"module": module, "source_module": "tessera_routed_fused_value"})
+            readers.append(reader)
+            rf.build_library(module, "tessera_routed_fused_value", lambda *a: pytest.fail("no JIT"))
+            fd = owner.fd
+            held.append(fd)
+            owner.finish(lambda: None, keep_load_fd=True)
+            assert os.fstat(fd).st_size == 10
+            assert rf.build_library is original and owner.closed
+            assert module not in sys.modules
+        assert len(set(held)) == 2
+        for fd in held:
+            assert os.fstat(fd).st_size == 10
+    finally:
+        for fd in held:
+            os.close(fd)
+        for reader in readers:
+            reader.close()
+
+
+@pytest.mark.parametrize("matched", [False, True])
+def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, matched):
+    owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
+    lib = rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail("no JIT"))
+    info = os.fstat(owner.fd)
+    inode = info.st_ino if matched else info.st_ino + 1
+    maps = f"1000-2000 r-xp 00000000 {os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x} {inode} /sealed/native.so\n"
+    original_read = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda path, *a, **kw: maps if str(path) == "/proc/self/maps" else original_read(path, *a, **kw))
+    try:
+        if matched:
+            owner.attest_mapped(lib)
+            assert owner.record["mapped_sha256"] == owner.record["expected_sha256"]
+            assert owner.record["executable_mappings"] == [maps.strip()]
+        else:
+            with pytest.raises(ValueError, match="held ELF inode"):
+                owner.attest_mapped(lib)
+    finally:
+        owner.finish(lambda: None)
+        reader.close()

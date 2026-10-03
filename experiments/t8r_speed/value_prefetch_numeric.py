@@ -141,7 +141,7 @@ def consume(bank, manifest, out):
         raise ValueError('synthetic numeric consumer requires admitted CUDA')
     out.mkdir(parents=True, exist_ok=False)
     reader = StagedInputs(manifest)
-    reports, owners = [], []
+    reports, owners, live_load_fds = [], [], []
     try:
         import zipfile
         runner_dir = out / "runner"
@@ -178,6 +178,9 @@ def consume(bank, manifest, out):
                                        expected_sha256=expected, source_sha256=SOURCE_SHA,
                                        module=module, source_module='tessera_routed_fused_value')
                 try:
+                    lib = rf._ext("value")
+                    owner.attest_mapped(lib)
+                    owner.record["resolved_value_prefetch"] = int(lib.VALUE_A_PREFETCH)
                     for i, sample in enumerate(samples):
                         outputs = _staged_check(stacks, bundles, sample['x'], sample['ids'], sample['weights'],
                                                 'value', f'{SCOPE}:{arm}:q{case["q256"]}:M{sample["m"]}', compact=False)
@@ -189,14 +192,25 @@ def consume(bank, manifest, out):
                                 compare_bits(left, right)
                             reports.append({'q256': case['q256'], 'm': sample['m'], 'stages': ['mode1', 'activation', 'mode2', 'mode0'], 'bitwise': True})
                 finally:
-                    owner.finish(torch.cuda.synchronize)
+                    if owner.module is not None:
+                        live_load_fds.append(owner.fd)
+                    try:
+                        if owner.module is not None:
+                            owner.attest_mapped(owner.module)
+                    finally:
+                        owner.finish(torch.cuda.synchronize, keep_load_fd=True)
                     owners.append(dict(owner.record, q256=case["q256"], arm=arm))
                     rf._ext.cache_clear()
         if len(reports) != len(Q256_CASES) * len(MS):
             raise ValueError("incomplete synthetic numeric result")
         (out / "numeric.json").write_text(json.dumps({"scope": SCOPE, "results": reports, "owners": owners, "readset_sha256": reader.manifest_sha256}, indent=2) + "\n")
     finally:
-        reader.close()
+        try:
+            torch.cuda.synchronize()
+        finally:
+            for fd in live_load_fds:
+                os.close(fd)
+            reader.close()
 
 
 def sanitize(bank, manifest, out):

@@ -37,6 +37,12 @@ compares every stage and final output by bytes on identical input tensors,
 and supplements this with the existing derived-bound oracle. Its sanitizer
 operation executes only the digest-bound retained tool and runtime files.
 This preparation does not replace actual calibrated T16 release acceptance.
+The two-arm diagnostic holds every loaded native FD through experiment teardown
+to prevent `/proc/self/fd` pathname reuse in CPython/dlopen caches. Resolved
+prefetch distance, executable mapped inode and held-ELF digest are recorded per
+arm. `experiments/configs/value_prefetch_874_protocol.json` freezes staging,
+single-attempt admission, finite numeric/sanitizer deadlines and cleanup;
+it is an authorization proposal, not permission to execute GPU work.
 
 The results show why this combination is interesting: **Tessera-8 reaches
 EXL3-like reconstruction quality while using FP8 activations**, and a

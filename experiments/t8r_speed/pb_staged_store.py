@@ -297,7 +297,23 @@ class NativeCallback:
             module.__spec__.origin!=origin):
             raise ValueError('actual native module origin/identity differs')
 
-    def finish(self, fence):
+    def attest_mapped(self, module):
+        """Diagnostic mapping proof using the held artifact FD, never path rereads."""
+        self.bind(module)
+        info = os.fstat(self.fd)
+        matches = []
+        for line in Path("/proc/self/maps").read_text().splitlines():
+            fields = line.split(None, 5)
+            if len(fields) >= 5 and "x" in fields[1]:
+                major, minor = (int(v, 16) for v in fields[3].split(":"))
+                if (major, minor, int(fields[4])) == (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino):
+                    matches.append(line)
+        if not matches:
+            raise ValueError("native module is not mapped from its held ELF inode")
+        self.record["executable_mappings"] = matches
+        self.record["mapped_sha256"] = self._hash()
+
+    def finish(self, fence, *, keep_load_fd=False):
         if self.closed: return
         try:
             if self.module is not None:
@@ -308,6 +324,10 @@ class NativeCallback:
                     raise ValueError('native artifact changed during profile')
         finally:
             self.rf.build_library=self.original
-            os.close(self.fd);self.closed=True
+            # Diagnostic multi-arm callers hold every loaded pathname alive
+            # until teardown: CPython/dlopen can cache /proc/self/fd names.
+            if not keep_load_fd or self.module is None:
+                os.close(self.fd)
+            self.closed=True
             if self.module is not None and sys.modules.get(self.MODULE) is self.module:
                 del sys.modules[self.MODULE]
