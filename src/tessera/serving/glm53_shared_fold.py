@@ -54,19 +54,17 @@ for the first kept call (with the reason).
 from __future__ import annotations
 
 import functools
-import hashlib
 import importlib
-import inspect
 import logging
 import os
 import threading
-from pathlib import Path
 from threading import RLock
 from typing import Any
 
 import torch
 
 from .flags import latched_bool
+from .stock_interface import source_digest as _source_digest, signature_parameters, stock_attribute
 
 __all__ = ["FLAG", "install_for_current_config", "native_call", "runner_decline_reason"]
 
@@ -247,11 +245,6 @@ def native_call(adapter: Any, x: Any, expert_ids: Any, routing_weights: Any, *,
 
 # -- install -----------------------------------------------------------------
 
-def _source_digest(module: Any) -> str | None:
-    path = getattr(module, "__file__", None)
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
-
-
 def _compilation_reason() -> str | None:
     try:
         from vllm import config as vllm_config
@@ -267,27 +260,27 @@ def _compilation_reason() -> str | None:
     return None
 
 
+def _inspect(runner_module: Any, shared_module: Any):
+    """Retain the source/class/method/order facts inspected before rebinding."""
+    digests=[]
+    for name,module in ((_RUNNER_MODULE,runner_module),(_SHARED_MODULE,shared_module)):
+        digest=_source_digest(module);digests.append(digest)
+        if digest is None:return None,None,None,tuple(digests),f"{name} has no source file to inspect"
+        if digest not in _INSPECTED_SHA256[name]:return None,None,None,tuple(digests),f"{name} sha256 {digest[:12]} is not an inspected source"
+    runner=stock_attribute(runner_module,"MoERunner")
+    if runner is None:return None,None,None,tuple(digests),f"{_RUNNER_MODULE} has no MoERunner"
+    params=signature_parameters(runner,"_maybe_apply_routed_scale_to_output")
+    if params!=_SIGNATURE:return None,None,None,tuple(digests),f"MoERunner._maybe_apply_routed_scale_to_output has parameters {params}, expected {_SIGNATURE}"
+    order=stock_attribute(shared_module,"SharedExpertsOrder")
+    shared=stock_attribute(shared_module,"SharedExperts")
+    no_overlap=stock_attribute(order,"NO_OVERLAP")
+    if no_overlap is None or shared is None or stock_attribute(shared,"_determine_shared_experts_order") is None or stock_attribute(shared,"_output_idx") is None:
+        return None,None,None,tuple(digests),f"{_SHARED_MODULE} lacks SharedExpertsOrder.NO_OVERLAP or the SharedExperts slots"
+    return runner,stock_attribute(runner,"_maybe_apply_routed_scale_to_output"),no_overlap,tuple(digests),_compilation_reason()
+
+
 def _decline_reason(runner_module: Any, shared_module: Any) -> str | None:
-    for name, module in ((_RUNNER_MODULE, runner_module), (_SHARED_MODULE, shared_module)):
-        digest = _source_digest(module)
-        if digest is None:
-            return f"{name} has no source file to inspect"
-        if digest not in _INSPECTED_SHA256[name]:
-            return f"{name} sha256 {digest[:12]} is not an inspected source"
-    runner = getattr(runner_module, "MoERunner", None)
-    if runner is None:
-        return f"{_RUNNER_MODULE} has no MoERunner"
-    params = tuple(inspect.signature(runner._maybe_apply_routed_scale_to_output).parameters)
-    if params != _SIGNATURE:
-        return (f"MoERunner._maybe_apply_routed_scale_to_output has parameters {params}, "
-                f"expected {_SIGNATURE}")
-    order = getattr(shared_module, "SharedExpertsOrder", None)
-    shared = getattr(shared_module, "SharedExperts", None)
-    if getattr(order, "NO_OVERLAP", None) is None or shared is None \
-            or not hasattr(shared, "_determine_shared_experts_order") \
-            or not hasattr(shared, "_output_idx"):
-        return f"{_SHARED_MODULE} lacks SharedExpertsOrder.NO_OVERLAP or the SharedExperts slots"
-    return _compilation_reason()
+    return _inspect(runner_module,shared_module)[4]
 
 
 def install_for_current_config() -> bool:
@@ -305,25 +298,22 @@ def install_for_current_config() -> bool:
         try:
             runner_module = importlib.import_module(_RUNNER_MODULE)
             shared_module = importlib.import_module(_SHARED_MODULE)
-        except ImportError as exc:
+        except Exception as exc:
             reason = f"the stock MoE runner is not importable ({exc})"
         else:
-            runner = getattr(runner_module, "MoERunner", None)
-            if runner is not None and getattr(runner._maybe_apply_routed_scale_to_output, _MARK,
-                                              False) and _STATE.get("installed"):
+            runner = stock_attribute(runner_module,"MoERunner")
+            if runner is not None and stock_attribute(stock_attribute(runner,"_maybe_apply_routed_scale_to_output"),_MARK,False) and _STATE.get("installed"):
                 return True
-            reason = _decline_reason(runner_module, shared_module)
+            runner,stock,no_overlap,digests,reason = _inspect(runner_module,shared_module)
         if reason is not None:
             _report(f"{_LEVER} declined, stock MoERunner._maybe_apply_routed_scale_to_output: "
                     f"{reason}")
             return False
-        runner = runner_module.MoERunner
-        stock = runner._maybe_apply_routed_scale_to_output
         stock = getattr(stock, "__wrapped_stock__", stock)
         runner._maybe_apply_routed_scale_to_output = _wrap(stock)
-        _STATE.update(installed=True, no_overlap=shared_module.SharedExpertsOrder.NO_OVERLAP)
+        _STATE.update(installed=True, no_overlap=no_overlap)
         image = os.environ.get("TESSERA_CENSUS_RUNTIME_IMAGE", "").rpartition("@sha256:")[2][:12]
-        _report(f"{_LEVER} installed (stock source sha256 {_source_digest(runner_module)[:12]} "
-                f"and {_source_digest(shared_module)[:12]}, image sha {image or 'unstated'}): "
+        _report(f"{_LEVER} installed (stock source sha256 {digests[0][:12]} "
+                f"and {digests[1][:12]}, image sha {image or 'unstated'}): "
                 "MoERunner skips the shared add when token_sum already made it")
         return True
