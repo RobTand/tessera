@@ -55,9 +55,9 @@ def test_synthetic_matrix_covers_every_routed_run_pair():
 def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phase):
     import json
     manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
-                "produced_by": {"tool": "test"}, "mount_prefix": "/mnt/shared",
+                "produced_by": {"tool": "test"}, "mount_prefix": str(tmp_path),
                 "annotations": {"phases": [{"name": "whole-synthetic-bank", "bytes": 32, "cumulative_bytes": 32 if complete_phase else 31}]},
-                "entries": [{"path": "/mnt/shared/synthetic.pt", "offset": 0, "bytes": 32, "sha256": "0" * 64}],
+                "entries": [{"path": str(tmp_path / "synthetic.pt"), "offset": 0, "bytes": 32, "sha256": "0" * 64}],
                 "entry_count": 1, "total_bytes": 32}
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps(manifest))

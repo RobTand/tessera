@@ -1,5 +1,18 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-03 for default-off folded BF16 activation prefetch (#874).
+The existing value-library owner accepts only distance0/default or opt-in4,
+freezes selection in its cache, and uses a separately named retained library
+with exported-distance attestation. One-run routed BM64 modes0/1/2 retain
+their ABI, layout and accumulation order; dense/two-run and other families
+are controls. Source `849b039b` has accepted 54-pair synthetic-only exact
+numeric and full-matrix memcheck evidence, not calibrated original-model
+performance, serving, energy or PACT evidence. Frozen protocol/native/readset
+identities remain in `experiments/configs/value_prefetch_874_protocol.json`.
+Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
+skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
+now uses its temporary root, not an undeclared box path. Issue874 remains open.
+
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
