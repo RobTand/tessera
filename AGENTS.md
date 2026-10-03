@@ -105,9 +105,33 @@ person or agent — changing the code.
     **Severity.** `P0` -- can ship or serve a wrong artifact. `P1` -- a gate that
     cannot catch its own defect, or a wrong or underived number a decision reads.
     `P2` -- provenance, observability, or a claim beyond its evidence. `P3` --
-    cleanup with no decision riding on it. Two orthogonal labels:
+    cleanup with no decision riding on it. `P2+` sits between `P1` and `P2`: an
+    important `P2` gap with no `P0`/`P1` consequence, carrying a documented
+    urgency trigger -- it blocks an already-required, named near-term acceptance
+    or handoff from getting trustworthy evidence, the evidence it needs is at a
+    concrete retention or deletion deadline, or measured recurring waste
+    threatens an approved campaign's admitted resource window. Name the milestone
+    or deadline, or the measurement and its causal effect; a generic blocker or
+    "this matters" is not `P2+`, and a demonstrated `P0` or `P1` stays where it
+    is -- `P2+` never downgrades it. Two orthogonal labels:
     `measurement-needed` when a GPU or served A/B decides it, and
     `needs-decision` when the answer is a trade only Rob prices.
+
+    **The priority lives on the issue, where anyone can see it.** Every owned
+    issue that is filed, reopened or materially re-triaged leads its title with
+    exactly one prefix -- `[P0]`, `[P1]`, `[P2+]`, `[P2]` or `[P3]` -- and,
+    where the repo label exists, carries that one priority label and no other;
+    nonpriority labels coexist untouched. A prose severity, a local ledger or a
+    status label is not the canonical encoding. Where the matching label is
+    absent, the title prefix stays canonical until a maintainer with label
+    authority adds it -- do not substitute `P2` for `P2+` and do not create
+    labels without authority. Missing, doubled or mismatched prefix and label
+    block handoff and closure until the owner fixes them, and while two readings
+    stand, route at the higher one. Reprioritizing leaves a comment: old prefix,
+    new prefix, what changed, why, who reviewed it. This applies from here
+    forward -- no mass relabelling or retrospective reprioritization of
+    historical issues. Severity stays independent of whether the issue is
+    blocked, waiting on a measurement, or waiting on a decision.
 
     **One exception, narrower than it was.** A finding in prose -- a doc, comment
     or docstring -- is *fixed on sight* and never filed: reading the cited line
