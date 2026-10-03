@@ -56,7 +56,13 @@ controls (two real filesystem refusal lease models and tool subprocess failure),
 with twelve deselected and no CUDA. Exact receipt, source, scope and complete
 OOM0/processes-live0 telemetry are retained in
 `experiments/results/value_prefetch_902_cpu_cleanup_evidence.json`; specific
-cleanup correction acceptance is not whole901/source/GPU acceptance.
+cleanup correction acceptance is not whole901/source/GPU acceptance. After the
+complete accepted T4 prerequisite composition, action97c689fb source0a132caf
+passed all six specifically changed initial normal-feedback cases, with zero
+skips/uncollected tests/CUDA allocations. Its exact source, CAS receipt,
+telemetry and one managed completion-client ending are recorded in
+`experiments/results/combined_feedback_901_cpu_evidence.json`. This narrow
+causal gate pass is not the full normal suite or scientific GPU authorization.
 
 The #875 composed qualifier binds exactly the two finalized production FP4
 banks from common source `bcdd43f6`, immutable image `5be13705`, and the actual
