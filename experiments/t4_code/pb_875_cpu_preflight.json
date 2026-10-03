@@ -5,57 +5,134 @@
       "-m",
       "pytest",
       "tests/test_routed_fused_e2m1.py",
-      "tests/test_serving_native_extensions.py",
-      "tests/test_routed_terminal_cuda.py"
+      "-k",
+      "extension_consumer"
     ],
-    "cwd": "/home/rob/tmp/sol-t4-875-pb",
-    "demand": {
-      "cpu": 2,
-      "mem_gb": 4
-    },
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
     "anywhere": true,
-    "env": {
-      "OMP_NUM_THREADS": "1",
-      "MKL_NUM_THREADS": "1",
-      "OPENBLAS_NUM_THREADS": "1"
-    },
-    "timeout_s": 600
-  },
-  {
-    "argv": [
-      "bash",
-      "-c",
-      "set -euo pipefail; mkdir -p /mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/home /mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/tmp /mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/triton /mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/native-identities; docker run --rm --user \"$(id -u):$(id -g)\"  --network none -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 -e OPENBLAS_NUM_THREADS=1 -e MAX_JOBS=1 -e CUDA_VISIBLE_DEVICES= -e NVIDIA_VISIBLE_DEVICES=void -e ORACLE_IMAGE=vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14 -e PYTHONPATH=/work/src:/work/experiments/t4_code:/work/tests -e HOME=/mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/home -e TMPDIR=/mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/tmp -e TRITON_CACHE_DIR=/mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/triton -e TORCH_EXTENSIONS_DIR=/mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/home/torch_extensions -e TERMINAL_NATIVE_IDENTITY_DIR=/mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native/native-identities -v \"$PWD\":/work:ro -v /mnt/shared/tessera-measurements/t4-875-cpu-20261003:/mnt/shared/tessera-measurements/t4-875-cpu-20261003 -w /work --entrypoint bash vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14 -c 'set -euo pipefail; printf '\\''%s\\n'\\'' '\\''4acdfd8d85663bc2562c1e239dad447e84a26a56d509a1f9ac0110891c46078a  experiments/t4_code/fused_e2m1_check.py'\\'' '\\''f51c6a919fb7b5854820a2448953f0cb484166028964155dd94f7c76e845c589  src/tessera/_dev/native_identity.py'\\'' '\\''14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py'\\'' '\\''d1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py'\\'' | sha256sum -c -; python3 experiments/t4_code/fused_e2m1_check.py --out /mnt/shared/tessera-measurements/t4-875-cpu-20261003/root-go/cpu-mapped-native --retained-banks /mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-userenv/native_compile.json --compare-prefetch --build-only'"
-    ],
-    "cwd": "/home/rob/tmp/sol-t4-875-pb",
     "demand": {
       "cpu": 1,
-      "mem_gb": 4
+      "mem_gb": 3
     },
-    "anywhere": true,
-    "container_images": [
-      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
-    ],
-    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset.json",
+    "env": {
+      "OMP_NUM_THREADS": "1"
+    },
     "timeout_s": 180
   },
   {
     "argv": [
       "bash",
       "-c",
-      "set -euo pipefail; printf '%s\\n' '7a7fcdefb67042731daf021478176f4919e1843d0b10cb697af28a7d8a3d108b  /usr/local/cuda-13.0/compute-sanitizer/compute-sanitizer' 'a8988c4ec7ba20d4b03bc27cbd0ad85dfe363a3a42c793e4a4883515c7a67ab0  /usr/local/cuda-13.0/compute-sanitizer/libInterceptorInjectionTarget.so' '468536e1b20e29241826788756f2b4a0f4c4e0cda8e6007c215164f590f23cf4  /usr/local/cuda-13.0/compute-sanitizer/libsanitizer-collection.so' '3077e5732b363ff532e55e7e35c7ddff65d2c57d0898f0abc0b5d614a45d9a24  /usr/local/cuda-13.0/compute-sanitizer/libsanitizer-public.so' '7d5b878dc8d8a31c425d32e74cf473e2a0d5db6b8fc08829727c04d4caf5239c  /usr/local/cuda-13.0/compute-sanitizer/libTreeLauncherPlaceholder.so' '29862189027903d504b0d48d8f4583d36e38294d927371ef7405ef24155deac5  /usr/local/cuda-13.0/compute-sanitizer/libTreeLauncherTargetInjection.so' 'e56384c6e944a9ef15d6a40d54f8cd4ebcb1d300a694bc44e8bb1d22408800e2  /usr/local/cuda-13.0/compute-sanitizer/libTreeLauncherTargetUpdatePreloadInjection.so' '9a27106d62ec6eb326abe2722e890d618d2e536fe5b9c9e9401d5b3369d7735f  /usr/local/cuda-13.0/compute-sanitizer/TreeLauncherSubreaper' '9c3e6419b60038d39ab964f4fa4ed4c0a19d2db12540297fca2e2b136d39c811  /usr/local/cuda-13.0/compute-sanitizer/TreeLauncherTargetLdPreloadHelper' | sha256sum -c -; docker run --rm --network none -e CUDA_VISIBLE_DEVICES= -e NVIDIA_VISIBLE_DEVICES=void -v /usr/local/cuda-13.0/compute-sanitizer:/tools/compute-sanitizer:ro --entrypoint bash vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14 -c '/tools/compute-sanitizer/compute-sanitizer --version; python3 -c \"import pytest; print(pytest.__version__)\"'"
+      "set -e; bash -n experiments/t4_code/prefetch_qualification_action.sh; /home/rob/venvs/pb-cpu/bin/python -m pytest tests/test_routed_gate_native_artifact.py tests/test_native_fd_loader_lifetime.py"
     ],
-    "cwd": "/home/rob/tmp/sol-t4-875-pb",
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "anywhere": true,
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 3
+    },
+    "env": {
+      "OMP_NUM_THREADS": "1",
+      "PYTHONPATH": "src:/mnt/shared/prismabuild-fleet/repo/src"
+    },
+    "timeout_s": 180
+  },
+  {
+    "argv": [
+      "/home/rob/venvs/pb-cpu/bin/python",
+      "experiments/t4_code/prefetch_qualification.py",
+      "staged-read",
+      "--manifest",
+      "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset-staged.json"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "anywhere": true,
     "demand": {
       "cpu": 1,
       "mem_gb": 2
     },
-    "tags": [
-      "sparky"
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "residency_share": "off",
+    "env": {
+      "PYTHONPATH": "src:/mnt/shared/prismabuild-fleet/repo/src",
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "timeout_s": 180
+  },
+  {
+    "argv": [
+      "/home/rob/venvs/pb-cpu/bin/python",
+      "experiments/t4_code/prefetch_qualification.py",
+      "staged-read",
+      "--manifest",
+      "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json"
     ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "anywhere": true,
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 2
+    },
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "residency_share": "off",
+    "env": {
+      "PYTHONPATH": "src:/mnt/shared/prismabuild-fleet/repo/src",
+      "PYTHONDONTWRITEBYTECODE": "1"
+    },
+    "timeout_s": 180
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; printf '%s\\n' '30c72947d57a47ccafc5846ff9b98e4e494a0ba6bad0292e0dc4efe36d21a955  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/cpu-native-map' cpu-map '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset-staged.json' "
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "anywhere": true,
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 4
+    },
     "container_images": [
       "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
     ],
-    "timeout_s": 180
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "residency_share": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 300
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; printf '%s\\n' '30c72947d57a47ccafc5846ff9b98e4e494a0ba6bad0292e0dc4efe36d21a955  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/cpu-staged-tools' tool-preflight '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' "
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "anywhere": true,
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 4
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "residency_share": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 300
   }
 ]

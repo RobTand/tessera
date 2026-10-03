@@ -8,6 +8,7 @@ GPU_ARGS=(); DRIVER_ARGS=(); VISIBILITY=(); OUT_ARGS=(--out "$OUT/diagnostic")
 case "$MODE" in
   staged-read) DRIVER_ARGS=(staged-read); OUT_ARGS=() ;;
   cpu-map) DRIVER_ARGS=(consume --cpu-map) ;;
+  tool-preflight) DRIVER_ARGS=(tool-preflight) ;;
   numeric|native) GPU_ARGS=(--gpus all); DRIVER_ARGS=(consume) ;;
   sanitize) GPU_ARGS=(--gpus all); DRIVER_ARGS=(sanitize) ;;
   *) echo "unsupported qualification mode $MODE" >&2; exit 2 ;;

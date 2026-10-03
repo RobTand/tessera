@@ -247,6 +247,12 @@ def sanitize(args):
             target.chmod(0o755)
             if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
                 raise ValueError("actual staged sanitizer bytes differ")
+        if args.command == "tool-preflight":
+            subprocess.run([str(tool_dir / "compute-sanitizer"), "--version"], check=True)
+            print(json.dumps({"kind": "CPU staged-tool compatibility only",
+                              "pin_id": reader.held["pin_id"], "ref_id": reader.held["ref_id"],
+                              "reads": reader.reads}), flush=True)
+            return 0
         command = [str(tool_dir / "compute-sanitizer"), "--tool", args.tool,
                    "--error-exitcode", "86", "--target-processes", "all",
                    "--log-file", str(out / "sanitizer.log"), sys.executable, str(Path(__file__).resolve()),
@@ -280,6 +286,9 @@ def main():
     san.add_argument("--out", required=True)
     san.add_argument("--tool", required=True, choices=("memcheck", "racecheck", "synccheck", "initcheck"))
     san.add_argument("--arm", type=int, choices=(0, 4))
+    tools = sub.add_parser("tool-preflight")
+    tools.add_argument("--manifest", required=True)
+    tools.add_argument("--out", required=True)
     args = ap.parse_args()
     if args.command == "repair-readset":
         repair_readset(args.original, args.out, include_tools=args.include_tools)
@@ -292,7 +301,7 @@ def main():
     if args.command == "staged-read":
         staged_read(args.manifest)
         return 0
-    if args.command == "sanitize":
+    if args.command in ("sanitize", "tool-preflight"):
         return sanitize(args)
     return consume(args)
 
