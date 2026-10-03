@@ -18,6 +18,22 @@ compiler objects, HOME and temporary state on the shared measurement volume;
 observed worker floor and immutable-image compatibility remain admission gates.
 No default, serving cell, price, PACT or energy claim is promoted.
 
+The #875 composed qualifier binds exactly the two finalized production FP4
+banks from common source `bcdd43f6`, immutable image `5be13705`, and the actual
+PB compile actions `b70ff504`/`b45dfd00`. Each arm declares its compile record,
+no-pending-work finalization and ELF in that order (six whole-file inputs),
+plus the nine immutable sanitizer members only when needed. Production PyInit
+names remain `tessera_routed_fused_e2m1` / `tessera_routed_fused_e2m1_apf4`;
+both resolve the existing value source owner and load once from held SDK FDs
+through the existing NativeCallback and full E2M1 ABI checker. No raw banks,
+second loader/cache, recompilation or old-image proof bridge is introduced.
+The old #875 finite manifests below are preserved historical source4e/image61
+records, not runnable composed-source qualification or GPU authorization.
+New composed source/image/readset/capacity identities require their own parent
+review and actual CPU stage/mapping evidence before the separately held GPU
+science/admission gate. No 15-GPU-payload submissions have been made; metadata
+CPU action `3d65783a` separately passed 18 no-retag capacity controls.
+
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
 before the first MMA on routed E4M3-MMA mode0, one-run R4 only. Both64/128-route

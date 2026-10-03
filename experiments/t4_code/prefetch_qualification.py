@@ -18,16 +18,28 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments/t8r_speed"), str(ROOT / "tests")]
 
-SOURCE_SHA = "c2d56fc8b91045da3ff0b274e8cd7e285c1c5aa7b91bfc76fdc86886103e2012"
-IMAGE = "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
-NATIVE_ROOT = Path("/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-userenv")
-NATIVE_RECORD = NATIVE_ROOT / "native_compile.json"
-ARMS = {
-    0: ("tessera_routed_fused_e2m1_dev_apf0", "9a33c215c306a75640d025b807e6e6d9aa7e75892d76598acdd2120360a5c26c"),
-    4: ("tessera_routed_fused_e2m1_dev_apf4", "17f0f390ed688ba4a93876ec6713acf796550b64dba0f2e5d08f4d6e635fe3d9"),
+SOURCE_SHA = "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40"
+IMAGE = "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+NATIVE_ROOT = Path("/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6")
+BANKS = {
+    0: {"module": "tessera_routed_fused_e2m1", "bytes": 1889544,
+        "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+        "record_bytes": 2439, "record_sha256": "02ab5a7e607895052f4d3683e50eaca40516a1c5a0ccb36fe442a6e7c560b4bc",
+        "finalization_bytes": 2364, "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
+        "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd"},
+    4: {"module": "tessera_routed_fused_e2m1_apf4", "bytes": 1889584,
+        "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+        "record_bytes": 2459, "record_sha256": "752929fc6444343242cf32c2cb53ed074893cef6c2ca5db4ef1c5b20572c5156",
+        "finalization_bytes": 2404, "finalization_sha256": "fdf833a508705a5409264517ebad607ddde953f56ceb989b7d9367701d4c3be1",
+        "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861"},
 }
-PHASE = "native1-whole"
-TOOLS_ROOT = NATIVE_ROOT.parent / "sanitizer-immutable"
+for _arm, _bank in BANKS.items():
+    _bank["root"] = NATIVE_ROOT / f"ext-fp4-b{_arm}"
+    _bank["path"] = _bank["root"] / (_bank["module"] + "_sm_121_tessera_guarded_v1") / (_bank["module"] + ".so")
+    _bank["record_path"] = _bank["root"] / "native-build-record.json"
+    _bank["finalization_path"] = _bank["path"].parent / "native-finalization.json"
+PHASE = "t4-composed-whole"
+TOOLS_ROOT = Path("/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable")
 TOOLS_SHA = {
     "compute-sanitizer": "7a7fcdefb67042731daf021478176f4919e1843d0b10cb697af28a7d8a3d108b",
     "libInterceptorInjectionTarget.so": "a8988c4ec7ba20d4b03bc27cbd0ad85dfe363a3a42c793e4a4883515c7a67ab0",
@@ -42,6 +54,49 @@ TOOLS_SHA = {
 
 
 
+def native_members():
+    """Exact production-bank record/finalization/ELF order, one existing owner."""
+    members = {}
+    for bank in BANKS.values():
+        for name in ("record", "finalization"):
+            members[str(bank[name + "_path"])] = (bank[name + "_bytes"], bank[name + "_sha256"])
+        members[str(bank["path"])] = (bank["bytes"], bank["sha256"])
+    return members
+
+
+def validate_bank_record(record, finalization, arm, *, source_module):
+    """Bind the actual production-bank compile/finalization, not old proofs."""
+    bank = BANKS[arm]
+    if (record.get("schema"), record.get("action_key"), record.get("source_sha256")) != (
+            "tessera.native_build_cohort.v1", bank["action_key"], SOURCE_SHA):
+        raise ValueError("common native compile source/action identity differs")
+    image = record["image"]
+    if (image.get("schema"), image.get("required"), image.get("requested"), image.get("resolved_reference"),
+            image.get("present"), image.get("refused")) != (
+            "tessera.runtime_image/1", IMAGE, IMAGE, IMAGE, True, False):
+        raise ValueError("common native compile image identity differs")
+    selectors = {"TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+                 "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": str(arm),
+                 "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"}
+    if record.get("selectors") != selectors:
+        raise ValueError("common native compile independent selectors differ")
+    expected = {"library": "e2m1", "module": bank["module"], "source_module": source_module,
+                "path": str(bank["path"]), "bytes": bank["bytes"], "sha256": bank["sha256"],
+                "finalization_path": str(bank["finalization_path"]),
+                "finalization_sha256": bank["finalization_sha256"],
+                "status": "compile gate (no matching device here)"}
+    if record.get("libraries") != [expected]:
+        raise ValueError("common native production module/artifact differs")
+    if (finalization.get("schema"), finalization.get("reconciled"), finalization.get("no_pending_work")) != (
+            "tessera.native_build_finalization.v1", True, True):
+        raise ValueError("native build is not finalized with no pending work")
+    bindings = finalization["bindings"]
+    if bindings[record["source_path"]]["sha256"] != SOURCE_SHA:
+        raise ValueError("finalization source binding differs")
+    if (bindings[str(bank["path"])]["sha256"], bindings[str(bank["path"])]["bytes"]) != (bank["sha256"], bank["bytes"]):
+        raise ValueError("finalization ELF binding differs")
+
+
 def validate_readset(path):
     from prismabuild import client, storage_tiers
 
@@ -51,9 +106,7 @@ def validate_readset(path):
         raise ValueError("native1 whole-phase ranges differ or are incomplete")
     if client.manifest_read_entries(manifest) != manifest["entries"]:
         raise ValueError("native1 declared consumption order differs")
-    required = {str(NATIVE_RECORD): (852, "b8b242cbbb2901320942e87a273cbce024e86276ad72ab66b23fe5778eb6d9d0")}
-    for arm, (module, digest) in ARMS.items():
-        required[str(NATIVE_ROOT / f"build_apf{arm}" / (module + ".so"))] = (1889616, digest)
+    required = native_members()
     ordered = [e["path"] for e in manifest["entries"]]
     if any(e["offset"] != 0 for e in manifest["entries"]) or len(set(ordered)) != len(ordered):
         raise ValueError("native1 needs unique whole-file offset-zero members")
@@ -77,32 +130,28 @@ def validate_readset(path):
     return manifest, expected
 
 
-def repair_readset(original, output, *, include_tools=False):
-    value = json.loads(Path(original).read_bytes())
-    original_entries = list(value["entries"])
+def prepare_readset(output, *, include_tools=False):
+    """Seal actual already-finalized inputs; never compile or substitute banks."""
+    members = native_members()
     if include_tools:
-        tools = []
-        for name, expected in TOOLS_SHA.items():
-            path = TOOLS_ROOT / name
-            raw = path.read_bytes()
-            digest = hashlib.sha256(raw).hexdigest()
-            if digest != expected:
-                raise ValueError(f"tool preparation bytes differ: {path}")
-            tools.append({"path": str(path), "offset": 0, "bytes": len(raw), "sha256": digest})
-        value["entries"] = tools + original_entries
-        value["entry_count"] = len(value["entries"])
-        value["total_bytes"] = sum(e["bytes"] for e in value["entries"])
-    value["annotations"] = dict(value["annotations"], phases=[
-        {"name": PHASE, "bytes": value["total_bytes"], "cumulative_bytes": value["total_bytes"]}])
+        members = {**{str(TOOLS_ROOT / name): (None, digest) for name, digest in TOOLS_SHA.items()}, **members}
+    entries = []
+    for name, (expected_size, expected_digest) in members.items():
+        raw = Path(name).read_bytes()
+        if (expected_size is not None and len(raw) != expected_size) or hashlib.sha256(raw).hexdigest() != expected_digest:
+            raise ValueError(f"qualified artifact changed before sealing: {name}")
+        entries.append({"path": name, "offset": 0, "bytes": len(raw), "sha256": expected_digest})
+    total = sum(entry["bytes"] for entry in entries)
+    value = {"schema": "prismaquant.prismabuild.data_manifest.v1",
+             "produced_by": {"issue": 875, "scope": "actual finalized common-source T4 code banks; not GPU proof"},
+             "mount_prefix": "/mnt/shared", "entries": entries, "entry_count": len(entries), "total_bytes": total,
+             "annotations": {"phases": [{"name": PHASE, "bytes": total, "cumulative_bytes": total}]}}
     with Path(output).open("x") as handle:
         json.dump(value, handle, indent=2)
         handle.write("\n")
-    checked, phases = validate_readset(output)
-    if [e for e in checked["entries"] if e["path"] in {x["path"] for x in original_entries}] != original_entries:
-        raise ValueError("readset repair changed retained input bytes")
+    validate_readset(output)
     print(json.dumps({"readset": str(output), "sha256": hashlib.sha256(Path(output).read_bytes()).hexdigest(),
-                      "entry_count": checked["entry_count"], "total_bytes": checked["total_bytes"],
-                      "phases": phases, "retained_entries_unchanged": True}), flush=True)
+                      "entries": len(entries), "bytes": total, "scope": "sealed metadata, no CUDA execution"}), flush=True)
 
 
 def staged_read(path):
@@ -176,22 +225,16 @@ def leased_banks(manifest_path, out, *, gpu):
     fence = torch.cuda.synchronize if gpu else lambda: None
     try:
         out.mkdir(parents=True, exist_ok=True)
-        record = reader.json(NATIVE_RECORD)
-        if (record["source_sha256"], record["torch"], record["image"]) != (
-                SOURCE_SHA, torch.__version__, os.environ.get("ORACLE_IMAGE")):
-            raise ValueError("native1 source/torch/image identity differs")
-        rows = {row["activation_prefetch"]: row for row in record["banks"]}
-        if set(rows) != set(ARMS):
-            raise ValueError("native1 must name exactly the baseline/candidate arms")
         source = ext.native_source_path(fe.MODULE_NAME_VALUE)
-        for arm, (module, digest) in ARMS.items():
-            row = rows[arm]
-            expected_path = NATIVE_ROOT / f"build_apf{arm}" / (module + ".so")
-            if (row["path"], row["sha256"], row["bytes"]) != (str(expected_path), digest, 1889616):
-                raise ValueError("native1 module/PyInit artifact differs")
-            owner = NativeCallback(reader, expected_path, fe, out / f"arm{arm}",
-                                   expected_sha256=digest, source_sha256=SOURCE_SHA,
-                                   module=module, source_module=fe.MODULE_NAME_VALUE,
+        if os.environ.get("ORACLE_IMAGE") != IMAGE:
+            raise ValueError("the T4 consumer must use the exact common compile image")
+        for arm, expected_bank in BANKS.items():
+            record = reader.json(expected_bank["record_path"])
+            finalization = reader.json(expected_bank["finalization_path"])
+            validate_bank_record(record, finalization, arm, source_module=fe.MODULE_NAME_VALUE)
+            owner = NativeCallback(reader, expected_bank["path"], fe, out / f"arm{arm}",
+                                   expected_sha256=expected_bank["sha256"], source_sha256=SOURCE_SHA,
+                                   module=expected_bank["module"], source_module=fe.MODULE_NAME_VALUE,
                                    install_build_callback=False)
             owners.append(owner)
             bank = owner.load_declared(source)
@@ -299,10 +342,9 @@ def sanitize(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     sub = ap.add_subparsers(dest="command", required=True)
-    repair = sub.add_parser("repair-readset")
-    repair.add_argument("--original", required=True)
-    repair.add_argument("--out", required=True)
-    repair.add_argument("--include-tools", action="store_true")
+    prepare = sub.add_parser("prepare-readset")
+    prepare.add_argument("--out", required=True)
+    prepare.add_argument("--include-tools", action="store_true")
     validate = sub.add_parser("validate-readset")
     validate.add_argument("--manifest", required=True)
     read = sub.add_parser("staged-read")
@@ -321,8 +363,8 @@ def main():
     tools.add_argument("--manifest", required=True)
     tools.add_argument("--out", required=True)
     args = ap.parse_args()
-    if args.command == "repair-readset":
-        repair_readset(args.original, args.out, include_tools=args.include_tools)
+    if args.command == "prepare-readset":
+        prepare_readset(args.out, include_tools=args.include_tools)
         return 0
     if args.command == "validate-readset":
         manifest, phases = validate_readset(args.manifest)

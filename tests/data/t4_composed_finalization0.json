@@ -1,0 +1,31 @@
+{
+  "schema": "tessera.native_build_finalization.v1",
+  "bindings": {
+    "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+      "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "bytes": 189924,
+      "mtime_ns": 1791059072256511266
+    },
+    "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/build.ninja": {
+      "sha256": "f0bd6b0a889cbce434053a2d6225188ac58d1656f8cc3ce66ab8e35dbc3739cc",
+      "bytes": 1800,
+      "mtime_ns": 1791059073803468869
+    },
+    "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+      "sha256": "ed39bf7dcc8c6aa2484bb91027d882122e2e21b6e1f13a887674c54377b90f5f",
+      "bytes": 2336224,
+      "mtime_ns": 1791059110401205367
+    },
+    "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so": {
+      "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+      "bytes": 1889544,
+      "mtime_ns": 1791059110564208648
+    }
+  },
+  "log_before_sha256": "03ff7a647d7b613afd32af091c304739b96da35f104a211968f5936ee5abd6c8",
+  "log_after_sha256": "bfa3c11a39446f28cdf187f89b8947409d2fc6f3ee922208eac9666c8025a5b3",
+  "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_e2m1.so\nninja explain: recorded mtime of tessera_routed_fused_e2m1.so older than most recent input routed_fused_window.cuda.o (1791059073805468909 vs 1791059110401205367)\n",
+  "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+  "reconciled": true,
+  "no_pending_work": true
+}

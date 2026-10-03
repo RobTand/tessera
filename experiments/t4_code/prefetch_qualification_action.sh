@@ -33,6 +33,8 @@ mkdir -p "$OUT"
 docker run --rm "${GPU_ARGS[@]}" "${VISIBILITY[@]}" --network=none --ipc=host --pid=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" -v "$PWD":/work:ro -v "$OUT":"$OUT" \
   -v /mnt/shared/tessera-measurements/t4-875-cpu-20261003:/mnt/shared/tessera-measurements/t4-875-cpu-20261003:ro \
+  -v /mnt/shared/tessera-measurements/combined-native-874-875-739-20261003:/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003:ro \
+  -v /mnt/shared/tessera-measurements/t4-875-composed-qual-20261003:/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003:ro \
   -v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet \
   -v "$STAGE_ROOT":"$STAGE_ROOT" -e HOME="$OUT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e PYTHONPATH="/work/src:/work/tests:/work/experiments/t4_code:/work/experiments/t8r_speed:$PB_CLIENT_ROOT/src" \
