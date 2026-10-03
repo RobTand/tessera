@@ -213,8 +213,48 @@ class PowerSampler:
         return {"sm_clock_mhz": self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM),
                 "temperature_c": self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)}
 
-    def observation(self):
-        return {"unix": time.time(), "power_w": self.read_w(), **self.read_clock_temperature()}
+    def observation(self, *, include_throttle=False):
+        before = time.monotonic()
+        result = {"unix": time.time(), "power_w": self.read_w(), **self.read_clock_temperature()}
+        if include_throttle:
+            result["throttle_reason_mask"] = None
+            try:
+                if self.source == "pynvml":
+                    query = getattr(self._nv, "nvmlDeviceGetCurrentClocksEventReasons", None)
+                    if query is None:
+                        query = self._nv.nvmlDeviceGetCurrentClocksThrottleReasons
+                    result["throttle_reason_mask"] = query(self._h)
+            except Exception as error:
+                result["throttle_observation_error"] = repr(error)
+            result["host_monotonic_read_interval"] = [before, time.monotonic()]
+        return result
+
+    def observe_while(self, work):
+        """Record host-polled evidence, never claim native sensor cadence."""
+        readings = [self.observation(include_throttle=True)]
+        stop = threading.Event()
+        def observe():
+            while not stop.wait(0.1):
+                try:
+                    readings.append(self.observation(include_throttle=True))
+                except Exception as error:
+                    readings.append({"unix": time.time(), "observation_error": repr(error)})
+        thread = threading.Thread(target=observe, daemon=True)
+        start_unix, start_monotonic = time.time(), time.monotonic()
+        thread.start()
+        try:
+            result = work()
+        finally:
+            end_monotonic, end_unix = time.monotonic(), time.time()
+            stop.set()
+            thread.join()
+        readings.append(self.observation(include_throttle=True))
+        return result, {"window_unix": [start_unix, end_unix],
+            "window_monotonic": [start_monotonic, end_monotonic],
+            "source": self.source, "requested_poll_interval_s": 0.1,
+            "observations": readings,
+            "clock_status": "unqualified_reported_host_polled_no_native_update_timestamp",
+            "thermal_policy": "retain_all_temperatures_and_reason_masks_no_result_based_filtering"}
 
     def sample_during(self, work, seconds, *, capture_series=False):
         """Run ``work()`` back to back for ``seconds`` while sampling; return stats."""
@@ -521,6 +561,29 @@ def numeric_outputs(fn, xa):
     return captured_outputs
 
 
+def condition_repeatability(arms, xa, power, seconds):
+    """Fixed, unscored alternating workload; no plateau or clock-control claim."""
+    def work():
+        started = time.monotonic()
+        calls = {"legacy": 0, "piece_major": 0}
+        while time.monotonic() - started < seconds:
+            for arm in ("legacy", "piece_major"):
+                arms[arm][0](*xa)
+                calls[arm] += 1
+                torch.cuda.synchronize()
+        return {"calls_by_arm": calls, "seconds": time.monotonic() - started}
+    calls, observations = power.observe_while(work)
+    return {**calls, **observations,
+            "scope": "unscored alternating resident arms; fixed duration, not thermal equilibration proof"}
+
+
+def repeatability_event_cell(call, power):
+    samples, observations = power.observe_while(lambda: time_events(call, 10, 30))
+    return {"wall": summarize(samples), "wall_window_unix": observations["window_unix"],
+            "event_polling": observations,
+            "outlier_policy": "retain_all_raw_events_no_posthoc_exclusion"}
+
+
 def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, native_owner):
     """Finite numeric or ABBA phase using this benchmark's existing owners."""
     from pathlib import Path
@@ -549,7 +612,7 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
     if (tuple(captured.shape) != (2048, TOP_K) or captured.dtype != torch.int32
             or int(captured.min()) < 0 or int(captured.max()) >= EXPERTS):
         raise ValueError("comparison requires the captured 2048x8 expert-ID matrix")
-    meta = {"schema": pp.SCHEMA + ".receipt", "phase": phase, "status": "running",
+    meta = {"schema": protocol["schema"] + ".receipt", "phase": phase, "status": "running",
             "protocol_sha256": protocol_sha, "ms": protocol["ms"],
             "routing_scope": "M2048 captured IDs; M1 first row, an operator geometry control, not a fresh decode capture",
             "activation_scope": "seeded BF16 inputs and uniform routing weights; not served activation replay",
@@ -582,7 +645,15 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
         return tensor.detach().contiguous().view(torch.uint8).cpu()
 
     results = []
-    power = PowerSampler() if phase == "timing" else None
+    power = PowerSampler() if phase in ("timing", "repeatability") else None
+    if phase == "repeatability":
+        pp.require_profile_receipt(protocol, numeric_receipt)
+        meta["repeatability"] = protocol["repeatability"]
+        meta["mechanism_profiles_reused"] = protocol["repeatability"]["profile_receipt"]
+        meta["clock_status"] = "unqualified_descriptive_balanced_repeatability"
+        meta["thermal_policy"] = "fixed60s_alternating_conditioning_then_retain_all_cells_no_filtering"
+        if power.source != "pynvml":
+            raise ValueError("repeatability requires the already qualified in-process NVML instrument")
     for m in protocol["ms"]:
         seed = zlib.crc32(f"{protocol['group']}:{m}".encode())
         torch.manual_seed(seed)
@@ -606,7 +677,10 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
             proof = next(row for row in numeric_receipt["results"] if row["M"] == m)
             if input_hashes != proof["input_hashes"]:
                 raise ValueError("comparison timing inputs differ from its numeric proof")
-            order = protocol["order"] if phase == "timing" else ("legacy", "piece_major")
+            if phase == "repeatability":
+                rec["conditioning"] = condition_repeatability(arms, xa, power,
+                    protocol["repeatability"]["conditioning_s"])
+            order = protocol["order"] if phase in ("timing", "repeatability") else ("legacy", "piece_major")
             for position, arm in enumerate(order):
                 fn, holder, touched = arms[arm]
                 call = lambda: fn(*xa)
@@ -614,6 +688,10 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
                 observed = hashlib.sha256(bits(call()).numpy().tobytes()).hexdigest()
                 if observed != proof["bit_hashes"]["forward"]:
                     raise ValueError("comparison timed arm output differs from its numeric proof")
+                if phase == "repeatability":
+                    rec["cells"][key] = {"arm": arm, "out_sha256": observed,
+                        "bytes": touched(m), **repeatability_event_cell(call, power)}
+                    continue
                 if phase == "ncu":
                     for _ in range(10):
                         call()
@@ -682,7 +760,7 @@ def main():
                     help="directory with m<M>/*.pt recorded top-k ids; each file adds a "
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
     ap.add_argument("--comparison-protocol", default=None)
-    ap.add_argument("--comparison-phase", choices=("numeric", "timing", "ncu"), default="numeric")
+    ap.add_argument("--comparison-phase", choices=("numeric", "timing", "ncu", "repeatability"), default="numeric")
     ap.add_argument("--comparison-numeric-receipt", default=None)
     ap.add_argument("--comparison-numeric-sha256", default=None)
     ap.add_argument("--ncu", action="store_true",

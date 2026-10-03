@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 SCHEMA = "tessera.routed_piece_major_comparison.v1"
+REPEAT_SCHEMA = "tessera.routed_piece_major_repeatability.v1"
 ARTIFACT = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 GROUP = "experts.R1024.L10"
 ORDER = ["legacy", "piece_major", "piece_major", "legacy"]
@@ -28,12 +29,30 @@ def require_digest(value):
 def validate(doc):
     fields = {"schema", "artifact", "group", "ms", "order", "warmup", "iters", "power_s",
               "input_manifest", "source_manifest", "kernel_sha256", "native", "routing", "harness"}
-    if set(doc) not in (fields, fields | {"numeric_protocol"}) or doc["schema"] != SCHEMA:
-        raise ValueError("unknown comparison schema or fields")
-    if (doc["artifact"] != ARTIFACT or doc["group"] != GROUP or doc["ms"] != [1, 2048]
-            or doc["order"] != ORDER or doc["warmup"] != 10 or doc["iters"] != 30
-            or doc["power_s"] != 30):
-        raise ValueError("comparison requires exact A8SE L10/M1,2048 and finite ABBA limits")
+    repeated = doc.get("schema") == REPEAT_SCHEMA
+    if repeated:
+        if set(doc) != fields | {"numeric_protocol", "repeatability"}:
+            raise ValueError("unknown repeatability schema or fields")
+        repeat = doc["repeatability"]
+        if (set(repeat) != {"pair", "block", "conditioning_s", "profile_receipt"}
+                or type(repeat["pair"]) is not int or repeat["pair"] not in (1, 2, 3)
+                or type(repeat["block"]) is not int or repeat["block"] not in (1, 2)
+                or repeat["conditioning_s"] != 60):
+            raise ValueError("repeatability requires three balanced pairs and fixed60s conditioning")
+        order = ORDER if (repeat["pair"] + repeat["block"]) % 2 == 0 else ["piece_major", "legacy", "legacy", "piece_major"]
+        expected_ms, expected_power = [2048], 0
+        profile = repeat["profile_receipt"]
+        if set(profile) != {"path", "sha256"} or not Path(profile["path"]).is_absolute():
+            raise ValueError("repeatability requires the bound accepted profile receipt")
+        require_digest(profile["sha256"])
+    else:
+        if set(doc) not in (fields, fields | {"numeric_protocol"}) or doc.get("schema") != SCHEMA:
+            raise ValueError("unknown comparison schema or fields")
+        order, expected_ms, expected_power = ORDER, [1, 2048], 30
+    if (doc["artifact"] != ARTIFACT or doc["group"] != GROUP or doc["ms"] != expected_ms
+            or doc["order"] != order or doc["warmup"] != 10 or doc["iters"] != 30
+            or doc["power_s"] != expected_power):
+        raise ValueError("comparison requires its exact finite A8SE L10 population and budgets")
     require_digest(doc["kernel_sha256"])
     if set(doc["harness"]) != {"experiments/t8r_speed/bench_t8r.py", "experiments/t8r_speed/bench_t8r.sh",
                                 "experiments/t8r_speed/piece_major_protocol.py", "experiments/t8r_speed/pb_staged_store.py"}:
@@ -64,8 +83,12 @@ def numeric_protocol_sha256(doc, current_digest):
     proof = doc["numeric_protocol"]
     original, digest = hashed_json(proof["path"], proof["sha256"])
     validate(original)
-    # Launch/proof wiring may change; every measured semantic input remains exact.
-    for key in set(original) - {"harness", "numeric_protocol"}:
+    # Repetition changes only the scored population/order and power-loop budget.
+    # Tensor/native/reader semantics remain exactly those of the accepted proof.
+    changed_controls = {"harness", "numeric_protocol"}
+    if doc.get("schema") == REPEAT_SCHEMA:
+        changed_controls |= {"schema", "ms", "order", "power_s"}
+    for key in set(original) - changed_controls:
         if doc[key] != original[key]:
             raise ValueError(f"timing semantic input differs from accepted numeric protocol: {key}")
     return digest
@@ -87,11 +110,12 @@ def harness_identity(doc):
 
 
 def require_options(args, doc, *, stubbed=False):
-    if (args.artifact != doc["artifact"] or args.groups != doc["group"] or args.ms != "1,2048"
+    phases = ("repeatability",) if doc["schema"] == REPEAT_SCHEMA else ("numeric", "timing", "ncu")
+    if (args.artifact != doc["artifact"] or args.groups != doc["group"] or args.ms != ",".join(map(str, doc["ms"]))
             or not args.no_graph or args.outputs_only or args.routing or args.single_routing_file
             or args.profile_native_file or args.input_manifest != doc["input_manifest"]["path"]
-            or args.warmup != 10 or args.iters != 30 or args.power_s != 30
-            or args.comparison_phase not in ("numeric", "timing", "ncu")
+            or args.warmup != 10 or args.iters != 30 or args.power_s != doc["power_s"]
+            or args.comparison_phase not in phases
             or bool(args.ncu) != (args.comparison_phase == "ncu")):
         raise ValueError("comparison arguments differ from the finite protocol")
     if stubbed:
@@ -127,6 +151,36 @@ def require_numeric_receipt(path, digest, protocol_sha256):
         for digest in list(row["bit_hashes"].values()) + list(row["input_hashes"].values()):
             require_digest(digest)
     return doc
+
+
+def require_profile_receipt(doc, numeric):
+    """Reuse accepted mechanism evidence without profiling the repeated window."""
+    proof = doc["repeatability"]["profile_receipt"]
+    profile, _ = hashed_json(proof["path"], proof["sha256"])
+    if (profile.get("schema") != SCHEMA + ".receipt" or profile.get("phase") != "timing"
+            or profile.get("status") != "passed" or profile.get("ms") != [1, 2048]
+            or profile.get("source_files_unchanged") is not True
+            or profile.get("kernel_sha256") != doc["kernel_sha256"]):
+        raise ValueError("accepted profile population differs")
+    for arm in ("legacy", "piece_major"):
+        native = profile.get("native", {}).get(arm, {})
+        if native.get("sha256") != doc["native"]["sha256"] or native.get("files") != doc["native"]["files"]:
+            raise ValueError("accepted profile native identity differs")
+    rows = profile.get("results", [])
+    if [row.get("M") for row in rows] != [1, 2048]:
+        raise ValueError("accepted profile population lacks its finite cases")
+    for row, accepted in zip(rows, numeric["results"]):
+        if row.get("input_hashes") != accepted["input_hashes"]:
+            raise ValueError("accepted profile inputs differ from numeric proof")
+        expected = [f"{position}:{arm}:M{row['M']}" for position, arm in enumerate(ORDER)]
+        if list(row.get("cells", {})) != expected:
+            raise ValueError("accepted profile population lacks ABBA cells")
+        for cell in row["cells"].values():
+            data = cell.get("profile", {})
+            require_digest(data.get("trace_sha256"))
+            if not data.get("top"):
+                raise ValueError("accepted profile lacks actual kernel evidence")
+    return profile
 
 
 def source_identity(doc, source_root):

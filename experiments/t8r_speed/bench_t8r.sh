@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run experiments/t8r_speed/bench_t8r.py inside the serving image on one GB10.
-# Non-vLLM work runs through PrismaBuild. The closed comparison uses stock
-# vLLM custom ops directly under the vLLM execution exemption. Usage:
+# Batch benchmarks use PrismaBuild, including stock vLLM custom ops. The
+# closed comparison retains its qualified held-original-FD transport. Usage:
 #   bench_t8r.sh <checkout> <out_dir> <bench_t8r.py args...>
 # BENCH_NCU=1 wraps the process in Nsight Compute (routed_fused_kernel and the
 # dense window kernels; one profiled call per (group, M) via --profile-from-start off).
@@ -71,13 +71,13 @@ if [[ -n "${BENCH_STRICT_STAGED:-}" ]]; then
   IMAGE_ENV+=(-e "PYTHONPATH=$CONTAINER_SRC:/work/tests:$PB_CLIENT_ROOT/src")
 fi
 # Reuse the qualified direct benchmark containment contract. Numeric phase
-# only; timing/profiling require a separately reviewed resource window.
+# and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
-  [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "direct vLLM mode cannot use a PB launch context" >&2; exit 2; }
+  [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
   [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol" >&2; exit 2; }
   if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
-  elif [[ " $* " == *" --comparison-phase timing "* ]]; then DIRECT_TIMEOUT=600
-  else echo "direct transport requires closed numeric or timing phase" >&2; exit 2; fi
+  elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
+  else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
   [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
   [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
   [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }

@@ -1,12 +1,9 @@
 {
-  "schema": "tessera.pm_m2048_controlled_latency_preregistration.v2",
-  "state": "Prepared experimental design; not a runnable action or GPU authorization",
-  "issue": "https://github.com/RobTand/tessera/issues/739",
-  "pr": "https://github.com/RobTand/tessera/pull/868",
-  "production_disposition": "draft/defaultOFF/parent739open; no automatic closing relationship",
-  "question": "Does M2048 layout latency benefit persist at matched, thermally equilibrated reported SM clocks independently of ABBA versus BAAB order?",
-  "source_of_control_predicates": "/mnt/shared/astra-resume-20261002/t8_performance/INDEPENDENT-PM-NEXT-CONTROL-CONSTRAINTS.json; proposed experimental tolerances, not historical qualification",
-  "accepted_input_identity": {
+  "schema": "tessera.pm_m2048_descriptive_repeatability_design.v1",
+  "status": "Actionable owner adaptation CPU-qualified; unlaunched pending exact source packets and independent review/rootGO",
+  "question": "Does the observed M2048 layout benefit repeat descriptively across balanced independently conditioned ABBA/BAAB blocks?",
+  "clock_disposition": "Unqualified. Do not claim fixed/effective/matched within-cell frequency, thermal equilibrium or causal DVFS elimination. Native-cadence/1% clock predicates are NOT gates for this descriptive question.",
+  "input_identity": {
     "artifact": "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported",
     "group": "experts.R1024.L10",
     "M": 2048,
@@ -29,12 +26,6 @@
     "numeric_v4_receipt_sha256": "0e35d25f968b7683e069d5ebc47e4ee4ed36af062b70e62ad92e59b608fba4ec",
     "numeric_protocol_sha256": "192aa398aae403678c61c615cc3b569e0f15721ce702c5894bf327ea87fe347d",
     "resident_bytes_per_arm": 1872827160
-  },
-  "reuse": {
-    "numeric": "Reuse existing passing V4; no new mode0/1/2 qualification population",
-    "profiling": "Reuse eight accepted raw Torch profiles and exact launch counts from f10b6eaa; no duplicate five-call profiler or NCU in latency actions",
-    "original_harness": "Preserve old protocol/window and c8a snapshot; new narrow versioned M2048-only latency phase must be separately source-bound and CPU-qualified before executable requests can be sealed",
-    "inputs_and_native": "Existing Store/StagedInputs/NativeCallback/paired containment owners; no new decoder/kernel/native build/dispatcher/staging cache"
   },
   "population": {
     "balanced_block_pairs": 3,
@@ -110,70 +101,34 @@
     "scheduling": "Six tiny logical block actions submitted through existing PB campaign interface only after source/instrument qualification and exact rootGO. PB owns serialization/placement; sameSparky exclusive dependency, no second scheduler."
   },
   "conditioning": {
-    "workload": "Unscored alternating legacy/PM full forwards on same prepared resident arms and M2048 inputs; synchronize and attribute each arm sample; no scoring during reference selection",
-    "minimum_observed_preceding_window_s": 30,
-    "maximum_conditioning_seconds_per_block": 180,
-    "reference_rule": "Before the first scored block, freeze the median of valid qualified SM-frequency samples from both arms during the final30s qualifying alternating-arm window. Persist target with immutable reference identity. Every block and scored cell uses that same target; never retarget after scored effects. If no valid first reference forms within180s, fail the design.",
-    "temperature_span_max_c": 2,
-    "first10s_last10s_temperature_median_difference_max_c": 1,
-    "all_native_sm_frequency_samples_target_relative_tolerance_percent": 1,
-    "power_loops_per_scored_cell": 0,
-    "authority": "No clock/NTP/driver/power actuation without a separately qualified and authorized owner. If existing device policy cannot meet plateau predicates, stop rather than asserting DVFS removed."
+    "seconds": 60,
+    "work": "Fixed unscored alternating legacy/PM resident full forwards, synchronized per call, before each independently started block. No adaptive plateau selection or retargeting.",
+    "additional_per_cell_warmups": 10,
+    "per_cell_power_heaters": 0
   },
-  "scored_controls": {
-    "each_cell_clock_relative_target_tolerance_percent": 1,
-    "each_cell_temperature_span_max_c": 2,
-    "matched_arm_mean_clock_difference_max_percent": 1,
-    "matched_arm_temperature_median_difference_max_c": 2,
-    "throttle_state": "Same reason bitmask; no newly asserted thermal throttle",
-    "cadence": "Require established true sensor-update cadence, valid sample identity/native timestamps and covering observations around each scored interval. Preserve host monotonic+wall read bounds separately. Do not interpolate, treat polling as native cadence or count repeated response points as independent samples.",
-    "time_domains": "CUDA events and same-host monotonic intervals are the primary latency domains. Native/reported SM-frequency provenance must be explicit; reported-clock matching does not certify effective-cycle frequency without instrument proof. Cross-host clock/energy remain HOLD underPB1440.",
-    "failure": "Any plateau/cadence/coverage/throttle/clock-match/thermal-match/source/input/output/native/FD/resource failure invalidates the control. Preserve all failed data; no automatic retry, result-based extension, post-hoc row exclusion, threshold retuning or fallback to uncontrolled claims.",
-    "cadence_and_lag_acceptance": {
-      "target": "Qualification must cover subsecond scored cells, historically about0.4-0.6s, not merely30s conditioning or before/after readings.",
-      "predeclared_sampling_resolution_rule": "Maximum qualified native update interval plus maximum sample-delivery lag must be <=one tenth of the shortest scored cell duration; at least ten genuine native timestamped observations per scored cell, with native history bracketing both boundaries. If instrument cannot provide this coverage/lag proof, fail readiness instead of interpolating.",
-      "interpretation": "This supports sampled reported-SM matching only. It does not certify effective-cycle frequency or exclude every between-sample frequency transient; such claims need independently qualified stronger instrument/actuator evidence."
-    }
+  "policies": {
+    "outliers": "Retain every raw event in execution order; no posthoc deletion, retries or outcome-driven extension.",
+    "temperature": "Retain all polled temperatures and available raw throttle masks/errors during conditioning/scored windows. Report warming/drift/order effects; no result-based temperature exclusions or invented stabilization threshold.",
+    "instrumentation": "Host-polled NVML power/reportedSM/temperature/throttle readings at requested100ms, with host wall/monotonic read timestamps and errors. Polling cadence is not native sensor update cadence; duplicates are not independent sensor observations.",
+    "safety": "Existing exact-CID ownership, PB resource scope,40GiB launch/24GiB active available floor,fullPSI<20,600s owner/15s wrapper grace/PB900 perblock. No new clock/driver/NTP/power-policy mutation."
   },
-  "statistical_analysis": {
+  "profiles": {
+    "reuse_receipt_sha256": "3ce7df07c5acc2646174f8296c401a1e2e119ddd0dba736249d4404290403fe2",
+    "scope": "Eight accepted before/after Torch profiles, actual immutable native/layout mechanism. Reuse explicitly; do not label their durations a fresh-window profile or duplicate Torch/NCU evidence."
+  },
+  "telemetry": {
+    "fresh": "Both-Spark raw Netdata for action, fixed conditioning and every scored event window; CPU/memory/pressure/swapIO/diskIO/reportedSM/temperature/power, true source cadence and rejected groups/errors retained. Subsecond event windows may have no native Netdata group; report unobserved coverage, never interpolate.",
+    "clock_owner": "PB1440 gateway-only independent alignment remainsHOLD; same-host CUDA/monotonic evidence is distinct.",
+    "energy": "HOLD; no work-per-joule, served or fullmodel speedup claim."
+  },
+  "analysis": {
     "cell_statistic": "Conventional median of30 raw CUDA-event observations per cell, preserving event order",
     "block_contrast": "legacy_mean=arithmetic mean of the two legacy cell medians; pm_mean=same forPM; reduction_percent=100*(legacy_mean-pm_mean)/legacy_mean; throughput_ratio=legacy_mean/pm_mean",
     "pair_contrast": "Report ABBA and BAAB block contrasts individually, pair mean and ABBA-minus-BAAB order interaction; descriptive mean/range/sampleSD of three pair contrasts",
     "replication_unit": "Independent conditioned block/pair, not720 pooled events; do not bootstrap individual events as independent runs",
     "acceptance_scope": "Three balanced pairs are minimum descriptive variance/order control, not guaranteed95% significance. No inferential/stable/general/served/energy/default promotion. Stronger inferential block count and analysis require predeclared approval before any sampling."
   },
-  "host_evidence": {
-    "hosts": [
-      "sparky",
-      "sparklina"
-    ],
-    "series": [
-      "power",
-      "CPU",
-      "memory available",
-      "memory and CPU PSI",
-      "swapIO",
-      "diskIO",
-      "reported SM frequency",
-      "temperature",
-      "throttle reasons"
-    ],
-    "method": "Existing Netdata/box-power owners, raw selected action/block/cell intervals, source-native cadence and accepted/rejected group boundaries. Preserve wall/monotonic discontinuity evidence; coarse cross-host data remains diagnostic, not interpolated energy coverage.",
-    "clock_owner_status": "/mnt/shared/fleet-clock-diagnosis-20261002/postboot-20261003-status.json: gateway-only192.168.1.1/reference481E2358, trusted independent alignment unqualified; same-host latency remains distinct."
-  },
-  "containment": {
-    "PB": "measurement/exclusive/sameSparky; bothSparks quiet, cpus2/mem_gb16/gpu_memory_gb8/native threads1/max_attempts1",
-    "container": "memory16GiB/no additionalswap; preserve assigned affinity and PB Docker ownership",
-    "existing_owner": "run_direct_arm(deadline_s600) and owned_cleanup only; never invoke pairedmain",
-    "wrapper_kill_grace_s": 15,
-    "PB_timeout_s_per_block": 900,
-    "launch_MemAvailable_floor_gib": 40,
-    "active_MemAvailable_floor_gib": 24,
-    "active_memory_full_PSI_avg10_max": 20,
-    "conditioning_exhaustion": "180s cap perblock inside600s owner; no deadline extension/retry",
-    "cleanup": "Unique per-block owner token and exact CID absence verified before releasing each reservation"
-  },
-  "separate_counter_question": {
+  "counter_question": {
     "enabled_in_latency_protocol": false,
     "question": "Why does matched PM M2048 mode0 gate/up remain roughly58% of device time?",
     "authorization": "Separate exact rootGPU GO and separate profiled action; not a repeat of accepted full-forward Torch profiling",
@@ -204,26 +159,40 @@
     "DRAM_counter_gap": "The retained raw capability names contain no dram__ transaction metric. L2/sysmem sector counters are explicitly labeled proxies, not renamedDRAM measurements. Require actual supported DRAM counter evidence before such a claim; no invented aliases.",
     "timing_boundary": "Instrumented counter durations never enter uninstrumented event statistics."
   },
-  "launch_prerequisites": [
-    "Narrowly versioned M2048-only latency owner/protocol adaptation with original numeric/input/native semantic binding and CPU proof onDL; existing eight-cell protocol must continue refusing unsupported variants",
-    "Qualified SM-frequency/native-cadence/throttle instrument and its reference-target identity; if unavailable, no matched-effective-clock claim or launch",
-    "Reviewer acceptance of predeclared experimental tolerances/block count/analysis and explicit same-host-only clock scope",
-    "Exact source/harness/instrument/request hashes and six unique block ownership/output identities sealed; then explicit rootGPU GO for that exact packet",
-    "Separate counter question has no authorization in this latency design"
-  ],
-  "no_new_gpu_execution": true,
-  "reference_dependency": {
-    "producer": "First ABBA block creates and freezes reference before its scored events, then commits reference via PB produced-output template with its successful terminal proof. A failed first block publishes no admitted reference; downstream actions do not run.",
-    "consumers": "The other five block actions carry supported PB --after PRODUCER:TEMPLATE_ID and the exact produced reference as manifest-bound input. They read that bound reference through the existing PB input owner, verify producer/action/content identity and matching device/driver/instrument/source/numeric semantics; never poll an unsealed shared file or mint a new target.",
-    "ownership": "PB produced-output/after owns publication/readiness/materialization and any real dependency ordering; no application dispatcher or scheduler.",
-    "freeze_fields": [
-      "clock reference rule and target",
-      "producer action/block and content digest",
-      "qualifying unscored conditioning native samples and timestamps",
-      "GPU UUID/model/driver, native instrument identity/cadence/lag proof",
-      "monotonic/wall mapping and boot identity",
-      "source/readset/native/numeric proof identities"
-    ]
+  "PB_quantum": "Six independent science-defined block actions, sameSparky measurement/exclusive/CPU2/mem16/GPUsubset8/native1/max_attempts1 via supportedpbcampaign; PB owns placement/serialization. No shared clock reference producer or application dispatcher is needed because no clockmatch is claimed.",
+  "owner_protocol": {
+    "schema": "tessera.routed_piece_major_repeatability.v1",
+    "phase": "repeatability",
+    "ms": [
+      2048
+    ],
+    "power_s": 0,
+    "conditioning_s": 60,
+    "balanced_pair_ids": [
+      1,
+      2,
+      3
+    ],
+    "block_ids": [
+      1,
+      2
+    ],
+    "numeric_semantics": "Original content-bound numericV4 input/source/native proof mandatory; original protocol/receipt remain immutable.",
+    "profile_semantics": "Original content-bound passing timing/profile receipt with same kernel/native/input identities mandatory.",
+    "no_gpu_GO": true
   },
-  "supersedes_design_sha256": "9053ff5be285c7a329c088408c838b128b59be93378ce493d5dcad3bba2e8598"
+  "CPU_proof": {
+    "causal_red_action": "5090c5b00a025ac784fe3ef685dd379257f401ce26f2e0029f725eaca0fcac58",
+    "causal_red_result": "9 failed/11 passed; old owner rejects new exact protocol and wrapper phase beforeCUDA",
+    "green_action": "79a9ac1d45aa812a0b4633dd61157616404dd231e676cdf6ccabdfae1b97d8ed",
+    "green_result": "31passed/0skips/0uncollected/0CUDAallocated; DL380G10 CPU2/native1/xdistworksteal",
+    "green_receipt_sha256": "52bda9f93a9f60d9832509f1f98975d28ed47863f17ff14a0734050e12683e82"
+  },
+  "supersedes_conditional_design_sha256": "556859fb5552b2a26a449a6f6cf1af25ee6b289358f29ed60eac56d61bb2caee",
+  "remaining_launch_gates": [
+    "Exact per-block source/harness/protocol/controller/window/accepted-proof digests and unique owner/output identities prepared and CPUpreflighted",
+    "Independent review of the executable descriptive packet, not an unsupported perfect-clock claim",
+    "Explicit rootGO for the exact six-block packet; freshquietbothSparks/resource/ownership health checks beforeadmission"
+  ],
+  "no_new_gpu_execution": true
 }

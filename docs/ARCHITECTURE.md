@@ -35,6 +35,25 @@ raw events, Torch profiler traces and power windows; both-host Netdata and
 clock review are required, and energy remains HOLD. Defaults and serving cells
 are unchanged.
 
+
+The separate `tessera.routed_piece_major_repeatability.v1` experiment admits
+only M2048, three predeclared balanced ABBA/BAAB block pairs, 10 warmups and
+30 raw events per cell. Each independently started block first executes fixed
+60-second unscored alternating resident forwards. It requires the original
+numeric proof and content-bound passing mechanism-profile receipt, with exact
+input/source/native identities; it does not repeat numeric or Torch/NCU
+qualification. All raw events, temperatures, reported-SM/throttle observations
+and errors remain: no outlier deletion, adaptive plateau or result-based retry.
+Host-polled timestamps are not native-update proof and clocks remain explicitly
+unqualified; these are descriptive repeatability observations, not fixed-clock
+causality, served speed or energy. Existing Netdata owners retain fresh both-host
+action, conditioning and event windows, including coarse/empty coverage and
+per-series errors. Six science-defined finite block actions use supported PB
+campaign admission, exclusive same-Sparky resources and existing exact-CID
+containment; no application dispatcher or source/controller main bypass is
+added. The obsolete historical benchmark exemption does not authorize batch
+execution. No default, cell, pin or precision menu is promoted.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,

@@ -306,3 +306,53 @@ subsequent reviewer sealing constraints add PB reference dependencies and explic
 subsecond resolution to v2 above. It is not new harness/sensor qualification.
 No controlled GPU submission has occurred; the parent issue remains open,
 the PR remains draft, and PM remains default off.
+
+
+## Superseding actionable descriptive repeatability adaptation
+
+Root explicitly separated useful repeated same-host A/B evidence from unsupported
+perfect clock-control requirements. The latest JSON design now has SHA
+`a4789d8f4e19375acb1af11e7ef07bd7b95f30cabf824d6f592c1f83abccecdb`
+and schema `tessera.pm_m2048_descriptive_repeatability_design.v1`.
+The old conditional clock-matched v1/v2 designs remain immutable external
+history, not readiness gates for this descriptive experiment. No 1% frequency,
+device-native sensor-lag or plateau claim is imposed or fabricated.
+
+The existing benchmark/protocol/wrapper now implements a narrowly versioned
+`repeatability` phase: only M2048, fixed60s unscored alternating-arm conditioning,
+three balanced ABBA/BAAB pairs, four cells/block, 10 warmups and30 fresh events
+per cell. Six independently started finite PB blocks produce720 raw events.
+All events remain in execution order, including outliers; all available polled
+power/SM/temperature/throttle readings/errors remain. No retrospective exclusion,
+adaptive conditioning, clock mutation or result-driven retry is allowed.
+Temperature/order/DVFS uncertainty is reported rather than normalized away.
+
+The accepted numericV4 input/final-bit proof is bound and checked before scoring;
+original source/native/readset semantics remain unchanged. The eight accepted
+Torch profiles are content-bound mechanism evidence for the same binary and
+inputs, explicitly reused rather than represented as fresh-window profiles.
+No duplicate numeric, Torch or NCU population or per-cell30s heater is added.
+Fresh both-host Netdata retains action, conditioning and every event window,
+including raw diskIO/SM/temperature/pressure responses and per-series errors.
+Subsecond windows may have no native Netdata group; that is unobserved coverage,
+not a fabricated high-rate reading. Energy and general/served speed remain HOLD.
+
+The new exact phase's causal CPU control was PB
+`5090c5b00a025ac784fe3ef685dd379257f401ce26f2e0029f725eaca0fcac58`:
+9 failures /11 passes on the old owner (unknown new protocol/options/profile
+binding and rejected wrapper phase). The implemented owner qualified PB
+`79a9ac1d45aa812a0b4633dd61157616404dd231e676cdf6ccabdfae1b97d8ed`:
+31 passes, zero skips/uncollected and zero CUDA-allocated tests onDL380G10,
+CPU2/native1, xdist worksteal, 6.88s outer/4.69s pytest. This is narrow CPU
+control evidence, not GPU or CUDA-surface qualification; the accepted prior53
+controls/numeric qualification were not redundantly rerun. Actual logs, payload
+and full published SDK CAS lookup verified receipt
+`52bda9f93a9f60d9832509f1f98975d28ed47863f17ff14a0734050e12683e82`.
+
+Existing containment remains600s with15s wrapper grace/PB900, CPU2/UMA16GiB/
+GPUsubset8GiB/native1 and exact owned-CID cleanup. No new scheduler is added;
+PB's existing campaign interface owns six scientific block actions. No clock
+reference dependency is needed because these blocks make no clock-matching
+claim. Exact source-bound per-block packets and real-input CPU preflight precede
+independent review and explicit rootGPU GO. Nothing here authorizes a new GPU
+submission, deployment/default/pin/cell change or automatic issue739 closure.

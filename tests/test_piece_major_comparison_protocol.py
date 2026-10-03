@@ -176,3 +176,90 @@ def test_timing_reuses_only_semantically_identical_numeric_protocol(tmp_path, ch
             pp.numeric_protocol_sha256(timing, 'e' * 64)
     else:
         assert pp.numeric_protocol_sha256(pp.validate(timing), 'e' * 64) == digest
+
+REPEAT_SCHEMA = "tessera.routed_piece_major_repeatability.v1"
+
+
+def repeatability_protocol(tmp_path, pair=1, block=1):
+    original = protocol(tmp_path)
+    original_path = tmp_path / 'original-numeric-protocol.json'
+    original_path.write_text(json.dumps(original))
+    doc = copy.deepcopy(original)
+    doc.update(schema=REPEAT_SCHEMA, ms=[2048], power_s=0,
+               order=pp.ORDER.copy() if (pair, block) in ((1, 1), (2, 2), (3, 1)) else ['piece_major', 'legacy', 'legacy', 'piece_major'])
+    doc['numeric_protocol'] = {'path': str(original_path),
+        'sha256': hashlib.sha256(original_path.read_bytes()).hexdigest()}
+    doc['repeatability'] = {'pair': pair, 'block': block, 'conditioning_s': 60,
+        'profile_receipt': {'path': str(tmp_path / 'accepted-profiles.json'), 'sha256': 'f' * 64}}
+    return doc
+
+
+@pytest.mark.parametrize('pair,block', [(1,1), (1,2), (2,1), (2,2), (3,1), (3,2)])
+def test_repeatability_admits_only_predeclared_balanced_block(tmp_path, pair, block):
+    doc = repeatability_protocol(tmp_path, pair, block)
+    assert pp.validate(doc) is doc
+    assert pp.numeric_protocol_sha256(doc, 'e' * 64) == doc['numeric_protocol']['sha256']
+
+
+@pytest.mark.parametrize('field,value', [('ms',[1,2048]), ('power_s',30),
+    ('order',['legacy','piece_major']), ('warmup',11), ('iters',31)])
+def test_repeatability_cannot_broaden_control_population(tmp_path, field, value):
+    doc = repeatability_protocol(tmp_path)
+    doc[field] = value
+    with pytest.raises(ValueError):
+        pp.validate(doc)
+
+
+@pytest.mark.parametrize('field,value', [('pair',True), ('pair',4), ('block',0),
+    ('conditioning_s',59), ('conditioning_s',61)])
+def test_repeatability_requires_exact_identity_and_conditioning(tmp_path, field, value):
+    doc = repeatability_protocol(tmp_path)
+    doc['repeatability'][field] = value
+    with pytest.raises(ValueError):
+        pp.validate(doc)
+
+
+def test_repeatability_still_binds_numeric_semantics_and_actual_options(tmp_path, monkeypatch):
+    doc = repeatability_protocol(tmp_path)
+    environment(monkeypatch, doc)
+    args = options(doc)
+    args.ms, args.power_s, args.comparison_phase = '2048', 0, 'repeatability'
+    pp.require_options(args, pp.validate(doc))
+    for phase in ('numeric', 'timing', 'ncu'):
+        args.comparison_phase = phase
+        with pytest.raises(ValueError):
+            pp.require_options(args, doc)
+    doc['routing']['sha256'] = 'd' * 64
+    with pytest.raises(ValueError, match='semantic input differs'):
+        pp.numeric_protocol_sha256(doc, 'e' * 64)
+
+
+def test_old_protocol_cannot_admit_repeatability(tmp_path, monkeypatch):
+    doc = protocol(tmp_path)
+    environment(monkeypatch, doc)
+    args = options(doc)
+    args.comparison_phase = 'repeatability'
+    with pytest.raises(ValueError):
+        pp.require_options(args, doc)
+
+
+def test_repeatability_requires_content_bound_unchanged_profile_population(tmp_path):
+    doc = repeatability_protocol(tmp_path)
+    numeric_path, numeric_digest = receipt(tmp_path)
+    numeric = pp.require_numeric_receipt(numeric_path, numeric_digest, 'b' * 64)
+    profile = {'schema': pp.SCHEMA + '.receipt', 'phase': 'timing', 'status': 'passed',
+        'ms': [1,2048], 'kernel_sha256': doc['kernel_sha256'], 'source_files_unchanged': True,
+        'native': {arm: {'sha256':doc['native']['sha256'], 'files':doc['native']['files']}
+                   for arm in ('legacy','piece_major')},
+        'results': [{'M':m, 'input_hashes':numeric['results'][i]['input_hashes'],
+            'cells': {f'{position}:{arm}:M{m}': {'profile':{'trace_sha256':'a'*64, 'top':{'kernel':{}}}}
+                for position,arm in enumerate(pp.ORDER)}} for i,m in enumerate((1,2048))]}
+    path = Path(doc['repeatability']['profile_receipt']['path'])
+    path.write_text(json.dumps(profile))
+    doc['repeatability']['profile_receipt']['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert pp.require_profile_receipt(doc, numeric)['phase'] == 'timing'
+    profile['native']['piece_major']['sha256'] = 'd' * 64
+    path.write_text(json.dumps(profile))
+    doc['repeatability']['profile_receipt']['sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match='profile'):
+        pp.require_profile_receipt(doc, numeric)

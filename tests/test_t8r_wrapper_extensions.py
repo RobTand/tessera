@@ -134,7 +134,7 @@ def test_actual_wrapper_forwards_resident_layout_selection(tmp_path, selection, 
         assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
 
 
-@pytest.mark.parametrize('phase,deadline', [('numeric', '240s'), ('timing', '600s')])
+@pytest.mark.parametrize('phase,deadline', [('numeric', '240s'), ('timing', '600s'), ('repeatability', '600s')])
 def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_path, phase, deadline):
     wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
