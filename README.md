@@ -18,6 +18,19 @@ That opens a useful middle ground: a finely adjustable memory budget with
 hardware-native arithmetic. The encoder does the expensive search once;
 the decoder uses the resulting bits, lookup tables, and scales repeatedly.
 
+Experimental native T16 activation prefetch (#874) is **off by default**.
+`TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=4` freezes a separate prefetch4
+native build at first value-library use; only 0 and 4 are accepted. It applies
+only to one-run folded BF16 routed launches (BM64, modes 0/1/2, rates 1–8),
+not dense or two-run launches. The existing ABI, wire layout, BF16 folding,
+accumulation order and resident bytes are unchanged. No T16 speedup, energy
+benefit, serving cell, or PACT price is established by this experimental arm.
+Qualification must use the same frozen T16 wire/calibration and input/routing
+bytes in both arms, retain native ELF/source/image/readset digests, check
+mode0/1/2 and final output bits, then collect interleaved before/after timing
+and in-process profiles with both Sparks’ Netdata power/residency records.
+GPU qualification requires root authorization; T8 timing is not T16 proof.
+
 The results show why this combination is interesting: **Tessera-8 reaches
 EXL3-like reconstruction quality while using FP8 activations**, and a
 **roughly four-bit Tessera NVFP4 artifact has matched a production NVFP4
