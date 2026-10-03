@@ -11,7 +11,8 @@
   "common_pbrun_args": ["--measurement", "--host-class", "gb10", "--exclusive", "--cpus", "1", "--residency", "stage", "--max-attempts", "1", "--wait-s", "7200"],
   "actions": {
     "numeric": {
-      "pbrun_args": ["--demand", "gpu=1,mem_gb=12", "--gpu-memory-gb", "8", "--timeout-s", "600"],
+      "pbrun_args": ["--demand", "gpu=1,mem_gb=16", "--gpu-memory-gb", "8", "--timeout-s", "600"],
+      "resource_scope": "Exclusive published PB admission enforces an aggregate 16 GiB floor; container inherits that actual parent bound with no additional 12 GiB inner cap. GPU subset cap remains 8 GiB.",
       "command": ["bash", "experiments/t8r_speed/value_prefetch_numeric_action.sh", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-numeric-v2", "consume", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2/readset-v3.json"]
     },
     "sanitizer": {
