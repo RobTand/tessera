@@ -1,5 +1,15 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-03 for paired-K32 raw-event summary integrity (#889).
+The experimental ABBA reducer now uses the existing timing-panel numeric
+owner to validate exactly30 finite positive events per declared cell and
+derive its conventional median. A differing or boolean advertised median
+refuses; ratios use the observed median, without filtering, normalization
+or reordering the retained raw samples. This CPU admission repair changes
+no kernel, native bank, source/input manifest or historical scientific result.
+It does not qualify the paired controller, performance, energy or serving;
+the separate #855/#857 gates remain unchanged.
+
 Re-stamped 2026-10-02 for the default-off paired-K32 routed experiment (#857).
 The existing E4M3 MMA build owner accepts the explicit compile flag
 `TESSERA_ROUTED_FUSED_PAIRED_K32=1`. Only routed fused gate/up or down,
