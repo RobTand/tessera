@@ -259,8 +259,8 @@ def consume(bank, manifest, out):
 def sanitize(bank, manifest, out):
     import subprocess
     reader = StagedInputs(manifest)
-    tool_dir = out / "sanitizer"
     try:
+        tool_dir = out / "sanitizer"
         tool_dir.mkdir(parents=True, exist_ok=False)
         for path, offset in reader.entries:
             if Path(path).parent == bank / "sanitizer":
