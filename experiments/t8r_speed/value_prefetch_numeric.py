@@ -289,9 +289,31 @@ def staged_read(manifest):
         reader.close()
 
 
+def state_proof(bank, manifest, out):
+    if torch.cuda.is_available():
+        raise ValueError("state-history proof is CPU-only")
+    import zipfile
+    out.mkdir(parents=True, exist_ok=False)
+    reader = StagedInputs(manifest)
+    runner = out / "runner"
+    try:
+        with zipfile.ZipFile(io.BytesIO(reader.read(bank / "runner.zip"))) as archive:
+            archive.extractall(runner)
+    finally:
+        reader.close()
+    sys.path.insert(0, str(runner))
+    os.environ["T16_SYNTHETIC_READSET"] = str(manifest)
+    import pytest
+    code = pytest.main(["tests/test_value_prefetch_numeric.py", "-q", "-s",
+                        "-p", "no:cacheprovider", "-k", "fixture_transfer or actual_retained",
+                        "--basetemp", str(out / "pytest-tmp")])
+    if code:
+        raise SystemExit(code)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read"])
+    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read", "state-proof"])
     ap.add_argument('--bank', type=Path, required=True)
     ap.add_argument('--native-root', type=Path)
     ap.add_argument("--runner", type=Path)
@@ -301,6 +323,8 @@ def main():
     a = ap.parse_args()
     if a.operation == 'prepare':
         prepare(a.bank, a.native_root, a.sanitizer, a.runner)
+    elif a.operation == "state-proof":
+        state_proof(a.bank, a.manifest, a.out)
     elif a.operation == "staged-read":
         staged_read(a.manifest)
     elif a.operation == "repair-readset":

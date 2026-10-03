@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# GPU-only PB action; submission requires explicit root GO. All evidence nonshipping.
+# PB qualification action. Consume/sanitize require root GPU GO; state-proof is CPU-only.
 set -euo pipefail
 BANK=${1:?synthetic bank}; OUT=${2:?output}; MODE=${3:?consume or sanitize}; MANIFEST=${4:?frozen readset}
-[[ "$MODE" == consume || "$MODE" == sanitize ]] || exit 2
+[[ "$MODE" == consume || "$MODE" == sanitize || "$MODE" == state-proof ]] || exit 2
+GPU_ARGS=()
+[[ "$MODE" == state-proof ]] || GPU_ARGS=(--gpus all)
 IMAGE=${ORACLE_IMAGE:?immutable image required}
 PB_CLIENT_ROOT=${PB_CLIENT_ROOT:?published PB SDK required}
 source experiments/runtime_image.sh
@@ -19,7 +21,7 @@ done
 STAGE_ROOT=$(PYTHONPATH="$PB_CLIENT_ROOT/src" python3 -c 'import os; from prismabuild.client import read_residency_map; print(read_residency_map(os.environ["PRISMABUILD_RESIDENCY_MAP"])["stage_root"])')
 CPUS=$(python3 -c 'import os; print(",".join(map(str,sorted(os.sched_getaffinity(0)))))')
 mkdir -p "$OUT"
-docker run --rm --gpus all --ipc=host --network=none --pid=host --cpuset-cpus "$CPUS" \
+docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=none --pid=host --cpuset-cpus "$CPUS" \
   --user "$(id -u):$(id -g)" -v "$PWD":/work:ro -v "$BANK":"$BANK":ro \
   -v "$OUT":"$OUT" -v /mnt/shared/prismabuild-fleet:/mnt/shared/prismabuild-fleet \
   -v "$STAGE_ROOT":"$STAGE_ROOT" -e HOME="$OUT" -e PYTHONDONTWRITEBYTECODE=1 \
