@@ -12,7 +12,8 @@ from dataclasses import dataclass
 import threading
 from typing import Any, Callable
 
-from .stock_interface import InspectedInterface, import_modules, match_modules, stock_attribute
+from .glm53_prefill import sp_collective_decline
+from .stock_interface import InspectedInterface, import_modules, match_modules
 
 
 # Reuse the communicator read set inspected for #804; the route below reads
@@ -48,21 +49,9 @@ def pynccl_sp_decline(dc: Any, *, symmetric_ag_rs: bool, rocm: bool = False) -> 
     ordinary gather/scatter branches also select symmetric memory, and gather
     selects the base class on ROCm. Unknown facts decline before any enqueue.
     """
-    if dc is None or stock_attribute(dc, "world_size") != 2:
-        return "no TP2 CUDA communicator"
-    if stock_attribute(dc, "ca_comm", object()) is not None:
-        return "custom SP communicator present or unknown"
-    if type(symmetric_ag_rs) is not bool or symmetric_ag_rs:
-        return "symmetric-memory SP enabled or unknown"
     if type(rocm) is not bool or rocm:
         return "ROCm/base-class gather selected or unknown"
-    nccl = stock_attribute(dc, "pynccl_comm")
-    if (nccl is None or stock_attribute(nccl, "disabled") is not False
-            or stock_attribute(nccl, "world_size") != 2):
-        return "no active TP2 pynccl communicator"
-    if any(not callable(stock_attribute(nccl, name)) for name in ("reduce_scatter", "all_gather")):
-        return "pynccl SP methods unavailable"
-    return None
+    return sp_collective_decline(dc, symmetric_ag_rs=symmetric_ag_rs)
 
 
 @dataclass(frozen=True)

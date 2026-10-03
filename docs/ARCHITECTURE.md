@@ -7476,7 +7476,9 @@ timing result as a performance qualification.
 `experiments/mhc/sp_tile_probe.py` prepares the finite actual-vLLM TP2 screen
 at 512/2048/2049 tokens, a global tile of 1024, and both mHC sites. It uses
 the stock distributed context and inspected PyNccl SP route, checks all four
-outputs and global token identities, retains a wrong-layout control, and
+through the same active-writer refusal used by ordinary SP: unavailable,
+disabled, suspended or unknown PyNccl owners decline before enqueue. It checks
+all four outputs and global token identities, retains a wrong-layout control, and
 records ABBA timing, both-rank Torch traces, raw power and each host's Netdata.
 Its CPU stream fixtures do not qualify CUDA/NCCL arithmetic or a serving
 speedup. The old #804 all-reduce overlap runs with SP off; it cannot accelerate
