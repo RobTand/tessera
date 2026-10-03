@@ -28,6 +28,7 @@ from tessera.serving import glm53_prefill as gp
 
 def _config(**over):
     par = dict(tensor_parallel_size=2, pipeline_parallel_size=1, data_parallel_size=1,
+               distributed_executor_backend="mp",
                enable_expert_parallel=False, use_sequence_parallel_moe=False,
                decode_context_parallel_size=1, prefill_context_parallel_size=1)
     par.update(over.pop("parallel", {}))
@@ -99,6 +100,7 @@ def test_sp_eligible_config_has_no_decline_reason(monkeypatch):
 @pytest.mark.parametrize("over, needle", [
     ({"parallel": {"tensor_parallel_size": 1}}, "tensor_parallel_size 1"),
     ({"parallel": {"tensor_parallel_size": 4}}, "tensor_parallel_size 4"),
+    ({"parallel": {"distributed_executor_backend": "ray"}}, "executor_backend mp"),
     ({"parallel": {"pipeline_parallel_size": 2}}, "pipeline_parallel_size 2"),
     ({"parallel": {"data_parallel_size": 2}}, "data_parallel_size 2"),
     ({"parallel": {"enable_expert_parallel": True}}, "expert parallelism"),
@@ -458,7 +460,7 @@ def _ops(ranks, exact=lambda t, hidden, n: True):
     return NS(sp_shard=ranks.sp_shard, sp_all_gather=ranks.sp_all_gather,
               sp_reduce_scatter=ranks.sp_reduce_scatter, all_reduce=ranks.all_reduce,
               hc_expand=_hc_expand, hc_contract=_hc_contract, max_across_tp=ranks.max_across_tp,
-              sp_exact=exact, full_split=full_split)
+              sp_exact=exact, sp_available=lambda: True, full_split=full_split)
 
 
 class _NoCuda:

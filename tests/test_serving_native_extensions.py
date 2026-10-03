@@ -121,14 +121,75 @@ def _assigned_in_scope(tree: ast.AST, target: str, before: int) -> ast.expr | No
     return best[1] if best else None
 
 
-def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int) -> str | None:
+def _constructor_attribute(expr: ast.Attribute, tree: ast.AST,
+                           lineno: int) -> ast.expr | None:
+    """Read one unambiguous field of a same-module constructor.
+
+    This follows ``self.build = Build(...)`` into ``Build.__init__``;
+    unrelated classes' ``self.name`` fields are never candidate bindings.
+    Multiple writes, properties, dynamic factories and inherited fields stay
+    unreadable. They require a richer proof, not a guessed published prefix.
+    """
+    if isinstance(expr.value, ast.Name) and expr.value.id == "self":
+        owners = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)
+                  and n.lineno <= lineno <= n.end_lineno]
+        owner = min(owners, key=lambda n: n.end_lineno-n.lineno) if owners else None
+    elif isinstance(expr.value, ast.Attribute):
+        bound = _constructor_attribute(expr.value, tree, lineno)
+        if not (isinstance(bound, ast.Call) and isinstance(bound.func, ast.Name)):
+            return None
+        owners = [n for n in tree.body if isinstance(n, ast.ClassDef)
+                  and n.name == bound.func.id]
+        owner = owners[0] if len(owners) == 1 else None
+        # A constructor with a rebound identifier is not an explicit owner.
+        if any(isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+               and n.id == bound.func.id for n in ast.walk(tree)):
+            return None
+        if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name == bound.func.id for n in tree.body):
+            return None
+        lineno = owner.end_lineno if owner else lineno
+    else:
+        return None
+    if owner is None or owner.bases:
+        return None
+    if any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+           and n.name in (expr.attr, "__getattribute__", "__getattr__", "__setattr__")
+           for n in owner.body):
+        return None
+    initializers = [n for n in owner.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "__init__"]
+    if len(initializers) != 1:
+        return None
+    initializer = initializers[0]
+    writes = [n for n in ast.walk(owner) if isinstance(n, ast.Attribute)
+              and isinstance(n.ctx, ast.Store) and n.attr == expr.attr
+              and isinstance(n.value, ast.Name) and n.value.id == "self"]
+    if len(writes) != 1 or writes[0].lineno >= lineno:
+        return None
+    for assignment in ast.walk(initializer):
+        if isinstance(assignment, ast.Assign) and writes[0] in assignment.targets:
+            return assignment.value
+    return None
+
+
+def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int,
+                     active: frozenset[int] = frozenset()) -> str | None:
     """A module name this call site can produce, or ``None`` if unreadable.
 
     A literal gives the name exactly (the window loader spells
     ``name="tessera_window_gemv"`` as a literal for exactly this reader).  An
     f-string gives its leading constant segment plus a placeholder for what
-    varies.  A bare name is resolved one hop to its assignment.
+    varies. Bare names and explicit constructor fields resolve through their
+    assignments; cycles and opaque owner/path expressions remain unreadable.
     """
+    if expr is None or id(expr) in active:
+        return None
+    active = active | {id(expr)}
+
+    def read(value, at=lineno):
+        return _producible_name(value, tree, at, active)
+
     if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
         return expr.value
     if isinstance(expr, ast.JoinedStr):
@@ -138,20 +199,36 @@ def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int) -> str |
                 out.append(piece.value)
                 continue
             inner = piece.value if isinstance(piece, ast.FormattedValue) else None
-            resolved = _producible_name(inner, tree, lineno) if inner is not None else None
+            resolved = read(inner) if inner is not None else None
             # A segment that resolves to a constant is part of the name; one
             # computed at run time is what the glob's ``*`` stands for.
             out.append(resolved if resolved is not None else _VARIES)
-        return "".join(out)
+        name = "".join(out)
+        # A variable directory/hash suffix is fine; an opaque basename prefix
+        # cannot stand in for an explicitly published library identity.
+        return None if name.rsplit("/", 1)[-1].startswith(_VARIES) else name
     if isinstance(expr, ast.Name):
         bound = _assigned_in_scope(tree, expr.id, lineno)
         if bound is None or isinstance(bound, ast.Name):
             return None
-        return _producible_name(bound, tree, lineno)
+        return read(bound)
+    if isinstance(expr, ast.Attribute):
+        bound = _constructor_attribute(expr, tree, lineno)
+        return read(bound, bound.lineno) if bound is not None else None
+    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name)
+            and expr.func.id == "str" and len(expr.args) == 1 and not expr.keywords):
+        return read(expr.args[0])
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
-        left = _producible_name(expr.left, tree, lineno)
-        right = _producible_name(expr.right, tree, lineno)
+        left = read(expr.left)
+        right = read(expr.right)
         return None if left is None or right is None else left + right
+    if (isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Div)
+            and isinstance(expr.left, ast.Call) and isinstance(expr.left.func, ast.Name)
+            and expr.left.func.id == "Path" and len(expr.left.args) == 1
+            and not expr.left.keywords):
+        # Only the directory varies; an unreadable basename must still refuse.
+        basename = read(expr.right)
+        return None if basename is None else _VARIES + "/" + basename
     return None
 
 
@@ -396,6 +473,49 @@ def test_the_scanner_refuses_a_load_site_it_cannot_read(tmp_path):
     sites = scan_jit_extension_loads(tmp_path / "src", ["tessera.serving"])
     assert [s["name"] for s in sites] == [None]
 
+
+
+def _shared_builder_sites(tmp_path, *, name='f"{PREFIX}{key}"',
+                          owner='Build()', extra='', other=''):
+    root = tmp_path / "src" / "tessera"
+    root.mkdir(parents=True)
+    (root / "__init__.py").write_text("")
+    (root / "builder.py").write_text(textwrap.dedent(f"""
+        import ctypes
+        from pathlib import Path
+        from torch.utils.cpp_extension import load
+        PREFIX = "tessera_shared_"
+        class Build:
+            def __init__(self):
+                self.name = {name}
+                {extra}
+                self.library_path = Path(directory) / f"{{self.name}}.so"
+                load(name=self.name, sources=["x.cu"])
+        class Runtime:
+            def __init__(self):
+                self.build = {owner}
+                ctypes.CDLL(str(self.build.library_path))
+        {other}
+    """))
+    return scan_jit_extension_loads(tmp_path / "src", ["tessera.builder"])
+
+
+def test_shared_builder_name_and_retained_path_have_one_inventory_identity(tmp_path):
+    sites = _shared_builder_sites(tmp_path)
+    assert [s['name'] for s in sites] == ['tessera_shared_'+_VARIES]*2
+    assert _undeclared(sites, []) == sites
+    assert _undeclared(sites, [{'filename_glob':'tessera_shared_*.so'}]) == []
+
+
+@pytest.mark.parametrize('changes,expected', [
+    ({'name':'chosen'}, [None,None]),
+    ({'owner':'dynamic_builder()'}, ['tessera_shared_'+_VARIES,None]),
+    ({'extra':'self.name = chosen'}, [None,None]),
+    ({'name':'self.name'}, [None,None]),
+    ({'other':'class Other: name = "tessera_foreign"'}, ['tessera_shared_'+_VARIES]*2),
+])
+def test_shared_builder_inventory_refuses_opaque_or_ambiguous_names(tmp_path, changes, expected):
+    assert [s['name'] for s in _shared_builder_sites(tmp_path, **changes)] == expected
 
 def test_the_scanner_does_not_trip_on_an_ordinary_load(tmp_path):
     root = tmp_path / "src" / "tessera" / "serving"

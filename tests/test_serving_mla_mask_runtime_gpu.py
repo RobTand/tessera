@@ -6,7 +6,7 @@ import pytest
 import torch
 pytest.importorskip('vllm')
 from tessera.serving import mla_sparse_sm120 as module
-from tessera.serving.mla_prefill import MlaPrefillLibrary
+from tessera.serving import mla_prefill
 
 @pytest.fixture(scope="module")
 def workload():
@@ -20,10 +20,20 @@ def workload():
 
 
 @pytest.fixture(scope="module")
-def native_library(tmp_path_factory):
-    # The production owner is cached per process/device. Reuse that lifetime;
-    # changing the build directory for one name makes Torch version the DSO.
-    return MlaPrefillLibrary(tmp_path_factory.mktemp("mla_native") / "build")
+def native_library():
+    # Bind the existing Torch cache to the retained candidate before this gate.
+    # Exercise the production factory and forbid any replacement native build.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(mla_prefill, 'load',
+                      lambda **kw: pytest.fail('runtime gate requires the retained MLA DSO'))
+        module.library_for_device.cache_clear()
+        try:
+            library=module.library_for_device(torch.device('cuda',torch.cuda.current_device()))
+            assert library.build.manifest['p0_buffers'] is True
+            assert library.build.manifest['p0_wrong_pass'] is False
+            yield library
+        finally:
+            module.library_for_device.cache_clear()
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(),reason='requires actual SM121 CUDA runtime')
@@ -34,7 +44,7 @@ def test_actual_eager_override_matches_stock_and_graph_capture_stays_stock(T,E,m
     module.flags.reset_for_tests(module.FLAG);monkeypatch.setenv(module.FLAG,'1')
     assert module.qualified_source_refusal() is None
     library=native_library
-    monkeypatch.setattr(module,'library_for_device',lambda device:library)
+    assert module.library_for_device(torch.device('cuda',torch.cuda.current_device())) is library
     impl=object.__new__(module.TesseraMLASparseSM120Impl)
     impl.num_heads=32;impl.kv_lora_rank=512;impl.qk_nope_head_dim=256;impl.qk_rope_head_dim=0
     impl.kv_scale_format='arbitrary_fp32';impl.scale=1/16;impl._workspace_buffer=None

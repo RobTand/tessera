@@ -1,6 +1,9 @@
 """A fresh extension directory is a valid pre-build measurement state."""
 from pathlib import Path
+import os
 import subprocess
+
+import pytest
 
 
 def extension_listing(directory):
@@ -24,3 +27,79 @@ def test_existing_extension_identity_stays_visible(tmp_path):
     timestamp,name=result.strip().split(maxsplit=1)
     assert int(timestamp)==int(library.stat().st_mtime)
     assert name.endswith('tessera_native/fixture.so')
+
+
+def wrapper_environment(tmp_path):
+    checkout = tmp_path / 'checkout'
+    (checkout / 'experiments').mkdir(parents=True)
+    (checkout / 'experiments/runtime_image.sh').write_text(
+        'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; }\n')
+    (checkout / 'pyproject.toml').write_text('[project]\nname="tessera-quant"\nversion="0.0.0"\n')
+    source = tmp_path / 'frozen-src'
+    kernel = source / 'tessera/serving/csrc/routed_fused_window.cu'
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text('// reviewed frozen source\n')
+    extensions = tmp_path / 'retained-extensions'
+    packages = tmp_path / 'packages'
+    packages.mkdir()
+    for name in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging', 'xdist', 'execnet'):
+        (packages / name).mkdir()
+    (packages / 'py.py').write_text('')
+    binaries = tmp_path / 'bin'
+    binaries.mkdir()
+    docker = binaries / 'docker'
+    docker.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$DOCKER_ARGV_PATH"\n')
+    docker.chmod(0o755)
+    argv_path = tmp_path / 'argv'
+    env = {k: v for k, v in os.environ.items() if not k.startswith(('BENCH_', 'NATIVE_', 'TEST_'))}
+    env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'],
+               ORACLE_IMAGE='inert-image', TEST_RUNNER_SP=str(packages),
+               BENCH_SRC=str(source), BENCH_EXT_DIR=str(extensions), TEST_XDIST='1',
+               DOCKER_ARGV_PATH=str(argv_path))
+    return checkout, source, extensions, argv_path, env
+
+
+@pytest.mark.parametrize('canonical', [False, True])
+def test_gpu_test_wrapper_reuses_native_namespace_and_xdist(tmp_path, canonical):
+    wrapper = Path(__file__).resolve().parents[1] / 'experiments/routed_fused_tests.sh'
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    container_source = '/tessera/src' if canonical else '/work/src'
+    container_extensions = '/ext' if canonical else str(extensions)
+    if canonical:
+        env.update(NATIVE_CONTAINER_SRC=container_source, NATIVE_CONTAINER_EXT=container_extensions)
+    subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+                    '-n', '2', '--dist', 'worksteal', 'owned-case'],
+                   env=env, check=True, capture_output=True, text=True)
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    assert str(source) + ':' + container_source + ':ro' in args
+    assert str(extensions) + ':' + container_extensions in args
+    assert 'TORCH_EXTENSIONS_DIR=' + container_extensions in args
+    assert 'NATIVE_CONTAINER_SRC=' + container_source in args
+    if canonical:
+        assert 'native_test_source' in args
+        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args
+    assert 'xdist.plugin' in args
+    assert args[-5:] == ['-n', '2', '--dist', 'worksteal', 'owned-case']
+
+
+@pytest.mark.parametrize('canonical', [False, True])
+def test_build_wrapper_matches_the_consumer_namespace(tmp_path, canonical):
+    wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/build_ext.sh'
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    container_source = '/tessera/src' if canonical else '/work/src'
+    container_extensions = '/ext' if canonical else str(extensions)
+    work = tmp_path / 'owned-library-work'
+    env['NATIVE_BUILD_WORK_DIR'] = str(work)
+    if canonical:
+        env.update(NATIVE_CONTAINER_SRC=container_source, NATIVE_CONTAINER_EXT=container_extensions)
+    subprocess.run(['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma'],
+                   env=env, check=True, capture_output=True, text=True)
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    assert str(source) + ':' + container_source + ':ro' in args
+    assert str(extensions) + ':' + container_extensions in args
+    assert 'TORCH_EXTENSIONS_DIR=' + container_extensions in args
+    assert 'PYTHONPATH=' + container_source in args
+    assert 'HOME=' + str(work / 'home') in args
+    assert 'TMPDIR=' + str(work / 'tmp') in args
+    if canonical:
+        assert str(checkout / 'pyproject.toml') + ':/tessera/pyproject.toml:ro' in args

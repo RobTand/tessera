@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 """Emit the producer's explicit expert projection without encoding or serving.
 
-PrismaQuant calls this named tool as a subprocess, keeping Tessera's serving
-imports in the producer process and its source grammar in the exporter.
+Public entry point: ``python -m tessera.producer_plan``. Consumers call it as a
+subprocess, keeping serving imports in the producer process and source grammar
+in the exporter. The installed-package output is ``tessera.expert_projection.v1``.
 The source seal binds the checkpoint; the geometry reads its headers.
 Optional stat-bound caching reuses fenced shard hashes and records their receipt.
 """
@@ -12,13 +13,13 @@ import argparse
 import json
 from pathlib import Path
 
-from export_tessera_serving import project_expert_plan, quantizable
+from tessera.export_serving import project_expert_plan, quantizable
 from tessera.cached_unit import read_manifest
 from tessera.serving_parts import source_identity
 from tessera.source_digest_cache import SourceDigestCache
 
 
-def _producer_projection(src: Path, stack_plan: Path, *, digest_cache=None) -> dict:
+def producer_projection(src: Path, stack_plan: Path, *, digest_cache=None) -> dict:
     """Assemble the producer-owned geometry and whole-source seal."""
     _shards, dense, packed, routed = quantizable(src)
     projected = project_expert_plan({**dense, **packed, **routed},
@@ -38,7 +39,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     cache = (SourceDigestCache(args.source_digest_cache, source=args.src)
              if args.source_digest_cache is not None else None)
-    projected = _producer_projection(args.src, args.stack_plan, digest_cache=cache)
+    projected = producer_projection(args.src, args.stack_plan, digest_cache=cache)
     if cache is not None:
         projected["source_digest_cache"] = cache.receipt()
     args.out.write_text(json.dumps(projected, indent=2) + "\n")

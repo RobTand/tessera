@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _producer_stubs() -> tuple[ModuleType, ModuleType]:
     """Separate geometry and plan reading from real source-seal/cache behavior."""
-    geometry = ModuleType("export_tessera_serving")
+    geometry = ModuleType("tessera.export_serving")
     geometry.__dict__.update(
         quantizable=lambda src: ([], {}, {}, {}),
         project_expert_plan=lambda *args: {"projection": "control"},
@@ -33,7 +33,7 @@ def producer(monkeypatch):
     for dependency in _producer_stubs():
         monkeypatch.setitem(sys.modules, dependency.__name__, dependency)
     spec = importlib.util.spec_from_file_location(
-        "producer_plan_cache_cli", ROOT / "experiments" / "tessera_producer_plan.py")
+        "producer_plan_cache_cli", ROOT / "src" / "tessera" / "producer_plan.py")
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -115,6 +115,28 @@ def test_cli_cache_reuses_seal_and_keeps_config_and_auxiliary_reads(
     assert receipt["shards"][0]["writer"]["quiescent_seconds"] == source_digest_cache.DEFAULT_QUIESCENT_SECONDS
 
 
+def test_public_projection_cache_hit_is_byte_identical_to_uncached_projection(
+        producer, source, tmp_path, cache_directory, quiescent_clock, hash_reads):
+    plan = tmp_path / "stack-plan.json"
+    uncached = producer.producer_projection(source, plan)
+    expected_bytes = (json.dumps(uncached, indent=2) + "\n").encode()
+    hash_reads.clear()
+    cold_cache = source_digest_cache.SourceDigestCache(cache_directory, source=source)
+    cold = producer.producer_projection(source, plan, digest_cache=cold_cache)
+    assert (json.dumps(cold, indent=2) + "\n").encode() == expected_bytes
+    assert hash_reads.count("model.safetensors") == 1
+    assert cold_cache.receipt()["hashed_shards"] == 1
+    hash_reads.clear()
+    # A new instance models a subsequent producer process, not in-memory reuse.
+    warm_cache = source_digest_cache.SourceDigestCache(cache_directory, source=source)
+    warm = producer.producer_projection(source, plan, digest_cache=warm_cache)
+    assert (json.dumps(warm, indent=2) + "\n").encode() == expected_bytes
+    assert "model.safetensors" not in hash_reads
+    assert {"config.json", "tokenizer_config.json"} <= set(hash_reads)
+    assert warm_cache.receipt()["cached_shards"] == 1
+    assert warm_cache.receipt()["hashed_shards"] == 0
+
+
 def test_cli_cache_rehashes_same_size_changed_shard(
         producer, source, tmp_path, cache_directory, quiescent_clock, hash_reads):
     first = _call(producer, source, tmp_path, cache_directory)
@@ -151,3 +173,5 @@ def test_cli_cache_keeps_directory_refusals(producer, source, tmp_path, kind, me
         directory.chmod(0o777)
     with pytest.raises(ValueError, match=message):
         _call(producer, source, tmp_path, directory)
+
+
