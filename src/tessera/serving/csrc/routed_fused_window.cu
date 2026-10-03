@@ -179,6 +179,16 @@ constexpr int WORD_STAGES_MIN = 2;
 #define TESSERA_ROUTED_FUSED_A_PREFETCH 4
 #endif
 constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
+// Experimental mode-0 one-run R4 consumer schedule (tessera#739). Both
+// independent B column groups load before the first group's MMAs. Register
+// lifetime changes, but accumulator K order and shared ownership do not.
+#ifndef TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH
+#define TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH 0
+#endif
+static_assert(TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH == 0 ||
+              TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH == 1, "B schedule is 0 or 1");
+constexpr bool MMA8_GATE_UP_B_PREFETCH =
+    FAMILY_MMA8 && TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH;
 static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
 
 // One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
@@ -1388,18 +1398,39 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int row = WROWS * mw + 16 * mi + 8 * ((lane >> 3) & 1) + (lane & 7);
                         ldmatrix_x4(a[mi], A + row * BK + (((lane >> 4) ^ ((row >> 2) & 1)) << 4));
                     }
-                    #pragma unroll
-                    for (int G = 0; G < 2; ++G) {
+                    auto load_b = [&](int G, uint32_t (&be)[2], uint32_t (&bo)[2]) {
                         uint32_t X[4];
                         // lane l addresses row l of matrix l >> 3: k = lane
                         ldmatrix_x4_trans(X, B + lane * BN + ((((2 * nw + G) ^ b8swz(lane)) & 7) << 4));
-                        const uint32_t be[2] = {__byte_perm(X[0], X[1], 0x6420), __byte_perm(X[2], X[3], 0x6420)};
-                        const uint32_t bo[2] = {__byte_perm(X[0], X[1], 0x7531), __byte_perm(X[2], X[3], 0x7531)};
+                        be[0] = __byte_perm(X[0], X[1], 0x6420);
+                        be[1] = __byte_perm(X[2], X[3], 0x6420);
+                        bo[0] = __byte_perm(X[0], X[1], 0x7531);
+                        bo[1] = __byte_perm(X[2], X[3], 0x7531);
+                    };
+                    if constexpr (MMA8_GATE_UP_B_PREFETCH && MODE == 0 && !DENSE && !TWO && RL == 4) {
+                        uint32_t be[2][2], bo[2][2];
                         #pragma unroll
-                        for (int mi = 0; mi < MI; ++mi) {
-                            if (mi >= live) break;
-                            mma16832_e4m3(acc[mi][2 * G], a[mi], be);
-                            mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo);
+                        for (int G = 0; G < 2; ++G) load_b(G, be[G], bo[G]);
+                        #pragma unroll
+                        for (int G = 0; G < 2; ++G) {
+                            #pragma unroll
+                            for (int mi = 0; mi < MI; ++mi) {
+                                if (mi >= live) break;
+                                mma16832_e4m3(acc[mi][2 * G], a[mi], be[G]);
+                                mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo[G]);
+                            }
+                        }
+                    } else {
+                        #pragma unroll
+                        for (int G = 0; G < 2; ++G) {
+                            uint32_t be[2], bo[2];
+                            load_b(G, be, bo);
+                            #pragma unroll
+                            for (int mi = 0; mi < MI; ++mi) {
+                                if (mi >= live) break;
+                                mma16832_e4m3(acc[mi][2 * G], a[mi], be);
+                                mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo);
+                            }
                         }
                     }
                 } else {
@@ -3166,6 +3197,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
+    m.attr("MMA8_GATE_UP_B_PREFETCH") = MMA8_GATE_UP_B_PREFETCH;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
