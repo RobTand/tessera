@@ -20,7 +20,7 @@ def callback_module():
     return module
 
 
-def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None):
+def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,owner_args=None):
     reader,staged,opened,sdk=fixture(tmp_path,origin='/forbidden-origin/module.so',offset=0)
     module=callback_module();calls=[]
     source=ROOT/'src/tessera/serving/csrc/routed_fused_window.cu'
@@ -36,7 +36,7 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None):
                         lambda self,lib: exec_hook(lib,staged) if exec_hook else None)
     owner=module.NativeCallback(reader,'/forbidden-origin/module.so',rf,tmp_path/'retained',
         expected_sha256=expected or hashlib.sha256(b'owned-wire').hexdigest(),
-        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), **(owner_args or {}))
     return owner,reader,staged,rf,build,calls
 
 
@@ -101,3 +101,77 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
     owner.finish(lambda:None);reader.close()
 
 
+@pytest.mark.parametrize("module", ["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4"])
+def test_value_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module):
+    source_module = "tessera_routed_fused_value"
+    owner, reader, staged, rf, original, calls = owner_fixture(
+        tmp_path, monkeypatch, owner_args={"module": module, "source_module": source_module})
+    lib = rf.build_library(module, source_module, lambda *a: pytest.fail("no JIT"))
+    owner.bind(lib)
+    assert calls == [(module, source_module)]
+    owner.finish(lambda: None)
+    assert rf.build_library is original
+    reader.close()
+
+
+@pytest.mark.parametrize("module", ["tessera_routed_fused_e4m3", "tessera_routed_fused_e2m1"])
+def test_original_token_sum_owners_require_matching_source(tmp_path, monkeypatch, module):
+    owner, reader, staged, rf, original, calls = owner_fixture(
+        tmp_path, monkeypatch, owner_args={"module": module, "source_module": module})
+    try:
+        with pytest.raises(ValueError, match="foreign"):
+            rf.build_library(module, "tessera_routed_fused_value", lambda *a: pytest.fail("no JIT"))
+        lib = rf.build_library(module, module, lambda *a: pytest.fail("no JIT"))
+        owner.bind(lib)
+        assert calls == [(module, module)]
+    finally:
+        owner.finish(lambda: None)
+        reader.close()
+
+
+def test_multi_arm_load_path_fds_remain_distinct_until_teardown(tmp_path, monkeypatch):
+    held, readers = [], []
+    try:
+        for index, module in enumerate(["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4"]):
+            path = tmp_path / str(index)
+            path.mkdir()
+            owner, reader, staged, rf, original, calls = owner_fixture(
+                path, monkeypatch, owner_args={"module": module, "source_module": "tessera_routed_fused_value"})
+            readers.append(reader)
+            rf.build_library(module, "tessera_routed_fused_value", lambda *a: pytest.fail("no JIT"))
+            fd = owner.fd
+            held.append(fd)
+            owner.finish(lambda: None, keep_load_fd=True)
+            assert os.fstat(fd).st_size == 10
+            assert rf.build_library is original and owner.closed
+            assert module not in sys.modules
+        assert len(set(held)) == 2
+        for fd in held:
+            assert os.fstat(fd).st_size == 10
+    finally:
+        for fd in held:
+            os.close(fd)
+        for reader in readers:
+            reader.close()
+
+
+@pytest.mark.parametrize("matched", [False, True])
+def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, matched):
+    owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
+    lib = rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail("no JIT"))
+    info = os.fstat(owner.fd)
+    inode = info.st_ino if matched else info.st_ino + 1
+    maps = f"1000-2000 r-xp 00000000 {os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x} {inode} /sealed/native.so\n"
+    original_read = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda path, *a, **kw: maps if str(path) == "/proc/self/maps" else original_read(path, *a, **kw))
+    try:
+        if matched:
+            owner.attest_mapped(lib)
+            assert owner.record["mapped_sha256"] == owner.record["expected_sha256"]
+            assert owner.record["executable_mappings"] == [maps.strip()]
+        else:
+            with pytest.raises(ValueError, match="held ELF inode"):
+                owner.attest_mapped(lib)
+    finally:
+        owner.finish(lambda: None)
+        reader.close()

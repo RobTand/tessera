@@ -205,7 +205,18 @@ class NativeCallback:
     """
     MODULE = 'tessera_routed_fused_mma_e4m3'
 
-    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256):
+    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256,
+                 module=None, source_module=None):
+        self.MODULE = self.MODULE if module is None else module
+        self.source_module = self.MODULE if source_module is None else source_module
+        if (self.MODULE, self.source_module) not in {
+            ("tessera_routed_fused_mma_e4m3", "tessera_routed_fused_mma_e4m3"),
+            ("tessera_routed_fused_value", "tessera_routed_fused_value"),
+            ("tessera_routed_fused_e4m3", "tessera_routed_fused_e4m3"),
+            ("tessera_routed_fused_e2m1", "tessera_routed_fused_e2m1"),
+            ("tessera_routed_fused_value_prefetch4", "tessera_routed_fused_value"),
+        }:
+            raise ValueError("unqualified retained native family")
         self.reader,self.rf,self.out = reader,rf,Path(out)
         self.original = rf.build_library
         self.fd,self.entry,self.serving = reader.native_artifact(path)
@@ -256,7 +267,7 @@ class NativeCallback:
         return digest.hexdigest()
 
     def _build(self, module, source_module, compile_fn):
-        if (module,source_module)!=(self.MODULE,self.MODULE):
+        if (module,source_module)!=(self.MODULE,self.source_module):
             raise ValueError('foreign native library requested')
         def retained(src,build,token,verbose):
             if hashlib.sha256(Path(src).read_bytes()).hexdigest()!=self.source_sha256:
@@ -288,7 +299,23 @@ class NativeCallback:
             module.__spec__.origin!=origin):
             raise ValueError('actual native module origin/identity differs')
 
-    def finish(self, fence):
+    def attest_mapped(self, module):
+        """Diagnostic mapping proof using the held artifact FD, never path rereads."""
+        self.bind(module)
+        info = os.fstat(self.fd)
+        matches = []
+        for line in Path("/proc/self/maps").read_text().splitlines():
+            fields = line.split(None, 5)
+            if len(fields) >= 5 and "x" in fields[1]:
+                major, minor = (int(v, 16) for v in fields[3].split(":"))
+                if (major, minor, int(fields[4])) == (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino):
+                    matches.append(line)
+        if not matches:
+            raise ValueError("native module is not mapped from its held ELF inode")
+        self.record["executable_mappings"] = matches
+        self.record["mapped_sha256"] = self._hash()
+
+    def finish(self, fence, *, keep_load_fd=False):
         if self.closed: return
         try:
             if self.module is not None:
@@ -299,6 +326,10 @@ class NativeCallback:
                     raise ValueError('native artifact changed during profile')
         finally:
             self.rf.build_library=self.original
-            os.close(self.fd);self.closed=True
+            # Diagnostic multi-arm callers hold every loaded pathname alive
+            # until teardown: CPython/dlopen can cache /proc/self/fd names.
+            if not keep_load_fd or self.module is None:
+                os.close(self.fd)
+            self.closed=True
             if self.module is not None and sys.modules.get(self.MODULE) is self.module:
                 del sys.modules[self.MODULE]
