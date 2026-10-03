@@ -152,13 +152,21 @@ def repair_readset(original, output):
     print(json.dumps({"scope": SCOPE, "readset": str(output), "sha256": digest(output), "entry_count": checked["entry_count"], "total_bytes": checked["total_bytes"], "phases": phases, "retained_entries_unchanged": checked["entries"] == json.loads(original.read_bytes())["entries"]}))
 
 
-def move(value):
+def move(value, device="cuda"):
+    from tessera.kernel_window_gemv import WindowGemvUnit
+    if isinstance(value, WindowGemvUnit):
+        from tessera.window_gemm import _resolve_initial_state
+        # Canonicalize the existing reader precedence before rep rebuilding:
+        # legacy fixture history is a dynamic rep attribute, not a field.
+        value = dataclasses.replace(value, initial_state=_resolve_initial_state(value, None))
     if isinstance(value, torch.Tensor):
-        return value.cuda()
+        return value.to(device)
     if dataclasses.is_dataclass(value):
-        return dataclasses.replace(value, **{f.name: move(getattr(value, f.name)) for f in dataclasses.fields(value)})
+        return dataclasses.replace(value, **{f.name: move(getattr(value, f.name), device) for f in dataclasses.fields(value)})
     if isinstance(value, dict):
-        return {k: move(v) for k, v in value.items()}
+        return {k: move(v, device) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return tuple(move(v, device) for v in value)
     return value
 
 
@@ -225,7 +233,10 @@ def consume(bank, manifest, out):
                             owner.attest_mapped(owner.module)
                     finally:
                         owner.finish(torch.cuda.synchronize, keep_load_fd=True)
-                    owners.append(dict(owner.record, q256=case["q256"], arm=arm))
+                    record = dict(owner.record, q256=case["q256"], arm=arm, scope=SCOPE)
+                    (out / ("q" + str(case["q256"])) / arm / "native-identity.json").write_text(json.dumps(record, indent=2) + "\n")
+                    print("VALUE_NATIVE_IDENTITY " + json.dumps(record), flush=True)
+                    owners.append(record)
                     rf._ext.cache_clear()
         if len(reports) != len(Q256_CASES) * len(MS):
             raise ValueError("incomplete synthetic numeric result")

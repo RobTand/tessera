@@ -68,3 +68,75 @@ def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phas
     else:
         with pytest.raises(ValueError, match="staging phase"):
             numeric.validate_readset(path)
+
+
+@pytest.mark.parametrize("history", ["none", "zero", "fallback", "declared-wins"])
+def test_fixture_transfer_preserves_native_history_precedence_and_prefix(history):
+    import dataclasses
+    from test_window_gemm_grouped import Expert, _states
+    from tessera.window_gemm import _resolve_initial_state
+    initial = None if history == "none" else torch.zeros(32, dtype=torch.int32)
+    if history in ("fallback", "declared-wins"):
+        initial = torch.arange(32, dtype=torch.int32) + 101
+    expert = Expert(64, 32, (1,) * 32, 874, family="value", init=initial, device="cpu")
+    unit = expert.unit
+    if history == "declared-wins":
+        unit = dataclasses.replace(unit, initial_state=initial)
+        unit.rep.initial_state = torch.full((32,), 999, dtype=torch.int32)
+    rep_history = getattr(unit.rep, "initial_state", None)
+    declared_history = unit.initial_state
+    # The old recursive replacement drops the dynamic rep history.
+    old_transfer = dataclasses.replace(unit, rep=dataclasses.replace(unit.rep))
+    old_states = _states(expert.body, expert.rates, 14, _resolve_initial_state(old_transfer, None))
+    transferred = numeric.move(unit, "cpu")
+    resolved = _resolve_initial_state(transferred, None)
+    decoded = _states(expert.body, expert.rates, 14, resolved)
+    assert torch.equal(decoded, expert.states)
+    assert torch.equal(old_states[13:], expert.states[13:])
+    if history == "fallback":
+        assert not torch.equal(old_states[:13], expert.states[:13])
+    else:
+        assert torch.equal(old_states, expert.states)
+    assert unit.initial_state is declared_history
+    assert getattr(unit.rep, "initial_state", None) is rep_history
+    if initial is None:
+        assert resolved is None
+    else:
+        assert torch.equal(resolved, initial)
+    for items, _ in transferred.items_by_mt.values():
+        assert items.device == transferred.rep.words.device
+
+
+def test_actual_retained_fixture_histories_through_public_pinned_reader():
+    import io, json, os
+    from test_window_gemm_grouped import _states
+    from tessera.window_gemm import _resolve_initial_state
+    manifest = os.environ.get("T16_SYNTHETIC_READSET")
+    if manifest is None:
+        pytest.skip("explicit admitted synthetic bank proof only")
+    reader = numeric.StagedInputs(manifest)
+    units, histories = 0, 0
+    try:
+        packet_path = next(path for path, offset in reader.entries if Path(path).name == "packet.json")
+        packet = json.loads(reader.read(packet_path))
+        assert packet["scope"] == numeric.SCOPE
+        assert [case["q256"] for case in packet["cases"]] == numeric.Q256_CASES
+        for case in packet["cases"]:
+            payload = torch.load(io.BytesIO(reader.read(case["path"])), map_location="cpu", weights_only=False)
+            for stack in payload["stacks"]:
+                for expert in stack:
+                    original = _resolve_initial_state(expert.unit, None)
+                    transferred = numeric.move(expert.unit, "cpu")
+                    resolved = _resolve_initial_state(transferred, None)
+                    if original is None:
+                        assert resolved is None
+                    else:
+                        assert torch.equal(resolved, original)
+                        histories += 1
+                    assert torch.equal(_states(expert.body, expert.rates, 14, resolved), expert.states)
+                    assert _resolve_initial_state(expert.unit, None) is original
+                    units += 1
+        assert (units, histories) == (270, 108)
+        print(f"RETAINED_SYNTHETIC_CPU_STATE_PROOF units={units} histories={histories} readset={reader.manifest_sha256}")
+    finally:
+        reader.close()

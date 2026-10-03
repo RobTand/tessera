@@ -8,15 +8,15 @@
   "packet_sha256": "47ce04bb2e451cde8ed48a3648f7997147394e4f9dec0dfc1961ba90aa5721e9",
   "container_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
   "native_source_sha256": "51f6f7d76e0f7f54e448202599b98007c88a7ebb1e2d9c69ba0324258fb892c9",
-  "common_pbrun_args": ["--measurement", "--host-class", "gb10", "--exclusive", "--gpu", "--cpus", "1", "--residency", "stage", "--max-attempts", "1", "--wait-s", "7200"],
+  "common_pbrun_args": ["--measurement", "--host-class", "gb10", "--exclusive", "--cpus", "1", "--residency", "stage", "--max-attempts", "1", "--wait-s", "7200"],
   "actions": {
     "numeric": {
-      "pbrun_args": ["--demand", "mem_gb=12", "--gpu-memory-gb", "8", "--timeout-s", "600"],
-      "command": ["bash", "experiments/t8r_speed/value_prefetch_numeric_action.sh", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-numeric-v1", "consume", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2/readset-v3.json"]
+      "pbrun_args": ["--demand", "gpu=1,mem_gb=12", "--gpu-memory-gb", "8", "--timeout-s", "600"],
+      "command": ["bash", "experiments/t8r_speed/value_prefetch_numeric_action.sh", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-numeric-v2", "consume", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2/readset-v3.json"]
     },
     "sanitizer": {
-      "pbrun_args": ["--demand", "mem_gb=32", "--gpu-memory-gb", "24", "--timeout-s", "1800"],
-      "command": ["bash", "experiments/t8r_speed/value_prefetch_numeric_action.sh", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-sanitizer-v1", "sanitize", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2/readset-v3.json"],
+      "pbrun_args": ["--demand", "gpu=1,mem_gb=32", "--gpu-memory-gb", "24", "--timeout-s", "1800"],
+      "command": ["bash", "experiments/t8r_speed/value_prefetch_numeric_action.sh", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-sanitizer-v2", "sanitize", "/mnt/shared/tessera-measurements/t16-prefetch-874/syntheticgeometry-nonshipping-bank-v2/readset-v3.json"],
       "tool_args": ["--tool", "memcheck", "--error-exitcode", "99", "--target-processes", "all"]
     }
   },

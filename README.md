@@ -47,6 +47,11 @@ Readset publication validates the actual PB v1 schema and whole-bank staging
 phase. The corrected readset is a separate `readset-v3.json`; original bank-v2
 bytes are preserved. The action takes that frozen manifest as its fourth
 argument, identically to PB admission, rather than silently reading an old file.
+Fixture transfer resolves the native window reader's existing initial-state
+precedence into the declared unit field before copying tensors, so legacy
+repack-attached row-cut history is not discarded by dataclass replacement.
+No bound, accumulation order, bank tensor or native kernel is changed by this
+qualification-harness correction.
 
 The results show why this combination is interesting: **Tessera-8 reaches
 EXL3-like reconstruction quality while using FP8 activations**, and a
