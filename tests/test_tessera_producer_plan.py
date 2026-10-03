@@ -186,4 +186,5 @@ def test_public_producer_api_and_safe_path_cli_use_real_expert_geometry(tmp_path
     subprocess.run([sys.executable, "-m", "tessera.producer_plan", str(source),
                     "--stack-plan", str(plan), "--out", str(output)],
                    check=True, cwd=tmp_path, env=env, capture_output=True, text=True)
-    assert output.read_bytes() == (json.dumps(expected, indent=2) + "\n").encode()
+    # tensor_names returns a set; JSON object member order is not the v1 contract.
+    assert json.loads(output.read_text()) == expected
