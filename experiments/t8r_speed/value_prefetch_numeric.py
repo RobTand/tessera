@@ -189,56 +189,62 @@ def consume(bank, manifest, out):
         expected_cases = [{"q256": q, "path": str(bank / f"q{q}.pt"), "ms": MS} for q in Q256_CASES]
         if packet["cases"] != expected_cases:
             raise ValueError("synthetic case matrix differs")
-        for case in packet['cases']:
-            # Pickle is permitted only for this digested, explicitly trusted synthetic producer.
-            payload = torch.load(io.BytesIO(reader.read(case['path'])), map_location='cpu', weights_only=False)
-            if payload['scope'] != SCOPE or payload['q256'] != case['q256']:
-                raise ValueError("synthetic fixture differs")
-            if [s["m"] for s in payload["samples"]] != MS:
-                raise ValueError("synthetic sample matrix differs")
-            stacks = payload['stacks']
-            for stack in stacks:
-                for expert in stack:
-                    expert.unit = move(expert.unit)
-                    expert.scale = expert.scale.cuda()
-            bundles = _bundles('value', stacks)
-            samples = [{**s, 'x': s['x'].cuda(), 'ids': s['ids'].cuda(), 'weights': s['weights'].cuda()} for s in payload['samples']]
-            baseline = []
-            for arm, (module, distance, expected) in ARMS.items():
-                rf._ext.cache_clear()
-                os.environ['TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH'] = str(distance)
-                owner = NativeCallback(reader, bank / (arm + '-' + module + '.so'), rf,
-                                       out / f'q{case["q256"]}' / arm,
-                                       expected_sha256=expected, source_sha256=SOURCE_SHA,
-                                       module=module, source_module='tessera_routed_fused_value')
-                try:
-                    lib = rf._ext("value")
-                    owner.attest_mapped(lib)
-                    owner.record["resolved_value_prefetch"] = int(lib.VALUE_A_PREFETCH)
-                    for i, sample in enumerate(samples):
-                        outputs = _staged_check(stacks, bundles, sample['x'], sample['ids'], sample['weights'],
-                                                'value', f'{SCOPE}:{arm}:q{case["q256"]}:M{sample["m"]}', compact=False)
-                        frozen = [o.detach().clone() for o in outputs]
-                        if arm == 'baseline':
-                            baseline.append(frozen)
+        reference_outputs = {}
+        for arm, (module, distance, expected) in ARMS.items():
+            # The existing native owner/cache has one lifetime per arm, not
+            # one PyBind initialization per rung. Keep both load FDs alive.
+            rf._ext.cache_clear()
+            os.environ["TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH"] = str(distance)
+            owner = NativeCallback(reader, bank / (arm + "-" + module + ".so"), rf,
+                                   out / arm, expected_sha256=expected,
+                                   source_sha256=SOURCE_SHA, module=module,
+                                   source_module="tessera_routed_fused_value")
+            completed = []
+            try:
+                lib = rf._ext("value")
+                owner.attest_mapped(lib)
+                owner.record["resolved_value_prefetch"] = int(lib.VALUE_A_PREFETCH)
+                for case in packet["cases"]:
+                    # Re-read the same authenticated bytes, never regenerate inputs.
+                    payload = torch.load(io.BytesIO(reader.read(case["path"])), map_location="cpu", weights_only=False)
+                    if payload["scope"] != SCOPE or payload["q256"] != case["q256"]:
+                        raise ValueError("synthetic fixture differs")
+                    if [s["m"] for s in payload["samples"]] != MS:
+                        raise ValueError("synthetic sample matrix differs")
+                    stacks = payload["stacks"]
+                    for stack in stacks:
+                        for expert in stack:
+                            expert.unit = move(expert.unit)
+                            expert.scale = expert.scale.cuda()
+                    bundles = _bundles("value", stacks)
+                    for sample in payload["samples"]:
+                        x, ids, weights = (sample[k].cuda() for k in ("x", "ids", "weights"))
+                        outputs = _staged_check(stacks, bundles, x, ids, weights, "value",
+                                                f'{SCOPE}:{arm}:q{case["q256"]}:M{sample["m"]}', compact=False)
+                        key = (case["q256"], sample["m"])
+                        if arm == "baseline":
+                            reference_outputs[key] = [o.detach().clone() for o in outputs]
                         else:
-                            for left, right in zip(baseline[i], frozen):
+                            for left, right in zip(reference_outputs.pop(key), outputs):
                                 compare_bits(left, right)
-                            reports.append({'q256': case['q256'], 'm': sample['m'], 'stages': ['mode1', 'activation', 'mode2', 'mode0'], 'bitwise': True})
-                finally:
+                            report = {"q256": key[0], "m": key[1], "stages": ["mode1", "activation", "mode2", "mode0"], "bitwise": True}
+                            reports.append(report)
+                            print("VALUE_NUMERIC_PAIR " + json.dumps(report), flush=True)
+                        completed.append(key)
+            finally:
+                if owner.module is not None:
+                    live_load_fds.append(owner.fd)
+                try:
                     if owner.module is not None:
-                        live_load_fds.append(owner.fd)
-                    try:
-                        if owner.module is not None:
-                            owner.attest_mapped(owner.module)
-                    finally:
-                        owner.finish(torch.cuda.synchronize, keep_load_fd=True)
-                    record = dict(owner.record, q256=case["q256"], arm=arm, scope=SCOPE)
-                    (out / ("q" + str(case["q256"])) / arm / "native-identity.json").write_text(json.dumps(record, indent=2) + "\n")
-                    print("VALUE_NATIVE_IDENTITY " + json.dumps(record), flush=True)
-                    owners.append(record)
-                    rf._ext.cache_clear()
-        if len(reports) != len(Q256_CASES) * len(MS):
+                        owner.attest_mapped(owner.module)
+                finally:
+                    owner.finish(torch.cuda.synchronize, keep_load_fd=True)
+                record = dict(owner.record, completed_cases=completed, arm=arm, scope=SCOPE)
+                (out / arm / "native-identity.json").write_text(json.dumps(record, indent=2) + "\n")
+                print("VALUE_NATIVE_IDENTITY " + json.dumps(record), flush=True)
+                owners.append(record)
+                rf._ext.cache_clear()
+        if reference_outputs or len(reports) != len(Q256_CASES) * len(MS):
             raise ValueError("incomplete synthetic numeric result")
         (out / "numeric.json").write_text(json.dumps({"scope": SCOPE, "results": reports, "owners": owners, "readset_sha256": reader.manifest_sha256}, indent=2) + "\n")
     finally:
@@ -289,7 +295,7 @@ def staged_read(manifest):
         reader.close()
 
 
-def state_proof(bank, manifest, out):
+def state_proof(bank, manifest, out, *, loader=False):
     if torch.cuda.is_available():
         raise ValueError("state-history proof is CPU-only")
     import zipfile
@@ -304,16 +310,17 @@ def state_proof(bank, manifest, out):
     sys.path.insert(0, str(runner))
     os.environ["T16_SYNTHETIC_READSET"] = str(manifest)
     import pytest
-    code = pytest.main(["tests/test_value_prefetch_numeric.py", "-q", "-s",
-                        "-p", "no:cacheprovider", "-k", "fixture_transfer or actual_retained",
-                        "--basetemp", str(out / "pytest-tmp")])
+    tests = ["tests/test_native_pybind_owner_epoch.py", "tests/test_value_prefetch_matrix_epoch.py"] if loader else ["tests/test_value_prefetch_numeric.py"]
+    selection = [] if loader else ["-k", "fixture_transfer or actual_retained"]
+    code = pytest.main(tests + ["-q", "-s", "-p", "no:cacheprovider"] + selection +
+                       ["--basetemp", str(out / "pytest-tmp")])
     if code:
         raise SystemExit(code)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read", "state-proof"])
+    ap.add_argument("operation", choices=["prepare", "consume", "sanitize", "repair-readset", "staged-read", "state-proof", "loader-proof"])
     ap.add_argument('--bank', type=Path, required=True)
     ap.add_argument('--native-root', type=Path)
     ap.add_argument("--runner", type=Path)
@@ -323,6 +330,8 @@ def main():
     a = ap.parse_args()
     if a.operation == 'prepare':
         prepare(a.bank, a.native_root, a.sanitizer, a.runner)
+    elif a.operation == "loader-proof":
+        state_proof(a.bank, a.manifest, a.out, loader=True)
     elif a.operation == "state-proof":
         state_proof(a.bank, a.manifest, a.out)
     elif a.operation == "staged-read":

@@ -2,9 +2,9 @@
 # PB qualification action. Consume/sanitize require root GPU GO; state-proof is CPU-only.
 set -euo pipefail
 BANK=${1:?synthetic bank}; OUT=${2:?output}; MODE=${3:?consume or sanitize}; MANIFEST=${4:?frozen readset}
-[[ "$MODE" == consume || "$MODE" == sanitize || "$MODE" == state-proof ]] || exit 2
+[[ "$MODE" == consume || "$MODE" == sanitize || "$MODE" == state-proof || "$MODE" == loader-proof ]] || exit 2
 GPU_ARGS=()
-[[ "$MODE" == state-proof ]] || GPU_ARGS=(--gpus all)
+[[ "$MODE" == state-proof || "$MODE" == loader-proof ]] || GPU_ARGS=(--gpus all)
 IMAGE=${ORACLE_IMAGE:?immutable image required}
 PB_CLIENT_ROOT=${PB_CLIENT_ROOT:?published PB SDK required}
 source experiments/runtime_image.sh
