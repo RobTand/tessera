@@ -13,6 +13,7 @@
 #   ORACLE_IMAGE      the immutable image reference (required)
 #   TEST_RUNNER_SP    site-packages holding the pure-Python runner (required)
 #   TEST_RO_MOUNTS    host directories mounted read-only at the same path
+#   PB_CLIENT_ROOT    optional frozen published SDK root for owner controls
 #   TEST_CPU_ONLY    1: admitted CPU controls, no GPU request inside the container
 #   TEST_LOCAL_TMP    1: TMPDIR and pytest's basetemp on a container tmpfs
 #   NATIVE_CONTAINER_SRC / NATIVE_CONTAINER_EXT: match retained build paths
@@ -72,6 +73,7 @@ if [[ "$CONTAINER_SRC" != /work/src ]]; then
   [[ -f "$PROJECT_FILE" ]] || { echo "missing source version metadata: $PROJECT_FILE" >&2; exit 2; }
   EXTRA+=(-v "$PROJECT_FILE":"$(dirname "$CONTAINER_SRC")/pyproject.toml":ro)
 fi
+if [[ -n "${PB_CLIENT_ROOT:-}" ]]; then EXTRA+=(-v "$PB_CLIENT_ROOT":"$PB_CLIENT_ROOT":ro); fi
 for d in ${TEST_RO_MOUNTS:-}; do [[ -d "$d" ]] || { echo "missing $d" >&2; exit 2; }; EXTRA+=(-v "$d":"$d":ro); done
 BT="$OUT/tmp/pytest-tmp"; TD="$OUT/tmp"
 if [[ "${TEST_LOCAL_TMP:-0}" == 1 ]]; then EXTRA+=(--tmpfs /pbtmp:rw,exec,size=8g); BT=/pbtmp/pytest-tmp; TD=/pbtmp; fi
@@ -84,7 +86,7 @@ docker run --rm "${GPU_ARGS[@]}" --ipc=host --network=host --cpuset-cpus "$CPUS"
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" -e PYTHONDONTWRITEBYTECODE=1 \
   -e NATIVE_CONTAINER_SRC="$CONTAINER_SRC" \
   -e TERMINAL_NATIVE_IDENTITY_DIR="$OUT/native-identities" \
-  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp" \
+  -e PYTHONPATH="$CONTAINER_SRC":/work/tests:/work/experiments:"$OUT/runner-sp"${PB_CLIENT_ROOT:+:"$PB_CLIENT_ROOT/src"} \
   -e HOST_NAME="$(hostname)" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
   -e OPENBLAS_NUM_THREADS=1 -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
