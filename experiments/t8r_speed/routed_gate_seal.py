@@ -35,8 +35,9 @@ def seal(manifest_path, *, root=ROOT, modules=(MODULE,)):
         # Every declared range, including the routing capture, must be owned and
         # hash-checked before emitting a complete readset. No staged path reread.
         seen = {(r['path'],r['offset']) for r in reader.reads}
-        for identity in reader.entries.keys() - seen:
-            reader.read(*identity)
+        for identity in reader.entries:
+            if identity not in seen:
+                reader.read(*identity)
         doc = json.loads(json.dumps(reader.manifest))
         observed = {(r['path'],r['offset']):r for r in reader.reads}
         for entry in doc['entries']:
@@ -81,8 +82,8 @@ def prepare_stageprev(native_paths, routing_files):
         add(path, 0, len(raw), hashlib.sha256(raw).hexdigest())
         return raw
 
-    index = json.loads(full(root / "model.safetensors.index.json"))["weight_map"]
     full(root / "config.json")
+    index = json.loads(full(root / "model.safetensors.index.json"))["weight_map"]
     published = json.loads(full(root / "tessera_serving_manifest.json"))
     for module in MODULES:
         roles = published["modules"][module]["roles"]
@@ -119,7 +120,8 @@ def prepare_stageprev(native_paths, routing_files):
                 produced_by={"tool":"stageprev metadata/header inventory; NOT SEALED",
                              "action_key":os.environ["PRISMABUILD_ACTION_KEY"]},
                 annotations={"row_id":"stageprev793-provisional-original-ranges",
-                             "modules":list(MODULES), "routing_files":list(routing_files)})
+                             "modules":list(MODULES), "routing_files":list(routing_files),
+                             "phases":[{"name":"original-three-layer-seal", "cumulative_bytes":total}]})
 
 
 def main():
