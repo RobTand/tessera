@@ -411,15 +411,23 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   native1-sanitizer-readset-staged.json, explicit helper/test hashes and the
   same immutable image. Public manifest/phase sealing actually passed in
   PBa67d342f: three files/3780084 bytes, and12 files/31445460 bytes, original
-  native entries unchanged. Those phase declarations are not by themselves an
-  active-reader proof: the staged-read, held native-map and tool preflights must
-  actually acquire/consume/release SDK leases before root GPU GO.
+  native entries unchanged. After supported admission recovered, existing rows
+  PBc8c24e35/PB5c429a8a acquired/read/released both exact SDK readsets on DL380
+  through prismabuild-stage:dl380g10 (rc0, actual pin/ref IDs and per-range
+  digests). PB33b17d47 on Sparklina loaded both held staged ELFs through
+  /proc/self/fd, checked the owner ABI and executable inode before/after load
+  and teardown (rc0), using the same DL stage and immutable image. These are
+  diagnostic code-owner proofs, not serving _ext admission or GPU execution.
+  These already-published rows exercised their frozen pre-teardown-fix driver;
+  PB14164463 separately passed all nine updated ownership/envelope controls.
   Each sanitizer (memcheck/racecheck/synccheck/initcheck) carries
   --error-exitcode86 and bounded time/resources; its authenticated tool bytes
   are materialized through the existing SDK reader, not a guessed host toolkit.
   PBcef66493 established the original toolkit hashes, Compute Sanitizer2025.3.1
-  and pytest9.1.1 on the pinned image; healthy-worker staged compatibility is
-  a separate required proof. The image alone lacks compute-sanitizer.
+  and pytest9.1.1 on the pinned image. PBb80eeff7 on healthy Sparklina actually
+  acquired/read/released the SDK lease and ran the staged authenticated tool
+  (Compute Sanitizer2025.3.1.0, rc0); this is CPU compatibility only, not a
+  memcheck/racecheck/synccheck/initcheck pass. The image alone lacks the tool.
   Compile preparation reuses cuda_home_shadow.sh
   for missing vendor headers rather than adding the incompatible whole wheel
   include directory. Failed missing-header/nvdisasm/ownership attempts are
