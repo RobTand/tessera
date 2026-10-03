@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-03 for the retained original token-sum qualification
+controls (#859): the frozen PB proposal reads its published-client path
+from the existing box-artifact registry. The SASS-control test imports its
+actual checker at collection so the standard no-torch probe reports the
+missing dependency, rather than six fixture errors. Protocol, sealed readsets,
+CUDA source and native ELF identities are unchanged; this portability repair
+adds no native or GPU qualification and leaves the original-binding gate held.
+
 Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
 The existing MLA loader now shares one build owner with the CPU experiment
 row. It retains the final DSO and verifies source, selector, flags, compiler,

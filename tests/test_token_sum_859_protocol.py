@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import runpy
 
+from box_artifacts import ROOTS
+
 ROOT = Path(__file__).resolve().parents[1]
 DRIVER = runpy.run_path(str(ROOT / 'experiments/t8r_speed/token_sum_859.py'))
 PROTOCOL = json.loads((ROOT / 'experiments/configs/token_sum_859_protocol.json').read_bytes())
@@ -29,7 +31,9 @@ def test_root_gpu_proposal_has_two_concrete_exclusive_single_attempt_commands():
     assert resources['output_max_bytes'] == 32 << 20
     assert len(PROTOCOL['submission_argv']) == len(PROTOCOL['gpu_rows']) == 2
     for row, argv in zip(PROTOCOL['gpu_rows'], PROTOCOL['submission_argv']):
-        assert argv[0:2] == ['python3', '/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py']
+        # Frozen proposal uses the published client, not a per-test host path.
+        client = Path(ROOTS['prismabuild_tools'].default) / 'pbrun.py'
+        assert argv[0:2] == ['python3', str(client)]
         assert '--exclusive' in argv
         for option, value in [('--max-attempts', '1'), ('--cpus', '1'), ('--timeout-s', '180'), ('--wait-s', '180'), ('--container-image', PROTOCOL['image']), ('--data-manifest', PROTOCOL['readsets'][row['arm']]['path'])]:
             assert argv[argv.index(option) + 1] == value
