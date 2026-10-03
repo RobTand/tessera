@@ -360,16 +360,25 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   into FP4's tuple/nibble, padded16-column group geometry. #807's measured
   negative gives no T4 speed credit. Only the activation L1 memory hint transfers;
   its distance and benefit remain hypotheses requiring a T4 baseline measurement.
-* First numeric gate: experiments/t4_code/fused_e2m1_check.py with
-  --compare-prefetch --retained-banks <native_compile.json> reuses the exact
-  CPU-built 0/4 ELFs without rebuilding, refuses source/image/torch/ELF identity
-  drift and binds each loaded bank to its hashed executable-mapped inode.
-  Both banks reuse each encoded bundle/routing table and identical seeded
-  activations; mode0/1/2/chain AND dense/split controls compare exact hashes,
-  dtype-derived fp64 bounds and eager/graph identity. The bound refuses
-  nonfinite outputs, references or bounds (real pre-fix NaN false-pass: PB62e3e5ee).
-  Full nonquick coverage is every uniform/adjacent producer table; native
-  consumer tests additionally cover row tails and legal rank cuts.
+* First numeric gate is the staged driver
+  experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
+  native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
+  Public client.read_data_manifest, manifest_read_entries and
+  storage_tiers.manifest_phase_ranges must bind exactly three native files
+  (or those files plus the nine qualified sanitizer files), offset zero,
+  unique ordered whole-file members and one complete native1-whole phase.
+  Both libraries load ONCE in one process from distinct held SDK FDs, not
+  original-path reopens; direct diagnostic mapping is NOT serving _ext admission.
+  The existing producer ABI rule is shared by _ext and diagnostic consumers.
+  Both FDs and modules remain alive until the entire matrix is fenced; all
+  owner cleanup attempts precede SDK lease release, even after bind/hash/setup
+  failure. Original failures retain cleanup diagnostics rather than disappearing.
+  Full nonquick scope: 15 uniform/adjacent rate tables at whole and rank-1 cuts
+  (30 tensor cases), 60 paired routed oracle checks and 450 paired dense/split
+  checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
+  consumer execution additionally requires all48 GPU cases (42 FP4 cases and
+  six terminal patterns); skipped or changed populations fail qualification.
+  Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
 * Before GPU qualification, root must authorize the resource/readset. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
@@ -383,8 +392,10 @@ T4 activation-prefetch experiment (2026-10-02, #875):
 * Actual CPU/native preparation (not GPU proof): PB86450d1c on DL380 returned
   rc0, 96 passed/66 CUDA-gated skips. Consumer tests exercise distinct compiler
   flags/names/build identities, exported ABI refusal, cached reuse and post-load
-  mutation refusal. New real-inode tests initially found math builtin on DL;
-  the fixture now uses the actual Torch DSO and requires its own corrected run.
+  mutation refusal. The corrected actual-Torch-DSO inode controls passed on
+  healthy Sparklina (PBaf6ea8c3: three passed, no skips); prior96/66 is reused.
+  After the ABI guard was factored, PB93b12d52 passed five consumer controls;
+  PB77830261 passed nine shared callback/real two-DSO FD-lifetime controls.
   PBd5837c31 compiled/loaded both retained native1 ELFs with GPU visibility off;
   PB8b96ac6b proved both executable mappings match their hashed file inodes.
   PBe242d198: master50127b9 to default-OFF is exact SASS for all422 kernels
@@ -396,13 +407,20 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   experiments/t4_code/pb_875_cpu_preflight.json and pb_875_synthetic_{numeric,
   native,sanitizers}.json. Run them through the published pbcampaign.py;
   synthetic numeric/native/sanitizer rows remain UNSUBMITTED and root-GO-only.
-  The full nonquick paired oracle and both native-consumer arms bind the same
-  sealed native1-readset.json, explicit helper/test hashes and immutable image.
+  Native numeric/native rows bind native1-readset-staged.json; sanitizers bind
+  native1-sanitizer-readset-staged.json, explicit helper/test hashes and the
+  same immutable image. Public manifest/phase sealing actually passed in
+  PBa67d342f: three files/3780084 bytes, and12 files/31445460 bytes, original
+  native entries unchanged. Those phase declarations are not by themselves an
+  active-reader proof: the staged-read, held native-map and tool preflights must
+  actually acquire/consume/release SDK leases before root GPU GO.
   Each sanitizer (memcheck/racecheck/synccheck/initcheck) carries
-  --error-exitcode86, bounded time/resources and the actual readonly CUDA13.0
-  toolkit dependency. PBcef66493 attests those mounted tool/library hashes,
-  Compute Sanitizer2025.3.1 and pytest9.1.1 on the pinned image; the image alone
-  lacks compute-sanitizer. Compile preparation reuses cuda_home_shadow.sh
+  --error-exitcode86 and bounded time/resources; its authenticated tool bytes
+  are materialized through the existing SDK reader, not a guessed host toolkit.
+  PBcef66493 established the original toolkit hashes, Compute Sanitizer2025.3.1
+  and pytest9.1.1 on the pinned image; healthy-worker staged compatibility is
+  a separate required proof. The image alone lacks compute-sanitizer.
+  Compile preparation reuses cuda_home_shadow.sh
   for missing vendor headers rather than adding the incompatible whole wheel
   include directory. Failed missing-header/nvdisasm/ownership attempts are
   not reported as passes; successful cubins/ELFs are retained, never rebuilt
