@@ -1,7 +1,8 @@
 """One finite baseline/candidate run through existing bench/native/input owners.
 
-Stock vLLM custom ops run directly under its execution exemption. Preparation
-and CPU controls use PrismaBuild. This is not a dispatcher or residency cache.
+The historical direct launcher is not a qualified PrismaBuild controller.
+Batch custom-op work is not covered by the vLLM service exemption; the
+paired acceptance packet governs any future PB-bound controller.
 """
 import argparse
 import hashlib
