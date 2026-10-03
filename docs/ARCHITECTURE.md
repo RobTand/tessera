@@ -1,5 +1,19 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
+(#868/#875/#874). The current PM `piece_major` argument stays after the two
+word counts in every caller; direct legacy geometry callers pass false.
+E2M1 routed/dense readers retain both legacy-layout refusals. Default-off
+BF16 and FP4 activation hints use independent selectors and the same native
+build/source owner; E2M1 variants resolve the published value source. Each
+CPU build retains a source/image/selector/ELF/finalization record in its own
+extension directory. A changed common translation unit requires fresh matched
+family builds and numeric/sanitizer evidence: neither the original 51f6 T16
+54-pair proof nor the original T4/PM banks qualify this combined ABI. Routine
+builds declare real local scratch through the published PB ledger and keep
+compiler objects, HOME and temporary state on the shared measurement volume;
+observed worker floor and immutable-image compatibility remain admission gates.
+No default, serving cell, price, PACT or energy claim is promoted.
 
 Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
 (#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`

@@ -158,10 +158,12 @@ def extension_boundary(monkeypatch):
 
 
 @pytest.mark.parametrize("arm", [0, 4])
-def test_extension_consumer_freezes_distinct_compiled_arm(monkeypatch, extension_boundary, arm):
+@pytest.mark.parametrize("value_prefetch", ["0", "4"])
+def test_extension_consumer_freezes_distinct_compiled_arm(monkeypatch, extension_boundary, arm, value_prefetch):
     compiled, builds, loads = extension_boundary
     compiled.A_PREFETCH = arm
     monkeypatch.setenv(fe.PREFETCH_ENV, str(arm))
+    monkeypatch.setenv("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", value_prefetch)
     assert fe._ext() is compiled
     module = fe.MODULE_NAME + ("_apf4" if arm else "")
     assert builds == [(module, fe.MODULE_NAME_VALUE)]

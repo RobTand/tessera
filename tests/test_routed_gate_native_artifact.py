@@ -121,11 +121,13 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
 
 
 
-@pytest.mark.parametrize("module", ["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4"])
-def test_value_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module):
+@pytest.mark.parametrize("module", ["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4",
+                                   "tessera_routed_fused_e2m1", "tessera_routed_fused_e2m1_apf4"])
+@pytest.mark.parametrize("direct", [False, True])
+def test_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module, direct):
     source_module = "tessera_routed_fused_value"
     owner, reader, staged, rf, original, calls = owner_fixture(
-        tmp_path, monkeypatch, owner_args={"module": module, "source_module": source_module})
+        tmp_path, monkeypatch, direct=direct, owner_args={"module": module, "source_module": source_module})
     lib = rf.build_library(module, source_module, lambda *a: pytest.fail("no JIT"))
     owner.bind(lib)
     assert calls == [(module, source_module)]

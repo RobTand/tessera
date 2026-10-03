@@ -1,4 +1,5 @@
 """CPU build-owner controls for the default-off folded BF16 arm (#874)."""
+import ast
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
@@ -8,9 +9,11 @@ from tessera.errors import GrammarError
 
 
 @pytest.mark.parametrize("distance", ["0", "4"])
-def test_value_prefetch_build_identity(monkeypatch, distance):
+@pytest.mark.parametrize("fp4_distance", ["0", "4"])
+def test_value_prefetch_build_identity(monkeypatch, distance, fp4_distance):
     rf._ext.cache_clear()
     monkeypatch.setenv("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", distance)
+    monkeypatch.setenv("TESSERA_ROUTED_FUSED_FP4_A_PREFETCH", fp4_distance)
     calls = []
     def load(**kw):
         calls.append(kw)
@@ -45,3 +48,21 @@ def test_value_prefetch_native_support_is_narrow():
     assert "PREFETCH_DISTANCE > 0 && !DENSE && !TWO" in source
     assert "ic + PREFETCH_DISTANCE < nkc" in source
     assert "constexpr bool PREV_STAGED = FAMILY_MMA8;" in source
+
+
+@pytest.mark.parametrize("relative", ["src/tessera/routed_fused.py",
+    "experiments/t8r_speed/bench_geometry.py", "experiments/t8r_speed/bench_pairs.py",
+    "experiments/t8r_speed/bench_rates.py"])
+def test_current_piece_major_abi_is_closed_for_every_direct_caller(relative):
+    root = Path(__file__).resolve().parents[1]
+    calls = [node for node in ast.walk(ast.parse((root / relative).read_text()))
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+             and node.func.attr == "routed_fused_forward"]
+    assert len(calls) == 1
+    call = calls[0]
+    assert len(call.args) == 33
+    if relative.startswith("src/"):
+        assert ast.unparse(call.args[20]) == "bool(self.piece_major)"
+        assert ast.unparse(call.args[21]) == "routing.offsets"
+    else:
+        assert isinstance(call.args[20], ast.Constant) and call.args[20].value is False
