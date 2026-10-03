@@ -22,10 +22,14 @@ NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
 ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
 source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
 and final output bits must agree before a content-bound numeric receipt can
-admit ABBA timing. This vLLM-backed operator uses the explicit direct execution
-exception; held original FDs retain the existing outer/inner checks, native
-load/fence checks and close-before-publication behavior. CPU checks and builds
-still use PB. Seeded activations and uniform routing weights are geometry
+admit ABBA timing. This vLLM-backed batch operator runs through PrismaBuild;
+only inference-serving services are exempt. `piece_major_pb_action.py` binds the
+sealed timing packet and explicit coordinator GPU GO inside an exclusive
+measurement attempt, importing the existing containment owner rather than
+launching a second dispatcher. Held original FDs retain the existing outer/inner
+checks, native load/fence checks and close-before-publication behavior. CPU
+checks and builds also use PB. Seeded activations and uniform routing weights
+are geometry
 controls, not served decode or quality measurements. Every timed arm retains
 raw events, Torch profiler traces and power windows; both-host Netdata and
 clock review are required, and energy remains HOLD. Defaults and serving cells
