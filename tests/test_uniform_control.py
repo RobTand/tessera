@@ -13,8 +13,9 @@ Numbers pinned here come from
 """
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
+import sys
 from collections import Counter, namedtuple
 from fractions import Fraction
 from pathlib import Path
@@ -46,6 +47,7 @@ from tessera.grammar import (
 from tessera.manifest import BodyKind
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
 
 #: Qwen3-0.6B's seven body Linears, the shapes the receipt was measured on.
 ROLE_SHAPES = {
@@ -495,17 +497,11 @@ def _prismaquant_tessera_formats():
     An older one does not get a looser assertion, it gets a failure naming the
     tree -- see the accounting test.
     """
-    import sys
+    from _accounting_source import accountant
     tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
     if tree is None:
         box_artifacts.skip_now("prismaquant", "prismaquant", "tessera_formats.py")
-    if str(tree) not in sys.path:
-        sys.path.insert(0, str(tree))
-    try:
-        import prismaquant.tessera_formats as tessera_formats
-    except Exception as exc:                                    # pragma: no cover - env
-        pytest.skip(f"PrismaQuant not importable: {exc}")
-    return tessera_formats
+    return accountant(tree)
 
 
 def _price_both_ways(tessera_formats, shape):
@@ -757,11 +753,7 @@ def test_a_ratio_the_floats_cannot_state_is_named_rather_than_infinity(
 
 
 def _cli():
-    spec = importlib.util.spec_from_file_location(
-        "uniform_control_cli", ROOT / "experiments" / "uniform_control.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.uniform_control")
 
 
 def _candidate_files(tmp_path):

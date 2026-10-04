@@ -96,8 +96,10 @@ from pathlib import Path
 from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
 from tessera._dev.suite_source import VERIFIER_ENV  # noqa: E402
+import _suite_container as suite_container  # noqa: E402
 from tessera._dev.surface_publication import (  # noqa: E402
     POPULATION,
     digest_bytes,
@@ -118,6 +120,18 @@ DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 PROCESS_THREAD_LIMITS = dict.fromkeys(
     ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
 )
+#: The import path the suite's own child processes inherit, spelled the way
+#: CI states it: ``.github/workflows/ci.yml`` runs pytest under
+#: ``PYTHONPATH=src``.  ``tests/conftest.py`` puts the tree's roots on
+#: ``sys.path`` for the pytest process itself, but a test that starts an
+#: interpreter of its own inherits an environment, not that list -- the
+#: batch-891-895 x86 population (receipt ``20261003T230852``, issue #914)
+#: failed ``test_forest_grid_roster`` and, as its probe-child cascade,
+#: ``test_collection_probe`` on exactly this: green under CI's export, red
+#: under a gate that never declared it.  Relative on purpose -- pbrun
+#: materialises each action's checkout at a per-action path, and ``src``
+#: resolves against the checkout cwd every process in the action shares.
+CHILD_ENV = {"PYTHONPATH": "src"}
 #: The source verifier each arm declares (``tessera._dev.suite_source``).  A
 #: pbrun checkout carries the closure stamp pbrun generated; PrismaBuild's own
 #: published ``pbsnapshot.py verify`` says which file that is and which sealed
@@ -288,10 +302,11 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
                "-p", "no:cacheprovider",
                "--surface-json", str(surface_json)]
     if cpus > 1:
-        # loadfile, not the default: a module's tests share fixtures and, on
-        # the GPU arm, device state, and splitting one across workers is how a
-        # suite goes flaky in a way no population report would explain.
-        command += ["-n", str(cpus), "--dist", "loadfile"]
+        # The retained native mode is loadfile. The explicit container arm
+        # uses independent process state and worksteal under its own contract.
+        command += ["-n", str(cpus), "--dist", arm.get("dist", "loadfile")]
+        if arm.get("container"):
+            command += ["-p", "xdist.plugin"]
     if arm["strict_cuda"]:
         command.append("--strict-cuda")
     return command + extra
@@ -308,12 +323,29 @@ def _timed_command(command: list[str], timeout_s: float) -> list[str]:
 
 def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
     surface_json = receipt_dir / f"surface.{name}.json"
+    image = getattr(args, "gpu_image", "") if name == "gpu" else ""
+    if image:
+        arm = {**arm, "python": "/usr/bin/python3", "fans_out": True,
+               "dist": "worksteal", "container": True}
     # The reservation is this ARM's, not the run's: an arm clamped to serial
     # must not hold the cores it was told to spend, or the ledger says the box
     # is busy while seven of its cores idle.
-    cpus = _arm_cpus(arm, args.cpus)
-    command = _timed_command(_command(arm, surface_json, args.pytest_arg, cpus),
-                             args.timeout_s)
+    requested_cpus = (getattr(args, "gpu_cpus", None) or args.cpus) if name == "gpu" else args.cpus
+    mem_gb = (getattr(args, "gpu_mem_gb", None) or args.mem_gb) if name == "gpu" else args.mem_gb
+    cpus = _arm_cpus(arm, requested_cpus)
+    command = _command(arm, surface_json, args.pytest_arg, cpus)
+    artifact_roots = getattr(args, "artifact_root", [])
+    if image:
+        runner = ["--image", image, "--deps-site", args.gpu_deps_site,
+                  "--deps-sha256", args.gpu_deps_sha256,
+                  "--surface-dir", str(receipt_dir), "--cache-dir", args.gpu_cache_dir]
+        for root in getattr(args, "gpu_data_root", []):
+            runner += ["--data-root", root]
+        for root in artifact_roots:
+            runner += ["--artifact-root", root]
+        suite_container.parse([*runner, "--", *command])
+        command = ["/usr/bin/python3", suite_container.RUNNER, *runner, "--", *command]
+    command = _timed_command(command, args.timeout_s)
     flags = list(arm["pbrun_flags"])
     if name == "gpu" and args.gpu_tag:
         flags += ["--tag", args.gpu_tag]
@@ -323,13 +355,15 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "--cpus", str(cpus),
         # --exclusive derives full GPU capacity from the selected worker's
         # live offer through pbrun.exclusive_gpu_demand, never from a slot guess.
-        "--demand", f"mem_gb={args.mem_gb}",
+        "--demand", f"mem_gb={mem_gb}",
         "--cwd", str(args.checkout),
         "--timeout-s", str(args.timeout_s),
         "--wait-s", str(args.wait_s),
-        *[part for key, value in PROCESS_THREAD_LIMITS.items()
+        *[part for key, value in {**PROCESS_THREAD_LIMITS, **CHILD_ENV}.items()
           for part in ("--env", f"{key}={value}")],
         "--env", f"{VERIFIER_ENV}={shlex.join(SOURCE_VERIFIER)}",
+        *(["--container-image", image] if image else []),
+        *[part for value in artifact_roots for part in ("--env", value)],
         "--", *command,
     ]
     record = {
@@ -343,16 +377,25 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         # The run mode, on the record, because a pass count of one arm read
         # against the other's differs by more than the device: the five
         # failures on ``82f0047`` were an ``-n``-only defect.
-        "cpus_requested": args.cpus,
+        "cpus_requested": requested_cpus,
         "cpus_used": cpus,
+        "mem_gb": mem_gb,
         "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
+        # The environment beyond the thread limits that this arm declared, on
+        # the record, so a receipt reader can see the population ran under the
+        # same import contract CI states rather than inferring it (#914).
+        "declared_env": dict(CHILD_ENV),
         "source_verifier": shlex.join(SOURCE_VERIFIER),
         "timeout_s": args.timeout_s,
         "timeout_kill_after_s": TIMEOUT_KILL_AFTER_S,
         "timeout_scope": "per attempt; excludes queue time, retries and detached descendants",
         "pbrun": " ".join(shlex.quote(part) for part in invocation),
     }
-    if cpus != args.cpus:
+    if image:
+        record["container_image"] = image
+        record["dependency_site"] = args.gpu_deps_site
+        record["dependency_sha256"] = args.gpu_deps_sha256
+    if cpus != requested_cpus:
         record["cpus_note"] = arm.get("serial_because", "")
     if args.dry_run:
         record["status"] = "not submitted (--dry-run)"
@@ -530,6 +573,12 @@ def _pytest_argv(command: list) -> tuple[list[str] | None, str | None]:
         return None, f"`{program}` is not a pytest invocation this tool parses"
     if len(parts) >= 3 and parts[1] == "-m" and parts[2] == "pytest":
         return parts, None
+    try:
+        container = suite_container.command_spec(parts)
+        if container is not None:
+            return container["inner"], None
+    except (ValueError, OSError) as error:
+        return None, str(error)
     if len(parts) >= 2 and Path(parts[1]).name == _DEADLINE_WRAPPER:
         if "--" not in parts[2:]:
             return None, (f"`{_DEADLINE_WRAPPER}` was sealed without the `--` "
@@ -564,6 +613,15 @@ def _effective_surface_json(command: list) -> tuple[str | None, str | None]:
         elif part.startswith("--surface-json="):
             destination = part.split("=", 1)[1]
     return destination, None
+
+
+def _container_spec(command):
+    """Unwrap only the existing deadline owner and exact container runner."""
+    parts = [str(part) for part in command]
+    if (len(parts) >= 2 and _PYTHON_NAME.match(Path(parts[0]).name)
+            and Path(parts[1]).name == _DEADLINE_WRAPPER and "--" in parts[2:]):
+        return _container_spec(parts[parts.index("--", 2) + 1:])
+    return suite_container.command_spec(parts)
 
 
 #: The population's ``counts`` buckets, and the words pytest's summary line
@@ -619,7 +677,8 @@ _FINAL_ATTEMPT_STATUSES = ("executed", "failed")
 
 def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
                      outcome: dict,
-                     published: "_Publication | None") -> str | None:
+                     published: "_Publication | None",
+                     verified_bundles: dict | None = None) -> str | None:
     """Why this finished action's status is not this population's, or ``None``.
 
     ``published`` is one read of the surface file -- its bytes, their digest
@@ -752,6 +811,17 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
                 + ", ".join(f"{held.get(b) or 0} {b}" for b in differing)
                 + "), so the population at this path is not what that "
                 "attempt published")
+    command = (payload.get("params") or {}).get("command") or []
+    # Only the exact runner path is recognized by the grammar. Its name is
+    # still no authority: authenticate the actual runner and shared owner
+    # blobs from this request's immutable snapshot before adopting its exit.
+    try:
+        container = _container_spec(command)
+        if container is not None:
+            suite_container.admission(container, payload)
+            suite_container.source_bound(payload, POOL_CAS_REQUESTS.parent, verified_bundles)
+    except (ValueError, OSError, KeyError, IndexError, subprocess.SubprocessError) as error:
+        return "container runner source refused: " + str(error)
     return None
 
 
@@ -795,14 +865,30 @@ def _pool_actions_that_wrote(surface_json: Path,
     """
 
     wanted = str(Path(surface_json))
+    stamps = ((published.payload.get("source_identity") or {}).get("excluded_metadata") or []) if published else []
+    keys = {entry.get("action_key") for entry in stamps if isinstance(entry, dict)
+            and isinstance(entry.get("action_key"), str)
+            and re.fullmatch(r"[0-9a-f]{64}", entry["action_key"])}
+    if not keys:
+        return [], ["the population names no sealed action as its producer "
+                    "(no source_identity.excluded_metadata action_key)"]
     found: list[dict] = []
     refused: list[str] = []
+    verified_bundles: dict = {}
+    terminal_keys: set[str] = set()
     for state in ("done", "failed"):
         folder = POOL_QUEUE / state
         if not folder.is_dir():
             continue
-        for outcome_path in sorted(folder.glob("*.json")):
-            key = outcome_path.stem
+        # The population names its producer(s). Unrelated history cannot
+        # supply an exit; reading it made a real resume exceed its 300-second
+        # PB budget. Multiple producers and duplicate terminal states still
+        # go through every binding check and remain ambiguous.
+        for key in sorted(keys):
+            outcome_path = folder / f"{key}.json"
+            if not outcome_path.is_file():
+                continue
+            terminal_keys.add(key)
             request = POOL_CAS_REQUESTS / key[:2] / f"{key}.json"
             try:
                 request_bytes = request.read_bytes()
@@ -830,7 +916,7 @@ def _pool_actions_that_wrote(surface_json: Path,
             if not isinstance(outcome, dict):
                 continue
             refusal = _binding_refusal(key, request_payload, request_bytes,
-                                       outcome, published)
+                                       outcome, published, verified_bundles)
             if refusal:
                 refused.append(f"{key[:12]}: {refusal}")
                 continue
@@ -848,6 +934,8 @@ def _pool_actions_that_wrote(surface_json: Path,
                 # chose the mode is gone.
                 "command": command,
             })
+    for key in sorted(keys - terminal_keys):
+        refused.append(f"{key[:12]}: no terminal done/failed record for the named producer")
     return found, refused
 
 
@@ -900,14 +988,21 @@ def _attach_pool_exit_status(record: dict, surface_json: Path,
     if refused:
         record["pool_actions_refused"] = refused
         record["exit_status_note"] += (
-            " A finished pool action named this population's path and was not "
-            "bound to it: " + "; ".join(refused) + ".")
+            " The named producer did not establish a bound terminal status: "
+            + "; ".join(refused) + ".")
     if len(matches) == 1 and isinstance(matches[0].get("returncode"), int):
         pool = matches[0]
         record["returncode"] = pool["returncode"]
         record["exit_status_observed"] = True
         record["exit_status_source"] = "pool"
         record["pool_action"] = pool
+        # The authenticated producer's effective command names its runtime;
+        # configured arm defaults describe a prospective submission instead.
+        argv, _ = _pytest_argv(pool.get("command") or [])
+        record["pytest_command"] = argv
+        record["python"] = (argv[0] if argv and len(argv) >= 3
+                            and _PYTHON_NAME.match(Path(argv[0]).name)
+                            and argv[1:3] == ["-m", "pytest"] else None)
         record["exit_status_note"] = (
             "the submitting process did not survive to watch this run, so the "
             "exit status is the one PrismaBuild's worker recorded for action "
@@ -957,7 +1052,7 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
     record = {
         "arm": name,
         "why": arm["why"],
-        "python": arm["python"],
+        "python": None,
         "requires_cuda": bool(arm["strict_cuda"]),
         "resumed": True,
         "exit_status_observed": False,
@@ -1460,6 +1555,16 @@ def main() -> int:
                          "so one number can submit an -n x86 arm and a serial "
                          "GPU arm in the same run. Default 1")
     ap.add_argument("--mem-gb", type=int, default=16)
+    ap.add_argument("--gpu-cpus", type=int, default=None, help="GPU arm process reservation; defaults to --cpus")
+    ap.add_argument("--gpu-mem-gb", type=int, default=None, help="GPU aggregate host memory; defaults to --mem-gb")
+    ap.add_argument("--gpu-image", default="", help="immutable PB-local image; enables GPU xdist")
+    ap.add_argument("--gpu-deps-site", default="", help="readonly scoped pytest/xdist site")
+    ap.add_argument("--gpu-deps-sha256", default="", help="suite_dependencies.v1 content seal")
+    ap.add_argument("--gpu-cache-dir", default="", help="new owned writable directory outside the source")
+    ap.add_argument("--gpu-data-root", action="append", default=[str(POOL_ROOT)],
+                    help="canonical same-path readonly data mount; repeatable")
+    ap.add_argument("--artifact-root", action="append", default=[], metavar="ENV=PATH",
+                    help="box_artifacts root override, sealed and mounted; repeatable")
     ap.add_argument("--timeout-s", type=_positive_seconds, default=3600.0,
                     help="positive finite per-attempt inner deadline; TERM then KILL "
                          "after 5s, not a queue/retry lifetime limit")
@@ -1493,6 +1598,14 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="print the pbrun invocations and submit nothing")
     args = ap.parse_args()
+    if args.cpus < 1 or args.mem_gb < 1 or any(value is not None and value < 1
+                                              for value in (args.gpu_cpus, args.gpu_mem_gb)):
+        ap.error("CPU and memory reservations must be positive")
+    if args.gpu_image:
+        if not all((args.gpu_deps_site, args.gpu_deps_sha256, args.gpu_cache_dir)):
+            ap.error("--gpu-image requires --gpu-deps-site, --gpu-deps-sha256 and --gpu-cache-dir")
+    elif any((args.gpu_deps_site, args.gpu_deps_sha256, args.gpu_cache_dir)):
+        ap.error("container dependencies/cache require --gpu-image")
 
     # Module-level because that is where the readers look, and because a test
     # that monkeypatches them is doing the same thing this flag does.

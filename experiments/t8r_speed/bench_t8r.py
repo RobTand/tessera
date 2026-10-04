@@ -33,8 +33,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
+import statistics
 import sys
 import threading
 import time
@@ -96,6 +98,7 @@ def _init_vllm_world1(rdv_dir):
 from safetensors import safe_open  # noqa: E402
 
 ARTIFACT = "/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported"
+REPLAY_ARTIFACT = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 P = "model.language_model.layers."
 TOP_K, EXPERTS, SWIGLU_LIMIT = 8, 288, 10.0
 TP_SIZE, TP_RANK = 2, 0
@@ -150,17 +153,24 @@ BF16_GROUPS = [
 
 
 class Store:
-    def __init__(self, root):
+    def __init__(self, root, inputs=None):
         self.root = root
-        self.index = json.load(open(os.path.join(root, "model.safetensors.index.json")))["weight_map"]
-        self.config = json.load(open(os.path.join(root, "config.json")))
+        self.inputs = inputs
+        self.index = self.metadata("model.safetensors.index.json")["weight_map"]
+        self.config = self.metadata("config.json")
         self._open = {}
         self.schemes = {}
         for g in self.config["quantization_config"]["config_groups"].values():
             for t in g["targets"]:
                 self.schemes[t] = g["scheme"]
 
+    def metadata(self, name):
+        path = os.path.join(self.root, name)
+        return self.inputs.json(path) if self.inputs else json.load(open(path))
+
     def get(self, name):
+        if self.inputs:
+            return self.inputs.tensor(self.root, name, index=self.index)
         shard = self.index[name]
         if shard not in self._open:
             self._open[shard] = safe_open(os.path.join(self.root, shard), "pt", device="cpu")
@@ -197,7 +207,60 @@ class PowerSampler:
             return float(out.split()[0])
         return None
 
-    def sample_during(self, work, seconds):
+    def read_clock_temperature(self):
+        if self.source != "pynvml":
+            return {"sm_clock_mhz": None, "temperature_c": None}
+        return {"sm_clock_mhz": self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM),
+                "temperature_c": self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)}
+
+    def observation(self, *, include_throttle=False):
+        before = time.monotonic()
+        result = {"unix": time.time(), "power_w": self.read_w(), **self.read_clock_temperature()}
+        if include_throttle:
+            result["throttle_reason_mask"] = None
+            try:
+                if self.source == "pynvml":
+                    query = getattr(self._nv, "nvmlDeviceGetCurrentClocksEventReasons", None)
+                    if query is None:
+                        query = self._nv.nvmlDeviceGetCurrentClocksThrottleReasons
+                    result["throttle_reason_mask"] = query(self._h)
+            except Exception as error:
+                result["throttle_observation_error"] = repr(error)
+            result["host_monotonic_read_interval"] = [before, time.monotonic()]
+        return result
+
+    def observe_while(self, work):
+        """Record host-polled evidence, never claim native sensor cadence."""
+        def record():
+            before = time.monotonic()
+            try:
+                return self.observation(include_throttle=True)
+            except Exception as error:
+                return {"unix": time.time(), "observation_error": repr(error),
+                        "host_monotonic_read_interval": [before, time.monotonic()]}
+        readings = [record()]
+        stop = threading.Event()
+        def observe():
+            while not stop.wait(0.1):
+                readings.append(record())
+        thread = threading.Thread(target=observe, daemon=True)
+        start_unix, start_monotonic = time.time(), time.monotonic()
+        thread.start()
+        try:
+            result = work()
+        finally:
+            end_monotonic, end_unix = time.monotonic(), time.time()
+            stop.set()
+            thread.join()
+        readings.append(record())
+        return result, {"window_unix": [start_unix, end_unix],
+            "window_monotonic": [start_monotonic, end_monotonic],
+            "source": self.source, "requested_poll_interval_s": 0.1,
+            "observations": readings,
+            "clock_status": "unqualified_reported_host_polled_no_native_update_timestamp",
+            "thermal_policy": "retain_all_temperatures_and_reason_masks_no_result_based_filtering"}
+
+    def sample_during(self, work, seconds, *, capture_series=False):
         """Run ``work()`` back to back for ``seconds`` while sampling; return stats."""
         if self.source is None:
             n = 0
@@ -206,12 +269,16 @@ class PowerSampler:
                 work(); n += 1
             torch.cuda.synchronize()
             return {"source": None, "calls": n, "seconds": time.time() - t0}
-        samples, stop = [], threading.Event()
+        samples, clocks, stop = [], [], threading.Event()
 
         def loop():
             while not stop.is_set():
                 try:
-                    samples.append((time.time(), self.read_w()))
+                    ts = time.time()
+                    samples.append((ts, self.read_w()))
+                    if capture_series and self.source == "pynvml":
+                        reading = self.read_clock_temperature()
+                        clocks.append((ts, reading["sm_clock_mhz"], reading["temperature_c"]))
                 except Exception:  # noqa: BLE001
                     pass
                 stop.wait(0.1)
@@ -231,7 +298,14 @@ class PowerSampler:
         stop.set(); th.join()
         w = [v for ts, v in samples if v is not None and t0 <= ts <= t1]
         mean = sum(w) / len(w) if w else None
-        return {"source": self.source, "calls": n, "seconds": t1 - t0, "window_unix": [t0, t1],
+        extra = {}
+        if capture_series:
+            extra = {"power_series_unix_w": samples, "clock_temperature_series": clocks, "energy_status": "HOLD_pending_Netdata_coverage",
+                     "gpu_clock_mhz": self._nv.nvmlDeviceGetClockInfo(self._h, self._nv.NVML_CLOCK_SM)
+                         if self.source == "pynvml" else None,
+                     "gpu_temperature_c": self._nv.nvmlDeviceGetTemperature(self._h, self._nv.NVML_TEMPERATURE_GPU)
+                         if self.source == "pynvml" else None}
+        return {**extra, "source": self.source, "calls": n, "seconds": t1 - t0, "window_unix": [t0, t1],
                 "samples": len(w), "mean_w": mean, "max_w": max(w) if w else None,
                 "envelope_frac": (mean / ENVELOPE_W) if mean else None,
                 "calls_per_j": (n / ((t1 - t0) * mean)) if mean else None}
@@ -293,9 +367,26 @@ def build_routed(store, module):
                 w2_len[e] = wire.numel()
     packed = intake.finish(w13_len, w2_len)
     native = packed.adapter()
+    library = getattr(native, "library", None)
+    library_path = library_sha = None
+    if library is not None:
+        from tessera import routed_fused as rf
+        library_path = os.path.realpath(rf._ext(library).__file__)
+        with open(library_path, "rb") as handle:
+            library_sha = hashlib.file_digest(handle, "sha256").hexdigest()
+    expected_library = os.environ.get("BENCH_EXPECT_LIBRARY_SHA256")
+    if expected_library and library_sha != expected_library:
+        raise ValueError("routed adapter's loaded native library differs from the expected binary")
     per_expert_rank = wire_total / EXPERTS / TP_SIZE
     info = {"family": scheme["family"], "q256": {g: v["q256"] for g, v in scheme["groups"].items()},
             "adapter": type(native).__name__,
+            "resident_word_layouts": {role: getattr(packed, role).word_layout
+                                      for role in ("gate", "up", "down")},
+            "native_piece_major": getattr(native, "piece_major", None),
+            "native_library": library,
+            "native_library_path": library_path,
+            "native_library_sha256": library_sha,
+            "requested_piece_major": os.environ.get("TESSERA_ROUTED_PIECE_MAJOR", "0"),
             "adapter_attrs": sorted(a for a in vars(native) if not a.startswith("__"))[:40]
             if hasattr(native, "__dict__") else None,
             "resident_bytes": int(packed.resident_bytes()) if hasattr(packed, "resident_bytes") else None,
@@ -306,6 +397,7 @@ def build_routed(store, module):
 
     def fn(x, ids, w):
         return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+    fn.native = native  # The finite comparison observes this same serving owner.
     return fn, info, packed, touched
 
 
@@ -369,9 +461,11 @@ def routing_stats(ids):
 
 # ------------------------------------------------------------------ timing
 def summarize(samples):
-    s = sorted(samples)
+    raw = list(samples)
+    s = sorted(raw)
     q = lambda p: s[min(len(s) - 1, max(0, int(round(p * (len(s) - 1)))))]
-    return {"median_ms": q(0.5), "p25_ms": q(0.25), "p75_ms": q(0.75), "min_ms": s[0], "n": len(s)}
+    return {"median_ms": statistics.median(s), "p25_ms": q(0.25), "p75_ms": q(0.75),
+            "min_ms": s[0], "n": len(s), "raw_samples_ms": raw}
 
 
 def time_events(call, warmup, iters):
@@ -386,13 +480,15 @@ def time_events(call, warmup, iters):
     return out
 
 
-def kernel_profile(call, reps=5):
+def kernel_profile(call, reps=5, *, full_names=False, trace_path=None):
     from torch.profiler import profile, ProfilerActivity
     call(); torch.cuda.synchronize()
     with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
         for _ in range(reps):
             call()
         torch.cuda.synchronize()
+    if trace_path is not None:
+        prof.export_chrome_trace(str(trace_path))
     per = {}
     total = 0.0
     launches = 0
@@ -401,12 +497,256 @@ def kernel_profile(call, reps=5):
         if dev_us is None:
             dev_us = getattr(evt, "self_cuda_time_total", 0.0)
         if dev_us and evt.device_type is not None and str(evt.device_type).endswith("CUDA"):
-            per[evt.key[:120]] = {"us_per_call": dev_us / reps, "count_per_call": evt.count / reps}
+            per[evt.key if full_names else evt.key[:120]] = {"us_per_call": dev_us / reps, "count_per_call": evt.count / reps}
             total += dev_us / reps
         if evt.key in ("cudaLaunchKernel", "cuLaunchKernel", "cuLaunchKernelEx", "cudaLaunchKernelExC"):
             launches += evt.count / reps
     top = dict(sorted(per.items(), key=lambda kv: -kv[1]["us_per_call"])[:12])
     return {"kernel_us_per_call": total, "launches_per_call": launches, "top": top}
+
+
+def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args, "outputs_only", False):
+        if (args.artifact != REPLAY_ARTIFACT or args.groups != "experts.R1024.L10"
+                or args.ms != "1,2048" or not args.no_graph or args.ncu
+                or args.input_manifest is not None or args.routing is not None
+                or args.single_routing_file is not None or args.profile_native_file is not None):
+            raise ValueError("paired layout output screen requires exact A8SE L10/M1,2048, "
+                             "no graph, profiling, staging or routing overrides")
+        if stubbed:
+            raise ValueError("paired layout output screen refuses stubbed vLLM")
+        return
+    if getattr(args,"profile_native_file",None):
+        expected = "/mnt/shared/astra-routed-gate-20261002/retained-native-0f953b69/tessera_routed_fused_mma_e4m3.so"
+        if not args.single_routing_file or not args.ncu or args.profile_native_file!=expected:
+            raise ValueError("retained native artifact requires the exact counter-only replay")
+    if args.single_routing_file:
+        if (args.groups != "experts.R1024.L10" or args.ms != "2048"
+                or not args.input_manifest or args.routing or not args.no_graph
+                or args.power_s < 30 or args.warmup != 10 or args.iters != 30):
+            raise ValueError("single replay requires L10/M2048, staged inputs, no graph/menu and >=30s power")
+        if args.artifact != REPLAY_ARTIFACT:
+            raise ValueError("single replay requires the actual A8SE artifact")
+        if stubbed:
+            raise ValueError("single replay refuses stubbed vLLM")
+    elif args.input_manifest or args.artifact != ARTIFACT:
+        raise ValueError("artifact/staged-input overrides require the exact single replay")
+
+
+def numeric_outputs(fn, xa):
+    """Observe the real frozen adapter's class seam for this one instance."""
+    import torch
+    from tessera import routed_fused as rf
+
+    native = fn.native
+    if type(native) is not rf.FusedRoutedWindowMoE or native.library != "e4m3mma":
+        raise ValueError("comparison requires the actual frozen E4M3 MMA adapter")
+    owner = type(native)
+    original = owner._launch
+    captured_outputs = {}
+    def bits(tensor):
+        return tensor.detach().contiguous().view(torch.uint8).cpu()
+    def observe(instance, mode, *a, **kw):
+        original(instance, mode, *a, **kw)
+        if instance is not native:
+            return
+        key = "mode" + str(mode)
+        if mode not in (0, 1, 2) or key in captured_outputs:
+            raise ValueError("comparison must expose each routed reader mode once")
+        captured_outputs[key] = bits(kw["out"])
+    owner._launch = observe
+    try:
+        captured_outputs["forward"] = bits(fn(*xa))
+        captured_outputs["mode1"] = bits(native.gate_up(*xa))
+    finally:
+        owner._launch = original
+    if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
+        raise ValueError("comparison did not observe every routed reader mode")
+    return captured_outputs
+
+
+def condition_repeatability(arms, xa, power, seconds):
+    """Fixed, unscored alternating workload; no plateau or clock-control claim."""
+    def work():
+        started = time.monotonic()
+        calls = {"legacy": 0, "piece_major": 0}
+        while time.monotonic() - started < seconds:
+            for arm in ("legacy", "piece_major"):
+                arms[arm][0](*xa)
+                calls[arm] += 1
+                torch.cuda.synchronize()
+        return {"calls_by_arm": calls, "seconds": time.monotonic() - started}
+    calls, observations = power.observe_while(work)
+    return {**calls, **observations,
+            "scope": "unscored alternating resident arms; fixed duration, not thermal equilibration proof"}
+
+
+def repeatability_event_cell(call, power):
+    samples, observations = power.observe_while(lambda: time_events(call, 10, 30))
+    return {"wall": summarize(samples), "wall_window_unix": observations["window_unix"],
+            "event_polling": observations,
+            "outlier_policy": "retain_all_raw_events_no_posthoc_exclusion"}
+
+
+def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, native_owner):
+    """Finite numeric or ABBA phase using this benchmark's existing owners."""
+    from pathlib import Path
+    import piece_major_protocol as pp
+    from tessera import routed_fused as rf
+    import tessera
+
+    phase = args.comparison_phase
+    numeric_receipt = None
+    if phase != "numeric":
+        numeric_receipt = pp.require_numeric_receipt(args.comparison_numeric_receipt,
+                                   args.comparison_numeric_sha256, pp.numeric_protocol_sha256(protocol, protocol_sha))
+    if inputs.manifest_sha256 != protocol["input_manifest"]["sha256"]:
+        raise ValueError("comparison readset differs from its authenticated lease")
+    source_root = Path(tessera.__file__).resolve().parent.parent
+    before = pp.source_identity(protocol, source_root)
+    pp.native_bank_identity(protocol["native"])
+    native_raw = inputs.read(protocol["native"]["origin_path"])
+    if hashlib.sha256(native_raw).hexdigest() != protocol["native"]["sha256"]:
+        raise ValueError("comparison native bank differs from the authenticated artifact")
+    del native_raw
+    routing_raw = inputs.read(protocol["routing"]["path"])
+    if hashlib.sha256(routing_raw).hexdigest() != protocol["routing"]["sha256"]:
+        raise ValueError("comparison routing differs from the bound capture")
+    captured = torch.load(io.BytesIO(routing_raw), map_location="cpu", weights_only=True)["ids"]
+    if (tuple(captured.shape) != (2048, TOP_K) or captured.dtype != torch.int32
+            or int(captured.min()) < 0 or int(captured.max()) >= EXPERTS):
+        raise ValueError("comparison requires the captured 2048x8 expert-ID matrix")
+    meta = {"schema": protocol["schema"] + ".receipt", "phase": phase, "status": "running",
+            "protocol_sha256": protocol_sha, "ms": protocol["ms"],
+            "routing_scope": "M2048 captured IDs; M1 first row, an operator geometry control, not a fresh decode capture",
+            "activation_scope": "seeded BF16 inputs and uniform routing weights; not served activation replay",
+            "tp": [TP_RANK, TP_SIZE], "artifact": args.artifact, "source_root": str(source_root),
+            "kernel_sha256": protocol["kernel_sha256"], "start_unix": time.time(),
+            "native": {}, "arm_info": {}, "energy_status": "HOLD_pending_both_host_coverage_and_clock_review"}
+    arms = {}
+    previous = os.environ.get("TESSERA_ROUTED_PIECE_MAJOR")
+    try:
+        # Retain the two prepared resident stacks; never relay in a timed call.
+        for arm in ("legacy", "piece_major"):
+            os.environ["TESSERA_ROUTED_PIECE_MAJOR"] = "1" if arm == "piece_major" else "0"
+            fn, info, holder, touched = build_routed(store, P + "10.mlp.experts")
+            if (info["native_library"] != "e4m3mma"
+                    or info["native_piece_major"] != (arm == "piece_major")
+                    or set(info["resident_word_layouts"].values()) != {arm}):
+                raise ValueError("actual comparison resident layout or dispatch differs")
+            arms[arm] = (fn, holder, touched)
+            meta["arm_info"][arm] = info
+            meta["native"][arm] = pp.mapped_native_identity(rf._ext("e4m3mma"), protocol["native"])
+        if meta["arm_info"]["legacy"]["resident_bytes"] != meta["arm_info"]["piece_major"]["resident_bytes"]:
+            raise ValueError("comparison resident byte counts differ")
+    finally:
+        if previous is None:
+            os.environ.pop("TESSERA_ROUTED_PIECE_MAJOR", None)
+        else:
+            os.environ["TESSERA_ROUTED_PIECE_MAJOR"] = previous
+
+    def bits(tensor):
+        return tensor.detach().contiguous().view(torch.uint8).cpu()
+
+    results = []
+    power = PowerSampler() if phase in ("timing", "repeatability") else None
+    if phase == "repeatability":
+        pp.require_profile_receipt(protocol, numeric_receipt)
+        meta["repeatability"] = protocol["repeatability"]
+        meta["mechanism_profiles_reused"] = protocol["repeatability"]["profile_receipt"]
+        meta["clock_status"] = "unqualified_descriptive_balanced_repeatability"
+        meta["thermal_policy"] = "fixed60s_alternating_conditioning_then_retain_all_cells_no_filtering"
+        if power.source != "pynvml":
+            raise ValueError("repeatability requires the already qualified in-process NVML instrument")
+    for m in protocol["ms"]:
+        seed = zlib.crc32(f"{protocol['group']}:{m}".encode())
+        torch.manual_seed(seed)
+        x = torch.randn(m, HIDDEN, device="cuda", dtype=torch.bfloat16)
+        ids = captured[:m].to(device="cuda")
+        weights = torch.full((m, TOP_K), 1.0 / TOP_K, device="cuda", dtype=torch.float32)
+        xa = (x, ids, weights)
+        input_hashes = {name: hashlib.sha256(bits(t).numpy().tobytes()).hexdigest()
+                        for name, t in zip(("x", "ids", "weights"), xa)}
+        rec = {"group": protocol["group"], "M": m, "seed": seed,
+               "input_hashes": input_hashes, "routing": routing_stats(ids), "cells": {}}
+        if phase == "numeric":
+            control = numeric_outputs(arms["legacy"][0], xa)
+            candidate = numeric_outputs(arms["piece_major"][0], xa)
+            if any(not torch.equal(control[key], candidate[key]) for key in control):
+                raise ValueError(f"comparison intermediate/output bits differ at M={m}")
+            rec["bit_hashes"] = {key: hashlib.sha256(value.numpy().tobytes()).hexdigest()
+                                  for key, value in control.items()}
+            rec["intermediate_bits_equal"] = True
+        else:
+            proof = next(row for row in numeric_receipt["results"] if row["M"] == m)
+            if input_hashes != proof["input_hashes"]:
+                raise ValueError("comparison timing inputs differ from its numeric proof")
+            if phase == "repeatability":
+                rec["conditioning"] = condition_repeatability(arms, xa, power,
+                    protocol["repeatability"]["conditioning_s"])
+            order = protocol["order"] if phase in ("timing", "repeatability") else ("legacy", "piece_major")
+            for position, arm in enumerate(order):
+                fn, holder, touched = arms[arm]
+                call = lambda: fn(*xa)
+                key = f"{position}:{arm}:M{m}"
+                observed = hashlib.sha256(bits(call()).numpy().tobytes()).hexdigest()
+                if observed != proof["bit_hashes"]["forward"]:
+                    raise ValueError("comparison timed arm output differs from its numeric proof")
+                if phase == "repeatability":
+                    rec["cells"][key] = {"arm": arm, "out_sha256": observed,
+                        "bytes": touched(m), **repeatability_event_cell(call, power)}
+                    continue
+                if phase == "ncu":
+                    for _ in range(10):
+                        call()
+                    torch.cuda.synchronize()
+                    torch.cuda.cudart().cudaProfilerStart()
+                    call()
+                    torch.cuda.synchronize()
+                    torch.cuda.cudart().cudaProfilerStop()
+                    rec["cells"][key] = {"ncu": True}
+                    continue
+                t0 = time.time()
+                event_before = power.observation()
+                wall = summarize(time_events(call, 10, 30))
+                event_after = power.observation()
+                window = [t0, time.time()]
+                trace = Path(args.out) / f"torch-{m}-{position}-{arm}.json"
+                profile = kernel_profile(call, full_names=True, trace_path=trace)
+                profile["trace_sha256"] = hashlib.sha256(trace.read_bytes()).hexdigest()
+                profile["trace_path"] = str(trace)
+                sampled = power.sample_during(call, 30, capture_series=True)
+                if sampled.get("source") != "pynvml" or sampled.get("samples", 0) < 2:
+                    raise ValueError("comparison requires a fast recorded power series")
+                sampled["calls_per_j"] = None
+                sampled["energy_status"] = meta["energy_status"]
+                rec["cells"][key] = {"arm": arm, "wall": wall, "wall_window_unix": window,
+                                     "profile": profile, "power": sampled, "bytes": touched(m),
+                                     "event_observations": [event_before, event_after]}
+        results.append(rec)
+    torch.cuda.synchronize()
+    pp.harness_identity(protocol)
+    after = pp.source_identity(protocol, source_root)
+    if before != after:
+        raise ValueError("comparison source identity changed")
+    for arm in arms:
+        now = pp.mapped_native_identity(rf._ext("e4m3mma"), protocol["native"])
+        if now["files"] != meta["native"][arm]["files"]:
+            raise ValueError("comparison compiled or changed native artifacts")
+    native_owner.finish(torch.cuda.synchronize)
+    meta["native_code_artifact"] = native_owner.record
+    inputs.close()  # Release/fence the actual input owner before publishing success.
+    meta["input_ownership"] = getattr(inputs, "direct_record", None)
+    meta.update(status="passed", end_unix=time.time(), staged_reads=inputs.reads,
+                intermediate_bits_equal=phase == "numeric", source_files_unchanged=True)
+    output = {**meta, "meta": meta, "results": results}
+    dest = Path(args.out) / "bench_t8r.json"
+    temp = dest.with_suffix(".tmp")
+    temp.write_text(json.dumps(output, indent=1) + "\n")
+    os.replace(temp, dest)
+    print(json.dumps({"comparison_phase": phase, "status": "passed", "protocol_sha256": protocol_sha,
+                      "receipt_sha256": hashlib.sha256(dest.read_bytes()).hexdigest()}), flush=True)
+    return 0
 
 
 def main():
@@ -418,158 +758,284 @@ def main():
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--power-s", type=float, default=3.0)
     ap.add_argument("--no-graph", action="store_true")
+    ap.add_argument("--outputs-only", action="store_true",
+                    help="record output bits and native/layout identity without timing, power or graph work")
     ap.add_argument("--routing", default=None,
                     help="directory with m<M>/*.pt recorded top-k ids; each file adds a "
                          "'<M>@<file>' cell to every routed group (balanced cells stay)")
+    ap.add_argument("--comparison-protocol", default=None)
+    ap.add_argument("--comparison-phase", choices=("numeric", "timing", "ncu", "repeatability"), default="numeric")
+    ap.add_argument("--comparison-numeric-receipt", default=None)
+    ap.add_argument("--comparison-numeric-sha256", default=None)
     ap.add_argument("--ncu", action="store_true",
                     help="one call per (group, M) between cudaProfilerStart/Stop; no timing")
+    ap.add_argument("--artifact", default=ARTIFACT)
+    ap.add_argument("--single-routing-file", default=None,
+                    help="one sealed historical real-ID replay; no balanced/menu cases")
+    ap.add_argument("--input-manifest", default=None,
+                    help="exact PB-staged readset for the single replay")
+    ap.add_argument("--profile-native-file", default=None,
+                    help="one declared retained native-code artifact for counter-only recovery")
     args = ap.parse_args()
+    if args.outputs_only and args.ncu:
+        ap.error("--outputs-only cannot be combined with --ncu")
+    comparison = None
+    comparison_sha = None
+    if getattr(args, "comparison_protocol", None):
+        import piece_major_protocol as pp
+        comparison, comparison_sha = pp.load(args.comparison_protocol)
+        pp.require_options(args, comparison, stubbed=VLLM_STUBBED)
+        if args.comparison_phase != "numeric":
+            pp.require_numeric_receipt(args.comparison_numeric_receipt,
+                                       args.comparison_numeric_sha256, pp.numeric_protocol_sha256(comparison, comparison_sha))
+    else:
+        require_single_replay_options(args, stubbed=VLLM_STUBBED)
     os.makedirs(args.out, exist_ok=True)
     ms = [int(v) for v in args.ms.split(",")]
     wanted = None if args.groups == "all" else set(args.groups.split(","))
     torch.manual_seed(0)
     dev = torch.device("cuda")
-    store = Store(ARTIFACT)
-    power = PowerSampler()
-    import tessera
-    meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
-            "top_k": TOP_K, "experts": EXPERTS, "ms": ms, "warmup": args.warmup, "iters": args.iters,
-            "power_source": power.source, "tessera_file": tessera.__file__, "artifact": ARTIFACT,
-            "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
-            "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
-            "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
-            "e4m3_mma": os.environ.get("TESSERA_FUSED_E4M3_MMA"),
-            "start_unix": time.time()}
-    recorded = routing_files(args.routing, ms) if args.routing else {}
-    if args.routing and not any(recorded.values()):
-        raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
-                         "(is the directory mounted into the container?)")
-    meta["routing"] = {"root": args.routing, "files": {str(m): len(v) for m, v in recorded.items()}}
-    meta["vllm_stubbed"] = VLLM_STUBBED
-    if not VLLM_STUBBED:
-        import vllm
-        meta["vllm"] = getattr(vllm, "__version__", None)
+    inputs = None
+    native_owner = None
+    if args.single_routing_file or comparison:
+        from pb_staged_store import StagedInputs
+        inputs = (StagedInputs(args.input_manifest, direct_vllm=True) if comparison
+                  else StagedInputs(args.input_manifest))
     try:
-        import importlib.metadata as md
-        meta["tessera_dist"] = md.version("tessera_quant")
-    except Exception as exc:  # noqa: BLE001
-        meta["tessera_meta_error"] = repr(exc)
-    ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
-    results = []
-    plan = [(g, k, mod) for g, k, mod in TESSERA_GROUPS] + [(g, "bf16", (o, i)) for g, o, i in BF16_GROUPS]
-    for gid, kind, module in plan:
-        if wanted is not None and gid not in wanted and gid.split(".")[0] not in wanted:
-            continue
-        t0 = time.time()
-        rec = {"group": gid, "kind": kind, "module": module if kind != "bf16" else None}
-        fn = holder = None
+        store = Store(args.artifact, inputs)
+        if inputs:
+            # Bind publisher declarations to the exact staged bytes intake reads.
+            published = store.metadata("tessera_serving_manifest.json")
+            inputs.bind_roles(store.root, published["modules"][P + "10.mlp.experts"]["roles"])
+            if args.profile_native_file:
+                from pb_staged_store import NativeCallback
+                from tessera import routed_fused as rf
+                native_owner = NativeCallback(inputs,args.profile_native_file,rf,
+                    os.path.join(args.out,"native-artifact"),
+                    expected_sha256=os.environ["BENCH_EXPECT_LIBRARY_SHA256"],
+                    source_sha256=os.environ["KERNEL_SHA"])
+
+        if comparison:
+            from pb_staged_store import NativeCallback
+            from tessera import routed_fused as rf
+            native_owner = NativeCallback(inputs, comparison["native"]["origin_path"], rf,
+                os.path.join(args.out, "native-artifact"),
+                expected_sha256=comparison["native"]["sha256"],
+                source_sha256=comparison["kernel_sha256"])
+            return run_piece_major_comparison(args, comparison, comparison_sha, inputs, store, native_owner)
+        power = PowerSampler()
+        import tessera
+        meta = {"device": torch.cuda.get_device_name(), "torch": torch.__version__, "tp": [TP_RANK, TP_SIZE],
+                "top_k": TOP_K, "experts": EXPERTS, "ms": ms, "warmup": args.warmup, "iters": args.iters,
+                "power_source": power.source, "tessera_file": tessera.__file__, "artifact": args.artifact,
+                "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
+                "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
+                "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
+                "e4m3_mma": os.environ.get("TESSERA_FUSED_E4M3_MMA"),
+                "start_unix": time.time()}
+        recorded = routing_files(args.routing, ms) if args.routing else {}
+        if args.routing and not any(recorded.values()):
+            raise SystemExit(f"--routing {args.routing}: no m<M>/*.pt for M in {ms} "
+                             "(is the directory mounted into the container?)")
+        meta["routing"] = {"root": args.routing, "files": {str(m): len(v) for m, v in recorded.items()}}
+        meta["vllm_stubbed"] = VLLM_STUBBED
+        if not VLLM_STUBBED:
+            import vllm
+            meta["vllm"] = getattr(vllm, "__version__", None)
         try:
-            with torch.inference_mode():
-                if kind == "routed":
-                    fn, info, holder, bytes_for = build_routed(store, module)
-                    width = int(store.schemes[module]["groups"]["w13"]["columns"])
-                elif kind == "bf16":
-                    fn, width, info, holder, bytes_for = build_bf16(*module)
-                else:
-                    fn, width, info, holder, bytes_for = build_dense(store, module, kind)
-                rec["info"] = info
-                rec["load_s"] = time.time() - t0
-                rec["cells"] = {}
-                cases = []
-                for m in ms:
-                    cases.append((str(m), m, None))
-                    if kind == "routed":
-                        cases += [(f"{m}@{os.path.splitext(os.path.basename(f))[0]}", m, f)
-                                  for f in recorded.get(m, [])]
-                for key, m, rfile in cases:
-                    # seeded per (group, M), so two arms that run different
-                    # group sets still see the same x and can compare outputs
-                    torch.manual_seed(zlib.crc32(f"{gid}:{m}".encode()))
-                    x = torch.randn(m, width, device=dev, dtype=torch.bfloat16)
-                    if kind != "routed":
-                        xa = (x,)
-                    elif rfile is None:
-                        xa = (x, *balanced_routing(m, dev))
-                    else:
-                        xa = (x, *recorded_routing(rfile, m, dev))
-                    call = lambda: fn(*xa)  # noqa: E731
-                    if args.ncu:
-                        # ncu --profile-from-start off: exactly one profiled call per (group, M).
-                        for _ in range(3):
-                            call()
-                        torch.cuda.synchronize()
-                        torch.cuda.cudart().cudaProfilerStart()
-                        call()
-                        torch.cuda.synchronize()
-                        torch.cuda.cudart().cudaProfilerStop()
-                        rec["cells"][key] = {"ncu": True, "bytes": bytes_for(m)}
-                        print(json.dumps({"group": gid, "M": key, "ncu": True}), flush=True)
-                        del x, xa
-                        continue
-                    cell = {"bytes": bytes_for(m)}
-                    if kind == "routed":
-                        cell["routing"] = dict(routing_stats(xa[1]), source=rfile or "balanced")
-                    # the output's bytes, for a bitwise A/B across kernel arms
-                    y = call()
-                    torch.cuda.synchronize()
-                    cell["out_sha256"] = hashlib.sha256(
-                        y.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
-                    cell["out_shape"] = list(y.shape)
-                    del y
-                    ts = time.time()
-                    cell["wall"] = summarize(time_events(call, args.warmup, args.iters))
-                    cell["wall_window_unix"] = [ts, time.time()]
-                    cell["profile"] = kernel_profile(call)
-                    if not args.no_graph and m <= 8:
-                        try:
-                            s = torch.cuda.Stream()
-                            s.wait_stream(torch.cuda.current_stream())
-                            with torch.cuda.stream(s):
-                                for _ in range(3):
-                                    call()
-                            torch.cuda.current_stream().wait_stream(s)
-                            torch.cuda.synchronize()
-                            g = torch.cuda.CUDAGraph()
-                            with torch.cuda.graph(g):
-                                call()
-                            cell["graph"] = summarize(time_events(g.replay, args.warmup, args.iters))
-                            replay = g.replay
-                        except Exception as exc:  # noqa: BLE001
-                            cell["graph_error"] = repr(exc)[:400]
-                            replay = call
-                    else:
-                        replay = call
-                    cell["power"] = power.sample_during(replay, args.power_s)
-                    best = cell.get("graph", cell["wall"])["median_ms"]
-                    cell["eff_gbps"] = cell["bytes"] / (best * 1e-3) / 1e9
-                    k_us = cell["profile"]["kernel_us_per_call"]
-                    cell["eff_gbps_kernel"] = cell["bytes"] / (k_us * 1e-6) / 1e9 if k_us else None
-                    rec["cells"][key] = cell
-                    print(json.dumps({"group": gid, "M": key, "wall_ms": round(cell["wall"]["median_ms"], 4),
-                                      "graph_ms": round(cell["graph"]["median_ms"], 4) if "graph" in cell else None,
-                                      "kernel_ms": round(k_us / 1000, 4),
-                                      "GBps_kernel": round(cell["eff_gbps_kernel"] or 0, 1),
-                                      "W": round(cell["power"].get("mean_w") or 0, 1)}), flush=True)
-                    del x, xa
-            rec["ok"] = True
-        except Exception:  # noqa: BLE001
-            import traceback
-            rec["ok"] = False
-            rec["error"] = traceback.format_exc()
-            print(json.dumps({"group": gid, "ok": False, "err": rec["error"][-800:]}), flush=True)
-        finally:
+            import importlib.metadata as md
+            meta["tessera_dist"] = md.version("tessera_quant")
+        except Exception as exc:  # noqa: BLE001
+            meta["tessera_meta_error"] = repr(exc)
+        ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
+        if inputs:
+            meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
+                                      "reference_baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
+                                      "manifest_sha256": inputs.manifest_sha256,
+                                      "sdk_version": inputs.sdk.SDK_VERSION}
+        results = []
+        plan = [(g, k, mod) for g, k, mod in TESSERA_GROUPS] + [(g, "bf16", (o, i)) for g, o, i in BF16_GROUPS]
+        for gid, kind, module in plan:
+            if wanted is not None and gid not in wanted and gid.split(".")[0] not in wanted:
+                continue
+            t0 = time.time()
+            rec = {"group": gid, "kind": kind, "module": module if kind != "bf16" else None}
             fn = holder = None
-            torch.cuda.empty_cache()
-        rec["group_wall_s"] = time.time() - t0
-        results.append(rec)
+            try:
+                with torch.inference_mode():
+                    if kind == "routed":
+                        fn, info, holder, bytes_for = build_routed(store, module)
+                        width = int(store.schemes[module]["groups"]["w13"]["columns"])
+                    elif kind == "bf16":
+                        fn, width, info, holder, bytes_for = build_bf16(*module)
+                    else:
+                        fn, width, info, holder, bytes_for = build_dense(store, module, kind)
+                    rec["info"] = info
+                    rec["load_s"] = time.time() - t0
+                    rec["cells"] = {}
+                    cases = []
+                    for m in ms:
+                        if args.single_routing_file:
+                            cases.append((f"{m}@{os.path.splitext(os.path.basename(args.single_routing_file))[0]}",
+                                          m, args.single_routing_file))
+                            continue
+                        cases.append((str(m), m, None))
+                        if kind == "routed":
+                            cases += [(f"{m}@{os.path.splitext(os.path.basename(f))[0]}", m, f)
+                                      for f in recorded.get(m, [])]
+                    for key, m, rfile in cases:
+                        # seeded per (group, M), so two arms that run different
+                        # group sets still see the same x and can compare outputs
+                        torch.manual_seed(zlib.crc32(f"{gid}:{m}".encode()))
+                        x = torch.randn(m, width, device=dev, dtype=torch.bfloat16)
+                        if kind != "routed":
+                            xa = (x,)
+                        elif rfile is None:
+                            xa = (x, *balanced_routing(m, dev))
+                        elif inputs:
+                            loaded = torch.load(io.BytesIO(inputs.read(rfile)), map_location="cpu", weights_only=True)
+                            ids = loaded["ids"]
+                            if tuple(ids.shape) != (2048, TOP_K) or ids.dtype != torch.int32:
+                                raise ValueError("single replay routing shape/dtype differs")
+                            if int(ids.min()) < 0 or int(ids.max()) >= EXPERTS:
+                                raise ValueError("single replay expert ids out of range")
+                            weights = torch.full((m, TOP_K), 1.0/TOP_K, dtype=torch.float32, device=dev)
+                            xa = (x, ids.to(device=dev), weights)
+                            from tessera import routed_fused as rf
+                            expected = "3a32d040668cc1fe5678c2088deb5afa8cd6f227a7920dfbd899c90863c03254"
+                            source = os.path.join(os.path.dirname(rf.__file__), "serving/csrc/routed_fused_window.cu")
+                            if hashlib.sha256(open(source, "rb").read()).hexdigest() != expected:
+                                raise ValueError("single replay kernel source differs from baseline608")
+                            if rf.library_for("e4m3") != "e4m3mma" or rf.superblock_rows("e4m3mma", 0, m) != 128:
+                                raise ValueError("single replay library/width differs")
+                            meta["single_replay"]["input_hashes"] = {
+                                "x": hashlib.sha256(x.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest(),
+                                "weights": hashlib.sha256(weights.view(torch.uint8).cpu().numpy().tobytes()).hexdigest(),
+                                "ids": hashlib.sha256(ids.contiguous().view(torch.uint8).numpy().tobytes()).hexdigest()}
+                            meta["single_replay"]["seed"] = zlib.crc32(f"{gid}:{m}".encode())
+                            from tessera.serving.backend import platform_token
+                            token = platform_token(torch=torch)
+                            meta["single_replay"]["compile_flags"] = rf._cflags(token, True, True)
+                            lib = rf._ext("e4m3mma")
+                            if native_owner:
+                                native_owner.bind(lib)
+                            meta["single_replay"]["library_path"] = lib.__file__
+                            meta["single_replay"]["library_sha256"] = hashlib.sha256(open(lib.__file__, "rb").read()).hexdigest()
+                            expected_library = os.environ.get("BENCH_EXPECT_LIBRARY_SHA256")
+                            if expected_library and meta["single_replay"]["library_sha256"] != expected_library:
+                                raise ValueError("profile recovery native binary differs from measured library")
+                            meta["single_replay"]["build_platform"] = token
+                        else:
+                            xa = (x, *recorded_routing(rfile, m, dev))
+                        call = lambda: fn(*xa)  # noqa: E731
+                        if args.ncu:
+                            # ncu --profile-from-start off: exactly one profiled call per (group, M).
+                            for _ in range(args.warmup if inputs else 3):
+                                call()
+                            torch.cuda.synchronize()
+                            torch.cuda.cudart().cudaProfilerStart()
+                            call()
+                            torch.cuda.synchronize()
+                            torch.cuda.cudart().cudaProfilerStop()
+                            rec["cells"][key] = {"ncu": True, "bytes": bytes_for(m)}
+                            print(json.dumps({"group": gid, "M": key, "ncu": True}), flush=True)
+                            del x, xa
+                            continue
+                        cell = {"bytes": bytes_for(m)}
+                        if kind == "routed":
+                            cell["routing"] = dict(routing_stats(xa[1]), source=rfile or "balanced")
+                        # the output's bytes, for a bitwise A/B across kernel arms
+                        y = call()
+                        torch.cuda.synchronize()
+                        cell["out_sha256"] = hashlib.sha256(
+                            y.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
+                        cell["out_shape"] = list(y.shape)
+                        del y
+                        if args.outputs_only:
+                            cell["outputs_only"] = True
+                            rec["cells"][key] = cell
+                            print(json.dumps({"group": gid, "M": key, "out_sha256": cell["out_sha256"],
+                                              "outputs_only": True}), flush=True)
+                            del x, xa
+                            continue
+                        ts = time.time()
+                        cell["wall"] = summarize(time_events(call, args.warmup, args.iters))
+                        cell["wall_window_unix"] = [ts, time.time()]
+                        cell["profile"] = kernel_profile(call, full_names=bool(inputs))
+                        if inputs:
+                            wanted_kernel = "routed_fused_kernel<true, 0, false, false, 4, false, 128>"
+                            mode0 = [v for k,v in cell["profile"]["top"].items() if wanted_kernel in k]
+                            if len(mode0) != 1 or mode0[0]["count_per_call"] != 1:
+                                raise ValueError("actual profiled single replay is not one mode0/RL4/BMT128 kernel")
+                            cell["mode0_profile"] = mode0[0]
+                        if not args.no_graph and m <= 8:
+                            try:
+                                s = torch.cuda.Stream()
+                                s.wait_stream(torch.cuda.current_stream())
+                                with torch.cuda.stream(s):
+                                    for _ in range(3):
+                                        call()
+                                torch.cuda.current_stream().wait_stream(s)
+                                torch.cuda.synchronize()
+                                g = torch.cuda.CUDAGraph()
+                                with torch.cuda.graph(g):
+                                    call()
+                                cell["graph"] = summarize(time_events(g.replay, args.warmup, args.iters))
+                                replay = g.replay
+                            except Exception as exc:  # noqa: BLE001
+                                cell["graph_error"] = repr(exc)[:400]
+                                replay = call
+                        else:
+                            replay = call
+                        cell["power"] = power.sample_during(replay, args.power_s, capture_series=bool(inputs))
+                        if inputs:
+                            cell["power"]["scope"] = "whole single-owner forward; not gate-only or full-model energy"
+                            cell["power"]["calls_per_j"] = None
+                            if cell["power"].get("source") is None:
+                                raise ValueError("single replay requires fast power instrument")
+                        best = cell.get("graph", cell["wall"])["median_ms"]
+                        cell["eff_gbps"] = cell["bytes"] / (best * 1e-3) / 1e9
+                        k_us = cell["profile"]["kernel_us_per_call"]
+                        cell["eff_gbps_kernel"] = cell["bytes"] / (k_us * 1e-6) / 1e9 if k_us else None
+                        rec["cells"][key] = cell
+                        print(json.dumps({"group": gid, "M": key, "wall_ms": round(cell["wall"]["median_ms"], 4),
+                                          "graph_ms": round(cell["graph"]["median_ms"], 4) if "graph" in cell else None,
+                                          "kernel_ms": round(k_us / 1000, 4),
+                                          "GBps_kernel": round(cell["eff_gbps_kernel"] or 0, 1),
+                                          "W": round(cell["power"].get("mean_w") or 0, 1)}), flush=True)
+                        del x, xa
+                rec["ok"] = True
+            except Exception:  # noqa: BLE001
+                import traceback
+                rec["ok"] = False
+                rec["error"] = traceback.format_exc()
+                print(json.dumps({"group": gid, "ok": False, "err": rec["error"][-800:]}), flush=True)
+            finally:
+                fn = holder = None
+                torch.cuda.empty_cache()
+            rec["group_wall_s"] = time.time() - t0
+            results.append(rec)
+            json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
+                      indent=1, default=repr)
+        if native_owner:
+            native_owner.finish(torch.cuda.synchronize)
+            meta["native_code_artifact"] = native_owner.record
+        if inputs:
+            meta["staged_reads"] = inputs.reads
+            inputs.close()
+        meta["end_unix"] = time.time()
         json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                   indent=1, default=repr)
-    meta["end_unix"] = time.time()
-    json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
-              indent=1, default=repr)
-    bad = [r["group"] for r in results if not r["ok"]]
-    print("done; failed groups:", bad, flush=True)
-    return 1 if bad else 0
+        bad = [r["group"] for r in results if not r["ok"]]
+        print("done; failed groups:", bad, flush=True)
+        return 1 if bad else 0
+    finally:
+        try:
+            if native_owner:
+                native_owner.finish(torch.cuda.synchronize)
+        finally:
+            if inputs:
+                inputs.close()
 
 
 if __name__ == "__main__":

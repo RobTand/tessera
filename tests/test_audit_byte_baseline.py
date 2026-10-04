@@ -416,3 +416,12 @@ def test_a_shard_row_decodes_to_its_parent_sliced(layout_blobs):
             f"rows {rows} x columns {cols}: its bytes are stable and wrong, "
             f"which is what a digest alone cannot tell you"
         )
+
+
+def test_resident_matrix_reaches_piece_major_and_pins_wire_and_bijection():
+    module = _load()
+    # A new resident layout cannot be proved by encoder-only digests.
+    result = module.resident_hashes()
+    assert result['r4-two-tiles/serialized_legacy'] == result['r4-two-tiles/serialized_piece_major']
+    assert result['r4-two-tiles/original_words'] == result['r4-two-tiles/restored_words']
+    assert result['r4-two-tiles/piece_major_words'] != result['r4-two-tiles/original_words']

@@ -1,0 +1,198 @@
+{
+  "schema": "tessera.pm_m2048_descriptive_repeatability_design.v1",
+  "status": "Actionable owner adaptation CPU-qualified; unlaunched pending exact source packets and independent review/rootGO",
+  "question": "Does the observed M2048 layout benefit repeat descriptively across balanced independently conditioned ABBA/BAAB blocks?",
+  "clock_disposition": "Unqualified. Do not claim fixed/effective/matched within-cell frequency, thermal equilibrium or causal DVFS elimination. Native-cadence/1% clock predicates are NOT gates for this descriptive question.",
+  "input_identity": {
+    "artifact": "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported",
+    "group": "experts.R1024.L10",
+    "M": 2048,
+    "tp_rank": 0,
+    "tp_size": 2,
+    "activation_dtype": "BF16",
+    "activation_seed_crc32": 1605385075,
+    "routing": {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000007.pt",
+      "sha256": "41ab82c0433f9f228ba13d2bf45070f4b52f8eaee24e836eb26bdee33d4caf97"
+    },
+    "weights": "float32 uniform1/8; exact hashes read from accepted numericV4 M2048 row",
+    "readset_sha256": "ae1fb40659d2a1b8c372c4609f3256a9fd62980f09e0687bde4042e5225ccf07",
+    "kernel_sha256": "c236b7aa340c74c9b965d84133d54c16c1488cecc6781d996ee14cc4d4068522",
+    "native_elf_sha256": "4d693c2621333eb36b32b21479e0283e95236e8864923fad9d1f15bc1487091d",
+    "source_and_native_namespace": [
+      "/tessera/src",
+      "/ext"
+    ],
+    "numeric_v4_receipt_sha256": "0e35d25f968b7683e069d5ebc47e4ee4ed36af062b70e62ad92e59b608fba4ec",
+    "numeric_protocol_sha256": "192aa398aae403678c61c615cc3b569e0f15721ce702c5894bf327ea87fe347d",
+    "resident_bytes_per_arm": 1872827160
+  },
+  "population": {
+    "balanced_block_pairs": 3,
+    "independently_conditioned_blocks": 6,
+    "cells_per_block": 4,
+    "events_per_cell": 30,
+    "total_scored_events": 720,
+    "warmups_per_cell": 10,
+    "graphs": false,
+    "block_orders": [
+      {
+        "pair": 1,
+        "block": 1,
+        "order": [
+          "legacy",
+          "piece_major",
+          "piece_major",
+          "legacy"
+        ]
+      },
+      {
+        "pair": 1,
+        "block": 2,
+        "order": [
+          "piece_major",
+          "legacy",
+          "legacy",
+          "piece_major"
+        ]
+      },
+      {
+        "pair": 2,
+        "block": 1,
+        "order": [
+          "piece_major",
+          "legacy",
+          "legacy",
+          "piece_major"
+        ]
+      },
+      {
+        "pair": 2,
+        "block": 2,
+        "order": [
+          "legacy",
+          "piece_major",
+          "piece_major",
+          "legacy"
+        ]
+      },
+      {
+        "pair": 3,
+        "block": 1,
+        "order": [
+          "legacy",
+          "piece_major",
+          "piece_major",
+          "legacy"
+        ]
+      },
+      {
+        "pair": 3,
+        "block": 2,
+        "order": [
+          "piece_major",
+          "legacy",
+          "legacy",
+          "piece_major"
+        ]
+      }
+    ],
+    "freshness": "A fresh contained process/independent conditioning and fresh CUDA-event instances for each block; physical-device history remains recorded, not asserted independent",
+    "scheduling": "Six tiny logical block actions submitted through existing PB campaign interface only after source/instrument qualification and exact rootGO. PB owns serialization/placement; sameSparky exclusive dependency, no second scheduler."
+  },
+  "conditioning": {
+    "seconds": 60,
+    "work": "Fixed unscored alternating legacy/PM resident full forwards, synchronized per call, before each independently started block. No adaptive plateau selection or retargeting.",
+    "additional_per_cell_warmups": 10,
+    "per_cell_power_heaters": 0
+  },
+  "policies": {
+    "outliers": "Retain every raw event in execution order; no posthoc deletion, retries or outcome-driven extension.",
+    "temperature": "Retain all polled temperatures and available raw throttle masks/errors during conditioning/scored windows. Report warming/drift/order effects; no result-based temperature exclusions or invented stabilization threshold.",
+    "instrumentation": "Host-polled NVML power/reportedSM/temperature/throttle readings at requested100ms, with host wall/monotonic read timestamps and errors. Polling cadence is not native sensor update cadence; duplicates are not independent sensor observations.",
+    "safety": "Existing exact-CID ownership, PB resource scope,40GiB launch/24GiB active available floor,fullPSI<20,600s owner/15s wrapper grace/PB900 perblock. No new clock/driver/NTP/power-policy mutation."
+  },
+  "profiles": {
+    "reuse_receipt_sha256": "3ce7df07c5acc2646174f8296c401a1e2e119ddd0dba736249d4404290403fe2",
+    "scope": "Eight accepted before/after Torch profiles, actual immutable native/layout mechanism. Reuse explicitly; do not label their durations a fresh-window profile or duplicate Torch/NCU evidence."
+  },
+  "telemetry": {
+    "fresh": "Both-Spark raw Netdata for action, fixed conditioning and every scored event window; CPU/memory/pressure/swapIO/diskIO/reportedSM/temperature/power, true source cadence and rejected groups/errors retained. Subsecond event windows may have no native Netdata group; report unobserved coverage, never interpolate.",
+    "clock_owner": "PB1440 gateway-only independent alignment remainsHOLD; same-host CUDA/monotonic evidence is distinct.",
+    "energy": "HOLD; no work-per-joule, served or fullmodel speedup claim."
+  },
+  "analysis": {
+    "cell_statistic": "Conventional median of30 raw CUDA-event observations per cell, preserving event order",
+    "block_contrast": "legacy_mean=arithmetic mean of the two legacy cell medians; pm_mean=same forPM; reduction_percent=100*(legacy_mean-pm_mean)/legacy_mean; throughput_ratio=legacy_mean/pm_mean",
+    "pair_contrast": "Report ABBA and BAAB block contrasts individually, pair mean and ABBA-minus-BAAB order interaction; descriptive mean/range/sampleSD of three pair contrasts",
+    "replication_unit": "Independent conditioned block/pair, not720 pooled events; do not bootstrap individual events as independent runs",
+    "acceptance_scope": "Three balanced pairs are minimum descriptive variance/order control, not guaranteed95% significance. No inferential/stable/general/served/energy/default promotion. Stronger inferential block count and analysis require predeclared approval before any sampling."
+  },
+  "counter_question": {
+    "enabled_in_latency_protocol": false,
+    "question": "Why does matched PM M2048 mode0 gate/up remain roughly58% of device time?",
+    "authorization": "Separate exact rootGPU GO and separate profiled action; not a repeat of accepted full-forward Torch profiling",
+    "logical_launches": "One M2048 mode0 launch per layout; actual tool replay count/pass/cache policy recorded, not described as one physical execution if NCUreplays",
+    "metric_inventory": {
+      "path": "/mnt/shared/astra-resume-20261002/t8_performance/piece-major-common-c236b7aa/pb-timing-v1-99cd5da71437/RETAINED-SM121-COUNTER-NAMES.json",
+      "sha256": "d4944d0c20635f449aedfc562a261fa61e1cdab65acfeaec3d4691f70a5af01a",
+      "CPU_preparation_action": "344d23228906e59db6353b18889254e466613e2f7e0d4d801c20e27722eb1056",
+      "historical_counter_action": "7ae4bc6c8ce2312a85636e33ed39658953a88fcb640f25df2e317bb091fabb2f",
+      "csv_sha256": "eccb437abf39fcdbd3ad700d1c78d37ac250902359d7b5ea4414ec43fe574f6a",
+      "evidence_scope": "Captured sm121/GB10 driver595.91.07 NCU2025.3.1 capability names from distinct0f953b69 binary; not PM4d693c counters and not a timing baseline"
+    },
+    "exact_existing_named_metrics": [
+      "lts__t_sectors_srcunit_tex_op_read.sum",
+      "lts__t_sectors_srcunit_tex_op_write.sum",
+      "lts__t_sector_hit_rate.pct",
+      "lts__d_sectors_fill_sysmem.sum",
+      "lts__t_sectors_aperture_sysmem_op_write.sum",
+      "sm__pipe_tensor_cycles_active.avg.pct_of_peak_sustained_elapsed",
+      "sm__warps_active.avg.pct_of_peak_sustained_active",
+      "smsp__inst_executed.sum",
+      "smsp__average_warps_issue_stalled_barrier_per_issue_active.ratio",
+      "smsp__average_warps_issue_stalled_long_scoreboard_per_issue_active.ratio",
+      "smsp__average_warps_issue_stalled_short_scoreboard_per_issue_active.ratio",
+      "smsp__average_warps_issue_stalled_mio_throttle_per_issue_active.ratio",
+      "smsp__average_warps_issue_stalled_wait_per_issue_active.ratio"
+    ],
+    "DRAM_counter_gap": "The retained raw capability names contain no dram__ transaction metric. L2/sysmem sector counters are explicitly labeled proxies, not renamedDRAM measurements. Require actual supported DRAM counter evidence before such a claim; no invented aliases.",
+    "timing_boundary": "Instrumented counter durations never enter uninstrumented event statistics."
+  },
+  "PB_quantum": "Six independent science-defined block actions, sameSparky measurement/exclusive/CPU2/mem16/GPUsubset8/native1/max_attempts1 via supportedpbcampaign; PB owns placement/serialization. No shared clock reference producer or application dispatcher is needed because no clockmatch is claimed.",
+  "owner_protocol": {
+    "schema": "tessera.routed_piece_major_repeatability.v1",
+    "phase": "repeatability",
+    "ms": [
+      2048
+    ],
+    "power_s": 0,
+    "conditioning_s": 60,
+    "balanced_pair_ids": [
+      1,
+      2,
+      3
+    ],
+    "block_ids": [
+      1,
+      2
+    ],
+    "numeric_semantics": "Original content-bound numericV4 input/source/native proof mandatory; original protocol/receipt remain immutable.",
+    "profile_semantics": "Original content-bound passing timing/profile receipt with same kernel/native/input identities mandatory.",
+    "no_gpu_GO": true
+  },
+  "CPU_proof": {
+    "causal_red_action": "5090c5b00a025ac784fe3ef685dd379257f401ce26f2e0029f725eaca0fcac58",
+    "causal_red_result": "9 failed/11 passed; old owner rejects new exact protocol and wrapper phase beforeCUDA",
+    "green_action": "79a9ac1d45aa812a0b4633dd61157616404dd231e676cdf6ccabdfae1b97d8ed",
+    "green_result": "31passed/0skips/0uncollected/0CUDAallocated; DL380G10 CPU2/native1/xdistworksteal",
+    "green_receipt_sha256": "52bda9f93a9f60d9832509f1f98975d28ed47863f17ff14a0734050e12683e82"
+  },
+  "supersedes_conditional_design_sha256": "556859fb5552b2a26a449a6f6cf1af25ee6b289358f29ed60eac56d61bb2caee",
+  "remaining_launch_gates": [
+    "Exact per-block source/harness/protocol/controller/window/accepted-proof digests and unique owner/output identities prepared and CPUpreflighted",
+    "Independent review of the executable descriptive packet, not an unsupported perfect-clock claim",
+    "Explicit rootGO for the exact six-block packet; freshquietbothSparks/resource/ownership health checks beforeadmission"
+  ],
+  "no_new_gpu_execution": true
+}

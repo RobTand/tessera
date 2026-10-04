@@ -1,0 +1,47 @@
+{
+  "schema": "tessera.composed_901_changed_normal_gates.v1",
+  "scope": "Only six causally changed initial normal-feedback cases; not broad normal suite, CUDA/native performance or GPU authorization",
+  "action_key": "97c689fbde547ccd8141c6945a6fbc23b51cb004b87ba644feb1cb4867e3b58f",
+  "source_commit": "0a132cafbecc7ec312e143d867c1a2c51fda5e22",
+  "composed_code_commit": "0a026c840ba28f35ef30addfbfc5b1d61b9a4931",
+  "accepted_t4_source": "4392df5a888475b02197b0b831dd82845b5eb4dd",
+  "passed": 6,
+  "skipped": 0,
+  "not_collected": 0,
+  "cuda_allocated": 0,
+  "returncode": 0,
+  "attempts": 1,
+  "resources": {
+    "cpu": 1,
+    "mem_gb": 4,
+    "spool_gb": 2
+  },
+  "receipt": {
+    "action_manifest_sha256": "9f0c66cf17076309ab5365d48b12fda38bd6672926c98d847f8446dbc577c454",
+    "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/97/97c689fbde547ccd8141c6945a6fbc23b51cb004b87ba644feb1cb4867e3b58f.json",
+    "present": true,
+    "receipt_sha256": "00a407803df18caa55456d5db18cf4b6c0a6d802e60d095b3b88886a919e45fa",
+    "result": {
+      "bytes": 1280,
+      "sha256": "9e0840ab75b025fb0c83b5e5770abb004e59f434dfc612a4322c4761da961bfb"
+    }
+  },
+  "telemetry": {
+    "complete": true,
+    "oom_local": 0,
+    "processes_live": 0
+  },
+  "completion_custody": {
+    "name": "t16-901-97c689fb-completion",
+    "id": "5f681eef-1210-4d51-9d99-ad9a85ff1bd1",
+    "pid": 491000,
+    "client_exit": 0,
+    "published_client": "pbwait.py",
+    "horizon_s": 7200,
+    "no_resubmit": true
+  },
+  "review_cycle": 1,
+  "failed_revisions": 0,
+  "successor_protocol_sha256": "2e92de7700959e30eb5fe8eadd22b6f38ea63d11c1271b5aaddc609ccc20743b",
+  "gpu_authorized": false
+}

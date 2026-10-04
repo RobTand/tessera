@@ -46,7 +46,8 @@
 // stride), so a merged Linear's roles are one launch each and no concatenation
 // follows.  When the item count ``ceil(M / 64) * N / 128`` would leave SMs idle
 // (decode: M <= 64 on a 4096-row role is 32 items for 48 SMs) the K range is
-// split ``S`` ways (``k_split``); each split accumulates its chunk range into
+// split ``S`` ways (``k_split``, at most ``K / 64`` so every split item keeps
+// two K chunks; see ``dense_forward``); each split accumulates its chunk range into
 // an fp32 workspace ``[S, M, N]`` and ``dense_reduce_kernel`` sums the ``S``
 // partials in fixed order and applies the epilogue -- deterministic, and the
 // same fp32 operation order as the unsplit epilogue once the sum is formed.
@@ -144,6 +145,9 @@ constexpr int RATE_MAX = (FAMILY_FP8 || FAMILY_FP4) ? 8 : 14;
 constexpr int ROUTED_RATE_MAX = 8;
 constexpr int BDESC_INTS = 12;                      // per-32-column descriptor (see ``col_map``)
 constexpr int TILE_ROWS = 512;
+// The 64-row pieces inside one 512-row tile (the piece-major layout's plan:
+// a column's chunk is PIECES_PER_TILE pieces of 2*rate words each).
+constexpr int PIECES_PER_TILE = TILE_ROWS / 64;
 constexpr int WINDOW_BITS = 14;
 constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 static_assert(RATE_MAX <= WINDOW_BITS && ROUTED_RATE_MAX <= RATE_MAX, "a code fits its window");
@@ -175,7 +179,25 @@ constexpr int WORD_STAGES_MIN = 2;
 #define TESSERA_ROUTED_FUSED_A_PREFETCH 4
 #endif
 constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_A_PREFETCH;
+// Experimental mode-0 one-run R4 consumer schedule (tessera#739). Both
+// independent B column groups load before the first group's MMAs. Register
+// lifetime changes, but accumulator K order and shared ownership do not.
+#ifndef TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH
+#define TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH 0
+#endif
+static_assert(TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH == 0 ||
+              TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH == 1, "B schedule is 0 or 1");
+constexpr bool MMA8_GATE_UP_B_PREFETCH =
+    FAMILY_MMA8 && TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH;
 static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
+// Folded BF16 qualification arm (tessera#874), never enabled by default.
+// Reuses load_a addressing; no additional shared-memory allocation.
+#ifndef TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH 0
+#endif
+constexpr int VALUE_A_PREFETCH = TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH;
+static_assert(VALUE_A_PREFETCH == 0 || VALUE_A_PREFETCH >= 2,
+              "value prefetch distance 1 is the load itself");
 
 // One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
 // E4M3 instruction.
@@ -697,6 +719,7 @@ struct Params {
     const int32_t* bdesc1;
     long words_stride;
     int tile_words;
+    int piece_major;               // 1: words are [tile][piece][column] (tessera#739)
     int slot_words;                // int32 words per (half, column) word-stage slot (see Layout)
     int K;
     int N;                         // rows per projection
@@ -721,17 +744,31 @@ struct Params {
 
 // ``RL``, ``TWO``: the launch's run pair (``pair_of``) -- the low (or only)
 // rate, and whether a second run at ``RL + 1`` exists.
-template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
+// ``PM``: the resident words are the piece-major [tile][piece][column] order
+// (tessera#739).  It is the bounded one-run rate-4 routed body only: an odd
+// rate's 16-byte alignment depends on the piece index in a way the piece-major
+// address (t64 * ncols + c) does not preserve, so the odd-rate copy path is
+// deliberately not ported.
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT, bool PM = false>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
+    // PM is only ever instantiated for the one-run rate-4 routed case; the
+    // assert pins that so a future call cannot quietly read a wrong layout.
+    // The piece-major reader is the one-run rate-4 ROUTED body: gate/up
+    // (MODE 0/1) or the routed down (MODE 2, not the DENSE flag).  It is the
+    // E4M3 MMA reader only.
+    static_assert(!PM || (!TWO && RL == 4 && !DENSE && FAMILY_MMA8 && FP8),
+                  "the piece-major reader is the E4M3 one-run rate-4 routed body only");
     static_assert(launch_decodes(MODE, RL, TWO, DENSE), "only the pairs the launch decodes are instantiated");
     static_assert(has_width(FP8, FAMILY_MMA8, MODE, BMT) && !(SPLIT && BMT != BM),
                   "wide superblocks: the launches ``has_width`` names, unsplit");
     static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT>;
-    constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
+    constexpr int PREFETCH_DISTANCE = FAMILY_MMA8 ? A_PREFETCH
+        : (!FAMILY_FP8 && !FAMILY_FP4 ? VALUE_A_PREFETCH : 0);
+    constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO;
     // One A tile of BMT rows, and the consumers' rows: two warp rows of
     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
     // tile, two per row.
@@ -772,6 +809,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int item = claim[0];
             const int slot = item_idx & 1;
             if (item >= total_items) {
+                // FULL(gc) reuses FULL(gc-2), just like an ordinary chunk.
+                // The last real chunk waited only for EMPTY(gc-3); producers
+                // may still be ahead of the consumers by two chunks (#855).
+                if (gc >= 2) bar_sync(BAR_EMPTY0 + (gc & 1), THREADS);
                 if (tid == 0) desc[slot * 8 + 0] = -1;
                 __threadfence_block();
                 bar_arrive(BAR_FULL0 + (gc & 1), THREADS);
@@ -881,6 +922,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const bool second = (MODE != 2) && h == 1;
                 g_h[h] = g;
                 t64_h[h] = t / HALF;
+                // The tile origin is the same in both layouts: piece 0 starts
+                // at the tile, and piece k is an offset INSIDE it (a piece
+                // plane is tile_words / PIECES_PER_TILE long).  Only the three
+                // inner addresses below move, never this base.
                 tbase_h[h] = (second ? p.words1 : p.words0) + (long)e * p.words_stride
                              + (long)g * p.tile_words;
                 init_h[h] = (second ? p.init1 : p.init0) + (long)e * p.K;
@@ -900,6 +945,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // (``pair_of``).  A mismatch here would address outside the
             // expert's words, so it traps rather than reads.
             if (tid == 0) {
+                // A piece-major launch is only ever the one-run rate-4 case;
+                // any other shape with the flag set is a caller bug, not a
+                // decode to attempt.  (Routed only: DENSE never sets the flag.)
+                if (PM && (TWO || RL != 4 || DENSE)) __trap();
                 #pragma unroll
                 for (int h = 0; h < 2; ++h) {
                     const RunPair& rp = rp_h[h];
@@ -1060,7 +1109,14 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int mm = (tid >> 1) & 31;
                         const int q = tid & 1;
                         const ColMap c = col_map<RL, TWO>(blk_of(kc, ih, ring), n_lo, w_hi, kc, mm);
-                        const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
+                        // Legacy: a column's chunk starts at cw0 and its t64-th
+                        // piece is 2*rate words in.  Piece-major: the piece
+                        // planes are tile_words / PIECES_PER_TILE long, and the
+                        // column's own words sit cw0 / PIECES_PER_TILE in.
+                        const int32_t* src = PM
+                            ? tbase_i + t64_i * (p.tile_words / PIECES_PER_TILE)
+                                  + c.cw0 / PIECES_PER_TILE
+                            : tbase_i + c.cw0 + 2 * c.rate * t64_i;
                         int32_t* dst = Ws + (kc % WS) * W_STAGE + (ih * BK + mm) * SW;
                         if constexpr (TWO) {
                             if (c.lo) copy_half<RL>(dst, src, t64_i, q);
@@ -1074,12 +1130,29 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if constexpr (PREV_STAGED) {
                             if (q == 1) {
                                 int32_t* pd = Ps + (kc % WS) * PREV_STAGE_INTS + ih * BK + mm;
-                                const int wr0 = 2 * c.rate * t64_i;
-                                const int32_t* wcol = tbase_i + c.cw0;
-                                if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
-                                else if (g_i > 0) cp_async4(pd, wcol + 16 * c.rate - 1 - p.tile_words);
-                                else if (hasinit_i) cp_async4(pd, init_i + c.p);
-                                else *pd = 0;
+                                if constexpr (PM) {
+                                    // The word before the half in the piece
+                                    // plane: the same column's previous piece's
+                                    // last word; at t64 == 0 the previous tile's
+                                    // piece 7, one plane stride below the first
+                                    // piece (7*ps - tile_words == -ps).
+                                    const int ps = p.tile_words / PIECES_PER_TILE;
+                                    const int colbase = c.cw0 / PIECES_PER_TILE;
+                                    if (t64_i > 0)
+                                        cp_async4(pd, tbase_i + (t64_i - 1) * ps + colbase
+                                                          + 2 * c.rate - 1);
+                                    else if (g_i > 0)
+                                        cp_async4(pd, tbase_i + colbase + 2 * c.rate - 1 - ps);
+                                    else if (hasinit_i) cp_async4(pd, init_i + c.p);
+                                    else *pd = 0;
+                                } else {
+                                    const int wr0 = 2 * c.rate * t64_i;
+                                    const int32_t* wcol = tbase_i + c.cw0;
+                                    if (wr0 > 0) cp_async4(pd, wcol + wr0 - 1);
+                                    else if (g_i > 0) cp_async4(pd, wcol + 16 * c.rate - 1 - p.tile_words);
+                                    else if (hasinit_i) cp_async4(pd, init_i + c.p);
+                                    else *pd = 0;
+                                }
                             }
                         }
                     }
@@ -1105,12 +1178,21 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(blk_of(kc, h, ring), n_lo, w_hi, kc, m);
                         const ColMap& c = cm[h];
                         if (PREV_STAGED || 8 * j * c.rate >= 32) continue;
-                        const int wr0 = 2 * c.rate * t64_h[h];
-                        const int32_t* wcol = tbase_h[h] + c.cw0;
                         int32_t v;
-                        if (wr0 > 0) v = wcol[wr0 - 1];
-                        else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
-                        else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        if constexpr (PM) {
+                            const int ps = p.tile_words / PIECES_PER_TILE;
+                            const int colbase = c.cw0 / PIECES_PER_TILE;
+                            const int t64 = t64_h[h];
+                            if (t64 > 0) v = tbase_h[h][(t64 - 1) * ps + colbase + 2 * c.rate - 1];
+                            else if (g_h[h] > 0) v = tbase_h[h][colbase + 2 * c.rate - 1 - ps];
+                            else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        } else {
+                            const int wr0 = 2 * c.rate * t64_h[h];
+                            const int32_t* wcol = tbase_h[h] + c.cw0;
+                            if (wr0 > 0) v = wcol[wr0 - 1];
+                            else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
+                            else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        }
                         pv[h] = v;
                     }
                 };
@@ -1171,7 +1253,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 load_a(kc0, a_cur);
                 if constexpr (PREFETCH_A) {
                     #pragma unroll
-                    for (int d = 2; d < A_PREFETCH; ++d)
+                    for (int d = 2; d < PREFETCH_DISTANCE; ++d)
                         if (d < nkc) prefetch_a(kc0 + d);
                 }
                 // Settle the first chunk's loads here, before the chunk loop.
@@ -1203,7 +1285,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
                     if constexpr (PREFETCH_A) {
-                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                        if (ic + PREFETCH_DISTANCE < nkc) prefetch_a(kc + PREFETCH_DISTANCE);
                     }
                     // Chunk kc's words (and the tables) have landed ...
                     if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
@@ -1326,18 +1408,39 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int row = WROWS * mw + 16 * mi + 8 * ((lane >> 3) & 1) + (lane & 7);
                         ldmatrix_x4(a[mi], A + row * BK + (((lane >> 4) ^ ((row >> 2) & 1)) << 4));
                     }
-                    #pragma unroll
-                    for (int G = 0; G < 2; ++G) {
+                    auto load_b = [&](int G, uint32_t (&be)[2], uint32_t (&bo)[2]) {
                         uint32_t X[4];
                         // lane l addresses row l of matrix l >> 3: k = lane
                         ldmatrix_x4_trans(X, B + lane * BN + ((((2 * nw + G) ^ b8swz(lane)) & 7) << 4));
-                        const uint32_t be[2] = {__byte_perm(X[0], X[1], 0x6420), __byte_perm(X[2], X[3], 0x6420)};
-                        const uint32_t bo[2] = {__byte_perm(X[0], X[1], 0x7531), __byte_perm(X[2], X[3], 0x7531)};
+                        be[0] = __byte_perm(X[0], X[1], 0x6420);
+                        be[1] = __byte_perm(X[2], X[3], 0x6420);
+                        bo[0] = __byte_perm(X[0], X[1], 0x7531);
+                        bo[1] = __byte_perm(X[2], X[3], 0x7531);
+                    };
+                    if constexpr (MMA8_GATE_UP_B_PREFETCH && MODE == 0 && !DENSE && !TWO && RL == 4) {
+                        uint32_t be[2][2], bo[2][2];
                         #pragma unroll
-                        for (int mi = 0; mi < MI; ++mi) {
-                            if (mi >= live) break;
-                            mma16832_e4m3(acc[mi][2 * G], a[mi], be);
-                            mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo);
+                        for (int G = 0; G < 2; ++G) load_b(G, be[G], bo[G]);
+                        #pragma unroll
+                        for (int G = 0; G < 2; ++G) {
+                            #pragma unroll
+                            for (int mi = 0; mi < MI; ++mi) {
+                                if (mi >= live) break;
+                                mma16832_e4m3(acc[mi][2 * G], a[mi], be[G]);
+                                mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo[G]);
+                            }
+                        }
+                    } else {
+                        #pragma unroll
+                        for (int G = 0; G < 2; ++G) {
+                            uint32_t be[2], bo[2];
+                            load_b(G, be, bo);
+                            #pragma unroll
+                            for (int mi = 0; mi < MI; ++mi) {
+                                if (mi >= live) break;
+                                mma16832_e4m3(acc[mi][2 * G], a[mi], be);
+                                mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo);
+                            }
                         }
                     }
                 } else {
@@ -1581,16 +1684,16 @@ int max_dynamic_smem_bytes(int device) {
     return v;
 }
 
-template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT>
+template <bool FP8, int MODE, bool DENSE, bool SPLIT, int RL, bool TWO, int BMT, bool PM>
 void launch_pair(const Params& p, int grid, cudaStream_t stream) {
     const int smem = launch_smem_bytes(MODE, p.slot_words, BMT);
     static int attributed = 0;     // the largest dynamic size this instantiation was granted
     if (smem > attributed) {
-        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT>,
+        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT, PM>,
                                             cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
         attributed = smem;
     }
-    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT><<<grid, THREADS, smem, stream>>>(p);
+    routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO, BMT, PM><<<grid, THREADS, smem, stream>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
@@ -1605,11 +1708,29 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     // One case per (r_lo, two); a two-run key is offset past every rate.
     constexpr int KEY_TWO = 16;
     static_assert(RATE_MAX < KEY_TWO, "one-run and two-run keys stay apart");
+    // Piece-major is the E4M3 MMA one-run rate-4 ROUTED body (tessera#739):
+    // gate/up MODE 0/1, or the routed down MODE 2 (DENSE is the separate dense
+    // Linear flag, not MODE).  The guard is ``if constexpr`` so the PM
+    // instantiation is never even named for another family or a dense launch;
+    // a request there is refused, never silently decoded as legacy.
+    TORCH_CHECK(!p.piece_major || (FAMILY_MMA8 && FP8),
+                "the piece-major reader is the E4M3 MMA reader only");
+    if constexpr (FAMILY_MMA8 && FP8 && !DENSE) {
+        if (p.piece_major) {
+            TORCH_CHECK(!k.two && k.r_lo == 4,
+                        "the piece-major reader is the one-run rate-4 routed body only");
+            if constexpr (launch_decodes(MODE, 4, false, DENSE)) {
+                launch_pair<FP8, MODE, false, SPLIT, 4, false, BMT, true>(p, grid, stream);
+                return;
+            }
+            TORCH_CHECK(false, "no piece-major rate-4 launch for this mode/width");
+        }
+    }
     switch (k.two ? KEY_TWO + k.r_lo : k.r_lo) {
 #define TESSERA_ROUTED_FUSED_PAIR(R, T)                                                        \
         case (T ? KEY_TWO : 0) + R:                                                            \
             if constexpr (launch_decodes(MODE, R, T, DENSE)) {                                 \
-                launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT>(p, grid, stream);              \
+                launch_pair<FP8, MODE, DENSE, SPLIT, R, T, BMT, false>(p, grid, stream);              \
                 return;                                                                        \
             }                                                                                  \
             break;
@@ -1748,6 +1869,13 @@ void check_run_tables(const torch::Tensor& runs, const torch::Tensor& bdesc, int
 // the half's slot, in the same commit group as the half's words, so no chunk
 // waits on a global load of its history.
 namespace fp4 {
+
+// #875: default-off FP4 hypothesis, sharing only the L1 hint primitive.
+#ifndef TESSERA_ROUTED_FUSED_FP4_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_FP4_A_PREFETCH 0
+#endif
+constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_FP4_A_PREFETCH;
+static_assert(A_PREFETCH == 0 || A_PREFETCH == 4, "FP4 activation prefetch is 0 or 4");
 
 constexpr int BK = 64;                          // columns per chunk: one m16n8k64 step
 constexpr int HALF_T = 64;                      // tuples per half
@@ -1945,6 +2073,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
     static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
     using L = Layout<MODE>;
+    constexpr bool PREFETCH_A = A_PREFETCH > 0 && !DENSE && !TWO;
     constexpr int SW = pair_slot_words(RL, TWO);
     constexpr int SS = slot_stride(SW);
     constexpr int GI = group_ints(SW);
@@ -1990,6 +2119,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
             const int item = claim[0];
             const int slot = item_idx & 1;
             if (item >= total_items) {
+                // Drain this reused FULL phase before publishing termination,
+                // as the value/E4M3 persistent producer does (#855).
+                if (gc >= 2) bar_sync(BAR_EMPTY0 + (gc & 1), THREADS);
                 if (tid == 0) desc[slot * 8 + 0] = -1;
                 __threadfence_block();
                 bar_arrive(BAR_FULL0 + (gc & 1), THREADS);
@@ -2190,6 +2322,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                         cp_async4(A + BM * A_ROW + (tid - 128) * A_SF, p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
                     }
                 };
+                // Exactly issue_a's packed-code / linear-UE4M3 addresses.
+                // Callers bound kc to this item's chunks; arow excludes every
+                // partial-superblock tail. These hints write no data, retain no
+                // pointer beyond the launch, and do not change cp.async timing.
+                auto prefetch_a = [&](int kc) {
+                    if (arow < 0) return;
+                    if (tid < 128)
+                        prefetch_l1(p.x + arow * (long)(p.K >> 1) + kc * A_ROW + 16 * (tid & 1));
+                    else
+                        prefetch_l1(p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
+                };
                 // Chunk kc's decode into B stage ``stage``: two tuples (rows
                 // 4 s2 .. + 3 of half dh) at the 16 columns of group kg, from
                 // table ``TOFF`` (a compile-time offset: the lookups address
@@ -2315,9 +2458,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                 cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
                 uint32_t m_cur = mask_of(kc0), m_nxt = 0;
+                if constexpr (PREFETCH_A) {
+                    #pragma unroll
+                    for (int d = 2; d < A_PREFETCH; ++d)
+                        if (d < nkc) prefetch_a(kc0 + d);
+                }
                 for (int ic = 0; ic < nkc; ++ic, ++gc) {
                     const int kc = kc0 + ic;
                     if (ic + 1 < nkc) m_nxt = mask_of(kc + 1);
+                    if constexpr (PREFETCH_A) {
+                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                    }
                     cp_async_wait<1>();                // chunk kc's group has landed ...
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; stage (kc - 1) is free
                     if (ic + 2 < nkc) issue_words(kc + 2, TWO);
@@ -2612,6 +2763,7 @@ void routed_fused_forward(
     torch::Tensor runs0, torch::Tensor runs1,
     torch::Tensor bdesc0, torch::Tensor bdesc1,
     int64_t tile_words, int64_t slot_words,
+    bool piece_major,
     torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
     torch::Tensor item_off, torch::Tensor counter,
     int64_t top_k, int64_t a_row_mode, bool mul_weight, double limit,
@@ -2705,6 +2857,7 @@ void routed_fused_forward(
     if (two) check_words(words1, "words1");
     p.words_stride = words0.size(1);
     p.tile_words = (int)tile_words;
+    p.piece_major = piece_major ? 1 : 0;
     check_slot((int)mode, slot_words, x, (int)bm);
     p.slot_words = (int)slot_words;
     p.K = (int)K;
@@ -2794,7 +2947,15 @@ void dense_forward(
                 && (out.stride(0) % 2) == 0,
                 "out must be a bf16 [M, N] view with unit column stride and an even row stride");
     const int nk = (int)(K / BK);
-    TORCH_CHECK(k_split >= 1 && k_split <= nk, "k_split must be in [1, K / ", BK, "]");
+    // The producers write item i + 2's descriptor into item i's slot once
+    // item i + 1's last chunk has waited EMPTY on the chunk two before it;
+    // the consumers read item i's slot before they release its first chunk
+    // (the split epilogue writes the raw partial from registers and reads no
+    // slot).  Items i and i + 1 of three chunks or more between them order
+    // the two, so every item keeps two chunks: floor(nk / S) >= 2, the E2M1
+    // launch's bound on the same protocol (tessera#805).
+    TORCH_CHECK(k_split >= 1 && k_split <= nk / 2, "k_split must be in [1, K / ", 2 * BK,
+                "]: every split item keeps two K chunks, so no descriptor slot is rewritten before it is read");
     TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, 2, (int)bm) && (bm == BM || k_split == 1), "bm ", bm,
                 ": the dense launch takes ", BM, "-row superblocks, or ", BM_WIDE,
                 " unsplit in the E4M3 family's library");
@@ -3155,6 +3316,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
+    m.attr("MMA8_GATE_UP_B_PREFETCH") = MMA8_GATE_UP_B_PREFETCH;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
@@ -3176,6 +3338,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("THREADS") = THREADS;
     m.attr("FAMILY_FP8") = FAMILY_FP8;
     m.attr("FAMILY_MMA8") = FAMILY_MMA8;
+    m.attr("VALUE_A_PREFETCH") = VALUE_A_PREFETCH;
 #else
     // The E2M1 family's library: its own entries and geometry.
     m.def("routed_fused_forward_fp4", &routed_fused_forward_fp4);
@@ -3184,6 +3347,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("BN") = fp4::BN;
     m.attr("HALF_ROWS") = fp4::HALF_ROWS;
     m.attr("BK") = fp4::BK;
+    m.attr("A_PREFETCH") = fp4::A_PREFETCH;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;

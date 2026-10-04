@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import collections
 import json
+import hashlib
 import os
 import re
 import subprocess
@@ -42,7 +43,7 @@ LIBRARIES = {
 }
 
 
-def _flags(library: str, token: str) -> list:
+def _flags(library: str, token: str, fp4_a_prefetch: int = 0) -> list:
     fp8, mma8, fp4 = LIBRARIES[library]
     digits = token[len("sm_"):] + ("a" if fp4 else "")
     flags = ["-O3", "-lineinfo", "-std=c++17",
@@ -50,6 +51,8 @@ def _flags(library: str, token: str) -> list:
              f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}"]
     if fp4:
         flags.append("-DTESSERA_ROUTED_FUSED_FP4=1")
+        if fp4_a_prefetch:
+            flags.append(f"-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH={fp4_a_prefetch}")
     return flags + ["-gencode", f"arch=compute_{digits},code=sm_{digits}"]
 
 
@@ -59,7 +62,7 @@ def _includes() -> list:
     from torch.utils.cpp_extension import include_paths
 
     out = []
-    for p in include_paths() + [sysconfig.get_paths()["include"]]:
+    for p in include_paths(device_type="cuda") + [sysconfig.get_paths()["include"]]:
         out += ["-I", p]
     return out
 
@@ -92,7 +95,7 @@ def parse_sass(text: str) -> dict:
 def _dump_one(args, library: str, version: str, torch_version: str) -> str:
     nvcc = os.environ.get("NVCC", "nvcc")
     cubin = os.path.join(args.out, f"{library}.cubin")
-    cmd = [nvcc, "-cubin", "-o", cubin, *_flags(library, args.token), *_includes(),
+    cmd = [nvcc, "-cubin", "-o", cubin, *_flags(library, args.token, args.fp4_a_prefetch), *_includes(),
            "-D_GLIBCXX_USE_CXX11_ABI=1", "-DTORCH_EXTENSION_NAME=sass_dump", args.source]
     if args.ptxas_verbose:
         cmd[1:1] = ["-Xptxas", "-v"]
@@ -105,13 +108,14 @@ def _dump_one(args, library: str, version: str, torch_version: str) -> str:
     sass = subprocess.run(["cuobjdump", "-sass", cubin], capture_output=True, text=True, check=True).stdout
     kernels = parse_sass(sass)
     rec = {"library": library, "source": os.path.abspath(args.source), "token": args.token,
-           "flags": _flags(library, args.token), "nvcc": version, "torch": torch_version,
-           "kernels": kernels, "resources": resources}
+           "flags": _flags(library, args.token, args.fp4_a_prefetch), "nvcc": version, "torch": torch_version,
+           "kernels": kernels, "resources": resources,
+           "source_sha256": hashlib.sha256(open(args.source, "rb").read()).hexdigest(),
+           "cubin_sha256": hashlib.sha256(open(cubin, "rb").read()).hexdigest()}
     for name, r in sorted(resources.items()):
         print(f"  {library} {name[:110]}: {r}", flush=True)
     with open(os.path.join(args.out, f"{library}.json"), "w") as f:
         json.dump(rec, f)
-    os.remove(cubin)
     return f"{library}: {len(kernels)} kernels, {sum(len(v) for v in kernels.values())} instructions"
 
 
@@ -230,6 +234,27 @@ def compare(args) -> int:
     return 1 if any(r["differs"] or r["only_before"] for r in report.values()) else 0
 
 
+def inspect(args) -> int:
+    """Disassemble an already compiled bank; never rebuild just for tooling."""
+    result = subprocess.run(["cuobjdump", "-sass", args.cubin], capture_output=True, text=True)
+    if result.returncode:
+        print(result.stdout + result.stderr, flush=True)
+        result.check_returncode()
+    kernels = parse_sass(result.stdout)
+    if not kernels:
+        raise RuntimeError(f"no kernels disassembled from {args.cubin}")
+    resources = subprocess.run(["cuobjdump", "-res-usage", args.cubin],
+                               capture_output=True, text=True, check=True).stdout
+    with open(args.cubin, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    record = {"cubin": os.path.abspath(args.cubin), "cubin_sha256": digest,
+              "kernels": kernels, "resource_usage": resources}
+    with open(args.out, "w") as f:
+        json.dump(record, f)
+    print(f"{args.cubin}: {len(kernels)} kernels; sha256={digest}", flush=True)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -238,13 +263,19 @@ def main(argv=None) -> int:
     d.add_argument("--out", required=True)
     d.add_argument("--libraries", default="value,e4m3,e4m3mma")
     d.add_argument("--token", default="sm_121")
+    d.add_argument("--fp4-a-prefetch", type=int, choices=(0, 4), default=0)
     d.add_argument("--ptxas-verbose", action="store_true",
                    help="also record each kernel's registers and spill bytes (-Xptxas -v)")
     c = sub.add_parser("compare")
     c.add_argument("before")
     c.add_argument("after")
     c.add_argument("--json")
+    i = sub.add_parser("inspect")
+    i.add_argument("cubin")
+    i.add_argument("--out", required=True)
     args = ap.parse_args(argv)
+    if args.cmd == "inspect":
+        return inspect(args)
     return dump(args) if args.cmd == "dump" else compare(args)
 
 

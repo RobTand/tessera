@@ -270,7 +270,7 @@ def run_routed(args, rf, lib, library, mma8, dev, sms, power, clock, results):
                     lib.routed_fused_forward(
                         mode, True, x, a_scale, p0["words"], p1["words"], p0["table"], p1["table"],
                         p0["init"], p1["init"], p0["has_init"], p1["has_init"], p0["scale"], p1["scale"],
-                        p0["runs"], p1["runs"], p0["bdesc"], p1["bdesc"], p0["tile_words"], slot_words,
+                        p0["runs"], p1["runs"], p0["bdesc"], p1["bdesc"], p0["tile_words"], slot_words, False,  # these benchmark bodies use legacy order
                         offsets, flat_sorted, rw_sorted, item_off, counter, TOP_K,
                         0 if mode == 0 else 1, mode == 2, SWIGLU_LIMIT, out, sms, bm)
                 try:

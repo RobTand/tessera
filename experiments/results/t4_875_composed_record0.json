@@ -1,0 +1,43 @@
+{
+  "schema": "tessera.native_build_cohort.v1",
+  "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+  "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+  "image": {
+    "fix": null,
+    "gated": true,
+    "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+    "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+    "present": true,
+    "reason": "explicit_digest",
+    "refused": false,
+    "repo_digests": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "requested_tag": null,
+    "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "schema": "tessera.runtime_image/1"
+  },
+  "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+  "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+  "selectors": {
+    "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+    "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+    "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+  },
+  "libraries": [
+    {
+      "library": "e2m1",
+      "module": "tessera_routed_fused_e2m1",
+      "source_module": "tessera_routed_fused_value",
+      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
+      "bytes": 1889544,
+      "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
+      "status": "compile gate (no matching device here)"
+    }
+  ]
+}

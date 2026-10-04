@@ -1001,6 +1001,197 @@ def _fused_max_rate() -> int:
         ) from None
 
 
+#: Below this, a float32 branch cost cannot overflow: ``(|t| + |x|)^2 * w``
+#: summed over the arity, with every rounding factor ``(1 + 2^-24)`` it can
+#: pick up, stays under the float32 maximum (just below ``2^128``) with a
+#: factor of four to spare.
+_BRANCH_FINITE_BOUND = 2.0 ** 126
+
+#: The CPU class minimum is a comparison tournament up to this rate and
+#: ``torch.min(dim=0)`` above it.  A speed choice, never an answer: both
+#: return the same bytes.  ``torch.min`` with indices runs a scalar loop per
+#: output; the tournament runs vectorised passes whose count grows with the
+#: rate.  Measured on dl380g10 (x86, one thread) with a one-off timing of
+#: the minimum alone, L = 14, 256 columns, integer-valued costs, ms per step
+#: (``experiments/window_viterbi_cpu_bench.py`` times the whole call):
+#:
+#:     R             1      2      3      4      6      8
+#:     torch.min   25.7   23.6   21.9   17.4    9.9   12.0
+#:     tournament   4.6    8.3    9.7   10.8   11.2   11.6
+#:
+#: A second run, on a busier box where every figure about doubled, placed
+#: the crossover between 5 and 6: R = 4, 5, 6, 7 took 35.3, 26.6, 20.8,
+#: 21.0 ms under torch.min and 22.4, 22.6, 23.5, 23.2 ms as a tournament.
+_TOURNAMENT_MAX_RATE = 5
+
+
+def _branch_cannot_be_nan(tuples, table, wrows) -> bool:
+    """True when no path cost of this call can ever be NaN.
+
+    Every branch cost is then finite and non-negative (or a signed zero), so
+    a path cost is either finite or ``+inf`` and never NaN.  That is the
+    condition under which a strict ``<`` comparison picks exactly what
+    ``torch.min(dim=0)`` picks: ``torch.min`` treats NaN as the minimum, and
+    a comparison does not.  Any non-finite input, any negative weight, or a
+    magnitude that could overflow a squared difference answers False.
+    """
+    for tensor in (tuples, table) + (() if wrows is None else (wrows,)):
+        if tensor.numel() and not bool(torch.isfinite(tensor).all()):
+            return False
+    if tuples.numel() == 0:
+        return True
+    peak = 1.0
+    if wrows is not None and wrows.numel():
+        if bool((wrows < 0).any()):
+            return False
+        peak = float(wrows.max())
+    reach = float(tuples.abs().max()) + float(table.abs().max())
+    return reach * reach * peak * table.shape[1] < _BRANCH_FINITE_BOUND
+
+
+def _viterbi_window_cpu(tuples, wrows, table, window_bits, rate, cols, chunk):
+    """The reference trellis on CPU, step for step, without its copies.
+
+    It returns the reference's states and the reference's ``sse`` float,
+    bit for bit, for every input (``tests/test_window_viterbi_cpu.py`` holds
+    it to a verbatim copy of the reference).  It differs only in where each
+    value is stored and in which order commutative operations meet:
+
+    * The branch cost is computed directly in the ``[size, n]`` layout, as
+      ``(t - x)^2``, which is ``(x - t)^2`` exactly.  The weight multiplies
+      the square, as in the reference: ``((t - x)^2) * w``.
+    * At arity 1 the length-1 sum is skipped, and at arity 2 it is one add,
+      ``a + b``.  The two can differ from ``torch.sum`` only in the sign of a
+      zero.  That sign never reaches a path cost: the start costs are ``+0``
+      and ``+inf``, ``c + b`` is ``-0`` only when both ``c`` and ``b`` are,
+      and every ``c`` is a minimum over earlier path costs, so no path cost
+      is ever ``-0``.  Arities above 2 keep the reference's sum.
+    * ``best`` is added in place through a ``[low, fan, n]`` view of the
+      branch buffer: a new state is ``(low class << R) | new bits``, so a low
+      class's ``fan`` states are consecutive.  That is the reference's
+      ``repeat_interleave`` add with its operands swapped.
+    * The class minimum over ``fan`` predecessors is a tournament of strict
+      ``<`` comparisons between ADJACENT predecessors (``2k`` against
+      ``2k + 1``, then pair against pair).  Every left side then holds only
+      lower indices than its right side, so keeping the left side on a tie
+      returns the first minimal index exactly as ``torch.min(dim=0)`` does.
+      Halving instead (``k`` against ``k + fan/2``) does not: from the
+      second round on a left side can hold ``k + fan/2`` against a right
+      side's ``k + fan/4``, and the property test caught exactly that.
+      The value side is ``torch.minimum``, which on equal operands returns
+      their common value, and the index rides along as uint8 arithmetic.  A
+      comparison and ``torch.min`` disagree only on NaN, so the tournament
+      runs only when :func:`_branch_cannot_be_nan` holds, and only up to
+      ``_TOURNAMENT_MAX_RATE``, above which ``torch.min`` is as fast;
+      otherwise ``torch.min`` runs as before.
+    * Four buffers are allocated once per call instead of four to six
+      ``[size, n]`` tensors per step.
+    """
+    steps, arity, _ = tuples.shape
+    device = tuples.device
+    size = table.shape[0]
+    fan = 1 << rate
+    low = size >> rate
+    states = torch.empty(steps, cols, dtype=torch.long, device=device)
+    sse = 0.0
+    width = max(min(chunk, cols), 0)
+    tournament = (rate <= _TOURNAMENT_MAX_RATE
+                  and _branch_cannot_be_nan(tuples, table, wrows))
+    front = torch.empty(size * width, device=device, dtype=torch.float32)
+    spare = torch.empty(size * width, device=device, dtype=torch.float32)
+    term = (torch.empty(size * width, device=device, dtype=torch.float32)
+            if arity == 2 else None)
+    best_flat = torch.empty(low * width, device=device, dtype=torch.float32)
+    back_dtype = torch.uint8 if fan <= 256 else torch.int32
+    back_flat = torch.empty(steps * low * width, dtype=back_dtype, device=device)
+    columns = [table[:, a].contiguous().unsqueeze(1) for a in range(arity)]
+    if tournament:
+        half = fan >> 1
+        mask_flat = torch.empty(half * low * width, dtype=torch.bool, device=device)
+        gap_flat = torch.empty(half * low * width, dtype=torch.uint8, device=device)
+        value_flat = (
+            torch.empty(half * low * width, device=device, dtype=torch.float32),
+            torch.empty(half * low * width, device=device, dtype=torch.float32))
+        index_flat = (torch.empty(half * low * width, dtype=torch.uint8, device=device),
+                      torch.empty(half * low * width, dtype=torch.uint8, device=device))
+    else:
+        pred = torch.empty(low * width, dtype=torch.long, device=device)
+    for start in range(0, cols, chunk):
+        x = tuples[:, :, start : start + chunk]                  # [steps, arity, n]
+        n = x.shape[2]
+        w = None if wrows is None else wrows[:, :, start : start + chunk]
+        cost = front[: size * n].view(size, n)
+        nxt = spare[: size * n].view(size, n)
+        cost.fill_(float("inf"))
+        cost[0] = 0.0
+        best = best_flat[: low * n].view(low, n)
+        back = back_flat[: steps * low * n].view(steps, low, n)
+        for step in range(steps):
+            if tournament:
+                # Round ``level`` merges blocks of ``span`` predecessors.  A
+                # block's index is local to it: the winner of a merge is the
+                # left block's, or the right block's plus ``span``.
+                values = cost.view(fan, low, n)
+                indices = None
+                h, span, level = half, 1, 0
+                while h:
+                    m = h * low * n
+                    pairs = values.view(h, 2, low, n)
+                    a, b = pairs[:, 0], pairs[:, 1]
+                    mask = torch.lt(b, a, out=mask_flat[:m].view(h, low, n))
+                    if h == 1:
+                        value_out = best.view(1, low, n)
+                        index_out = back[step].view(1, low, n)
+                    else:
+                        value_out = value_flat[level & 1][:m].view(h, low, n)
+                        index_out = index_flat[level & 1][:m].view(h, low, n)
+                    torch.minimum(a, b, out=value_out)
+                    if indices is None:
+                        index_out.copy_(mask)
+                    else:
+                        local = indices.view(h, 2, low, n)
+                        gap = torch.sub(local[:, 1], local[:, 0],
+                                        out=gap_flat[:m].view(h, low, n))
+                        gap.add_(span).mul_(mask)
+                        torch.add(local[:, 0], gap, out=index_out)
+                    values, indices = value_out, index_out
+                    h, span, level = h >> 1, span << 1, level + 1
+            else:
+                torch.min(cost.view(fan, low, n), dim=0,
+                          out=(best, pred[: low * n].view(low, n)))
+                back[step] = pred[: low * n].view(low, n).to(back_dtype)
+            if arity <= 2:
+                torch.sub(columns[0], x[step, 0], out=nxt)
+                nxt.mul_(nxt)
+                if w is not None:
+                    nxt.mul_(w[step, 0])
+                if arity == 2:
+                    other = term[: size * n].view(size, n)
+                    torch.sub(columns[1], x[step, 1], out=other)
+                    other.mul_(other)
+                    if w is not None:
+                        other.mul_(w[step, 1])
+                    nxt.add_(other)
+            else:
+                diff = x[step].t().unsqueeze(1) - table.unsqueeze(0)  # [n, size, arity]
+                diff = diff * diff
+                if w is not None:
+                    diff = diff * w[step].t().unsqueeze(1)
+                nxt.copy_(diff.sum(dim=2).t())
+            nxt.view(low, fan, n).add_(best.unsqueeze(1))
+            cost, nxt = nxt, cost
+        final, state = cost.min(dim=0)                           # [n]
+        sse += float(final.sum())
+        column = torch.empty(steps, n, dtype=torch.long, device=device)
+        for step in range(steps - 1, -1, -1):
+            column[step] = state
+            lowbits = state >> rate
+            pred_bits = back[step].gather(0, lowbits.unsqueeze(0)).squeeze(0).long()
+            state = (pred_bits << (window_bits - rate)) | lowbits
+        states[:, start : start + chunk] = column
+    return states, sse
+
+
 def viterbi_window(
     targets: torch.Tensor,
     vectors: torch.Tensor,
@@ -1054,6 +1245,19 @@ def viterbi_window(
     ``WINDOW_FUSED_MAX_RATE``**, and the reference otherwise.  ``"fused"``
     asked for explicitly is still honoured above the crossover: the crossover
     governs the choice ``auto`` makes, not what the caller may demand.
+
+    On CPU with the float32 default dtype, the reference runs as
+    :func:`_viterbi_window_cpu`, the same chain without its per-step copies,
+    which returns the identical states and the identical sse float
+    (tessera#795). Buffers stay on the input device even under a different
+    default-device context. Other default dtypes retain the torch chain
+    below: its branch costs are float32 before promotion into the cost front,
+    which an in-place front of another dtype would change (tessera#816).
+    Gradient-bearing inputs with autograd enabled retain that chain too:
+    its functional operations support them, while optimized ``out=``
+    buffers do not. No-grad calls keep the optimized CPU path.
+    Every other device runs that chain unchanged, so the definition the fused
+    kernel is tested against does not move.
     """
     if impl not in ("auto", "reference", "fused"):
         raise GrammarError(f"unknown viterbi_window impl {impl!r}")
@@ -1091,6 +1295,14 @@ def viterbi_window(
     tuples = targets.float().reshape(steps, arity, cols)
     wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
     table = vectors.float().to(device)
+    if device.type == "cpu" and torch.get_default_dtype() == torch.float32:
+        needs_autograd = torch.is_grad_enabled() and (
+            tuples.requires_grad or table.requires_grad
+            or (wrows is not None and wrows.requires_grad))
+        if not needs_autograd:
+            states, sse = _viterbi_window_cpu(tuples, wrows, table, window_bits, rate,
+                                              cols, chunk)
+            return states, (sse if want_sse else None)
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
     sse = 0.0
     for start in range(0, cols, chunk):

@@ -215,6 +215,10 @@ class PreparedWindowGemm:
     #: fp32 accumulator) or ``"folded"`` (into each decoded weight, one bf16
     #: rounding, before the dot).  The E4M3 family is always ``"epilogue"``.
     arithmetic: str = "epilogue"
+    #: The resident word order of ``words`` (``kernel_window_gemv``
+    #: ``WORD_LAYOUT_*``), carried from the unit's own repack so a single-unit
+    #: bundle never silently strips a re-laid body to the legacy default.
+    word_layout: str = "legacy"
 
     def __post_init__(self):
         # Metadata only -- no tensor is read -- so the custom op that rebuilds
@@ -232,6 +236,8 @@ class PreparedWindowGemm:
 
     def __call__(self, x: torch.Tensor, a_scale: "torch.Tensor | None" = None,
                  out: "torch.Tensor | None" = None) -> torch.Tensor:
+        from .kernel_window_gemv import require_legacy_word_layout
+        require_legacy_word_layout(self.word_layout, "the compact Triton dense GEMM")
         if x.dim() != 2 or x.shape[1] != self.cols or x.device != self.device:
             raise GrammarError(
                 f"x must be a [M, {self.cols}] tensor on {self.device}, got "
@@ -444,6 +450,7 @@ def prepare_window_gemm(
         block_k=block_k,
         quantizer=quantizer if unit.family == "e4m3" else "native",
         arithmetic=arithmetic,
+        word_layout=str(getattr(unit.rep, "word_layout", "legacy")),
     )
 
 

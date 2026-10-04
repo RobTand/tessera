@@ -285,8 +285,11 @@ def main():
                     def at_split():
                         # the split is read at capture; replay runs what was captured
                         model = rf.dense_k_split
+                        # clamped to the launch's legality bound (tessera#805; an arm
+                        # older than the bound takes K / 32)
+                        cap = getattr(rf, "dense_split_max", lambda c: c // rf.BK)
                         rf.dense_k_split = lambda m_, rows_, cols_, sms_, tile_words=None: min(
-                            int(forced), cols_ // rf.BK)
+                            int(forced), cap(cols_))
                         try:
                             fn()
                         finally:

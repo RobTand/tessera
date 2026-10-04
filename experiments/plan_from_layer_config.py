@@ -101,6 +101,7 @@ from fractions import Fraction
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 from tessera.control import (  # noqa: E402
     control_block,
@@ -110,6 +111,7 @@ from tessera.control import (  # noqa: E402
     units_from_plan,
 )
 from tessera.errors import TesseraError  # noqa: E402
+from _accounting_source import accountant  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -365,13 +367,7 @@ def charged_bits(prismaquant: "Path | None", family: str, rung: int, shape) -> "
     """
     if prismaquant is None:
         return None
-    if str(prismaquant) not in sys.path:
-        sys.path.insert(0, str(prismaquant))
-    try:
-        from prismaquant.tessera_formats import artifact_bpp
-    except Exception as exc:                                    # pragma: no cover - env
-        print(f"  (no PrismaQuant accounting: {exc})", flush=True)
-        return None
+    artifact_bpp = accountant(prismaquant).artifact_bpp
     rows, cols = shape
     return Fraction(artifact_bpp(family, rung, shape=(rows, cols))) * rows * cols
 
@@ -389,7 +385,7 @@ def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
     was given, and a plan whose control cannot be byte-matched (two families,
     or the 0.241-bpp hole below the E2M1x2 coset cap) is still a plan.  What it
     must never do is stay silent about it, so the reason lands in the block.
-    ``experiments/uniform_control.py`` is where the match is *asserted*, because
+    ``python -m tessera.uniform_control`` is where the match is *asserted*, because
     that is where the arm you would actually build gets written.
     """
     try:
@@ -768,7 +764,7 @@ def main(argv=None):
               f"no served KL has validated.  The menu requires "
               f"{selection['mode_required']} selection (docs/ARCHITECTURE.md §4.10, "
               f"tessera#2): serve the byte-matched uniform control "
-              f"(experiments/uniform_control.py verify) before this plan ships.")
+              f"(python -m tessera.uniform_control verify) before this plan ships.")
     if args.write_uniform_plan is not None:
         units = units_from_plan(logical_plan, shapes)
         control = uniform_control(units, rule=args.control_rule)

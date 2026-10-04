@@ -1,5 +1,18 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
+Both qualification owners derive the mapping device from the held FD's
+exact mount ID and require that backing device plus inode on an executable
+mapping. A subvolume's virtual `st_dev` is not the kernel mapping device.
+Unknown or ambiguous mount provenance fails closed; hash and FD fences stay
+strict. No native kernel, serving, timing or energy claim is changed.
+
+Re-stamped 2026-10-04 for merge-batch SDK dependency declarations (#915).
+Only controls that invoke the real published PrismaBuild manifest/lease API
+require that SDK; portable numeric, history and cleanup controls still run.
+Missing-SDK collection is named honestly, not fabricated as native coverage;
+real-SDK execution and strict native mapping evidence remain independent.
+
 Re-stamped 2026-10-04 for the token-sum output-device input gate (tessera#859).
 Both native bindings require their output on the routed tensor's CUDA device
 before even the zero-token return. The shared-add lever remains default-off;
@@ -10,6 +23,480 @@ Re-stamped 2026-10-02 for the shared-add inspected-stock guard. Shared
 pins and expected parameters remain local and unchanged. Unreadable source,
 missing method, signature or import failures decline before rebinding. The
 lever remains opt-in and its CUDA/TR3/served gates remain independent.
+Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
+(#868/#875/#874; independently scoped source/cohort child #897). The current PM `piece_major` argument stays after the two
+word counts in every caller; direct legacy geometry callers pass false.
+E2M1 routed/dense readers retain both legacy-layout refusals. Default-off
+BF16 and FP4 activation hints use independent selectors and the same native
+build/source owner; E2M1 variants resolve the published value source. Actual
+wrappers preserve unset versus explicitly empty choices for all three families,
+so malformed values reach the strict Python gate instead of silently selecting
+baseline zero. Each
+CPU build retains a source/image/selector/ELF/finalization record in its own
+extension directory. A changed common translation unit requires fresh matched
+family builds and numeric/sanitizer evidence: neither the original 51f6 T16
+54-pair proof nor the original T4/PM banks qualify this combined ABI. Routine
+builds declare real local scratch through the published PB ledger and keep
+compiler objects, HOME and temporary state on the shared measurement volume;
+observed worker floor and immutable-image compatibility remain admission gates.
+No default, serving cell, price, PACT or energy claim is promoted. The combined
+`bcdd43f6` cohort now has one published CPU control action (207 passed, 43
+explicitly skipped CUDA/bank cases) and seven fresh CPU-native build actions,
+all returncode zero, one attempt each, in the explicit `5be13705` image. Exact
+ELF, source-owner, finalization, image and CAS identities are retained in
+`experiments/results/combined_native_874_875_739_cpu_evidence.json`. This is not
+an active runtime-image owner or placement recipe: the byte-preserved observed
+receipt belongs to the established results namespace (#903), while acting
+code and generated execution recipes retain the canonical runtime-image owner.
+This is not
+a GPU or performance pass. The current T16 synthetic producer binds only the
+new value0/value4 ELFs; the old `51f6` protocol remains historical, not new proof.
+The T16 `native-preflight` operation reads the complete fresh bank through the
+public staged SDK and loads each actual value DSO once through the existing
+`NativeCallback`, retaining both original FD pathnames until final teardown. It
+checks exported family/geometry/distance, before/mapped/post hashes, unchanged
+serving builder/cache and closes FDs before releasing the reader. This explicit
+CPU diagnostic does not call kernels, replace the serving gate/cache, or claim a
+CUDA fence, serving admission or numeric/sanitizer qualification. The fresh
+admitted CPU preflight `85bfd750` completed once with three new negative gates
+passing and actual distance0/distance4 DSO mappings retaining matching hashes
+before load, in executable mappings and after inspection. The original serving
+builder/cache stayed unchanged; both load FDs and the reader were released.
+Exact current-bank sealer, staged270-unit/108-history proof, native-FD receipt
+and the original unapproved GPU numeric/sanitizer proposal are retained in
+`experiments/results/value_prefetch_874_combined_safety_protocol_v2.json`. Its
+`5aba4096` source48a6 identity remains historical; it does not authorize the
+corrected source. The same54-cell corrected-source successor, composing the
+parent-accepted4392 T4 prerequisite lineage and the actual #902 release proof,
+is `experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
+It preserves the exact bank/ELF/image/readset and numeric16/GPU8/600 plus
+memcheck32/GPU24/1800 bounds. Parent901/normal/all-used-filesystem/scientific
+authorization gates remain held; no old protocol or ELF is restamped.
+Post-acquire sanitizer setup is inside the same reader-release
+`finally` as staging and tool execution (#902); filesystem refusal propagates.
+The admitted sourceb9b155b3 causal CPU action1b7076bb passed three selected
+controls (two real filesystem refusal lease models and tool subprocess failure),
+with twelve deselected and no CUDA. Exact receipt, source, scope and complete
+OOM0/processes-live0 telemetry are retained in
+`experiments/results/value_prefetch_902_cpu_cleanup_evidence.json`; specific
+cleanup correction acceptance is not whole901/source/GPU acceptance. After the
+complete accepted T4 prerequisite composition, action97c689fb source0a132caf
+passed all six specifically changed initial normal-feedback cases, with zero
+skips/uncollected tests/CUDA allocations. Its exact source, CAS receipt,
+telemetry and one managed completion-client ending are recorded in
+`experiments/results/combined_feedback_901_cpu_evidence.json`. This narrow
+causal gate pass is not the full normal suite or scientific GPU authorization.
+
+The #875 composed qualifier binds exactly the two finalized production FP4
+banks from common source `bcdd43f6`, immutable image `5be13705`, and the actual
+PB compile actions `b70ff504`/`b45dfd00`. Each arm declares its compile record,
+no-pending-work finalization and ELF in that order (six whole-file inputs),
+plus the nine immutable sanitizer members only when needed. Production PyInit
+names remain `tessera_routed_fused_e2m1` / `tessera_routed_fused_e2m1_apf4`;
+both resolve the existing value source owner and load once from held SDK FDs
+through the existing NativeCallback and full E2M1 ABI checker. No raw banks,
+second loader/cache, recompilation or old-image proof bridge is introduced.
+The old source4e/image61 finite recipes are retired from the acting tree. Their
+unchanged source/metadata history remains at commit `5bbd050e` and in the old
+NAS publication checkout; replicas and accepted historical proofs are retained.
+Observed producer-record fixtures live under the existing `experiments/results`
+receipt boundary with exact original bytes. Active image selection comes from
+the hashed actual compile record, never a copied default pin; the default is
+still owned by runtime_contract.json and is not changed by this experiment.
+New composed source/image/readset/capacity identities require their own parent
+review and actual CPU stage/mapping evidence before the separately held GPU
+synthetic-safety admission gate. No 15-GPU-payload submissions have been made; metadata
+CPU action `3d65783a` separately passed 18 no-retag capacity controls.
+Actual notified current-cohort CPU preparation `274f5db4` passed 27 controls,
+zero skips/CUDA allocations, and sealed the six native / fifteen tool+native
+members. Distinct current image-owner source1b90 controls `d8e19943` also
+passed 27 with zero skips/CUDA allocations. Each receipt and exact snapshot
+parent is recorded separately in the composed qualification contract; neither
+is current held-native-FD/tool execution or GPU/scientific qualification.
+Current source1b90 CPU rows `9ac5effb` / `e1cd2861` independently completed
+rc0, one attempt each on SL/image5be: both production FP4 banks loaded once
+from actual held stage FDs with matching executable inode maps and all four
+before/load/mapped/post-fence hashes; the tool row read nine staged members
+and ran Compute Sanitizer2025.3.1 --version with GPU visibility disabled.
+They do not exercise GPU tensors, sanitizer findings, performance or serving
+admission, and do not supply PB1483 operative all-used-filesystem floor proof.
+Source/CPU engineering acceptance permits only the complete owned consumer
+three-way composition into the common branch; normal source/pure CI and mainline
+approval remain separate. Closing #906 does not close #875 family qualification.
+
+The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
+experiment (Refs #739) schedules both independent B column-group fragment loads
+before the first MMA on routed E4M3-MMA mode0, one-run R4 only. Both64/128-route
+widths and legacy/piece-major words retain the accumulator K/G/mi/even/odd order.
+Producer decode/history, barriers, shared allocation, wire/layout/Params,
+mode1/2, dense/two-run and other families retain their scheduling paths.
+The exact0/1 choice is frozen at Python module import, emitted only into MMA8
+compile flags, and checked against the loaded native export. Off/on arms require
+distinct processes/build directories; changing an environment variable after
+import does not retarget the cached extension. Fresh native build/SASS, changed
+source numerical and matched before/after profile/Netdata/work-per-joule evidence
+are required: source/CPU controls alone make no speed/energy claim. Neither this
+flag nor PM is promoted as a default, serving cell or pin.
+
+Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
+(#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
+selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
+that choice before loading; each eligible one-run R4 unit is permuted from
+`[tile][column][64-row piece][word]` to `[tile][64-row piece][column][word]`
+before its one `WindowUnitAxis.put`. Serialized bytes, word counts, scales,
+column permutation and TP-cut initial states stay unchanged. The owner carries
+the layout through its signature and finished SoA; finish copies no word plane.
+BF16 (including A8SE layer45), forced f16 and routed opt-out retain legacy
+placement. A prepared PM stack refuses an incompatible reader or fallback.
+Dense Triton/fused/custom-op owners, GEMV argument extraction and E2M1 WINDOW
+readers require legacy words before dropping their layout metadata. Native PM
+dispatch is limited to routed E4M3 MMA, one-run R4, modes 0/1/2; history reads
+the same column's preceding piece/tile or its incoming state. This opt-in has
+no numerical, performance, graph or serving qualification from CPU checks or
+compilation alone. No serving cell, default, precision menu or pin is promoted.
+
+The finite PM experiment extends the existing benchmark, StagedInputs and
+NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
+ranges, the captured M2048 expert IDs (M1 uses only their first row), frozen
+source, harness bytes and one matched MMA ELF. Actual mode0/1/2 intermediates
+and final output bits must agree before a content-bound numeric receipt can
+admit ABBA timing. This vLLM-backed batch operator runs through PrismaBuild;
+only inference-serving services are exempt. `piece_major_pb_action.py` binds the
+sealed timing packet and explicit coordinator GPU GO inside an exclusive
+measurement attempt, importing the existing containment owner rather than
+launching a second dispatcher. Held original FDs retain the existing outer/inner
+checks, native load/fence checks and close-before-publication behavior. CPU
+checks and builds also use PB. Seeded activations and uniform routing weights
+are geometry
+controls, not served decode or quality measurements. Every timed arm retains
+raw events, Torch profiler traces and power windows; both-host Netdata and
+clock review are required, and energy remains HOLD. Defaults and serving cells
+are unchanged.
+
+
+The separate `tessera.routed_piece_major_repeatability.v1` experiment admits
+only M2048, three predeclared balanced ABBA/BAAB block pairs, 10 warmups and
+30 raw events per cell. Each independently started block first executes fixed
+60-second unscored alternating resident forwards. It requires the original
+numeric proof and content-bound passing mechanism-profile receipt, with exact
+input/source/native identities; it does not repeat numeric or Torch/NCU
+qualification. All raw events, temperatures, reported-SM/throttle observations
+and errors remain: no outlier deletion, adaptive plateau or result-based retry.
+Host-polled timestamps are not native-update proof and clocks remain explicitly
+unqualified; these are descriptive repeatability observations, not fixed-clock
+causality, served speed or energy. Existing Netdata owners retain fresh both-host
+action, conditioning and event windows, including coarse/empty coverage and
+per-series errors. Six science-defined finite block actions use supported PB
+campaign admission, exclusive same-Sparky resources and existing exact-CID
+containment; no application dispatcher or source/controller main bypass is
+added. The obsolete historical benchmark exemption does not authorize batch
+execution. No default, cell, pin or precision menu is promoted.
+
+Re-stamped 2026-10-02 for the uninstalled SP mHC tile pipeline primitive
+(tessera#858, children of #783/#803; §5.1.3). Its CPU fixtures cover token
+ownership, event dependencies and failure retirement. Actual TP2 NCCL
+exactness, performance, energy and serving qualification remain unmeasured;
+no installation hook, default, wire, runtime pin or contract cell changes.
+
+Re-stamped 2026-10-03 for default-off folded BF16 activation prefetch (#874).
+The existing value-library owner accepts only distance0/default or opt-in4,
+freezes selection in its cache, and uses a separately named retained library
+with exported-distance attestation. One-run routed BM64 modes0/1/2 retain
+their ABI, layout and accumulation order; dense/two-run and other families
+are controls. Source `849b039b` has accepted 54-pair synthetic-only exact
+numeric and full-matrix memcheck evidence, not calibrated original-model
+performance, serving, energy or PACT evidence. Frozen protocol/native/readset
+identities remain in `experiments/configs/value_prefetch_874_protocol.json`.
+Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
+skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
+now uses its temporary root, not an undeclared box path. Issue874 remains open.
+
+
+Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
+§5.1.3). A pass that would activate SP refuses before activation when its
+ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
+ranks agree once on the existing TP CPU group at SP activation, under the
+inspected MP communicator lifecycle. Boundary checks are local; profile,
+small, declined and captured passes retain their stock path. CPU
+fixtures reproduce the unwritten-output path and refusal. No wrong-output
+GPU observation or guard latency/energy qualification is claimed.
+
+Re-stamped 2026-10-02 for the private MLA pass-buffer experiment (#853).
+The existing MLA loader now shares one build owner with the CPU experiment
+row. It retains the final DSO and verifies source, selector, flags, compiler,
+header, image declaration and artifact identity before reuse. A required
+retained build cannot silently compile; runtime loading still requires SM121.
+The generic loader retains the original schedule by default. The existing
+default-off `TESSERA_RESEARCH_MLA_MASK_SKIP` backend explicitly selects the
+pass-buffer schedule and emits `mg_mask_skip_pass_buffers`; no new flag or
+stock/default route is introduced. The wrong-pass mutant stays experiment-only.
+The bounded operator gate passed 17 exact
+output/LSE cases and two causal mutants; pooled-mask old-L0 comparisons reduced
+operator time 18.97% at 2048@8192 and 13.50% at 2048@2048. Full-model serving,
+random-mask performance and energy remain unqualified. See
+`experiments/mla_prefill/P0_BUFFERS_PACKET.md`; excluded direct-Docker objects
+are not qualification evidence.
+
+Re-stamped 2026-10-02 (Refs #856): external shape-panel replay preserves
+the original request, producer, worker job and GPU evidence while creating
+a separate CPU replay job bound to the current checker worker. The existing
+installed preflight and full panel validator own both joins. An original
+immutable PB verifier path is accepted only when its held read-only regular
+bytes equal the current published verifier, under bounded stable reads;
+execution uses those held bytes and rechecks them afterwards. No fleet alias,
+original input rewrite, serving pin change or new GPU measurement is involved.
+
+Re-stamped 2026-10-02 for the first Tessera #688 native timing receipt
+slice. `serving.timing_panel` is a passive stdlib validator for one E4M3
+dense TP1 eager/resident operator, requiring canonical wire/container
+checks, independent runtime identity, a positively matching backed cell,
+its named native launch and wire predicate, and bound raw measurement
+evidence. It shares `fused_frame` framing with the existing fused reader.
+Samples determine a true median and inclusive quartiles; energy remains
+HOLD while cross-host clocks are unqualified. New package source changes
+its source digest if deployed as a runtime. The repository producer owns
+its stdlib schema separately from an isolated subprocess using an accepted
+installed runtime, whose original cell source remains strict. This code
+publishes bounded operator measurements, never cells or runtimes, and cannot
+restamp original b40/contract-v45 evidence. The repository application
+`tools/tessera_shape_time_panel.py` preflights that context and uses the
+public native create/load/finalize/apply path, fresh route telemetry and
+existing CUDA-event/box instruments. It independently observes imported
+runtime and producer source, fences final publication against drift and
+reports committed progress only after durable artifact publication. The
+application has one qualified execution/replay at q896/M512/N=K256/TP1 under
+b40/raw0869/f8; no full-menu, quality, compiled, serving or cell qualification
+follows. See `measurements/2026-10-02-native-dense-first-receipt.md`.
+The installed runtime first runs a CPU-only, CUDA-disabled contract preflight.
+Its own unchanged strict validator checks the same owned contract bytes after
+RECORD, imported-root, commit and software/source checks. The successful phase
+is bound to the original request SHA, job SHA, worker/validator bytes, actual
+exit status and raw contract digest. Entry/exit identities must agree. Only
+that actual process result issues the private external-validation object;
+a bool, copied extension roster or serialized claim is insufficient. The
+producer then uses the existing planner's extracted private pure core, retaining
+its explicit registry hash. Local public planning and panel validation still
+strictly validate against their own package. External final panel validation
+requires the verified installed object and bound phase evidence; CLI replay
+reruns CPU preflight in a separate current-worker job bound to the original
+request, producer and wire roles. The first b508 pilot
+failed at producer-owned validation before CUDA, so it supplied no timings.
+The same CLI emits a versioned, input-bound handoff
+`tessera.shape_time_observation.v1` when `check` is given an externally
+supplied `--expected-panel-sha256`, `--observation-out` and an original
+producer root. It hashes the same panel bytes it parses, re-runs the existing
+`validate_external_panel` on the actual installed CPU preflight, and only then
+publishes the admitted scope, observed lane/cell, raw samples and warmups,
+fixed claims, the sealed original measurement producer and a distinct replay
+validator identity, every evidence/preflight binding and the
+`sample_unit=single_apply` operator projection. The observation is a data
+handoff, not a new validator, runtime contract or pin.
+The versioned native phase uses existing containment, TP1 context and
+single-apply event sampling; actual package/module origins, raw contract
+and source identities are checked at entry before device setup and exit.
+Legacy cells without a code pair retain external exact-runtime binding;
+partial or mismatched pairs refuse. The repository worker reuses the
+published stdlib VCS/RECORD checker and refreshes cached package hashes.
+A host-only clean-checkout seal supplies the independent producer commit
+and existing source-tree/tool closures; the Gitless container verifies
+those bytes and records `commit_source=sealed_checkout`. Installed runtime
+metadata remains separate. The first ELF receipt requires the actual
+prepared fused lane and observes existing process mappings before/after
+sampling; it refuses Triton preparation and never builds a library for
+evidence. Measurement requires the sealed request digest; the producer
+hashes and parses one owned byte buffer before any native phase. See
+[the bounded receipt contract](design/native-shape-timing.md).
+
+Re-stamped 2026-10-02 for shared inspected-stock interface facts. The current prefill
+guards reuse `serving.stock_interface` and keep their own pins and parameters.
+Empty-RoPE and shared-add adaptations remain separate experimental follow-ups. Complete digest tuples stay indivisible.
+Unreadable source/attributes/signatures decline to stock, with no installation
+framework, format, default, runtime pin or serving qualification change.
+
+Re-stamped 2026-10-02 for the opt-in single routed gate/up diagnosis (#826).
+The existing T8R benchmark can replay one historical real-ID distribution
+against the A8SE wires through PB public pinned readers, binding the same
+owned outer bytes to publisher cached-inner digests plus exact role/rows and
+canonical TSRFUSE1 reframing before the unchanged rank-local intake. A PB-only
+sealer records outer-frame hashes for the final GPU readset; it never treats
+a cached inner-unit digest as an exported outer-frame digest.
+Only served mode0/RL4/one-run/BMT128 is profiled; the teacher-forced mode1
+interface is excluded. Seeded activation/uniform downstream weights remain
+a declared proxy; no full-model quality/speed, serving/default/pin change
+or gate promotion is delivered. A >=30s steady power loop and both-box
+Netdata supplement the one-kernel profile; energy remains held until actual
+coverage and instrument agreement. Raw timing samples are retained and the
+reported median uses the conventional odd/even sample median (#836).
+A missing counter instrument may be recovered without repeating timing/power.
+The separate retained-native counter population uses the existing build callback
+and a public SDK-held native-code FD with pre/post hashes and module-origin
+checks; this trusts the experimental native artifact owner and does not qualify
+an immutable original tensor provider. Production source and defaults stay fixed.
+See docs/measurements/2026-10-02-routed-gate-diagnosis.md.
+
+Re-stamped 2026-10-02 for Netdata cadence attribution (Refs #840).
+The box-power owner reports native collection cadence from the returned DB
+metadata, returned bucket duration separately, and returned tier/node/instance
+metadata. Missing native cadence stays unknown; bucket size cannot establish
+sensor cadence. Numeric samples, whole-group bounds and coverage are unchanged.
+This metadata correction does not qualify sensor agreement or energy.
+
+Re-stamped 2026-10-02 for the KDA experiment's scientific-independent
+admission/publication seam (Refs #814). `experiments/kda/conv_gate.py`
+owns the unchanged PTX string, case/mode roster and raw-word gates;
+`conv_progress.py` owns durable publication. The GPU driver re-exports
+and uses those owners, and the bank auditor imports the gate directly.
+Pure CI exercises raw admission and directory durability without Torch;
+actual driver/stock controls use the existing scientific dependency
+population. A source identity binds the driver and both owners and
+refuses changes before every publication/return, including NCU,
+numerics-only and partial progress. The actual driver root and both
+imported module/function origins must match the owned source files;
+cached foreign owners cannot certify their own unrelated checkout.
+This refactor changes no numerical
+inputs, CUDA bytes, profiler math or runtime execution; historical GPU
+receipts remain at their original sources and are not restamped.
+
+Re-stamped 2026-10-02 for resumed interpreter attribution (Refs #837).
+Resumed runtime metadata comes from the uniquely authenticated producer's
+effective pytest command, using the existing deadline/container parser. An
+unbound population or a console pytest entry point leaves `python` unknown;
+configured arm defaults do not establish the interpreter a past run used.
+Source, exit, image and serving gates remain unchanged.
+
+Re-stamped 2026-10-02 for the standalone integration-tool boundary
+(Refs #832). The explicit pricing-root owner and the sealed container-runner
+owner live under repository `tools/`, outside the installed `tessera` package.
+The converter, accounting gate, runner and receipt reader reuse those owners;
+the authenticated snapshot names the moved runner owner. No standalone
+allowlist, pricing rule, source-binding requirement or serving contract moves.
+
+Re-stamped 2026-10-02 (tessera#816, CPU encoder compatibility): window
+Viterbi's optimized CPU buffers explicitly use the input's device and float32
+dtype, so a meta default-device context cannot move CPU work. A non-float32
+global default dtype retains the original torch reference chain, whose branch
+costs are computed in float32 before promotion into the cost front. Exact
+state/SSE controls cover float16, bfloat16, float32 and float64 defaults plus
+meta placement. Gradient-bearing inputs with autograd enabled also retain
+the functional reference; no-grad calls keep the optimized CPU path. No
+recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
+serving, and no new throughput claim is made.
+
+Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
+(contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
+subclass for the stock `FLASHINFER_MLA_SPARSE_SM120` enum through the plugin.
+Its stock name, conversions and residency path remain inherited. Only eager
+pure-prefill BF16 queries, 32 heads, latent 512/no RoPE, page 64 packed FP8
+arbitrary-scale KV and 2176 indices can select the qualified MG masked-tile
+kernel; FlashInfer's own resolved plan must say FP8/MG/direct. Mixed, decode,
+staged, unsupported and CUDA stream-capture calls use stock. The backend and
+policy sources plus the complete sparse-MLA header tree are hash-bound to
+image5be13705. Eager host dispatch counts use the existing per-rank telemetry;
+graph replay counts are not claimed. Actual per-rank post-timing CUDA events
+must establish eager/FULL_DECODE_ONLY prefill execution before a served claim.
+The stock Q power-of-two scale rounding and arithmetic order remain intact.
+The opt-in native call uses the pass-buffer schedule; decode, mixed and
+capture guards remain unchanged. Its runtime GPU fixture exercises the actual
+cached factory with a retained DSO and refuses compilation. Full-model and
+actual vLLM-runtime validation are separate gates: the two-case eager/stock-
+capture fixture passed on the retained candidate; full-model serving remains
+unqualified.
+No production runtime pin, route cell, default, artifact or ship gate moves.
+
+Re-stamped 2026-10-01 for the stock-kernel overrides block (contract v54).
+A new top-level block, `stock_kernel_overrides`, publishes where the plugin,
+behind an opt-in flag, replaces a kernel of the stock runtime with its own,
+and an install path acts only on its own published entry. The block was empty
+at v54, so that revision installed no override and no route, cell or served byte moves. The
+native-load scanner reads both blocks. See §4.5i.
+
+Re-stamped 2026-10-02 after root review of the stock screen's progress
+publication (tessera#814 / PR #830). Partial and final JSON data are
+fsynced before atomic rename, their containing directory is fsynced,
+and only then does the PB progress helper receive measure or publish.
+A directory-sync failure prevents advancement. The historical GPU
+baseline is unchanged and is not restamped to this later harness fix.
+
+Re-stamped 2026-10-02 for the experimental stock FlashKDA measurement
+harness (Refs tessera#735). `tessera.kda_stock_screen.v1` records native
+workspace allocations, exact stock binary/harness identities, actual
+prepare/recurrence profiles, resident graph windows and full raw host
+telemetry from both Sparks. Missing or ambiguous kernel roles refuse.
+The bounded FP32-state H32 baseline establishes no fused candidate,
+serving speedup or qualified energy result. See §5.1.3 and
+[the stock profile](measurements/2026-10-02-kda-stock-native-profile.md).
+
+Re-stamped 2026-10-02 for `tessera.kda_conv_screen.v2` (tessera#814),
+reviewed by Astra after the original ex2 output witness proved impossible
+in the measured operation order. Four required mutations change actual
+output or state; ex2-ftz instead requires an active raw exponential
+difference and identical downstream denominator/FP32/BF16 bits. The
+control refuses absent, malformed, vacuous or stale source/compiled
+evidence. The original v1 failure remains history. No serving contract,
+route or default changes. See §5.1.3 and
+[the bound control and proof](measurements/2026-10-02-kda-ex2-equivalence.md).
+
+Re-stamped 2026-10-02 for the KDA convolution screen's fail-closed admission
+(the initial v1 contract, tessera#814). The experimental PTX reference follows the pinned stock
+prefill's width-minus-one history at the beginning of the physical cache,
+and compares actual q/k/v output and the entire convolution state as raw
+BF16 bits. Required mutants must differ from the unmutated candidate;
+a shared mismatch against stock is no mutation witness. A failed or
+vacuous screen returns nonzero and stops later timing parts. No serving
+override, runtime contract, format, route or default changes. See §5.1.3
+and [the recovery evidence](measurements/2026-10-02-kda-screen-recovery.md).
+
+Re-stamped 2026-10-02 for guarded module re-exports in the impacted-test
+selector (Refs #808). The dependency owner derives a finite import condition
+only from a fully recognized, immutable-name `__getattr__` forwarding hook.
+Changed files retain the conservative import union. Only UNKNOWN propagation
+may exclude that proved conditional edge; direct named calls retain named
+demand plus Python's implicit `__path__`, while object/namespace escapes,
+stars, explicit hook and file loads retain the union, including ordinary
+re-exports. Ordinary imports and package initialization remain unconditional.
+The source-read capability and UNKNOWN origin contract are unchanged;
+no serving interface, runtime, wire, pin, lane or promotion gate moves. See §1.1.
+
+Re-stamped 2026-10-02 for bounded Netdata phase evidence (Refs #819).
+`experiments/box_power_window.py` requests unaligned data and accepts only
+whole returned groups within the requested phase. It retains the raw response,
+requested and returned windows, rejected groups and actual accepted coverage;
+a straddling group is unknown for this phase and is never interpolated into
+its power statistics. This repairs provenance, without claiming that the
+coarse sensor values or any historical energy comparison are qualified.
+
+Re-stamped 2026-10-02 for the optional container GPU merge-suite arm
+(tessera#818). A source-sealed runner uses PrismaBuild's Docker ownership and
+affinity shim, immutable image and scoped dependency content identities, and
+same-path readonly source/data mounts. The coordinator's existing receipt
+reader authenticates the runner and shared argv owner from the request's
+snapshot bundle before adopting a resumed exit. Container GPU xdist spends
+the declared CPUs with native threads one; all existing source, publication,
+device-allocation and missing-artifact gates remain in force. This changes no
+wire, serving route, runtime pin or artifact.
+
+Re-stamped 2026-10-02 for explicit PrismaQuant accounting-source binding
+(tessera#825). The plan converter and accounting gate use one repo-tooling
+import owner, `tools/_accounting_source.py`. It binds the requested root
+to the canonical origin of both `prismaquant` and its `tessera_formats`
+module before reading prices. A foreign cached module or an unavailable
+explicit accountant refuses; no module is evicted and no pricing logic is
+copied. Same-origin cached modules retain the original accounting function.
+Different source versions need separate processes or one qualified compatible
+root; an unspecified accountant remains explicitly absent. No wire, serving
+route, runtime pin, numerical pricing rule or production default changes.
+
+Re-stamped 2026-10-02 for the dense split launch's legality bound
+(tessera#805). The E4M3 and value dense launch now refuses a K split that
+leaves an item fewer than two K chunks, and `dense_k_split` searches only up
+to that bound (`dense_split_max`, `K / 64`). This is the bound the E2M1
+launch already enforces on the same producer/consumer protocol. Two
+consecutive one-chunk items in one CTA let the producers rewrite a
+descriptor slot before the consumers read it, which leaves a partial
+unwritten. On GB10 no GLM-5.3 role's split exceeds the bound, at any M or
+rate, so no GLM-5.3 launch changes. Few-row, small-K roles take a smaller
+split; for example, 128 x 256 at M = 1 now takes 4 splits where it took 8.
+No route, cell, rung or schema changes. See §3.3 (the dense identity).
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
@@ -56,6 +543,122 @@ entry, launch row or cell changes, and the three existing libraries' SASS is
 instruction-identical to master's (value 101/101, E4M3-f16 107/107,
 E4M3-instruction 137/137; PB `0ab25e95` against `ac4fb3e4`). See the fused
 lane's section.
+
+T4 activation-prefetch experiment (2026-10-02, #875):
+
+* TESSERA_ROUTED_FUSED_FP4_A_PREFETCH=4 selects an explicit default-OFF
+  producer compile variant (unset/0 retains baseline). It uses the existing
+  build owner with an isolated JIT name/directory, checks the exported distance,
+  refuses invalid selection and refuses changes after the library is loaded.
+* One-run routed modes0/1/2 use the existing shared L1 hint four FP4 K64 chunks
+  ahead. Packed A codes and linear per16 UE4M3 scales use exactly issue_a's
+  addresses, bounded by the live route row and remaining chunks. The existing
+  two-ahead cp.async schedule, wire, quantizer, residency, MMA/reduction order
+  and scales do not change. Dense and adjacent two-run launches remain controls.
+* Scope stays producer-only: the served T4 TCQ span2 route is not relabeled as
+  fused WINDOW. Intake still refuses wrong family/window/run order, K not a
+  multiple of64 or below256, hidden rows not a multiple of256, intermediate
+  rows not a multiple of128, incompatible gate/up tile strides and insufficient
+  device shared memory. Producer rates1..8 and all adjacent pairs remain;
+  WINDOW oracle q128..1024 step64 is not a promoted public recipe gamut.
+  TP2 cuts and carried states are unchanged; no new distributed, MLA absorbed
+  BMM, embedding-gather or quantizer ABI is implied.
+* Applicability: mixed-run decode, descriptor rings, staged stream history and
+  terminal FULL drain already exist on FP4. Dense split admission still keeps
+  at least two K64 chunks per item (dense_split_max = K/128); this experiment
+  does not relax the descriptor lifetime guard or add one-chunk items.
+  E4M3 paired-K32 is structurally different: FP4 already executes native
+  m16n8k64 with per16 block scales. E4M3 piece-major indexing cannot be copied
+  into FP4's tuple/nibble, padded16-column group geometry. #807's measured
+  negative gives no T4 speed credit. Only the activation L1 memory hint transfers;
+  its distance and benefit remain hypotheses requiring a T4 baseline measurement.
+* First numeric gate is the staged driver
+  experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
+  native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
+  Public client.read_data_manifest, manifest_read_entries and
+  storage_tiers.manifest_phase_ranges must bind exactly three native files
+  (or those files plus the nine qualified sanitizer files), offset zero,
+  unique ordered whole-file members and one complete native1-whole phase.
+  Both libraries load ONCE in one process from distinct held SDK FDs, not
+  original-path reopens; direct diagnostic mapping is NOT serving _ext admission.
+  The existing producer ABI rule is shared by _ext and diagnostic consumers.
+  Both FDs and modules remain alive until the entire matrix is fenced; all
+  owner cleanup attempts precede SDK lease release, even after bind/hash/setup
+  failure. Original failures retain cleanup diagnostics rather than disappearing.
+  Full nonquick scope: 15 uniform/adjacent rate tables at whole and rank-1 cuts
+  (30 tensor cases), 60 paired routed oracle checks and 450 paired dense/split
+  checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
+  consumer execution additionally requires all48 GPU cases (42 FP4 cases and
+  six terminal patterns); skipped or changed populations fail qualification.
+  Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
+* Before GPU qualification, root must authorize the resource/readset. Use the
+  same real captured/calibrated T4 bundle bank, input/global scales, residency,
+  recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
+  chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
+  incoming states, route tails, M1..8/512/2048/2049/8192, eager and graph.
+  Preserve baseline/candidate source and native ELF hashes. Measure in-process
+  forward/reverse paired windows with profiler and NCU; align both Spark
+  Netdata power/clocks/temperatures/CPU/memory to every window. No T8 baseline
+  or cross-precision credit, speed/energy claim, cell/menu/pin/default change.
+  No GPU qualification or speed/energy evidence is claimed yet.
+* Actual CPU/native preparation (not GPU proof): PB86450d1c on DL380 returned
+  rc0, 96 passed/66 CUDA-gated skips. Consumer tests exercise distinct compiler
+  flags/names/build identities, exported ABI refusal, cached reuse and post-load
+  mutation refusal. The corrected actual-Torch-DSO inode controls passed on
+  healthy Sparklina (PBaf6ea8c3: three passed, no skips); prior96/66 is reused.
+  After the ABI guard was factored, PB93b12d52 passed five consumer controls;
+  PB77830261 passed nine shared callback/real two-DSO FD-lifetime controls.
+  PBd5837c31 compiled/loaded both retained native1 ELFs with GPU visibility off;
+  PB8b96ac6b proved both executable mappings match their hashed file inodes.
+  PBe242d198: master50127b9 to default-OFF is exact SASS for all422 kernels
+  (value101, E4M3-f16107, E4M3-MMA137, E2M177). PB8b342b0f: opt-in changes
+  exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
+  all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
+  zero STACK/LOCAL allocation (FP4 maximum128 registers).
+* Current persisted actions are `pb_875_composed_cpu_prepare.json`,
+  `pb_875_composed_cpu_stage.json` and the complete15-row
+  `pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
+  full numeric/native/sanitizer population and real local-scratch contract
+  is `pb_875_composed_qualification_contract.json`. The GPU packet stays
+  unpublished until the exact current source/SDK-stage/parent/admission
+  tuple is accepted; no old source4e/image61 allowance or CPU pass transfers.
+  Old packet bytes remain available in commit `5bbd050e` and the old NAS
+  checkout, not as obsolete runnable recipes in this tree. Supported PB
+  publication owns fanout, admission and cleanup; never substitute a dispatcher
+  or replay a failed row without a real source fix and supported supersession.
+  Historical source4e native/sanitizer rows bound the original native1 readsets;
+  those accepted CPU identities below do not attest the current composed rows.
+  Historical public manifest/phase sealing actually passed in
+  PBa67d342f: three files/3780084 bytes, and12 files/31445460 bytes, original
+  native entries unchanged. After supported admission recovered, existing rows
+  PBc8c24e35/PB5c429a8a acquired/read/released both exact SDK readsets on DL380
+  through prismabuild-stage:dl380g10 (rc0, actual pin/ref IDs and per-range
+  digests). PB33b17d47 on Sparklina loaded both held staged ELFs through
+  /proc/self/fd, checked the owner ABI and executable inode before/after load
+  and teardown (rc0), using the same DL stage and immutable image. These are
+  diagnostic code-owner proofs, not serving _ext admission or GPU execution.
+  These already-published rows exercised their frozen pre-teardown-fix driver;
+  PB14164463 separately passed all nine updated ownership/envelope controls.
+  Each sanitizer (memcheck/racecheck/synccheck/initcheck) carries
+  --error-exitcode86 and bounded time/resources; its authenticated tool bytes
+  are materialized through the existing SDK reader, not a guessed host toolkit.
+  PBcef66493 established the original toolkit hashes, Compute Sanitizer2025.3.1
+  and pytest9.1.1 on the pinned image. PBb80eeff7 on healthy Sparklina actually
+  acquired/read/released the SDK lease and ran the staged authenticated tool
+  (Compute Sanitizer2025.3.1.0, rc0); this is CPU compatibility only, not a
+  memcheck/racecheck/synccheck/initcheck pass. The image alone lacks the tool.
+  Compile preparation reuses cuda_home_shadow.sh
+  for missing vendor headers rather than adding the incompatible whole wheel
+  include directory. Failed missing-header/nvdisasm/ownership attempts are
+  not reported as passes; successful cubins/ELFs are retained, never rebuilt
+  merely to recover disassembly.
+* Real speed/quality qualification still needs a compatible captured/calibrated
+  T4 WINDOW readset. Historical T4 TCQ banks are not substitute inputs for this
+  producer kernel. Before any timed row, require root isolation/admission and
+  healthy storage floors. Both Sparks expose power_draw (Watts), sm/mem clocks
+  (MHz), temperature (Celsius) and frame-buffer used/free/reserved (bytes) in
+  nvidia_smi contexts; save aligned raw intervals on both hosts, not utilization
+  percentages or an unqualified T8 cross-precision comparison.
 
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
@@ -608,10 +1211,11 @@ where the structure changes the wire. No contract cell, serving default or
 route changes.
 
 Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
-targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
-in its dependency graph but records it under `excluded_tests` with its reason,
-not in the pytest target list. Its manual CUDA gate is not executed or certified
-by that selection; pytest consumers and full-run escalation remain unchanged.
+targets (tessera#647). `tools/impacted_tests.py` retains explicit manual-only
+interfaces in its dependency graph and records configured exclusions under
+`excluded_tests` with their reasons. The A4 gate now has a pytest entry point,
+and the current exclusion map is empty. Selection alone does not execute or
+certify a manual CUDA gate; full-run escalation remains unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
@@ -1923,7 +2527,7 @@ Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
 plan, off the supported path since tessera#687 -- the producer writes the plan),
 `tessera.export_serving` (`python -m tessera.export_serving`; plan to checkpoint),
 `tools/tessera_route_census.py` (checkpoint to route), and `tessera.control`
-plus `experiments/uniform_control.py` (the gate that judges the result).
+plus the installed `python -m tessera.uniform_control` gate that judges the result.
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
 allocator sees is `docs/tessera-one-format.md` §5.
 
@@ -1933,7 +2537,7 @@ allocator sees is `docs/tessera-one-format.md` §5.
 PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
 `--exclusive`: the deployed scheduler derives the complete GPU reservation
 from that worker's advertised capacity, rather than treating one logical slot
-as physical exclusion. The GPU arm remains serial under `--strict-cuda`,
+as physical exclusion. The native GPU arm remains serial under `--strict-cuda`,
 which has three legs since tessera#152: it refuses a device-less session
 before anything runs, refuses at the end a run in which no test allocated on
 the device (torch's own allocator counter, published as
@@ -1947,6 +2551,48 @@ Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
 defaults and preventing each xdist worker's native math or extension compiler
 from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
+An explicit `--gpu-image` enables the container GPU arm. It requires
+`--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
+`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
+the finite runner grammar and Docker argv; `tools/suite_container.py` launches
+it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
+--dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
+`--gpu-mem-gb` when its population needs different CPU
+or aggregate memory reservations from the x86 arm. The pinned image must
+already be local according to PB's `--container-image` contract. Scoped
+dependencies declare their versions and every file's path, mode, length and
+SHA-256 (`tessera.suite_dependencies.v1`); changed bytes or a symlink refuse.
+The runner checks the dependency seal at entry and exit, so a host-side
+mutation during pytest cannot turn a clean summary into a successful action.
+The source and declared data roots mount readonly at their actual absolute
+paths, while the surface directory and action-owned cache mount writable.
+`--artifact-root ENV=PATH` uses the names owned by `tests/box_artifacts.py`;
+these overrides are sealed, mounted and forwarded to pytest. The helper
+disables user-site imports, bytecode writes and implicit pytest plugin
+autoload, fixes the Python entrypoint/workdir and native thread limits, and
+keeps pytest temporary files and compiler caches outside the source tree.
+PB's Docker shim retains responsibility for scope ownership, affinity,
+memory containment and exact-attempt termination.
+
+For a resumed arm, `pytest_command` records the effective command from its
+uniquely authenticated producer. `python` names the explicit interpreter of
+that command's `-m pytest` form, including the container's inner interpreter.
+It is unknown for a console pytest entry point or an unbound population;
+the configured arm default is not observed runtime metadata.
+
+The receipt reader recognizes only the canonical relative runner path and
+its shared finite grammar, never arbitrary Docker tokens or shell fragments.
+It keeps the existing snapshot/stamp/request/publication/terminal checks and
+additionally reads the exact request's authenticated Git bundle (bounded to
+256 MiB), comparing the runner and shared owner blobs with the coordinator's
+sources. A receipt assembly verifies each distinct bundle once; this is
+ephemeral verification state, not a second source-identity cache. A modified
+runner, option/environment/mount shadow, worker/reservation mismatch, unknown
+producer, unverified source or different effective source remains non-green.
+Resume reads only the action keys the population's verified producer stamps
+name. It does not scan unrelated fleet history; several named producers or
+conflicting terminal records remain ambiguous, and an unstamped population
+cannot acquire an exit from another action.
 The sealed inner command also uses `tessera._dev.suite_deadline`, launched through
 `tools/suite_deadline.py` with the arm's named Python. `--timeout-s` must be
 positive and finite; expiry signals its owned process group with TERM, then
@@ -2266,7 +2912,61 @@ also create edges, including aliased readers, and for a resolved path this is
 independent of what the reader does with the bytes. Runtime-selected or shadowed
 paths remain conservative unknown edges and propagate to downstream tests when
 the reader can execute Python; a parameterized filename in a source-executing
-module is not silently treated as no dependency. What this misses is a source
+module is not silently treated as no dependency. Recognized calls to imported
+source-executing helpers now propagate that capability to their callers via a
+fixed point over top-level helper summaries, preserving relative imports,
+re-exports and ambiguous module spellings. Module and helper seeds use the same
+source-call predicate with enclosing lexical aliases. A single authoritative
+parse/read result supplies both summaries and graph edges: a first-pass failure
+remains diagnosed wildcard uncertainty, never erased by a retry. Callable alias
+recognition uses a finite worklist and per-path cycle guards rather than the
+Python call stack. Importing a helper without calling it does not promote a reader. This capability proves no external origin: a
+generic module parameter and an import missing from the graph remain unknown.
+The frozen `202d1f07` #808 draft failed the three unchanged selectivity ratchets,
+forcing full for the shared conftest. The initial `021f4f2b` receipt banked no predecessor
+path proving which uncertainty seed caused that escalation, so it did not
+establish the asserted GLM53-through-serving.config attribution. Selection now records resolved-file
+`uncertainty_paths` and `uncertainty_collection_probes_skipped` from the same
+reverse walk that decides escalation. These are static predecessor witnesses,
+not proof that a runtime call executes. It is not a completed external-origin contract.
+
+The source-dependency owner now recognizes a narrowly proved module re-export:
+`if name in <literal frozenset>: import module; return getattr(module, name)`,
+followed by a literal `AttributeError`. It accepts no hook decorators, computed
+defaults, extra effects, shadowed builtins, guard rebinding/mutation or hook,
+guard or global-namespace escape. A literal `__all__` directory hook may enumerate
+that immutable set. Every other shape retains the unconditional import union.
+The graph keeps the conservative dependency union for changed files, including
+this guarded import. Only UNKNOWN propagation may exclude its proved conditional
+edge; active attribute demands retain direct dependencies. Explicit
+from-imports used only as direct callees (or unused) request their named
+attributes plus Python's implicit `__path__`. Passing, storing, returning or
+inspecting imported objects, mutable namespace access (including reflective or
+dynamic `getattr`), namespace imports, stars,
+explicit hook or guard access and exact file loads request every branch.
+The proved hook's own forwarding call has a closed literal name domain;
+other reflective accesses retain the union. Unknown namespace demand forwards
+through ordinary re-exports as a finite union.
+Ambiguous
+spellings still resolve to every candidate through the existing module resolver.
+All ordinary imports and package-initialization effects remain dependencies;
+the guard worklist terminates on cycles. Known helper namespace effects
+(including `f_globals` and reflective access) reuse the source-execution
+helper-call fixed point and lexical resolver as a separate effect fact;
+calling such a helper refuses a guarded summary, including through a re-export.
+Star imports cannot prove unshadowed guard bindings and retain the union.
+This is bounded helper recognition, not a general evaluator. The receipt reports
+`uncertainty_guarded_imports_skipped` with provider, literal guard names and
+predecessor witnesses separately from collection-probe exclusions. Changed and
+uncertain seeds traverse the same annotated graph under their respective rules;
+their reached consumers are then combined. Failed source reads cannot publish a
+summary and remain authoritative wildcard uncertainty. The real-tree causal
+probe established that the guarded slicing-to-layout edge was a complete cut
+between all recorded uncertainty seeds and conftests on frozen `202d1f07`;
+it did not prove GLM53 source external. The three real ratchets and the
+source-execution helper/refusal controls remain acceptance criteria.
+
+What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
 A conftest **reached** -- changed, or importing anything changed -- reaches its
@@ -3540,13 +4240,36 @@ can only break the deliberate verification run, never a default encode.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
-`experiments/tessera_producer_plan.py` reads source headers and an explicit
+`python -m tessera.producer_plan` reads source headers and an explicit
 stack plan, then calls the exporter's existing expert planners. Its JSON names
 the physical source tensor, logical tensor, source slice, expert, canonical
 role and both unit/group dimensions. PrismaQuant can invoke this producer tool
 without importing the serving runtime or restating its expert grammar. Source
 tensor names retain their actual suffix; logical tensors include `.weight`,
 and allocation/cache keys remove exactly that suffix via `ActivationSource`.
+The public installed-package API is `tessera.producer_plan.producer_projection`
+and its JSON contract remains `tessera.expert_projection.v1` (Refs #871).
+The experiment entry point is removed, not shimmed: an installed producer needs
+neither this repository's `experiments/` directory nor PrismaQuant/PrismaBuild
+checkouts. Producer source/package selection remains explicit; this packaging
+cutover does not qualify a serving runtime or change a consumer's runtime pin.
+The real-geometry API/CLI regression binds its subprocess to the parent-loaded
+producer package root before changing cwd (Refs #881). Source-tree runs select
+their snapshot; installed qualifiers select their installed package, with no
+experiment/sibling roots inherited and child refusal stderr retained.
+
+The producer tool hashes source shard bodies by default. Its optional
+`--source-digest-cache DIRECTORY` passes an existing trusted `SourceDigestCache`
+to `source_identity` and writes that cache's receipt under `source_digest_cache`
+in the projection JSON. Without the flag, the output is unchanged. The cache
+library owns directory, fingerprint, quiescence, mutation and corrupt-entry
+checks; config, auxiliaries and complete header coverage are still read.
+A reuse receipt names previously fenced shard digests, not a fresh body read
+by this process, and confers no serving or campaign qualification.
+The CPU regression in `tests/test_tessera_producer_plan.py` compares the
+serialized public projection byte-for-byte across uncached, cold-cache and
+fresh-instance cache-hit calls, and checks that only shard-body hashing is
+elided. CLI receipts deliberately remain separate from that projection.
 
 `tessera.cached_unit` seals original dtype/shape/weight bytes, the actual
 per-unit Hessian plus capture identity and full activation settings, resolved
@@ -3887,9 +4610,16 @@ each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
 S partials in a fixed order before the one epilogue (`(acc * a_scale) *
 w_scale` for E4M3, the bare accumulator for the folded value family) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
-of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/32,
+of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/64,
 ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
-the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+the unsplit kernel. `K/64` is `dense_split_max`, the launch's legality bound,
+not a tuning choice: the producers write an item's descriptor slot when they
+claim it, two items ahead of the consumers at most, and the consumers read the
+slot once, at item start. So every split item keeps two K chunks
+(`floor(nk / S) >= 2`), and the library refuses a larger split by name. This
+is the E2M1 launch's bound on the same protocol (tessera#805). It binds on
+few-row, small-K roles only, and on no GLM-5.3 role on GB10. Two runs are
+bitwise equal in both regimes and a captured
 forward replays (the work counter is zeroed inside the region; the partial is
 a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not
@@ -6014,6 +6744,43 @@ tag. Until a GLM fp4 route-class cell names this image in its runtime scope,
 the attestation stays unreferenced -- published so the gate has something true
 to read, not as an admission.
 
+### 4.5i What the contract says a serve REPLACES in the stock runtime
+
+`native_extensions` publishes the libraries a Tessera route decodes its wire
+through. Since contract v54 a second top-level block, `stock_kernel_overrides`
+(`ext.STOCK_KERNEL_OVERRIDES`), publishes the other thing the plugin can do to
+a serving process: replace a kernel of the stock runtime, such as an attention
+backend's prefill call or a stock unquantized linear, with its own. Such a
+replacement reads no Tessera wire and belongs to no route. Its claim is that it
+computes the stock kernel's output bit for bit.
+
+Each entry is closed and validated by `contract._validate_stock_kernel_overrides`:
+
+| Field | Value |
+|---|---|
+| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts). |
+| `enabled_by` | The `TESSERA_*` flag that installs it. One flag per entry. |
+| `default` | `off`, the only value. An unset flag installs nothing, so a serve that did not ask is the stock serve. |
+| `loaded_by` | The `tessera.serving` module that installs it. |
+| `library` | The native library it maps, under the `native_extensions` legibility rules (`_validate_library`), or `null`. |
+| `required_identity` | `bitwise_vs_stock`, the only value. |
+| `evidence` | The gates the identity has passed, `{gate, receipt}`. Empty until one has. |
+
+The packaged contract is the install path's permission, not the install
+path's own constants. `contract.stock_kernel_override_refusal` returns `None`
+only when the contract publishes an entry under the flag and the entry names
+the same kind, stock object, loader and library prefix the install is about to
+use. Otherwise it returns the reason, which is the install line's text, and
+nothing installs.
+
+Across both blocks, no published glob may match a library name another entry's
+load path can produce, so a residency fingerprint names one library per mapped
+`.so`. `tests/test_serving_native_extensions.py` scans every native load
+reachable from `tessera.serving` against both blocks, and matches a `CDLL`,
+`LoadLibrary` or `load_library` call by its path's basename. A consumer that
+fingerprints native residency from `native_extensions` alone does not see an
+override's library; it must read this block too.
+
 ### 4.5e Per-operator presence, and the two reasons a quantized route refuses
 
 `native_ops.py` binds the two quantized routes to vLLM's own registered CUDA
@@ -6503,9 +7270,16 @@ served comparison is one encode under two servings rather than two encodes.
 
 ### 4.7 The verdict is served KL against the byte-matched control
 
-`experiments/uniform_control.py verify` asserts the match on the bytes that
+`python -m tessera.uniform_control verify` asserts the match on the bytes that
 shipped and, given both KLs, states whether the candidate beat its control.
 `tessera.control.control_block` carries that verdict beside the bpp.
+The CLI is packaged rather than loaded from `experiments/` (Refs #886). Its
+`plan --model` branch uses the public exporter's `quantizable` source classifier
+for the unchanged dense/unpacked logical population, not the retired experiment
+converter. The public handoff remains `tessera.uniform_control.v1`; neither
+integer accounting/slack/KL rules nor shipping/serving admission changes.
+An installed producer needs no PrismaQuant checkout to plan or verify a control.
+Historical measurement drivers remain bound to their historical revisions.
 
 **The verdict is published only over evidence the gate validated**
 (tessera#225). `ByteMatch` is where the four numbers a match reads have their
@@ -6940,6 +7714,153 @@ What this does not establish:
 
 Receipt: [the release serve's mode NONE](measurements/2026-10-01-glm-release-serve-mode-none.md).
 
+### 5.1.3 GLM-5.3 prefill overrides
+
+`src/tessera/serving/glm53_prefill.py` changes the pinned vLLM's stock
+GLM-5.3 (Glm5Next) prefill at serve time. `TesseraConfig.get_quant_method`
+installs it (`src/tessera/serving/config.py`). No vLLM or FlashInfer source
+file is edited. Each change checks the sha256 of every module it reads against
+an inspected interface (`_INTERFACES`: image `5be13705`, vLLM
+`0.30.1rc1.dev336+gaf5b4857e`). On any mismatch, or on a serve shape it was
+not measured on, it declines to the stock code with one warning and never
+raises.
+
+| Variable | Default | What it changes |
+|---|---|---|
+| `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
+| `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
+| `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
+| `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
+
+The module docstring records the decline rules and the exactness argument.
+The SP source read set includes the CUDA communicator, AG/RS route rule,
+PyNccl, parallel state, Torch utilities, MP executor, GPU worker and engine
+core. The qualified backend is `mp`. Ordinary SP requires an active,
+available TP2 PyNccl writer with `disabled=False` and `_suspended=False`;
+custom or symmetric-memory SP routes are outside this inspected qualification.
+`SpCollectiveGuard` agrees local availability through a MAX on the **existing
+TP CPU group** only when the existing state/split/threshold decision would
+activate SP. The optional `auto` threshold benchmark also checks availability
+before attempting its SP measurements. Profile/small/declined/captured passes
+keep their stock path. An unavailable writer at activation refuses both ranks
+before sharding. Subsequent boundary checks only inspect local status and
+the admitted writer identity, with no CPU collective per RS/AG. This prevents the pinned stock
+reduce-scatter wrapper from returning its unwritten `torch.empty` allocation
+when PyNccl silently returns on `disabled`.
+
+This scope follows the inspected lifecycle: PyNccl writes `disabled` only in
+construction/destruction; suspend/resume modify `_suspended` without toggling
+`disabled` (`pynccl.py:584–603`). `WorkerProc.worker_busy_loop` executes one
+RPC at a time (`multiproc_executor.py:1032–1050`). Engine pause drains pending
+work and synchronizes the device before sleep; the GPU worker synchronizes
+before communicator suspension (`gpu_worker.py:271–293`), and wake resumes
+communicators before the engine resumes scheduling (`core.py:957–978`).
+An unsupported disable/suspend/owner replacement inside an admitted model
+RPC refuses locally before enqueue; concurrent out-of-contract field mutation
+and cross-rank failure containment are not qualified by the CPU fixtures.
+No vLLM lifecycle method is modified. Capture enters no SP control exchange
+and retains the stock all-reduces. The active SP writer's tensor
+arguments, results and NCCL reduction order are unchanged; the added CPU
+activation control has unmeasured latency and energy overhead.
+
+The #863 completion merges master `15d9378e1d` without changing the
+qualified serving module, `test_glm53_prefill.py`, or the pinned PyNccl
+lifecycle fixture. Their SHA256 bindings retain the accepted CPU
+qualification (`2e52573116e3`, receipt `0efd4bd14bba`: 92 tests).
+PrismaBuild action `bf74cc45d85b` (receipt `fe82ab9cfd28`) additionally
+executed 28 writer-guard tests on the merged source: either-rank
+disabled-writer refusal before sharding, active writer arguments/order,
+stock non-SP fallback, and pinned suspend/resume method slices with CPU
+NCCL stand-ins. It passed on dl380g10 with Torch 2.11.0+cpu, native
+threads one, zero skips and zero CUDA allocations. Independent review
+then removed the wiring-only fake-tensor/collective call-echo test; the
+27 retained writer-guard cases and production contract are unchanged.
+The earlier count is historical, not a claim of 28 retained behaviors.
+Refusing an unsupported candidate must not bypass this ordinary-SP
+admission guard and return to the unsafe stock SP writer.
+This is source/CPU qualification only, not actual NCCL execution,
+capture replay, concurrent teardown containment, or a performance claim;
+defaults and GPU qualification remain unchanged.
+
+Every flag that rebinds a stock method or changes a stock default stays off by default until a served
+TR3 A/B against stock, on the same pin and in the same window, shows identical
+KL. For SP mHC and the conv
+split that A/B is the VAL787 window (arms VS, VK and VB against V0).
+
+`src/tessera/serving/sp_tile_overlap.py` contains an **uninstalled** SP tile
+pipeline primitive (#858). `SpTilePlan` gives each rank its half of every
+global token tile, pads only the final tile and reconstructs gathered tiles
+in original global order. The initial residual shard and all carried mHC
+state must use that ownership for an entire pass; stock contiguous rank
+halves are incompatible. `SpTileOverlap` enqueues all tile reduce-scatters
+on one communication stream, then each tile's all-gather after its mHC
+completion event. Compute waits for each reduce-scatter and for final side
+retirement. Allocations are registered before enqueue; partial enqueue or
+consumer errors join the side stream, following #804/#847's lifetime rule.
+The output-slice adapter uses the three explicit stock post/prenorm/pre
+kernels at the full batch's `SplitForcer` value, including a one-row tail.
+This extends #802's exact tiled body without admitting its negative isolated
+timing result as a performance qualification.
+
+`experiments/mhc/sp_tile_probe.py` prepares the finite actual-vLLM TP2 screen
+at 512/2048/2049 tokens, a global tile of 1024, and both mHC sites. It uses
+the stock distributed context and inspected PyNccl SP route
+through the same active-writer refusal used by ordinary SP: unavailable,
+disabled, suspended or unknown PyNccl owners decline before enqueue. It checks
+all four outputs and global token identities, retains a wrong-layout control, and
+records ABBA timing, both-rank Torch traces, raw power and each host's Netdata.
+Its CPU stream fixtures do not qualify CUDA/NCCL arithmetic or a serving
+speedup. The old #804 all-reduce overlap runs with SP off; it cannot accelerate
+the SP-force A8SE baseline. Any future serving wiring needs a separate,
+default-off guarded hook plus this real TP2 screen and matched serving gates.
+
+`experiments/mhc/mhc_probe.py --parts kdaptx --numerics-only` is the
+convolution reference screen for potential future FlashKDA fusion. It is
+not a serving override. It compares actual q/k/v output and the whole
+convolution state bit for bit, including spare/speculative columns and
+unused cache slots. The logical prefill history is `KERNEL_WIDTH - 1`,
+regardless of physical cache length; for width four, stock reads and
+writes columns 0..2. Contract `tessera.kda_conv_screen.v2` requires FMA,
+division, physical-tail-read and physical-tail-write mutations to differ
+from the unmodified candidate in actual output or state. Ex2-ftz remains
+required as a separate observable: an actual subnormal FP32 exponential
+must differ, while the rounded `+1` denominator, FP32 SiLU and BF16 output
+remain bit-identical. Actual raw words, summaries, finite-input scope and
+current PTX/build flags/compiled module/SASS digests are checked. Missing,
+malformed, stale or vacuous control evidence fails; the entire convolution
+matrix must also observe no ex2 output/state difference. Admission requires
+the complete 24-case roster from the same `KDA_PTX_CASES` definition the
+producer uses, matched geometry/sequence lengths/history masks, typed
+raw-word comparison counts and equality flags, q/k/v slice totals and
+case-derived aggregate summaries. Any failure
+stops later parts. The original v1 failure is preserved, not re-labelled.
+Banked cases are reused only when relevant device text and test inputs
+are unchanged; the artifact audit seals expected JSON and old-module
+digests, requires the compared new module to equal the control's compiled
+identity, requires every mode in `KDA_PTX_MODES` exactly once in each cubin
+(no extra/missing mode), and checks the installed stock source. The screen
+explicitly does not cover recurrent output or final recurrent state, and
+cannot admit a fused serving implementation by itself. `kdafwd` is a
+separate stock-kernel timing screen; its results require PrismaBuild's
+measurement admission and both in-process and host telemetry.
+Its `tessera.kda_stock_screen.v1` output binds the installed stock module
+and executed harness by SHA-256, queries native workspace bytes, and
+refuses missing or ambiguous prepare/recurrence identities. It retains
+full gzip torch-profiler traces through the published PB helper,
+separates allocation/warmup, profile, settle and steady graph intervals,
+and reports cumulative completed calls only after synchronization.
+Before either measure or publish progress advances, the corresponding
+complete JSON is file-fsynced, atomically renamed and directory-fsynced.
+The existing residency policy provides distinct resident copies. Each
+window retains fast NVML samples and full unfiltered Netdata responses,
+returned views and exact intervals from both Sparks. Energy remains
+unqualified until coverage agreement is established. FP32 recurrent
+state is the pinned model's native default; BF16 state and H=1 are
+explicit diagnostics, and H=1 prepare still launches multiple CTAs.
+The measured T512/T2048 H32 stock baseline is recorded in
+[the stock profile](measurements/2026-10-02-kda-stock-native-profile.md);
+it does not admit a serving change or substitute for recurrent-quality
+validation of a future fused candidate.
 ### 5.1.4 Opt-in: fold the MoE shared-expert add into the token sum (tessera#799)
 
 Each stock MoE layer ends with `result = shared_output + fused_output`

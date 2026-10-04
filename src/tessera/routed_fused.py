@@ -92,6 +92,7 @@ __all__ = [
     "compose_table8",
     "dense_forward",
     "dense_k_split",
+    "dense_split_max",
     "dense_rates",
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
@@ -140,6 +141,14 @@ LIBRARIES = {
 ENV_E4M3_MMA = "TESSERA_FUSED_E4M3_MMA"
 E4M3_MMA_CHOICES = ("f16", "e4m3")
 E4M3_MMA_DEFAULT = "e4m3"
+# Build-scoped experiment, frozen before the first extension load. Off/on arms
+# require distinct processes and build directories, never a cached-module retarget.
+ENV_MMA8_GATE_UP_B_PREFETCH = "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH"
+_mma8_b_choice = os.environ.get(ENV_MMA8_GATE_UP_B_PREFETCH, "0")
+if _mma8_b_choice not in ("0", "1"):
+    raise GrammarError(f"{ENV_MMA8_GATE_UP_B_PREFETCH}={_mma8_b_choice!r}; one of ('0', '1')")
+MMA8_GATE_UP_B_PREFETCH = int(_mma8_b_choice)
+del _mma8_b_choice
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
@@ -467,6 +476,7 @@ def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> lis
     return ["-O3", "-lineinfo", "-std=c++17",
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
+            *([f"-D{ENV_MMA8_GATE_UP_B_PREFETCH}={MMA8_GATE_UP_B_PREFETCH}"] if mma8 else []),
             *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
             *offload_flags(token, arch_specific=fp4)]
 
@@ -550,6 +560,13 @@ def _ext(library: str):
         raise GrammarError(f"the fused routed lane builds the libraries {sorted(LIBRARIES)}, got {library!r}")
     module, family, mma8 = LIBRARIES[library]
     fp8 = family == "e4m3"
+    # Experimental selection is frozen by the existing per-library owner cache.
+    value_prefetch = os.environ.get("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "0") if library == "value" else "0"
+    if value_prefetch not in ("0", "4"):
+        raise GrammarError("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH must be 0 or 4")
+    source_module = module
+    if value_prefetch == "4":
+        module = "tessera_routed_fused_value_prefetch4"
 
     def compile_fn(src, build, token, verbose):
         if mma8:
@@ -562,12 +579,20 @@ def _ext(library: str):
                 name="tessera_routed_fused_e4m3",   # literal: the contract scanner reads it
                 sources=[src], build_directory=build,
                 extra_cuda_cflags=_cflags(token, True), verbose=verbose)
+        if value_prefetch == "4":
+            return load(
+                name="tessera_routed_fused_value_prefetch4",
+                sources=[src], build_directory=build,
+                extra_cuda_cflags=_cflags(token, False) + ["-DTESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=4"],
+                verbose=verbose)
         return load(
             name="tessera_routed_fused_value",  # literal: the contract scanner reads it
             sources=[src], build_directory=build,
             extra_cuda_cflags=_cflags(token, False), verbose=verbose)
 
-    lib = build_library(module, module, compile_fn)
+    lib = build_library(module, source_module, compile_fn)
+    if library == "value" and lib.VALUE_A_PREFETCH != int(value_prefetch):
+        raise GrammarError("the value library prefetch distance differs from its frozen selection")
     dense_max = DENSE_RATE_MAX["e4m3" if fp8 else "value"]
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
                        ("DENSE_ROW_QUANTUM", DENSE_ROW_QUANTUM),
@@ -586,6 +611,12 @@ def _ext(library: str):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{module} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
+    if mma8:
+        actual = getattr(lib, "MMA8_GATE_UP_B_PREFETCH", None)
+        if actual != bool(MMA8_GATE_UP_B_PREFETCH):
+            raise GrammarError(
+                f"{module} was built with MMA8_GATE_UP_B_PREFETCH={actual!r}; "
+                f"this process expects {bool(MMA8_GATE_UP_B_PREFETCH)!r}")
     return lib
 
 
@@ -753,6 +784,20 @@ def block_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     return desc.to(torch.int32).contiguous()
 
 
+def has_one_rate_four_run(b, e: int) -> bool:
+    """Whether a bundle is the bounded one-run rate-4 body (tessera#739).
+
+    The piece-major resident layout is scoped to exactly this shape: one run,
+    rate 4, covering every column.  ``run_pair`` already validates that shape;
+    this reads its result rather than the raw table.
+    """
+    pair, why = run_pair(b.runs_all.reshape(e, -1, 4)[0], int(b.cols))
+    if why is not None or pair is None:
+        return False
+    r_lo, _c0, n_lo, _w0, _r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
+    return n_hi == 0 and r_lo == 4 and n_lo == int(b.cols)
+
+
 def _run_stack_reason(name: str, b, e: int) -> "str | None":
     """The wire checks every fused window lane makes on one projection's
     stack: words by expert, one run table for the stack that is the kernel's
@@ -826,6 +871,32 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
             return f"{name} lives on {b.device}; the lane is CUDA"
         if b.window_bits != WINDOW_BITS:
             return f"{name} window_bits {b.window_bits} != {WINDOW_BITS}"
+        # The word layout must be an EXACT tag this lane reads: 'legacy' for
+        # every stack, or 'piece_major' for the bounded E4M3 one-run rate-4
+        # routed body only (tessera#739).  An unknown tag is refused, and the
+        # three bundles must agree -- never inferred from one of them.
+        lays = {str(getattr(x, "word_layout", "legacy")) for x in bundles.values()}
+        if len(lays) != 1:
+            return f"the gate/up/down bundles disagree on their word layout: {sorted(lays)}"
+        layout = lays.pop()
+        if layout not in ("legacy", "piece_major"):
+            return f"{name} carries unknown word layout {layout!r}"
+        if layout == "piece_major":
+            if fam != "e4m3":
+                return (f"{name} is piece_major; the lane reads piece-major only for the "
+                        f"E4M3 family, not {fam!r}")
+            # The piece-major reader is instantiated only in the MMA E4M3
+            # library.  An explicit TESSERA_FUSED_E4M3_MMA=f16 selects the
+            # f16-byte reader, which reads legacy words only: refuse here, before
+            # the device query or any smem/extension build below.
+            lib = library_for(fam)
+            if not library_mma8(lib):
+                return (f"{name} is piece_major, which the lane reads only on the MMA E4M3 "
+                        f"reader ({ENV_E4M3_MMA}={os.environ.get(ENV_E4M3_MMA, E4M3_MMA_DEFAULT)!r} "
+                        f"selects {lib!r})")
+            if not has_one_rate_four_run(b, e):
+                return (f"{name} is piece_major, which the lane reads only for a single run at "
+                        f"rate 4; its run table is not one rate-4 run over {b.cols} columns")
         if int(b.experts) != e:
             return f"{name} has {b.experts} experts, down has {e}"
         if fam == "e4m3" and b.quantizer != "native":
@@ -996,6 +1067,16 @@ class FusedRoutedWindowMoE:
     counters: torch.Tensor
     activation: str = "silu"
 
+    @property
+    def piece_major(self) -> bool:
+        """Whether the resident words are the piece-major order (tessera#739).
+
+        Read off the bundles' shared tag (``word_layout``), never recomputed
+        from the run table: the reader must agree with how the stack was
+        actually written.
+        """
+        return str(getattr(self.down, "word_layout", "legacy")) != "legacy"
+
     @classmethod
     def from_bundles(cls, gate, up, down, *, activation: str = "silu") -> "FusedRoutedWindowMoE":
         reason = fused_routed_window_supported(gate, up, down)
@@ -1101,6 +1182,7 @@ class FusedRoutedWindowMoE:
             b0.scale_all, b1.scale_all,
             r0, r1, d0, d1,
             int(tile_words), int(slot_words),
+            bool(self.piece_major),
             routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
@@ -1255,6 +1337,12 @@ def fused_dense_window_supported(bundle) -> "str | None":
     ``tessera::window_gemm_dense``, and the reason is the string returned
     here so a load log can say which.
     """
+    from .kernel_window_gemv import require_legacy_word_layout
+    try:
+        require_legacy_word_layout(getattr(bundle, "word_layout", "legacy"),
+                                   "the fused dense window reader")
+    except GrammarError as exc:
+        return str(exc)
     if not fused_dense_window_enabled():
         return f"disabled by {ENV_TOGGLE_DENSE}=0"
     fam = bundle.family
@@ -1395,6 +1483,23 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
         tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
+def dense_split_max(cols: int) -> int:
+    """The largest K split the dense launch takes at ``cols`` columns.
+
+    The producers write item ``i + 2``'s descriptor into item ``i``'s slot
+    once item ``i + 1``'s last chunk has waited for the chunk two before it
+    to be consumed; the consumers read item ``i``'s slot before they release
+    its first chunk.  Items ``i`` and ``i + 1`` of three chunks or more
+    between them order the two, so every split item keeps two chunks:
+    ``floor(nk / S) >= 2``, ``nk = cols / 32``.  The split launch's epilogue
+    writes the raw partial from registers and reads no slot, so this is the
+    whole bound.  The library refuses a larger split by name (tessera#805; the
+    E2M1 launch's :func:`tessera.routed_fused_e2m1.dense_split_max` is the
+    same bound on the same protocol).
+    """
+    return int(cols) // BK // 2
+
+
 def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
     """How many ways to split K for one role at ``m`` rows: the bandwidth model.
 
@@ -1410,16 +1515,17 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
     with ``wire = rows * tile_words * 4 / 512`` -- the role's wire bytes, from
     its words per 512-row tile (``rows * cols / 2`` at rate 4, the default
     when ``tile_words`` is not given).  The minimiser over the integers
-    ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
-    SM count and the byte counts, nothing else.
+    ``1 .. min(dense_split_max(K), ceil(sms / items0))`` is returned; the
+    constants are the SM count and the byte counts, nothing else.  The upper
+    end is the launch's legality bound (:func:`dense_split_max`), not a
+    tuning choice: the library refuses a larger split.
     """
     items0 = -(-m // BM) * -(-rows // BN)
-    nk = cols // BK
     if items0 >= sms or m <= 0:
         return 1
     wire = rows * cols // 2 if tile_words is None else rows * int(tile_words) * 4 // 512
     best_s, best_t = 1, None
-    for s in range(1, min(nk, -(-sms // items0)) + 1):
+    for s in range(1, min(dense_split_max(cols), -(-sms // items0)) + 1):
         t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
         if best_t is None or t < best_t:
             best_s, best_t = s, t
