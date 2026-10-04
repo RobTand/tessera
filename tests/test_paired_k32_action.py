@@ -129,3 +129,17 @@ def test_abba_summary_checks_qualified_population(monkeypatch,fault):
     if fault:
         with pytest.raises(ValueError):module.timing_summary(reports,cert)
     else:assert module.timing_summary(reports,cert)['cells']['512']['operator_speedup']==2
+
+
+def test_paired_netdata_uses_the_same_stable_box_endpoints(monkeypatch):
+    import ipaddress
+    module = action(monkeypatch)
+    calls = []
+    owner = SimpleNamespace(collect=lambda address, *args: calls.append(address) or {"address": address})
+    spec = SimpleNamespace(loader=SimpleNamespace(exec_module=lambda loaded: None))
+    monkeypatch.setattr(module.importlib.util, "spec_from_file_location", lambda *args: spec)
+    monkeypatch.setattr(module.importlib.util, "module_from_spec", lambda value: owner)
+    result = module.netdata_window(10, 20)
+    assert calls == [address for _, address in module.BOX_ENDPOINTS]
+    assert set(result) == {host for host, _ in module.BOX_ENDPOINTS}
+    assert all(not ipaddress.ip_address(address).is_loopback for address in calls)

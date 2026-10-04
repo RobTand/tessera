@@ -19,6 +19,7 @@ import time
 import statistics
 
 from paired_k32_qualification import compare_reports,numeric_certificate,NUMERIC_RECEIPT,NUMERIC_RECEIPT_SHA
+from routed_gate_netdata import BOX_ENDPOINTS
 from tessera.serving.timing_panel import timing_summary as event_summary
 
 
@@ -135,7 +136,7 @@ def netdata_window(after,before):
     spec=importlib.util.spec_from_file_location('_paired_existing_box_power_owner',path)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return {host:module.collect(addr,int(after),int(before),max(4,int(before-after)))
-            for host,addr in [('sparky','127.0.0.1'),('sparklina','192.168.1.110')]}
+            for host,addr in BOX_ENDPOINTS}
 
 
 def require_pb_execution():

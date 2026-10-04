@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for placement-independent paired box attribution
+(#918). Both routed diagnosis and paired sampling use one stable two-Spark
+endpoint owner; localhost is never relabelled as Sparky on another worker.
+No raw values, requested windows, cadence labels or historical evidence are
+rewritten; energy and work/J still require actual attribution review.
+
 Re-stamped 2026-10-04 for paired custom-op PB execution admission (#917).
 The paired batch and its wrapper require an admitted PrismaBuild context;
 held-original-FD input transport is not a vLLM service exemption. Existing

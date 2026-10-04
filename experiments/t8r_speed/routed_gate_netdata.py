@@ -5,6 +5,7 @@ import math
 import sys
 from pathlib import Path
 
+BOX_ENDPOINTS = (("sparky", "192.168.1.180"), ("sparklina", "192.168.1.110"))
 
 def retain_query(owner, address, context, dimensions, start, end, points):
     """Keep each diagnostic response/error without losing other host evidence."""
@@ -45,7 +46,7 @@ def main():
     for phase, (a,z) in phases.items():
         start,end = math.floor(a),math.ceil(z)
         boxes = {}
-        for host,address in [('sparky','192.168.1.180'),('sparklina','192.168.1.110')]:
+        for host,address in BOX_ENDPOINTS:
             try:
                 # Preserve the owner's explicit queries, update_every and points;
                 # never infer fast cadence from an averaged returned series.

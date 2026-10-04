@@ -12249,6 +12249,10 @@
     "state": "OPEN",
     "title": "[P1] Paired custom-op numeric launcher must require admitted PB execution"
    },
+   "918": {
+    "state": "OPEN",
+    "title": "[P1] Paired telemetry must attribute each Spark independently of PB placement"
+   },
    "910": {
     "state": "OPEN",
     "title": "[P2] Bind the VB1770 baseline serve run: no doc names u4-VAL787-20261001T1231Z-A8SE752VB, its serve image digest, or the 1770.27 tok/s host-L8192-c1 cell"
