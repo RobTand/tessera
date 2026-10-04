@@ -143,44 +143,115 @@ def test_the_committed_artifact_plan_dry_runs_end_to_end(tmp_path):
     assert strip(eager) == graph[:cc] + graph[cc + 2:]
 
 
-def _arm_dir(root, name, *, image_digest, max_model_len, model):
+REF = "localhost/prismaquant/spark-vllm-nccl230@sha256:"
+
+
+def _arm_dir(root, name, *, image_digest="a", max_model_len=8448, model, script="c" * 64,
+             kernel='{"enable_flashinfer_autotune":false}', extra=(), drop=()):
+    """An arm directory as arm.sh writes it after review 2: the runtime gate's bare digest
+    (``image_digest_resolved=sha256:<hex>``, runtime_image.py's real shape) beside the whole
+    reference it resolved (``image_resolved_reference=<repo>@sha256:<hex>``)."""
     d = root / name
     d.mkdir()
-    (d / f"engine-args-{name}.txt").write_text("\n".join([
-        f"arm={name}", "eager=1", f"image=localhost/prismaquant/spark-vllm-nccl230@sha256:{'0' * 64}",
-        f"image_digest_resolved=localhost/prismaquant/spark-vllm-nccl230@sha256:{image_digest * 64}",
-        f"serve_args=--host 0.0.0.0 --tensor-parallel-size 1 --max-model-len {max_model_len} "
-        "--max-num-seqs 8 --kernel-config '{\"enable_flashinfer_autotune\":false}'",
-        "spec_json=", f"src_sha256={'s' * 64}", f"model={model}"]) + "\n")
+    lines = [f"arm={name}", "eager=1", f"image={REF}{'0' * 64}",
+             f"image_digest_resolved=sha256:{image_digest * 64}",
+             f"image_resolved_reference={REF}{image_digest * 64}",
+             f"serve_args=--host 0.0.0.0 --tensor-parallel-size 1 --max-model-len {max_model_len} "
+             f"--max-num-seqs 8 --kernel-config '{kernel}'",
+             "spec_json=", f"src_sha256={'s' * 64}", f"hooks_sha256={'h' * 64}",
+             f"equal_script_sha256={script}", f"model={model}", *extra]
+    lines = [l for l in lines if l.split("=", 1)[0] not in drop]
+    (d / f"engine-args-{name}.txt").write_text("\n".join(lines) + "\n")
     return d
 
 
-def test_arms_that_measured_different_serves_make_no_receipt(tmp_path):
+@pytest.fixture
+def model(tmp_path):
+    m = tmp_path / "model"
+    m.mkdir()
+    (m / "config.json").write_text("{}")
+    return m
+
+
+def _scopes(tool, root, names, legacy=None):
+    return {n: tool.arm_scope(root / n, n, legacy) for n in names}
+
+
+def test_the_image_is_the_whole_resolved_reference_never_the_bare_digest(tmp_path, model):
+    tool = _receipt_tool()
+    _arm_dir(tmp_path, "e1", model=model)
+    assert tool.arm_scope(tmp_path / "e1", "e1")["image"] == f"{REF}{'a' * 64}"
+
+
+def test_a_bare_digest_alone_names_no_image(tmp_path, model):
+    """The post-measurement arm.sh recorded only the bare digest; with no reference beside it
+    and no digest-pinned declaration, the arm has no image scope."""
+    tool = _receipt_tool()
+    _arm_dir(tmp_path, "e1", model=model, drop=("image_resolved_reference", "image"),
+             extra=("image=localhost/prismaquant/spark-vllm:latest",))
+    with pytest.raises(SystemExit, match="did not record.*image"):
+        tool.arm_scope(tmp_path / "e1", "e1")
+
+
+def test_arms_that_measured_different_serves_make_no_receipt(tmp_path, model):
     """Review of #930: a scope field is read from what each arm recorded, and arms that
     disagree on any of them (here the image and max_model_len) are not one measurement."""
     tool = _receipt_tool()
-    model = tmp_path / "model"
-    model.mkdir()
-    (model / "config.json").write_text("{}")
-    _arm_dir(tmp_path, "e1", image_digest="a", max_model_len=8448, model=model)
+    _arm_dir(tmp_path, "e1", model=model)
     _arm_dir(tmp_path, "g1", image_digest="b", max_model_len=4096, model=model)
-    scopes = {n: tool.arm_scope(tmp_path / n, n) for n in ("e1", "g1")}
+    scopes = _scopes(tool, tmp_path, ("e1", "g1"))
     assert scopes["e1"]["tensor_parallel_size"] == 1 and scopes["g1"]["max_model_len"] == 4096
-    with pytest.raises(SystemExit, match=r"differ in \['image', 'max_model_len'\]"):
+    with pytest.raises(SystemExit, match=r"differ in \['image', 'max_model_len'") as refused:
         tool.one_measurement(scopes)
-    _arm_dir(tmp_path, "g2", image_digest="a", max_model_len=8448, model=model)
-    shared = tool.one_measurement({n: tool.arm_scope(tmp_path / n, n) for n in ("e1", "g2")})
-    assert shared["image"].endswith("a" * 64)
+    assert "serve_flags" in str(refused.value)   # the argv carries max_model_len too
+    _arm_dir(tmp_path, "g2", model=model)
+    assert tool.one_measurement(_scopes(tool, tmp_path, ("e1", "g2")))["image"].endswith("a" * 64)
 
 
-def test_an_arm_that_recorded_no_digest_pinned_image_has_no_scope(tmp_path):
+@pytest.mark.parametrize("change, field", [
+    (dict(script="d" * 64), "equal_script_sha256"),
+    (dict(kernel='{"enable_flashinfer_autotune":true}'), "kernel_config"),
+    (dict(extra=("fabric_requested=roce",)), "fabric_requested"),
+    (dict(extra=("tessera_env=TESSERA_FUSED_E4M3_MMA=e4m3",)), "tessera_env"),
+])
+def test_arms_that_ran_another_script_or_setup_make_no_receipt(tmp_path, model, change, field):
     tool = _receipt_tool()
-    model = tmp_path / "model"
-    model.mkdir()
-    (model / "config.json").write_text("{}")
-    d = _arm_dir(tmp_path, "e1", image_digest="a", max_model_len=8448, model=model)
-    text = (d / "engine-args-e1.txt").read_text()
-    text = "\n".join(l for l in text.splitlines() if not l.startswith("image"))
-    (d / "engine-args-e1.txt").write_text(text + "\nimage=localhost/prismaquant/spark-vllm:latest\n")
-    with pytest.raises(SystemExit, match="did not record"):
-        tool.arm_scope(d, "e1")
+    _arm_dir(tmp_path, "e1", model=model)
+    _arm_dir(tmp_path, "g1", model=model, **change)
+    with pytest.raises(SystemExit, match=field):
+        tool.one_measurement(_scopes(tool, tmp_path, ("e1", "g1")))
+
+
+def test_the_operator_priority_a_graph_arm_pins_is_not_a_setup_difference(tmp_path, model):
+    """rG4 pins eager's IR priority in its kernel config: the execution mode under test."""
+    tool = _receipt_tool()
+    _arm_dir(tmp_path, "e1", model=model)
+    _arm_dir(tmp_path, "g4", model=model, kernel='{"enable_flashinfer_autotune":false,'
+             '"ir_op_priority":{"rms_norm":["vllm_c","native"]}}')
+    tool.one_measurement(_scopes(tool, tmp_path, ("e1", "g4")))
+
+
+def test_a_legacy_arm_takes_its_script_from_its_own_snapshot_or_has_no_scope(tmp_path, model):
+    tool = _receipt_tool()
+    _arm_dir(tmp_path, "e1", model=model, drop=("equal_script_sha256",))
+    with pytest.raises(SystemExit, match="equal_script_sha256"):
+        tool.arm_scope(tmp_path / "e1", "e1")
+    legacy = {"e1": {"sha256": "c" * 64, "source": "snapshot"}}
+    assert tool.arm_scope(tmp_path / "e1", "e1", legacy)["equal_script_sha256"] == "c" * 64
+
+
+@pytest.mark.parametrize("files, tp, ok", [
+    (["aGR.rank0.dispatch.1.json", "aGR.rank1.dispatch.2.json"], 2, True),
+    (["aGR.rank1.dispatch.2.json"], 2, False),                 # the head's copy never arrived
+    (["aGR.dispatch.1.json"], 1, True),
+    (["aGR.rank0.dispatch.1.json"], 1, False),
+])
+def test_a_tensor_parallel_arm_needs_every_ranks_dispatch_log(tmp_path, files, tp, ok):
+    tool = _receipt_tool()
+    for name in files:
+        (tmp_path / name).write_text("{}")
+    if ok:
+        tool.require_every_rank(tmp_path, "aGR", tp)
+    else:
+        with pytest.raises(SystemExit, match="cannot show it replayed"):
+            tool.require_every_rank(tmp_path, "aGR", tp)
