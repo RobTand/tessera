@@ -650,11 +650,12 @@ ENV_DENSE_MODULE`) selects the dense identity's launch shape and K split
 model, read per call:
 - **Unset or `0` (the default).** One launch per role, with
   `dense_k_split_bandwidth`. This is the model and range from before
-  tessera#778, up to `K / 32`, with the split reduced by `dense_reduce_kernel`.
+  tessera#778, with the split reduced by `dense_reduce_kernel` and bounded by
+  `dense_split_max` (`K / 64`, tessera#805).
   It is the per-role path that ran before, on both families.
 - **`1`.** On the E4M3 libraries, one `dense_forward_roles` launch per
   module, with the split reduced in the kernel. Every dense launch is priced
-  with `dense_k_split_makespan`, whose range ends at `dense_split_max`.
+  with `dense_k_split_makespan`, whose range ends at `dense_fixup_split_max`.
 
 Any other value is refused by name.
 
@@ -718,7 +719,7 @@ Linear's roles at once and reduces a K split in the kernel, bitwise the
 two-launch result (`MULTI = DENSE && FP8` in `routed_fused_window.cu`; the value
 family and every routed launch keep their code, and their SASS differs from
 before by at most one commuted `IADD3`). A split the kernel reduces itself
-keeps every item at least `STAGES + 1` K chunks long (`dense_split_max`), which
+keeps every item at least `STAGES + 1` K chunks long (`dense_fixup_split_max`), which
 keeps the producers from rewriting the descriptor and row-scale slot of an
 item still in its fixup. The module launch is opt-in
 (`TESSERA_DENSE_MODULE_LAUNCH=1`, the 2026-10-01 stamp below). No route, rung,
@@ -4846,26 +4847,29 @@ one bf16 rounding. `dense_k_split(m, rows, cols, sms)` is the split every
 launch asks for. It dispatches on `TESSERA_DENSE_MODULE_LAUNCH`, read per call:
 - **Unset or `0` (the default).** `dense_k_split_bandwidth`: the integer
   minimiser of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 ..
-  min(K/32, ceil(sms/items))`, which returns 1 as soon as every SM has an item.
-  This is the model from before tessera#778.
+  min(dense_split_max(K), ceil(sms/items))`, with `dense_split_max = K/64`
+  (tessera#805), which returns 1 as soon as every SM has an item. This is the
+  model from before tessera#778.
 - **`1`.** `dense_k_split_makespan`: the integer minimiser of the launch's
   makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) / nk + c) +
-  2 S M N 4` over `1 .. min(dense_split_max(K), sms)`.
+  2 S M N 4` over `1 .. min(dense_fixup_split_max(K), sms)`.
   - `item` is the wire bytes of one 128-row block over K, and `c =
     DENSE_ITEM_FIXED_BYTES` is the measured per-item cost.
   - tessera#750: the last wave's idle SMs cost a whole wave, so 32 items split
     three ways, not two.
 
-`dense_split_max(K) = (K / 32) / (STAGES + 1)` is the range of a split the
-kernel reduces itself. Every such item keeps at least three K chunks, because
+`dense_fixup_split_max(K) = (K / 32) / (STAGES + 1)` is the range of a split the
+kernel reduces itself, inside every launch's `dense_split_max` bound. Every
+such item keeps at least three K chunks, because
 the producers run at most `STAGES` = 2 chunks ahead and write an item's
 descriptor and row-scale slot (two slots, alternating) when they claim it, so a
 shorter item two back could still be in its fixup. The library refuses a larger
 split there.
 
-The one-role launch, reduced by `dense_reduce_kernel`, takes the earlier range
-up to `K / 32`. Its short-item window, which the bandwidth model reaches for
-roles of at most 128 rows at small M, is tessera#805.
+The one-role launch, reduced by `dense_reduce_kernel`, takes only the
+`dense_split_max` bound (`K / 64`, tessera#805): two K chunks per item, which
+closes the short-item window the bandwidth model used to reach for roles of at
+most 128 rows at small M.
 
 Prefill shapes, whose items fill whole waves or whose partials outweigh the
 idle tail, run the unsplit kernel under either model. Two runs are bitwise equal in both regimes and a captured

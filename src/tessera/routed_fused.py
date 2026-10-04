@@ -213,7 +213,8 @@ DENSE_ITEM_FIXED_BYTES = 7300
 #: item of at least ``STAGES + 1`` chunks guarantees that the descriptor and
 #: row-scale slot two items back is free before it is rewritten; a split the
 #: kernel reduces itself may not cut an item shorter (:func:`dense_fixup_split_max`).
-#: The one-role launch keeps its earlier range, up to ``K / 32`` (tessera#805).
+#: Every launch, the fixup one included, is also bounded by :func:`dense_split_max`
+#: (``K / 64``, tessera#805).
 STAGES = 2
 #: The most roles one dense launch takes (``MAX_ROLES`` in the source): a
 #: module with more is launched in groups of at most this many.
