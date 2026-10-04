@@ -51,6 +51,11 @@ the served kernel AND repeat bit-deterministically, every counted survivor must
 be bitwise on every distribution, and the sample statistic must be the
 conventional median of the raw ABBA observations. A reference mismatch is
 retained as a diagnostic row and refuses the serving table for that shape.
+
+``--synthetic-only`` is an explicit opt-in screen posture: it never stats or
+opens the recorded-capture paths, reports ``real_source: not_measured`` and
+stamps the run as a screen. Real-input qualification remains a separate step
+against the existing pinned intake.
 """
 from __future__ import annotations
 
@@ -149,7 +154,7 @@ def power_of(call, seconds, sampler):
         return {"error": repr(exc)}
 
 
-def inputs(capture, rows, k, dev, seed):
+def inputs(capture, rows, k, dev, seed, allow_capture=True):
     """Per distribution, an [rows, k] bf16 tensor (``real`` None without a capture)."""
     g = torch.Generator(device=dev).manual_seed(seed)
     out = {"normal": torch.randn(rows, k, generator=g, device=dev).to(torch.bfloat16),
@@ -159,15 +164,18 @@ def inputs(capture, rows, k, dev, seed):
     u = torch.rand(rows, k, generator=g, device=dev)
     out["adversarial"] = (sign * torch.exp2(e) * (1 + u)).to(torch.bfloat16)
     out["real"], out["real_source"] = None, None
-    if capture is not None:
+    # The path is not even built when the run may not open it: a synthetic-only
+    # screen never names, stats or opens a mutable capture.
+    capture_desc = None
+    if capture is not None and allow_capture:
         name, cols = CAPTURES[capture]
-        res = resolve_real_input(True, (name, cols, os.path.join(CAPTURE, name)), rows, k,
-                                 os.path.exists,
-                                 lambda p: torch.load(p, map_location="cpu",
-                                                      weights_only=False)["inputs"])
-        out["real"], out["real_source"] = res["real"], res["real_source"]
-        if out["real"] is not None:
-            out["real"] = out["real"].contiguous().to(torch.bfloat16).to(dev)
+        capture_desc = (name, cols, os.path.join(CAPTURE, name))
+    res = resolve_real_input(allow_capture, capture_desc, rows, k, os.path.exists,
+                             lambda p: torch.load(p, map_location="cpu",
+                                                  weights_only=False)["inputs"])
+    out["real"], out["real_source"] = res["real"], res["real_source"]
+    if out["real"] is not None:
+        out["real"] = out["real"].contiguous().to(torch.bfloat16).to(dev)
     return out
 
 
@@ -190,8 +198,12 @@ def main():
     ap.add_argument("--survivors", type=int, default=8)
     ap.add_argument("--row-tiles", type=lambda v: [int(x) for x in v.split(",") if x], default=[128, 256, 512, 1024],
                     help="tile row counts for the row-tile check (empty to skip)")
+    ap.add_argument("--synthetic-only", action="store_true",
+                    help="never stat or open the recorded-capture paths; the real distribution is "
+                         "reported as not_measured and this run is a screen, not qualification")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    allow_capture = not args.synthetic_only
     ms_list = [int(v) for v in args.m.split(",")]
     m0 = ms_list[0]
     t0 = time.time()
@@ -211,6 +223,9 @@ def main():
                 build_s=round(time.time() - t0, 1), m=ms_list,
                 pinned_gemm_cpp_sha256=hashlib.sha256(open(PINNED_GEMM_SOURCE, "rb").read()).hexdigest(), workspace_bytes=WS_BYTES,
                 power_source=getattr(sampler, "source", None),
+                synthetic_only=allow_capture is False,
+                real_input="not_measured" if not allow_capture else "recorded_capture_or_missing",
+                capture_root=None if not allow_capture else CAPTURE,
                 started=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
     ws = torch.empty(WS_BYTES, dtype=torch.uint8, device=dev)
     results, entries = [], []
@@ -243,7 +258,7 @@ def main():
         ts = time.time()
         torch.manual_seed(n * 7 + k)
         w = (torch.randn(n, k, device=dev) * 0.02).to(torch.bfloat16)
-        xs = inputs(capture, max(ms_list), k, dev, seed=n + 3 * k)
+        xs = inputs(capture, max(ms_list), k, dev, seed=n + 3 * k, allow_capture=allow_capture)
         refs = {}
         for m in ms_list:
             for dist in DISTRIBUTIONS:
@@ -373,6 +388,7 @@ def main():
                                       reference_ms=ref_med, ms=pick_med,
                                       reference_matches_served_kernel=rec["reference"]["matches_served_kernel"],
                                       reference_deterministic=rec["reference"]["deterministic"],
+                                      synthetic_only=not allow_capture,
                                       label="[S] timing screen")))
                 elif refusal is not None:
                     # Fail closed: a faster pick under an unqualified reference is

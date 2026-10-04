@@ -61,16 +61,16 @@ def admit_pick(matches_served_kernel, deterministic, saving_ms):
 
 
 def resolve_real_input(allow_capture, capture, rows, k, exists, load):
-    """Resolve the ``real`` distribution from a recorded capture.
+    """Resolve the ``real`` distribution: recorded capture, named gap, or not_measured.
 
     ``capture`` is ``(name, cols, path)`` or None; ``exists``/``load`` are
     injected so a run (and these tests) observe exactly which paths are
-    stat'ed or opened.
-
-    OLD RULE (pre-#850): ``allow_capture`` is accepted but not consulted --
-    a present capture is always opened.
+    stat'ed or opened.  A synthetic-only run (``allow_capture`` False) is a
+    screen: neither ``exists`` nor ``load`` is called for any capture path,
+    and the real distribution is reported as ``not_measured``.
     """
-    del allow_capture
+    if not allow_capture:
+        return {"real": None, "real_source": "not_measured"}
     if capture is None:
         return {"real": None, "real_source": None}
     name, cols, path = capture
