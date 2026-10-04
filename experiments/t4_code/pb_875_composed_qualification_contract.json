@@ -1,48 +1,49 @@
 {
   "issue": 875,
-  "pr": 900,
-  "scope": "Finite synthetic numeric and native safety qualification ONLY. No calibrated scientific quality, timing, energy, serving, allocation/default or PACT frontier claim.",
-  "source_revision": "1b90b813125932c0b27ec19a68fc56389271f963",
+  "pr": null,
+  "scope": "Finite synthetic numeric and native safety qualification ONLY on the current master source a3a599ec47457b6be769c2e3ec55859f5e759aff. No calibrated scientific quality, timing, energy, serving, allocation/default or PACT frontier claim; no menu, runtime pin, census or default promotion.",
+  "source_revision": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
   "snapshot_binding": "Stage the existing NAS source checkout at source_revision before publication. Each admitted payload requires git rev-parse HEAD^ to equal source_revision: published pbrun builds its snapshot commit with that checkout HEAD as parent. Existing per-file SHA256 guards then bind executable bytes. snapshot_ref is an extra branch-advertisement option, not a source pin, and is deliberately absent.",
   "executable_source_sha256": {
-    "experiments/t4_code/prefetch_qualification.py": "87782c230121f09879cff8c3717880f92e5914b0603a607e9d599d9620560da9",
-    "experiments/t4_code/prefetch_qualification_action.sh": "9c2623b94579944808fae5cafade6c76e474a3dc0c61cdd775d8bf7bc19c2757",
-    "experiments/t8r_speed/pb_staged_store.py": "23731086412410435d92b33a1ae9ef5ff81b9d27ea1be8d55e5a8563abfad358",
+    "experiments/t4_code/prefetch_qualification.py": "93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0",
+    "experiments/t4_code/prefetch_qualification_action.sh": "67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7",
+    "experiments/t8r_speed/pb_staged_store.py": "e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75",
     "src/tessera/routed_fused_e2m1.py": "688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4",
+    "src/tessera/routed_fused.py": "4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293",
     "experiments/t4_code/fused_e2m1_check.py": "c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7",
-    "src/tessera/serving/csrc/routed_fused_window.cu": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+    "src/tessera/serving/csrc/routed_fused_window.cu": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3",
     "tests/test_routed_fused_e2m1.py": "0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368",
     "tests/test_routed_terminal_cuda.py": "d1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a"
   },
   "native_source": {
     "path": "src/tessera/serving/csrc/routed_fused_window.cu",
-    "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40"
+    "sha256": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3"
   },
   "native_elfs": [
     {
       "arm": 0,
-      "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+      "action_key": "917cc5a474d39d0b97db9fbeb65939dba68dac62c11ad5ff08db340ec5bbf0f7",
       "library": "e2m1",
       "module": "tessera_routed_fused_e2m1",
       "source_module": "tessera_routed_fused_value",
-      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
-      "bytes": 1889544,
-      "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
-      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
-      "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
+      "bytes": 1892000,
+      "sha256": "1302ad713309ef54a62a6a4ff9edeed7d61306803ce820df9c704f3ca279afbf",
+      "finalization_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "5a243e4241e8f5f11b9a395381bb64c57d50626d3c5f0dcafae03a54ccb3a7b6",
       "status": "compile gate (no matching device here)"
     },
     {
       "arm": 4,
-      "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861",
+      "action_key": "b9e2173f70f1bba64b0142454ababd45ad36bb435fc6be12237f2bff1e674b83",
       "library": "e2m1",
       "module": "tessera_routed_fused_e2m1_apf4",
       "source_module": "tessera_routed_fused_value",
-      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
-      "bytes": 1889584,
-      "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
-      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
-      "finalization_sha256": "fdf833a508705a5409264517ebad607ddde953f56ceb989b7d9367701d4c3be1",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
+      "bytes": 1892040,
+      "sha256": "7111322823e7677795e7e18df11bdff5d0e233f0672383125950f950c1cc2c1a",
+      "finalization_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "4e44e45931ea337cf9f16cfc38a69a4d802ef9a257bdbf5f1f7fa787bd28f81c",
       "status": "compile gate (no matching device here)"
     }
   ],
@@ -400,7 +401,7 @@
   "result_binding": "Retain PB action keys/terminal records/logs/CAS receipts and source/image/readset/ELF hashes, actual held pin/ref/stage identities, exact expected/passed/skip counts; report every failure without narrowing population or changing bounds.",
   "real_calibrated_capture_requirement": "Original BF16 production W and disjoint fit/eval BF16 activations, source/model/layer/projection/expert/shape/hashes, static globalA calibration, authentic SDK4 original provider metadata/readset. Existing encode_linear E2M1_GRID WINDOW/LUT/window14 artifacts with original mapper/cache/state/perm/runpair ownership, genuine gate/up/down/routing or dense projections. Historical TCQ or T8 restamps cannot satisfy this. Shared with original scientific/runtime owners; no extra GPU/capture authorization.",
   "readset_binding": "Each whole-file native compile record, finalization and ELF has the exact current-cohort size/digest enforced by validate_readset; immutable sanitizer digest/order is also enforced. Public PB seals the actual full readset content into each action key. Prepare from actual files through the published SDK; no historical manifest identity is reused.",
-  "coordinator_checkout": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/source-image-owner",
+  "coordinator_checkout": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
   "cpu_filesystem_observation": {
     "scope": "Read-only observation immediately before changed-owner CPU publication; no data manifest means no DL stage/prewarm used by this specific quantum",
     "sparklina_root": {
@@ -463,5 +464,7 @@
     "requested_readset_bytes": 35242964,
     "residency_ram": "off",
     "limits": "Stage pool physical free is distinct from dataset available and ledger. Actual PB owns atomic staging/mover resource admission; before execution/future GPU refresh all used floors plus aggregate allowances. RAM stage not requested; observed for mapping only."
-  }
+  },
+  "carrier_branch": "ts875/t4-current-banks-20261004",
+  "provenance_note": ""
 }
