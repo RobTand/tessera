@@ -193,7 +193,7 @@ def profile_geometry(native,x,ids,lib,profile):
         rows = x.shape[0] if mode == 0 else x.shape[0]*ids.shape[1]
         paired = bool(lib.paired_k32_scope(True, True, mode, False, False, 4, False,
                                           bm, bundle.cols, rows, slot))
-        symbol = f'routed_fused_kernel<true, {mode}, false, false, 4, false, {bm}, {str(paired).lower()}>'
+        symbol = f'routed_fused_kernel<true, {mode}, false, false, 4, false, {bm}, false, {str(paired).lower()}>'
         hits = [record for name,record in profile['top'].items() if symbol in name]
         if len(hits) != 1 or hits[0]['count_per_call'] != 1:
             raise ValueError('actual profiled native role differs from paired dispatch scope')

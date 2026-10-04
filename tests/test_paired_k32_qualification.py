@@ -175,7 +175,7 @@ def test_actual_numeric_observer_and_refusals(tmp_path,monkeypatch,fault):
         return out
     call.native_adapter=native
     def profile(fn,**kwargs):
-        return {'top':{f'routed_fused_kernel<true, {mode}, false, false, 4, false, 64, false>':
+        return {'top':{f'routed_fused_kernel<true, {mode}, false, false, 4, false, 64, false, false>':
             {'count_per_call':2 if fault=='profile' else 1} for mode in (0,2)}}
     args=(call,None,torch.ones(2,128,dtype=torch.bfloat16,device='cpu'),torch.zeros(2,2,dtype=torch.int32,device='cpu'),
           torch.ones(2,2,device='cpu'),tmp_path/'words')
@@ -212,7 +212,7 @@ def test_timing_guards_accepted_words_before_unprofiled_events(tmp_path,monkeypa
         assert (warm,iters)==(10,30);phases.append('events');return [1.0]*30
     def profile(call,**kwargs):
         assert kwargs=={'reps':3,'full_names':True};phases.append('profile')
-        return {'top':{f'routed_fused_kernel<true, {m}, false, false, 4, false, 64, false>':
+        return {'top':{f'routed_fused_kernel<true, {m}, false, false, 4, false, 64, false, false>':
                        {'count_per_call':1} for m in (0,2)}}
     def sample(call,seconds,**kwargs):
         assert seconds==3 and kwargs['capture_series'];phases.append('power')
