@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Serve-comparison gates published from the reviewed deployment orchestrators.
 #
+#   artifact_gate    (issue #885) The existing shared identity owner
+#                    (comparison_arm_identity.py) authenticates the ordered
+#                    owned arm population and the actual loaded arm/audit
+#                    bytes against the frozen comparison binding. The
+#                    orchestrator calls it BEFORE any resource is taken --
+#                    before memory checks, preflight, locks or fences -- and
+#                    takes the artifact path from its output; a hardcoded or
+#                    stale export identity is the defect this gate refuses.
 #   generation_gate  (issue #872) Requires the complete paired generated
 #                    population (decoded UTF-8 text + length finish, warmup
 #                    included) before an arm may SHIP. Actual timed outputs,
@@ -11,13 +19,23 @@
 #                    lever_check is clean AND whose generation gate passes is
 #                    SHIP. A generation failure never falls through to SHIP.
 #
-# Sourcing context must provide lever_chain's collaborators (say, run_val,
-# tr3_gate, lever_check, and the arm variables). generation_gate prefers the
-# SERVED_GENERATION_CLIENT / SERVE_GATE_TOOL_DIR overrides and otherwise uses
+# Sourcing context must provide: COMPARISON_MANIFEST, LEAD_PIN, ARMS, MTP_ARM
+# and H (harness directory holding arms/*.env) for artifact_gate, and
+# lever_chain's collaborators (say, run_val, tr3_gate, lever_check, and the
+# arm variables). artifact_gate and generation_gate prefer the
+# SERVE_GATE_TOOL_DIR / SERVED_GENERATION_CLIENT overrides and otherwise use
 # this script's own directory.
 #
-# These gates bind generated-output evidence only. Quality, native, admission,
+# These gates bind input/model identity only. Quality, native, admission,
 # image and serve authorization each keep their existing owner.
+
+artifact_gate() {  # existing shared owner authenticates actual loaded arm/audit bytes
+  local a owner_dir
+  owner_dir=${SERVE_GATE_TOOL_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}
+  local -a command=(python3 "$owner_dir/comparison_arm_identity.py" comparison-artifact --manifest "$COMPARISON_MANIFEST" --pin "$LEAD_PIN")
+  for a in $ARMS ${MTP_ARM:-}; do command+=(--arm "$H/arms/$a.env"); done
+  "${command[@]}"
+}
 
 generation_gate() {  # candidate/reference run dirs, candidate arm; actual timed outputs, not TR3
   local client gate_dir

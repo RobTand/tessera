@@ -1,5 +1,32 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for the serve-comparison intake identity publication
+(#885, with its accepted #872 dependency). The operational seam that a serve
+comparison's inputs bind to an actual exported artifact is published under
+`tools/`: `comparison_arm_identity.py` owns the export/comparison identity
+(the audit roster authenticated by SHA and bound to the exact artifact path;
+config, index and serving-manifest content and byte agreement; the exact
+export commit and contract version; serialized shard, metadata and full-file
+bytes kept as separate currencies), `comparison_input_intake.py` binds a
+comparison manifest to that derived identity from two distinct owned arm
+files before anything is written, and `serve_comparison_gates.sh` carries the
+orchestration gates: the artifact gate consumes the frozen binding and
+authenticates the actual loaded arm/audit bytes BEFORE any resource is taken
+(never a hardcoded or stale export identity), and the #872 generation gate
+requires the complete paired decoded-text/length-finish population before an
+arm may SHIP. Fieldless historical manifests keep their explicit
+pathname-only model check; a malformed or drifting new binding never falls
+back to it. A differing export source/contract needs an explicit reviewed
+exception reason, which is a deviation record and never admission authority.
+All of this binds input/model identity only: quality, native, admission,
+image, serve authorization, serving defaults and pins keep their existing
+owners, the frozen EXL3 panel and its serialized-safetensors size currency
+are unchanged, and no cross-artifact EXL3 comparison is introduced. Decoded
+UTF-8 + length-finish equality is the generation instrument's only claim;
+token-ID/logit equality and teacher-forced KL remain separate gates. The
+publication is correctness-only source; it records no new deployment,
+current-artifact, serving or quality evidence.
+
 Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
 Both qualification owners derive the mapping device from the held FD's
 exact mount ID and require that backing device plus inode on an executable
