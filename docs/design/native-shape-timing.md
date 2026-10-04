@@ -190,3 +190,20 @@ current published PB verifier under bounded stable reads. It executes the
 held source bytes and rechecks both owners after use; location equality alone
 does not decide code identity. Changed helper bytes, a mutable helper or a
 symlink outside that immutable path refuse.
+
+The #685 acceptance consumer is a separate stdlib module,
+`tessera.serving.panel_baseline` (schema
+`tessera.shape_time_baseline_comparison.v1`, reviewer CLI
+`tools/tessera_panel_baseline.py`). It judges new panel rows against the
+preserved #685 after-run tables and owns one rule: the recorded band is the
+band the historical bench itself wrote -- nearest-sample quartiles with
+Python's half-to-even round, reconstructed verbatim and proven against every
+recorded cell of a table before any comparison. It deliberately does not
+reuse `timing_summary`'s interpolated quartiles, which yield a different
+IQR on the same samples. Numbers are compared only after a row's
+(structure, module, family, grid, rate) key matches a documented group and
+its rank-local geometry agrees; a median outside the band is a named gap,
+never a silent pass. Dense rows project from a validated
+`tessera.shape_time_panel.v1` receipt; a routed row has no projection until
+the panel schema grows one, and the refusal says so rather than comparing a
+routed stack by dense projection.
