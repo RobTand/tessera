@@ -57,6 +57,7 @@ def native_metadata(module, b_prefetch):
         BDESC_INTS=module.BDESC_INTS, WINDOW_BITS=module.WINDOW_BITS,
         FAMILY_FP8=True, FAMILY_MMA8=True,
         PAIRED_K32_BUILD=module._paired_k32_build_enabled(True),
+        STAGES=module.STAGES, MAX_ROLES=module.MAX_ROLES,
         WORD_STAGES=module.WORD_STAGES,
         WORD_STAGES_MIN=module.WORD_STAGES_MIN,
         SMEM_FIXED_GATE_UP=module.SMEM_FIXED_MMA8[0],
