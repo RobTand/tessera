@@ -344,7 +344,9 @@ def main():
                                  "pick": power_of(lambda: ext.run(bt, xm, w, out_m, ws), 2.0, sampler)}
                 ref_med, pick_med, saving_ms = abba_summary(ab["reference"], ab["pick"])
                 mrec["pick"] = dict(blob=best["blob"], config=best["config"], ms=pick_med,
-                                    reference_ms=ref_med, saving_ms=saving_ms)
+                                    reference_ms=ref_med, saving_ms=saving_ms,
+                                    observations=dict(reference=list(ab["reference"]),
+                                                      pick=list(ab["pick"])))
                 admitted, _refusal = admit_pick(rec["reference"]["matches_served_kernel"],
                                                 rec["reference"]["deterministic"], saving_ms)
                 if admitted:

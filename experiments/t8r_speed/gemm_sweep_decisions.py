@@ -6,32 +6,34 @@ summarized, when a reference qualifies a pick for the serving table, and
 which input paths a run may stat or open.  The sweep driver imports this
 module; tests import it directly by path, so the rules are exercised
 without torch or cuBLASLt.
-
-This extraction preserves the recovered sweep's behavior exactly (the OLD
-rules); the #850 fixes change the bodies, one commit per rule.
 """
 from __future__ import annotations
+
+import statistics
 
 
 def abba_summary(reference_observations, pick_observations):
     """Summarize an interleaved A/B group: (ref_med, pick_med, saving_ms or None).
 
-    OLD RULE (pre-#850): the ``sorted(x)[len(x) // 2]`` upper order statistic.
+    The conventional sample median, like the bench owner's ``summarize()``: the
+    mean of the two middle order statistics for an even group.  The recovered
+    ``sorted(x)[len(x) // 2]`` is an upper order statistic, which reports the
+    slower arm of an even-sized ABBA group as if it were the middle.
     """
-    ref_med = sorted(reference_observations)[len(reference_observations) // 2]
-    pick_med = sorted(pick_observations)[len(pick_observations) // 2]
+    ref_med = statistics.median(reference_observations)
+    pick_med = statistics.median(pick_observations)
     return ref_med, pick_med, (ref_med - pick_med if pick_med < ref_med else None)
 
 
 def non_bitwise_fraction_summary(diffs):
     """Summarize the non-bitwise candidates' differing fractions.
 
-    OLD RULE (pre-#850): the ``sorted(x)[len(x) // 2]`` upper order statistic,
-    and no raw population retained.
+    The conventional sample median, with the raw ordered population retained
+    so the summary can be re-derived without re-running.
     """
     ordered = sorted(diffs)
     return dict(count=len(ordered), min=ordered[0] if ordered else None,
-                median=ordered[len(ordered) // 2] if ordered else None)
+                median=statistics.median(ordered) if ordered else None, raw=ordered)
 
 
 def reference_qualified(matches_served_kernel, deterministic):
