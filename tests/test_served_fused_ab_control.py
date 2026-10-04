@@ -145,7 +145,7 @@ def _write_arm(half: Path, tag: str, arm: str, *, commit: str = AFTER_COMMIT,
 
 def _run_closure(half: Path, after_tree: Path):
     return subprocess.run(
-        [sys.executable, str(CLOSURE), "--half-dir", str(half),
+        [sys.executable, str(CLOSURE), "--half", "h1", "--half-dir", str(half),
          "--after-tree", str(after_tree)],
         capture_output=True, text=True)
 

@@ -90,7 +90,7 @@ ls -la "$OUT"
 
 echo "=== closure (fail-closed) ==="
 python3 "$SNAP/experiments/served_fused_ab_closure.py" \
-  --half-dir "$OUT" --after-tree "$TS_BASE/after"
+  --half "$HALF" --half-dir "$OUT" --after-tree "$TS_BASE/after"
 closure=$?
 if [ "$closure" -ne 0 ]; then
   echo "[action] closure REFUSED rc=$closure; failed arms: ${FAILED_ARMS[*]:-none}"

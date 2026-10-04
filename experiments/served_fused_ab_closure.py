@@ -108,8 +108,8 @@ def arm_problems(result: dict, expected_commit: str, after_symbols: set[str],
     return problems
 
 
-def check_half(half_dir: Path, after_tree: Path) -> int:
-    families = FAMILY_KEY[half_dir.name]
+def check_half(half: str, half_dir: Path, after_tree: Path) -> int:
+    families = FAMILY_KEY[half]
     expected = {
         "before": load_commit(half_dir / "before-commit.txt"),
         "after": load_commit(half_dir / "after-commit.txt"),
@@ -152,20 +152,23 @@ def check_half(half_dir: Path, after_tree: Path) -> int:
     if missing_pairs:
         failed = True
     if failed:
-        print(f"VERDICT {half_dir.name}: REFUSED (fail-closed)")
+        print(f"VERDICT {half}: REFUSED (fail-closed)")
         return 1
-    print(f"VERDICT {half_dir.name}: closed")
+    print(f"VERDICT {half}: closed")
     return 0
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--half", required=True, choices=sorted(FAMILY_KEY),
+                    help="which half the receipts belong to (the action knows "
+                         "it; the directory name is not the identity)")
     ap.add_argument("--half-dir", required=True, type=Path,
                     help="receipt dir for the half (contains arm-*.json and "
                          "before/after-commit.txt)")
     ap.add_argument("--after-tree", required=True, type=Path)
     a = ap.parse_args()
-    return check_half(a.half_dir, a.after_tree)
+    return check_half(a.half, a.half_dir, a.after_tree)
 
 
 if __name__ == "__main__":
