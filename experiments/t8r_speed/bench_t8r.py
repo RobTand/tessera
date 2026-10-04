@@ -632,6 +632,11 @@ def run_piece_major_comparison(args, protocol, protocol_sha, inputs, store, nati
             "tp": [TP_RANK, TP_SIZE], "artifact": args.artifact, "source_root": str(source_root),
             "kernel_sha256": protocol["kernel_sha256"], "start_unix": time.time(),
             "native": {}, "arm_info": {}, "energy_status": "HOLD_pending_both_host_coverage_and_clock_review"}
+    if protocol["schema"] == pp.DUAL_B_NUMERIC_SCHEMA:
+        if phase != "numeric" or rf.MMA8_GATE_UP_B_PREFETCH != protocol["dual_b"]["compile_choice"]:
+            raise ValueError("changed-source numeric requires the actual frozen dual-B compile choice")
+        meta["dual_b"] = protocol["dual_b"]
+        meta["qualification_scope"] = "changed-source numeric only; not old V4, profiling, timing or energy"
     arms = {}
     previous = os.environ.get("TESSERA_ROUTED_PIECE_MAJOR")
     try:

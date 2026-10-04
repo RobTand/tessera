@@ -1062,6 +1062,9 @@ class FusedRoutedWindowMoE:
     #: The ``torch.profiler`` range ``moe_route`` runs this adapter's forward
     #: under; the compact adapter's is ``tessera_native_window_moe`` (#640).
     PROFILER_LABEL = "tessera_routed_fused_window"
+    #: ``__call__`` takes ``shared=``: the MoE runner's shared-expert output,
+    #: added as the token sum is stored (``tessera.serving.glm53_shared_fold``).
+    supports_shared_fold = True
 
 
     gate: object
@@ -1242,7 +1245,14 @@ class FusedRoutedWindowMoE:
     # -- the routed forward -------------------------------------------------
     def __call__(self, x: torch.Tensor, expert_ids: torch.Tensor, routing_weights: torch.Tensor,
                  *, apply_router_weight_on_input: bool = False,
-                 swiglu_limit: "float | None" = None) -> torch.Tensor:
+                 swiglu_limit: "float | None" = None,
+                 shared: "torch.Tensor | None" = None) -> torch.Tensor:
+        """The routed forward: bf16 ``[T, H]``.
+
+        ``shared``, when given, is a contiguous bf16 ``[T, H]`` tensor (the MoE
+        runner's shared-expert output). It is added as the token sum is
+        stored, bitwise equal to ``shared + forward(...)`` in bf16.
+        """
         from .native_window_moe import SUPPORTED_ACTIVATIONS, checked_swiglu_limit
 
         limit = checked_swiglu_limit(swiglu_limit)
@@ -1261,6 +1271,11 @@ class FusedRoutedWindowMoE:
                     f"prepare asserts this); got topk={int(expert_ids.shape[1])}")
             x = x * routing_weights.reshape(-1, 1).to(x.dtype)
         hidden, inter = self.down.rows, self.down.cols
+        if shared is not None and (shared.dtype != torch.bfloat16 or not shared.is_contiguous()
+                                   or tuple(shared.shape) != (tokens, hidden)
+                                   or shared.device != self.device):
+            raise GrammarError(f"shared must be contiguous bf16 {(tokens, hidden)} on {self.device}, "
+                               f"got {shared.dtype} {tuple(shared.shape)} on {shared.device}")
         if tokens == 0:
             return torch.empty((0, hidden), dtype=torch.bfloat16, device=self.device)
         routing = self._routing(expert_ids, routing_weights)
@@ -1273,7 +1288,10 @@ class FusedRoutedWindowMoE:
         self._launch(2, aq, a2, routing, a_row_mode=1, mul_weight=not apply_router_weight_on_input,
                      limit=float("inf"), out=routed, counter=1)
         out = torch.empty((tokens, hidden), dtype=torch.bfloat16, device=self.device)
-        _ext(self.library).token_sum(routed, out, int(routing.top_k))
+        if shared is None:
+            _ext(self.library).token_sum(routed, out, int(routing.top_k))
+        else:
+            _ext(self.library).token_sum_shared(routed, shared, out, int(routing.top_k))
         return out
 
     # -- the teacher-forced stages (the oracle's interface) ------------------

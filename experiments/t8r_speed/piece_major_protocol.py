@@ -8,6 +8,7 @@ from pathlib import Path
 
 SCHEMA = "tessera.routed_piece_major_comparison.v1"
 REPEAT_SCHEMA = "tessera.routed_piece_major_repeatability.v1"
+DUAL_B_NUMERIC_SCHEMA = "tessera.routed_mma8_dual_b_numeric.v1"
 ARTIFACT = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 GROUP = "experts.R1024.L10"
 ORDER = ["legacy", "piece_major", "piece_major", "legacy"]
@@ -30,7 +31,19 @@ def validate(doc):
     fields = {"schema", "artifact", "group", "ms", "order", "warmup", "iters", "power_s",
               "input_manifest", "source_manifest", "kernel_sha256", "native", "routing", "harness"}
     repeated = doc.get("schema") == REPEAT_SCHEMA
-    if repeated:
+    dual_b = doc.get("schema") == DUAL_B_NUMERIC_SCHEMA
+    if dual_b:
+        if set(doc) != fields | {"dual_b"}:
+            raise ValueError("unknown changed-source dual-B numeric fields")
+        choice = doc["dual_b"]
+        if (set(choice) != {"compile_choice", "superblock_rows"}
+                or type(choice["compile_choice"]) is not int
+                or choice["compile_choice"] not in (0, 1)
+                or type(choice["superblock_rows"]) is not int
+                or choice["superblock_rows"] not in (64, 128)):
+            raise ValueError("dual-B numeric requires exact compile0/1 and width64/128")
+        order, expected_ms, expected_power = ["legacy", "piece_major"], [1, 2048], 0
+    elif repeated:
         if set(doc) != fields | {"numeric_protocol", "repeatability"}:
             raise ValueError("unknown repeatability schema or fields")
         repeat = doc["repeatability"]
@@ -110,7 +123,9 @@ def harness_identity(doc):
 
 
 def require_options(args, doc, *, stubbed=False):
-    phases = ("repeatability",) if doc["schema"] == REPEAT_SCHEMA else ("numeric", "timing", "ncu")
+    dual_b = doc["schema"] == DUAL_B_NUMERIC_SCHEMA
+    phases = (("numeric",) if dual_b else ("repeatability",)
+              if doc["schema"] == REPEAT_SCHEMA else ("numeric", "timing", "ncu"))
     if (args.artifact != doc["artifact"] or args.groups != doc["group"] or args.ms != ",".join(map(str, doc["ms"]))
             or not args.no_graph or args.outputs_only or args.routing or args.single_routing_file
             or args.profile_native_file or args.input_manifest != doc["input_manifest"]["path"]
@@ -122,6 +137,10 @@ def require_options(args, doc, *, stubbed=False):
         raise ValueError("comparison refuses stubbed vLLM")
     choices = {"TESSERA_ROUTED_FUSED": "1", "TESSERA_FUSED_E4M3_MMA": "e4m3",
                "TESSERA_ROUTED_FUSED_WIDE": "1"}
+    if dual_b:
+        choice = doc["dual_b"]
+        choices["TESSERA_ROUTED_FUSED_WIDE"] = "0" if choice["superblock_rows"] == 64 else "1"
+        choices["TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH"] = str(choice["compile_choice"])
     for key, expected in choices.items():
         if os.environ.get(key) != expected:
             raise ValueError(f"comparison requires {key}={expected}")
