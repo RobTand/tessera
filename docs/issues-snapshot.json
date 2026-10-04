@@ -12121,6 +12121,14 @@
     "state": "CLOSED",
     "title": "#81's sibling: under a CHANNEL plane, window_sigma equal to the resolved channel_sigma is the same encoder and gets a different id, a bigger artifact and minor 5"
    },
+   "902": {
+    "state": "OPEN",
+    "title": "[P1] Release the T16 sanitizer reader when output initialization fails"
+   },
+   "903": {
+    "state": "OPEN",
+    "title": "[P3] Store combined native observed receipts in the established results namespace"
+   },
    "91": {
     "state": "CLOSED",
     "title": "The compile-cache key does not see the GEMV lane: two structurally different streamed graphs share one slot"

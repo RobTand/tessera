@@ -21,9 +21,69 @@ No default, serving cell, price, PACT or energy claim is promoted. The combined
 explicitly skipped CUDA/bank cases) and seven fresh CPU-native build actions,
 all returncode zero, one attempt each, in the explicit `5be13705` image. Exact
 ELF, source-owner, finalization, image and CAS identities are retained in
-`experiments/configs/combined_native_874_875_739_cpu_evidence.json`. This is not
+`experiments/results/combined_native_874_875_739_cpu_evidence.json`. This is not
+an active runtime-image owner or placement recipe: the byte-preserved observed
+receipt belongs to the established results namespace (#903), while acting
+code and generated execution recipes retain the canonical runtime-image owner.
+This is not
 a GPU or performance pass. The current T16 synthetic producer binds only the
 new value0/value4 ELFs; the old `51f6` protocol remains historical, not new proof.
+The T16 `native-preflight` operation reads the complete fresh bank through the
+public staged SDK and loads each actual value DSO once through the existing
+`NativeCallback`, retaining both original FD pathnames until final teardown. It
+checks exported family/geometry/distance, before/mapped/post hashes, unchanged
+serving builder/cache and closes FDs before releasing the reader. This explicit
+CPU diagnostic does not call kernels, replace the serving gate/cache, or claim a
+CUDA fence, serving admission or numeric/sanitizer qualification. The fresh
+admitted CPU preflight `85bfd750` completed once with three new negative gates
+passing and actual distance0/distance4 DSO mappings retaining matching hashes
+before load, in executable mappings and after inspection. The original serving
+builder/cache stayed unchanged; both load FDs and the reader were released.
+Exact current-bank sealer, staged270-unit/108-history proof, native-FD receipt
+and the original unapproved GPU numeric/sanitizer proposal are retained in
+`experiments/results/value_prefetch_874_combined_safety_protocol_v2.json`. Its
+`5aba4096` source48a6 identity remains historical; it does not authorize the
+corrected source. The same54-cell corrected-source successor, composing the
+parent-accepted4392 T4 prerequisite lineage and the actual #902 release proof,
+is `experiments/configs/value_prefetch_874_combined_safety_protocol_v3.json`.
+It preserves the exact bank/ELF/image/readset and numeric16/GPU8/600 plus
+memcheck32/GPU24/1800 bounds. Parent901/normal/all-used-filesystem/scientific
+authorization gates remain held; no old protocol or ELF is restamped.
+Post-acquire sanitizer setup is inside the same reader-release
+`finally` as staging and tool execution (#902); filesystem refusal propagates.
+The admitted sourceb9b155b3 causal CPU action1b7076bb passed three selected
+controls (two real filesystem refusal lease models and tool subprocess failure),
+with twelve deselected and no CUDA. Exact receipt, source, scope and complete
+OOM0/processes-live0 telemetry are retained in
+`experiments/results/value_prefetch_902_cpu_cleanup_evidence.json`; specific
+cleanup correction acceptance is not whole901/source/GPU acceptance. After the
+complete accepted T4 prerequisite composition, action97c689fb source0a132caf
+passed all six specifically changed initial normal-feedback cases, with zero
+skips/uncollected tests/CUDA allocations. Its exact source, CAS receipt,
+telemetry and one managed completion-client ending are recorded in
+`experiments/results/combined_feedback_901_cpu_evidence.json`. This narrow
+causal gate pass is not the full normal suite or scientific GPU authorization.
+
+The #875 composed qualifier binds exactly the two finalized production FP4
+banks from common source `bcdd43f6`, immutable image `5be13705`, and the actual
+PB compile actions `b70ff504`/`b45dfd00`. Each arm declares its compile record,
+no-pending-work finalization and ELF in that order (six whole-file inputs),
+plus the nine immutable sanitizer members only when needed. Production PyInit
+names remain `tessera_routed_fused_e2m1` / `tessera_routed_fused_e2m1_apf4`;
+both resolve the existing value source owner and load once from held SDK FDs
+through the existing NativeCallback and full E2M1 ABI checker. No raw banks,
+second loader/cache, recompilation or old-image proof bridge is introduced.
+The old source4e/image61 finite recipes are retired from the acting tree. Their
+unchanged source/metadata history remains at commit `5bbd050e` and in the old
+NAS publication checkout; replicas and accepted historical proofs are retained.
+Observed producer-record fixtures live under the existing `experiments/results`
+receipt boundary with exact original bytes. Active image selection comes from
+the hashed actual compile record, never a copied default pin; the default is
+still owned by runtime_contract.json and is not changed by this experiment.
+New composed source/image/readset/capacity identities require their own parent
+review and actual CPU stage/mapping evidence before the separately held GPU
+synthetic-safety admission gate. No 15-GPU-payload submissions have been made; metadata
+CPU action `3d65783a` separately passed 18 no-retag capacity controls.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
@@ -516,32 +576,20 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
   all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
   zero STACK/LOCAL allocation (FP4 maximum128 registers).
-* Persisted next actions are published-client campaign manifests under
-  experiments/t4_code/pb_875_cpu_preflight.json and pb_875_synthetic_{numeric,
-  native,sanitizers}.json. pb_875_finite_campaign.json concatenates those exact
-  reviewed15 rows without changing any row. After admission gates release, use
-  published pbcampaign.py --max-inflight 1 --wait-s 97200
-  --require-data-manifest experiments/t4_code/pb_875_finite_campaign.json:
-  its supported bounded
-  window stops on the first actual failure and preserves the unpublished
-  suffix. This is PB-owned publication, not a second dispatcher or retries.
-  The GPU campaign remains UNSUBMITTED pending root admission conditions.
-  The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
-  guard the PB snapshot parent as executable source4e17907d, max_attempts1
-  and retry_safe=false, unchanged
-  native1 ELFs/readsets/image/resources/deadlines and exact expected counts.
-  Root authorizes numeric/safety only after independent review and a compatible
-  quiet window; the PM owner's both-Spark interval must finish first. No prior
-  CPU proofs are rerun to repin source. The published client refuses
-  measurement+anywhere, and snapshot_ref advertises branches rather than
-  pinning source: these fields are absent. Stage the existing NAS checkout at
-  source4e17907d; each payload checks HEAD^ and its executable file hashes.
-  Root requires an eligible GB10 coordinator, not DL380; explicit class
-  measurement lets PB place matching workers. This seal is not real calibrated,
-  performance or serving proof.
-  Native numeric/native rows bind native1-readset-staged.json; sanitizers bind
-  native1-sanitizer-readset-staged.json, explicit helper/test hashes and the
-  same immutable image. Public manifest/phase sealing actually passed in
+* Current persisted actions are `pb_875_composed_cpu_prepare.json`,
+  `pb_875_composed_cpu_stage.json` and the complete15-row
+  `pb_875_composed_finite_campaign.json`. The source/image/cohort/readset,
+  full numeric/native/sanitizer population and real local-scratch contract
+  is `pb_875_composed_qualification_contract.json`. The GPU packet stays
+  unpublished until the exact current source/SDK-stage/parent/admission
+  tuple is accepted; no old source4e/image61 allowance or CPU pass transfers.
+  Old packet bytes remain available in commit `5bbd050e` and the old NAS
+  checkout, not as obsolete runnable recipes in this tree. Supported PB
+  publication owns fanout, admission and cleanup; never substitute a dispatcher
+  or replay a failed row without a real source fix and supported supersession.
+  Historical source4e native/sanitizer rows bound the original native1 readsets;
+  those accepted CPU identities below do not attest the current composed rows.
+  Historical public manifest/phase sealing actually passed in
   PBa67d342f: three files/3780084 bytes, and12 files/31445460 bytes, original
   native entries unchanged. After supported admission recovered, existing rows
   PBc8c24e35/PB5c429a8a acquired/read/released both exact SDK readsets on DL380
