@@ -166,12 +166,12 @@ fi
 source "$TS/experiments/runtime_image.sh"
 runtime_image_require "$IMG" || { echo "arm $ARM: runtime image refused on $(hostname)"; exit 2; }
 IMGENV1=(); while IFS= read -r kv; do [ -n "$kv" ] && IMGENV1+=(-e "$kv"); done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
-DIGEST1=${RUNTIME_IMAGE_DIGEST:-}
-head_env=$(hssh "bash -c 'source $TS/experiments/runtime_image.sh && runtime_image_require $IMG >/dev/null && printf \"%s\n\" \"\$RUNTIME_IMAGE_DIGEST\" \"\$RUNTIME_IMAGE_CONTAINER_ENV\"'") \
+REF1=${RUNTIME_IMAGE_REFERENCE:-}
+head_env=$(hssh "bash -c 'source $TS/experiments/runtime_image.sh && runtime_image_require $IMG >/dev/null && printf \"%s\n\" \"\$RUNTIME_IMAGE_REFERENCE\" \"\$RUNTIME_IMAGE_CONTAINER_ENV\"'") \
   || { echo "arm $ARM: runtime image refused on the head ($HEAD_IP)"; exit 2; }
-DIGEST0=$(head -1 <<<"$head_env")
+REF0=$(head -1 <<<"$head_env")
 IMGENV0=(); while IFS= read -r kv; do [ -n "$kv" ] && IMGENV0+=(-e "$kv"); done < <(tail -n +2 <<<"$head_env")
-[ "$DIGEST0" = "$DIGEST1" ] || { echo "arm $ARM: the two boxes resolve the image to $DIGEST0 and $DIGEST1"; exit 2; }
+[ -n "$REF1" ] && [ "$REF0" = "$REF1" ] || { echo "arm $ARM: the two boxes resolve the image to '$REF0' and '$REF1'"; exit 2; }
 for box in local head; do
   if [ $box = local ]; then gpu=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l); mem=$(avail_gib_local)
     own=$(docker ps -q --filter label=org.prismaquant.campaign=graph-attest-702 | wc -l)
@@ -189,7 +189,8 @@ hssh "mkdir -p $OUT0 $EXT && chmod 0777 $OUT0 $EXT" || exit 2
   echo "max_model_len=$MAX_MODEL_LEN"; echo "max_num_seqs=$MAX_NUM_SEQS"; echo "kv_cache_memory_bytes=$KV_BYTES"
   echo "tessera_env=$TESSERA_ENV"; echo "long=$([ -n "$LONG_CASES" ] && echo 1 || echo 0)"
   echo "serve_rank0=$CMD0"; echo "serve_rank1=$CMD1"
-  echo "image=$IMG"; echo "image_digest_resolved=$DIGEST1"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
+  echo "image=$IMG"; echo "image_resolved_reference=$REF1"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
+  echo "equal_script_sha256=$(sha256sum "$Q/equal-508.py" | cut -c1-64)"
   echo "image_id_head=$(hssh "docker image inspect --format '{{.Id}}' $IMG")"
   echo "host=$(hostname)+$HEAD_IP"; echo "tree=$TS"; echo "tree_sha=$(git -C "$TS" rev-parse HEAD)"
   echo "src_sha256=$SRC_SHA256"; echo "hooks_sha256=$(sha256sum "$HOOKS/usercustomize.py" | cut -c1-64)"

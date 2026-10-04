@@ -79,6 +79,8 @@ mkdir -p "$EXT/src-copy" && cp -r "$ROOT/src" "$ROOT/pyproject.toml" "$EXT/src-c
   echo "max_model_len=$MAX_MODEL_LEN"; echo "max_num_seqs=$MAX_NUM_SEQS"; echo "long=${LONG:-0}"
   echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
   echo "image_digest_resolved=${RUNTIME_IMAGE_DIGEST:-}"
+  echo "image_resolved_reference=${RUNTIME_IMAGE_REFERENCE:-}"
+  echo "equal_script_sha256=$(sha256sum "$Q/equal-508.py" | cut -c1-64)"
   echo "host=$(hostname)"; echo "pb_action=${PRISMABUILD_ACTION_KEY:-}"
   echo "src_sha256=$(cd "$ROOT" && find src -type f -name '*.py' | sort | xargs sha256sum | sha256sum | cut -c1-64)"
   echo "hooks_sha256=$(sha256sum "$HOOKS/usercustomize.py" | cut -c1-64)"
