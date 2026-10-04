@@ -76,9 +76,21 @@ static std::vector<Problem> problems;
 static void* workspace = nullptr;
 static size_t workspace_bytes = 0;
 
-// Row-major C[M,N] = X[M,K] @ W[N,K]^T, posed column-major as C^T = W * X^T:
-// A = W (K x N col-major, transposed), B = X (K x M col-major), C (N x M).
-int64_t lt_setup(int64_t m, int64_t n, int64_t k, int64_t max_algos, int64_t ws_bytes) {
+static void layout(cublasLtMatrixLayout_t* l, int64_t rows, int64_t cols, int64_t ld, int64_t batch, int64_t bs) {
+  CK(cublasLtMatrixLayoutCreate(l, CUDA_R_16BF, rows, cols, ld));
+  if (batch > 1) {
+    int32_t b = (int32_t)batch;
+    CK(cublasLtMatrixLayoutSetAttribute(*l, CUBLASLT_MATRIX_LAYOUT_BATCH_COUNT, &b, sizeof(b)));
+    CK(cublasLtMatrixLayoutSetAttribute(*l, CUBLASLT_MATRIX_LAYOUT_STRIDED_BATCH_OFFSET, &bs, sizeof(bs)));
+  }
+}
+
+// Column-major D = op(A) * B, every operand described explicitly (rows, cols,
+// leading dimension, batch stride) so a strided view is posed exactly as torch
+// holds it.  A row-major Linear C[M,N] = X[M,K] @ W[N,K]^T is
+// C^T = W * X^T: transa=1, A = (K, N, K), B = (K, M, K), C = (N, M, N).
+int64_t lt_setup(int64_t transa, std::vector<int64_t> a, std::vector<int64_t> b, std::vector<int64_t> c,
+                 int64_t batch, int64_t max_algos, int64_t ws_bytes) {
   if ((size_t)ws_bytes > workspace_bytes) {
     if (workspace) cudaFree(workspace);
     TORCH_CHECK(cudaMalloc(&workspace, ws_bytes) == cudaSuccess);
@@ -86,12 +98,12 @@ int64_t lt_setup(int64_t m, int64_t n, int64_t k, int64_t max_algos, int64_t ws_
   }
   Problem p;
   CK(cublasLtMatmulDescCreate(&p.op, CUBLAS_COMPUTE_32F, CUDA_R_32F));
-  cublasOperation_t ta = CUBLAS_OP_T, tb = CUBLAS_OP_N;
+  cublasOperation_t ta = transa ? CUBLAS_OP_T : CUBLAS_OP_N, tb = CUBLAS_OP_N;
   CK(cublasLtMatmulDescSetAttribute(p.op, CUBLASLT_MATMUL_DESC_TRANSA, &ta, sizeof(ta)));
   CK(cublasLtMatmulDescSetAttribute(p.op, CUBLASLT_MATMUL_DESC_TRANSB, &tb, sizeof(tb)));
-  CK(cublasLtMatrixLayoutCreate(&p.a, CUDA_R_16BF, k, n, k));
-  CK(cublasLtMatrixLayoutCreate(&p.b, CUDA_R_16BF, k, m, k));
-  CK(cublasLtMatrixLayoutCreate(&p.c, CUDA_R_16BF, n, m, n));
+  layout(&p.a, a[0], a[1], a[2], batch, a[3]);
+  layout(&p.b, b[0], b[1], b[2], batch, b[3]);
+  layout(&p.c, c[0], c[1], c[2], batch, c[3]);
   cublasLtMatmulPreference_t pref;
   CK(cublasLtMatmulPreferenceCreate(&pref));
   uint64_t ws = ws_bytes;
@@ -123,6 +135,7 @@ std::vector<int64_t> lt_config(int64_t pid, int64_t i) {
           (int64_t)r.workspaceSize, (int64_t)(r.wavesCount * 1000)};
 }
 
+// a_op/b_op are the column-major A and B operands (for a Linear: the weight, then the activation).
 void lt_run(int64_t pid, int64_t i, torch::Tensor x, torch::Tensor w, torch::Tensor out) {
   auto& p = problems.at(pid);
   float alpha = 1.f, beta = 0.f;
@@ -207,7 +220,7 @@ def bench_default(k, n, args):
 
 def bench_lt(lt, k, n, xs, ws, args):
     ref = torch.mm(xs[0], ws[0].t())
-    pid = lt.lt_setup(M, n, k, args.lt_algos, args.lt_workspace_mb << 20)
+    pid = lt.lt_setup(1, [k, n, k, 0], [k, M, k, 0], [n, M, n, 0], 1, args.lt_algos, args.lt_workspace_mb << 20)
     rows = []
     for i in range(lt.lt_count(pid)):
         cfg = lt.lt_config(pid, i)
@@ -232,6 +245,85 @@ def bench_lt(lt, k, n, xs, ws, args):
         out = torch.empty(M, n, device="cuda", dtype=torch.bfloat16)
         best["kernels"] = kernel_names(lambda: lt.lt_run(pid, i, xs[0], ws[0], out))
     return rows, best
+
+
+# MLA absorbed BMMs per rank (batch 32 in the trace), as the serve holds them: views of [tokens, heads, d] transposed to [heads, tokens, d].
+#   up:   q_nope[h] (2048x256) @ W_UK[h] (256x512) -> [h, 2048, 512]
+#   down: o_lat[h] (2048x512) @ W_UV[h]^T (512x256) -> [h, 2048, 256]
+BMMS = {"mla_bmm_uk": (32, 256, 512, 11), "mla_bmm_uv": (32, 512, 256, 11)}
+
+
+def bmm_operands(h, k, n, kind):
+    x_tok = torch.randn(M, h, k, device="cuda", dtype=torch.bfloat16)
+    out_tok = torch.empty(M, h, n, device="cuda", dtype=torch.bfloat16)
+    # Each head's matrix is one half of a per-head pair, so the batch stride is 2*k*n,
+    # as the trace records (262144 for both).
+    if kind == "mla_bmm_uk":
+        w = (torch.randn(h, 2 * k, n, device="cuda", dtype=torch.bfloat16) * k**-0.5)[:, :k]
+    else:
+        w = (torch.randn(h, 2 * n, k, device="cuda", dtype=torch.bfloat16) * k**-0.5)[:, :n].transpose(1, 2)
+    return x_tok, w, out_tok
+
+
+def bench_bmm(lt, kind, args):
+    h, k, n, calls = BMMS[kind]
+    x_tok, w, out_tok = bmm_operands(h, k, n, kind)
+    xv, ov = x_tok.transpose(0, 1), out_tok.transpose(0, 1)
+    r = {"heads": h, "K": k, "N": n, "calls_per_chunk": calls,
+         "strides": {"x": list(xv.stride()), "w": list(w.stride()), "out": list(ov.stride())}}
+    flops = 2.0 * h * M * k * n
+    served = lambda i: torch.bmm(xv, w, out=ov)  # noqa: E731
+    t = time_calls(served, 1, args.reps, args.iters)
+    t["tflops"] = flops / (t["ms"] * 1e-3) / 1e12
+    t["kernels"] = kernel_names(lambda: served(0))
+    r["served_strided"] = t
+    ref = ov.clone()
+    xc = xv.contiguous()
+    oc = torch.empty(h, M, n, device="cuda", dtype=torch.bfloat16)
+    wc = w.contiguous()
+    t = time_calls(lambda i: torch.bmm(xc, wc, out=oc), 1, args.reps, args.iters)
+    t["tflops"] = flops / (t["ms"] * 1e-3) / 1e12
+    t["kernels"] = kernel_names(lambda: torch.bmm(xc, wc, out=oc))
+    t["max_abs_vs_served"] = float((oc.float() - ref.float()).abs().max())
+    t["bitwise_equal_served"] = bool(torch.equal(oc, ref))
+    r["contiguous_bmm_only"] = t
+    t = time_calls(lambda i: ov.copy_(torch.bmm(xv.contiguous(), wc)), 1, args.reps, args.iters)
+    t["tflops"] = flops / (t["ms"] * 1e-3) / 1e12
+    r["contiguous_with_copies"] = t
+    if lt is not None:
+        # Column-major per head: out^T (n x M, ld h*n, bs n) = w^T * x^T.
+        # x^T: (k x M, ld h*k, bs k).  uk: w [h,k,n] row-major = col-major (n x k, ld n), op N.
+        # uv: w is a [h,n,k] row-major tensor = col-major (k x n, ld k), op T.  Batch stride w.stride(0).
+        if kind == "mla_bmm_uk":
+            ta, a = 0, [n, k, n, w.stride(0)]
+        else:
+            ta, a = 1, [k, n, k, w.stride(0)]
+        pid = lt.lt_setup(ta, a, [k, M, h * k, k], [n, M, h * n, n], h, args.lt_algos, args.lt_workspace_mb << 20)
+        rows = []
+        for i in range(lt.lt_count(pid)):
+            row = dict(zip(["algo_id", "tile", "stages", "splitk", "reduction", "swizzle", "custom",
+                            "workspace", "waves_x1000"], lt.lt_config(pid, i)))
+            out2 = torch.empty_like(out_tok)
+            try:
+                lt.lt_run(pid, i, x_tok, w, out2)
+                torch.cuda.synchronize()
+            except Exception as exc:  # noqa: BLE001
+                row["error"] = repr(exc)[:200]
+                rows.append(row)
+                continue
+            o2 = out2.transpose(0, 1)
+            row["bitwise_equal_served"] = bool(torch.equal(o2, ref))
+            row["max_abs_vs_served"] = float((o2.float() - ref.float()).abs().max())
+            row.update(time_calls(lambda j: lt.lt_run(pid, i, x_tok, w, out2), 1, args.reps, args.iters))
+            row["tflops"] = flops / (row["ms"] * 1e-3) / 1e12
+            rows.append(row)
+        best = min((x for x in rows if "ms" in x), key=lambda x: x["ms"], default=None)
+        if best is not None:
+            i = rows.index(best)
+            out2 = torch.empty_like(out_tok)
+            best["kernels"] = kernel_names(lambda: lt.lt_run(pid, i, x_tok, w, out2))
+        r["lt_rows"], r["lt_best"] = rows, best
+    return r
 
 
 def triton_matmul():
@@ -358,7 +450,7 @@ def main():
     ap.add_argument("--iters", type=int, default=40)
     ap.add_argument("--lt-algos", type=int, default=32)
     ap.add_argument("--lt-workspace-mb", type=int, default=32)
-    ap.add_argument("--skip", default="", help="comma list of: lt,triton,fp8,concat")
+    ap.add_argument("--skip", default="", help="comma list of: lt,triton,fp8,bmm,concat")
     ap.add_argument("--artifact", default=None, help="accepted for bench_t8r.sh; unused")
     args = ap.parse_args()
     skip = set(filter(None, args.skip.split(",")))
@@ -403,6 +495,18 @@ def main():
         if "ms" in g:
             summ.update(fp8_ms=round(g["ms"], 4), fp8_tflops=round(g["tflops"], 1))
         print(json.dumps(summ), flush=True)
+    bmms = {}
+    if "bmm" not in skip:
+        for kind in BMMS:
+            b = bench_bmm(lt, kind, args)
+            bmms[kind] = b
+            print(json.dumps({"bmm": kind, "served_ms": b["served_strided"]["ms"],
+                              "served_kernels": b["served_strided"]["kernels"],
+                              "contig_ms": b["contiguous_bmm_only"]["ms"],
+                              "contig_copies_ms": b["contiguous_with_copies"]["ms"],
+                              "lt_best_ms": (b.get("lt_best") or {}).get("ms"),
+                              "lt_best_bitwise": (b.get("lt_best") or {}).get("bitwise_equal_served"),
+                              "lt_best_kernels": (b.get("lt_best") or {}).get("kernels")}), flush=True)
     concats = {}
     if "concat" not in skip:
         for cname, members in CONCATS.items():
@@ -412,7 +516,7 @@ def main():
                                   "fused_ms": concats[cname]["fused"]["ms"]}), flush=True)
     meta["end_unix"] = time.time()
     with open(os.path.join(args.out, "proj_gemm.json"), "w") as f:
-        json.dump({"meta": meta, "shapes": results, "concats": concats,
+        json.dump({"meta": meta, "shapes": results, "bmms": bmms, "concats": concats,
                    "peaks": {"bf16_mma_sync": BF16_PEAK, "e4m3_mma_sync": E4M3_PEAK}}, f, indent=1)
     print("done", flush=True)
 
