@@ -385,7 +385,7 @@ def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
     was given, and a plan whose control cannot be byte-matched (two families,
     or the 0.241-bpp hole below the E2M1x2 coset cap) is still a plan.  What it
     must never do is stay silent about it, so the reason lands in the block.
-    ``experiments/uniform_control.py`` is where the match is *asserted*, because
+    ``python -m tessera.uniform_control`` is where the match is *asserted*, because
     that is where the arm you would actually build gets written.
     """
     try:
@@ -764,7 +764,7 @@ def main(argv=None):
               f"no served KL has validated.  The menu requires "
               f"{selection['mode_required']} selection (docs/ARCHITECTURE.md §4.10, "
               f"tessera#2): serve the byte-matched uniform control "
-              f"(experiments/uniform_control.py verify) before this plan ships.")
+              f"(python -m tessera.uniform_control verify) before this plan ships.")
     if args.write_uniform_plan is not None:
         units = units_from_plan(logical_plan, shapes)
         control = uniform_control(units, rule=args.control_rule)

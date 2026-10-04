@@ -1,0 +1,158 @@
+{
+  "schema": "tessera.value_prefetch_874_combined_safety_protocol.v2",
+  "scope": "syntheticgeometry/nonshipping; fresh combined native source safety only",
+  "gpu_authorized": false,
+  "source_head": "3b58e8fe1eaa5c6f19d797209e7ba75dced3aa15",
+  "compiled_source_parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+  "native_source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+  "cohort_evidence_sha256": "1c0146966facd6bd6bda3f401456ce39752d5dfbd165b5f1741ddbf6fe18b6a1",
+  "container_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "bank": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/t16-synthetic-bank-v1",
+  "readset": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/t16-synthetic-bank-v1/readset.json",
+  "readset_sha256": "b857ccc6c92de5439e80c103bd0e23e5737e4ed1520e0336255fdaa0f0297c73",
+  "packet_sha256": "18bd603c54fd94452dd8f94853fa5ca818a1e473ed4c4fb5aade50e11a2d66af",
+  "readset_phase": {
+    "name": "whole-synthetic-bank",
+    "start_bytes": 0,
+    "end_bytes": 564278071
+  },
+  "entry_count": 36,
+  "arms": {
+    "baseline": {
+      "module": "tessera_routed_fused_value",
+      "source_module": "tessera_routed_fused_value",
+      "distance": 0,
+      "elf_sha256": "6a8c74671956d680690ebd342bd672cf19db07a0d71fd8285820bcff70d7a90a"
+    },
+    "candidate": {
+      "module": "tessera_routed_fused_value_prefetch4",
+      "source_module": "tessera_routed_fused_value",
+      "distance": 4,
+      "elf_sha256": "df00510cd202b810d28ce46671189f81362efb814fa1df6cccef4d51cd034f6b"
+    }
+  },
+  "cpu_fixture_sealer": {
+    "action_key": "46d8ca2364ef09ef75979da8bd493bde2dfb55ee12606e9108fe9851311decff",
+    "returncode": 0,
+    "attempts": 1,
+    "receipt_sha256": "a86af064c1e4e31765868873b2de92a5105043b3fc78e3dc6584f0d51db58501",
+    "payload_sha256": "5e3269e63548a7e6bb31db305f4dd0e9efc77f4d2dfcf9d39432ba80fc63f1db"
+  },
+  "cpu_staged_state_proof": {
+    "action_key": "e3b8cc377510c02d78ca60bdb45dd0f5a07ddf75f7970169ab6b2856209c7244",
+    "returncode": 0,
+    "attempts": 1,
+    "passed": 5,
+    "deselected": 5,
+    "skipped": 0,
+    "not_collected": 0,
+    "cuda_allocated": 0,
+    "actual_units": 270,
+    "actual_histories": 108,
+    "receipt_sha256": "634e63a564a31b4cc166829da3dd453af5ed9c4c6fbb3f38d1c613db9066a521",
+    "payload_sha256": "53711d61ab0660ffd569e2a01e299a7a8875818a010a74279176ae99024abe7d"
+  },
+  "common_pbrun_args": [
+    "--measurement",
+    "--exclusive",
+    "--cpus",
+    "1",
+    "--residency",
+    "stage",
+    "--max-attempts",
+    "1",
+    "--wait-s",
+    "7200"
+  ],
+  "environment": {
+    "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/runtime-generations/c43700f9d1d0-1791018557-b6c96bc4bbbb",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MAX_JOBS": "1",
+    "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+    "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+    "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648"
+  },
+  "actions": {
+    "numeric": {
+      "pbrun_args": [
+        "--demand",
+        "gpu=1,mem_gb=16",
+        "--gpu-memory-gb",
+        "8",
+        "--timeout-s",
+        "600"
+      ],
+      "mode": "consume",
+      "output": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/t16-numeric-bcdd-v1"
+    },
+    "sanitizer": {
+      "pbrun_args": [
+        "--demand",
+        "gpu=1,mem_gb=32",
+        "--gpu-memory-gb",
+        "24",
+        "--timeout-s",
+        "1800"
+      ],
+      "mode": "sanitize",
+      "output": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/t16-sanitizer-bcdd-v1",
+      "tool_sha256": "7a7fcdefb67042731daf021478176f4919e1843d0b10cb697af28a7d8a3d108b",
+      "tool_args": [
+        "--tool",
+        "memcheck",
+        "--error-exitcode",
+        "99",
+        "--target-processes",
+        "all"
+      ]
+    }
+  },
+  "execution": "Only after concrete Root GO and designated-parent source/cohort acceptance: use published pbrun --cwd the frozen checkout --container-image container_image --data-manifest readset, common_pbrun_args plus selected action args and all environment pairs, then bash experiments/t8r_speed/value_prefetch_numeric_action.sh bank output mode readset. Numeric first; sanitizer only after actual complete numeric receipt acceptance. No retries or old-bank replay. Fresh live complete claim-ledger, compatible already-local image, physical local floor at least 5 percent plus named 2 GiB, and exclusive GPU/host headroom are required at each publication. PB owns eligible placement; measurement legitimately selects the current qualified submitting host.",
+  "matrix_and_lifetime": "Existing 18 q256 rungs times M1/M7/M71 equals54 cells per arm. Load baseline once then candidate once, keep original load FDs held through final CUDA fence, preserve current serving cache/ABI/layout guards. Require exact bits at gate/up/post/down and all actual bound reports; report before/mapped/post-native SHA and resolved distance. Cgroup OOM/process-live evidence and real sanitizer error summary required. CPU models do not qualify these CUDA lifetimes.",
+  "not_claimed": [
+    "real calibrated T16 source authority",
+    "arbitrary shape/stream/graph/race coverage",
+    "T4 or MMA8 qualification",
+    "latency or energy improvement",
+    "default/menu/pin/cell change",
+    "serving or PACT adoption"
+  ],
+  "review_parent": "Tessera piece-major performance",
+  "source_pr": 901,
+  "cpu_native_fd_preflight": {
+    "action_key": "85bfd750c0ac0fb1a4e36cc34796c26f32008afaa1684c30252cf52c8d6a741f",
+    "returncode": 0,
+    "attempts": 1,
+    "focused_negative_gates_passed": 3,
+    "focused_deselected": 10,
+    "receipt": {
+      "action_manifest_sha256": "1c561ba13d398035162be8e9dc28caea7270b700551856c3a213be0112607d6b",
+      "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/85/85bfd750c0ac0fb1a4e36cc34796c26f32008afaa1684c30252cf52c8d6a741f.json",
+      "present": true,
+      "receipt_sha256": "0a82f4ffa3e571f0c20e76c66eaf790ba1d602e670efd2fd142cc1a7b4425467",
+      "result": {
+        "bytes": 6184,
+        "sha256": "a062e4f480d8d7ccc4851f6c2f649d00b2bc19e09b03f0570ab168c3b31312ab"
+      }
+    },
+    "report_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/t16-native-fd-preflight-v1/syntheticgeometry-nonshipping/native-fd-preflight.json",
+    "report_sha256": "fdb5bad073be825341a92fb31ad9636d86455a9a04547452f1099d858478b187",
+    "readset_sha256": "b857ccc6c92de5439e80c103bd0e23e5737e4ed1520e0336255fdaa0f0297c73",
+    "total_read_bytes": 564278071,
+    "actual_mapping_distances": [
+      0,
+      4
+    ],
+    "before_mapped_post_sha_equal": true,
+    "all_load_fds_closed": true,
+    "serving_builder_unchanged": true,
+    "serving_cache_empty": true,
+    "telemetry_complete": true,
+    "oom_local": 0,
+    "processes_live": 0,
+    "scope": "CPU staged read and actual held-FD mapping only; no CUDA or serving admission"
+  }
+}

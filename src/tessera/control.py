@@ -23,7 +23,7 @@ This module is that control, promoted out of the receipt's drivers:
 * :func:`control_block` renders the pair -- and, when the two KLs are known,
   the verdict -- as the JSON an artifact carries beside its bpp;
 * :func:`kl_verdict` is where the two KLs are divided, for the block and for
-  ``experiments/uniform_control.py verify`` alike: it states the ratio, or
+  ``python -m tessera.uniform_control verify`` alike: it states the ratio, or
   states that there is none to state, in a form JSON can carry (tessera#288).
 * :func:`selection_requirement` says whether a plan embodies a rung
   selection at all, and stamps the menu's requirement when it does:
@@ -250,7 +250,7 @@ def _error_ratio(value, *, field: str, where: str, error=TesseraError) -> float:
 def require_kl(value, *, field: str, where: str, error=TesseraError) -> float:
     """A KL divergence: finite and non-negative, by its own definition.
 
-    Public, because ``experiments/uniform_control.py verify`` builds its
+    Public, because ``python -m tessera.uniform_control verify`` builds its
     verdict from two KLs off the command line rather than through
     :func:`control_block`, and one rule has one home (AGENTS.md rule 4).
 
@@ -325,8 +325,8 @@ def kl_verdict(candidate_kl, control_kl, *, where: str, error=TesseraError) -> K
 
     Zero is a KL :func:`require_kl` accepts on purpose -- it means the two
     distributions agree -- so the verdict owes it an answer rather than a
-    refusal.  Both :func:`control_block` and ``experiments/uniform_control.py
-    verify`` used to spell that answer themselves as ``float("inf")`` whenever
+    refusal. Both :func:`control_block` and the uniform-control CLI
+    used to spell that answer themselves as ``float("inf")`` whenever
     the control's KL was zero: wrong for 0/0, which is undefined rather than
     positively infinite, and unwritable either way, since ``Infinity`` is a
     token no strict JSON reader accepts and the CLI wrote it and exited 0
@@ -1110,7 +1110,7 @@ def selection_requirement(units: Iterable[PlannedUnit]) -> dict:
     gate to check.  More than one pair means the surrogate chose rungs, and
     the block says so with ``validated: False``: no KL has been served here,
     and serving the byte-matched uniform control
-    (``experiments/uniform_control.py verify``, whose verdict
+    (``python -m tessera.uniform_control verify``, whose verdict
     :func:`control_block` records) is what flips that answer, not building
     the plan.  A plan with no Tessera units has no rate axis at all.
     """
@@ -1154,7 +1154,7 @@ def selection_requirement(units: Iterable[PlannedUnit]) -> dict:
         "detail": (
             f"{len(pairs)} distinct (grid, rung) pairs: a rung selection the "
             "surrogate made and no served KL has validated.  Serve the "
-            "byte-matched uniform control (experiments/uniform_control.py "
+            "byte-matched uniform control (python -m tessera.uniform_control "
             "verify) and record its verdict before this plan ships."
         ),
         "reason": _SELECTION_REASON,
