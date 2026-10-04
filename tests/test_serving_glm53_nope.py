@@ -158,6 +158,14 @@ _GRAPHS = (CUDAGraphMode.FULL_DECODE_ONLY, CUDAGraphMode.FULL, CUDAGraphMode.PIE
            CUDAGraphMode.FULL_AND_PIECEWISE)
 
 
+@pytest.mark.parametrize("enforce_eager", [True, False])
+def test_known_stock_v2_runner_is_refused_without_cuda_graphs(runner, enforce_eager):
+    runner(glm53_nope._STOCK_RUNNER_SHA256)
+    reason = _config_reason(config(graph=CUDAGraphMode.NONE, enforce_eager=enforce_eager))
+    assert reason is not None, "known out-of-bounds stock V2 runner was admitted without graphs"
+    assert "stock V2 runner" in reason and "vLLM #57317" in reason
+
+
 def test_graphs_on_the_stock_runner_are_refused_with_the_fault(runner):
     runner(glm53_nope._STOCK_RUNNER_SHA256)
     for graph in _GRAPHS:
