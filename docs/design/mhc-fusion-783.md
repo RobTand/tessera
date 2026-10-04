@@ -1,8 +1,9 @@
 # Fused mHC post/pre for GLM-5.3 prefill (#783)
 
 Status 2026-10-04: default-off; **bitwise to stock** on GB10 (GPU probe,
-60/60 cases at every tile height); **2.6 ms per 2048-token chunk per rank
-faster** at the served SP shape in matched microbenchmarks, not yet served.
+60/60 cases at every tile height); **2.6-3.0 ms per 2048-token chunk per
+rank faster** at the served SP shape in two matched microbenchmarks, not yet
+served.
 Receipts are under "Measured".
 
 ## What it costs today
@@ -126,7 +127,9 @@ realistic/adversarial. The kernel source is unchanged since.
 | attn 512 (6) | 0.222 | 0.343 → declines to stock | 0.154 |
 
 **At the served shape**, 44 attn and 45 ffn fused sites per chunk:
-44 × 0.022 + 45 × 0.036 ≈ **2.6 ms per 2048-token chunk per rank**, about 0.2%
+44 × 0.022 + 45 × 0.036 ≈ **2.6 ms per 2048-token chunk per rank**
+(3.0 ms in the confirmation run at the final head, PB `5f7e12ed`; tables in
+`docs/measurements/2026-10-04-mhc-fused-783.md`), about 0.2%
 of the 1157 ms chunk. The fused site is about 1.9× the floor; stock is about
 2.0×.
 

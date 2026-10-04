@@ -396,8 +396,10 @@ bitwise gate is `experiments/mhc/mhc_fused_probe.py` (60/60 cases at every
 tile height, PB `fa23b165`, recorded as the entry's `evidence`) and
 `tests/test_mhc_fusion_cuda.py`. Calls stock runs at split > 1 stay stock.
 At the served SP shard (1024 tokens at split 1) it measured 0.583/0.579 ms per
-site against stock 0.605/0.615 (attn/ffn, PB `286a7d3b`), about 2.6 ms per
-chunk per rank; that is a microbenchmark, not a served result.
+site against stock 0.605/0.615 (attn/ffn, PB `286a7d3b`), 2.6-3.0 ms per
+chunk per rank over two matched runs
+(`docs/measurements/2026-10-04-mhc-fused-783.md`); a microbenchmark, not a
+served result.
 No production pin, route cell, default, artifact or ship gate moves. Design:
 `docs/design/mhc-fusion-783.md`.
 
