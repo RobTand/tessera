@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for merge-batch SDK dependency declarations (#915).
+Only controls that invoke the real published PrismaBuild manifest/lease API
+require that SDK; portable numeric, history and cleanup controls still run.
+Missing-SDK collection is named honestly, not fabricated as native coverage;
+real-SDK execution and strict native mapping evidence remain independent.
+
 Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
 (#868/#875/#874; independently scoped source/cohort child #897). The current PM `piece_major` argument stays after the two
 word counts in every caller; direct legacy geometry callers pass false.

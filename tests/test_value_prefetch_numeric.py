@@ -100,6 +100,7 @@ def test_synthetic_matrix_covers_every_routed_run_pair():
 
 @pytest.mark.parametrize("complete_phase", [False, True])
 def test_public_pb_readset_and_whole_bank_phase_contract(tmp_path, complete_phase):
+    pytest.importorskip("prismabuild", reason="exact public manifest/phase control requires the published PB SDK")
     import json
     manifest = {"schema": "prismaquant.prismabuild.data_manifest.v1",
                 "produced_by": {"tool": "test"}, "mount_prefix": str(tmp_path),
