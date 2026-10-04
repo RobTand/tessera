@@ -8,7 +8,7 @@
 # Step 2 (t8): bench_dense_module.py -- the Tessera T-8 dense lane at the KDA
 #   input and o_proj shapes, M = 2048, with the bf16 and _scaled_mm references.
 # Step 3 (bmm): bench_mla_bmm.py -- MLA absorbed BMMs: served call, weight
-#   stored column-major, and tessera.serving.mla_bmm's strided Triton GEMM.
+#   stored column-major, and a strided Triton GEMM (bitwise-checked).
 # A later step still runs after an earlier failure; the action exits 1 if any
 # step failed and 2 before running anything when ORACLE_IMAGE is unset.
 set -uo pipefail
