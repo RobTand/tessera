@@ -177,16 +177,21 @@ def default_grid(torch: Any, device: Any) -> int:
 
 
 def tile_tokens(tokens: int, ctas: int) -> int:
-    """Tokens per tile: the fewest whole m16 tiles that cover the site in one wave of CTAs.
+    """Tokens per tile: 32 when that, and not 16, covers the site in one wave of CTAs; else 16.
 
-    A tile's GEMM is a chain of ~2048 dependent TF32 MMAs that takes ~135 us
-    on GB10 whatever the tile height (PB ``5bb4c705`` phase clocks), and a
-    CTA runs all of its tile's chains at once; so a site costs one chain
-    latency per wave of tiles, and the fewest waves is the target.  Capped at
-    ``TILE_MAX``; larger sites take more than one wave.
+    Measured on GB10 (PB ``286a7d3b``, attn and ffn): a tile's GEMM costs
+    143 us at 16 rows, 173 at 32, 315-391 at 48 and 548 at 64 -- beyond two
+    m16 tiles per CTA the TF32 chains stop overlapping -- and a site pays its
+    post, GEMM and pre once per wave.  So a second m16 tile is worth it only
+    when it removes a wave: at 1024 tokens on 48 SMs, 32-row tiles run 0.583 /
+    0.579 ms/site against 0.681 / 0.680 at 16 (stock 0.605 / 0.615).  When a
+    site takes several waves anyway, CTAs drift apart and one's GEMM overlaps
+    another's DRAM stream, and 16-row tiles win (2048 tokens: 1.206 ms at 16,
+    1.303 at 32; 8192: 4.557 at 16, 5.128 at 32).
     """
-    per_cta = -(-tokens // max(1, ctas))
-    return min(TILE_MAX, TILE_QUANTUM * -(-per_cta // TILE_QUANTUM))
+    quantum_waves = -(-tokens // (TILE_QUANTUM * max(1, ctas)))
+    pair_waves = -(-tokens // (2 * TILE_QUANTUM * max(1, ctas)))
+    return 2 * TILE_QUANTUM if quantum_waves > 1 and pair_waves == 1 else TILE_QUANTUM
 
 
 # ------------------------------------------------------------------ the call

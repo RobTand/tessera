@@ -64,16 +64,13 @@ def test_kernel_constants_and_params_layout_match_the_cuda_source():
     assert names == [field for field, _ in mf._Params._fields_]
 
 
-@pytest.mark.parametrize("tokens,ctas", [(33, 48), (1024, 48), (1024, 32), (2048, 48), (2049, 48),
-                                         (8192, 48), (100, 1)])
-def test_tiles_are_whole_m16_tiles_covering_the_site_in_the_fewest_waves(tokens, ctas):
+@pytest.mark.parametrize("tokens,ctas", [(33, 48), (768, 48), (769, 48), (1024, 48), (1024, 32),
+                                         (1536, 48), (1537, 48), (2048, 48), (8192, 48), (100, 1)])
+def test_a_second_m16_tile_only_when_it_removes_a_wave(tokens, ctas):
     tm = mf.tile_tokens(tokens, ctas)
-    assert tm % mf.TILE_QUANTUM == 0 and mf.TILE_QUANTUM <= tm <= mf.TILE_MAX
-    waves = -(-tokens // (tm * ctas))
-    if tm < mf.TILE_MAX:
-        assert waves == 1  # one wave whenever the cap does not bind
-        if tm > mf.TILE_QUANTUM:  # and no smaller tile would also have been one wave
-            assert -(-tokens // ((tm - mf.TILE_QUANTUM) * ctas)) > 1
+    assert tm in (mf.TILE_QUANTUM, 2 * mf.TILE_QUANTUM) and tm <= mf.TILE_MAX
+    waves = lambda t: -(-tokens // (t * ctas))  # noqa: E731
+    assert (tm == 2 * mf.TILE_QUANTUM) == (waves(mf.TILE_QUANTUM) > 1 and waves(2 * mf.TILE_QUANTUM) == 1)
 
 
 def test_unset_flag_installs_nothing():
