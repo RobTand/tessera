@@ -3,6 +3,7 @@
 These checks exercise actual CUDA-source pure C++ without a CUDA device. They
 establish dispatch/allocation arithmetic, not GPU numerics or performance.
 """
+import ast
 from pathlib import Path
 import os
 import shutil
@@ -108,19 +109,41 @@ def test_python_resource_helper_matches_native(native_owner):
             rf.launch_smem_bytes(**args)
 
 
-def test_compile_gate_is_scoped_and_default_off(monkeypatch):
+def test_compile_gate_is_scoped_and_frozen_at_import(monkeypatch):
     pytest.importorskip("torch")
     from tessera import routed_fused as rf
-    flag='-DTESSERA_ROUTED_FUSED_PAIRED_K32=1'
-    monkeypatch.delenv(rf.ENV_PAIRED_K32, raising=False)
-    assert flag not in rf._cflags('sm_121',True,True)
-    monkeypatch.setenv(rf.ENV_PAIRED_K32,'1')
-    assert flag in rf._cflags('sm_121',True,True)
-    assert flag not in rf._cflags('sm_121',True,False)
-    assert flag not in rf._cflags('sm_121',False,False,True)
-    monkeypatch.setenv(rf.ENV_PAIRED_K32,'true')
-    with pytest.raises(rf.GrammarError, match='compile flag must be 0 or 1'):
-        rf._cflags('sm_121',True,True)
+    flag = "-DTESSERA_ROUTED_FUSED_PAIRED_K32=1"
+    monkeypatch.setattr(rf, "PAIRED_K32_BUILD", False)
+    monkeypatch.setenv(rf.ENV_PAIRED_K32, "1")
+    assert flag not in rf._cflags("sm_121", True, True)
+    monkeypatch.setattr(rf, "PAIRED_K32_BUILD", True)
+    monkeypatch.setenv(rf.ENV_PAIRED_K32, "0")
+    assert flag in rf._cflags("sm_121", True, True)
+    assert flag not in rf._cflags("sm_121", True, False)
+    assert flag not in rf._cflags("sm_121", False, False, True)
+
+
+@pytest.mark.parametrize("choice", [None, "0", "1", "", "true", "2", "-1"])
+def test_paired_import_choice_is_strict_and_defaults_off(choice):
+    from types import SimpleNamespace
+    from tessera.errors import GrammarError
+    path = SOURCE.parents[2] / "routed_fused.py"
+    tree = ast.parse(path.read_text())
+    selected = []
+    for node in tree.body:
+        names = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+        if "_paired_k32_choice" in names or (isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "ENV_PAIRED_K32" for target in node.targets)):
+            selected.append(node)
+    env = {} if choice is None else {"TESSERA_ROUTED_FUSED_PAIRED_K32": choice}
+    scope = {"os": SimpleNamespace(environ=env), "GrammarError": GrammarError}
+    program = compile(ast.Module(body=selected, type_ignores=[]), str(path), "exec")
+    if choice not in (None, "0", "1"):
+        with pytest.raises(GrammarError, match="compile flag must be 0 or 1"):
+            exec(program, scope)
+    else:
+        exec(program, scope)
+        assert scope["PAIRED_K32_BUILD"] is (choice == "1")
 
 
 PRODUCER_HARNESS = r'''

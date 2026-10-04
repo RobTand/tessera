@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for paired compiled-bank choice identity (#919).
+The paired 0/1 selector is strict and import-frozen, like the independent
+MMA8 B-fragment selector. Environment edits after import cannot retarget a
+cached native module; comparison choices use separate processes and banks.
+The default is still zero and no kernel math, layout, source proof or serving
+adoption is promoted by this source fix.
+
 Re-stamped 2026-10-04 for placement-independent paired box attribution
 (#918). Both routed diagnosis and paired sampling use one stable two-Spark
 endpoint owner; localhost is never relabelled as Sparky on another worker.

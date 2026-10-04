@@ -119,6 +119,11 @@ ENV_TOGGLE_DENSE = "TESSERA_DENSE_FUSED"
 #: Default-off experiment read only by the E4M3 MMA build flags. Separate
 #: retained extension banks must be used for matched original/paired binaries.
 ENV_PAIRED_K32 = "TESSERA_ROUTED_FUSED_PAIRED_K32"
+_paired_k32_choice = os.environ.get(ENV_PAIRED_K32, "0")
+if _paired_k32_choice not in ("0", "1"):
+    raise GrammarError(f"{ENV_PAIRED_K32}={_paired_k32_choice!r}; compile flag must be 0 or 1")
+PAIRED_K32_BUILD = _paired_k32_choice == "1"
+del _paired_k32_choice
 #: The three JIT module names.  Literals: the contract's native-extension
 #: scanner reads the ``load(name=...)`` sites statically.
 MODULE_NAME_VALUE = "tessera_routed_fused_value"
@@ -483,12 +488,7 @@ def fused_dense_window_enabled() -> bool:
 
 
 def _paired_k32_build_enabled(mma8: bool) -> bool:
-    if not mma8:
-        return False
-    value = os.environ.get(ENV_PAIRED_K32, "0")
-    if value not in ("0", "1"):
-        raise GrammarError(f"{ENV_PAIRED_K32}={value!r}; compile flag must be 0 or 1")
-    return value == "1"
+    return bool(mma8 and PAIRED_K32_BUILD)
 
 
 def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> list:
