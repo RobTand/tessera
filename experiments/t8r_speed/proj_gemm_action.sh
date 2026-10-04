@@ -7,6 +7,8 @@
 #   same-input concatenations.
 # Step 2 (t8): bench_dense_module.py -- the Tessera T-8 dense lane at the KDA
 #   input and o_proj shapes, M = 2048, with the bf16 and _scaled_mm references.
+# Step 3 (bmm): bench_mla_bmm.py -- MLA absorbed BMMs: served call, weight
+#   stored column-major, and tessera.serving.mla_bmm's strided Triton GEMM.
 # A later step still runs after an earlier failure; the action exits 1 if any
 # step failed and 2 before running anything when ORACLE_IMAGE is unset.
 set -uo pipefail
@@ -24,9 +26,10 @@ step() {
   tail -n 40 "$OUT/$name.log"
   ((rc == 0)) || FAILED+=("$name:$rc")
 }
-STEPS=" ${PROJ_STEPS:-proj t8} "
+STEPS=" ${PROJ_STEPS:-proj t8 bmm} "
 [[ $STEPS == *" proj "* ]] && step proj env BENCH_PY=bench_proj_gemm.py bash $H . "$OUT/proj" ${PROJ_ARGS:-}
 [[ $STEPS == *" t8 "* ]] && step t8 env BENCH_PY=bench_dense_module.py bash $H . "$OUT/t8" \
   --modules kda_in,o_proj --ms 2048 --refs --power-ms 2048 --numerics-ms 2048
+[[ $STEPS == *" bmm "* ]] && step bmm env BENCH_PY=bench_mla_bmm.py bash $H . "$OUT/bmm"
 ((${#FAILED[@]} == 0)) || { echo "FAILED: ${FAILED[*]}"; exit 1; }
 echo "all steps rc=0"
