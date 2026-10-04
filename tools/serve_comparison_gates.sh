@@ -16,12 +16,12 @@
 #   lever_chain      (issue #872) The base arm, then the gate arm and (only
 #                    on a gate failure) the fallbacks in order; the first arm
 #                    whose TR3 is BITWISE against the base and whose
-#                    lever_check is clean AND whose generation gate passes is
+#                    declared lever status is clean AND whose generation gate passes is
 #                    SHIP. A generation failure never falls through to SHIP.
 #
 # Sourcing context must provide: COMPARISON_MANIFEST, LEAD_PIN, ARMS, MTP_ARM
 # and H (harness directory holding arms/*.env) for artifact_gate, and
-# lever_chain's collaborators (say, run_val, tr3_gate, lever_check, and the
+# lever_chain's collaborators (say, run_val, tr3_gate and the
 # arm variables). artifact_gate and generation_gate prefer the
 # SERVE_GATE_TOOL_DIR / SERVED_GENERATION_CLIENT overrides and otherwise use
 # this script's own directory.
