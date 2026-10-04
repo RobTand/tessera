@@ -141,6 +141,14 @@ LIBRARIES = {
 ENV_E4M3_MMA = "TESSERA_FUSED_E4M3_MMA"
 E4M3_MMA_CHOICES = ("f16", "e4m3")
 E4M3_MMA_DEFAULT = "e4m3"
+# Build-scoped experiment, frozen before the first extension load. Off/on arms
+# require distinct processes and build directories, never a cached-module retarget.
+ENV_MMA8_GATE_UP_B_PREFETCH = "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH"
+_mma8_b_choice = os.environ.get(ENV_MMA8_GATE_UP_B_PREFETCH, "0")
+if _mma8_b_choice not in ("0", "1"):
+    raise GrammarError(f"{ENV_MMA8_GATE_UP_B_PREFETCH}={_mma8_b_choice!r}; one of ('0', '1')")
+MMA8_GATE_UP_B_PREFETCH = int(_mma8_b_choice)
+del _mma8_b_choice
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
@@ -468,6 +476,7 @@ def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> lis
     return ["-O3", "-lineinfo", "-std=c++17",
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
+            *([f"-D{ENV_MMA8_GATE_UP_B_PREFETCH}={MMA8_GATE_UP_B_PREFETCH}"] if mma8 else []),
             *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
             *offload_flags(token, arch_specific=fp4)]
 
@@ -587,6 +596,12 @@ def _ext(library: str):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{module} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
+    if mma8:
+        actual = getattr(lib, "MMA8_GATE_UP_B_PREFETCH", None)
+        if actual != bool(MMA8_GATE_UP_B_PREFETCH):
+            raise GrammarError(
+                f"{module} was built with MMA8_GATE_UP_B_PREFETCH={actual!r}; "
+                f"this process expects {bool(MMA8_GATE_UP_B_PREFETCH)!r}")
     return lib
 
 

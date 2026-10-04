@@ -12217,6 +12217,10 @@
     "state": "OPEN",
     "title": "Bind paired timing summaries to exact raw-event medians"
    },
+   "893": {
+    "state": "OPEN",
+    "title": "[P1] Default-off T8 mode0 dual-B source and build-choice contract"
+   },
    "9": {
     "state": "CLOSED",
     "title": "BF16 has a wire and no serving route"
