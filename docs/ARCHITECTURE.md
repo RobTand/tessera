@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for actual-published SDK inspection in CPU controls
+(#915). Published pbrun/claim-owner checks run in fresh test processes with
+the actual resolved public source first; the suite's consumer-pinned SDK is
+not mutated or reclassified as current tooling. Exact SDK4/source/manifest
+and class-scope refusal predicates remain strict; no claim or GPU launch
+is invoked and no SDK5/runtime adoption is inferred.
+
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both

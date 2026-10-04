@@ -1,6 +1,8 @@
 """Coordinator controls; original16 proof stays immutable, changed guards selected."""
 from copy import deepcopy
-import importlib.util
+import os
+import subprocess
+import textwrap
 import json
 from pathlib import Path
 import sys
@@ -12,6 +14,24 @@ import box_artifacts as BOX
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "experiments/t8r_speed"))
 import stageprev_793_prepare as preparation
+
+
+def _run_published_sdk(program):
+    """Inspect actual published owners in a fresh process, not the suite SDK."""
+    tools = BOX.skip_now("prismabuild_tools", "pbrun.py").parent.resolve()
+    published = tools.parent
+    paths = [published / "src", ROOT / "experiments/t8r_speed", tools]
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(map(str, paths))}
+    prefix = """from pathlib import Path
+import sys
+from prismabuild import client
+assert Path(client.__file__).resolve().is_relative_to(Path(sys.argv[1]) / "src")
+assert client.SDK_VERSION == 4
+"""
+    result = subprocess.run([sys.executable, "-c", prefix + textwrap.dedent(program), str(published)],
+                            cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
 
 
 @pytest.fixture
@@ -103,20 +123,17 @@ def test_operative_successor_preserves_root_go_and_both_host_telemetry(contracts
 
 
 def test_actual_published_pbrun_class_scope_is_not_submitter_pin():
-    pytest.importorskip("prismabuild")
-    path = BOX.skip_now("prismabuild_tools", "pbrun.py")
-    sys.path.insert(0, str(path.parent))
-    spec = importlib.util.spec_from_file_location("stageprev_live_pbrun", path)
-    owner = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(owner)
-    from prismabuild.client import SDK_VERSION
-    assert SDK_VERSION == 4
-    owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool")
-    for hostname in ("sparky", "sparklina"):
-        assert owner.placement_tags(Path(preparation.SL_COORDINATOR), explicit=["gb10"],
-                                    here=False, hostname=hostname, portable_checkout=True,
-                                    command=["bash", "experiments/t8r_speed/ab_arms.sh"]) == ["gb10"]
-        assert owner.placement_tags(Path(preparation.SL_COORDINATOR), explicit=["gb10"],
-                                    here=True, hostname=hostname) == ["gb10", hostname]
-    with pytest.raises(SystemExit, match="drop --anywhere"):
-        owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool", anywhere=True)
+    _run_published_sdk("""
+        import pytest
+        import pbrun as owner
+        from stageprev_793_prepare import SL_COORDINATOR
+        owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool")
+        for hostname in ("sparky", "sparklina"):
+            assert owner.placement_tags(Path(SL_COORDINATOR), explicit=["gb10"],
+                                        here=False, hostname=hostname, portable_checkout=True,
+                                        command=["bash", "experiments/t8r_speed/ab_arms.sh"]) == ["gb10"]
+            assert owner.placement_tags(Path(SL_COORDINATOR), explicit=["gb10"],
+                                        here=True, hostname=hostname) == ["gb10", hostname]
+        with pytest.raises(SystemExit, match="drop --anywhere"):
+            owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool", anywhere=True)
+    """)

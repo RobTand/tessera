@@ -154,14 +154,15 @@ def test_exact_current_refusal_predicate_requires_the_fail_closed_continuation()
 
 
 def test_actual_loaded_public_claim_identity_matches_published_manifest():
-    import box_artifacts as BOX
-    pytest.importorskip("prismabuild")
-    from prismabuild.client import SDK_VERSION
-    assert SDK_VERSION == 4
-    manifest = json.loads(BOX.skip_now("prismabuild_tools", "..", "RUNTIME_VERSION.json").read_text())
-    observed = claim_contract.observe_current_claim_contract(manifest)
-    assert observed["verified"] is True
-    assert observed["claim_invoked"] is False and observed["denial_synthesized"] is False
+    from test_stageprev_793_prepare import _run_published_sdk
+    _run_published_sdk("""
+        import json
+        import stageprev_793_claim_contract as contract
+        manifest = json.loads((Path(sys.argv[1]) / "RUNTIME_VERSION.json").read_text())
+        observed = contract.observe_current_claim_contract(manifest)
+        assert observed["verified"] is True
+        assert observed["claim_invoked"] is False and observed["denial_synthesized"] is False
+    """)
 
 
 @pytest.mark.parametrize("defect", ["old_hash", "fake_root", "fake_kind", "changed_gate", "fake_go"])

@@ -11989,6 +11989,10 @@
     "state": "CLOSED",
     "title": "The compile-cache key does not see the GEMV lane: two structurally different streamed graphs share one slot"
    },
+   "915": {
+    "state": "OPEN",
+    "title": "[P1] Preserve explicit SDK dependencies and strict native mapping controls in the CPU merge batch"
+   },
    "92": {
     "state": "CLOSED",
     "title": "A uniformly-NVFP4 export declares \"mixed-precision\" and loses vLLM's FP4 fusion"
