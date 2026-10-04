@@ -26,6 +26,12 @@ Records: $OUT/<arm>.eq.<case>.json, and $OUT/<arm>.eq.summary.json with a
 digest of every choice's token ids and top-20 logprobs.
 
   equal-508.py PORT OUT ARM [CASES]    CASES: comma list of case names (default all)
+
+T702_LONG=1 swaps in the long-context screen (tessera#702) instead: cases whose
+longest row passes index_topk, so a graph serve replays its long-context class.
+Above that threshold eager is not repeat-exact (above), so these cases are a
+screen against a pool of eager outcomes, never part of the equality set.
+T702_MAX_MODEL_LEN is the serve's max_model_len, their length limit.
 """
 import hashlib
 import json
@@ -91,7 +97,9 @@ def delta(a, b):
 
 para = ("The quick brown fox jumps over the lazy dog near the riverbank while "
         "seventeen curious ravens observe the scene from a weathered oak branch. ")
-ids = post("/tokenize", dict(model=MODEL, prompt=para * 200, add_special_tokens=False))["tokens"]
+LONG = os.environ.get("T702_LONG") == "1"
+ids = post("/tokenize", dict(model=MODEL, prompt=para * (400 if LONG else 200),
+                             add_special_tokens=False))["tokens"]
 
 
 def window(n, offset):
@@ -122,6 +130,19 @@ CASES = {
     "rep_len1_a": ([(1, 0)], 32),
     "rep_len1_b": ([(1, 0)], 32),
 }
+
+if LONG:
+    LIMIT = int(os.environ["T702_MAX_MODEL_LEN"])
+    CASES = {
+        "long_b1_len2100": ([(2100, 0)], 32),
+        "long_b1_len4000": ([(4000, 3)], 32),
+        "long_b1_len8000": ([(8000, 5)], 32),
+        # one row past index_topk makes the whole step's max_seq_len long
+        "long_b2_mixed": ([(300, 11), (5000, 13)], 24),
+        "long_b4_mixed": ([(37, 11), (900, 13), (2500, 17), (6000, 19)], 24),
+        "long_rep_len4000_a": ([(4000, 3)], 32),
+        "long_rep_len4000_b": ([(4000, 3)], 32),
+    }
 
 
 def digest(choice):
