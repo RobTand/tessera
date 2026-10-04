@@ -1,5 +1,15 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
+the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
+eager execution as well as CUDA graphs. Its generic slot mapping can read
+past the kpool-tail block table; an eager configuration does not remove that
+read. The already measured #57317 backport and existing nonstock eager/V1
+admission retain their prior boundaries. Compilation, graph, drafter and
+eager-equivalence receipts remain independent. This is a correctness-only
+gate fix: no runtime image, public pin, serving cell, wire, numerical path,
+residency or performance default is promoted.
+
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
 before the first MMA on routed E4M3-MMA mode0, one-run R4 only. Both64/128-route
