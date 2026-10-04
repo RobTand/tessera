@@ -36,11 +36,12 @@ def population():
 def numeric_population():
     expected, summary = population()
     expected.update(phase="numeric", require_intermediates=True, native_files={})
-    expected["launch"] = json.loads((ROOT/"experiments/configs/stageprev_793_expected.json").read_text())["launch"]
+    reviewed = json.loads((ROOT / "experiments/configs/stageprev_793_expected.json").read_text())
+    expected["launch"] = reviewed["launch"]
     records = {}
     for arm in expected["arms"]:
         sha = expected["kernel_sha"][arm+"-routed"]
-        native = {"path":f"/mnt/shared/fixture-{arm}.so", "sha256":sha, "source_sha256":sha,
+        native = {"path":reviewed["native_files"][arm]["path"], "sha256":sha, "source_sha256":sha,
                   "build_action_key":"d"*64, "build_receipt_sha256":"e"*64}
         expected["native_files"][arm] = native
         record = {"declared_path":native["path"], "source_sha256":sha,
