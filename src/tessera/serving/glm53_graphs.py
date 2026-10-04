@@ -474,8 +474,9 @@ def install_branch_capture(config: Any, breakable=_breakable_enabled) -> bool:
                 "tessera.glm53_graphs: this Tessera GLM-5.3 CUDA-graph serve would not compute "
                 "what its eager serve computes, and Tessera refuses it: "
                 + "; ".join(reasons)
-                + ". Serve --enforce-eager, or max_model_len <= index_topk "
-                f"({min(index_topk_thresholds(config) or {0})}), on an inspected interface.")
+                + ". Serve --enforce-eager, or remove each difference named here (a serve at "
+                f"max_model_len <= index_topk ({min(index_topk_thresholds(config) or {0})}) "
+                "needs no class split, but its operators and capture sizes are judged all the same).")
         cudagraph_utils, mamba_hybrid = modules[0], modules[1]
         speculator_graphs = modules[3]
         mamba_hybrid.build_attn_metadata = _record_build(mamba_hybrid.build_attn_metadata)
