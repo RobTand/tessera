@@ -104,6 +104,9 @@ Environment:
   row shows tolerance and acceptance hold.
 - ``TESSERA_GLM53_ONORM_CUDA``: ``1`` appends the op as above; ``0`` (the
   default) leaves ``custom_ops`` as the serve set it.
+- ``TESSERA_GLM53_MHC_FUSED``: ``1`` installs :mod:`tessera.serving.mhc_fusion`
+  (one fused kernel per split-k mHC site, bitwise to stock at the stock split,
+  #783); unset or ``0`` (the default) keeps the stock mHC kernels.
 
 Decline (stock behaviour, one warning): a touched module's sha256 is not an
 inspected interface's, or TP != 2, PP > 1, DP > 1, EP, sequence-parallel MoE
@@ -972,7 +975,10 @@ def install_for_current_config() -> None:
     current = getter() if getter is not None else None
     if current is None:
         return
+    from .mhc_fusion import install_mhc_fusion
+
     with _INSTALL_LOCK:
         enable_onorm_cuda(current)
         install_sp_mhc(current)
         install_kda_conv_split(current)
+        install_mhc_fusion(current)
