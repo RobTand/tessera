@@ -665,3 +665,35 @@ manifest/payload and attestation. The prior15 Python-owner controls and all
 historic native/profile/numeric populations were not repeated. Source-only
 child893 may close independently; parent739/native/performance/serving outcome
 remains OPEN and all native/GPU/performance/default/pin/energy gates remain.
+
+
+## Changed-source dual-B numeric admission contract (#905, parent #739 OPEN)
+
+The new closed schema `tessera.routed_mma8_dual_b_numeric.v1` reuses the real
+benchmark's existing numeric owner on newly built common-source MMA banks,
+not a second dispatcher. Exactinteger compile0/1 and explicit64/128-route width
+are bound to M1/M2048, legacy/PMword layouts, source/harness/readset/routing/ELF
+identities. Onlynumeric phase and0power-loop seconds are admitted; old numericV4
+or repeatability/profile/timing/NCU proof cannot stand for changed-source proof.
+The benchmark checks the actual import-frozen choice before arm preparation and
+records it in the new receipt. Separate processes/extension roots per compile
+choice preserve the old native PyInit/cache identity rules. CommonCUDA/rf source
+and all seven freshly compiled ELF banks remain untouched by this harness change.
+
+Actualold-owner newcontrols
+`c3c1e3dd337d05c4308eaf78d4e71c49e0b391542f9b82fb28cfad72cfbce0a9`
+failed6/passed9: new finite protocol/geometry/env binding was unknown. First
+changed action `082857375655d704128bac960c4f7e7b6365f30a91c6b4850a09a49d56857b5a`
+failed2/passed13 because positive tests reused the old helper's power_s30 while
+the new numeric-only contract correctly requires0. Test invocation was corrected;
+no production exception or threshold change. Exactnewcontrols passed action
+`777601dcc6b4858e00bf6f22498a323f9c9aec3e95a566e7fe330fa37411a2ed`:
+15P/0S/0uncollected/0CUDAallocated, SparklinaCPU2/native1/xdistworksteal,
+pytest1.63s/outer2.544313s. Full currentCoreCAS authenticated receipt
+`e3eeebe1c7304fee86517756b5cb7d2f5be8a7c1ca8a24c10f216974f373df98`,
+payload `ffdb54bda0ceeb327d1bf5e096c26eceae3e2871b6b458dadb49ca69a78b765f`
+and attestation `ce572fb0c460297da7da84d1922bece8078230bb0946b7e1523b9ce681f872d7`.
+These are new schema/refusal CPU controls, not numerical, GPU, full-suite,
+profile, performance or energy qualification. Acceptedolder proofs are retained,
+not rerun/restamped. The independently closable source-contract child905 does
+not close739 or authorize new GPU/publication/default/pin/serving/deployment.

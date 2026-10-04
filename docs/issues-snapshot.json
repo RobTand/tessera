@@ -12129,6 +12129,10 @@
     "state": "OPEN",
     "title": "[P3] Store combined native observed receipts in the established results namespace"
    },
+   "905": {
+    "state": "OPEN",
+    "title": "[P1] Bind changed-source dual-B numeric protocol without historical proof substitution"
+   },
    "91": {
     "state": "CLOSED",
     "title": "The compile-cache key does not see the GEMV lane: two structurally different streamed graphs share one slot"
