@@ -126,11 +126,21 @@ def verify(receipt: dict, serve: dict) -> str | None:
     is about to publish.  The receipt's own rule is re-applied, so a receipt
     edited to say ``equal`` without equal arms is refused.
     """
-    if receipt.get("schema") != SCHEMA:
-        return f"schema {receipt.get('schema')!r} is not {SCHEMA}"
+    if not isinstance(receipt, dict) or receipt.get("schema") != SCHEMA:
+        schema = receipt.get("schema") if isinstance(receipt, dict) else type(receipt).__name__
+        return f"schema {schema!r} is not {SCHEMA}"
     missing = [f for f in SCOPE_FIELDS if f not in serve]
     if missing:
         return f"the serve does not name {missing}"
+    try:
+        return _verify(receipt, serve)
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as exc:
+        # A receipt the rule cannot read attests nothing: a reason, never an exception
+        # a caller might not treat as a refusal.
+        return f"malformed receipt ({type(exc).__name__}: {exc})"
+
+
+def _verify(receipt: dict, serve: dict) -> str | None:
     rederived = finish(json.loads(json.dumps(receipt)))
     if rederived["verdict"] != receipt.get("verdict") or rederived["verdict"] != "equal":
         bad = [a["name"] for a in rederived["arms"] if not a["equal"]]

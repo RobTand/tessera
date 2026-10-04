@@ -92,3 +92,16 @@ def test_a_serve_that_does_not_name_its_scope_is_refused():
     serve = _serve()
     del serve["tensor_parallel_size"]
     assert "does not name" in gr.verify(_receipt(), serve)
+
+
+@pytest.mark.parametrize("damage", [
+    lambda r: r["arms"][0].pop("graph"),
+    lambda r: r["arms"][0]["passes"][0].pop("members"),
+    lambda r: r.pop("runtime"),
+    lambda r: r.update(arms="not a list"),
+])
+def test_a_malformed_receipt_is_refused_with_a_reason_not_an_exception(damage):
+    receipt = _receipt()
+    damage(receipt)
+    why = gr.verify(receipt, _serve())
+    assert isinstance(why, str) and "malformed" in why
