@@ -321,6 +321,10 @@ class PreparedDenseNativeModule:
         return (self.symbol, self.decoder)
     @property
     def role_names(self): return tuple(role.name for role in self.__roles)
+    @property
+    def role_bundles(self):
+        """Each role's frozen ``PreparedWindowGemm``, in row order (read-only)."""
+        return tuple(role.bundle for role in self.__roles)
 
     def layout_facts(self):
         """Each role's lightweight layout facts, in row order.
