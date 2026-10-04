@@ -23,8 +23,8 @@ OUT=${1:-/mnt/shared/tessera-runs/receipts/696-serving-acceptance-20261004/image
 STOCK_IMG=${STOCK_IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5}
 BACKPORT_IMG=${BACKPORT_IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b}
 NIGHTLY_IMG=${NIGHTLY_IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a}
-RUNNER=vllm/v1/worker/gpu/model_runner.py
-BLOCK_TABLE=vllm/v1/worker/gpu/block_table.py
+RUNNER=v1/worker/gpu/model_runner.py
+BLOCK_TABLE=v1/worker/gpu/block_table.py
 
 mkdir -p "$OUT"
 chmod a+rwx "$OUT" 2>/dev/null || true
