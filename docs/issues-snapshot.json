@@ -12241,6 +12241,10 @@
     "state": "OPEN",
     "title": "[P3] Store combined native observed receipts in the established results namespace"
    },
+   "905": {
+    "state": "OPEN",
+    "title": "[P1] Bind changed-source dual-B numeric protocol without historical proof substitution"
+   },
    "906": {
     "state": "OPEN",
     "title": "[P2] Close the composed T4 staged-consumer source prerequisite independently"
