@@ -102,8 +102,9 @@ def _call_tensors(tokens, hidden=mf.HIDDEN):
         sinkhorn_repeat=20, norm_weight=torch.zeros(hidden, dtype=torch.bfloat16))
 
 
-def _deps(small_batch_config, deep_gemm=True):
-    kernels = SimpleNamespace(mhc_fused_post_pre_split_config=lambda t, h, n: small_batch_config)
+def _deps(small_batch_config, deep_gemm=True, split=1):
+    kernels = SimpleNamespace(mhc_fused_post_pre_split_config=lambda t, h, n: small_batch_config,
+                              compute_num_split=lambda block_k, k, grid: split)
     return kernels, SimpleNamespace(is_deep_gemm_supported=lambda: deep_gemm)
 
 
@@ -115,6 +116,19 @@ def test_decline_defers_to_the_stock_small_batch_dispatch():
 def test_decline_without_deepgemm_the_stock_gemm_is_another_kernel():
     kernels, dg = _deps(None, deep_gemm=False)
     assert "DeepGEMM" in mf.decline_reason(**_call_tensors(64), kernels=kernels, deep_gemm=dg)
+
+
+def test_decline_when_the_stock_split_is_above_one():
+    kernels, dg = _deps(None, split=3)
+    assert "split" in mf.decline_reason(**_call_tensors(1024), kernels=kernels, deep_gemm=dg)
+
+
+def test_the_split_is_read_for_this_calls_tokens_at_call_time():
+    seen = []
+    kernels, dg = _deps(None)
+    kernels.compute_num_split = lambda block_k, k, grid: seen.append((block_k, k, grid)) or 1
+    mf.decline_reason(**_call_tensors(1000), kernels=kernels, deep_gemm=dg)
+    assert seen == [(64, mf.HC_MULT * mf.HIDDEN, -(-1000 // 64))]
 
 
 def test_decline_shape_norm_and_device():

@@ -209,6 +209,13 @@ def decline_reason(x: Any, residual: Any, post_layer_mix: Any, comb_res_mix: Any
         return "stock small-batch fused kernel"
     if not deep_gemm.is_deep_gemm_supported():
         return "stock pre-norm GEMM is not DeepGEMM's"
+    # The kernel runs a call's splits one after another in each chain, which
+    # stock runs as parallel CTAs: at split 6 it measured 1.5-2x slower than
+    # stock (256@512 0.220 vs 0.102 ms, 512 0.343 vs 0.222; PB 286a7d3b), at
+    # split 1 faster.  Exact, but not worth taking; read at call time, so an
+    # exact-SP shard is judged at the full batch's split.
+    if kernels.compute_num_split(64, HC_MULT * HIDDEN, -(-tokens // 64)) != 1:
+        return "stock split > 1 (its splits run in parallel there)"
     if sinkhorn_repeat < 1:
         return "sinkhorn_repeat < 1"
     expect = ((x, torch.bfloat16, tokens * HIDDEN), (residual, torch.bfloat16, tokens * HC_MULT * HIDDEN),
