@@ -45,23 +45,33 @@ echo "host=$(hostname) cpus=$CPUS image=$IMAGE_REF libs=${LIBS[*]} ext=$EXT star
 echo "arm src=$KSRC kernel_sha=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)"
 docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g)" \
   -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$EXT":"$CONTAINER_EXT" -v "$BUILD_WORK":"$BUILD_WORK" \
-  -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
+  -e HOME="$BUILD_WORK/home" -e TMPDIR="$BUILD_WORK/tmp" -e XDG_CACHE_HOME="$BUILD_WORK/home/.cache" \
+  -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \
   -e TESSERA_PLATFORM_TOKEN="${BUILD_TOKEN:-sm_121}" -e MAX_JOBS="$NCPU" \
+  -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e PYTHONDONTWRITEBYTECODE=1 -e TESSERA_SERVE_MODE=resident \
+  -e PRISMABUILD_ACTION_KEY="${PRISMABUILD_ACTION_KEY:?PB admission required}" \
+  -e NATIVE_BUILD_IMAGE_RECORD="$RUNTIME_IMAGE_JSON" \
+  -e TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH="${TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH-0}" \
+  -e TESSERA_ROUTED_FUSED_FP4_A_PREFETCH="${TESSERA_ROUTED_FUSED_FP4_A_PREFETCH-0}" \
   -e TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH="${TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH-0}" \
-  -e PYTHONPATH="$CONTAINER_SRC" -e PYTHONUNBUFFERED=1 -e TESSERA_SERVE_MODE=resident \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
-import glob, hashlib, os, sys, time
+import glob, hashlib, json, os, sys, time
 from pathlib import Path
 from experiments.t8r_speed.finalize_native_build import finalize
 from tessera import routed_fused as rf
 from tessera.serving.backend import PlatformMismatchError
 root = os.environ["TORCH_EXTENSIONS_DIR"]
+source = Path(rf.__file__).parent / "serving/csrc/routed_fused_window.cu"
+libraries = []
 for lib in sys.argv[1:]:
     if lib == "e2m1":
         from tessera import routed_fused_e2m1 as fe
-        module, build = fe.MODULE_NAME, fe._ext
+        module = fe.MODULE_NAME + ("_apf4" if fe.activation_prefetch() else "")
+        source_module, build = fe.MODULE_NAME_VALUE, fe._ext
     else:
-        module = rf.LIBRARIES[lib][0]
+        module = source_module = rf.LIBRARIES[lib][0]
+        if lib == "value" and os.environ.get("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "0") == "4":
+            module = "tessera_routed_fused_value_prefetch4"
         build = lambda: rf._ext(lib)
     t0 = time.time()
     try:
@@ -73,8 +83,22 @@ for lib in sys.argv[1:]:
     if not found:
         sys.exit(f"{lib}: no library under {root} after the build")
     for so in found:
-        finalize(Path(so).parent, Path(rf.__file__).parent / 'serving/csrc/routed_fused_window.cu')
-        print(f"{lib}: {so} sha256={hashlib.sha256(open(so, 'rb').read()).hexdigest()} "
-              f"{time.time() - t0:.1f}s {how}", flush=True)
+        finalize(Path(so).parent, source)
+        finalization = Path(so).parent / "native-finalization.json"
+        identity = dict(library=lib, module=module, source_module=source_module, path=so,
+                        bytes=Path(so).stat().st_size, sha256=hashlib.sha256(Path(so).read_bytes()).hexdigest(),
+                        finalization_path=str(finalization),
+                        finalization_sha256=hashlib.sha256(finalization.read_bytes()).hexdigest(), status=how)
+        libraries.append(identity)
+        print(f"{lib}: {so} sha256={identity['sha256']} {time.time() - t0:.1f}s {how}", flush=True)
+record = dict(schema="tessera.native_build_cohort.v1", action_key=os.environ["PRISMABUILD_ACTION_KEY"],
+              scope="CPU native compile gate; not CUDA numeric, performance or serving qualification",
+              image=json.loads(os.environ["NATIVE_BUILD_IMAGE_RECORD"]),
+              source_path=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+              selectors={key: os.environ.get(key, "0") for key in (
+                  "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH",
+                  "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH")}, libraries=libraries)
+with (Path(root) / "native-build-record.json").open("x") as stream:
+    json.dump(record, stream, indent=2); stream.write("\n")
 PY
 echo "end=$(date -u +%FT%TZ)"

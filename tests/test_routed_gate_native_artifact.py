@@ -9,6 +9,7 @@ from types import ModuleType,SimpleNamespace
 
 import pytest
 
+pytest.importorskip("prismabuild", reason="native public-reader callback controls require the published PB SDK")
 from prismabuild import client
 from _routed_gate_sdk_fixture import fixture
 from test_routed_gate_staged_store import ROOT
@@ -21,7 +22,7 @@ def callback_module():
     return module
 
 
-def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=False):
+def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=False,owner_args=None):
     reader,staged,opened,sdk=fixture(tmp_path,origin='/forbidden-origin/module.so',offset=0)
     module=callback_module();calls=[]
     native_path='/forbidden-origin/module.so'
@@ -47,7 +48,7 @@ def owner_fixture(tmp_path,monkeypatch,*,expected=None,exec_hook=None,direct=Fal
                         lambda self,lib: exec_hook(lib,staged) if exec_hook else None)
     owner=module.NativeCallback(reader,native_path,rf,tmp_path/'retained',
         expected_sha256=expected or hashlib.sha256(b'owned-wire').hexdigest(),
-        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest())
+        source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), **(owner_args or {}))
     return owner,reader,staged,rf,build,calls
 
 
@@ -118,4 +119,72 @@ def test_other_library_cannot_trigger_fallback_compile(tmp_path,monkeypatch):
         rf.build_library('other','other',lambda *a:pytest.fail('JIT'))
     assert calls==[]
     owner.finish(lambda:None);reader.close()
+
+
+
+@pytest.mark.parametrize("module", ["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4",
+                                   "tessera_routed_fused_e2m1", "tessera_routed_fused_e2m1_apf4"])
+@pytest.mark.parametrize("direct", [False, True])
+def test_retained_arms_keep_production_source_owner(tmp_path, monkeypatch, module, direct):
+    source_module = "tessera_routed_fused_value"
+    owner, reader, staged, rf, original, calls = owner_fixture(
+        tmp_path, monkeypatch, direct=direct, owner_args={"module": module, "source_module": source_module})
+    lib = rf.build_library(module, source_module, lambda *a: pytest.fail("no JIT"))
+    owner.bind(lib)
+    assert calls == [(module, source_module)]
+    owner.finish(lambda: None)
+    assert rf.build_library is original
+    reader.close()
+
+
+def test_multi_arm_load_path_fds_remain_distinct_until_teardown(tmp_path, monkeypatch):
+    held, readers = [], []
+    try:
+        for index, module in enumerate(["tessera_routed_fused_value", "tessera_routed_fused_value_prefetch4"]):
+            path = tmp_path / str(index)
+            path.mkdir()
+            owner, reader, staged, rf, original, calls = owner_fixture(
+                path, monkeypatch, owner_args={"module": module, "source_module": "tessera_routed_fused_value"})
+            readers.append(reader)
+            rf.build_library(module, "tessera_routed_fused_value", lambda *a: pytest.fail("no JIT"))
+            fd = owner.fd
+            held.append(fd)
+            owner.finish(lambda: None, keep_load_fd=True)
+            assert os.fstat(fd).st_size == 10
+            assert rf.build_library is original and owner.closed
+            assert module not in sys.modules
+        assert len(set(held)) == 2
+        for fd in held:
+            assert os.fstat(fd).st_size == 10
+    finally:
+        for fd in held:
+            os.close(fd)
+        for reader in readers:
+            reader.close()
+
+
+@pytest.mark.parametrize("fault", ["none", "inode", "device", "path"])
+def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, fault):
+    owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
+    lib = rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail("no JIT"))
+    from tessera._dev.native_identity import mapped_file_device
+    info = os.fstat(owner.fd)
+    device = mapped_file_device(owner.fd)
+    inode = info.st_ino + (fault == "inode")
+    minor = device[1] + (fault == "device")
+    mapped_path = "/sealed/foreign.so" if fault == "path" else os.readlink(f"/proc/self/fd/{owner.fd}")
+    maps = f"1000-2000 r-xp 00000000 {device[0]:02x}:{minor:02x} {inode} {mapped_path}\n"
+    original_read = Path.read_text
+    monkeypatch.setattr(Path, "read_text", lambda path, *a, **kw: maps if str(path) == "/proc/self/maps" else original_read(path, *a, **kw))
+    try:
+        if fault == "none":
+            owner.attest_mapped(lib)
+            assert owner.record["mapped_sha256"] == owner.record["expected_sha256"]
+            assert owner.record["executable_mappings"] == [maps.strip()]
+        else:
+            with pytest.raises(ValueError, match="held ELF inode"):
+                owner.attest_mapped(lib)
+    finally:
+        owner.finish(lambda: None)
+        reader.close()
 

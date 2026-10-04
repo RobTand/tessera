@@ -33,7 +33,7 @@ def wrapper_environment(tmp_path):
     checkout = tmp_path / 'checkout'
     (checkout / 'experiments').mkdir(parents=True)
     (checkout / 'experiments/runtime_image.sh').write_text(
-        'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; }\n')
+        'runtime_image_require() { RUNTIME_IMAGE_CONTAINER_ENV=""; RUNTIME_IMAGE_JSON="{}"; }\n')
     (checkout / 'pyproject.toml').write_text('[project]\nname="tessera-quant"\nversion="0.0.0"\n')
     source = tmp_path / 'frozen-src'
     kernel = source / 'tessera/serving/csrc/routed_fused_window.cu'
@@ -55,7 +55,7 @@ def wrapper_environment(tmp_path):
     env.update(PATH=str(binaries) + os.pathsep + os.environ['PATH'],
                ORACLE_IMAGE='inert-image', TEST_RUNNER_SP=str(packages),
                BENCH_SRC=str(source), BENCH_EXT_DIR=str(extensions), TEST_XDIST='1',
-               DOCKER_ARGV_PATH=str(argv_path))
+               DOCKER_ARGV_PATH=str(argv_path), PRISMABUILD_ACTION_KEY="0" * 64)
     return checkout, source, extensions, argv_path, env
 
 
@@ -166,12 +166,17 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
     assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'e' * 32
 
 
+@pytest.mark.parametrize("key,on,library", [
+    ("TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH", "1", "e4m3mma"),
+    ("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "4", "value"),
+    ("TESSERA_ROUTED_FUSED_FP4_A_PREFETCH", "4", "e2m1")])
 @pytest.mark.parametrize('kind', ['build', 'benchmark'])
-@pytest.mark.parametrize('selection', [None, '', '0', '1', 'bad'],
+@pytest.mark.parametrize('selection', [None, '', '0', 'on', 'bad'],
                          ids=['unset', 'empty', 'off', 'on', 'invalid'])
-def test_mma8_build_choice_wrapper_preserves_declared_value(tmp_path, kind, selection):
+def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, selection, key, on, library):
     """Real shell paths preserve strict Python choice; only Docker/image are inert."""
-    key = 'TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH'
+    if selection == "on":
+        selection = on
     root = Path(__file__).resolve().parents[1]
     checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
     env.pop(key, None)
@@ -179,7 +184,7 @@ def test_mma8_build_choice_wrapper_preserves_declared_value(tmp_path, kind, sele
         env[key] = selection
     if kind == 'build':
         wrapper = root / 'experiments/t8r_speed/build_ext.sh'
-        command = ['bash', str(wrapper), str(checkout), str(extensions), 'e4m3mma']
+        command = ['bash', str(wrapper), str(checkout), str(extensions), library]
     else:
         wrapper = root / 'experiments/t8r_speed/bench_t8r.sh'
         artifact = tmp_path / 'artifact'; artifact.mkdir()

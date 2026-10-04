@@ -1,6 +1,10 @@
 #!/usr/bin/env python
 """The byte-matched uniform arm, built and judged (tessera#3).
 
+Public installed entry point: ``python -m tessera.uniform_control``. The
+``tessera.uniform_control.v1`` handoff is shared with PrismaQuant's shipcard
+reader. No experiment or sibling-repository import is required.
+
 A candidate on Tessera's rate axis makes a claim no other check in the pipeline
 tests: that *choosing* rungs beats spending the same bytes at one rung.  On
 2026-09-02 that claim was false by 2.00x served while the bytes were exact to
@@ -35,14 +39,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from fractions import Fraction
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-from tessera.control import (  # noqa: E402
-    DEFAULT_MAX_RELATIVE_SLACK,
+from tessera.control import (
+    CONTROL_SCHEMA, DEFAULT_MAX_RELATIVE_SLACK,
     assert_byte_matched,
     bits_from_manifest,
     control_block,
@@ -50,7 +51,7 @@ from tessera.control import (  # noqa: E402
     uniform_control,
     units_from_plan,
 )
-from tessera.errors import ControlNotByteMatchedError, TesseraError  # noqa: E402
+from tessera.errors import ControlNotByteMatchedError, TesseraError
 
 
 def read_shapes(args) -> dict:
@@ -60,10 +61,13 @@ def read_shapes(args) -> dict:
         return {name: tuple(int(v) for v in shape) for name, shape in raw.items()}
     if args.model is None:
         raise SystemExit("pass --model (the source checkpoint) or --shapes-json")
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from plan_from_layer_config import body_weights
+    from tessera.export_serving import quantizable
 
-    return body_weights(args.model)
+    _shards, dense, _packed, routed = quantizable(args.model)
+    shapes = {**dense, **routed}
+    if not shapes:
+        raise TesseraError(f"no 2-D body weight tensors in {args.model}")
+    return shapes
 
 
 def cmd_plan(args) -> int:
@@ -172,7 +176,7 @@ def cmd_verify(args) -> int:
             for key in ("varying_params", "candidate_bpp", "control_bpp"):
                 match_json[key] = None
         report = {
-            "schema": "tessera.uniform_control.v1",
+            "schema": CONTROL_SCHEMA,
             "candidate_label": args.candidate_label,
             "candidate_checkpoint": str(args.candidate),
             "control_checkpoint": str(args.control),
