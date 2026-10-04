@@ -4,11 +4,13 @@ Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
 eager execution as well as CUDA graphs. Its generic slot mapping can read
 past the kpool-tail block table; an eager configuration does not remove that
-read. The already measured #57317 backport and existing nonstock eager/V1
+read. The already measured vllm-project/vllm#57317 backport and existing
+nonstock eager/V1
 admission retain their prior boundaries. Compilation, graph, drafter and
 eager-equivalence receipts remain independent. This is a correctness-only
 gate fix: no runtime image, public pin, serving cell, wire, numerical path,
 residency or performance default is promoted.
+
 Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
 Both qualification owners derive the mapping device from the held FD's
 exact mount ID and require that backing device plus inode on an executable
@@ -7610,7 +7612,8 @@ is unchanged.
 
 **Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
 tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
-DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
+DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner except the known stock
+V2 runner (`_STOCK_RUNNER_SHA256`), which is refused in every mode. CUDA graphs run on
 vLLM's V2 model runner, and only on the runner source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
 backported (`_GRAPH_RUNNER_SHA256`, image
 `localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
@@ -7619,7 +7622,8 @@ VLLM_COMPILE, FULL_DECODE_ONLY. The gate judges the graph mode vLLM will run
 (`_graph_mode`): this backend's metadata builder supports uniform batches
 only, so a FULL request becomes FULL_DECODE_ONLY, or FULL_AND_PIECEWISE when
 attention is a splitting op. Every other combination is refused with its
-reason: the stock runner (its generic slot mapping reads the kpool tail's
+reason: the stock runner in every mode, eager included (its generic slot
+mapping reads the kpool tail's
 block-table row by absolute position, and past the table in a long prefill),
 STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
 (measured without graphs only), piecewise graphs under VLLM_COMPILE (they need
