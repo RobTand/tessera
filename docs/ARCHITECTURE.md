@@ -1,5 +1,15 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 (`fix/impacted-nonpython-directory-inputs-20261004`,
+#923): the impacted-test selector treats directory-wide reads as edges to the
+base directory, so a changed, added or deleted member of an enumerated
+directory (`rglob`, `iterdir`, `os.listdir`/`scandir`/`walk`) selects the
+directory's readers; a conftest's enumeration is probe-excluded collection
+machinery. This repairs the TS921 omission in which a docs/ARCHITECTURE.md
+change silently dropped `tests/test_issue_refs.py`. Selector infrastructure
+only: no wire, recipe table, serving lane, plugin contract, numerical path,
+residency or performance default moves.
+
 The closed `tessera.routed_mma8_dual_b_numeric.v1` schema (Refs #739) reuses
 `bench_t8r`'s real numeric owner for newly built common-source E4M3 MMA banks.
 It binds integer compile0/1 and explicit64/128-route width, M1/M2048,
@@ -2863,7 +2873,20 @@ an exact edge whatever its suffix -- a non-Python file is a node under its own
 repository-relative path. A conservative text fallback also selects tests that
 name a changed non-Python file when a helper hides the read from the resolver.
 This includes Markdown and other documentation suffixes: a named test input is
-not inert merely because it is prose (#358). **What is bounded is the resolution, not only its
+not inert merely because it is prose (#358). Directory-wide reads are edges to
+the base directory itself: `Path.rglob`/`iterdir`, `os.listdir`/`scandir`/
+`walk` consume the directory's *membership*, not one named file, so the graph
+holds the resolved base under its repository path and the selector seeds every
+changed path's ancestor directories against it -- a changed, added or deleted
+member selects the reader, pattern-agnostically, because matching the pattern
+would trade a sound over-selection for an under-selection any new file can
+trigger (#923). An out-of-tree or otherwise refused base keeps the #338
+unplaced-read uncertainty; a base assembled from runtime state names nothing
+and follows the named/unnamed rule; a conftest's enumeration is collection
+machinery and joins the probe exclusion, because pytest imports the conftest
+for every test in its scope whatever changed, and a per-change edge from an
+ancestor listing would close the cycle that holds every verdict at full
+(#148). **What is bounded is the resolution, not only its
 destination**, because a normalized final membership says nothing about the
 steps taken to reach it: `Path.resolve` walks a spelling as written, so
 `outside/../repo/driver.py` -- which normalizes into the tree -- still

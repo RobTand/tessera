@@ -642,3 +642,63 @@ def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypat
         '    item.read_text()\n', root)
     assert found == {root / "link"}
     assert not unknown and not unplaced
+
+
+def test_an_enumerated_directory_is_an_edge_to_its_base(tmp_path):
+    """A directory-wide read consumes the base's membership, so the base is
+    the dependency: one node every changed, added or deleted path under it
+    reaches (tessera#923)."""
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'DOCS = Path(__file__).resolve().parent / "docs"\n'
+        'for path in DOCS.rglob("*.md"):\n'
+        '    path.read_text()\n', tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced
+
+
+def test_iterdir_names_its_base(tmp_path):
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'DOCS = Path(__file__).resolve().parent / "docs"\n'
+        'NAMES = sorted(child.name for child in DOCS.iterdir())\n', tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced
+
+
+def test_an_out_of_tree_enumeration_base_keeps_the_unplaced_read(
+        tmp_path, monkeypatch):
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    outside = tmp_path.parent / "outside"
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'OUT = Path({str(outside)!r})\n'
+        'for path in OUT.rglob("*.md"):\n'
+        '    path.read_text()\n', tmp_path)
+    assert found == set()
+    assert not unknown and unplaced
+
+
+def test_a_dynamic_pattern_on_a_named_base_keeps_the_unplaced_read(tmp_path):
+    """The base is named, the membership is not: #338 uncertainty, never a
+    silent drop of a directory the diff can still reach."""
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(
+        'import os\nfrom pathlib import Path\n'
+        'DOCS = Path(__file__).resolve().parent / "docs"\n'
+        'for path in DOCS.rglob(os.environ.get("PATTERN", "*.md")):\n'
+        '    path.read_text()\n', tmp_path)
+    assert found == set()
+    assert not unknown and unplaced
+
+
+def test_a_source_executing_module_with_an_unnameable_base_is_a_wildcard(
+        tmp_path):
+    found, unknown, unplaced = _scan_full(
+        'import os\nfrom pathlib import Path\nimport runpy\n'
+        'for path in Path(os.environ["DOCS"]).rglob("*.py"):\n'
+        '    runpy.run_path(path)\n', tmp_path)
+    assert found == set() and not unplaced
+    assert unknown
