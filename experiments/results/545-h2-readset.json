@@ -1,0 +1,188 @@
+{
+ "schema": "prismaquant.prismabuild.data_manifest.v1",
+ "produced_by": {
+  "tool": "experiments/build_545_readset_manifest.py",
+  "issue": "RobTand/tessera#545 step-3 served A/B",
+  "half": "h2"
+ },
+ "annotations": {},
+ "mount_prefix": "/mnt/shared",
+ "entries": [
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/STUB_SOURCE.json",
+   "offset": 0,
+   "bytes": 187,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/chat_template.jinja",
+   "offset": 0,
+   "bytes": 10644,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/config.json",
+   "offset": 0,
+   "bytes": 28652,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/generation_config.json",
+   "offset": 0,
+   "bytes": 194,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00001-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 3605254954,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00002-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145041,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00003-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145004,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00004-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074144779,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00005-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1264988626,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00006-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145012,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00007-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145011,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00008-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1286444578,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00009-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145057,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00010-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145004,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00011-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074144731,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00012-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1286445426,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00013-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145041,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00014-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074144908,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00015-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1286444730,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00016-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145059,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00017-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074145049,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00018-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1074144628,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model-00019-of-00019.safetensors",
+   "offset": 0,
+   "bytes": 1564119578,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/model.safetensors.index.json",
+   "offset": 0,
+   "bytes": 1001071,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/processor_config.json",
+   "offset": 0,
+   "bytes": 909,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/tessera_serving_manifest.json",
+   "offset": 0,
+   "bytes": 3904560,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/tokenizer.json",
+   "offset": 0,
+   "bytes": 20217442,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D/tokenizer_config.json",
+   "offset": 0,
+   "bytes": 761,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-kl/wikitext_test.txt",
+   "offset": 0,
+   "bytes": 400622,
+   "sha256": null
+  }
+ ],
+ "entry_count": 29,
+ "total_bytes": 24283147258
+}

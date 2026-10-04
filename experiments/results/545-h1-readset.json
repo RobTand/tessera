@@ -1,0 +1,116 @@
+{
+ "schema": "prismaquant.prismabuild.data_manifest.v1",
+ "produced_by": {
+  "tool": "experiments/build_545_readset_manifest.py",
+  "issue": "RobTand/tessera#545 step-3 served A/B",
+  "half": "h1"
+ },
+ "annotations": {},
+ "mount_prefix": "/mnt/shared",
+ "entries": [
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/config.json",
+   "offset": 0,
+   "bytes": 69745,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/generation_config.json",
+   "offset": 0,
+   "bytes": 239,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/merges.txt",
+   "offset": 0,
+   "bytes": 1671853,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/model.safetensors",
+   "offset": 0,
+   "bytes": 846726118,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/tessera_serving_manifest.json",
+   "offset": 0,
+   "bytes": 123285,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/tokenizer.json",
+   "offset": 0,
+   "bytes": 11422654,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/tokenizer_config.json",
+   "offset": 0,
+   "bytes": 9732,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/ts104-gemv-rates/qwen3-0.6b-uniform-R1024/vocab.json",
+   "offset": 0,
+   "bytes": 2776833,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/config.json",
+   "offset": 0,
+   "bytes": 69857,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/generation_config.json",
+   "offset": 0,
+   "bytes": 239,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/merges.txt",
+   "offset": 0,
+   "bytes": 1671853,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/model.safetensors",
+   "offset": 0,
+   "bytes": 1015088026,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/tessera_gridbook_manifest.json",
+   "offset": 0,
+   "bytes": 117147,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/tokenizer.json",
+   "offset": 0,
+   "bytes": 11422654,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/tokenizer_config.json",
+   "offset": 0,
+   "bytes": 9732,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin/vocab.json",
+   "offset": 0,
+   "bytes": 2776833,
+   "sha256": null
+  },
+  {
+   "path": "/mnt/shared/tessera-kl/wikitext_test.txt",
+   "offset": 0,
+   "bytes": 400622,
+   "sha256": null
+  }
+ ],
+ "entry_count": 17,
+ "total_bytes": 1894357422
+}
