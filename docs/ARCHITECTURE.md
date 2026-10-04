@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for the legacy dense host-dispatch ownership contract
+(tessera#913). Shared native validation borrows plane arrays and Tensor
+handles; each legacy role passes one-element views of its live parameters,
+not newly allocated vectors. Split choices, device scheduling, kernel math
+and defaults are unchanged; no latency or energy improvement is claimed.
+
 Re-stamped 2026-10-01 for the dense module launch as an opt-in setting
 (tessera#778, Refs #750). `TESSERA_DENSE_MODULE_LAUNCH` (`routed_fused.
 ENV_DENSE_MODULE`) selects the dense identity's launch shape and K split
@@ -3959,7 +3965,11 @@ M = 2048) for a model-forward patch and a changed census module count; instead
 `native_window.PreparedDenseNativeModule` runs the module as one op
 (`tessera::fused_window_dense`, a custom op like `window_gemm_dense`) into one
 `[M, rows]` output, each role in its column slice. By default it launches each
-role, and its reduce when split. Under `TESSERA_DENSE_MODULE_LAUNCH=1`, one
+role, and its reduce when split. The shared host validator borrows each plane
+through `c10::ArrayRef`; the legacy entry passes a view of its live Tensor
+parameter, without creating an owning vector or copying a Tensor handle.
+The module entry borrows the vectors already owned by its pybind call (#913).
+Under `TESSERA_DENSE_MODULE_LAUNCH=1`, one
 launch on the E4M3 libraries takes the module's roles (at most `MAX_ROLES` = 8 per launch,
 `routed_fused.dense_forward_roles`): their 128-row blocks are one item list that
 `dense_k_split(..., blocks=)` prices as a whole, and a K split is reduced in the

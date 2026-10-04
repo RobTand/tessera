@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import re
 import textwrap
 from pathlib import Path
 
@@ -588,3 +589,25 @@ def test_a_refused_explicit_toolkit_does_not_leave_another_one_compiling(tmp_pat
         "a refused explicit selection must not leave the displaced toolkit as the "
         "build's compiler: the operator named a root and the build looks there")
     assert os.environ["CUDA_HOME"] == str(chosen)
+
+
+def test_legacy_dense_dispatch_borrows_planes_without_owning_vectors():
+    """#913: the default per-role entry must not allocate role containers.
+
+    This source-contract control is not native timing or compilation evidence;
+    the existing CUDA dense identity controls still qualify changed binaries.
+    """
+    source = Path(ext.native_source_path("tessera_routed_fused_value")).read_text()
+    signature = re.search(r"\bvoid dense_launch\s*\((.*?)\)\s*\{", source, re.S)
+    assert signature is not None
+    parameters = signature.group(1)
+    assert "std::vector" not in parameters, "native dense_launch must borrow plane arrays"
+    planes = re.findall(r"c10::ArrayRef<torch::Tensor>\s+(\w+)", parameters)
+    assert planes, "native dense_launch must borrow plane arrays, not own vectors"
+    assert not re.search(r"\btorch::Tensor\s+\w+", parameters), "helper Tensor handles must be borrowed"
+    legacy = re.search(r"\bvoid dense_forward\s*\([^)]*\)\s*\{(.*?)^\}", source, re.S | re.M)
+    assert legacy is not None
+    body = legacy.group(1)
+    assert "std::vector" not in body
+    views = re.findall(r"c10::ArrayRef<torch::Tensor>\(&\w+,\s*1\)", body)
+    assert len(views) == len(planes), "every legacy plane must borrow its live Tensor parameter"

@@ -65,6 +65,7 @@
 // file as two ``native_extensions`` entries (one per family, see ``ext``).
 
 #include <torch/extension.h>
+#include <c10/util/ArrayRef.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -2843,12 +2844,12 @@ void routed_fused_forward(
 // More than one role needs the E4M3 libraries' launch (``DenseRoles``).  The
 // caller zeroes ``counter`` in-stream before the call.
 void dense_launch(
-    bool fp8, torch::Tensor x, torch::Tensor a_scale,
-    const std::vector<torch::Tensor>& words, const std::vector<torch::Tensor>& tables,
-    const std::vector<torch::Tensor>& inits, const std::vector<torch::Tensor>& has_inits,
-    const std::vector<torch::Tensor>& wscales, const std::vector<torch::Tensor>& runs,
-    const std::vector<torch::Tensor>& bdescs, int64_t tile_words, int64_t slot_words, torch::Tensor counter,
-    int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid, int64_t bm, bool fixup) {
+    bool fp8, const torch::Tensor& x, const torch::Tensor& a_scale,
+    c10::ArrayRef<torch::Tensor> words, c10::ArrayRef<torch::Tensor> tables,
+    c10::ArrayRef<torch::Tensor> inits, c10::ArrayRef<torch::Tensor> has_inits,
+    c10::ArrayRef<torch::Tensor> wscales, c10::ArrayRef<torch::Tensor> runs,
+    c10::ArrayRef<torch::Tensor> bdescs, int64_t tile_words, int64_t slot_words, const torch::Tensor& counter,
+    int64_t k_split, const torch::Tensor& partial, const torch::Tensor& out, int64_t grid, int64_t bm, bool fixup) {
     TORCH_CHECK(fp8 == FAMILY_FP8, "this library serves the ", FAMILY_FP8 ? "E4M3" : "value",
                 " family only; the other family's library is a separate native extension");
     TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be a contiguous 2-D CUDA tensor");
@@ -3029,8 +3030,11 @@ void dense_forward(
     torch::Tensor wscale, torch::Tensor runs, torch::Tensor bdesc, int64_t tile_words,
     int64_t slot_words, torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid,
     int64_t bm) {
-    dense_launch(fp8, x, a_scale, {words}, {table}, {init}, {has_init}, {wscale}, {runs}, {bdesc}, tile_words,
-                 slot_words, counter, k_split, partial, out, grid, bm, false);
+    dense_launch(fp8, x, a_scale, c10::ArrayRef<torch::Tensor>(&words, 1),
+                 c10::ArrayRef<torch::Tensor>(&table, 1), c10::ArrayRef<torch::Tensor>(&init, 1),
+                 c10::ArrayRef<torch::Tensor>(&has_init, 1), c10::ArrayRef<torch::Tensor>(&wscale, 1),
+                 c10::ArrayRef<torch::Tensor>(&runs, 1), c10::ArrayRef<torch::Tensor>(&bdesc, 1),
+                 tile_words, slot_words, counter, k_split, partial, out, grid, bm, false);
 }
 
 // A merged Linear's roles in one launch, the split reduced in-kernel: the E4M3
