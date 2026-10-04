@@ -51,6 +51,14 @@
 // an fp32 workspace ``[S, M, N]`` and ``dense_reduce_kernel`` sums the ``S``
 // partials in fixed order and applies the epilogue -- deterministic, and the
 // same fp32 operation order as the unsplit epilogue once the sum is formed.
+// On the E4M3 libraries (``MULTI``, tessera#750 WP2) one launch takes all of a
+// merged Linear's roles -- their 128-row blocks are one item list, each role's
+// planes its own tensors (``DenseRoles``) -- and the split is reduced in the
+// kernel: the last split of a tile to arrive (a per-tile arrival count) sums
+// the partials in the same fixed order and applies the same epilogue, so the
+// output is bitwise the two-launch one.  A split reduced in the kernel keeps
+// at least STAGES + 1 K chunks per item, which is what keeps an item's
+// descriptor and row-scale slot live until its fixup is done with it.
 // The dense identity is ``tessera::fused_window_dense`` (``serving.native_
 // window``), decoders ``native_fused_window_dense`` / ``..._folded``.
 //
@@ -58,6 +66,7 @@
 // file as two ``native_extensions`` entries (one per family, see ``ext``).
 
 #include <torch/extension.h>
+#include <c10/util/ArrayRef.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -402,6 +411,7 @@ __host__ __device__ constexpr int gate_up_rate_max() {
 constexpr int BAR_FULL0 = 1;
 constexpr int BAR_EMPTY0 = 3;
 constexpr int BAR_PROD = 5;
+constexpr int BAR_CONS = 6;       // MULTI && SPLIT: the consumers' split fixup
 
 __device__ __forceinline__ void bar_sync(int id, int count) {
     asm volatile("bar.sync %0, %1;" :: "r"(id), "r"(count) : "memory");
@@ -722,6 +732,35 @@ __device__ __forceinline__ void decode_two(const int32_t* const (&Wc)[2], const 
     decode_rows<FP8, RB>(Wc[1], (uint32_t)prev[1], j, T1, ws[1], packed[1]);
 }
 
+// MULTI: a merged Linear's roles, one launch.  The roles share K, the run
+// pair, ``tile_words`` and ``slot_words`` (a module is one rung), so their
+// 128-row blocks are one list: role r owns blocks ``block0[r] ..`` of it, and
+// every per-role plane is the role's own tensor.  Read with ``role_pick``
+// (compile-time indices, so the table stays in parameter space).
+constexpr int MAX_ROLES = 8;
+struct DenseRoles {
+    int n;                         // roles, 1 .. MAX_ROLES
+    int block0[MAX_ROLES];         // the role's first 128-row block in the launch's list
+    int rows[MAX_ROLES];           // the role's rows (its N)
+    int col[MAX_ROLES];            // the role's first column of ``out`` (and of ``partial``)
+    const int32_t* words[MAX_ROLES];
+    const void* table[MAX_ROLES];
+    const int32_t* init[MAX_ROLES];
+    const int32_t* has_init[MAX_ROLES];
+    const float* wscale[MAX_ROLES];
+    const int32_t* runs[MAX_ROLES];
+    const int32_t* bdesc[MAX_ROLES];
+};
+
+template <class T>
+__device__ __forceinline__ T role_pick(const T (&a)[MAX_ROLES], int r) {
+    T v = a[0];
+    #pragma unroll
+    for (int i = 1; i < MAX_ROLES; ++i)
+        if (r == i) v = a[i];
+    return v;
+}
+
 struct Params {
     const void* x;                 // [rows_x, K] bf16 (value) or e4m3 (fp8)
     const float* a_scale;          // [rows_x] fp32 (fp8) or nullptr
@@ -762,6 +801,12 @@ struct Params {
     int rows_x;                    // DENSE: M, the rows of x (and of out)
     int k_split;                   // DENSE: S, the K-range splits per (n-block, superblock)
     float* partial;                // DENSE && SPLIT: fp32 [S, M, N] raw accumulators
+    // ---- appended (tessera#750 WP2): the E4M3 libraries' dense launch (MULTI)
+    // takes a module's roles in one launch and reduces its K split in-kernel.
+    // The fields above keep their offsets, so no other launch moves.
+    int fixup;                     // MULTI && SPLIT: 1 = the last split of a tile reduces it
+    int32_t* tile_sem;             // MULTI && SPLIT && fixup: [n_blocks * superblocks] arrivals
+    DenseRoles roles;              // MULTI: the module's roles (N = the module's total rows)
 };
 
 // ``RL``, ``TWO``: the launch's run pair (``pair_of``) -- the low (or only)
@@ -797,6 +842,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     constexpr int PREFETCH_DISTANCE = FAMILY_MMA8 ? A_PREFETCH
         : (!FAMILY_FP8 && !FAMILY_FP4 ? VALUE_A_PREFETCH : 0);
     constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO;
+    // The E4M3 libraries' dense launch: a module's roles in one launch, its K
+    // split reduced in-kernel (``DenseRoles``, ``fixup``).  The value family's
+    // dense launch and every routed launch keep their code.
+    constexpr bool MULTI = DENSE && FP8;
     // #793: only single-run MMA8 launches stage stream history.
     // Keep PREV_REGION_BYTES allocated so layout/ABI and bank mapping stay fixed.
     constexpr bool STAGE_PREV = PREV_STAGED && !TWO;
@@ -863,6 +912,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 sb = rem / p.k_split;
                 ks = rem - sb * p.k_split;
                 e = 0;
+                if constexpr (MULTI) {
+                    // nb is the block in the launch's list: find its role
+                    #pragma unroll
+                    for (int r = 1; r < MAX_ROLES; ++r)
+                        if (r < p.roles.n && nb >= p.roles.block0[r]) e = r;
+                    nb -= role_pick(p.roles.block0, e);
+                }
                 pos0 = sb * BMT;
                 mb = min(BMT, p.rows_x - pos0);
                 kc0 = (int)(((long)ks * nk) / p.k_split);
@@ -903,7 +959,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const int c = tid;
                 float v;
                 if (MODE == 2) {
-                    if constexpr (DENSE) {
+                    if constexpr (MULTI) {
+                        v = (n0 + c < role_pick(p.roles.rows, e)) ? role_pick(p.roles.wscale, e)[n0 + c] : 0.f;
+                    } else if constexpr (DENSE) {
                         // N-tail: a role's last block may hold fewer than BN
                         // rows; the columns past N are never stored.
                         v = (n0 + c < p.N) ? p.wscale0[(long)e * p.N + n0 + c] : 0.f;
@@ -925,7 +983,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // lookup of the previous item, and consumers never read the table.
             if (e != last_e) {
                 constexpr int PER16 = 16 / ELEM_BYTES;   // table entries per 16-byte copy
-                const TabT* t0 = static_cast<const TabT*>(p.table0) + (long)e * TABLE_ENTRIES;
+                const TabT* t0 = MULTI ? static_cast<const TabT*>(role_pick(p.roles.table, e))
+                                       : static_cast<const TabT*>(p.table0) + (long)e * TABLE_ENTRIES;
                 for (int i = tid; i < TABLE_ENTRIES / PER16; i += PRODUCER_THREADS)
                     cp_async16(tab + i * PER16, t0 + i * PER16);
                 if (MODE != 2) {
@@ -954,16 +1013,24 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const bool second = (MODE != 2) && h == 1;
                 g_h[h] = g;
                 t64_h[h] = t / HALF;
-                // The tile origin is the same in both layouts: piece 0 starts
-                // at the tile, and piece k is an offset INSIDE it (a piece
-                // plane is tile_words / PIECES_PER_TILE long).  Only the three
-                // inner addresses below move, never this base.
-                tbase_h[h] = (second ? p.words1 : p.words0) + (long)e * p.words_stride
-                             + (long)g * p.tile_words;
-                init_h[h] = (second ? p.init1 : p.init0) + (long)e * p.K;
-                hasinit_h[h] = (second ? p.has_init1 : p.has_init0)[e];
-                rp_h[h] = load_runs(second ? p.runs1 : p.runs0, e);
-                bdesc_h[h] = (second ? p.bdesc1 : p.bdesc0) + (long)e * nk * BDESC_INTS;
+                if constexpr (MULTI) {
+                    tbase_h[h] = role_pick(p.roles.words, e) + (long)g * p.tile_words;
+                    init_h[h] = role_pick(p.roles.init, e);
+                    hasinit_h[h] = role_pick(p.roles.has_init, e)[0];
+                    rp_h[h] = load_runs(role_pick(p.roles.runs, e), 0);
+                    bdesc_h[h] = role_pick(p.roles.bdesc, e);
+                } else {
+                    // The tile origin is the same in both layouts: piece 0 starts
+                    // at the tile, and piece k is an offset INSIDE it (a piece
+                    // plane is tile_words / PIECES_PER_TILE long).  Only the three
+                    // inner addresses below move, never this base.
+                    tbase_h[h] = (second ? p.words1 : p.words0) + (long)e * p.words_stride
+                                 + (long)g * p.tile_words;
+                    init_h[h] = (second ? p.init1 : p.init0) + (long)e * p.K;
+                    hasinit_h[h] = (second ? p.has_init1 : p.has_init0)[e];
+                    rp_h[h] = load_runs(second ? p.runs1 : p.runs0, e);
+                    bdesc_h[h] = (second ? p.bdesc1 : p.bdesc0) + (long)e * nk * BDESC_INTS;
+                }
             }
             // The run pair must tile K and the wire's tile_words exactly, its
             // two rates must be adjacent (``grammar.rate_set``: a stack mixes
@@ -1469,6 +1536,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int mb = desc[slot * 8 + 4];
             const int nkc = desc[slot * 8 + 6];
             const int ks = desc[slot * 8 + 7];
+            // MULTI: the item's role's rows and first output column; one role
+            // at column 0 otherwise.
+            int n_role = p.N, col0 = 0;
+            if constexpr (MULTI) {
+                n_role = role_pick(p.roles.rows, e);
+                col0 = role_pick(p.roles.col, e);
+            }
             // This warp's 16-row blocks that hold a route.  On the wide
             // superblock a block wholly past ``mb`` is padding: its rows are
             // never written (the epilogue's ``r >= mb``), so its fragment
@@ -1616,13 +1690,13 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         // The raw fp32 accumulator of this K range; the reduce
                         // kernel forms the sum in split order and applies the
                         // epilogue once.
-                        float* part = p.partial + ((long)ks * p.rows_x + pos) * p.N + n0;
+                        float* part = p.partial + ((long)ks * p.rows_x + pos) * p.N + col0 + n0;
                         #pragma unroll
                         for (int sg = 0; sg < NSEG; ++sg) {
                             const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
                             // N-tail (SPLIT is dense-only): N % SEGW == 0, so a
                             // segment is wholly inside the role or wholly past it.
-                            if (n0 + cb >= p.N) continue;
+                            if (n0 + cb >= n_role) continue;
                             if constexpr (SEGW == 4)
                                 *reinterpret_cast<float4*>(part + cb) = make_float4(
                                     accv(mi, sg, 0, hr), accv(mi, sg, 1, hr), accv(mi, sg, 2, hr), accv(mi, sg, 3, hr));
@@ -1677,7 +1751,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                             if constexpr (DENSE) {
                                 // N-tail: N % SEGW == 0, so a segment is
                                 // wholly inside the role or wholly past it.
-                                if (n0 + cb >= p.N) continue;
+                                if (n0 + cb >= n_role) continue;
                             }
                             uint32_t w[SEGW / 2] = {};
                             #pragma unroll
@@ -1687,8 +1761,68 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                 if (!DENSE && p.mul_weight) y = __fmul_rn(y, rw);
                                 w[c >> 1] |= (uint32_t)bf16_bits_rn(y) << (16 * (c & 1));
                             }
-                            const long col = n0 + cb;
+                            const long col = col0 + n0 + cb;
                             store_seg(out + (long)flat * p.out_stride + col, w);
+                        }
+                    }
+                }
+            }
+            if constexpr (MULTI && SPLIT) {
+                if (p.fixup) {
+                    // The split fixup.  Every split of a tile has written its
+                    // raw partial; the one that arrives last sums the S
+                    // partials in split order from 0.f -- dense_reduce_kernel's
+                    // operation order -- and applies the epilogue, so the
+                    // output is bitwise the two-launch one.  ``wsc[slot]`` is
+                    // still this item's: every item has at least STAGES + 1
+                    // chunks (the host refuses a split that leaves fewer), so
+                    // the producers cannot reach item + 2's slot before the
+                    // consumers start item + 1.
+                    __threadfence();
+                    bar_sync(BAR_CONS, THREADS - PRODUCER_THREADS);
+                    if (tid == PRODUCER_THREADS) {
+                        const int sb = desc[slot * 8 + 2];
+                        const int tile = (role_pick(p.roles.block0, e) + nb) * dense_nsb + sb;
+                        const int before = atomicAdd(p.tile_sem + tile, 1);
+                        __threadfence();
+                        claim[1] = before == p.k_split - 1;
+                    }
+                    bar_sync(BAR_CONS, THREADS - PRODUCER_THREADS);
+                    if (claim[1]) {
+                        #pragma unroll
+                        for (int mi = 0; mi < MI; ++mi) {
+                            #pragma unroll
+                            for (int hr = 0; hr < 2; ++hr) {
+                                const int r = WROWS * mw + 16 * mi + 8 * hr + (lane >> 2);
+                                if (r >= mb) continue;
+                                const int pos = pos0 + r;
+                                const float a_s = p.a_scale[pos];
+                                #pragma unroll
+                                for (int sg = 0; sg < NSEG; ++sg) {
+                                    const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                                    if (n0 + cb >= n_role) continue;
+                                    float y[SEGW];
+                                    #pragma unroll
+                                    for (int c = 0; c < SEGW; ++c) y[c] = 0.f;
+                                    for (int s = 0; s < p.k_split; ++s) {
+                                        const float* src = p.partial + ((long)s * p.rows_x + pos) * p.N + col0 + n0 + cb;
+                                        if constexpr (SEGW == 4) {
+                                            const float4 v = __ldcg(reinterpret_cast<const float4*>(src));
+                                            y[0] += v.x; y[1] += v.y; y[2] += v.z; y[3] += v.w;
+                                        } else {
+                                            const float2 v = __ldcg(reinterpret_cast<const float2*>(src));
+                                            y[0] += v.x; y[1] += v.y;
+                                        }
+                                    }
+                                    uint32_t w[SEGW / 2] = {};
+                                    #pragma unroll
+                                    for (int c = 0; c < SEGW; ++c) {
+                                        const float v = __fmul_rn(__fmul_rn(y[c], a_s), wsc[slot * BN + cb + c]);
+                                        w[c >> 1] |= (uint32_t)bf16_bits_rn(v) << (16 * (c & 1));
+                                    }
+                                    store_seg(out + (long)pos * p.out_stride + col0 + n0 + cb, w);
+                                }
+                            }
                         }
                     }
                 }
@@ -3019,22 +3153,35 @@ void routed_fused_forward(
     }
 }
 
-// The dense launch: one role of a dense Linear (E = 1, route m = row m, no
-// weight), ``out`` a ``[M, N]`` view whose rows may be strided (a column slice
-// of the module's merged output).  ``k_split`` > 1 accumulates each split's K
-// range into ``partial`` ([S, M, N] fp32) and reduces it in fixed order.  The
+// The dense launch: the roles of a dense Linear (route m = row m, no weight)
+// into ``out``, a ``[M, sum(N_r)]`` view whose rows may be strided, role r at
+// column ``sum(N_<r)``.  ``k_split`` > 1 accumulates each split's K range into
+// ``partial`` ([S, M, sum(N_r)] fp32); ``fixup`` reduces it in-kernel (the
+// last split of a tile to arrive, tessera#750 WP2; the E4M3 libraries only,
+// arrival counts in ``counter[1 ..]``), otherwise ``dense_reduce_kernel``
+// reduces it after the launch (one role).  Both sum in split order from 0.f.
+// More than one role needs the E4M3 libraries' launch (``DenseRoles``).  The
 // caller zeroes ``counter`` in-stream before the call.
-void dense_forward(
-    bool fp8, torch::Tensor x, torch::Tensor a_scale,
-    torch::Tensor words, torch::Tensor table, torch::Tensor init, torch::Tensor has_init,
-    torch::Tensor wscale, torch::Tensor runs, torch::Tensor bdesc, int64_t tile_words,
-    int64_t slot_words, torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid,
-    int64_t bm) {
+void dense_launch(
+    bool fp8, const torch::Tensor& x, const torch::Tensor& a_scale,
+    c10::ArrayRef<torch::Tensor> words, c10::ArrayRef<torch::Tensor> tables,
+    c10::ArrayRef<torch::Tensor> inits, c10::ArrayRef<torch::Tensor> has_inits,
+    c10::ArrayRef<torch::Tensor> wscales, c10::ArrayRef<torch::Tensor> runs,
+    c10::ArrayRef<torch::Tensor> bdescs, int64_t tile_words, int64_t slot_words, const torch::Tensor& counter,
+    int64_t k_split, const torch::Tensor& partial, const torch::Tensor& out, int64_t grid, int64_t bm, bool fixup) {
+    TORCH_CHECK(fp8 == FAMILY_FP8, "this library serves the ", FAMILY_FP8 ? "E4M3" : "value",
+                " family only; the other family's library is a separate native extension");
     TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be a contiguous 2-D CUDA tensor");
     const int64_t M = x.size(0);
     const int64_t K = x.size(1);
     TORCH_CHECK(K % BK == 0 && K >= 4 * BK, "K must be a multiple of ", BK, " and at least ", 4 * BK);
-    check_run_tables(runs, bdesc, 1, K, "runs", "bdesc");
+    const int R = (int)words.size();
+    TORCH_CHECK(R >= 1 && R <= MAX_ROLES, "a dense launch takes 1 .. ", MAX_ROLES, " roles, not ", R);
+    TORCH_CHECK((int)tables.size() == R && (int)inits.size() == R && (int)has_inits.size() == R
+                && (int)wscales.size() == R && (int)runs.size() == R && (int)bdescs.size() == R,
+                "every role plane takes one tensor per role");
+    TORCH_CHECK(R == 1 || FAMILY_FP8, "more than one role per launch is the E4M3 libraries' dense launch");
+    TORCH_CHECK(!fixup || FAMILY_FP8, "the in-kernel split fixup is the E4M3 libraries' dense launch");
     if (fp8) {
         TORCH_CHECK(x.scalar_type() == torch::kFloat8_e4m3fn, "the E4M3 family takes an e4m3 x");
         TORCH_CHECK(a_scale.is_cuda() && a_scale.scalar_type() == torch::kFloat32
@@ -3042,29 +3189,61 @@ void dense_forward(
     } else {
         TORCH_CHECK(x.scalar_type() == torch::kBFloat16, "the value family takes a bf16 x");
     }
-    TORCH_CHECK(wscale.dim() == 2 && wscale.size(0) == 1 && wscale.scalar_type() == torch::kFloat32
-                && wscale.is_contiguous(), "wscale must be fp32 [1, N]");
-    const int64_t N = wscale.size(1);
-    // N-tail: the last block may hold fewer than BN rows.  The epilogue stores
-    // and the split reduce write DENSE_ROW_QUANTUM columns at a time, so N is a
-    // multiple of it and a store is wholly inside the role or wholly past it.
-    TORCH_CHECK(N % DENSE_ROW_QUANTUM == 0 && N > 0, "the role's rows must be a multiple of ",
-                DENSE_ROW_QUANTUM);
-    TORCH_CHECK(words.is_cuda() && words.dim() == 2 && words.size(0) == 1
-                && words.scalar_type() == torch::kInt32 && words.is_contiguous(), "words must be int32 [1, W]");
-    TORCH_CHECK(table.dim() == 2 && table.size(0) == 1 && table.size(1) == TABLE_ENTRIES
-                && table.scalar_type() == TABLE_DTYPE && table.is_contiguous(),
-                "table must be ", TABLE_DTYPE_NAME, " [1, 16384]");
-    TORCH_CHECK(init.dim() == 2 && init.size(0) == 1 && init.size(1) == K
-                && init.scalar_type() == torch::kInt32 && init.is_contiguous(), "init must be int32 [1, K]");
-    TORCH_CHECK(has_init.numel() == 1 && has_init.scalar_type() == torch::kInt32, "has_init must be int32 [1]");
     TORCH_CHECK(tile_words >= K * 16 * RATE_MIN && tile_words <= K * 16 * RATE_MAX && tile_words % 16 == 0,
                 "tile_words must be 16 * (sum of the column rates), rates ", RATE_MIN, "..", RATE_MAX);
+    DenseRoles roles{};
+    roles.n = R;
+    int64_t n_total = 0;
+    int blocks_total = 0;
+    for (int r = 0; r < R; ++r) {
+        check_run_tables(runs[r], bdescs[r], 1, K, "runs", "bdesc");
+        const torch::Tensor& ws = wscales[r];
+        TORCH_CHECK(ws.dim() == 2 && ws.size(0) == 1 && ws.scalar_type() == torch::kFloat32
+                    && ws.is_contiguous(), "wscale must be fp32 [1, N]");
+        const int64_t N = ws.size(1);
+        // N-tail: the last block may hold fewer than BN rows.  The epilogue
+        // stores and the split reduce write DENSE_ROW_QUANTUM columns at a
+        // time, so N is a multiple of it and a store is wholly inside the role
+        // or wholly past it.
+        TORCH_CHECK(N % DENSE_ROW_QUANTUM == 0 && N > 0, "the role's rows must be a multiple of ",
+                    DENSE_ROW_QUANTUM);
+        const torch::Tensor& w = words[r];
+        TORCH_CHECK(w.is_cuda() && w.dim() == 2 && w.size(0) == 1
+                    && w.scalar_type() == torch::kInt32 && w.is_contiguous(), "words must be int32 [1, W]");
+        check_words(w, "words");
+        const int nb = (int)((N + BN - 1) / BN);
+        // The wire is padded to whole 512-row tiles, so the last (partial)
+        // block's rows are words the repack wrote; refuse words that stop short.
+        TORCH_CHECK(w.size(1) >= ((long)nb * BN + TILE_ROWS - 1) / TILE_ROWS * tile_words,
+                    "words must hold every ", TILE_ROWS, "-row tile the role's ", nb, " blocks of ", BN,
+                    " rows read");
+        const torch::Tensor& t = tables[r];
+        TORCH_CHECK(t.dim() == 2 && t.size(0) == 1 && t.size(1) == TABLE_ENTRIES
+                    && t.scalar_type() == TABLE_DTYPE && t.is_contiguous(),
+                    "table must be ", TABLE_DTYPE_NAME, " [1, 16384]");
+        TORCH_CHECK(inits[r].dim() == 2 && inits[r].size(0) == 1 && inits[r].size(1) == K
+                    && inits[r].scalar_type() == torch::kInt32 && inits[r].is_contiguous(),
+                    "init must be int32 [1, K]");
+        TORCH_CHECK(has_inits[r].numel() == 1 && has_inits[r].scalar_type() == torch::kInt32,
+                    "has_init must be int32 [1]");
+        roles.block0[r] = blocks_total;
+        roles.rows[r] = (int)N;
+        roles.col[r] = (int)n_total;
+        roles.words[r] = i32_ptr(w);
+        roles.table[r] = t.data_ptr();
+        roles.init[r] = i32_ptr(inits[r]);
+        roles.has_init[r] = i32_ptr(has_inits[r]);
+        roles.wscale[r] = f32_ptr(ws);
+        roles.runs[r] = i32_ptr(runs[r]);
+        roles.bdesc[r] = i32_ptr(bdescs[r]);
+        n_total += N;
+        blocks_total += nb;
+    }
     TORCH_CHECK(counter.scalar_type() == torch::kInt32 && counter.numel() >= 1, "counter must be int32");
     TORCH_CHECK(out.is_cuda() && out.dim() == 2 && out.scalar_type() == torch::kBFloat16
-                && out.size(0) == M && out.size(1) == N && out.stride(1) == 1 && out.stride(0) >= N
+                && out.size(0) == M && out.size(1) == n_total && out.stride(1) == 1 && out.stride(0) >= n_total
                 && (out.stride(0) % 2) == 0,
-                "out must be a bf16 [M, N] view with unit column stride and an even row stride");
+                "out must be a bf16 [M, sum of the roles' rows] view with unit column stride and an even row stride");
     const int nk = (int)(K / BK);
     // The producers write item i + 2's descriptor into item i's slot once
     // item i + 1's last chunk has waited EMPTY on the chunk two before it;
@@ -3075,85 +3254,127 @@ void dense_forward(
     // launch's bound on the same protocol (tessera#805).
     TORCH_CHECK(k_split >= 1 && k_split <= nk / 2, "k_split must be in [1, K / ", 2 * BK,
                 "]: every split item keeps two K chunks, so no descriptor slot is rewritten before it is read");
+    // Every item of a split the kernel reduces itself keeps at least
+    // STAGES + 1 chunks: the producers run at most STAGES chunks ahead of the
+    // consumers, so a slot two items back (its descriptor, its row scales) is
+    // never rewritten before the fixup has finished with it.  A split reduced
+    // after the launch (``fixup`` false: the one-role entry) keeps the bound
+    // of the check above (tessera#805): two chunks per item, K / (2 * BK).
+    TORCH_CHECK(k_split == 1 || !fixup || k_split <= nk / (STAGES + 1), "k_split ", k_split,
+                " leaves a split fewer than ", STAGES + 1, " of the ", nk,
+                " K chunks; the in-kernel fixup takes at most ", nk / (STAGES + 1));
     TORCH_CHECK(has_width(FAMILY_FP8, FAMILY_MMA8, 2, (int)bm) && (bm == BM || k_split == 1), "bm ", bm,
                 ": the dense launch takes ", BM, "-row superblocks, or ", BM_WIDE,
                 " unsplit in the E4M3 family's library");
+    const int nsb = (int)((M + bm - 1) / bm);
     if (k_split > 1) {
         TORCH_CHECK(partial.is_cuda() && partial.scalar_type() == torch::kFloat32 && partial.is_contiguous()
-                    && partial.numel() == k_split * M * N, "partial must be contiguous fp32 [S, M, N]");
-        // the reduce writes four bf16 at a time (uint2) at column offsets that
-        // are multiples of 4: the row stride must keep those 8-byte aligned
-        TORCH_CHECK((out.stride(0) % 4) == 0,
-                    "a split-K launch needs out's row stride to be a multiple of 4 elements");
+                    && partial.numel() == k_split * M * n_total, "partial must be contiguous fp32 [S, M, N]");
+        if (fixup) {
+            TORCH_CHECK(counter.numel() >= 1 + (long)blocks_total * nsb, "an in-kernel split fixup needs ",
+                        1 + (long)blocks_total * nsb, " zeroed counter slots: the work counter and one arrival "
+                        "count per (block, superblock)");
+        } else {
+            TORCH_CHECK(R == 1, "a split reduced after the launch takes one role");
+            // the reduce writes four bf16 at a time (uint2) at column offsets that
+            // are multiples of 4: the row stride must keep those 8-byte aligned
+            TORCH_CHECK((out.stride(0) % 4) == 0,
+                        "a split-K launch needs out's row stride to be a multiple of 4 elements");
+        }
     }
     TORCH_CHECK(grid >= 1, "grid must be positive");
-    TORCH_CHECK(fp8 == FAMILY_FP8, "this library serves the ", FAMILY_FP8 ? "E4M3" : "value",
-                " family only; the other family's library is a separate native extension");
 
     Params p{};
     p.x = x.data_ptr();
     p.a_scale = fp8 ? f32_ptr(a_scale) : nullptr;
-    p.words0 = i32_ptr(words);
+    p.words0 = roles.words[0];
     p.words1 = nullptr;
-    p.table0 = table.data_ptr();
+    p.table0 = roles.table[0];
     p.table1 = nullptr;
-    p.init0 = i32_ptr(init);
+    p.init0 = roles.init[0];
     p.init1 = nullptr;
-    p.has_init0 = i32_ptr(has_init);
+    p.has_init0 = roles.has_init[0];
     p.has_init1 = nullptr;
-    p.wscale0 = f32_ptr(wscale);
+    p.wscale0 = roles.wscale[0];
     p.wscale1 = nullptr;
-    p.runs0 = i32_ptr(runs);
+    p.runs0 = roles.runs[0];
     p.runs1 = nullptr;
-    p.bdesc0 = i32_ptr(bdesc);
+    p.bdesc0 = roles.bdesc[0];
     p.bdesc1 = nullptr;
-    check_words(words, "words");
-    p.words_stride = words.size(1);
+    p.words_stride = words[0].size(1);
     p.tile_words = (int)tile_words;
     check_slot(2, slot_words, x, (int)bm);
     p.slot_words = (int)slot_words;
     p.K = (int)K;
-    p.N = (int)N;
+    p.N = (int)n_total;
     p.E = 1;
     p.offsets = nullptr;
     p.flat_sorted = nullptr;
     p.rw_sorted = nullptr;
     p.item_off = nullptr;
     p.counter = counter.data_ptr<int32_t>();
-    p.n_blocks = (int)((N + BN - 1) / BN);
-    // The wire is padded to whole 512-row tiles, so the last (partial) block's
-    // rows are words the repack wrote; refuse a words tensor that stops short.
-    TORCH_CHECK(words.size(1) >= ((long)p.n_blocks * BN + TILE_ROWS - 1) / TILE_ROWS * tile_words,
-                "words must hold every ", TILE_ROWS, "-row tile the role's ", p.n_blocks,
-                " blocks of ", BN, " rows read");
+    p.n_blocks = blocks_total;
     p.top_k = 1;
     p.a_row_mode = 2;
     p.mul_weight = 0;
     p.limit = std::numeric_limits<float>::infinity();
     p.out = out.data_ptr();
     p.out_stride = out.stride(0);
-    p.inter = (int)N;
+    p.inter = (int)n_total;
     p.rows_x = (int)M;
     p.k_split = (int)k_split;
     p.partial = k_split > 1 ? partial.data_ptr<float>() : nullptr;
+    p.fixup = (k_split > 1 && fixup) ? 1 : 0;
+    p.tile_sem = p.fixup ? counter.data_ptr<int32_t>() + 1 : nullptr;
+    p.roles = roles;
 
     const c10::cuda::CUDAGuard guard(x.device());
     auto stream = at::cuda::getCurrentCUDAStream();
     const int g = (int)grid;
     if (k_split > 1) {
         launch<FAMILY_FP8, 2, true, true>(p, g, stream);
-        const long quads = M * (N / 4);
-        const int threads = 256;
-        const long blocks = (quads + threads - 1) / threads;
-        dense_reduce_kernel<FAMILY_FP8><<<(unsigned)blocks, threads, 0, stream>>>(
-            p.partial, p.a_scale, p.wscale0, reinterpret_cast<uint16_t*>(p.out), p.out_stride,
-            (int)k_split, M, N);
-        C10_CUDA_KERNEL_LAUNCH_CHECK();
+        if (!p.fixup) {
+            const long quads = M * (n_total / 4);
+            const int threads = 256;
+            const long blocks = (quads + threads - 1) / threads;
+            dense_reduce_kernel<FAMILY_FP8><<<(unsigned)blocks, threads, 0, stream>>>(
+                p.partial, p.a_scale, p.wscale0, reinterpret_cast<uint16_t*>(p.out), p.out_stride,
+                (int)k_split, M, n_total);
+            C10_CUDA_KERNEL_LAUNCH_CHECK();
+        }
     } else if (bm == BM) {
         launch<FAMILY_FP8, 2, true, false>(p, g, stream);
     } else if constexpr (has_width(FAMILY_FP8, FAMILY_MMA8, 2, BM_WIDE)) {
         launch<FAMILY_FP8, 2, true, false, BM_WIDE>(p, g, stream);
     }
+}
+
+// One role, the split reduced after the launch: the entry every library has
+// published since the dense case entered (tessera#640 follow-up).
+void dense_forward(
+    bool fp8, torch::Tensor x, torch::Tensor a_scale,
+    torch::Tensor words, torch::Tensor table, torch::Tensor init, torch::Tensor has_init,
+    torch::Tensor wscale, torch::Tensor runs, torch::Tensor bdesc, int64_t tile_words,
+    int64_t slot_words, torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid,
+    int64_t bm) {
+    dense_launch(fp8, x, a_scale, c10::ArrayRef<torch::Tensor>(&words, 1),
+                 c10::ArrayRef<torch::Tensor>(&table, 1), c10::ArrayRef<torch::Tensor>(&init, 1),
+                 c10::ArrayRef<torch::Tensor>(&has_init, 1), c10::ArrayRef<torch::Tensor>(&wscale, 1),
+                 c10::ArrayRef<torch::Tensor>(&runs, 1), c10::ArrayRef<torch::Tensor>(&bdesc, 1),
+                 tile_words, slot_words, counter, k_split, partial, out, grid, bm, false);
+}
+
+// A merged Linear's roles in one launch, the split reduced in-kernel: the E4M3
+// libraries' dense entry (tessera#750 WP2).
+void dense_forward_roles(
+    bool fp8, torch::Tensor x, torch::Tensor a_scale,
+    std::vector<torch::Tensor> words, std::vector<torch::Tensor> tables, std::vector<torch::Tensor> inits,
+    std::vector<torch::Tensor> has_inits, std::vector<torch::Tensor> wscales, std::vector<torch::Tensor> runs,
+    std::vector<torch::Tensor> bdescs, int64_t tile_words, int64_t slot_words, torch::Tensor counter,
+    int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid, int64_t bm, bool fixup) {
+    TORCH_CHECK(FAMILY_FP8, "dense_forward_roles is the E4M3 libraries' entry");
+    dense_launch(fp8, x, a_scale, words, tables, inits, has_inits, wscales, runs, bdescs, tile_words, slot_words,
+                 counter, k_split, partial, out, grid, bm, fixup);
 }
 #else  // TESSERA_ROUTED_FUSED_FP4
 
@@ -3363,6 +3584,7 @@ void dense_forward_fp4(
 }
 #endif  // TESSERA_ROUTED_FUSED_FP4
 
+
 void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
     TORCH_CHECK(routed.is_cuda() && routed.dim() == 2 && routed.scalar_type() == torch::kBFloat16
                 && routed.is_contiguous(), "routed must be contiguous bf16 [P, H]");
@@ -3424,6 +3646,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 #if !TESSERA_ROUTED_FUSED_FP4
     m.def("routed_fused_forward", &routed_fused_forward);
     m.def("dense_forward", &dense_forward);
+    if constexpr (FAMILY_FP8) m.def("dense_forward_roles", &dense_forward_roles);
+    m.attr("MAX_ROLES") = MAX_ROLES;
+    m.attr("STAGES") = STAGES;
     m.attr("BM") = BM;
     m.attr("BN") = BN;
     m.attr("HALF") = HALF;

@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-04T21:01:17Z",
+ "generated": "2026-10-04T21:04:13Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -12506,7 +12506,7 @@
     "title": "[P1] merge_suite x86 arm runs the suite without the declared test environment: child processes get no PYTHONPATH=src and an undeclared PQ-worktree read fails the gate"
    },
    "915": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Preserve explicit SDK dependencies and strict native mapping controls in the CPU merge batch"
    },
    "916": {
