@@ -45,6 +45,12 @@ torch version, CUDA runtime and device.
 Weights are random (w ~ N(0, 0.02^2)): the accumulation order does not depend
 on the values. The reference counts as the serve only when this process picks
 the served kernel (``matches_served_kernel``).
+
+Qualification is closed by three predicates, not one: the reference must match
+the served kernel AND repeat bit-deterministically, every counted survivor must
+be bitwise on every distribution, and the sample statistic must be the
+conventional median of the raw ABBA observations. A reference mismatch is
+retained as a diagnostic row and refuses the serving table for that shape.
 """
 from __future__ import annotations
 
@@ -253,6 +259,15 @@ def main():
                                       ref0.view(torch.int16),
                                       torch.nn.functional.linear(x0, w).view(torch.int16)))))
         rec["reference"]["matches_served_kernel"] = any(served_kernel in kn for kn in rec["reference"]["kernels"])
+        # Reference identity is a qualification precondition, not a note.  A
+        # candidate may only be counted against a reference that is the kernel the
+        # served shape actually dispatched AND that repeats deterministically; a
+        # mismatch stays diagnostic and the table stays closed for this shape.
+        rec["reference_qualified"] = reference_qualified(rec["reference"]["matches_served_kernel"],
+                                                         rec["reference"]["deterministic"])
+        if not rec["reference_qualified"]:
+            rec["reference_refusal"] = admit_pick(rec["reference"]["matches_served_kernel"],
+                                                  rec["reference"]["deterministic"], None)[1]
         cands, seen = [], set()
         for source, algos in (("heuristic", ext.heuristics(m0, n, k, WS_BYTES, 64)),
                               ("exhaustive", ext.exhaustive(m0, n, k, WS_BYTES, args.max_exhaustive))):
@@ -347,15 +362,22 @@ def main():
                                     reference_ms=ref_med, saving_ms=saving_ms,
                                     observations=dict(reference=list(ab["reference"]),
                                                       pick=list(ab["pick"])))
-                admitted, _refusal = admit_pick(rec["reference"]["matches_served_kernel"],
-                                                rec["reference"]["deterministic"], saving_ms)
+                admitted, refusal = admit_pick(rec["reference"]["matches_served_kernel"],
+                                               rec["reference"]["deterministic"], saving_ms)
                 if admitted:
                     entries.append(dict(
                         m=m, n=n, k=k, dtype="bf16", layout="linear_x_wT", shape=name,
                         algo_blob=best["blob"], config=best["config"], workspace=best["workspace_needed"],
                         evidence=dict(bitwise=best["bitwise"], real_source=xs["real_source"],
                                       reference_kernels=mrec["reference_kernels"], kernels=best["kernels"],
-                                      reference_ms=ref_med, ms=pick_med, label="[S] timing screen")))
+                                      reference_ms=ref_med, ms=pick_med,
+                                      reference_matches_served_kernel=rec["reference"]["matches_served_kernel"],
+                                      reference_deterministic=rec["reference"]["deterministic"],
+                                      label="[S] timing screen")))
+                elif refusal is not None:
+                    # Fail closed: a faster pick under an unqualified reference is
+                    # a diagnostic row, never a serving table entry.
+                    mrec["pick"]["refused"] = refusal
             per_m[str(m)] = mrec
             del out_m
         # Row tiles: is out[s:s+tm] of a tm-row call the same bits as rows s:s+tm of the M0 call?

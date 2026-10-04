@@ -37,23 +37,27 @@ def non_bitwise_fraction_summary(diffs):
 
 
 def reference_qualified(matches_served_kernel, deterministic):
-    """When a reference qualifies picks for the serving table.
-
-    OLD RULE (pre-#850): recorded only -- every reference qualifies.
+    """A reference qualifies only when it is the kernel the served shape
+    dispatched AND it repeats bit-deterministically.
     """
-    return True
+    return bool(matches_served_kernel and deterministic)
 
 
 def admit_pick(matches_served_kernel, deterministic, saving_ms):
     """Admit a pick to the serving table: (admitted, refusal).
 
+    Fail closed: only a faster pick under a qualified reference is admitted.
     The refusal names the unmet reference predicate whenever the reference is
-    unqualified, whether or not a pick exists to refuse.
-
-    OLD RULE (pre-#850): no gate -- a faster pick is admitted regardless of
-    its reference.
+    unqualified, whether or not a pick exists to refuse -- a mismatch stays
+    diagnostic and the table stays closed.
     """
-    return saving_ms is not None, None
+    if not reference_qualified(matches_served_kernel, deterministic):
+        return False, ("reference kernel does not match the served kernel"
+                       if not matches_served_kernel
+                       else "reference does not repeat bit-deterministically")
+    if saving_ms is None:
+        return False, None
+    return True, None
 
 
 def resolve_real_input(allow_capture, capture, rows, k, exists, load):
