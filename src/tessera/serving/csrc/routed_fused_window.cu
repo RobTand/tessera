@@ -1631,6 +1631,53 @@ __global__ void token_sum_kernel(const uint16_t* __restrict__ routed, uint16_t* 
     *reinterpret_cast<uint4*>(out + t * width + c) = o;
 }
 
+// token_sum with the MoE runner's shared-expert add folded in
+// (TESSERA_GLM53_FOLD_SHARED_ADD, tessera.serving.glm53_shared_fold):
+// out[t, :] = bf16( f32(shared[t, :]) + f32(bf16( sum_{j < top_k} f32(routed[t * top_k + j, :]) )) ).
+// The routed sum is rounded to bf16 exactly as token_sum_kernel stores it, then
+// added the way ATen's bf16 ``shared + routed`` does: one fp32 add, rounded to
+// nearest even by the same intrinsic.  Bitwise equal to token_sum_kernel
+// followed by that add.
+__global__ void token_sum_shared_kernel(const uint16_t* __restrict__ routed,
+                                        const uint16_t* __restrict__ shared,
+                                        uint16_t* __restrict__ out,
+                                        long tokens, int top_k, long width) {
+    const long vec = (long)blockIdx.x * blockDim.x + threadIdx.x;   // one 8-column vector
+    const long vecs_per_row = width / 8;
+    if (vec >= tokens * vecs_per_row) return;
+    const long t = vec / vecs_per_row;
+    const long c = (vec - t * vecs_per_row) * 8;
+    float acc[8];
+    #pragma unroll
+    for (int i = 0; i < 8; ++i) acc[i] = 0.f;
+    for (int j = 0; j < top_k; ++j) {
+        const uint4 v = *reinterpret_cast<const uint4*>(routed + (t * top_k + j) * width + c);
+        const uint32_t w[4] = {v.x, v.y, v.z, v.w};
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            acc[2 * i] += bf16_bits_to_f32(w[i] & 0xFFFFu);
+            acc[2 * i + 1] += bf16_bits_to_f32(w[i] >> 16);
+        }
+    }
+    const uint4 sv = *reinterpret_cast<const uint4*>(shared + t * width + c);
+    const uint32_t sw[4] = {sv.x, sv.y, sv.z, sv.w};
+    uint32_t ow[4];
+    #pragma unroll
+    for (int i = 0; i < 4; ++i) {
+        const float lo = __fadd_rn(bf16_bits_to_f32(sw[i] & 0xFFFFu),
+                                   bf16_bits_to_f32(bf16_bits_rn(acc[2 * i])));
+        const float hi = __fadd_rn(bf16_bits_to_f32(sw[i] >> 16),
+                                   bf16_bits_to_f32(bf16_bits_rn(acc[2 * i + 1])));
+        ow[i] = bf16_bits_rn(lo) | ((uint32_t)bf16_bits_rn(hi) << 16);
+    }
+    uint4 o;
+    o.x = ow[0];
+    o.y = ow[1];
+    o.z = ow[2];
+    o.w = ow[3];
+    *reinterpret_cast<uint4*>(out + t * width + c) = o;
+}
+
 int max_dynamic_smem_bytes(int device) {
     int v = 0;
     C10_CUDA_CHECK(cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
@@ -3200,9 +3247,10 @@ void dense_forward_fp4(
 void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
     TORCH_CHECK(routed.is_cuda() && routed.dim() == 2 && routed.scalar_type() == torch::kBFloat16
                 && routed.is_contiguous(), "routed must be contiguous bf16 [P, H]");
-    TORCH_CHECK(out.dim() == 2 && out.scalar_type() == torch::kBFloat16 && out.is_contiguous()
+    TORCH_CHECK(out.is_cuda() && out.device() == routed.device()
+                && out.dim() == 2 && out.scalar_type() == torch::kBFloat16 && out.is_contiguous()
                 && out.size(1) == routed.size(1) && out.size(0) * top_k == routed.size(0),
-                "out must be bf16 [T, H] with T * top_k == P");
+                "out must be contiguous bf16 [T, H] on routed's CUDA device with T * top_k == P");
     TORCH_CHECK(routed.size(1) % 8 == 0, "H must be a multiple of 8");
     const long tokens = out.size(0);
     const long width = out.size(1);
@@ -3218,8 +3266,42 @@ void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
+// token_sum with the MoE runner's shared-expert output added as the sum is
+// stored (token_sum_shared_kernel).  ``shared`` is bf16 [T, H] like ``out``.
+void token_sum_shared(torch::Tensor routed, torch::Tensor shared, torch::Tensor out, int64_t top_k) {
+    TORCH_CHECK(routed.is_cuda() && routed.dim() == 2 && routed.scalar_type() == torch::kBFloat16
+                && routed.is_contiguous(), "routed must be contiguous bf16 [P, H]");
+    TORCH_CHECK(out.is_cuda() && out.device() == routed.device()
+                && out.dim() == 2 && out.scalar_type() == torch::kBFloat16 && out.is_contiguous()
+                && out.size(1) == routed.size(1) && out.size(0) * top_k == routed.size(0),
+                "out must be contiguous bf16 [T, H] on routed's CUDA device with T * top_k == P");
+    TORCH_CHECK(routed.size(1) % 8 == 0, "H must be a multiple of 8");
+    TORCH_CHECK(shared.is_cuda() && shared.device() == routed.device() && shared.dim() == 2
+                && shared.scalar_type() == torch::kBFloat16 && shared.is_contiguous()
+                && shared.size(0) == out.size(0) && shared.size(1) == out.size(1)
+                && reinterpret_cast<uintptr_t>(shared.data_ptr()) % 16 == 0,
+                "shared must be 16-byte aligned contiguous bf16 [T, H] on routed's device");
+    TORCH_CHECK(reinterpret_cast<uintptr_t>(routed.data_ptr()) % 16 == 0
+                && reinterpret_cast<uintptr_t>(out.data_ptr()) % 16 == 0,
+                "routed and out must be 16-byte aligned");
+    const long tokens = out.size(0);
+    const long width = out.size(1);
+    const long vecs = tokens * (width / 8);
+    if (vecs == 0) return;
+    const c10::cuda::CUDAGuard guard(routed.device());
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const int threads = 256;
+    const long blocks = (vecs + threads - 1) / threads;
+    token_sum_shared_kernel<<<(unsigned)blocks, threads, 0, stream>>>(
+        reinterpret_cast<const uint16_t*>(routed.data_ptr()),
+        reinterpret_cast<const uint16_t*>(shared.data_ptr()),
+        reinterpret_cast<uint16_t*>(out.data_ptr()), tokens, (int)top_k, width);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("token_sum", &token_sum);
+    m.def("token_sum_shared", &token_sum_shared);
 #if !TESSERA_ROUTED_FUSED_FP4
     m.def("routed_fused_forward", &routed_fused_forward);
     m.def("dense_forward", &dense_forward);
