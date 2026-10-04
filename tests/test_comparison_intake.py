@@ -93,8 +93,10 @@ def test_intake_binds_only_approved_artifact_and_common_source_identity(fixture)
     assert result['artifact_identity']['metadata_bytes'] == result['artifact_identity']['all_files_bytes'] - 3
     assert (Path(args.output) / 'artifact-audit.json').read_bytes() == (source.parent / 'audit.json').read_bytes()
     freeze = json.loads((Path(args.output) / 'FREEZE.json').read_text())
+    # The files table is computed before FREEZE.json itself is written, exactly
+    # like the accepted deployment freeze's own receipt.
     assert set(freeze['files']) == {str(Path(args.output) / name) for name in
-                                    ('manifest.json', 'artifact-audit.json', 'pin-env.sh', 'FREEZE.json')}
+                                    ('manifest.json', 'artifact-audit.json', 'pin-env.sh')}
     assert 'not live GO' in freeze['status']
 
 
