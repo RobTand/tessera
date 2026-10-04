@@ -9,6 +9,7 @@ root; the actual frozen Python/native choice must match before arm preparation.
 Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
+
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
 eager execution as well as CUDA graphs. Its generic slot mapping can read
@@ -42,6 +43,7 @@ Re-stamped 2026-10-02 for the shared-add inspected-stock guard. Shared
 pins and expected parameters remain local and unchanged. Unreadable source,
 missing method, signature or import failures decline before rebinding. The
 lever remains opt-in and its CUDA/TR3/served gates remain independent.
+
 Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
 (#868/#875/#874; independently scoped source/cohort child #897). The current PM `piece_major` argument stays after the two
 word counts in every caller; direct legacy geometry callers pass false.
@@ -7883,6 +7885,7 @@ The measured T512/T2048 H32 stock baseline is recorded in
 [the stock profile](measurements/2026-10-02-kda-stock-native-profile.md);
 it does not admit a serving change or substitute for recurrent-quality
 validation of a future fused candidate.
+
 ### 5.1.4 Opt-in: fold the MoE shared-expert add into the token sum (tessera#799)
 
 Each stock MoE layer ends with `result = shared_output + fused_output`
