@@ -269,6 +269,168 @@ def test_no_test_reason_names_why_the_path_selected_nothing(
     assert result["reason"] == reason
 
 
+_READER_MODULE = '''\
+from pathlib import Path
+
+DOCS = Path(__file__).resolve().parents[1] / "docs"
+
+
+def _markdown():
+    return sorted(DOCS.rglob("*.md"))
+
+
+def test_reads_every_doc():
+    assert all(path.read_text() for path in _markdown())
+'''
+
+
+def _docs_reader_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A tracked doc and a test whose only coupling to it is the rglob.
+
+    The reader names no file: neither the changed path nor its basename
+    appears in its source, so neither the import graph nor the text fallback
+    can see it.  The directory-wide enumeration is the whole relationship.
+    """
+    repo, _ = _repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "ARCHITECTURE.md").write_text("# base\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_docs_reader.py").write_text(
+        _READER_MODULE, encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "doc and its directory-wide reader")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_a_docs_change_selects_its_directory_wide_reader(tmp_path):
+    """tessera#923, TS921: a docs change must select the tests that rglob docs/.
+
+    On the unfixed selector the verdict here was ``none`` -- "inert changed
+    paths require no tests" -- while the full run caught what the narrowed
+    list dropped.
+    """
+    repo, base = _docs_reader_repo(tmp_path)
+    (repo / "docs" / "ARCHITECTURE.md").write_text("# changed\n", encoding="utf-8")
+    _git(repo, "add", "docs/ARCHITECTURE.md")
+    _git(repo, "commit", "-qm", "docs-only change")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["verdict"] == "narrowed", result
+    assert "tests/test_docs_reader.py" in result["tests"], result
+
+
+def test_a_new_doc_selects_the_directory_reader(tmp_path):
+    repo, base = _docs_reader_repo(tmp_path)
+    (repo / "docs" / "extra.md").write_text("# new\n", encoding="utf-8")
+    _git(repo, "add", "docs/extra.md")
+    _git(repo, "commit", "-qm", "new doc")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_docs_reader.py" in result["tests"], result
+
+
+def test_a_deleted_doc_still_selects_the_directory_reader(tmp_path):
+    """A deleted member is the reader's concern too: the last triage doc
+    going away is exactly what the existence guard exists to catch."""
+    repo, base = _docs_reader_repo(tmp_path)
+    _git(repo, "rm", "docs/ARCHITECTURE.md")
+    _git(repo, "commit", "-qm", "delete the doc")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_docs_reader.py" in result["tests"], result
+
+
+def test_a_named_base_with_an_unknown_pattern_keeps_its_dependency(tmp_path):
+    """A resolvable base with a dynamic pattern names the directory but not
+    the membership: the #338 unplaced-read uncertainty, never a silent drop."""
+    repo, _ = _repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "docs" / "ARCHITECTURE.md").write_text("# base\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_docs_reader.py").write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        'DOCS = Path(__file__).resolve().parents[1] / "docs"\n'
+        'PATTERN = os.environ.get("PATTERN", "*.md")\n'
+        "def test_reads_matches():\n"
+        "    assert all(path.read_text() for path in DOCS.rglob(PATTERN))\n",
+        encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "reader with a dynamic pattern")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "seed.txt").write_text("changed\n", encoding="utf-8")
+    _git(repo, "add", "seed.txt")
+    _git(repo, "commit", "-qm", "unrelated inert change")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["unplaced_data_reads"] == ["tests/test_docs_reader.py"], result
+    assert "tests/test_docs_reader.py" in result["tests"], result
+
+
+def _listing_conftest_repo(tmp_path: Path) -> tuple[Path, str]:
+    """A conftest that lists the repository root to bootstrap import roots."""
+    repo, _ = _repo(tmp_path)
+    (repo / "src" / "pkg").mkdir(parents=True)
+    (repo / "src" / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "src" / "pkg" / "mod.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests" / "conftest.py").write_text(
+        "from pathlib import Path\n"
+        "REPO = Path(__file__).resolve().parents[1]\n"
+        "def _roots():\n"
+        "    return sorted(child.name for child in REPO.iterdir())\n"
+        "ROOTS = _roots()\n",
+        encoding="utf-8")
+    (repo / "tests" / "test_consumer.py").write_text(
+        "from pkg.mod import VALUE\n\n\ndef test_value():\n    assert VALUE\n",
+        encoding="utf-8")
+    (repo / "tests" / "test_other.py").write_text(
+        "def test_other():\n    assert True\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "listing conftest fixture")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_a_conftest_enumeration_is_a_probe_not_a_whole_tree_edge(tmp_path):
+    """The conftest's root listing is collection machinery, not data coupling.
+
+    pytest imports the conftest for every test in its scope whatever changed,
+    so a per-change edge would let every changed path's ancestor listing reach
+    the conftest and hold every verdict at full (#148).  The edge is kept and
+    probe-marked: excluded from the walks that select or scope, like the
+    exec-probe edge one paragraph of the selector's contract already removes.
+    """
+    repo, base = _listing_conftest_repo(tmp_path)
+    (repo / "src" / "pkg" / "mod.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", "src/pkg/mod.py")
+    _git(repo, "commit", "-qm", "module change")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_consumer.py" in result["tests"], result
+    assert "tests/test_other.py" not in result["tests"], result
+    _, importers, probes, _ = impacted.import_graph(repo)
+    assert (".", "tests.conftest") in probes, sorted(probes)
+    assert "tests.conftest" in importers.get(".", set()), importers
+
+
+def test_a_docs_architecture_change_selects_the_issue_ref_guard():
+    """TS921, on the tree this selector actually serves.
+
+    The real 317-file selector run omitted tests/test_issue_refs.py for a
+    docs/ARCHITECTURE.md change and the pure CI run then caught the dangling
+    reference the guard exists for.  docs/ is consumed through
+    DOCS.rglob("*.md"), a directory-wide read with no nameable file.
+    """
+    result = impacted.select(ROOT, ["docs/ARCHITECTURE.md"])
+
+    assert "tests/test_issue_refs.py" in result["tests"], result
+
+
 def _dynamic_repo(tmp_path: Path, source: str, extra=None) -> tuple[Path, str]:
     repo, _ = _repo(tmp_path)
     files = {

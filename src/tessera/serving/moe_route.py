@@ -107,6 +107,7 @@ from ..errors import GrammarError
 from ..moe_execution import ResearchSelectedMoeConfig
 from ..moe_layout import (W13_PROJECTIONS, MoePacked, unpack_moe_wires,
                           validate_moe_wire_lengths)
+from .glm53_shared_fold import native_call
 from .lane import MODE_RESIDENT, MODES
 from .residency import named_resident_tensors
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
@@ -1278,7 +1279,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
                   shared_experts_input):
             if self._native is not None:
-                return self._apply_native(layer, x, topk_weights, topk_ids)
+                return self._apply_native(layer, x, topk_weights, topk_ids, shared_experts,
+                                          shared_experts_input)
             if research_selected is not None:
                 return self._apply_selected(layer, x, topk_weights, topk_ids,
                                             shared_experts, shared_experts_input)
@@ -1317,12 +1319,17 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 raise RuntimeError(f"{prefix}: research packed owner is not ready")
             return self._packed.resident_bytes()
 
-        def _apply_native(self, layer, x, topk_weights, topk_ids) -> torch.Tensor:
+        def _apply_native(self, layer, x, topk_weights, topk_ids, shared_experts=None,
+                          shared_experts_input=None) -> torch.Tensor:
             """The routed-expert compute for the native compact route.
 
             Returns ROUTED output only: the pinned runner computes shared
             experts (NO_OVERLAP) before ``apply`` and combines afterwards, so
-            nothing shared may be added here.
+            nothing shared may be added here -- except through
+            ``glm53_shared_fold.native_call``.  With
+            ``TESSERA_GLM53_FOLD_SHARED_ADD=1`` installed, that call adds the
+            already-computed shared output inside the adapter's token sum, and
+            the runner's rebound pre-add hook then skips its own add.
             """
             if x.ndim != 2 or x.shape[1] != int(declared['hidden_size']):
                 raise ValueError(
@@ -1343,8 +1350,9 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             if not x_native.is_contiguous():
                 x_native = x_native.contiguous()
             with torch.profiler.record_function(_profiler_label(self._native)):
-                out = self._native(
-                    x_native, topk_ids, topk_weights,
+                out = native_call(
+                    self._native, x_native, topk_ids, topk_weights,
+                    shared_experts=shared_experts, shared_experts_input=shared_experts_input,
                     swiglu_limit=limit,
                     apply_router_weight_on_input=bool(
                         getattr(layer, 'apply_router_weight_on_input', False)))

@@ -1,5 +1,52 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for the serve-comparison intake identity publication
+(#885, with its accepted #872 dependency). The operational seam that a serve
+comparison's inputs bind to an actual exported artifact is published under
+`tools/`: `comparison_arm_identity.py` owns the export/comparison identity
+(the audit roster authenticated by SHA and bound to the exact artifact path;
+config, index and serving-manifest content and byte agreement; the exact
+export commit and contract version; serialized shard, metadata and full-file
+bytes kept as separate currencies), `comparison_input_intake.py` binds a
+comparison manifest to that derived identity from two distinct owned arm
+files before anything is written, and `serve_comparison_gates.sh` carries the
+orchestration gates: the artifact gate consumes the frozen binding and
+authenticates the actual loaded arm/audit bytes BEFORE any resource is taken
+(never a hardcoded or stale export identity), and the #872 generation gate
+requires the complete paired decoded-text/length-finish population before an
+arm may SHIP. Fieldless historical manifests keep their explicit
+pathname-only model check; a malformed or drifting new binding never falls
+back to it. A differing export source/contract needs an explicit reviewed
+exception reason, which is a deviation record and never admission authority.
+All of this binds input/model identity only: quality, native, admission,
+image, serve authorization, serving defaults and pins keep their existing
+owners, the frozen EXL3 panel and its serialized-safetensors size currency
+are unchanged, and no cross-artifact EXL3 comparison is introduced. Decoded
+UTF-8 + length-finish equality is the generation instrument's only claim;
+token-ID/logit equality and teacher-forced KL remain separate gates. The
+publication is correctness-only source; it records no new deployment,
+current-artifact, serving or quality evidence.
+
+Re-stamped 2026-10-04 (`fix/impacted-nonpython-directory-inputs-20261004`,
+#923): the impacted-test selector treats directory-wide reads as edges to the
+base directory, so a changed, added or deleted member of an enumerated
+directory (`rglob`, `iterdir`, `os.listdir`/`scandir`/`walk`) selects the
+directory's readers; a conftest's enumeration is probe-excluded collection
+machinery. This repairs the TS921 omission in which a docs/ARCHITECTURE.md
+change silently dropped `tests/test_issue_refs.py`. Selector infrastructure
+only: no wire, recipe table, serving lane, plugin contract, numerical path,
+residency or performance default moves.
+
+The closed `tessera.routed_mma8_dual_b_numeric.v1` schema (Refs #739) reuses
+`bench_t8r`'s real numeric owner for newly built common-source E4M3 MMA banks.
+It binds integer compile0/1 and explicit64/128-route width, M1/M2048,
+legacy/piece-major layouts, source/harness/readset/routing/ELF hashes and exact
+mode0/1/2/final bits. Each compile choice runs in a distinct process and native
+root; the actual frozen Python/native choice must match before arm preparation.
+Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
+NCU or repeated720-event population can stand for changed-source proof. These
+CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
+
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
 eager execution as well as CUDA graphs. Its generic slot mapping can read
@@ -22,6 +69,17 @@ Only controls that invoke the real published PrismaBuild manifest/lease API
 require that SDK; portable numeric, history and cleanup controls still run.
 Missing-SDK collection is named honestly, not fabricated as native coverage;
 real-SDK execution and strict native mapping evidence remain independent.
+
+Re-stamped 2026-10-04 for the token-sum output-device input gate (tessera#859).
+Both native bindings require their output on the routed tensor's CUDA device
+before even the zero-token return. The shared-add lever remains default-off;
+native causal controls and its full CUDA/TR3/served gates remain independent.
+
+Re-stamped 2026-10-02 for the shared-add inspected-stock guard. Shared
+`serving.stock_interface` supplies source/signature facts; this lever's source
+pins and expected parameters remain local and unchanged. Unreadable source,
+missing method, signature or import failures decline before rebinding. The
+lever remains opt-in and its CUDA/TR3/served gates remain independent.
 
 Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
 (#868/#875/#874; independently scoped source/cohort child #897). The current PM `piece_major` argument stays after the two
@@ -2842,7 +2900,20 @@ an exact edge whatever its suffix -- a non-Python file is a node under its own
 repository-relative path. A conservative text fallback also selects tests that
 name a changed non-Python file when a helper hides the read from the resolver.
 This includes Markdown and other documentation suffixes: a named test input is
-not inert merely because it is prose (#358). **What is bounded is the resolution, not only its
+not inert merely because it is prose (#358). Directory-wide reads are edges to
+the base directory itself: `Path.rglob`/`iterdir`, `os.listdir`/`scandir`/
+`walk` consume the directory's *membership*, not one named file, so the graph
+holds the resolved base under its repository path and the selector seeds every
+changed path's ancestor directories against it -- a changed, added or deleted
+member selects the reader, pattern-agnostically, because matching the pattern
+would trade a sound over-selection for an under-selection any new file can
+trigger (#923). An out-of-tree or otherwise refused base keeps the #338
+unplaced-read uncertainty; a base assembled from runtime state names nothing
+and follows the named/unnamed rule; a conftest's enumeration is collection
+machinery and joins the probe exclusion, because pytest imports the conftest
+for every test in its scope whatever changed, and a per-change edge from an
+ancestor listing would close the cycle that holds every verdict at full
+(#148). **What is bounded is the resolution, not only its
 destination**, because a normalized final membership says nothing about the
 steps taken to reach it: `Path.resolve` walks a spelling as written, so
 `outside/../repo/driver.py` -- which normalizes into the tree -- still
@@ -7905,6 +7976,47 @@ The measured T512/T2048 H32 stock baseline is recorded in
 [the stock profile](measurements/2026-10-02-kda-stock-native-profile.md);
 it does not admit a serving change or substitute for recurrent-quality
 validation of a future fused candidate.
+
+### 5.1.4 Opt-in: fold the MoE shared-expert add into the token sum (tessera#799)
+
+Each stock MoE layer ends with `result = shared_output + fused_output`
+(`MoERunner.forward`), a bf16 `[T, H]` add. On a 2048-token GLM-5.3 prefill
+chunk at TP 2 it is 42 adds of about 195 us. The fused routed window's last
+kernel, `token_sum`, already stores the routed output, so it can add the shared
+output as it stores.
+
+With `TESSERA_GLM53_FOLD_SHARED_ADD=1`, `TesseraConfig.get_quant_method`
+installs `serving.glm53_shared_fold`:
+
+- Both `token_sum` and `token_sum_shared` refuse CPU or wrong-CUDA-device
+  output before the empty-workload return; safe zero-token controls retain
+  real CUDA backing storage and cover the native library families (#859).
+- `token_sum_shared` (`routed_fused_window.cu`) stores
+  `bf16(f32(shared) + f32(bf16(sum_j f32(routed_j))))`. That is the stock
+  path's two roundings in the same order, with the same `cvt.rn.bf16.f32`
+  instruction ATen's bf16 store uses, so the output is bitwise equal.
+  `token_sum` and every other kernel are unchanged.
+  `FusedRoutedWindowMoE.__call__` takes a keyword-only `shared=`.
+- The routed method's `_apply_native` calls the adapter through
+  `native_call`. It passes `shared=` only when the shared experts ran on the
+  current stream before the routed call (`NO_OVERLAP`), the routed input is
+  unpadded, and the shared output is a contiguous, 16-byte-aligned bf16
+  `[T, H]` tensor. It records the fold.
+- The rebound `MoERunner._maybe_apply_routed_scale_to_output`, called once just
+  before the add, consumes the record and returns `(None, fused)`, so the
+  runner takes its no-shared branch. A record that does not match the tensors
+  the runner holds raises rather than add the shared output twice.
+
+The install declines unless both stock sources (`runner/moe_runner.py`,
+`runner/shared_experts.py`) have an inspected sha256 (image `5be13705`) and
+the serve runs compilation mode `NONE`. Each runner is checked on its first
+forward and keeps the stock add on a routed scale other than 1.0, a reducing
+routed kernel, a routed transform, unpadded output, naive dispatch/combine,
+prefill context parallelism or dual-batch overlap. Each process logs one
+install line (`installed`, `declined` with the reason, or `off`), plus one line
+for the first folded call and one for the first kept call.
+
+The flag is off by default. No route, contract or artifact changes.
 
 ### 5.2 What the wheel ships besides Python
 
