@@ -148,7 +148,7 @@ def test_every_execution_mode_is_admitted_or_refused_by_name(runner, mode, graph
         assert f"refuses compilation mode {mode.name}" in reason and "no receipt" in reason
 
 
-def test_eager_and_cudagraph_none_are_admitted_on_any_runner(runner):
+def test_eager_and_cudagraph_none_preserve_nonstock_runner_admission(runner):
     runner("0" * 64)
     assert _config_reason(config()) is None
     assert _config_reason(config(enforce_eager=False)) is None
@@ -156,6 +156,21 @@ def test_eager_and_cudagraph_none_are_admitted_on_any_runner(runner):
 
 _GRAPHS = (CUDAGraphMode.FULL_DECODE_ONLY, CUDAGraphMode.FULL, CUDAGraphMode.PIECEWISE,
            CUDAGraphMode.FULL_AND_PIECEWISE)
+
+
+@pytest.mark.parametrize("enforce_eager", [True, False])
+def test_known_stock_v2_runner_is_refused_without_cuda_graphs(runner, enforce_eager):
+    runner(glm53_nope._STOCK_RUNNER_SHA256)
+    reason = _config_reason(config(graph=CUDAGraphMode.NONE, enforce_eager=enforce_eager))
+    assert reason is not None, "known out-of-bounds stock V2 runner was admitted without graphs"
+    assert "stock V2 runner" in reason and "vLLM #57317" in reason
+
+
+def test_known_stock_v2_digest_does_not_reject_eager_v1_path(runner):
+    runner(glm53_nope._STOCK_RUNNER_SHA256)
+    candidate = config()
+    candidate.use_v2_model_runner = False
+    assert _config_reason(candidate) is None
 
 
 def test_graphs_on_the_stock_runner_are_refused_with_the_fault(runner):
