@@ -15,6 +15,7 @@
 set -uo pipefail
 LABEL=$1; IMG=$2; shift 2
 PYTEST_ARGS=${*:-"tests/test_serving_glm53_nope.py"}
+export PYTEST_ARGS
 SRC=$(cd "$(dirname "$0")/../.." && pwd)
 OUT=${OUT:-/mnt/shared/tessera-runs/receipts/696-serving-acceptance-20261004/gate-tests}
 DIR="$OUT/$LABEL"

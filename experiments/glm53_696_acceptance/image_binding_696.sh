@@ -25,6 +25,9 @@ BACKPORT_IMG=${BACKPORT_IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:c2e
 NIGHTLY_IMG=${NIGHTLY_IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a}
 RUNNER=v1/worker/gpu/model_runner.py
 BLOCK_TABLE=v1/worker/gpu/block_table.py
+# Where the kpool tail's spec lives; the nightly question is whether its
+# uses_slot_mapping answer leaves the tail out of the generic mapping.
+KPOOL_SPEC_FILE=v1/kv_cache_interface.py
 
 mkdir -p "$OUT"
 chmod a+rwx "$OUT" 2>/dev/null || true
@@ -43,7 +46,7 @@ inspect() {
   local root
   root=$(sed -n 's/.*"vllm_path": "\([^"]*\)".*/\1/p' "$dir/identity.txt" | head -1)
   local rel base
-  for rel in "$RUNNER" "$BLOCK_TABLE"; do
+  for rel in "$RUNNER" "$BLOCK_TABLE" "$KPOOL_SPEC_FILE"; do
     base=$(basename "$rel")
     if [ -n "$root" ]; then
       docker run --rm --entrypoint /bin/cat --user "$(id -u):$(id -g)" \
@@ -75,6 +78,9 @@ inspect nightly "$NIGHTLY_IMG"
   echo "# nightly $NIGHTLY_IMG"
   echo "# KpoolTailSpec / uses_slot_mapping mentions in the nightly runner:"
   grep -n "uses_slot_mapping\|KpoolTail" "$OUT/nightly/model_runner.py" || echo "(none)"
+  echo "# nightly KpoolTailSpec's own uses_slot_mapping answer:"
+  grep -n -A6 "class KpoolTailSpec" "$OUT/nightly/kv_cache_interface.py" | head -20
+  grep -n "uses_slot_mapping" "$OUT/nightly/kv_cache_interface.py" | head -10
   echo "# nightly generic slot-mapping kernel (block_table.py) load and mask:"
   grep -n "position // \|// block_size\|slot_mappings\|is_local" "$OUT/nightly/block_table.py" | head -20
 } > "$OUT/nightly-slot-mapping.txt" 2>&1
