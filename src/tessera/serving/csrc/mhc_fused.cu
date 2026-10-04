@@ -7,8 +7,13 @@
 // below restates the stock arithmetic it reproduces, read from the stock
 // source and its SASS (docs/design/mhc-fusion-783.md):
 //
-//  post  out = post[i]*x; out = fma(comb[j][i], res[j], out) for j = 0..3;
-//        bf16 RN.  (FMUL then four FFMA, mhc_post_tilelang_kernel.)
+//  post  stock source: out = post[i]*x; out += comb[j][i]*res[j], j = 0..3.
+//        nvcc contracted it as out = comb[0][i]*res[0] (the FMUL);
+//        out = fma(post[i], x, out); out = fma(comb[j][i], res[j], out) for
+//        j = 1..3; bf16 RN.  Read off mhc_post_tilelang_kernel's SASS by
+//        register provenance (comb in the 256-bit loads, post in the 128-bit
+//        one, x from its own pointer); the other contraction differs in
+//        about 1.6e-5 of outputs.
 //  gemm  per split s: K blocks of 64 in order, eight m16n8k8 TF32 MMAs per
 //        block on the fp32 bits of the bf16 residual and the raw fp32 fn
 //        bits, fragments laid out as DeepGEMM's; sqrsum per lane over
@@ -151,9 +156,10 @@ __device__ void post_phase(const Params& p, int t0, uint64_t keep) {
         float o[8];
 #pragma unroll
         for (int e = 0; e < 8; ++e) {
-          float v = __fmul_rn(s_post[tl][i], d[e]);
+          float v = __fmul_rn(s_comb[tl][i], b[0][e]);
+          v = __fmaf_rn(s_post[tl][i], d[e], v);
 #pragma unroll
-          for (int j = 0; j < HC; ++j) v = __fmaf_rn(s_comb[tl][j * HC + i], b[j][e], v);
+          for (int j = 1; j < HC; ++j) v = __fmaf_rn(s_comb[tl][j * HC + i], b[j][e], v);
           o[e] = v;
         }
         st_evict_last(reinterpret_cast<uint4*>(p.residual_out + ((int64_t)tok * HC + i) * HIDDEN) + h8,
