@@ -90,6 +90,7 @@ def validate_successor(packet, expected):
     admission = packet["operative_admission"]
     if (admission["coordinator_host"] != "sparklina" or admission["coordinator_checkout"] != SL_COORDINATOR
             or admission["queue_root"] != QUEUE_ROOT or admission["excluded_host"] != "sparky"
+            or admission["exclusion_kind"] != "spool_gb"
             or admission["require_complete_claim_census"] is not True
             or admission["require_current_actual_positive_kind_refusal"] is not True
             or admission["roots_declare_reservation_not_quota"] is not True

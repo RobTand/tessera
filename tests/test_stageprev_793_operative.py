@@ -64,13 +64,14 @@ def metadata(packet):
 
 
 def test_actual_public_root_max_terms_and_immutable_original(packet):
+    pytest.importorskip("prismabuild")
     expected = json.loads((ROOT / prepare.EXPECTED_PATH).read_text())
     original = prepare.validate_successor(packet, expected)
     assert packet["cases"] == original["cases"] and packet["native_files"] == original["native_files"]
     assert hashlib.sha256((ROOT / prepare.ORIGINAL_PACKET_PATH).read_bytes()).hexdigest() == prepare.ORIGINAL_PACKET_SHA256
     demand, declarations = prepare.public_resource_demand(packet)
     assert demand == {"cpu": 2, "mem_gb": 16, "gpu": 1, "spool_gb": 3}
-    assert {entry["root"] for entry in declarations} == {"/tmp", "/home/rob/tmp", "/var/lib/docker"}
+    assert {entry["root"] for entry in declarations} == {entry[2] for entry in prepare.ROOT_DECLARATIONS}
     assert sum(entry["max_bytes"] for entry in declarations) == 3 * (1 << 30)
     record = prepare.proposal(packet, expected, prepare.SL_COORDINATOR)
     assert "spool_gb=3" not in record["argv_proposal_only"]
@@ -153,9 +154,11 @@ def test_exact_current_refusal_predicate_requires_the_fail_closed_continuation()
 
 
 def test_actual_loaded_public_claim_identity_matches_published_manifest():
+    import box_artifacts as BOX
+    pytest.importorskip("prismabuild")
     from prismabuild.client import SDK_VERSION
     assert SDK_VERSION == 4
-    manifest = json.loads((Path(prepare.PB_ROOT) / "RUNTIME_VERSION.json").read_text())
+    manifest = json.loads(BOX.skip_now("prismabuild_tools", "..", "RUNTIME_VERSION.json").read_text())
     observed = claim_contract.observe_current_claim_contract(manifest)
     assert observed["verified"] is True
     assert observed["claim_invoked"] is False and observed["denial_synthesized"] is False
@@ -165,10 +168,26 @@ def test_actual_loaded_public_claim_identity_matches_published_manifest():
 def test_successor_only_permits_exact_approved_operational_delta(packet, defect):
     candidate = deepcopy(packet)
     if defect == "old_hash": candidate["supersedes"]["sha256"] = "0" * 64
-    elif defect == "fake_root": candidate["environment"]["TESSERA_793_DOCKER_ROOT"] = "/mnt/shared/fake-root"
+    elif defect == "fake_root": candidate["environment"]["TESSERA_793_DOCKER_ROOT"] = "/fixtures/fake-root"
     elif defect == "fake_kind": candidate["operative_admission"]["exclusion_kind"] = "fake_disk"
     elif defect == "changed_gate": candidate["requires_before_publication"].pop()
     elif defect == "fake_go": candidate["admission_approval"]["launch_authorized"] = True
     expected = json.loads((ROOT / prepare.EXPECTED_PATH).read_text())
     with pytest.raises(ValueError):
         prepare.proposal(candidate, expected, prepare.SL_COORDINATOR)
+
+
+def test_pure_metadata_controls_do_not_import_the_public_sdk(packet, monkeypatch):
+    import builtins
+    actual_import = builtins.__import__
+
+    def refuse_sdk(name, *args, **kwargs):
+        if name == "prismabuild" or name.startswith("prismabuild."):
+            raise AssertionError("Pure metadata control attempted a public SDK import")
+        return actual_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", refuse_sdk)
+    record = metadata(packet)
+    assert prerequisites.evaluate(record, packet, now=NOW)["control_ready"] is True
+    record["positive_kind_reservation"]["need"] += 1
+    assert prerequisites.evaluate(record, packet, now=NOW)["control_ready"] is False

@@ -44,7 +44,7 @@ def admission_revision():
 
 
 def evaluate(record, packet, *, now=None):
-    from stageprev_793_prepare import ROOT_DECLARATIONS, SOURCE_ROOT, PACKET_PATH, public_resource_demand
+    from stageprev_793_prepare import ROOT_DECLARATIONS, SOURCE_ROOT, PACKET_PATH
     admission_revision()
     now = time.time() if now is None else now
     admission = packet["operative_admission"]
@@ -77,7 +77,9 @@ def evaluate(record, packet, *, now=None):
         unmet.append("Excluded-host positive-kind capacity is not zero")
     manifest = record.get("runtime_manifest")
     contract = record.get("public_claim_contract")
-    demand, _ = public_resource_demand(packet)
+    # This is the closed reviewed three-1GiB-root input contract, not a
+    # replacement allocator. Actual collect/proposal still derive with the SDK.
+    expected_kind_need = len(ROOT_DECLARATIONS)
     if not isinstance(manifest, dict):
         manifest = {}
     if not isinstance(contract, dict):
@@ -92,8 +94,8 @@ def evaluate(record, packet, *, now=None):
             or contract.get("pool_sha256") != published_sha
             or contract.get("published_pool_sha256") != published_sha
             or contract.get("generation") != manifest.get("generation")
-            or record.get("positive_kind_reservation") != {"kind": kind, "need": demand[kind]}
-            or type(demand.get(kind)) is not int or demand[kind] <= 0):
+            or record.get("positive_kind_reservation") != {"kind": kind, "need": expected_kind_need}
+            or expected_kind_need <= 0):
         unmet.append("CURRENT public claim source identity/positive-kind refusal contract unknown or unverified")
     if (record.get("coordinator_host") != admission["coordinator_host"]
             or record.get("runtime_changed_during_read") is not False or not manifest.get("generation")):
