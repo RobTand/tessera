@@ -345,6 +345,13 @@ declaration does not establish process-wide reclamation. Export-time
 preparation estimates and fullserve bounds are unchanged by this runtime
 ownership report.
 
+Re-stamped 2026-10-04 for actual-published SDK inspection in CPU controls
+(#915). Published pbrun/claim-owner checks run in fresh test processes with
+the actual resolved public source first; the suite's consumer-pinned SDK is
+not mutated or reclassified as current tooling. Exact SDK4/source/manifest
+and class-scope refusal predicates remain strict; no claim or GPU launch
+is invoked and no SDK5/runtime adoption is inferred.
+
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
 ordinary PyNccl writer is missing, disabled, suspended or unknown. Both
@@ -820,6 +827,15 @@ is bitwise master's. On the A8S release artifact's R1024 routed stack, the
 routed launches take 10.4% less time per call at M = 512 on recorded L512
 routing, and 8.5% less at M = 2048 on recorded L8192 chunks. Receipt: [the
 staged stream history](measurements/2026-09-30-staged-stream-history.md).
+Current #793 candidate narrows the five history-staging sites to
+`STAGE_PREV = PREV_STAGED && !TWO`, retaining the allocated history region,
+shared-memory sizing, descriptor ring and both #855 terminal guards. Mixed
+launches use the original register-history path; single-run MMA8 and all
+other families retain their existing arithmetic/schedule. This source remedy
+is not mixed-rate numerical/performance acceptance and changes no pin or
+serving default. The current acceptance owner requires a declared nonempty
+case/rate/source population and rejects missing or duplicate cases; numeric
+qualification never certifies timing. See #793 / PR #794.
 
 Re-stamped 2026-09-30 for the value library's dense launch at rates 9 to 14
 (contract v51, Refs #750 item 4). `routed_fused_window.cu`'s `RATE_MAX` is 14
