@@ -75,6 +75,52 @@ def test_token_sum_shared_refuses_a_shared_output_it_cannot_read_in_place(lib):
 
 
 @cuda
+@pytest.mark.parametrize("lib", LIBRARY_IDS)
+def test_token_sum_shared_refuses_a_cpu_output_even_for_an_empty_workload(lib):
+    """Zero-token views keep the pre-fix device-hole control free of launches."""
+    routed = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")[:0]
+    shared = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")[:0]
+    out = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cpu")
+    with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
+        rf._ext(lib).token_sum_shared(routed, shared, out, GLM_TOP_K)
+
+
+@cuda
+@pytest.mark.parametrize("lib", (*rf.LIBRARIES, "e2m1"))
+def test_original_token_sum_refuses_a_cpu_output_even_for_an_empty_workload(lib):
+    """#859: retain real device allocations while safely exposing the hole."""
+    routed = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda")[:0]
+    out = torch.empty((0, GLM_HIDDEN), dtype=torch.bfloat16, device="cpu")
+    if lib == "e2m1":
+        from tessera import routed_fused_e2m1
+        extension = routed_fused_e2m1._ext()
+    else:
+        extension = rf._ext(lib)
+    with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
+        extension.token_sum(routed, out, GLM_TOP_K)
+
+
+@cuda
+@pytest.mark.parametrize("lib", (*rf.LIBRARIES, "e2m1"))
+def test_token_sum_bindings_refuse_an_output_on_another_cuda_device(lib):
+    """A real second device is required; empty views never launch the old code."""
+    if torch.cuda.device_count() < 2:
+        pytest.skip("output-device refusal requires two CUDA devices")
+    routed = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda:0")[:0]
+    shared = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda:0")[:0]
+    out = torch.empty((1, GLM_HIDDEN), dtype=torch.bfloat16, device="cuda:1")[:0]
+    if lib == "e2m1":
+        from tessera import routed_fused_e2m1
+        extension = routed_fused_e2m1._ext()
+    else:
+        extension = rf._ext(lib)
+    with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
+        extension.token_sum(routed, out, GLM_TOP_K)
+    with pytest.raises(RuntimeError, match="out must be.*routed's CUDA device"):
+        extension.token_sum_shared(routed, shared, out, GLM_TOP_K)
+
+
+@cuda
 @pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("t", [1, 7, 71])
 def test_the_fused_forward_folds_the_shared_add_bitwise(family, t):

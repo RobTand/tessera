@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for the token-sum output-device input gate (tessera#859).
+Both native bindings require their output on the routed tensor's CUDA device
+before even the zero-token return. The shared-add lever remains default-off;
+native causal controls and its full CUDA/TR3/served gates remain independent.
+
 Re-stamped 2026-10-02 for the shared-add inspected-stock guard. Shared
 `serving.stock_interface` supplies source/signature facts; this lever's source
 pins and expected parameters remain local and unchanged. Unreadable source,
@@ -6946,6 +6951,9 @@ output as it stores.
 With `TESSERA_GLM53_FOLD_SHARED_ADD=1`, `TesseraConfig.get_quant_method`
 installs `serving.glm53_shared_fold`:
 
+- Both `token_sum` and `token_sum_shared` refuse CPU or wrong-CUDA-device
+  output before the empty-workload return; safe zero-token controls retain
+  real CUDA backing storage and cover the native library families (#859).
 - `token_sum_shared` (`routed_fused_window.cu`) stores
   `bf16(f32(shared) + f32(bf16(sum_j f32(routed_j))))`. That is the stock
   path's two roundings in the same order, with the same `cvt.rn.bf16.f32`
