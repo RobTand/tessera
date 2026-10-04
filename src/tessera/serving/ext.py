@@ -494,7 +494,13 @@ STOCK_KERNEL_OVERRIDES: list[dict] = [{
     "library": {"module_name_prefix": "tessera_mhc_fused_", "filename_glob": "tessera_mhc_fused_*.so",
                 "match": MATCH_BASENAME_FNMATCH, "source": "csrc/mhc_fused.cu"},
     "required_identity": IDENTITY_BITWISE_VS_STOCK,
-    "evidence": [],
+    "evidence": [{
+        "gate": ("bitwise_vs_stock: GPU probe experiments/mhc/mhc_fused_probe.py --parts bitwise, "
+                 "served checkpoint layer-1 attn+ffn, 15 shapes incl. exact-SP shards x "
+                 "realistic/adversarial, tile heights 16-64, graph replay, determinism: 60/60 "
+                 "(PB fa23b165, kernel source as of c52a7602)"),
+        "receipt": "/mnt/shared/tessera-measurements/mhc-fusion-783/bitwise-c52a7602/mhc_fused_probe.json",
+    }],
 }]
 
 

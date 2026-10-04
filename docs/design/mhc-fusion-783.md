@@ -1,8 +1,9 @@
 # Fused mHC post/pre for GLM-5.3 prefill (#783)
 
-Status 2026-10-04: source landed default-off; **no GPU result yet** (the
-bitwise gate and the timing are queued through PrismaBuild). Nothing below
-the "Measured" heading is a result until its receipt is named there.
+Status 2026-10-04: default-off; **bitwise to stock** on GB10 (GPU probe,
+60/60 cases at every tile height); **2.6 ms per 2048-token chunk per rank
+faster** at the served SP shape in matched microbenchmarks, not yet served.
+Receipts are under "Measured".
 
 ## What it costs today
 
@@ -53,40 +54,92 @@ cubins came from the probe cache. SASS was read with `cuobjdump` 13.4.
 
 | Stage | Stock (evidence) | Fused |
 |---|---|---|
-| post | `v = post[i]*x; v = fma(comb[j][i], res[j], v)` for j = 0..3, bf16 RN. SASS: 32 FMUL + 128 FFMA per 32 outputs, no FADD. | `__fmul_rn`, then four `__fmaf_rn` in j order |
+| post | Source `v = post[i]*x; v += comb[j][i]*res[j]`, j = 0..3, which nvcc contracted as `v = comb[0][i]*res[0]` (the FMUL), `v = fma(post[i], x, v)`, then `fma(comb[j][i], res[j], v)` for j = 1..3, bf16 RN. Read by register provenance in the SASS (comb from the 256-bit loads, post from the 128-bit one, x from its own pointer); the other contraction differs on ~1.6e-5 of outputs (first GPU gate, PB `f068e908`). | `__fmul_rn` on comb[0]·res[0], then `__fmaf_rn` in that order |
 | GEMM | `mma.sync m16n8k8 .tf32` on the fp32 bits of bf16 A and the raw fp32 B bits. K blocks of 64 in order within the split, 8 k-steps. Fragments: a0 = A[g][t], a1 = A[g+8][t], a2 = A[g][t+4], a3 = A[g+8][t+4]. sqrsum per lane is `+= a0*a0 + a2*a2`, then xor 2, xor 1. | The same instruction (`HMMA.1688.F32.TF32` in both SASS), fragments and order. One warp per (split, n-tile). |
 | pre | Split partials summed from 0 in split order. `rsqrtf(rms/16384 + eps)`. IEEE division and full `expf` (no fast math: 17 MUFU.RCP + slow-path calls). Sinkhorn reductions are butterflies: row xor 2,1; column xor 8,4; max xor 2,1. The layer input is `fma(pre, x, +0)` chains; sumsq is FFMA across chunks, then rv order (rv&1)*8 + (rv>>1); the 64-thread sum is xor 32 via smem, then xor 16..1; output is `(bf16(ol)*r)*w`. | The same C expressions, compiled `-O3` without fast math (TileLang's default), the same thread-to-position map and the same reduction trees. |
 
 ## Design
 
-Each CTA (256 threads) processes 16-token tiles, one m16 MMA tile, in a
-persistent loop:
+Each CTA (256 threads) runs a persistent loop over token tiles of 16 or 32
+rows (one or two m16 MMA tiles):
 
-1. **post** streams x and the old residual (`ld.global.cs`) and writes the
-   new residual with an L2 `evict_last` policy.
-2. **GEMM** re-reads the new residual from L2 in the split's K order. The
-   order is stream-major, but post produces all four streams per h, so the
-   tile must be buffered: 512 KiB per tile. fn comes from L2 (1.5 MiB,
-   shared). Partials go to a `[S, T, 24]` workspace.
-3. **pre** runs one warp per token for the mixes and Sinkhorn, then
-   64-thread groups compute the layer input, reading the new residual from L2
-   a final time.
+1. **post** streams x and the old residual (`ld.global.cs`) and writes the new
+   residual with an L2 `evict_last` policy.
+2. **GEMM** re-reads the new residual from L2 through a 4-stage cp.async ring
+   that every thread fills (fn comes from L2 too), in the split's K order. The
+   order is stream-major while post produces all four streams per h, so the
+   tile must be buffered. Every (m-tile, n-tile) chain of the tile runs at
+   once, up to two per warp; each chain is DeepGEMM's arithmetic. Partials go
+   to a `[S, T, 24]` workspace.
+3. **pre** runs one warp per token for the mixes and Sinkhorn, then 64-thread
+   groups compute the layer input, reading the new residual from L2 once
+   more.
 
-Grid: as many tiles as half the L2 holds (`L2/2 / 512 KiB`, 24 on GB10), at
-most one per SM. Numerics do not depend on the grid.
+Grid: one CTA per SM, which is what the 218 registers admit. Tile height:
+32 rows exactly when that, and not 16, fits the site in one wave; else 16.
+Calls stock runs at split > 1 stay stock. Neither choice changes a bit, and
+both were set from the measurements below.
 
-Known first-version limits, to be measured before optimizing:
+**What bounds it.** A tile's GEMM is about 2048 dependent TF32 MMAs. On GB10
+that is about 67 ns per step, about 140 µs per chain, and it does not change
+with ring depth (4 vs 10 stages, PB `5bb4c705`). Stock DeepGEMM pays the same
+per step (2048 steps in 167 µs). Stock pays it once per site; the fused
+kernel pays it once per wave of tiles, during which that CTA moves no DRAM.
+At the served shape the site is one wave:
 
-- At split 1 only 3 of 8 warps run the GEMM, and its chain is about 2048
-  dependent MMAs per tile.
-- Phases are sequential within a CTA; overlap comes only from other CTAs.
-- fn L2 traffic is 1.5 MiB per 16 tokens.
+- post about 330 µs, DRAM-bound at about 228 GB/s;
+- GEMM about 173 µs;
+- pre about 55 µs.
+
+So the fused site sits at about 1.9× the floor.
+
+Tried and removed, as measured losers:
+- **Overlapping** a tile's GEMM with the next tile's post on separate warps:
+  slower everywhere (5.38 vs 4.05 ms at 8192).
+- **A 10-stage ring:** no change.
+- **Tiles of 48 or 64 rows:** GEMM 315–548 µs per tile, because the CTA's
+  TF32 chains stop overlapping.
 
 ## Measured
 
-None yet. Pending PrismaBuild:
+All on GB10, image `5be13705`, served checkpoint layer-1 `hc_attn`/`hc_ffn`.
+Times are medians of graph replay over L2-defeating input copies, with stock
+and fused arms interleaved round by round.
 
-- `experiments/mhc/mhc_fused_probe.py --parts bitwise,timing` (served
-  checkpoint, both sites, 15 shape cases × realistic/adversarial, graph
-  replay, interleaved stock/fused arms, grid sweep, power).
-- `tests/test_mhc_fusion_cuda.py`.
+**Bitwise**: PASSED, 60/60 cases × tile heights 16/32/48/64, plus graph
+replay and determinism (PB `fa23b165`, sparky,
+`/mnt/shared/tessera-measurements/mhc-fusion-783/bitwise-c52a7602/mhc_fused_probe.json`;
+also `e50d9a9f` and `5f108ffe`). The cases: attn and ffn × 15 shapes,
+including the SP shards 1024@2048 and 4096@8192, and ragged 2049 ×
+realistic/adversarial. The kernel source is unchanged since.
+
+**Timing** (PB `286a7d3b`, sparky, exclusive GPU,
+`timing-c52a7602/mhc_fused_probe.json`), ms per site:
+
+| Site, tokens@batch (split) | Stock | Fused (current rule) | Floor at 273 GB/s |
+|---|---|---|---|
+| attn 1024@2048 (1) — served SP | 0.605 | 0.583 (tile 32) | 0.308 |
+| ffn 1024@2048 (1) — served SP | 0.615 | 0.579 (tile 32) | 0.308 |
+| attn 2048 (1) | 1.302 | 1.206 (tile 16) | 0.616 |
+| attn 4096@8192 (1) | 2.615 | 2.389 (tile 16) | 1.232 |
+| attn 8192 (1) | 5.540 | 4.557 (tile 16) | 2.463 |
+| attn 512 (6) | 0.222 | 0.343 → declines to stock | 0.154 |
+
+**At the served shape**, 44 attn and 45 ffn fused sites per chunk:
+44 × 0.022 + 45 × 0.036 ≈ **2.6 ms per 2048-token chunk per rank**, about 0.2%
+of the 1157 ms chunk. The fused site is about 1.9× the floor; stock is about
+2.0×.
+
+**Not measured:** served end to end, TR3/KL, both-Spark power, and work per
+joule. These belong to the kernels lead.
+
+## Next levers (not done)
+
+- **Stream the GEMM during post.** Produce the new residual stream-major
+  (re-reading the old tile from L2 per stream) so the split-1 chain starts on
+  stream 0 while streams 1–3 are produced. The GEMM tail would drop from
+  about 173 µs to about a quarter of that. This is the only route to the floor
+  at the one-wave served shape.
+- **Profile the TF32 step cost with Nsight Compute.** At about 67 ns it is far
+  above Ampere-class mma.sync latency. If it is an issue-rate limit, it bounds
+  stock DeepGEMM too.

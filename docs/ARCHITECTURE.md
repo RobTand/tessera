@@ -392,8 +392,12 @@ DeepGEMM's TF32 pre-norm GEMM and the TileLang pre kernel as one kernel
 DRAM traffic per token per site falls from 144 KiB to the 80 KiB floor. The
 small-batch fused stock path, an uninspected vLLM, and a layer whose op is
 not on `forward_cuda` stay stock. Required identity `bitwise_vs_stock`; the GPU
-bitwise gate and timing are `experiments/mhc/mhc_fused_probe.py` and
-`tests/test_mhc_fusion_cuda.py`, and `evidence` stays `[]` until they pass.
+bitwise gate is `experiments/mhc/mhc_fused_probe.py` (60/60 cases at every
+tile height, PB `fa23b165`, recorded as the entry's `evidence`) and
+`tests/test_mhc_fusion_cuda.py`. Calls stock runs at split > 1 stay stock.
+At the served SP shard (1024 tokens at split 1) it measured 0.583/0.579 ms per
+site against stock 0.605/0.615 (attn/ffn, PB `286a7d3b`), about 2.6 ms per
+chunk per rank; that is a microbenchmark, not a served result.
 No production pin, route cell, default, artifact or ship gate moves. Design:
 `docs/design/mhc-fusion-783.md`.
 
@@ -7748,7 +7752,7 @@ raises.
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
 | `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
-| `TESSERA_GLM53_MHC_FUSED` | unset | `1` installs `mhc_fusion` (contract `stock_kernel_overrides`, kind `model_method`): `Glm5NextDecoderLayer.hc_fused_post_pre` runs one fused post/GEMM/pre kernel per split-k mHC site, at the stock split read at call time, so it composes with `TESSERA_GLM53_SP_MHC`. It must be bitwise to stock, and it stays default-off until the GPU gate and a served A/B land (#783). Unlike the rows above, an install whose contract entry has drifted raises instead of declining. |
+| `TESSERA_GLM53_MHC_FUSED` | unset | `1` installs `mhc_fusion` (contract `stock_kernel_overrides`, kind `model_method`): `Glm5NextDecoderLayer.hc_fused_post_pre` runs one fused post/GEMM/pre kernel per mHC site that stock runs at split 1, the split read at call time, so it composes with `TESSERA_GLM53_SP_MHC`. It must be bitwise to stock, and it stays default-off until the GPU gate and a served A/B land (#783). Unlike the rows above, an install whose contract entry has drifted raises instead of declining. |
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
 
 The module docstring records the decline rules and the exactness argument.
