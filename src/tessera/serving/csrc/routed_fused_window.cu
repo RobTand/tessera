@@ -190,6 +190,14 @@ static_assert(TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH == 0 ||
 constexpr bool MMA8_GATE_UP_B_PREFETCH =
     FAMILY_MMA8 && TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH;
 static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
+// Folded BF16 qualification arm (tessera#874), never enabled by default.
+// Reuses load_a addressing; no additional shared-memory allocation.
+#ifndef TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH 0
+#endif
+constexpr int VALUE_A_PREFETCH = TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH;
+static_assert(VALUE_A_PREFETCH == 0 || VALUE_A_PREFETCH >= 2,
+              "value prefetch distance 1 is the load itself");
 
 // One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
 // E4M3 instruction.
@@ -758,7 +766,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(launch_smem_bytes(MODE, pair_slot_words(RL, TWO), BMT) <= SM121_SMEM_OPTIN,
                   "the pair fits the target's block at this width");
     using L = Layout<MODE, BMT>;
-    constexpr bool PREFETCH_A = A_PREFETCH > 0 && FAMILY_MMA8 && !DENSE && !TWO;
+    constexpr int PREFETCH_DISTANCE = FAMILY_MMA8 ? A_PREFETCH
+        : (!FAMILY_FP8 && !FAMILY_FP4 ? VALUE_A_PREFETCH : 0);
+    constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO;
     // One A tile of BMT rows, and the consumers' rows: two warp rows of
     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
     // tile, two per row.
@@ -1243,7 +1253,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 load_a(kc0, a_cur);
                 if constexpr (PREFETCH_A) {
                     #pragma unroll
-                    for (int d = 2; d < A_PREFETCH; ++d)
+                    for (int d = 2; d < PREFETCH_DISTANCE; ++d)
                         if (d < nkc) prefetch_a(kc0 + d);
                 }
                 // Settle the first chunk's loads here, before the chunk loop.
@@ -1275,7 +1285,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
                     }
                     if constexpr (PREFETCH_A) {
-                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                        if (ic + PREFETCH_DISTANCE < nkc) prefetch_a(kc + PREFETCH_DISTANCE);
                     }
                     // Chunk kc's words (and the tables) have landed ...
                     if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
@@ -1813,6 +1823,13 @@ void check_run_tables(const torch::Tensor& runs, const torch::Tensor& bdesc, int
 // waits on a global load of its history.
 namespace fp4 {
 
+// #875: default-off FP4 hypothesis, sharing only the L1 hint primitive.
+#ifndef TESSERA_ROUTED_FUSED_FP4_A_PREFETCH
+#define TESSERA_ROUTED_FUSED_FP4_A_PREFETCH 0
+#endif
+constexpr int A_PREFETCH = TESSERA_ROUTED_FUSED_FP4_A_PREFETCH;
+static_assert(A_PREFETCH == 0 || A_PREFETCH == 4, "FP4 activation prefetch is 0 or 4");
+
 constexpr int BK = 64;                          // columns per chunk: one m16n8k64 step
 constexpr int HALF_T = 64;                      // tuples per half
 constexpr int HALF_ROWS = 2 * HALF_T;           // weight rows per half
@@ -2009,6 +2026,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
     static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
     using L = Layout<MODE>;
+    constexpr bool PREFETCH_A = A_PREFETCH > 0 && !DENSE && !TWO;
     constexpr int SW = pair_slot_words(RL, TWO);
     constexpr int SS = slot_stride(SW);
     constexpr int GI = group_ints(SW);
@@ -2257,6 +2275,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                         cp_async4(A + BM * A_ROW + (tid - 128) * A_SF, p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
                     }
                 };
+                // Exactly issue_a's packed-code / linear-UE4M3 addresses.
+                // Callers bound kc to this item's chunks; arow excludes every
+                // partial-superblock tail. These hints write no data, retain no
+                // pointer beyond the launch, and do not change cp.async timing.
+                auto prefetch_a = [&](int kc) {
+                    if (arow < 0) return;
+                    if (tid < 128)
+                        prefetch_l1(p.x + arow * (long)(p.K >> 1) + kc * A_ROW + 16 * (tid & 1));
+                    else
+                        prefetch_l1(p.sfa + arow * (long)(p.K >> 4) + kc * A_SF);
+                };
                 // Chunk kc's decode into B stage ``stage``: two tuples (rows
                 // 4 s2 .. + 3 of half dh) at the 16 columns of group kg, from
                 // table ``TOFF`` (a compile-time offset: the lookups address
@@ -2382,9 +2411,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_fp4_kernel(const Para
                 cp_async_commit();                     // group 1
                 if constexpr (TWO) bar_sync(BAR_PROD, PRODUCER_THREADS);   // chunks kc0, kc0 + 1's descriptors
                 uint32_t m_cur = mask_of(kc0), m_nxt = 0;
+                if constexpr (PREFETCH_A) {
+                    #pragma unroll
+                    for (int d = 2; d < A_PREFETCH; ++d)
+                        if (d < nkc) prefetch_a(kc0 + d);
+                }
                 for (int ic = 0; ic < nkc; ++ic, ++gc) {
                     const int kc = kc0 + ic;
                     if (ic + 1 < nkc) m_nxt = mask_of(kc + 1);
+                    if constexpr (PREFETCH_A) {
+                        if (ic + A_PREFETCH < nkc) prefetch_a(kc + A_PREFETCH);
+                    }
                     cp_async_wait<1>();                // chunk kc's group has landed ...
                     bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; stage (kc - 1) is free
                     if (ic + 2 < nkc) issue_words(kc + 2, TWO);
@@ -3219,6 +3256,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("THREADS") = THREADS;
     m.attr("FAMILY_FP8") = FAMILY_FP8;
     m.attr("FAMILY_MMA8") = FAMILY_MMA8;
+    m.attr("VALUE_A_PREFETCH") = VALUE_A_PREFETCH;
 #else
     // The E2M1 family's library: its own entries and geometry.
     m.def("routed_fused_forward_fp4", &routed_fused_forward_fp4);
@@ -3227,6 +3265,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("BN") = fp4::BN;
     m.attr("HALF_ROWS") = fp4::HALF_ROWS;
     m.attr("BK") = fp4::BK;
+    m.attr("A_PREFETCH") = fp4::A_PREFETCH;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;

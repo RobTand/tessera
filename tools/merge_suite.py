@@ -120,6 +120,18 @@ DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 PROCESS_THREAD_LIMITS = dict.fromkeys(
     ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
 )
+#: The import path the suite's own child processes inherit, spelled the way
+#: CI states it: ``.github/workflows/ci.yml`` runs pytest under
+#: ``PYTHONPATH=src``.  ``tests/conftest.py`` puts the tree's roots on
+#: ``sys.path`` for the pytest process itself, but a test that starts an
+#: interpreter of its own inherits an environment, not that list -- the
+#: batch-891-895 x86 population (receipt ``20261003T230852``, issue #914)
+#: failed ``test_forest_grid_roster`` and, as its probe-child cascade,
+#: ``test_collection_probe`` on exactly this: green under CI's export, red
+#: under a gate that never declared it.  Relative on purpose -- pbrun
+#: materialises each action's checkout at a per-action path, and ``src``
+#: resolves against the checkout cwd every process in the action shares.
+CHILD_ENV = {"PYTHONPATH": "src"}
 #: The source verifier each arm declares (``tessera._dev.suite_source``).  A
 #: pbrun checkout carries the closure stamp pbrun generated; PrismaBuild's own
 #: published ``pbsnapshot.py verify`` says which file that is and which sealed
@@ -347,7 +359,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "--cwd", str(args.checkout),
         "--timeout-s", str(args.timeout_s),
         "--wait-s", str(args.wait_s),
-        *[part for key, value in PROCESS_THREAD_LIMITS.items()
+        *[part for key, value in {**PROCESS_THREAD_LIMITS, **CHILD_ENV}.items()
           for part in ("--env", f"{key}={value}")],
         "--env", f"{VERIFIER_ENV}={shlex.join(SOURCE_VERIFIER)}",
         *(["--container-image", image] if image else []),
@@ -369,6 +381,10 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "cpus_used": cpus,
         "mem_gb": mem_gb,
         "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
+        # The environment beyond the thread limits that this arm declared, on
+        # the record, so a receipt reader can see the population ran under the
+        # same import contract CI states rather than inferring it (#914).
+        "declared_env": dict(CHILD_ENV),
         "source_verifier": shlex.join(SOURCE_VERIFIER),
         "timeout_s": args.timeout_s,
         "timeout_kill_after_s": TIMEOUT_KILL_AFTER_S,
