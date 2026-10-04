@@ -215,6 +215,31 @@ def eager_equivalence_gap(config) -> str | None:
     return "; ".join(gaps) or None
 
 
+def _runner_reason(config, graph) -> str | None:
+    """Keep runner identity and its measured graph path in one owner."""
+    if not config.use_v2_model_runner:
+        if graph == CUDAGraphMode.NONE:
+            return None
+        return (f"Tessera GLM53 NoPE admits CUDA-graph mode {graph.name} on vLLM's V2 model "
+                "runner only; the V1 runner's graph path is not measured (tessera#508)")
+    runner = _runner_sha256()
+    if runner == _STOCK_RUNNER_SHA256:
+        return (f"Tessera GLM53 NoPE refuses CUDA-graph mode {graph.name} or eager execution on the stock V2 "
+                "runner: it maps the kpool-tail KV group through the generic slot-mapping "
+                "kernel, which reads that group's 32-entry block-table row by absolute "
+                "position, so a prompt past 128 tokens reads other rows and, further on, "
+                "past the table (compute-sanitizer: invalid global reads at "
+                "block_table.py:344, tessera#508; a two-chunk 3649-token prefill raised an "
+                "illegal memory access in 6 of 10 decode-graph serves, tessera#581). Serve "
+                f"the vLLM #57317 backport ({_GRAPH_RUNNER} sha256 {_GRAPH_RUNNER_SHA256})")
+    if graph == CUDAGraphMode.NONE:
+        return None
+    if runner == _GRAPH_RUNNER_SHA256:
+        return None if config.speculative_config is None else _speculative_reason(config)
+    return (f"Tessera GLM53 NoPE admits CUDA-graph mode {graph.name} on one measured runner "
+            f"({_GRAPH_RUNNER} sha256 {_GRAPH_RUNNER_SHA256}); this runtime's is {runner}")
+
+
 def _execution_reason(config) -> str | None:
     """Admit the execution modes a receipt shows run correctly; refuse the rest by name.
 
@@ -233,7 +258,7 @@ def _execution_reason(config) -> str | None:
         return (f"Tessera GLM53 NoPE refuses compilation mode {mode.name}: no receipt "
                 "measures it (tessera#508); serve with compilation mode NONE")
     if graph == CUDAGraphMode.NONE:
-        return None
+        return _runner_reason(config, graph)
     if mode == CompilationMode.DYNAMO_TRACE_ONCE:
         return ("Tessera GLM53 NoPE refuses CUDA graphs under compilation mode "
                 "DYNAMO_TRACE_ONCE: it is measured without graphs only (tessera#508); "
@@ -244,23 +269,7 @@ def _execution_reason(config) -> str | None:
                 "need vLLM's breakable CUDA graph, which forces compilation mode NONE (with "
                 "it off, vLLM refuses to start, tessera#508); serve with compilation mode "
                 "NONE, or FULL_DECODE_ONLY")
-    if not config.use_v2_model_runner:
-        return (f"Tessera GLM53 NoPE admits CUDA-graph mode {graph.name} on vLLM's V2 model "
-                "runner only; the V1 runner's graph path is not measured (tessera#508)")
-    runner = _runner_sha256()
-    if runner == _GRAPH_RUNNER_SHA256:
-        return None if config.speculative_config is None else _speculative_reason(config)
-    if runner == _STOCK_RUNNER_SHA256:
-        return (f"Tessera GLM53 NoPE refuses CUDA-graph mode {graph.name} on the stock V2 "
-                "runner: it maps the kpool-tail KV group through the generic slot-mapping "
-                "kernel, which reads that group's 32-entry block-table row by absolute "
-                "position, so a prompt past 128 tokens reads other rows and, further on, "
-                "past the table (compute-sanitizer: invalid global reads at "
-                "block_table.py:344, tessera#508; a two-chunk 3649-token prefill raised an "
-                "illegal memory access in 6 of 10 decode-graph serves, tessera#581). Serve "
-                f"the vLLM #57317 backport ({_GRAPH_RUNNER} sha256 {_GRAPH_RUNNER_SHA256})")
-    return (f"Tessera GLM53 NoPE admits CUDA-graph mode {graph.name} on one measured runner "
-            f"({_GRAPH_RUNNER} sha256 {_GRAPH_RUNNER_SHA256}); this runtime's is {runner}")
+    return _runner_reason(config, graph)
 
 
 #: Equivalence verdicts already reported by this process (one line per distinct verdict).
