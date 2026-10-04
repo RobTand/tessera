@@ -496,7 +496,13 @@ def test_shared_expert_gate_up_is_the_exporters_fused_group_too():
         build(config, shapes, with_control=False)
 
 
+@box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
 def test_the_unit_table_carries_the_shape_the_rate_was_charged_on():
+    """The charged-bpp columns come from PrismaQuant's own accountant at
+    ``PQ_TREE``, so this is a declared cross-tree dependency like its siblings
+    above: the gate runs the full check where the worktree exists and states
+    the missing provider where it does not, instead of failing the accountant's
+    own root refusal (#914)."""
     _plan, provenance = build(uniform_config(), one_layer_shapes(), prismaquant=PQ_TREE)
     rows = {u["qname"]: u for u in provenance["units"]}
     assert rows["model.layers.0.self_attn.q_proj"]["rows"] == 2048
