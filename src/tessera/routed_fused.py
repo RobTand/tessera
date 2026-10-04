@@ -116,6 +116,9 @@ ENV_TOGGLE = "TESSERA_ROUTED_FUSED"
 #: toggle so the two identities can be measured against their predecessors
 #: independently.
 ENV_TOGGLE_DENSE = "TESSERA_DENSE_FUSED"
+#: Default-off experiment read only by the E4M3 MMA build flags. Separate
+#: retained extension banks must be used for matched original/paired binaries.
+ENV_PAIRED_K32 = "TESSERA_ROUTED_FUSED_PAIRED_K32"
 #: The three JIT module names.  Literals: the contract's native-extension
 #: scanner reads the ``load(name=...)`` sites statically.
 MODULE_NAME_VALUE = "tessera_routed_fused_value"
@@ -299,9 +302,22 @@ def a_region_bytes(bm: int, *, mma8: bool = False) -> int:
     return 2 * int(bm) * BK * (1 if mma8 else 2)
 
 
-def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM) -> int:
+def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM, paired: bool = False) -> int:
     """The dynamic shared memory the launch takes at ``bm``-route
     superblocks: :func:`smem_bytes` with the A region at ``bm`` rows."""
+    if paired:
+        if not mma8 or mode not in (0, 2) or slot_words != 8 or bm != BM_WIDE:
+            raise GrammarError("paired shared memory requires E4M3 MMA, mode0/2, R4 slot8, BMT128")
+        # Existing layout owner, with four ordinary microtiles instead of two;
+        # four word/history slots instead of the original three. Ring unchanged.
+        micros = 2
+        tables = 1 if mode == 2 else 2
+        decoded = 2 * micros * (BK * BN + bm * BK)
+        fixed = tables * TABLE_ENTRIES + decoded + 2 * BN * 4 + 2 * 8 * 4 + 16
+        ring = DRING_STAGES * tables * BDESC_INTS * 4
+        history = 2 * micros * 2 * BK * 4
+        words = 2 * micros * 2 * BK * slot_words * 4
+        return fixed + ring + history + words
     return smem_bytes(mode, slot_words, mma8=mma8) + a_region_bytes(bm, mma8=mma8) - a_region_bytes(BM, mma8=mma8)
 
 
@@ -466,6 +482,15 @@ def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
+def _paired_k32_build_enabled(mma8: bool) -> bool:
+    if not mma8:
+        return False
+    value = os.environ.get(ENV_PAIRED_K32, "0")
+    if value not in ("0", "1"):
+        raise GrammarError(f"{ENV_PAIRED_K32}={value!r}; compile flag must be 0 or 1")
+    return value == "1"
+
+
 def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> list:
     """A library's compile flags.  ``fp4`` is the E2M1 family's library
     (``tessera.routed_fused_e2m1``): its define, and the architecture-specific
@@ -478,6 +503,7 @@ def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> lis
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
             *([f"-D{ENV_MMA8_GATE_UP_B_PREFETCH}={MMA8_GATE_UP_B_PREFETCH}"] if mma8 else []),
             *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
+            *(["-DTESSERA_ROUTED_FUSED_PAIRED_K32=1"] if _paired_k32_build_enabled(mma8) else []),
             *offload_flags(token, arch_specific=fp4)]
 
 
@@ -599,7 +625,8 @@ def _ext(library: str):
                        ("RATE_MIN", RATE_MIN), ("ROUTED_RATE_MAX", RATE_MAX),
                        ("RATE_MAX", dense_max), ("SLOT_WORDS_MAX", slot_words_for_rate(dense_max)),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
-                       ("FAMILY_MMA8", mma8), ("WORD_STAGES", WORD_STAGES),
+                       ("FAMILY_MMA8", mma8), ("PAIRED_K32_BUILD", _paired_k32_build_enabled(mma8)),
+                       ("WORD_STAGES", WORD_STAGES),
                        ("WORD_STAGES_MIN", WORD_STAGES_MIN),
                        ("SMEM_FIXED_GATE_UP", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[0]),
                        ("SMEM_FIXED_DOWN", (SMEM_FIXED_MMA8 if mma8 else SMEM_FIXED)[2]),
