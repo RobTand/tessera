@@ -9,6 +9,28 @@ root; the actual frozen Python/native choice must match before arm preparation.
 Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
+Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
+the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
+eager execution as well as CUDA graphs. Its generic slot mapping can read
+past the kpool-tail block table; an eager configuration does not remove that
+read. The already measured vllm-project/vllm#57317 backport and existing nonstock eager/V1
+admission retain their prior boundaries. Compilation, graph, drafter and
+eager-equivalence receipts remain independent. This is a correctness-only
+gate fix: no runtime image, public pin, serving cell, wire, numerical path,
+residency or performance default is promoted.
+
+Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
+Both qualification owners derive the mapping device from the held FD's
+exact mount ID and require that backing device plus inode on an executable
+mapping. A subvolume's virtual `st_dev` is not the kernel mapping device.
+Unknown or ambiguous mount provenance fails closed; hash and FD fences stay
+strict. No native kernel, serving, timing or energy claim is changed.
+
+Re-stamped 2026-10-04 for merge-batch SDK dependency declarations (#915).
+Only controls that invoke the real published PrismaBuild manifest/lease API
+require that SDK; portable numeric, history and cleanup controls still run.
+Missing-SDK collection is named honestly, not fabricated as native coverage;
+real-SDK execution and strict native mapping evidence remain independent.
 
 Re-stamped 2026-10-03 for the controlled PM/T4/T16 common native composition
 (#868/#875/#874; independently scoped source/cohort child #897). The current PM `piece_major` argument stays after the two
@@ -94,6 +116,22 @@ New composed source/image/readset/capacity identities require their own parent
 review and actual CPU stage/mapping evidence before the separately held GPU
 synthetic-safety admission gate. No 15-GPU-payload submissions have been made; metadata
 CPU action `3d65783a` separately passed 18 no-retag capacity controls.
+Actual notified current-cohort CPU preparation `274f5db4` passed 27 controls,
+zero skips/CUDA allocations, and sealed the six native / fifteen tool+native
+members. Distinct current image-owner source1b90 controls `d8e19943` also
+passed 27 with zero skips/CUDA allocations. Each receipt and exact snapshot
+parent is recorded separately in the composed qualification contract; neither
+is current held-native-FD/tool execution or GPU/scientific qualification.
+Current source1b90 CPU rows `9ac5effb` / `e1cd2861` independently completed
+rc0, one attempt each on SL/image5be: both production FP4 banks loaded once
+from actual held stage FDs with matching executable inode maps and all four
+before/load/mapped/post-fence hashes; the tool row read nine staged members
+and ran Compute Sanitizer2025.3.1 --version with GPU visibility disabled.
+They do not exercise GPU tensors, sanitizer findings, performance or serving
+admission, and do not supply PB1483 operative all-used-filesystem floor proof.
+Source/CPU engineering acceptance permits only the complete owned consumer
+three-way composition into the common branch; normal source/pure CI and mainline
+approval remain separate. Closing #906 does not close #875 family qualification.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
@@ -2498,7 +2536,7 @@ Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
 plan, off the supported path since tessera#687 -- the producer writes the plan),
 `tessera.export_serving` (`python -m tessera.export_serving`; plan to checkpoint),
 `tools/tessera_route_census.py` (checkpoint to route), and `tessera.control`
-plus `experiments/uniform_control.py` (the gate that judges the result).
+plus the installed `python -m tessera.uniform_control` gate that judges the result.
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
 allocator sees is `docs/tessera-one-format.md` §5.
 
@@ -7241,9 +7279,16 @@ served comparison is one encode under two servings rather than two encodes.
 
 ### 4.7 The verdict is served KL against the byte-matched control
 
-`experiments/uniform_control.py verify` asserts the match on the bytes that
+`python -m tessera.uniform_control verify` asserts the match on the bytes that
 shipped and, given both KLs, states whether the candidate beat its control.
 `tessera.control.control_block` carries that verdict beside the bpp.
+The CLI is packaged rather than loaded from `experiments/` (Refs #886). Its
+`plan --model` branch uses the public exporter's `quantizable` source classifier
+for the unchanged dense/unpacked logical population, not the retired experiment
+converter. The public handoff remains `tessera.uniform_control.v1`; neither
+integer accounting/slack/KL rules nor shipping/serving admission changes.
+An installed producer needs no PrismaQuant checkout to plan or verify a control.
+Historical measurement drivers remain bound to their historical revisions.
 
 **The verdict is published only over evidence the gate validated**
 (tessera#225). `ByteMatch` is where the four numbers a match reads have their
@@ -7575,7 +7620,9 @@ is unchanged.
 
 **Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
 tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
-DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
+DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner except the known
+stock V2 runner (`_STOCK_RUNNER_SHA256`), which is refused in every mode.
+CUDA graphs run on
 vLLM's V2 model runner, and only on the runner source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
 backported (`_GRAPH_RUNNER_SHA256`, image
 `localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
@@ -7584,7 +7631,8 @@ VLLM_COMPILE, FULL_DECODE_ONLY. The gate judges the graph mode vLLM will run
 (`_graph_mode`): this backend's metadata builder supports uniform batches
 only, so a FULL request becomes FULL_DECODE_ONLY, or FULL_AND_PIECEWISE when
 attention is a splitting op. Every other combination is refused with its
-reason: the stock runner (its generic slot mapping reads the kpool tail's
+reason: the known stock V2 runner in every mode, including eager (its generic
+slot mapping reads the kpool tail's
 block-table row by absolute position, and past the table in a long prefill),
 STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
 (measured without graphs only), piecewise graphs under VLLM_COMPILE (they need

@@ -9,6 +9,7 @@ from types import ModuleType,SimpleNamespace
 
 import pytest
 
+pytest.importorskip("prismabuild", reason="native public-reader callback controls require the published PB SDK")
 from prismabuild import client
 from _routed_gate_sdk_fixture import fixture
 from test_routed_gate_staged_store import ROOT
@@ -162,17 +163,21 @@ def test_multi_arm_load_path_fds_remain_distinct_until_teardown(tmp_path, monkey
             reader.close()
 
 
-@pytest.mark.parametrize("matched", [False, True])
-def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, matched):
+@pytest.mark.parametrize("fault", ["none", "inode", "device", "path"])
+def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, fault):
     owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
     lib = rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail("no JIT"))
+    from tessera._dev.native_identity import mapped_file_device
     info = os.fstat(owner.fd)
-    inode = info.st_ino if matched else info.st_ino + 1
-    maps = f"1000-2000 r-xp 00000000 {os.major(info.st_dev):02x}:{os.minor(info.st_dev):02x} {inode} /sealed/native.so\n"
+    device = mapped_file_device(owner.fd)
+    inode = info.st_ino + (fault == "inode")
+    minor = device[1] + (fault == "device")
+    mapped_path = "/sealed/foreign.so" if fault == "path" else os.readlink(f"/proc/self/fd/{owner.fd}")
+    maps = f"1000-2000 r-xp 00000000 {device[0]:02x}:{minor:02x} {inode} {mapped_path}\n"
     original_read = Path.read_text
     monkeypatch.setattr(Path, "read_text", lambda path, *a, **kw: maps if str(path) == "/proc/self/maps" else original_read(path, *a, **kw))
     try:
-        if matched:
+        if fault == "none":
             owner.attest_mapped(lib)
             assert owner.record["mapped_sha256"] == owner.record["expected_sha256"]
             assert owner.record["executable_mappings"] == [maps.strip()]

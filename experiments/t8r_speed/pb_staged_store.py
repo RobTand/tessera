@@ -377,13 +377,16 @@ class NativeCallback:
     def attest_mapped(self, module):
         """Diagnostic mapping proof using the held artifact FD, never path rereads."""
         self.bind(module)
+        from tessera._dev.native_identity import mapped_file_device
         info = os.fstat(self.fd)
+        device = mapped_file_device(self.fd)
+        mapped_path = os.readlink(f"/proc/self/fd/{self.fd}")
         matches = []
         for line in Path("/proc/self/maps").read_text().splitlines():
             fields = line.split(None, 5)
-            if len(fields) >= 5 and "x" in fields[1]:
+            if len(fields) == 6 and fields[5] == mapped_path and "x" in fields[1]:
                 major, minor = (int(v, 16) for v in fields[3].split(":"))
-                if (major, minor, int(fields[4])) == (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino):
+                if (major, minor, int(fields[4])) == (*device, info.st_ino):
                     matches.append(line)
         if not matches:
             raise ValueError("native module is not mapped from its held ELF inode")

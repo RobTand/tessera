@@ -893,3 +893,28 @@ def test_a_refused_explicit_toolkit_does_not_leave_another_one_compiling(tmp_pat
         "a refused explicit selection must not leave the displaced toolkit as the "
         "build's compiler: the operator named a root and the build looks there")
     assert os.environ["CUDA_HOME"] == str(chosen)
+
+
+def test_mapped_file_device_uses_exact_held_fd_mount(monkeypatch):
+    """Kernel superblock device, not a filesystem's virtual st_dev (#915)."""
+    from tessera._dev.native_identity import mapped_file_device
+    metadata = {"/proc/self/fdinfo/17": "pos:\t0\nmnt_id:\t42\n",
+                "/proc/self/mountinfo": "9 1 8:2 / /other rw - ext4 /dev/other rw\n42 1 0:30 / / rw - btrfs /dev/root rw\n"}
+    monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
+    assert mapped_file_device(17) == (0, 30)
+
+
+@pytest.mark.parametrize("fdinfo,mountinfo", [
+    ("pos:\t0\n", "42 1 0:30 / / rw - btrfs /dev/root rw\n"),
+    ("mnt_id:\t42\nmnt_id:\t43\n", "42 1 0:30 / / rw - btrfs /dev/root rw\n"),
+    ("mnt_id:\t42\n", "9 1 8:2 / /other rw - ext4 /dev/other rw\n"),
+    ("mnt_id:\t42\n", "42 1 0:30 / / rw\n42 1 0:30 / / rw\n"),
+    ("mnt_id:\t42\n", "42 1 bad:device / / rw\n"),
+    ("mnt_id:\t42\n", "42 1 30 / / rw\n"),
+])
+def test_mapped_file_device_refuses_missing_or_ambiguous_mount_provenance(monkeypatch, fdinfo, mountinfo):
+    from tessera._dev.native_identity import mapped_file_device
+    metadata = {"/proc/self/fdinfo/17": fdinfo, "/proc/self/mountinfo": mountinfo}
+    monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
+    with pytest.raises(RuntimeError, match="mount"):
+        mapped_file_device(17)
