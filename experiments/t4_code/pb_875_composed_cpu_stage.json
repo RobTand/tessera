@@ -32,7 +32,7 @@
     "retry_safe": false,
     "timeout_s": 180,
     "tags": [
-      "sparklina"
+      "gb10"
     ]
   },
   {
@@ -68,7 +68,7 @@
     "retry_safe": false,
     "timeout_s": 180,
     "tags": [
-      "sparklina"
+      "gb10"
     ]
   },
   {
@@ -104,7 +104,7 @@
     "retry_safe": false,
     "timeout_s": 180,
     "tags": [
-      "sparklina"
+      "gb10"
     ]
   }
 ]

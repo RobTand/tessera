@@ -7,7 +7,7 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "tags": [
-      "sparklina"
+      "gb10"
     ],
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
@@ -44,7 +44,7 @@
     ],
     "cwd": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
     "tags": [
-      "sparklina"
+      "gb10"
     ],
     "container_images": [
       "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
