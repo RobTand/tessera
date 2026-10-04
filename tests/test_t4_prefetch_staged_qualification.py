@@ -82,6 +82,7 @@ def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, m
     monkeypatch.setattr(qualified, "validate_readset", lambda path: None)
     monkeypatch.setattr(pb_staged_store, "StagedInputs", lambda path: reader)
     if mode == "native":
+        pytest.importorskip("torch", reason="native FD owner control requires Torch; pure metadata tests do not")
         target = tmp_path / "not-a-directory"
         target.write_bytes(b"real directory-creation failure")
         with pytest.raises(FileExistsError):
@@ -101,12 +102,10 @@ def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, m
 def test_public_manifest_validator_enforces_exact_whole_file_members(tmp_path, fault):
     import json
     from experiments.t4_code import prefetch_qualification as qualified
+    pytest.importorskip("prismabuild", reason="exact public manifest/phase control requires the published PB SDK")
 
-    entries = [{"path": str(qualified.NATIVE_RECORD), "offset": 0, "bytes": 852,
-                "sha256": "b8b242cbbb2901320942e87a273cbce024e86276ad72ab66b23fe5778eb6d9d0"}]
-    for arm, (module, digest) in qualified.ARMS.items():
-        entries.append({"path": str(qualified.NATIVE_ROOT / f"build_apf{arm}" / (module + ".so")),
-                        "offset": 0, "bytes": 1889616, "sha256": digest})
+    entries = [{"path": path, "offset": 0, "bytes": size, "sha256": digest}
+               for path, (size, digest) in qualified.native_members().items()]
     if fault == "offset":
         entries[0]["offset"] = 1
     elif fault == "duplicate-path":
@@ -127,3 +126,42 @@ def test_public_manifest_validator_enforces_exact_whole_file_members(tmp_path, f
     else:
         with pytest.raises(ValueError, match="offset-zero|member order"):
             qualified.validate_readset(path)
+
+
+@pytest.mark.parametrize("arm", [0, 4])
+@pytest.mark.parametrize("fault", [None, "source", "image", "selector", "module", "pending", "final-source", "final-elf", "action"])
+def test_actual_finalized_production_bank_metadata_fails_closed(arm, fault):
+    import hashlib
+    import json
+    from pathlib import Path
+    from experiments.t4_code import prefetch_qualification as qualified
+
+    fixture_root = Path(__file__).resolve().parents[1] / "experiments/results"
+    payloads = []
+    for name in ("record", "finalization"):
+        raw = (fixture_root / f"t4_875_composed_{name}{arm}.json").read_bytes()
+        assert len(raw) == qualified.BANKS[arm][name + "_bytes"]
+        assert hashlib.sha256(raw).hexdigest() == qualified.BANKS[arm][name + "_sha256"]
+        payloads.append(json.loads(raw))
+    record, finalization = payloads
+    if fault == "source":
+        record["source_sha256"] = "0" * 64
+    elif fault == "image":
+        record["image"]["resolved_reference"] = record["image"]["pinned"]
+    elif fault == "selector":
+        record["selectors"]["TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH"] = "1"
+    elif fault == "module":
+        record["libraries"][0]["module"] = "tessera_routed_fused_e2m1_dev_apf0"
+    elif fault == "pending":
+        finalization["no_pending_work"] = False
+    elif fault == "final-source":
+        finalization["bindings"][record["source_path"]]["sha256"] = "0" * 64
+    elif fault == "final-elf":
+        finalization["bindings"][record["libraries"][0]["path"]]["bytes"] += 1
+    elif fault == "action":
+        record["action_key"] = "0" * 64
+    if fault is None:
+        qualified.validate_bank_record(record, finalization, arm, source_module="tessera_routed_fused_value")
+    else:
+        with pytest.raises(ValueError):
+            qualified.validate_bank_record(record, finalization, arm, source_module="tessera_routed_fused_value")
