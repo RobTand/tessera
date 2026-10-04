@@ -64,7 +64,7 @@ telemetry and one managed completion-client ending are recorded in
 `experiments/results/combined_feedback_901_cpu_evidence.json`. This narrow
 causal gate pass is not the full normal suite or scientific GPU authorization.
 
-The #875 composed qualifier binds exactly the two finalized production FP4
+The #875 composed qualifier (source-only prerequisite #906 / PR900) binds
 banks from common source `bcdd43f6`, immutable image `5be13705`, and the actual
 PB compile actions `b70ff504`/`b45dfd00`. Each arm declares its compile record,
 no-pending-work finalization and ELF in that order (six whole-file inputs),
@@ -84,6 +84,22 @@ New composed source/image/readset/capacity identities require their own parent
 review and actual CPU stage/mapping evidence before the separately held GPU
 synthetic-safety admission gate. No 15-GPU-payload submissions have been made; metadata
 CPU action `3d65783a` separately passed 18 no-retag capacity controls.
+Actual notified current-cohort CPU preparation `274f5db4` passed 27 controls,
+zero skips/CUDA allocations, and sealed the six native / fifteen tool+native
+members. Distinct current image-owner source1b90 controls `d8e19943` also
+passed 27 with zero skips/CUDA allocations. Each receipt and exact snapshot
+parent is recorded separately in the composed qualification contract; neither
+is current held-native-FD/tool execution or GPU/scientific qualification.
+Current source1b90 CPU rows `9ac5effb` / `e1cd2861` independently completed
+rc0, one attempt each on SL/image5be: both production FP4 banks loaded once
+from actual held stage FDs with matching executable inode maps and all four
+before/load/mapped/post-fence hashes; the tool row read nine staged members
+and ran Compute Sanitizer2025.3.1 --version with GPU visibility disabled.
+They do not exercise GPU tensors, sanitizer findings, performance or serving
+admission, and do not supply PB1483 operative all-used-filesystem floor proof.
+Source/CPU engineering acceptance permits only the complete owned consumer
+three-way composition into the common branch; normal source/pure CI and mainline
+approval remain separate. Closing #906 does not close #875 family qualification.
 
 The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH`
 experiment (Refs #739) schedules both independent B column-group fragment loads
