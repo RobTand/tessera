@@ -398,6 +398,7 @@ def build_routed(store, module):
     def fn(x, ids, w):
         return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
     fn.native = native  # The finite comparison observes this same serving owner.
+    fn.native_adapter = native  # The closed paired mode observes this same owner.
     return fn, info, packed, touched
 
 
@@ -506,6 +507,14 @@ def kernel_profile(call, reps=5, *, full_names=False, trace_path=None):
 
 
 def require_single_replay_options(args, *, stubbed=False):
+    if getattr(args,'paired_k32_timing',False) and not getattr(args,'paired_k32_numerics',False):
+        raise ValueError('paired timing requires the closed qualified mode')
+    if getattr(args,'direct_vllm_inputs',False) and not getattr(args,'paired_k32_numerics',False):
+        raise ValueError('direct-vLLM input transport requires the closed paired numeric mode')
+    if getattr(args, 'paired_k32_numerics', False):
+        from paired_k32_qualification import require_options
+        require_options(args, stubbed=stubbed)
+        return
     if getattr(args, "outputs_only", False):
         if (args.artifact != REPLAY_ARTIFACT or args.groups != "experts.R1024.L10"
                 or args.ms != "1,2048" or not args.no_graph or args.ncu
@@ -776,6 +785,13 @@ def main():
                     help="exact PB-staged readset for the single replay")
     ap.add_argument("--profile-native-file", default=None,
                     help="one declared retained native-code artifact for counter-only recovery")
+    ap.add_argument('--paired-k32-numerics', action='store_true',
+                    help='closed-world pinned A8SE L10 TP2rank0 M1,512,2048 raw-bit qualification')
+    ap.add_argument('--paired-k32-source-sha256', default=None)
+    ap.add_argument('--direct-vllm-inputs', action='store_true',
+                    help='same sealed ranges through held original FDs; vLLM execution exemption')
+    ap.add_argument('--paired-k32-timing',action='store_true',
+                    help='reuse accepted numeric receipt; fixed10 warmup/30 events plus separate profile/power')
     args = ap.parse_args()
     if args.outputs_only and args.ncu:
         ap.error("--outputs-only cannot be combined with --ncu")
@@ -797,10 +813,10 @@ def main():
     dev = torch.device("cuda")
     inputs = None
     native_owner = None
-    if args.single_routing_file or comparison:
+    if args.single_routing_file or comparison or args.paired_k32_numerics:
         from pb_staged_store import StagedInputs
-        inputs = (StagedInputs(args.input_manifest, direct_vllm=True) if comparison
-                  else StagedInputs(args.input_manifest))
+        inputs = (StagedInputs(args.input_manifest, direct_vllm=True)
+                  if (comparison or args.direct_vllm_inputs) else StagedInputs(args.input_manifest))
     try:
         store = Store(args.artifact, inputs)
         if inputs:
@@ -815,6 +831,17 @@ def main():
                     expected_sha256=os.environ["BENCH_EXPECT_LIBRARY_SHA256"],
                     source_sha256=os.environ["KERNEL_SHA"])
 
+        if args.paired_k32_numerics:
+            if os.environ.get('KERNEL_SHA') != args.paired_k32_source_sha256:
+                raise ValueError('paired-K32 actual source differs from sealed expected source')
+            if not native_owner:
+                raise ValueError('paired-K32 numerics requires held native artifact owner')
+        timing_certificate=None
+        if args.paired_k32_timing:
+            from paired_k32_qualification import numeric_certificate
+            timing_certificate=numeric_certificate()
+            if timing_certificate['input_manifest_sha256']!=inputs.manifest_sha256:
+                raise ValueError('timing inputs differ from qualified numerics')
         if comparison:
             from pb_staged_store import NativeCallback
             from tessera import routed_fused as rf
@@ -847,8 +874,18 @@ def main():
             meta["tessera_dist"] = md.version("tessera_quant")
         except Exception as exc:  # noqa: BLE001
             meta["tessera_meta_error"] = repr(exc)
-        ctx = None if VLLM_STUBBED else _init_vllm_world1(args.out)  # noqa: F841 -- held open
-        if inputs:
+        # The closed routed numeric mode supplies TP explicitly to the packed
+        # intake and invokes its adapter directly; no vLLM method/config/world
+        # is constructed. It still uses the exact stock native FP8 quantizer.
+        ctx = None if VLLM_STUBBED or args.paired_k32_numerics else _init_vllm_world1(args.out)  # noqa: F841 -- held open
+        if args.paired_k32_numerics:
+            meta['paired_k32'] = {'input_manifest_sha256': inputs.manifest_sha256,
+                'source_sha256': args.paired_k32_source_sha256,
+                'scope': ('balanced seeded real A8SE TP2rank0; accepted numeric reuse and operator timing only'
+                          if args.paired_k32_timing else
+                          'balanced seeded inputs, real A8SE wire TP2rank0; no full-model quality/timing'),
+                'sdk_version': inputs.sdk.SDK_VERSION}
+        elif inputs:
             meta["single_replay"] = {"scope": "historical IDs, seeded random x and uniform weights; not VB capture",
                                       "reference_baseline_source": "608bbdf0d6909548ff7c6919e5cdb834c1fcef7c",
                                       "manifest_sha256": inputs.manifest_sha256,
@@ -873,6 +910,7 @@ def main():
                     rec["info"] = info
                     rec["load_s"] = time.time() - t0
                     rec["cells"] = {}
+                    paired_reference_holder = {}  # bounded offline reference for this one group
                     cases = []
                     for m in ms:
                         if args.single_routing_file:
@@ -928,6 +966,20 @@ def main():
                         else:
                             xa = (x, *recorded_routing(rfile, m, dev))
                         call = lambda: fn(*xa)  # noqa: E731
+                        if args.paired_k32_numerics:
+                            if args.paired_k32_timing:
+                                from paired_k32_qualification import timing_cell
+                                rec['cells'][key]=timing_cell(fn,*xa,certificate=timing_certificate,
+                                    time_events=time_events,summarize=summarize,kernel_profile=kernel_profile,power=power)
+                                print(json.dumps({'group':gid,'M':key,'wall':rec['cells'][key]['wall']}),flush=True)
+                            else:
+                                from paired_k32_qualification import numeric_cell
+                                rec['cells'][key] = numeric_cell(fn, store, *xa,
+                                    os.path.join(args.out, 'numeric-words', key), kernel_profile=kernel_profile,
+                                    reference_holder=paired_reference_holder)
+                                print(json.dumps({'group': gid, 'M': key, 'numeric_words': rec['cells'][key]['outputs']}), flush=True)
+                            del x, xa
+                            continue
                         if args.ncu:
                             # ncu --profile-from-start off: exactly one profiled call per (group, M).
                             for _ in range(args.warmup if inputs else 3):
@@ -1004,6 +1056,10 @@ def main():
                                           "GBps_kernel": round(cell["eff_gbps_kernel"] or 0, 1),
                                           "W": round(cell["power"].get("mean_w") or 0, 1)}), flush=True)
                         del x, xa
+                if args.paired_k32_numerics and not args.paired_k32_timing:
+                    from paired_k32_qualification import synthetic_controls
+                    rec['synthetic_controls'] = synthetic_controls(os.path.join(args.out, 'synthetic-words'),
+                                                                   kernel_profile=kernel_profile)
                 rec["ok"] = True
             except Exception:  # noqa: BLE001
                 import traceback
@@ -1023,6 +1079,7 @@ def main():
         if inputs:
             meta["staged_reads"] = inputs.reads
             inputs.close()
+            if inputs.direct_vllm:meta['direct_input_bindings'] = inputs.direct_record
         meta["end_unix"] = time.time()
         json.dump({"meta": meta, "results": results}, open(os.path.join(args.out, "bench_t8r.json"), "w"),
                   indent=1, default=repr)
