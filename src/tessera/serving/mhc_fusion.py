@@ -5,7 +5,7 @@ residual stream (``mhc_post_tilelang_kernel``, DeepGEMM's
 ``sm120_tf32_hc_prenorm_gemm_impl`` at the split ``compute_num_split`` picks,
 ``mhc_pre_big_fuse_with_norm_tilelang_kernel``): 144 KiB of DRAM traffic per
 token per site against an 80 KiB floor.  ``csrc/mhc_fused.cu`` runs all three
-per 16-token tile in one kernel: the new residual is written once and read back
+per token tile in one kernel: the new residual is written once and read back
 from L2 by the GEMM and the pre, so DRAM moves the floor.
 
 **Identity.**  Every output -- residual, post mix, comb mix, layer input -- is
@@ -47,8 +47,9 @@ _log = logging.getLogger(__name__)
 HC_MULT = 4
 HIDDEN = 4096
 NMIX = HC_MULT * 2 + HC_MULT * HC_MULT
-#: The kernel's token tile: one m16 MMA tile.  Must match ``TM`` in ``csrc/mhc_fused.cu``.
-TILE_TOKENS = 16
+#: Token tiles are whole m16 MMA tiles, at most ``TM_MAX`` (``csrc/mhc_fused.cu``) tokens.
+TILE_QUANTUM = 16
+TILE_MAX = 64
 
 MODULE_PREFIX = "tessera_mhc_fused_"
 SOURCE = "mhc_fused.cu"
@@ -102,7 +103,7 @@ class _Params(ctypes.Structure):
         ("tokens", ctypes.c_int), ("splits", ctypes.c_int),
         ("rms_eps", ctypes.c_float), ("pre_eps", ctypes.c_float), ("sinkhorn_eps", ctypes.c_float),
         ("post_mult", ctypes.c_float), ("norm_eps", ctypes.c_float), ("sinkhorn_repeat", ctypes.c_int),
-        ("clocks", ctypes.c_void_p), ("overlap", ctypes.c_int)]
+        ("clocks", ctypes.c_void_p), ("tm", ctypes.c_int)]
 
 
 def source_path() -> Path:
@@ -167,16 +168,25 @@ def library() -> MhcFusedLibrary:
 def default_grid(torch: Any, device: Any) -> int:
     """One persistent CTA per SM: the kernel's register use admits one 256-thread CTA per SM.
 
-    Measured, not assumed: on GB10 at 1024 tokens, split 1, the grid sweep
-    (12/16/24/32/48) was monotone and 48 was fastest (timing receipt
-    ``timing-6f19bf03``, PB ``7b0c4d46``); an L2-capacity cap on resident
-    tiles (24) was slower.  ``TESSERA_MHC_FUSED_CTAS`` overrides it for
-    measurement only.
+    ``TESSERA_MHC_FUSED_CTAS`` overrides it for measurement only.
     """
     override = os.environ.get("TESSERA_MHC_FUSED_CTAS")
     if override:
         return max(1, int(override))
     return torch.cuda.get_device_properties(device).multi_processor_count
+
+
+def tile_tokens(tokens: int, ctas: int) -> int:
+    """Tokens per tile: the fewest whole m16 tiles that cover the site in one wave of CTAs.
+
+    A tile's GEMM is a chain of ~2048 dependent TF32 MMAs that takes ~135 us
+    on GB10 whatever the tile height (PB ``5bb4c705`` phase clocks), and a
+    CTA runs all of its tile's chains at once; so a site costs one chain
+    latency per wave of tiles, and the fewest waves is the target.  Capped at
+    ``TILE_MAX``; larger sites take more than one wave.
+    """
+    per_cta = -(-tokens // max(1, ctas))
+    return min(TILE_MAX, TILE_QUANTUM * -(-per_cta // TILE_QUANTUM))
 
 
 # ------------------------------------------------------------------ the call
@@ -218,12 +228,12 @@ def fused_post_pre(lib: MhcFusedLibrary, kernels: Any, x: Any, residual: Any, po
                    hc_pre_eps: float, hc_sinkhorn_eps: float, hc_post_mult_value: float,
                    sinkhorn_repeat: int, norm_weight: Any, norm_eps: float,
                    grid: int | None = None, clocks: Any = None,
-                   overlap: bool = False) -> tuple[Any, Any, Any, Any]:
+                   tile: int | None = None) -> tuple[Any, Any, Any, Any]:
     """``mhc_fused_post_pre_tilelang``'s outputs from one kernel (caller has checked eligibility).
 
     ``clocks`` (diagnostic): an int64 CUDA tensor of ``tiles * 5`` that receives each
-    tile's phase-boundary ``%globaltimer`` stamps.  ``overlap``: run each tile's
-    GEMM alongside the next tile's post (same per-tile arithmetic; a schedule).
+    tile's phase-boundary ``%globaltimer`` stamps.  ``grid`` and ``tile`` override
+    the CTA count and tile height for measurement; neither changes any output bit.
     """
     import torch
 
@@ -244,9 +254,10 @@ def fused_post_pre(lib: MhcFusedLibrary, kernels: Any, x: Any, residual: Any, po
         residual_cur.data_ptr(), post_mix.data_ptr(), comb_mix.data_ptr(), layer_input.data_ptr(),
         part.data_ptr(), sqrsum.data_ptr(), tokens, int(splits),
         rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, norm_eps, int(sinkhorn_repeat),
-        None if clocks is None else clocks.data_ptr(), int(bool(overlap)))
-    tiles = -(-tokens // TILE_TOKENS)
-    grid = min(tiles, grid if grid is not None else default_grid(torch, dev))
+        None if clocks is None else clocks.data_ptr(), 0)
+    ctas = grid if grid is not None else default_grid(torch, dev)
+    params.tm = tile if tile is not None else tile_tokens(tokens, ctas)
+    grid = min(-(-tokens // params.tm), ctas)
     lib.launch(params, grid, torch.cuda.current_stream(dev).cuda_stream)
     return (residual_cur.view(*outer, HC_MULT, HIDDEN), post_mix.view(*outer, HC_MULT, 1),
             comb_mix.view(*outer, HC_MULT, HC_MULT), layer_input.view(*outer, HIDDEN))

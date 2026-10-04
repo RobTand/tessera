@@ -41,7 +41,7 @@ constexpr int HC = 4;
 constexpr int HIDDEN = 4096;
 constexpr int K = HC * HIDDEN;          // 16384
 constexpr int NMIX = HC * 2 + HC * HC;  // 24
-constexpr int TM = 16;                  // tokens per tile: one m16 MMA tile
+constexpr int TM_MAX = 64;              // most tokens per tile: four m16 MMA tiles
 constexpr int THREADS = 256;
 constexpr int WARPS = THREADS / 32;
 constexpr int BLOCK_K = 64;
@@ -69,12 +69,11 @@ struct Params {
   float rms_eps, pre_eps, sinkhorn_eps, post_mult, norm_eps;
   int sinkhorn_repeat;
   unsigned long long* clocks;     // [tiles, 5] %globaltimer ns at phase boundaries, or null
-  int overlap;                    // 1: GEMM of tile i alongside post of tile i+1 (same arithmetic)
+  int tm;                         // tokens per tile: a multiple of 16, at most TM_MAX
 };
 
 // Diagnostic only: when the caller passes a buffer, thread 0 stamps each tile's
-// phase boundaries: start, then post done (sequential) or GEMM done (overlap),
-// then both done, mixes done, layer input done.
+// phase boundaries: start, post done, GEMM done, mixes done, layer input done.
 __device__ __forceinline__ void stamp(const Params& p, int tile, int k) {
   if (p.clocks != nullptr && threadIdx.x == 0) {
     unsigned long long ns;
@@ -127,27 +126,26 @@ __device__ __forceinline__ void named_sync(int id, int threads) {
 }
 
 // ---------------------------------------------------------------- post
-// Threads tid = 0..nthr-1 of the caller's group run it; bar syncs that group.
-__device__ __noinline__ void post_phase(const Params& p, int t0, uint64_t keep, int tid, int nthr, int bar) {
-  __shared__ float s_post[TM][HC];
-  __shared__ float s_comb[TM][HC * HC];
-  for (int i = tid; i < TM * HC * HC; i += nthr) {
+__device__ void post_phase(const Params& p, int t0, int tm, uint64_t keep) {
+  __shared__ float s_post[TM_MAX][HC];
+  __shared__ float s_comb[TM_MAX][HC * HC];
+  for (int i = threadIdx.x; i < tm * HC * HC; i += THREADS) {
     int tok = t0 + i / (HC * HC);
     s_comb[i / (HC * HC)][i % (HC * HC)] = tok < p.tokens ? p.comb[(int64_t)tok * HC * HC + i % (HC * HC)] : 0.f;
   }
-  for (int i = tid; i < TM * HC; i += nthr) {
+  for (int i = threadIdx.x; i < tm * HC; i += THREADS) {
     int tok = t0 + i / HC;
     s_post[i / HC][i % HC] = tok < p.tokens ? p.post[(int64_t)tok * HC + i % HC] : 0.f;
   }
-  named_sync(bar, nthr);
+  __syncthreads();
   constexpr int H8 = HIDDEN / 8;              // 512 eight-element groups per stream
-  constexpr int ITEMS = TM * H8;              // 8192 per tile
+  const int ITEMS = tm * H8;
   constexpr int UNROLL = 4;
-  for (int base = tid; base < ITEMS; base += nthr * UNROLL) {
+  for (int base = threadIdx.x; base < ITEMS; base += THREADS * UNROLL) {
     uint4 xv[UNROLL], rv[UNROLL][HC];
 #pragma unroll
     for (int u = 0; u < UNROLL; ++u) {
-      int item = base + u * nthr;
+      int item = base + u * THREADS;
       int tl = item / H8, h8 = item % H8, tok = t0 + tl;
       if (item < ITEMS && tok < p.tokens) {
         xv[u] = __ldcs(reinterpret_cast<const uint4*>(p.x + (int64_t)tok * HIDDEN) + h8);
@@ -158,7 +156,7 @@ __device__ __noinline__ void post_phase(const Params& p, int t0, uint64_t keep, 
     }
 #pragma unroll
     for (int u = 0; u < UNROLL; ++u) {
-      int item = base + u * nthr;
+      int item = base + u * THREADS;
       int tl = item / H8, h8 = item % H8, tok = t0 + tl;
       if (item >= ITEMS || tok >= p.tokens) continue;
       float d[8], b[HC][8];
@@ -184,15 +182,18 @@ __device__ __noinline__ void post_phase(const Params& p, int t0, uint64_t keep, 
 }
 
 // ---------------------------------------------------------------- pre-norm GEMM
-// DeepGEMM's math warp for rows t0..t0+15, one warp per n-tile (warp nt), fed
+// DeepGEMM's math warp, per chain: one (m-tile, n-tile) pair of the tile, fed
 // by a cp.async ring every thread fills.  K blocks run 0..255 in order; split
-// s owns the contiguous range DeepGEMM gives it, and each warp's accumulator
-// chain (and warp 0's sqrsum) is flushed and reset at every split's end, so
-// each split's chain is DeepGEMM's: same blocks, same k-steps, same order.
-// Deep enough that a block is requested ~9 iterations before it is consumed:
-// with 4 stages the GEMM ran at 0.5 us per K block (PB fcec146e phase
-// clocks), about 5x its MMA chain, i.e. bound by L2 latency under load.
-constexpr int NSTAGE = 10;
+// s owns the contiguous range DeepGEMM gives it, and each chain's accumulator
+// (and, on n-tile 0, its m-tile's sqrsum) is flushed and reset at every
+// split's end, so each split's chain is DeepGEMM's: same blocks, same k-steps,
+// same order.  A chain is ~2048 dependent TF32 MMAs (~135 us on GB10, PB
+// 5bb4c705 phase clocks, at any ring depth), so a tile runs all of its chains
+// at once -- up to two per warp, interleaved like DeepGEMM's n-tiles -- and
+// the caller sizes tiles so a site is one wave.
+constexpr int NSTAGE = 4;
+constexpr int MT_MAX = TM_MAX / 16;
+constexpr int CHAINS_PER_WARP = (MT_MAX * NTILES + WARPS - 1) / WARPS;  // 2
 constexpr int A_LD = BLOCK_K + 8;   // bf16 per staged A row (144 B: 16B-aligned, conflict-free)
 constexpr int B_LD = BLOCK_K + 4;   // fp32 per staged B row (272 B)
 
@@ -208,69 +209,81 @@ __device__ __forceinline__ void cp_async_wait_stages() {
 }
 
 struct GemmSmem {
-  __nv_bfloat16 a[NSTAGE][TM][A_LD];
+  __nv_bfloat16 a[NSTAGE][TM_MAX][A_LD];
   float b[NSTAGE][NMIX][B_LD];
 };
 
-__device__ __forceinline__ void stage_block(const Params& p, GemmSmem& sm, int t0, int kb, int st,
-                                            int tid, int nthr) {
-  // 16 rows x 8 chunks of A, then 24 rows x 16 chunks of B: 512 16-byte chunks.
-#pragma unroll
-  for (int c = tid; c < TM * 8 + NMIX * 16; c += nthr) {
-    if (c < TM * 8) {
+__device__ __forceinline__ void stage_block(const Params& p, GemmSmem& sm, int t0, int tm, int kb, int st) {
+  // tm rows x 8 chunks of A, then 24 rows x 16 chunks of B, 16 bytes each.
+  for (int c = threadIdx.x; c < tm * 8 + NMIX * 16; c += THREADS) {
+    if (c < tm * 8) {
       const int r = c / 8, q = c % 8, tok = t0 + r;
       const bool ok = tok < p.tokens;
       cp_async16(&sm.a[st][r][q * 8], p.residual_out + (int64_t)(ok ? tok : 0) * K + kb * BLOCK_K + q * 8, ok);
     } else {
-      const int cb = c - TM * 8, n = cb / 16, q = cb % 16;
+      const int cb = c - tm * 8, n = cb / 16, q = cb % 16;
       cp_async16(&sm.b[st][n][q * 4], p.fn + (int64_t)n * K + kb * BLOCK_K + q * 4, true);
     }
   }
 }
 
-// Threads 0..nthr-1 of the CTA (warps 0..NTILES-1 among them) run it; bar syncs them.
-__device__ __noinline__ void gemm_phase(const Params& p, GemmSmem& sm, int t0, int nthr, int bar) {
-  const int tid = threadIdx.x;
+__device__ void gemm_phase(const Params& p, GemmSmem& sm, int t0, int tm) {
   const int warp = threadIdx.x / 32, lane = threadIdx.x % 32, g = lane / 4, t = lane % 4;
-  const int nt = warp;  // warps 0..NTILES-1 compute; the rest only stage
+  const int chains = (tm / 16) * NTILES;
   const int per = KBLOCKS / p.splits, rem = KBLOCKS % p.splits;
-  const int r0 = t0 + g, r1 = t0 + g + 8;
-  const bool v0 = r0 < p.tokens, v1 = r1 < p.tokens;
-  float acc[4] = {0.f, 0.f, 0.f, 0.f};
-  float sqr_sum_acc_0 = 0.f, sqr_sum_acc_1 = 0.f;
+  bool on[CHAINS_PER_WARP];
+  int mt[CHAINS_PER_WARP], nt[CHAINS_PER_WARP];
+  float acc[CHAINS_PER_WARP][4], sq0[CHAINS_PER_WARP], sq1[CHAINS_PER_WARP];
+#pragma unroll
+  for (int j = 0; j < CHAINS_PER_WARP; ++j) {
+    const int c = warp + j * WARPS;
+    on[j] = c < chains;
+    mt[j] = c / NTILES;
+    nt[j] = c % NTILES;
+    acc[j][0] = acc[j][1] = acc[j][2] = acc[j][3] = 0.f;
+    sq0[j] = sq1[j] = 0.f;
+  }
   int s = 0, split_end = per + (0 < rem);
 #pragma unroll
   for (int st = 0; st < NSTAGE - 1; ++st) {
-    stage_block(p, sm, t0, st, st, tid, nthr);
+    stage_block(p, sm, t0, tm, st, st);
     cp_async_commit();
   }
   for (int kb = 0; kb < KBLOCKS; ++kb) {
     cp_async_wait_stages();
-    named_sync(bar, nthr);  // block kb is resident; every warp is done with the stage refilled below
+    __syncthreads();  // block kb is resident; every warp is done with the stage refilled below
     const int nk = kb + NSTAGE - 1;
-    if (nk < KBLOCKS) stage_block(p, sm, t0, nk, nk % NSTAGE, tid, nthr);
+    if (nk < KBLOCKS) stage_block(p, sm, t0, tm, nk, nk % NSTAGE);
     cp_async_commit();
-    if (nt < NTILES) {
-      const int st = kb % NSTAGE;
+    const int st = kb % NSTAGE;
 #pragma unroll
-      for (int ks = 0; ks < 8; ++ks) {
-        const int k0 = ks * 8 + t;
-        float fa0 = __bfloat162float(sm.a[st][g][k0]);
-        float fa1 = __bfloat162float(sm.a[st][g + 8][k0]);
-        float fa2 = __bfloat162float(sm.a[st][g][k0 + 4]);
-        float fa3 = __bfloat162float(sm.a[st][g + 8][k0 + 4]);
-        if (nt == 0) {
-          sqr_sum_acc_0 += fa0 * fa0 + fa2 * fa2;
-          sqr_sum_acc_1 += fa1 * fa1 + fa3 * fa3;
+    for (int ks = 0; ks < 8; ++ks) {
+      const int k0 = ks * 8 + t;
+#pragma unroll
+      for (int j = 0; j < CHAINS_PER_WARP; ++j) {
+        if (!on[j]) continue;
+        const int ra = mt[j] * 16 + g, nb = nt[j] * 8 + g;
+        float fa0 = __bfloat162float(sm.a[st][ra][k0]);
+        float fa1 = __bfloat162float(sm.a[st][ra + 8][k0]);
+        float fa2 = __bfloat162float(sm.a[st][ra][k0 + 4]);
+        float fa3 = __bfloat162float(sm.a[st][ra + 8][k0 + 4]);
+        if (nt[j] == 0) {
+          sq0[j] += fa0 * fa0 + fa2 * fa2;
+          sq1[j] += fa1 * fa1 + fa3 * fa3;
         }
         uint32_t a[4] = {__float_as_uint(fa0), __float_as_uint(fa1), __float_as_uint(fa2), __float_as_uint(fa3)};
-        uint32_t b[2] = {__float_as_uint(sm.b[st][nt * 8 + g][k0]), __float_as_uint(sm.b[st][nt * 8 + g][k0 + 4])};
-        tf32_mma(acc, a, b);
+        uint32_t b[2] = {__float_as_uint(sm.b[st][nb][k0]), __float_as_uint(sm.b[st][nb][k0 + 4])};
+        tf32_mma(acc[j], a, b);
       }
-      if (kb + 1 == split_end) {
-        if (nt == 0) {
+    }
+    if (kb + 1 == split_end) {
+#pragma unroll
+      for (int j = 0; j < CHAINS_PER_WARP; ++j) {
+        const int r0 = t0 + mt[j] * 16 + g, r1 = r0 + 8;
+        const bool v0 = on[j] && r0 < p.tokens, v1 = on[j] && r1 < p.tokens;
+        if (on[j] && nt[j] == 0) {
           // DeepGEMM math::warp_reduce_sum<4>: xor 2, then xor 1.
-          float r0s = sqr_sum_acc_0, r1s = sqr_sum_acc_1;
+          float r0s = sq0[j], r1s = sq1[j];
           r0s = r0s + __shfl_xor_sync(0xffffffffu, r0s, 2);
           r0s = r0s + __shfl_xor_sync(0xffffffffu, r0s, 1);
           r1s = r1s + __shfl_xor_sync(0xffffffffu, r1s, 2);
@@ -279,16 +292,15 @@ __device__ __noinline__ void gemm_phase(const Params& p, GemmSmem& sm, int t0, i
             if (v0) p.sqrsum[(int64_t)s * p.tokens + r0] = r0s;
             if (v1) p.sqrsum[(int64_t)s * p.tokens + r1] = r1s;
           }
-          sqr_sum_acc_0 = 0.f;
-          sqr_sum_acc_1 = 0.f;
+          sq0[j] = sq1[j] = 0.f;
         }
-        const int col = nt * 8 + t * 2;
-        if (v0) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r0) * NMIX + col) = make_float2(acc[0], acc[1]);
-        if (v1) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r1) * NMIX + col) = make_float2(acc[2], acc[3]);
-        acc[0] = acc[1] = acc[2] = acc[3] = 0.f;
-        ++s;
-        split_end += per + (s < rem);
+        const int col = nt[j] * 8 + t * 2;
+        if (v0) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r0) * NMIX + col) = make_float2(acc[j][0], acc[j][1]);
+        if (v1) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r1) * NMIX + col) = make_float2(acc[j][2], acc[j][3]);
+        acc[j][0] = acc[j][1] = acc[j][2] = acc[j][3] = 0.f;
       }
+      ++s;
+      split_end += per + (s < rem);
     }
   }
   asm volatile("cp.async.wait_group 0;" ::: "memory");
@@ -417,47 +429,30 @@ __device__ void layer_input_token(const Params& p, int tok, const float* pre_mix
 }
 
 __global__ void __launch_bounds__(THREADS) mhc_fused_post_pre_kernel(Params p) {
-  __shared__ float s_mix[TM][32];
-  __shared__ float s_pre[TM][HC];
+  __shared__ float s_mix[TM_MAX][32];
+  __shared__ float s_pre[TM_MAX][HC];
   __shared__ float s_red[GROUPS][64];
   extern __shared__ __align__(16) unsigned char dyn_smem[];  // GemmSmem, > 48 KiB
   GemmSmem& s_gemm = *reinterpret_cast<GemmSmem*>(dyn_smem);
   const uint64_t keep = policy_evict_last();
   const int warp = threadIdx.x / 32;
-  const int ntiles = (p.tokens + TM - 1) / TM;
-  constexpr int GEMM_THREADS = NTILES * 32, BAR_ALL = 0, BAR_GEMM = 5, BAR_POST = 6;
-  if (p.overlap && blockIdx.x < ntiles) {
-    // Warps 0..2 run tile i's GEMM while warps 3..7 stream tile i+1's post, so
-    // the GEMM hides behind DRAM time.  Each tile's arithmetic is unchanged.
-    post_phase(p, blockIdx.x * TM, keep, threadIdx.x, THREADS, BAR_ALL);
-    __syncthreads();
-  }
+  const int tm = p.tm;
+  const int ntiles = (p.tokens + tm - 1) / tm;
   for (int tile = blockIdx.x; tile < ntiles; tile += gridDim.x) {
-    const int t0 = tile * TM;
+    const int t0 = tile * tm;
     stamp(p, tile, 0);
-    if (p.overlap) {
-      const int next = tile + gridDim.x;
-      if (warp < NTILES) {
-        gemm_phase(p, s_gemm, t0, GEMM_THREADS, BAR_GEMM);
-        stamp(p, tile, 1);
-      } else if (next < ntiles) {
-        post_phase(p, next * TM, keep, threadIdx.x - GEMM_THREADS, THREADS - GEMM_THREADS, BAR_POST);
-      }
-      __syncthreads();
-    } else {
-      post_phase(p, t0, keep, threadIdx.x, THREADS, BAR_ALL);
-      __syncthreads();
-      stamp(p, tile, 1);
-      gemm_phase(p, s_gemm, t0, THREADS, BAR_ALL);
-      __syncthreads();
-    }
+    post_phase(p, t0, tm, keep);
+    __syncthreads();
+    stamp(p, tile, 1);
+    gemm_phase(p, s_gemm, t0, tm);
+    __syncthreads();
     stamp(p, tile, 2);
-    for (int tl = warp; tl < TM; tl += WARPS)
+    for (int tl = warp; tl < tm; tl += WARPS)
       if (t0 + tl < p.tokens) mixes_token(p, t0 + tl, s_mix[tl], s_pre[tl]);
     __syncthreads();
     stamp(p, tile, 3);
     const int group = threadIdx.x / 64;
-    for (int tl = group; tl < TM; tl += GROUPS)
+    for (int tl = group; tl < tm; tl += GROUPS)
       if (t0 + tl < p.tokens) layer_input_token(p, t0 + tl, s_pre[tl], group, s_red[group]);
     __syncthreads();
     stamp(p, tile, 4);
@@ -468,6 +463,7 @@ __global__ void __launch_bounds__(THREADS) mhc_fused_post_pre_kernel(Params p) {
 
 #ifndef __CUDACC_RTC__
 extern "C" int tessera_mhc_fused_post_pre(const tessera_mhc::Params* params, int grid, cudaStream_t stream) {
+  if (params->tm < 16 || params->tm > tessera_mhc::TM_MAX || params->tm % 16) return static_cast<int>(cudaErrorInvalidValue);
   constexpr int smem = sizeof(tessera_mhc::GemmSmem);
   static const cudaError_t attr = cudaFuncSetAttribute(
       tessera_mhc::mhc_fused_post_pre_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);

@@ -91,32 +91,36 @@ def adversarial(x, res, post, comb, gen):
 
 
 def fused_call(lib, tk, prm):
-    def call(x, residual, post, comb, grid=None, clocks=None, overlap=False):
+    def call(x, residual, post, comb, grid=None, clocks=None, tile=None):
         return mf.fused_post_pre(lib, tk, x, residual, post, comb, prm["fn"], prm["scale"], prm["base"],
                                  mp.RMS_EPS, mp.HC_EPS, mp.HC_EPS, mp.POST_MULT, mp.SINKHORN,
-                                 prm["norm"], mp.RMS_EPS, grid=grid, clocks=clocks, overlap=overlap)
+                                 prm["norm"], mp.RMS_EPS, grid=grid, clocks=clocks, tile=tile)
     return call
 
 
 PHASES = ("post", "gemm", "mixes", "layer_input")
 
 
-def phase_clocks(fused, ins, reps=3, overlap=False):
+TILES = (16, 32, 48, 64)
+
+
+def phase_clocks(fused, ins, reps=3):
     """Per-tile phase durations (us, median over tiles and reps) from the kernel's own stamps."""
-    tiles = -(-ins[0].shape[0] // mf.TILE_TOKENS)
+    tokens = ins[0].shape[0]
+    tm = mf.tile_tokens(tokens, mf.default_grid(torch, ins[0].device))
+    tiles = -(-tokens // tm)
     per_phase = {k: [] for k in PHASES}
     spans = []
     for _ in range(reps):
         clocks = torch.zeros(tiles * 5, dtype=torch.int64, device="cuda")
-        fused(*ins, clocks=clocks, overlap=overlap)
+        fused(*ins, clocks=clocks, tile=tm)
         torch.cuda.synchronize()
         c = clocks.view(tiles, 5).double().cpu()
         for i, k in enumerate(PHASES):
             per_phase[k] += ((c[:, i + 1] - c[:, i]) / 1e3).tolist()
         spans.append(float((c[:, 4].max() - c[:, 0].min()) / 1e3))
     med = lambda v: sorted(v)[len(v) // 2]  # noqa: E731
-    names = ("gemm_while_post", "post_tail", "mixes", "layer_input") if overlap else PHASES
-    return {"tiles": tiles, "median_tile_us": {n: med(per_phase[k]) for n, k in zip(names, PHASES)},
+    return {"tile_tokens": tm, "tiles": tiles, "median_tile_us": {k: med(v) for k, v in per_phase.items()},
             "kernel_span_us": med(spans), "note": "%globaltimer stamps by thread 0; diagnostic, not a timing arm"}
 
 
@@ -136,11 +140,11 @@ def part_bitwise(args, model_dir, lib, tk):
                 with Forced(tk, full) as f_fused:
                     got = fused(*ins)
                     again = fused(*ins)
-                    overlapped = fused(*ins, overlap=True)
+                    by_tile = {tm: fused(*ins, tile=tm) for tm in TILES}
                 rec = {"which": which, "tokens": tokens, "full_batch": full, "variant": variant,
                        "split_stock": f_stock.seen, "split_fused": f_fused.seen,
                        "deterministic": all(torch.equal(a, b) for a, b in zip(got, again)),
-                       "overlap_equal": all(torch.equal(a, b) for a, b in zip(overlapped, ref))}
+                       "tiles_equal": {tm: all(torch.equal(a, b) for a, b in zip(o, ref)) for tm, o in by_tile.items()}}
                 for name, a, b in zip(OUTPUTS, got, ref):
                     rec[name] = mp.compare(a, b)
                     rec[name]["shape_equal"] = tuple(a.shape) == tuple(b.shape)
@@ -156,7 +160,7 @@ def part_bitwise(args, model_dir, lib, tk):
                     torch.cuda.synchronize()
                     rec["graph_replay_equal"] = all(torch.equal(a, b) for a, b in zip(captured, ref))
                 rec["bitwise"] = (all(rec[n]["equal"] and rec[n]["shape_equal"] for n in OUTPUTS)
-                                  and rec["deterministic"] and rec["overlap_equal"]
+                                  and rec["deterministic"] and all(rec["tiles_equal"].values())
                                   and rec.get("graph_replay_equal", True)
                                   and f_stock.seen[-1:] == f_fused.seen[-1:])
                 out["cases"].append(rec)
@@ -183,7 +187,8 @@ def part_timing(args, model_dir, lib, tk, sampler):
             arms = {"stock": lambda a: stock(*a)}
             for g in args.grids:
                 arms[f"fused_g{g}"] = (lambda a, g=g: fused(*a, grid=g))
-                arms[f"overlap_g{g}"] = (lambda a, g=g: fused(*a, grid=g, overlap=True))
+            for tm in TILES:
+                arms[f"tile{tm}"] = (lambda a, tm=tm: fused(*a, tile=tm))
             arms["fused_default"] = lambda a: fused(*a)
             samples = {name: [] for name in arms}
             power = {name: [] for name in arms}
@@ -194,8 +199,7 @@ def part_timing(args, model_dir, lib, tk, sampler):
                         t0 = time.time()
                         samples[name].append(mp.graph_ms(calls, args.reps))
                         power[name].append(sampler.window(t0, time.time()))
-                phases = {"sequential": phase_clocks(fused, ins[0]),
-                          "overlap": phase_clocks(fused, ins[0], overlap=True)}
+                phases = phase_clocks(fused, ins[0])
                 kern = {}
                 for name in ("stock", "fused_default"):
                     rows = mp.kernel_device_us(lambda fn=arms[name]: [fn(a) for a in ins[:4]], 2)
@@ -212,8 +216,8 @@ def part_timing(args, model_dir, lib, tk, sampler):
             out["cells"].append(cell)
             log("timing", which, tokens, full, "split", cell["split"],
                 " ".join(f"{n}={v:.4f}" for n, v in med.items()), f"floor={cell['floor_ms_at_peak']:.4f}",
-                "phases", json.dumps({m: (v["median_tile_us"], round(v["kernel_span_us"], 1))
-                                      for m, v in phases.items()}))
+                "phases", json.dumps(phases["median_tile_us"]), f"tile={phases['tile_tokens']}",
+                f"span={phases['kernel_span_us']:.1f}us")
             del ins
     return out
 

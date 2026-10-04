@@ -51,7 +51,7 @@ def test_interfaces_are_the_sp_table_pins_for_the_same_modules():
 
 def test_kernel_constants_and_params_layout_match_the_cuda_source():
     src = mf.source_path().read_text()
-    assert int(re.search(r"constexpr int TM = (\d+);", src).group(1)) == mf.TILE_TOKENS
+    assert int(re.search(r"constexpr int TM_MAX = (\d+);", src).group(1)) == mf.TILE_MAX
     assert int(re.search(r"constexpr int HIDDEN = (\d+);", src).group(1)) == mf.HIDDEN
     assert int(re.search(r"constexpr int HC = (\d+);", src).group(1)) == mf.HC_MULT
     body = re.search(r"struct Params \{(.*?)\};", src, re.S).group(1)
@@ -62,6 +62,18 @@ def test_kernel_constants_and_params_layout_match_the_cuda_source():
             continue
         names += [part.strip().lstrip("*").split()[-1].lstrip("*") for part in code.split(",")]
     assert names == [field for field, _ in mf._Params._fields_]
+
+
+@pytest.mark.parametrize("tokens,ctas", [(33, 48), (1024, 48), (1024, 32), (2048, 48), (2049, 48),
+                                         (8192, 48), (100, 1)])
+def test_tiles_are_whole_m16_tiles_covering_the_site_in_the_fewest_waves(tokens, ctas):
+    tm = mf.tile_tokens(tokens, ctas)
+    assert tm % mf.TILE_QUANTUM == 0 and mf.TILE_QUANTUM <= tm <= mf.TILE_MAX
+    waves = -(-tokens // (tm * ctas))
+    if tm < mf.TILE_MAX:
+        assert waves == 1  # one wave whenever the cap does not bind
+        if tm > mf.TILE_QUANTUM:  # and no smaller tile would also have been one wave
+            assert -(-tokens // ((tm - mf.TILE_QUANTUM) * ctas)) > 1
 
 
 def test_unset_flag_installs_nothing():
