@@ -141,3 +141,46 @@ def test_the_committed_artifact_plan_dry_runs_end_to_end(tmp_path):
     assert engines[0] == engines[2]
     cc = graph.index("--compilation-config")
     assert strip(eager) == graph[:cc] + graph[cc + 2:]
+
+
+def _arm_dir(root, name, *, image_digest, max_model_len, model):
+    d = root / name
+    d.mkdir()
+    (d / f"engine-args-{name}.txt").write_text("\n".join([
+        f"arm={name}", "eager=1", f"image=localhost/prismaquant/spark-vllm-nccl230@sha256:{'0' * 64}",
+        f"image_digest_resolved=localhost/prismaquant/spark-vllm-nccl230@sha256:{image_digest * 64}",
+        f"serve_args=--host 0.0.0.0 --tensor-parallel-size 1 --max-model-len {max_model_len} "
+        "--max-num-seqs 8 --kernel-config '{\"enable_flashinfer_autotune\":false}'",
+        "spec_json=", f"src_sha256={'s' * 64}", f"model={model}"]) + "\n")
+    return d
+
+
+def test_arms_that_measured_different_serves_make_no_receipt(tmp_path):
+    """Review of #930: a scope field is read from what each arm recorded, and arms that
+    disagree on any of them (here the image and max_model_len) are not one measurement."""
+    tool = _receipt_tool()
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}")
+    _arm_dir(tmp_path, "e1", image_digest="a", max_model_len=8448, model=model)
+    _arm_dir(tmp_path, "g1", image_digest="b", max_model_len=4096, model=model)
+    scopes = {n: tool.arm_scope(tmp_path / n, n) for n in ("e1", "g1")}
+    assert scopes["e1"]["tensor_parallel_size"] == 1 and scopes["g1"]["max_model_len"] == 4096
+    with pytest.raises(SystemExit, match=r"differ in \['image', 'max_model_len'\]"):
+        tool.one_measurement(scopes)
+    _arm_dir(tmp_path, "g2", image_digest="a", max_model_len=8448, model=model)
+    shared = tool.one_measurement({n: tool.arm_scope(tmp_path / n, n) for n in ("e1", "g2")})
+    assert shared["image"].endswith("a" * 64)
+
+
+def test_an_arm_that_recorded_no_digest_pinned_image_has_no_scope(tmp_path):
+    tool = _receipt_tool()
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}")
+    d = _arm_dir(tmp_path, "e1", image_digest="a", max_model_len=8448, model=model)
+    text = (d / "engine-args-e1.txt").read_text()
+    text = "\n".join(l for l in text.splitlines() if not l.startswith("image"))
+    (d / "engine-args-e1.txt").write_text(text + "\nimage=localhost/prismaquant/spark-vllm:latest\n")
+    with pytest.raises(SystemExit, match="did not record"):
+        tool.arm_scope(d, "e1")

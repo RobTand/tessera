@@ -17,6 +17,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import shlex
 import sys
 import tempfile
 from collections import defaultdict
@@ -108,6 +109,62 @@ def passes(flat: pathlib.Path, names: list[str], pool: list[str]) -> list[dict]:
     return out
 
 
+#: The scope fields every arm of one receipt must share (graph_receipt.SCOPE_FIELDS minus
+#: compilation_config, which is what separates a graph arm from its eager pool).
+SHARED_SCOPE = tuple(f for f in graph_receipt.SCOPE_FIELDS if f != "compilation_config")
+
+
+def _flag(argv: list[str], name: str) -> str | None:
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+def arm_scope(arm_dir: pathlib.Path, arm: str) -> dict:
+    """The scope one arm MEASURED, read from what it recorded, never from a default here.
+
+    The serve values come from the argv the arm launched (``serve_args`` from arm.sh,
+    ``serve_rank0`` from arm_tp2.sh); the image from the digest the runtime gate resolved,
+    else the digest-pinned reference the arm declared (a box-local image id names one box's
+    store and is not comparable across boxes); the model by its config.json digest.
+    """
+    args = engine_args(arm_dir, arm)
+    argv = shlex.split(args.get("serve_rank0") or args.get("serve_args") or "")
+    missing = []
+    image = args.get("image_digest_resolved") or ""
+    if not image:
+        ref = args.get("image", "")
+        image = ref if re.fullmatch(r"[a-z0-9./:_-]+@sha256:[0-9a-f]{64}", ref) else ""
+    if not image:
+        missing.append("image (no resolved digest and no digest-pinned reference)")
+    values = {"tensor_parallel_size": _flag(argv, "--tensor-parallel-size"),
+              "max_model_len": _flag(argv, "--max-model-len"),
+              "max_num_seqs": _flag(argv, "--max-num-seqs")}
+    missing += [f"{k} (not in the recorded serve argv)" for k, v in values.items() if v is None]
+    model = args.get("model")
+    config = pathlib.Path(model) / "config.json" if model else None
+    if config is None or not config.is_file():
+        missing.append(f"model config ({model!r})")
+    if not args.get("src_sha256"):
+        missing.append("src_sha256")
+    if missing:
+        raise SystemExit(f"{arm}: the arm did not record {missing}; its scope is unknown")
+    spec = json.loads(args["spec_json"]) if args.get("spec_json") else None
+    return {"image": image, "model_config_sha256": sha256(config),
+            "tessera_src_sha256": args["src_sha256"],
+            "speculative_tokens": int(spec["num_speculative_tokens"]) if spec else 0,
+            **{k: int(v) for k, v in values.items()}}
+
+
+def one_measurement(scopes: dict[str, dict]) -> dict:
+    """The shared scope of every arm, or refuse naming each field the arms disagree on."""
+    differ = {f: sorted({str(s[f]) for s in scopes.values()}) for f in SHARED_SCOPE
+              if len({graph_receipt.canonical(s[f]) for s in scopes.values()}) != 1}
+    if differ:
+        detail = "; ".join(f"{f}: " + ", ".join(f"{a}={scopes[a][f]}" for a in sorted(scopes))
+                           for f in differ)
+        raise SystemExit(f"the arms are not one measurement, they differ in {sorted(differ)} ({detail})")
+    return dict(next(iter(scopes.values())))
+
+
 def arm_record(receipts, manifest, flat, arm, pool) -> dict:
     d = receipts / arm
     args = engine_args(d, arm)
@@ -120,9 +177,8 @@ def arm_record(receipts, manifest, flat, arm, pool) -> dict:
         "execution": "eager" if args.get("eager") == "1" else "graph",
         "compilation_config": comp,
         "kernel_config": json.loads(args["kernel_json"]) if args.get("kernel_json") else None,
-        "speculative_tokens": int(spec["num_speculative_tokens"]) if spec else 0,
-        "max_model_len": int(args["max_model_len"]), "max_num_seqs": int(args["max_num_seqs"]),
-        "tensor_parallel_size": int(args.get("tensor_parallel_size", 1)),
+        **{k: v for k, v in arm_scope(d, arm).items() if k in (
+            "speculative_tokens", "max_model_len", "max_num_seqs", "tensor_parallel_size", "image")},
         "image_id": args.get("image_id"), "src_sha256": args.get("src_sha256"),
         "model": args.get("model"), "vllm": serve.get("vllm_version"),
         "resolved": serve.get("dispatch"), "enforce_eager": serve.get("enforce_eager"),
@@ -142,8 +198,8 @@ def main() -> int:
     ap.add_argument("--commit", default="")
     ap.add_argument("--not-measured", action="append", default=None, metavar="TEXT",
                     help="what this receipt does not cover, one per flag (default: the stub-B list)")
-    ap.add_argument("--image", default="localhost/prismaquant/spark-vllm-nccl230@sha256:"
-                    "5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a")
+    ap.add_argument("--image", default=None,
+                    help="optional cross-check: refuse unless the arms measured this image")
     a = ap.parse_args()
     manifest = json.loads(a.manifest.read_text())
     eager, graph = a.eager.split(","), a.graph.split(",")
@@ -151,19 +207,19 @@ def main() -> int:
     pool_records = [arm_record(a.receipts, manifest, flat, e, [p for p in eager if p != e])
                     for e in eager]
     arms = [arm_record(a.receipts, manifest, flat, g, eager) for g in graph]
-    src = {r["src_sha256"] for r in pool_records + arms}
-    models = {r["model"] for r in pool_records + arms}
-    if len(src) != 1 or len(models) != 1:
-        raise SystemExit(f"arms differ in Tessera source {src} or model {models}: not one measurement")
-    model = models.pop()
+    scope = one_measurement({name: arm_scope(a.receipts / name, name) for name in eager + graph})
+    if a.image is not None and a.image != scope["image"]:
+        raise SystemExit(f"the arms measured image {scope['image']}, not --image {a.image}")
+    model = pool_records[0]["model"]
     config = pathlib.Path(model) / "config.json"
     text = json.loads(config.read_text())
     text = text.get("text_config", text)
     receipt = {
         "schema": graph_receipt.SCHEMA, "issue": "tessera#702",
-        "runtime": {"image": a.image, "vllm": arms[0]["vllm"], "interface": "nightly-20260929"},
-        "tessera": {"commit": a.commit, "src_sha256": src.pop()},
-        "model": {"path": model, "config_sha256": sha256(config), "index_topk": text.get("index_topk")},
+        "runtime": {"image": scope["image"], "vllm": arms[0]["vllm"], "interface": "nightly-20260929"},
+        "tessera": {"commit": a.commit, "src_sha256": scope["tessera_src_sha256"]},
+        "model": {"path": model, "config_sha256": scope["model_config_sha256"],
+                  "index_topk": text.get("index_topk")},
         "equality_set": {"name": "tessera#508", "script_sha256": sha256(QUAL / "equal-508.py"),
                          "choices_per_pass": 48},
         "eager_pool": pool_records, "arms": arms,
@@ -172,9 +228,13 @@ def main() -> int:
                    "membership against the eager pool's outcomes is a screen, never the verdict",
             "eager_pool": {r["name"]: r["screen_long"] for r in pool_records},
             "arms": {r["name"]: r["screen_long"] for r in arms}}},
-        "not_measured": a.not_measured if a.not_measured is not None else [
-            "tensor_parallel_size 2", "the full GLM-5.3 artifact (u1 stub B, 8 layers)",
-            "served KL against BF16 under graphs", "graph-vs-eager speed"],
+        "not_measured": [
+            # Every receipt: the > index_topk class replays only under screen traffic (review #2).
+            "equality of the max_seq_len > index_topk class: screen only, its replays come from "
+            "the long-context screen, which no verdict reads",
+            *(a.not_measured if a.not_measured is not None else [
+                "tensor_parallel_size 2", "the full GLM-5.3 artifact (u1 stub B, 8 layers)",
+                "served KL against BF16 under graphs", "graph-vs-eager speed"])],
     }
     graph_receipt.finish(receipt)
     a.out.write_text(json.dumps(receipt, indent=1, sort_keys=True))
