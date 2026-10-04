@@ -19,7 +19,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 Q=$HERE/../glm53_508_graph_qual
 ARM=${1:?usage: run-arm-nightly.sh ARM}
 export ARM
-export SRV_OUT=${SRV_OUT:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve/receipts}
+SRV_OUT=${SRV_OUT:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve/receipts}
+# The serve logs where srv-nightly.sh puts them: GA_DIR when set (its savelogs
+# target), else that script's own default. Reading a hardcoded path here made
+# every GA_DIR run grep a file the run never wrote.
+DIR=${GA_DIR:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve}
 OUT=$SRV_OUT
 PORT=${PORT:-8141}; export PORT
 PROBES=${PROBES:-eq,eq2}
