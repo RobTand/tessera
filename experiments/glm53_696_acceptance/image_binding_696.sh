@@ -36,13 +36,21 @@ inspect() {
   mkdir -p "$dir"
   docker run --rm --entrypoint /usr/bin/python3 --user "$(id -u):$(id -g)" \
     -e HOME=/tmp -e PROBE_OUT=/out \
-    -v "$OUT":/out -v "$HERE":/probe:ro \
+    -v "$dir":/out -v "$HERE":/probe:ro \
     "$img" /probe/image_binding_probe.py > "$dir/identity.txt" 2>&1
+  # The package root the image itself reported; the file extracts need the
+  # absolute path (a relative cat reads nothing).
+  local root
+  root=$(sed -n 's/.*"vllm_path": "\([^"]*\)".*/\1/p' "$dir/identity.txt" | head -1)
   local rel base
   for rel in "$RUNNER" "$BLOCK_TABLE"; do
     base=$(basename "$rel")
-    docker run --rm --entrypoint /bin/cat --user "$(id -u):$(id -g)" \
-      -e HOME=/tmp "$img" "$rel" > "$dir/$base" 2>/dev/null
+    if [ -n "$root" ]; then
+      docker run --rm --entrypoint /bin/cat --user "$(id -u):$(id -g)" \
+        -e HOME=/tmp "$img" "$root/$rel" > "$dir/$base" 2>/dev/null
+    else
+      echo "(no vllm_path in identity.txt; cannot extract $rel)" > "$dir/$base"
+    fi
   done
 }
 
