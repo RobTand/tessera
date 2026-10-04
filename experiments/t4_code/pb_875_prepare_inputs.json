@@ -1,0 +1,81 @@
+{
+  "schema": "prismaquant.prismabuild.data_manifest.v1",
+  "produced_by": {
+    "issue": 875,
+    "purpose": "native1 manifest repair inputs and retained immutable toolkit"
+  },
+  "mount_prefix": "/mnt/shared",
+  "entries": [
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset.json",
+      "offset": 0,
+      "bytes": 1119,
+      "sha256": "f093e73237ab2383119f42547060c0a16d2c0ce12897bfa1670495842f75a3a4"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/compute-sanitizer",
+      "offset": 0,
+      "bytes": 7255120,
+      "sha256": "7a7fcdefb67042731daf021478176f4919e1843d0b10cb697af28a7d8a3d108b"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/libInterceptorInjectionTarget.so",
+      "offset": 0,
+      "bytes": 790296,
+      "sha256": "a8988c4ec7ba20d4b03bc27cbd0ad85dfe363a3a42c793e4a4883515c7a67ab0"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/libsanitizer-collection.so",
+      "offset": 0,
+      "bytes": 12035888,
+      "sha256": "468536e1b20e29241826788756f2b4a0f4c4e0cda8e6007c215164f590f23cf4"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/libsanitizer-public.so",
+      "offset": 0,
+      "bytes": 2105832,
+      "sha256": "3077e5732b363ff532e55e7e35c7ddff65d2c57d0898f0abc0b5d614a45d9a24"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/libTreeLauncherPlaceholder.so",
+      "offset": 0,
+      "bytes": 67336,
+      "sha256": "7d5b878dc8d8a31c425d32e74cf473e2a0d5db6b8fc08829727c04d4caf5239c"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/libTreeLauncherTargetInjection.so",
+      "offset": 0,
+      "bytes": 3566816,
+      "sha256": "29862189027903d504b0d48d8f4583d36e38294d927371ef7405ef24155deac5"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/libTreeLauncherTargetUpdatePreloadInjection.so",
+      "offset": 0,
+      "bytes": 1051992,
+      "sha256": "e56384c6e944a9ef15d6a40d54f8cd4ebcb1d300a694bc44e8bb1d22408800e2"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/TreeLauncherSubreaper",
+      "offset": 0,
+      "bytes": 724512,
+      "sha256": "9a27106d62ec6eb326abe2722e890d618d2e536fe5b9c9e9401d5b3369d7735f"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/sanitizer-immutable/TreeLauncherTargetLdPreloadHelper",
+      "offset": 0,
+      "bytes": 67584,
+      "sha256": "9c3e6419b60038d39ab964f4fa4ed4c0a19d2db12540297fca2e2b136d39c811"
+    }
+  ],
+  "entry_count": 10,
+  "total_bytes": 27666495,
+  "annotations": {
+    "phases": [
+      {
+        "name": "native1-seal-inputs",
+        "bytes": 27666495,
+        "cumulative_bytes": 27666495
+      }
+    ]
+  }
+}

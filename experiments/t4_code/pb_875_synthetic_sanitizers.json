@@ -1,0 +1,362 @@
+[
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/memcheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'memcheck'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/memcheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'memcheck' '--arm' '0'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/memcheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'memcheck' '--arm' '4'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/racecheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'racecheck'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/racecheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'racecheck' '--arm' '0'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/racecheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'racecheck' '--arm' '4'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/synccheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'synccheck'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/synccheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'synccheck' '--arm' '0'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/synccheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'synccheck' '--arm' '4'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/initcheck-paired' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'initcheck'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/initcheck-0' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'initcheck' '--arm' '0'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  },
+  {
+    "argv": [
+      "bash",
+      "-c",
+      "set -euo pipefail; test \"$(git rev-parse HEAD^)\" = \"4e17907d9c2909b2906292dcfbe7a3ad092cd432\"; printf '%s\\n' 'c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01  experiments/t4_code/prefetch_qualification.py' 'd9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829  experiments/t4_code/prefetch_qualification_action.sh' '0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7  experiments/t8r_speed/pb_staged_store.py' '7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912  src/tessera/routed_fused_e2m1.py' 'c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7  experiments/t4_code/fused_e2m1_check.py' '14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168  tests/test_routed_fused_e2m1.py' 'd1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a  tests/test_routed_terminal_cuda.py' | sha256sum -c -; bash experiments/t4_code/prefetch_qualification_action.sh '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/staged/initcheck-4' sanitize '/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json' '--tool' 'initcheck' '--arm' '4'"
+    ],
+    "cwd": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/source-cpu-controls",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "demand": {
+      "gpu": 1,
+      "cpu": 2,
+      "mem_gb": 80
+    },
+    "container_images": [
+      "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
+    ],
+    "data_manifest": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+    "residency": "stage",
+    "residency_ram": "off",
+    "env": {
+      "ORACLE_IMAGE": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo"
+    },
+    "timeout_s": 7200,
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "gpu_memory_gb": 64
+  }
+]

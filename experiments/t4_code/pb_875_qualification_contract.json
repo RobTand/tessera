@@ -1,0 +1,219 @@
+{
+  "issue": 875,
+  "pr": 877,
+  "scope": "Finite synthetic numeric and native safety qualification ONLY. No calibrated scientific quality, timing, energy, serving, allocation/default or PACT frontier claim.",
+  "source_revision": "4e17907d9c2909b2906292dcfbe7a3ad092cd432",
+  "snapshot_binding": "Stage the existing NAS source checkout at source_revision before publication. Each admitted payload requires git rev-parse HEAD^ to equal source_revision: published pbrun builds its snapshot commit with that checkout HEAD as parent. Existing per-file SHA256 guards then bind executable bytes. snapshot_ref is an extra branch-advertisement option, not a source pin, and is deliberately absent.",
+  "executable_source_sha256": {
+    "experiments/t4_code/prefetch_qualification.py": "c097eaa9673dd8e4cdb842cdf99c035b5f999513dbf993b60a771aa013378e01",
+    "experiments/t4_code/prefetch_qualification_action.sh": "d9edc2a1e862442954efc31091452d5b948eddc9e32b446a078faadf510b3829",
+    "experiments/t8r_speed/pb_staged_store.py": "0f95f86c069bc8b8ed6482ded8772a6830f88d459333293d0fcbee00518277b7",
+    "src/tessera/routed_fused_e2m1.py": "7e8398469601cb9465f4eec3b0d1c014948a7449ded018bd2370964e18dff912",
+    "experiments/t4_code/fused_e2m1_check.py": "c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7",
+    "tests/test_routed_fused_e2m1.py": "14182c6c48d3ba1fb5fbf4f28839448618b0f2470eae15eccba81ee135ac7168",
+    "tests/test_routed_terminal_cuda.py": "d1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a"
+  },
+  "native_source": {
+    "path": "src/tessera/serving/csrc/routed_fused_window.cu",
+    "sha256": "c2d56fc8b91045da3ff0b274e8cd7e285c1c5aa7b91bfc76fdc86886103e2012"
+  },
+  "native_record_sha256": "b8b242cbbb2901320942e87a273cbce024e86276ad72ab66b23fe5778eb6d9d0",
+  "native_elfs": [
+    {
+      "arm": 0,
+      "module": "tessera_routed_fused_e2m1_dev_apf0",
+      "bytes": 1889616,
+      "sha256": "9a33c215c306a75640d025b807e6e6d9aa7e75892d76598acdd2120360a5c26c"
+    },
+    {
+      "arm": 4,
+      "module": "tessera_routed_fused_e2m1_dev_apf4",
+      "bytes": 1889616,
+      "sha256": "17f0f390ed688ba4a93876ec6713acf796550b64dba0f2e5d08f4d6e635fe3d9"
+    }
+  ],
+  "readsets": [
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-readset-staged.json",
+      "sha256": "87a368f5193c0bceb82c730b69bb29155238f93875b85f4eae2d176cffcee9e0",
+      "entries": 3,
+      "bytes": 3780084,
+      "phase": {
+        "name": "native1-whole",
+        "start_bytes": 0,
+        "end_bytes": 3780084
+      }
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t4-875-cpu-20261003/native1-sanitizer-readset-staged.json",
+      "sha256": "b867039f39d19aba9f9e088eac55d8de0cc6a2449b423b3cf9eaa5c1623cadec",
+      "entries": 12,
+      "bytes": 31445460,
+      "phase": {
+        "name": "native1-whole",
+        "start_bytes": 0,
+        "end_bytes": 31445460
+      }
+    }
+  ],
+  "immutable_image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+  "owner": "Existing StagedInputs/NativeCallback, held /proc/self/fd native loading; fe._check_library is single ABI rule; every owner fenced/closed before reader.close; no alternate loader/cache/dispatcher and no bank rebuild.",
+  "numeric_population": {
+    "q256": [
+      128,
+      192,
+      256,
+      320,
+      384,
+      448,
+      512,
+      576,
+      640,
+      704,
+      768,
+      832,
+      896,
+      960,
+      1024
+    ],
+    "tensor_cases": 30,
+    "paired_routed_oracles": 60,
+    "paired_dense_oracles": 450,
+    "experts": 4,
+    "hidden": 512,
+    "intermediate": 1280,
+    "top_k": 2,
+    "expert_route_counts": [
+      1,
+      37,
+      64,
+      130
+    ],
+    "tokens": 116,
+    "cuts": [
+      "whole",
+      "rank1"
+    ],
+    "rank1_uniform_rows": [
+      640,
+      1280
+    ],
+    "rank1_mixed_rows": [
+      512,
+      1280
+    ],
+    "inputs": [
+      "onehot",
+      "random"
+    ],
+    "routed_checks": [
+      "mode1 gate/up",
+      "mode0 SwiGLU",
+      "weighted mode2 a_row_mode2",
+      "chain mode0 to weighted mode2 a_row_mode1"
+    ],
+    "dense_M": [
+      1,
+      7,
+      64,
+      100,
+      300
+    ],
+    "dense_k_split": [
+      1,
+      3,
+      10
+    ],
+    "dense_k_split_11": "must refuse because at least two K64 chunks per item",
+    "graph_replay": "All eager outputs must equal corresponding graph replay bits.",
+    "paired_outputs": "All mode1/mode0/mode2/chain and dense outputs must have matching baseline/candidate SHA256s.",
+    "bounds": "Reject any nonfinite got/reference/bound. Onehot follows exact fp32 multiplier/bf16 rounding sequence. Random abs(got-ref)<=bf16_ulp(ref)+K*2^-23*sum(abs(a*w))*ratio*(1+2^-7); down additionally multiplies routing weight. SwiGLU <=one bf16 ULP. Both own oracles pass before paired-bit equality."
+  },
+  "native_population": {
+    "per_arm": 48,
+    "fp4_native_cases": 42,
+    "terminal_patterns": [
+      "zero-work",
+      "single-item",
+      "idle-ctas",
+      "minimum-split",
+      "odd-split",
+      "mixed-odd-even"
+    ],
+    "plugin": "NativePopulation requires exactly48 frozen CUDA-gated nodeIDs passed; skips or changed population fail."
+  },
+  "actions": {
+    "numeric": {
+      "rows": 1,
+      "manifest": "experiments/t4_code/pb_875_synthetic_numeric.json"
+    },
+    "native": {
+      "rows": 2,
+      "manifest": "experiments/t4_code/pb_875_synthetic_native.json",
+      "arms": [
+        0,
+        4
+      ]
+    },
+    "sanitizers": {
+      "rows": 12,
+      "manifest": "experiments/t4_code/pb_875_synthetic_sanitizers.json",
+      "tools": [
+        "memcheck",
+        "racecheck",
+        "synccheck",
+        "initcheck"
+      ],
+      "per_tool": [
+        "paired numeric",
+        "native arm0",
+        "native arm4"
+      ],
+      "error_exitcode": 86,
+      "target_processes": "all",
+      "acceptance": "Each tool row rc0, zero sanitizer findings and the complete corresponding numeric/native population; inspect actual sanitizer.log and CAS receipt, never submission acknowledgement."
+    }
+  },
+  "resources": {
+    "numeric_native": {
+      "cpu": 2,
+      "total_memory_gib": 40,
+      "gpu": 1,
+      "gpu_memory_gib": 32,
+      "deadline_s": 3600
+    },
+    "sanitizers": {
+      "cpu": 2,
+      "total_memory_gib": 80,
+      "gpu": 1,
+      "gpu_memory_gib": 64,
+      "deadline_s": 7200
+    },
+    "exclusive": true,
+    "measurement": true,
+    "host_class": "gb10",
+    "max_attempts": 1,
+    "retry_safe": false,
+    "native_threads": 1
+  },
+  "cpu_provenance": {
+    "accepted_pre_teardown_source": "11a85863a6d8239af1acc555a9eb76abb5244f53",
+    "stage_keys": [
+      "c8c24e35a70e094648f6b430a2aa43548ba4f773a2c2ed5da7a0167635befd67",
+      "5c429a8a1e544bcef7255161931901f11e679587c9e82b58f3af70008c746a4a",
+      "33b17d4777046e9e9a5adcc80b33dbd8e40e5e9f79540479b0c5e4519c543a2b",
+      "b80eeff7b1fab04d75e9474e6721c709e071077633b90eeeca6883e368d40f10"
+    ],
+    "updated_failure_controls": {
+      "action_key": "14164463124346c4f35b483b2340616bb473e57e8383cb59f0cfe19dfe5b50d0",
+      "source_commit": "06c55f0f",
+      "test_file": "tests/test_t4_prefetch_staged_qualification.py",
+      "test_sha256": "43e8bc85e54805b40a4df722ce9ea75fe85614ae9b89a45608a963dfb91c46b5",
+      "passed": 9,
+      "skips": 0
+    }
+  },
+  "admission": "Root explicit finite numeric/safety GO after independent exact-source review; publication after Original63 and then PMsix terminal plus exact cleanup/release, no competing controlled window. Submit ONLY from Root-approved eligible GB10 coordinator, not DL380; measurement with explicit gb10 class uses PB class-matching placement, not anywhere. PB owns actual admission/affinity/container scope/staging; fresh>=5% physical disk floor and actual helper/generation/image/readset/native/tool/capacity compatibility mandatory. Generation/protocol tuple changes require refreeze/review. No new tier, retag, duplicate CPU proof or retry after failure.",
+  "result_binding": "Retain PB action keys/terminal records/logs/CAS receipts and source/image/readset/ELF hashes, actual held pin/ref/stage identities, exact expected/passed/skip counts; report every failure without narrowing population or changing bounds.",
+  "real_calibrated_capture_requirement": "Original BF16 production W and disjoint fit/eval BF16 activations, source/model/layer/projection/expert/shape/hashes, static globalA calibration, authentic SDK4 original provider metadata/readset. Existing encode_linear E2M1_GRID WINDOW/LUT/window14 artifacts with original mapper/cache/state/perm/runpair ownership, genuine gate/up/down/routing or dense projections. Historical TCQ or T8 restamps cannot satisfy this. Shared with original scientific/runtime owners; no extra GPU/capture authorization."
+}

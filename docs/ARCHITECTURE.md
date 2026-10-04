@@ -406,6 +406,134 @@ instruction-identical to master's (value 101/101, E4M3-f16 107/107,
 E4M3-instruction 137/137; PB `0ab25e95` against `ac4fb3e4`). See the fused
 lane's section.
 
+T4 activation-prefetch experiment (2026-10-02, #875):
+
+* TESSERA_ROUTED_FUSED_FP4_A_PREFETCH=4 selects an explicit default-OFF
+  producer compile variant (unset/0 retains baseline). It uses the existing
+  build owner with an isolated JIT name/directory, checks the exported distance,
+  refuses invalid selection and refuses changes after the library is loaded.
+* One-run routed modes0/1/2 use the existing shared L1 hint four FP4 K64 chunks
+  ahead. Packed A codes and linear per16 UE4M3 scales use exactly issue_a's
+  addresses, bounded by the live route row and remaining chunks. The existing
+  two-ahead cp.async schedule, wire, quantizer, residency, MMA/reduction order
+  and scales do not change. Dense and adjacent two-run launches remain controls.
+* Scope stays producer-only: the served T4 TCQ span2 route is not relabeled as
+  fused WINDOW. Intake still refuses wrong family/window/run order, K not a
+  multiple of64 or below256, hidden rows not a multiple of256, intermediate
+  rows not a multiple of128, incompatible gate/up tile strides and insufficient
+  device shared memory. Producer rates1..8 and all adjacent pairs remain;
+  WINDOW oracle q128..1024 step64 is not a promoted public recipe gamut.
+  TP2 cuts and carried states are unchanged; no new distributed, MLA absorbed
+  BMM, embedding-gather or quantizer ABI is implied.
+* Applicability: mixed-run decode, descriptor rings, staged stream history and
+  terminal FULL drain already exist on FP4. Dense split admission still keeps
+  at least two K64 chunks per item (dense_split_max = K/128); this experiment
+  does not relax the descriptor lifetime guard or add one-chunk items.
+  E4M3 paired-K32 is structurally different: FP4 already executes native
+  m16n8k64 with per16 block scales. E4M3 piece-major indexing cannot be copied
+  into FP4's tuple/nibble, padded16-column group geometry. #807's measured
+  negative gives no T4 speed credit. Only the activation L1 memory hint transfers;
+  its distance and benefit remain hypotheses requiring a T4 baseline measurement.
+* First numeric gate is the staged driver
+  experiments/t4_code/prefetch_qualification.py consume, which reuses the exact
+  native1 0/4 ELFs through the existing StagedInputs/NativeCallback owners.
+  Public client.read_data_manifest, manifest_read_entries and
+  storage_tiers.manifest_phase_ranges must bind exactly three native files
+  (or those files plus the nine qualified sanitizer files), offset zero,
+  unique ordered whole-file members and one complete native1-whole phase.
+  Both libraries load ONCE in one process from distinct held SDK FDs, not
+  original-path reopens; direct diagnostic mapping is NOT serving _ext admission.
+  The existing producer ABI rule is shared by _ext and diagnostic consumers.
+  Both FDs and modules remain alive until the entire matrix is fenced; all
+  owner cleanup attempts precede SDK lease release, even after bind/hash/setup
+  failure. Original failures retain cleanup diagnostics rather than disappearing.
+  Full nonquick scope: 15 uniform/adjacent rate tables at whole and rank-1 cuts
+  (30 tensor cases), 60 paired routed oracle checks and 450 paired dense/split
+  checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
+  consumer execution additionally requires all48 GPU cases (42 FP4 cases and
+  six terminal patterns); skipped or changed populations fail qualification.
+  Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
+* Before GPU qualification, root must authorize the resource/readset. Use the
+  same real captured/calibrated T4 bundle bank, input/global scales, residency,
+  recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
+  chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
+  incoming states, route tails, M1..8/512/2048/2049/8192, eager and graph.
+  Preserve baseline/candidate source and native ELF hashes. Measure in-process
+  forward/reverse paired windows with profiler and NCU; align both Spark
+  Netdata power/clocks/temperatures/CPU/memory to every window. No T8 baseline
+  or cross-precision credit, speed/energy claim, cell/menu/pin/default change.
+  No GPU qualification or speed/energy evidence is claimed yet.
+* Actual CPU/native preparation (not GPU proof): PB86450d1c on DL380 returned
+  rc0, 96 passed/66 CUDA-gated skips. Consumer tests exercise distinct compiler
+  flags/names/build identities, exported ABI refusal, cached reuse and post-load
+  mutation refusal. The corrected actual-Torch-DSO inode controls passed on
+  healthy Sparklina (PBaf6ea8c3: three passed, no skips); prior96/66 is reused.
+  After the ABI guard was factored, PB93b12d52 passed five consumer controls;
+  PB77830261 passed nine shared callback/real two-DSO FD-lifetime controls.
+  PBd5837c31 compiled/loaded both retained native1 ELFs with GPU visibility off;
+  PB8b96ac6b proved both executable mappings match their hashed file inodes.
+  PBe242d198: master50127b9 to default-OFF is exact SASS for all422 kernels
+  (value101, E4M3-f16107, E4M3-MMA137, E2M177). PB8b342b0f: opt-in changes
+  exactly24 FP4 one-run routed instantiations (modes0/1/2, rates1..8), leaves
+  all53 FP4 dense/mixed/utility and345 other-family controls exact, and reports
+  zero STACK/LOCAL allocation (FP4 maximum128 registers).
+* Persisted next actions are published-client campaign manifests under
+  experiments/t4_code/pb_875_cpu_preflight.json and pb_875_synthetic_{numeric,
+  native,sanitizers}.json. pb_875_finite_campaign.json concatenates those exact
+  reviewed15 rows without changing any row. After admission gates release, use
+  published pbcampaign.py --max-inflight 1 --wait-s 97200
+  --require-data-manifest experiments/t4_code/pb_875_finite_campaign.json:
+  its supported bounded
+  window stops on the first actual failure and preserves the unpublished
+  suffix. This is PB-owned publication, not a second dispatcher or retries.
+  The GPU campaign remains UNSUBMITTED pending root admission conditions.
+  The finite review seal is pb_875_qualification_contract.json: all15 GPU rows
+  guard the PB snapshot parent as executable source4e17907d, max_attempts1
+  and retry_safe=false, unchanged
+  native1 ELFs/readsets/image/resources/deadlines and exact expected counts.
+  Root authorizes numeric/safety only after independent review and a compatible
+  quiet window; the PM owner's both-Spark interval must finish first. No prior
+  CPU proofs are rerun to repin source. The published client refuses
+  measurement+anywhere, and snapshot_ref advertises branches rather than
+  pinning source: these fields are absent. Stage the existing NAS checkout at
+  source4e17907d; each payload checks HEAD^ and its executable file hashes.
+  Root requires an eligible GB10 coordinator, not DL380; explicit class
+  measurement lets PB place matching workers. This seal is not real calibrated,
+  performance or serving proof.
+  Native numeric/native rows bind native1-readset-staged.json; sanitizers bind
+  native1-sanitizer-readset-staged.json, explicit helper/test hashes and the
+  same immutable image. Public manifest/phase sealing actually passed in
+  PBa67d342f: three files/3780084 bytes, and12 files/31445460 bytes, original
+  native entries unchanged. After supported admission recovered, existing rows
+  PBc8c24e35/PB5c429a8a acquired/read/released both exact SDK readsets on DL380
+  through prismabuild-stage:dl380g10 (rc0, actual pin/ref IDs and per-range
+  digests). PB33b17d47 on Sparklina loaded both held staged ELFs through
+  /proc/self/fd, checked the owner ABI and executable inode before/after load
+  and teardown (rc0), using the same DL stage and immutable image. These are
+  diagnostic code-owner proofs, not serving _ext admission or GPU execution.
+  These already-published rows exercised their frozen pre-teardown-fix driver;
+  PB14164463 separately passed all nine updated ownership/envelope controls.
+  Each sanitizer (memcheck/racecheck/synccheck/initcheck) carries
+  --error-exitcode86 and bounded time/resources; its authenticated tool bytes
+  are materialized through the existing SDK reader, not a guessed host toolkit.
+  PBcef66493 established the original toolkit hashes, Compute Sanitizer2025.3.1
+  and pytest9.1.1 on the pinned image. PBb80eeff7 on healthy Sparklina actually
+  acquired/read/released the SDK lease and ran the staged authenticated tool
+  (Compute Sanitizer2025.3.1.0, rc0); this is CPU compatibility only, not a
+  memcheck/racecheck/synccheck/initcheck pass. The image alone lacks the tool.
+  Compile preparation reuses cuda_home_shadow.sh
+  for missing vendor headers rather than adding the incompatible whole wheel
+  include directory. Failed missing-header/nvdisasm/ownership attempts are
+  not reported as passes; successful cubins/ELFs are retained, never rebuilt
+  merely to recover disassembly.
+* Real speed/quality qualification still needs a compatible captured/calibrated
+  T4 WINDOW readset. Historical T4 TCQ banks are not substitute inputs for this
+  producer kernel. Before any timed row, require root isolation/admission and
+  healthy storage floors. Both Sparks expose power_draw (Watts), sm/mem clocks
+  (MHz), temperature (Celsius) and frame-buffer used/free/reserved (bytes) in
+  nvidia_smi contexts; save aligned raw intervals on both hosts, not utilization
+  percentages or an unqualified T8 cross-precision comparison.
+
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
 `TESSERA_BF16_K1` at one rung of every run table: `t16d1` covers [1] to [8] and

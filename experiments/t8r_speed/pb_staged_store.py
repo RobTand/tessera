@@ -263,9 +263,21 @@ class NativeCallback:
     """
     MODULE = 'tessera_routed_fused_mma_e4m3'
 
-    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256):
+    def __init__(self, reader, path, rf, out, *, expected_sha256, source_sha256,
+                 module=None, source_module=None, install_build_callback=True):
+        self.MODULE = self.MODULE if module is None else module
+        self.source_module = self.MODULE if source_module is None else source_module
+        if (self.MODULE, self.source_module) not in {
+            ("tessera_routed_fused_mma_e4m3", "tessera_routed_fused_mma_e4m3"),
+            ("tessera_routed_fused_value", "tessera_routed_fused_value"),
+            ("tessera_routed_fused_value_prefetch4", "tessera_routed_fused_value"),
+            ("tessera_routed_fused_e2m1_dev_apf0", "tessera_routed_fused_value"),
+            ("tessera_routed_fused_e2m1_dev_apf4", "tessera_routed_fused_value"),
+        }:
+            raise ValueError("unqualified retained native family")
         self.reader,self.rf,self.out = reader,rf,Path(out)
         self.original = rf.build_library
+        self.install_build_callback = install_build_callback
         self.fd,self.entry,self.serving = reader.native_artifact(path)
         self.module = None
         self.closed = False
@@ -280,7 +292,9 @@ class NativeCallback:
             self.record.update(pin_id=reader.held['pin_id'],ref_id=reader.held['ref_id'])
         self.source_sha256 = source_sha256
         try:
-            if (self.MODULE in sys.modules or rf._ext.cache_info().currsize):
+            cache_info = getattr(rf._ext, "cache_info", None)
+            cached = cache_info().currsize if cache_info else getattr(rf, "_LIB", None) is not None
+            if self.MODULE in sys.modules or cached:
                 raise ValueError('foreign native module already loaded')
             self.record['before_load_sha256'] = self._hash()
             if self.entry['sha256'] != expected_sha256 or self.record['before_load_sha256']!=expected_sha256:
@@ -298,7 +312,8 @@ class NativeCallback:
             if hashlib.sha256(target.read_bytes()).hexdigest()!=expected_sha256:
                 raise ValueError('retained native code artifact differs')
             self.record['retained_path']=str(target)
-            rf.build_library=self._build
+            if self.install_build_callback:
+                rf.build_library=self._build
         except BaseException:
             os.close(self.fd);self.closed=True
             raise
@@ -316,30 +331,37 @@ class NativeCallback:
             digest.update(data);offset+=len(data)
         return digest.hexdigest()
 
+    def load_declared(self, src):
+        """Map one held code artifact; direct diagnostics do not attest serving admission."""
+        if self.closed:
+            raise ValueError('native artifact already released')
+        if hashlib.sha256(Path(src).read_bytes()).hexdigest()!=self.source_sha256:
+            raise ValueError('native artifact source owner differs')
+        if self.module is not None or self.MODULE in sys.modules:
+            raise ValueError('native module already loaded')
+        if self._hash()!=self.record['expected_sha256']:
+            raise ValueError('native artifact changed before load')
+        origin=f'/proc/self/fd/{self.fd}'
+        loader=importlib.machinery.ExtensionFileLoader(self.MODULE,origin)
+        spec=importlib.util.spec_from_file_location(self.MODULE,origin,loader=loader)
+        self.module=importlib.util.module_from_spec(spec)
+        sys.modules[self.MODULE]=self.module
+        loader.exec_module(self.module)
+        self.bind(self.module)
+        self.record['module_origin']=origin
+        self.record['stage_fd_target']=os.readlink(origin)
+        self.record['after_load_sha256']=self._hash()
+        self.record['through_build_owner']=self.install_build_callback
+        if self.record['after_load_sha256']!=self.record['expected_sha256']:
+            raise ValueError('native artifact changed during load')
+        return self.module
+
     def _build(self, module, source_module, compile_fn):
-        if (module,source_module)!=(self.MODULE,self.MODULE):
+        if not self.install_build_callback or (module,source_module)!=(self.MODULE,self.source_module):
             raise ValueError('foreign native library requested')
         def retained(src,build,token,verbose):
-            if hashlib.sha256(Path(src).read_bytes()).hexdigest()!=self.source_sha256:
-                raise ValueError('native artifact source owner differs')
-            if self.module is not None or self.MODULE in sys.modules:
-                raise ValueError('native module already loaded')
-            if self._hash()!=self.record['expected_sha256']:
-                raise ValueError('native artifact changed before load')
-            origin=f'/proc/self/fd/{self.fd}'
-            loader=importlib.machinery.ExtensionFileLoader(self.MODULE,origin)
-            spec=importlib.util.spec_from_file_location(self.MODULE,origin,loader=loader)
-            self.module=importlib.util.module_from_spec(spec)
-            sys.modules[self.MODULE]=self.module
-            loader.exec_module(self.module)
-            self.bind(self.module)
-            self.record['module_origin']=origin
-            self.record['stage_fd_target']=os.readlink(origin)
-            self.record['after_load_sha256']=self._hash()
-            if self.record['after_load_sha256']!=self.record['expected_sha256']:
-                raise ValueError('native artifact changed during load')
-            return self.module
-        # Existing owner still checks platform, lock and all exported constants.
+            return self.load_declared(src)
+        # Existing serving owner still checks platform, lock and exported constants.
         return self.original(module,source_module,retained)
 
     def bind(self, module):
@@ -349,7 +371,23 @@ class NativeCallback:
             module.__spec__.origin!=origin):
             raise ValueError('actual native module origin/identity differs')
 
-    def finish(self, fence):
+    def attest_mapped(self, module):
+        """Diagnostic mapping proof using the held artifact FD, never path rereads."""
+        self.bind(module)
+        info = os.fstat(self.fd)
+        matches = []
+        for line in Path("/proc/self/maps").read_text().splitlines():
+            fields = line.split(None, 5)
+            if len(fields) >= 5 and "x" in fields[1]:
+                major, minor = (int(v, 16) for v in fields[3].split(":"))
+                if (major, minor, int(fields[4])) == (os.major(info.st_dev), os.minor(info.st_dev), info.st_ino):
+                    matches.append(line)
+        if not matches:
+            raise ValueError("native module is not mapped from its held ELF inode")
+        self.record["executable_mappings"] = matches
+        self.record["mapped_sha256"] = self._hash()
+
+    def finish(self, fence, *, keep_load_fd=False):
         if self.closed: return
         try:
             if self.module is not None:
@@ -359,7 +397,12 @@ class NativeCallback:
                 if self.record['after_profile_sha256']!=self.record['expected_sha256']:
                     raise ValueError('native artifact changed during profile')
         finally:
-            self.rf.build_library=self.original
-            os.close(self.fd);self.closed=True
+            if self.install_build_callback:
+                self.rf.build_library=self.original
+            # Diagnostic multi-arm callers hold every loaded pathname alive
+            # until teardown: CPython/dlopen can cache /proc/self/fd names.
+            if not keep_load_fd or self.module is None:
+                os.close(self.fd)
+            self.closed=True
             if self.module is not None and sys.modules.get(self.MODULE) is self.module:
                 del sys.modules[self.MODULE]
