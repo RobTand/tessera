@@ -57,6 +57,9 @@ import time
 
 import torch
 
+from gemm_sweep_decisions import (abba_summary, admit_pick, non_bitwise_fraction_summary,
+                                  reference_qualified, resolve_real_input)
+
 #: name, N, K, calls per chunk (A8SESHMN rank 0), served ms per chunk (r0), served kernel, capture
 SHAPES = [
     ("kda_in_proj", 12576, 4096, 34, 90.08, "nvjet_sm121_tst_mma_128x208x64_2_32x104x64_tmaAB_bz_TNNN",
@@ -152,17 +155,13 @@ def inputs(capture, rows, k, dev, seed):
     out["real"], out["real_source"] = None, None
     if capture is not None:
         name, cols = CAPTURES[capture]
-        path = os.path.join(CAPTURE, name)
-        if os.path.exists(path):
-            x = torch.load(path, map_location="cpu", weights_only=False)["inputs"]
-            x = x[:, :cols] if cols else x
-            if x.shape[1] != k or x.shape[0] < rows:
-                out["real_source"] = f"{name}: shape {tuple(x.shape)} does not cover [{rows}, {k}]"
-            else:
-                out["real"] = x[:rows].contiguous().to(torch.bfloat16).to(dev)
-                out["real_source"] = name + (f" (columns 0:{cols})" if cols else "")
-        else:
-            out["real_source"] = f"missing {path}"
+        res = resolve_real_input(True, (name, cols, os.path.join(CAPTURE, name)), rows, k,
+                                 os.path.exists,
+                                 lambda p: torch.load(p, map_location="cpu",
+                                                      weights_only=False)["inputs"])
+        out["real"], out["real_source"] = res["real"], res["real_source"]
+        if out["real"] is not None:
+            out["real"] = out["real"].contiguous().to(torch.bfloat16).to(dev)
     return out
 
 
@@ -212,6 +211,9 @@ def main():
     wanted = None if args.shapes == "all" else set(args.shapes.split(","))
     path = os.path.join(args.out, "gemm_algo_bitwise.json")
     table_path = os.path.join(args.out, "pinned_gemm_table.json")
+
+    def rounded_saving(pick):
+        return round(pick["saving_ms"], 4) if pick and pick["saving_ms"] is not None else None
 
     def dump(done):
         meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -340,11 +342,12 @@ def main():
                 best["kernels"] = kernel_names(lambda: ext.run(bt, xm, w, out_m, ws))
                 best["power"] = {"reference": power_of(ref_m_call, 2.0, sampler),
                                  "pick": power_of(lambda: ext.run(bt, xm, w, out_m, ws), 2.0, sampler)}
-                ref_med = sorted(ab["reference"])[len(ab["reference"]) // 2]
-                pick_med = sorted(ab["pick"])[len(ab["pick"]) // 2]
+                ref_med, pick_med, saving_ms = abba_summary(ab["reference"], ab["pick"])
                 mrec["pick"] = dict(blob=best["blob"], config=best["config"], ms=pick_med,
-                                    reference_ms=ref_med, saving_ms=ref_med - pick_med)
-                if pick_med < ref_med:
+                                    reference_ms=ref_med, saving_ms=saving_ms)
+                admitted, _refusal = admit_pick(rec["reference"]["matches_served_kernel"],
+                                                rec["reference"]["deterministic"], saving_ms)
+                if admitted:
                     entries.append(dict(
                         m=m, n=n, k=k, dtype="bf16", layout="linear_x_wT", shape=name,
                         algo_blob=best["blob"], config=best["config"], workspace=best["workspace_needed"],
@@ -401,9 +404,7 @@ def main():
         rec["bitwise_count"] = len(bitwise_rows)
         rec["errors"] = sum(1 for r in rows if "error" in r)
         diffs = [r["frac_elems_differ"] for r in ok if not r["bitwise"]]
-        rec["non_bitwise_frac_elems_differ"] = dict(
-            count=len(diffs), min=min(diffs) if diffs else None,
-            median=sorted(diffs)[len(diffs) // 2] if diffs else None)
+        rec["non_bitwise_frac_elems_differ"] = non_bitwise_fraction_summary(diffs)
         rec["heuristic_rank0"] = first[0] if first else None
         rec["survivors_at_m0"] = len(survivors)
         rec["per_m"] = per_m
@@ -423,7 +424,7 @@ def main():
                               candidates=len(rows), bitwise=len(bitwise_rows), survivors=len(survivors),
                               non_bitwise_frac_min=rec["non_bitwise_frac_elems_differ"]["min"],
                               real=xs["real_source"],
-                              picks={m: per_m[m].get("pick") and round(per_m[m]["pick"]["saving_ms"], 4)
+                              picks={m: rounded_saving(per_m[m].get("pick"))
                                      for m in per_m},
                               stock_row_tiles={tm: v["stock"] for tm, v in row_tiles.items()},
                               seconds=rec["seconds"])), flush=True)
