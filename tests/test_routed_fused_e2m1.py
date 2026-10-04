@@ -62,6 +62,133 @@ E2M1 = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
 
 
 # ----------------------------------------------------------------------------- CPU
+def test_activation_prefetch_defaults_off(monkeypatch):
+    monkeypatch.delenv(fe.PREFETCH_ENV, raising=False)
+    assert fe.activation_prefetch() == 0
+
+
+@pytest.mark.parametrize("value", ["0", "4"])
+def test_activation_prefetch_selects_only_declared_arms(monkeypatch, value):
+    monkeypatch.setenv(fe.PREFETCH_ENV, value)
+    assert fe.activation_prefetch() == int(value)
+
+
+@pytest.mark.parametrize("value", ["", "1", "2", "04", "-1", "true", "8"])
+def test_activation_prefetch_refuses_invalid_arms(monkeypatch, value):
+    monkeypatch.setenv(fe.PREFETCH_ENV, value)
+    with pytest.raises(GrammarError, match=fe.PREFETCH_ENV):
+        fe.activation_prefetch()
+
+
+@pytest.mark.parametrize("field", ["got", "reference", "bound"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+@pytest.mark.parametrize("exact", [False, True])
+def test_numeric_bound_refuses_nonfinite_values(field, value, exact):
+    from experiments.t4_code.fused_e2m1_check import compare
+
+    values = dict(got=torch.zeros(1, dtype=torch.bfloat16),
+                  reference=torch.zeros(1, dtype=torch.float64), bound=torch.zeros(1, dtype=torch.float64))
+    values[field][0] = value
+    result = compare(values["got"], values["reference"], values["bound"], exact)
+    assert not result["ok"] and result["nonfinite"][field] == 1
+
+
+@pytest.mark.parametrize("exact", [False, True])
+def test_numeric_bound_accepts_finite_exact_product(exact):
+    from experiments.t4_code.fused_e2m1_check import compare
+
+    result = compare(torch.ones(1, dtype=torch.bfloat16), torch.ones(1, dtype=torch.float64),
+                     torch.zeros(1, dtype=torch.float64), exact)
+    assert result["ok"]
+
+
+def test_native_identity_hashes_real_executable_mapping():
+    import hashlib
+    from tessera._dev.native_identity import loaded_native_identity
+
+    path = Path(torch._C.__file__).resolve()
+    expected = hashlib.sha256(path.read_bytes()).hexdigest()
+    identity = loaded_native_identity(torch._C, fe.__file__, expected_sha256=expected)
+    assert identity["path"] == str(path) and identity["sha256"] == expected
+    assert identity["executable_mappings"]
+
+
+def test_native_identity_refuses_wrong_declared_bytes():
+    from tessera._dev.native_identity import loaded_native_identity
+
+    with pytest.raises(RuntimeError, match="loaded native bytes changed"):
+        loaded_native_identity(torch._C, fe.__file__, expected_sha256="0" * 64)
+
+
+def test_native_identity_refuses_unmapped_python_module():
+    import json
+    from tessera._dev.native_identity import loaded_native_identity
+
+    with pytest.raises(RuntimeError, match="not mapped from the hashed file inode"):
+        loaded_native_identity(json, fe.__file__)
+
+
+@pytest.fixture
+def extension_boundary(monkeypatch):
+    """Instrument only the compiler boundary; exercise the real _ext consumer."""
+    from types import SimpleNamespace
+    from torch.utils import cpp_extension
+
+    fields = dict(BM=rf.BM, BN=fe.BN, HALF_ROWS=fe.HALF_ROWS, BK=fe.BK,
+                  RATE_MIN=rf.RATE_MIN, RATE_MAX=rf.RATE_MAX, SLOT_WORDS_MAX=rf.SLOT_WORDS_MAX,
+                  WORD_STAGES=fe.WORD_STAGES, DESC_WORDS=fe.DESC_WORDS, WINDOW_BITS=rf.WINDOW_BITS,
+                  SMEM_FIXED_GATE_UP=fe.SMEM_FIXED[0], SMEM_FIXED_DOWN=fe.SMEM_FIXED[2],
+                  FAMILY_FP8=False, FAMILY_MMA8=False, FAMILY_FP4=True, A_PREFETCH=0)
+    compiled = SimpleNamespace(**fields)
+    builds, loads = [], []
+
+    def compile_boundary(**kwargs):
+        loads.append(kwargs)
+        return compiled
+
+    def build_boundary(module, source_module, compile_fn):
+        builds.append((module, source_module))
+        return compile_fn("routed_fused_window.cu", f"owner-build/{module}", "sm_121", False)
+
+    monkeypatch.setattr(cpp_extension, "load", compile_boundary)
+    monkeypatch.setattr(fe, "build_library", build_boundary)
+    monkeypatch.setattr(fe, "_LIB", None)
+    monkeypatch.setattr(fe, "_LIB_PREFETCH", None)
+    return compiled, builds, loads
+
+
+@pytest.mark.parametrize("arm", [0, 4])
+@pytest.mark.parametrize("value_prefetch", ["0", "4"])
+def test_extension_consumer_freezes_distinct_compiled_arm(monkeypatch, extension_boundary, arm, value_prefetch):
+    compiled, builds, loads = extension_boundary
+    compiled.A_PREFETCH = arm
+    monkeypatch.setenv(fe.PREFETCH_ENV, str(arm))
+    monkeypatch.setenv("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", value_prefetch)
+    assert fe._ext() is compiled
+    module = fe.MODULE_NAME + ("_apf4" if arm else "")
+    assert builds == [(module, fe.MODULE_NAME_VALUE)]
+    assert loads[0]["name"] == module and loads[0]["build_directory"] == f"owner-build/{module}"
+    flags = loads[0]["extra_cuda_cflags"]
+    assert "-DTESSERA_ROUTED_FUSED_FP4=1" in flags
+    assert [f for f in flags if "FP4_A_PREFETCH" in f] == (
+        ["-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH=4"] if arm else [])
+    assert fe._ext() is compiled and len(builds) == len(loads) == 1
+    monkeypatch.setenv(fe.PREFETCH_ENV, str(4 if arm == 0 else 0))
+    with pytest.raises(GrammarError, match="changed after"):
+        fe._ext()
+    assert len(builds) == len(loads) == 1
+
+
+@pytest.mark.parametrize("field,value", [("A_PREFETCH", 4), ("BK", 32), ("FAMILY_FP4", False)])
+def test_extension_consumer_refuses_incompatible_binary(monkeypatch, extension_boundary, field, value):
+    compiled, builds, loads = extension_boundary
+    monkeypatch.setenv(fe.PREFETCH_ENV, "0")
+    setattr(compiled, field, value)
+    with pytest.raises(GrammarError, match=f"built with {field}"):
+        fe._ext()
+    assert fe._LIB is None and len(builds) == len(loads) == 1
+
+
 def _brute_desc(perm: torch.Tensor, n_lo: int, cols: int) -> torch.Tensor:
     out = torch.zeros(cols // 64, 4, dtype=torch.int64)
     hi = set(perm.tolist()[n_lo:])

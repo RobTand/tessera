@@ -1,0 +1,35 @@
+[
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "-lc",
+      "bash -n experiments/t8r_speed/value_prefetch_prepare.sh && bash experiments/t8r_speed/value_prefetch_prepare.sh /mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6 /mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/t16-synthetic-bank-v1"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 600,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TEST_RUNNER_SP": "/home/rob/venvs/pb-cpu/lib/python3.12/site-packages",
+      "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/runtime-generations/c43700f9d1d0-1791018557-b6c96bc4bbbb"
+    }
+  }
+]

@@ -60,14 +60,15 @@ E2M1 = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
 SRC = ROOT / "src" / "tessera" / "serving" / "csrc" / "routed_fused_window.cu"
 
 
-def build(out: Path):
+def build(out: Path, prefetch: int = 0):
     from torch.utils.cpp_extension import load
 
-    b = out / "build"
+    b = out / f"build_apf{prefetch}"
     b.mkdir(parents=True, exist_ok=True)
-    return load(name="tessera_routed_fused_e2m1_dev", sources=[str(SRC)], build_directory=str(b),
+    return load(name=f"tessera_routed_fused_e2m1_dev_apf{prefetch}", sources=[str(SRC)], build_directory=str(b),
                 extra_cuda_cflags=["-O3", "-lineinfo", "-std=c++17", "-DTESSERA_ROUTED_FUSED_FP8=0",
                                    "-DTESSERA_ROUTED_FUSED_MMA8=0", "-DTESSERA_ROUTED_FUSED_FP4=1",
+                                   f"-DTESSERA_ROUTED_FUSED_FP4_A_PREFETCH={prefetch}",
                                    "-gencode", "arch=compute_121a,code=sm_121a"],
                 verbose=False)
 
@@ -193,6 +194,10 @@ def bf16_ulp(v):
 def compare(got, ref, bound, exact):
     """got bf16, ref float64 (pre-rounding), bound float64 accumulation bound."""
     g = got.double()
+    nonfinite = {name: int((~torch.isfinite(t)).sum())
+                 for name, t in (("got", g), ("reference", ref), ("bound", bound))}
+    if any(nonfinite.values()):
+        return {"mismatch": sum(nonfinite.values()), "nonfinite": nonfinite, "ok": False}
     err = (g - ref).abs()
     if exact:
         want = ref.float().to(torch.bfloat16).double()   # the reference's one rounding sequence
@@ -266,6 +271,7 @@ def routed_case(lib, gate, up, down, R, kind, dev, seed):
     E = len(gate["wref"])
     K1, I = gate["cols"], gate["rows"]
     T, top_k, P = R["T"], R["top_k"], R["P"]
+    torch.manual_seed(seed)   # paired arms consume identical random activations
     x = onehot_x(T, K1, seed, dev) if kind == "onehot" else torch.randn(T, K1, dtype=torch.bfloat16, device=dev)
     xq, sfa, A, gs = quantize(x, dev)
     rg = (gate["global"] / gs).float().to(dev)
@@ -372,11 +378,14 @@ def routed_case(lib, gate, up, down, R, kind, dev, seed):
     res["a_side_rel_err"] = float(((A / gs) - x.double()).norm() / x.double().norm().clamp_min(1e-30))
     res["ok"] = all(v["ok"] if isinstance(v, dict) else bool(v) for k, v in res.items()
                     if k != "a_side_rel_err")
+    res["output_sha256"] = {name: hashlib.sha256(t.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
+                            for name, t in (("mode1", out1), ("mode0", out0), ("mode2", out2), ("chain", out3))}
     return res
 
 
 def dense_case(lib, role, M, k_split, kind, dev, seed):
     K, N = role["cols"], role["rows"]
+    torch.manual_seed(seed)   # candidate dense controls use identical activation bytes
     x = onehot_x(M, K, seed, dev) if kind == "onehot" else torch.randn(M, K, dtype=torch.bfloat16, device=dev)
     xq, sfa, A, gs = quantize(x, dev)
     ratio = (role["global"] / gs).float().to(dev)
@@ -399,6 +408,7 @@ def dense_case(lib, role, M, k_split, kind, dev, seed):
     r = compare(out, ref, absacc * float(ratio[0]) * K * 2.0 ** -23, exact)
     r["graph"] = graph_equal(f, out)
     r["ok"] = r["ok"] and r["graph"]
+    r["output_sha256"] = hashlib.sha256(out.contiguous().view(torch.uint8).cpu().numpy().tobytes()).hexdigest()
     return r
 
 
@@ -420,20 +430,48 @@ def dense_refuses(lib, role, k_split, dev):
 
 
 # ----------------------------------------------------------------------------- driver
-def main():
+def main(argv=None, *, banks=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--quick", action="store_true")
-    a = ap.parse_args()
+    ap.add_argument("--prefetch", type=int, choices=(0, 4), default=0)
+    ap.add_argument("--compare-prefetch", action="store_true",
+                    help="build both FP4 arms and compare exact stage bits in this process")
+    ap.add_argument("--build-only", action="store_true",
+                    help="compile/load retained numeric banks without touching a CUDA device")
+    a = ap.parse_args(argv)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     dev = "cuda"
     t0 = time.time()
-    lib = build(out)
+    if banks is not None:
+        lib = banks[a.prefetch]
+        paired = banks[4 if a.prefetch == 0 else 0] if a.compare_prefetch else None
+    else:
+        lib = build(out, a.prefetch)
+        paired = build(out, 4 if a.prefetch == 0 else 0) if a.compare_prefetch else None
+    if a.build_only:
+        banks = []
+        for bank in (lib, paired):
+            if bank is None:
+                continue
+            assert bank.BK == 64 and bank.FAMILY_FP4 and not bank.FAMILY_MMA8
+            assert bank.A_PREFETCH in (0, 4)
+            elf = Path(bank.__file__)
+            banks.append({"path": str(elf), "sha256": hashlib.sha256(elf.read_bytes()).hexdigest(),
+                          "bytes": elf.stat().st_size, "activation_prefetch": bank.A_PREFETCH})
+        report = {"kind": "cpu_compile_only_not_gpu_qualification", "banks": banks,
+                  "source_sha256": hashlib.sha256(SRC.read_bytes()).hexdigest(),
+                  "torch": torch.__version__, "image": os.environ.get("ORACLE_IMAGE"),
+                  "secs": time.time() - t0}
+        (out / "native_compile.json").write_text(json.dumps(report, indent=1))
+        print(json.dumps(report), flush=True)
+        return 0
     report = {"device": torch.cuda.get_device_name(), "capability": list(torch.cuda.get_device_capability()),
               "torch": torch.__version__, "tessera_head": os.environ.get("TESSERA_HEAD"),
               "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
               "source_sha256": hashlib.sha256(SRC.read_bytes()).hexdigest(),
+              "activation_prefetch": a.prefetch, "paired_prefetch": bool(paired),
               "build_secs": round(time.time() - t0, 1), "cases": []}
     path = out / "fused_e2m1_check.json"
     # Shapes: gate/up I = 1280 rows (two tiles, the second partial) over H = 512;
@@ -441,10 +479,13 @@ def main():
     # 64 and 130 (a single route, partial and whole superblocks), top_k 2.
     E, H, I = 4, 512, 1280
     counts = [1, 37, 64, 130]
-    q256s = [512, 448, 384, 960, 1024, 128, 576] if not a.quick else [512, 448]
+    q256s = list(range(128 * rf.RATE_MIN, 128 * rf.RATE_MAX + 1, 64)) if not a.quick else [512, 448]
     failures = 0
+    report["expected_population"] = {"tensor_cases": 2 * len(q256s),
+                                     "paired_routed_oracles": 4 * len(q256s) if paired is not None else 0,
+                                     "paired_dense_oracles": len(q256s) * 5 * 3 * 2 if paired is not None else 0}
     for q in q256s:
-        for cut_name in (("whole", "rank1") if q in (448, 512) else ("whole",)):
+        for cut_name in ("whole", "rank1"):
             case = {"q256": q, "cut": cut_name}
             try:
                 seed = 1000 * q
@@ -453,7 +494,7 @@ def main():
                 db = [encode(H, I, q, seed + 200 + e, dev) for e in range(E)]
                 # A mixed-rate unit cuts its columns only on 256-column
                 # superblocks, so q448's rank starts at 512, not TP2's I / 2.
-                cut_gu = (((512, I) if q % 256 else (I // 2, I)) if cut_name == "rank1" else None)
+                cut_gu = (((512, I) if q % 128 else (I // 2, I)) if cut_name == "rank1" else None)
                 case["cut_rows"] = list(cut_gu) if cut_gu else None
                 gate, up = stack(gb, cut_gu, dev), stack(ub, cut_gu, dev)
                 # rank 1 of the down cuts the same intermediate range from its
@@ -465,6 +506,13 @@ def main():
                 R = routing(counts, 2, q, dev)
                 for kind in ("onehot", "random"):
                     case[f"routed_{kind}"] = routed_case(lib, gate, up, down, R, kind, dev, seed)
+                    if paired is not None:
+                        other = routed_case(paired, gate, up, down, R, kind, dev, seed)
+                        baseline = case[f"routed_{kind}"]
+                        case[f"paired_{kind}"] = {"ok": baseline["ok"] and other["ok"]
+                            and baseline["output_sha256"] == other["output_sha256"],
+                            "baseline_sha256": baseline["output_sha256"],
+                            "candidate_sha256": other["output_sha256"]}
                 if cut_name == "whole":
                     role = stack([db[0]], None, dev)
                     nk = role["cols"] // 64            # one FP4 instruction's K per chunk
@@ -472,8 +520,18 @@ def main():
                         # 1, a middle split, and the cap (every item two chunks)
                         for ks in (1, 3, nk // 2):
                             for kind in ("onehot", "random"):
-                                case[f"dense_M{M}_S{ks}_{kind}"] = dense_case(lib, role, M, ks, kind, dev, seed + M)
+                                name = f"dense_M{M}_S{ks}_{kind}"
+                                baseline = dense_case(lib, role, M, ks, kind, dev, seed + M)
+                                case[name] = baseline
+                                if paired is not None:
+                                    other = dense_case(paired, role, M, ks, kind, dev, seed + M)
+                                    case[f"paired_{name}"] = {"ok": baseline["ok"] and other["ok"]
+                                        and baseline["output_sha256"] == other["output_sha256"],
+                                        "baseline_sha256": baseline["output_sha256"],
+                                        "candidate_sha256": other["output_sha256"]}
                     case["dense_split_cap_refused"] = dense_refuses(lib, role, nk // 2 + 1, dev)
+                    if paired is not None:
+                        case["paired_dense_split_cap_refused"] = dense_refuses(paired, role, nk // 2 + 1, dev)
                 case["ok"] = all(v.get("ok", True) for v in case.values() if isinstance(v, dict))
             except Exception as exc:  # noqa: BLE001 -- recorded, counted as a failure
                 import traceback
@@ -493,6 +551,8 @@ def main():
             report["failures"] = failures
             report["secs"] = round(time.time() - t0, 1)
             path.write_text(json.dumps(report, indent=1))
+    if len(report["cases"]) != report["expected_population"]["tensor_cases"]:
+        raise ValueError("incomplete admitted-rate/topology oracle population")
     print(f"failures={failures} secs={report['secs']}", flush=True)
     return 1 if failures else 0
 

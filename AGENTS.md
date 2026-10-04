@@ -247,7 +247,18 @@ Treat as constraints. Violate slogans when judgment says so.
   one under `--strict-cuda`, the device-less x86 one (torch, no CUDA device)
   -- and writes **one** receipt holding both side by side, so neither can be quoted without the
   other, appending a row per arm to `docs/status/suite-populations.md` under
-  `--record`. That ledger is where a suite result is recorded; read the two
+  `--record`. Each arm declares the environment the suite is written for --
+  the thread limits and the CI-spelled `PYTHONPATH=src` (`tests/conftest.py`
+  reaches only the pytest process; a test's own child interpreter inherits
+  the environment) -- and the receipt's arm record carries it as
+  `declared_env`, so a population red for want of a declaration cannot be
+  read as source red (#914). A run whose population must read an out-of-tree
+  provider declares it the same way: `--artifact-root ENV=PATH` rides into
+  the sealed environment verbatim (`TESSERA_PRISMAQUANT_WORKTREE` for the
+  pinned accountant, which `tests/box_artifacts.py` resolves ahead of its
+  documented default), so the declaration travels with the sealed action
+  instead of living in a shell profile. That ledger is where a suite result
+  is recorded; read the two
   adjacent rows, not one of them -- an arm a run did not submit is written as
   `not submitted in this run`, so a lone row cannot be read as a whole result
   -- and read each row's `mode` beside its `device`, because two rows of one
