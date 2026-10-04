@@ -1,6 +1,6 @@
 {
   "issue": 875,
-  "pr": null,
+  "pr": 929,
   "scope": "Finite synthetic numeric and native safety qualification ONLY on the current master source a3a599ec47457b6be769c2e3ec55859f5e759aff. No calibrated scientific quality, timing, energy, serving, allocation/default or PACT frontier claim; no menu, runtime pin, census or default promotion.",
   "source_revision": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
   "snapshot_binding": "Stage the existing NAS source checkout at source_revision before publication. Each admitted payload requires git rev-parse HEAD^ to equal source_revision: published pbrun builds its snapshot commit with that checkout HEAD as parent. Existing per-file SHA256 guards then bind executable bytes. snapshot_ref is an extra branch-advertisement option, not a source pin, and is deliberately absent.",
