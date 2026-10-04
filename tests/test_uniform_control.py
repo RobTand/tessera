@@ -13,7 +13,7 @@ Numbers pinned here come from
 """
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import json
 import sys
 from collections import Counter, namedtuple
@@ -753,11 +753,7 @@ def test_a_ratio_the_floats_cannot_state_is_named_rather_than_infinity(
 
 
 def _cli():
-    spec = importlib.util.spec_from_file_location(
-        "uniform_control_cli", ROOT / "experiments" / "uniform_control.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.uniform_control")
 
 
 def _candidate_files(tmp_path):

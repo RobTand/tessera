@@ -1,0 +1,254 @@
+[
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline",
+      "value"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+    }
+  },
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate",
+      "value"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "4",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+    }
+  },
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3",
+      "e4m3"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+    }
+  },
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0",
+      "e4m3mma"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+    }
+  },
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1",
+      "e4m3mma"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "1"
+    }
+  },
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0",
+      "e2m1"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+    }
+  },
+  {
+    "cwd": "/home/rob/tmp/sol-t16-combined-20261003",
+    "argv": [
+      "bash",
+      "experiments/t8r_speed/build_ext.sh",
+      ".",
+      "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4",
+      "e2m1"
+    ],
+    "demand": {
+      "cpu": 1,
+      "mem_gb": 12
+    },
+    "tags": [
+      "sparklina"
+    ],
+    "container_images": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "max_attempts": 1,
+    "timeout_s": 1200,
+    "env": {
+      "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+      "OMP_NUM_THREADS": "1",
+      "MKL_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "1",
+      "MAX_JOBS": "1",
+      "PYTHONDONTWRITEBYTECODE": "1",
+      "PRISMABUILD_LOCAL_SCRATCH_PAIRS": "TESSERA_LOCAL_BUILD_ROOT:TESSERA_LOCAL_BUILD_MAX_BYTES",
+      "TESSERA_LOCAL_BUILD_ROOT": "/home/rob/tmp/prismabuild-checkouts",
+      "TESSERA_LOCAL_BUILD_MAX_BYTES": "2147483648",
+      "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+      "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "4",
+      "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+    }
+  }
+]

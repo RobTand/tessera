@@ -1,0 +1,221 @@
+{
+  "schema": "tessera.value_prefetch.real_input_readiness.v1",
+  "issue": 874,
+  "status": "BLOCKED_original_a6_provider_runtime_and_envelope_unadopted",
+  "scope": "Readiness contract only; no GPU action, capture, performance, shipping, price, PACT, default or energy qualification.",
+  "accepted_synthetic_source": "849b039bd7b41d5c161962d3786f199c3669a0de",
+  "root_source_decision": {
+    "publisher": "zai-org/GLM-5.3-Flash-BF16",
+    "revision": "a6c167b62691b2bac901344b65cb651a70f53e43",
+    "semantics": "original G64; historical d025 causal-exp/safe_lower_bound_times_sigmoid/h64/DEV is not this authority",
+    "capture_owner": "Original GLM scientific diagnostic readiness",
+    "cuda_owner": "Original CUDA runtime execution continuation",
+    "adopted": false
+  },
+  "source_bindings": {
+    "publisher_authority": {
+      "path": "/mnt/shared/astra-original-a6-scientific-readiness-20261003/retained/publisher-authority.json",
+      "sha256": "e2ef65ff8190cb35aca15040e93b9c8646952968605282e80402971928e0b4be"
+    },
+    "producer": {
+      "path": "/mnt/shared/astra-original-a6-scientific-readiness-20261003/proposal/producer-source.proposed.json",
+      "sha256": "fc4e23a5a498912ab7cb3f5d796de21332ff0d543df4e9de36b4fabdf61ab4e0"
+    },
+    "readset": {
+      "path": "/mnt/shared/astra-original-a6-scientific-readiness-20261003/proposal/original-readset.proposed.json",
+      "sha256": "5559543e342e32beef9ad50b21e549cd0926fb94852544a6aee67427a1010d00"
+    },
+    "mapping": {
+      "path": "/mnt/shared/astra-original-a6-scientific-readiness-20261003/proposal/source-paths.proposed.json",
+      "sha256": "4d666e7789514145fcf94b44e6adf62e93e06fc29d357e265156419cb6ce9ae8"
+    },
+    "observed_headers": {
+      "path": "/mnt/shared/astra-original-a6-scientific-readiness-20261003/evidence/observed-source-headers.json",
+      "sha256": "c1af8271bf46fe5ee68f1041c2a2686b725620bb5ded77d05a82437d62cae8a6",
+      "weight_shards": 120,
+      "tensors": 38770,
+      "weight_payload_bytes_observed": 0
+    },
+    "head_tail_envelope": {
+      "path": "/mnt/shared/astra-original-a6-scientific-readiness-20261003/evidence/source-memory-head-tail.json",
+      "sha256": "439bf0cc9225ae0f3b37b7f80a9a3bf6e39147958bdeae7c0dbf79bf9a46f34c",
+      "reservation_admitted": false,
+      "head_resident_checkpoint_bytes": 2537562112,
+      "head_serialized_whole_files_bytes": 9531639384,
+      "max_adjacent_serialized_whole_files_bytes": 42909165472,
+      "logits_shape": [
+        1,
+        512,
+        154880
+      ],
+      "bf16_logit_plane_bytes": 158597120,
+      "fp32_logit_plane_bytes": 317194240,
+      "finite_mask_plane_bytes": 79298560,
+      "warning": "Header extents are facts, not a complete resource reservation or installed cast/workspace proof."
+    },
+    "files": 130,
+    "declared_total_bytes": 642676397788,
+    "config_sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
+    "index_sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f"
+  },
+  "calibration": {
+    "path": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/exact-calibration-input-01/calibration_tokens.safetensors",
+    "artifact_sha256": "9cd1fa129f249abd80d22efaeb8bc7e8b2d3b4252f173a8c6f2b2e496a4f8329",
+    "tensor_sha256": "dd5be8c887a48465fcd7df567b8aba876026339785da03f6642c7179413668e1",
+    "dtype": "torch.int64",
+    "shape": [
+      512,
+      512
+    ],
+    "full_N": 262144,
+    "fit_ids_sha256": "6b6a0c4283de3aae633fd2bf00f74ac80928a8c389c42aa6d5101b765115532e",
+    "text_sha256": "aee724fa58bfbdeb3fc6803297fb6bab27b203d7c40b39ddef9b9770e5d52fe5",
+    "seed": 0,
+    "scope": "Bind complete calibration. Existing atomic operator capture executes original sample zero, positions0..511; never normalize this as a full-draw quality measurement."
+  },
+  "existing_capture": {
+    "inspected_pq_source": "736fd56aa6853c3ee06655eda6015b18bef763bd",
+    "entrypoint": "tools/capture_glm_routed_layers.py",
+    "sha256": "b60f0d35ed9fc7ede0e1c4af36d66a57877fe86a315a6190c3b1070d05baccd0",
+    "module": "prismaquant.glm_routing_capture.capture_streamed_glm_routes",
+    "module_sha256": "b7e975d31f4874b68e7ce9e20276534fd3e7789e2451bcf2dc6d34eb4921dbb7",
+    "cli_arguments": [
+      "--plan",
+      "--plan-sha256",
+      "--prepared",
+      "--prepared-sha256",
+      "--output-root"
+    ],
+    "required_new_inputs": [
+      "Complete original-a6 plan and preparation bound to adopted provider and original G64 source_execution/runtime image/modeling/backend identity. Old0b2cc/962207/d025/416bd plan is rejected.",
+      "PB data-manifest covering actual whole source/auxiliary files plus exact calibration and controls with current public SDK phase ownership. Prefix-only layer0..3 manifest cannot run current layers3..44 entrypoint.",
+      "Finite reviewed original source/current+lookahead/alias/cast/packed-expert/head/shared-state/capture-serialization/profiling overlap reservation, CPU affinity/native thread limits and explicit root GPU GO.",
+      "Existing capture authority must permit original adopted provider without bypassing require_material_device or require_automatic_capture_source_recording. Current inspected CLI requires explicit DEV and stamps dev_uncertified; its output is not automatically production authority."
+    ],
+    "operation": "One existing runner.visit_layer_batches traversal, existing source/capture owner, two cache slots/one lookahead/one prefetch worker; no alternative loader, cache or dispatcher.",
+    "output": "42 layer-003..044.pt payloads and final receipt.json; publish each existing raw native boundary only after routed_boundary_inputs verifies it.",
+    "geometry": {
+      "experts": 288,
+      "hidden_size": 4096,
+      "intermediate_size": 2048,
+      "top_k": 8,
+      "raw_input_shape": [
+        512,
+        4096
+      ],
+      "ids_and_weights_shape": [
+        512,
+        8
+      ],
+      "coordinate_shape": [
+        512,
+        2
+      ],
+      "correction_bias_shape": [
+        288
+      ],
+      "dtype": "Observe original BF16 activation, I32/I64 IDs, BF16/F32 weights, I64 coordinates, FP32 bias without invented casts.",
+      "max_raw_tensor_bytes_per_layer": 4252800,
+      "max_raw_tensor_bytes_42_layers": 178617600,
+      "scope": "Arithmetic tensor payload upper bound only, excludes source, serialization copies, references, metadata and workspace."
+    },
+    "join_requirements": [
+      "Observed original router class/source/normalization epsilon/groups/topk groups/scale/swiglu limit and correction bias; weights post-renormalization/routed scaling, bias affects selection only.",
+      "Actual indexed CUDA device observed before CPU copy; original tensor content/dtype/shape identities and source/capture/session-coordinate identity.",
+      "Immutable full producer/source_execution/model_load_contract/runtime/calibration bindings, plus actual held-FD/publisher/readset/material/cast/stream receipts; declarations or CPU fixtures are not real source acquisition.",
+      "Complete atomically matched gate/up/down member roster and authenticated PWC renders/wires, not replicated experts or signed A operators."
+    ]
+  },
+  "existing_materialization": {
+    "entrypoint": "experiments/prepare_glm_native_moe_request.py",
+    "sha256": "d81cefefdcbe0e4c952d23e2e8c1123a9312f4663beb4868479441712f991822",
+    "cli_arguments": [
+      "--metadata",
+      "--metadata-sha256",
+      "--boundary",
+      "--boundary-sha256",
+      "--format",
+      "--out"
+    ],
+    "admitted_acquire": "experiments/glm_native_moe_acquire.py",
+    "acquire_sha256": "43f875e25a04fa0bf7560de70e0be1ce31e2de48ae3f715e209a653435103274",
+    "output": "Existing same-action LocalHandoff produces inputs.json, weight-references.json, phase-tensors.safetensors, origin.json and owned source/render/wire bytes; no cross-action local bundle reuse.",
+    "consumer": "Tessera experiments/bench_native_moe_operator.py.prepare_native_moe_operator and existing native serving owner; use its identity/geometry/route/source/reference gates. bench_t8r override stays fail-closed A8SE.",
+    "compatibility_blockers": [
+      "Historical preparation script hardcodes old scientific plan/serving config; historical launcher hardcodes TS32e/old serving image and40GiB container while acquisition selects48GiB device. Those numbers/identities are not an original-a6 envelope.",
+      "Capture must bind fresh adopted original-a6 plan/runtime/calibration authority; historical wire/H provenance stays explicitly historical until authenticated compatibility is established.",
+      "Source acquisition, whole-owner materialization, and native timing share existing action/phase lifetimes and SDK ownership. Do not copy canonical source payloads by pathname or add a family-specific cache."
+    ]
+  },
+  "historical_retained_data": {
+    "scope": "Historical same-source quantized atomic data, not current original-a6/GLM shipping qualification.",
+    "root": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/routed-owner-inputs-layer3-20260917",
+    "source_receipt_sha256": "f0f7cde1d8b522ebb0bb2769c7769cc414ebb4a7fcf1c529ffa9e6430f3607b8",
+    "a16_receipt_sha256": "fcb6db07c7d3ee58cc930e679e53423df32cd8870b4df5b1f9eba06d79f009b3",
+    "members": 864,
+    "format": "TESSERA_BF16_K1_R1024",
+    "encoder_source_sha256": "0833671bbddbc3fb7186bdbed0a905ef248c23ffdf1aeee0c083322680d20f6b",
+    "expert0_actual_wire_checks": {
+      "gate": {
+        "bytes": 4231951,
+        "sha256": "03f6dd452ce05146466ec43c1b00e571240c07b20c9d7dd95b63e1e6ad9c7974"
+      },
+      "up": {
+        "bytes": 4231951,
+        "sha256": "6ba0d8d733e59ff077107aa7ede7a176e86b1ccfa08175121e3d325b5e44a744"
+      },
+      "down": {
+        "bytes": 4235983,
+        "sha256": "0866e7f176d8e5b0ae47d0f14b887c007a36a13da8eea238c4ce26e33652a7f3"
+      }
+    },
+    "calibration_payload_keys": [
+      "inputs",
+      "hessian",
+      "name",
+      "source",
+      "count",
+      "max_abs"
+    ],
+    "not_present": "Joined token positions, routing probabilities and original execution session are absent from per-expert calibration payloads."
+  },
+  "bounded_corpus_findings": [
+    {
+      "root": "glm-canonical-census-20260908",
+      "finding": "A16 atomic wires/source/H records exist; original capture v2 complete36423 units, per-expert calibration payloads lack routing/session."
+    },
+    {
+      "root": "glm-shared-input-capture-20260907/real-routed-replay-01",
+      "finding": "Real layer4 selected collector metadata512 batches/48 roles retained; raw staging and offload directories empty; not an executable atomic boundary."
+    },
+    {
+      "root": "t16-coverage-20260930",
+      "finding": "Census names stub-T16D1; geometry benchmark constructs random projections/activations. Not authenticated model payloads."
+    },
+    {
+      "root": "glm-campaign-takeover-20260913/pact-routed-captures-1427-03 and -04",
+      "finding": "Offload directories empty; no adopted atomic payload."
+    },
+    {
+      "root": "glm-campaign-takeover-20260913/native-pact-acquisition-20260922/routing-prefix-layer3-phased-02",
+      "finding": "Only historical source-identity and empty offload retained; no boundary payload/final capture receipt."
+    },
+    {
+      "root": "glm-campaign-takeover-20260913/pact-gamut-20260926",
+      "finding": "Committed A16 960/1088/1152 views point to real producer row banks, not fresh routing/session capture; mixed-rate controls do not imply one-run speedup."
+    }
+  ],
+  "performance_acceptance": {
+    "gpu_go": false,
+    "root_only": true,
+    "population": "Declare applicable real rate/shape boundaries. Historical R1024 one-run4 cannot establish performance for other one-run rates1..8; mixed two-run controls and dense controls have prefetch disabled.",
+    "protocol": "Same own-T16 source/wire/render/input/routing/probability/coordinates in both arms, separate native modules loaded once per arm with original held FDs, in-process before/after timing and profiles, interleaved paired arm order, both-host bounded Netdata clock/temperature/power/residency records.",
+    "forbidden_claims": [
+      "T8 speedup transferred to T16",
+      "CPU/header/fixture declarations as actual original provider proof",
+      "Historical derivative restamped original-a6",
+      "Sample-zero operator capture as full512 quality",
+      "Price/serve/default/PACT/energy promotion without measured matching authority"
+    ]
+  }
+}

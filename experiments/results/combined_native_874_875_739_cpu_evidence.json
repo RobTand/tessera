@@ -1,0 +1,903 @@
+{
+  "schema": "tessera.combined_native_qualification_cohort.v1",
+  "scope": "CPU source control and fresh native compile only; no CUDA numeric, sanitizer, serving, latency or energy acceptance",
+  "issue": 897,
+  "source_commit": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+  "review_closure": {
+    "review_parent": "Tessera piece-major performance",
+    "github_approval_not_claimed": true,
+    "sealed_source_parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+    "recipe_hashes": {
+      "build_campaign": "c6b4336f739a30b9bcd048d2591b41497bfc33f7e2c3cc9613898161cc53c680",
+      "control_campaign": "4c39e97c1f2875625ec69369e4986864f5491b075b70e01c71763e265d9c33cb",
+      "build_wrapper": "ce44e3d8287e8214dea452ccf415c07fd57c7440cd9d6686a06f858be1f03dea",
+      "value_mma_caller": "b600ac34db89dc07ca7ac0fb9b64538fd59e6f2b2a5f158b2dd17c7868b5bdef",
+      "fp4_caller": "688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4"
+    },
+    "actual_native_attempts": [
+      {
+        "action_key": "c2a5a8c001a9071ad19551089441c9a7e0fa0597e412d9408c32d2e1ebd3ded5",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "a16f0cb9c04da3122f7e5a2ac6c68ad836330f26",
+          "input": {
+            "bytes": 13335632,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "4dc485609918a8c0539896ee8d51d03da5be19afdd060c9436e692aaf16ad929"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3676704768
+      },
+      {
+        "action_key": "aaf5cf7649b29050e5616b67bf9857185b3b615ea6fcdd5096c65ca66b95655f",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "cc74d8abd318b596eb3e0c1e60724feff2064841",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "e538257fb986513f9d1a6488e408cf6647f3eb9a07e96c2d648cea90c266b88f"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3675451392
+      },
+      {
+        "action_key": "656d063b8d23b94d609828312c10c502fbe634c700676ee90dc2e9da0f103a42",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "f7f24a42c74ee7c32c12aa31411ca731652ca002",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "1deb96cc001ab1e4c4ff28087de653dc0c69c78a152040b14f958094f846c88e"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3699716096
+      },
+      {
+        "action_key": "8c133cd214fdb30eb6b1eed26741c440f5a01b16eaf0314740ad1b5f8507e2b8",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "d277f10e5434acc7163c2e598afea83f8c5aa127",
+          "input": {
+            "bytes": 13335629,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "e651a6956bde2b52304780d72e2db6ab2e80fe88f863b9c700019b7fafd6e730"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3821355008
+      },
+      {
+        "action_key": "c6b4c6bb25ab2e518842e493913f605edd2d7527b9b225e49559b0ca58f2e68f",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "5d0486d68ac607cbf41781e5ab80728ce5b36417",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "8e169e0e5765ca8bff9d840e97483ecda6c8cd7b11ebf877a4c92cf909c60839"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3825688576
+      },
+      {
+        "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "218849c545406a3d4ea951dde9998021d8cdea27",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "cf4669b3421e2462402f63fc0fb80718c936b8b6e19191995fb902d72e943ca4"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3694772224
+      },
+      {
+        "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861",
+        "complete": true,
+        "state": "done",
+        "snapshot": {
+          "commit": "a5e910a225b4004bec03db9602ab375efda257ce",
+          "input": {
+            "bytes": 13335631,
+            "id": "pbrun.checkout-snapshot",
+            "sha256": "164a8a02dd82d5699c222887111c36e93f3cf584c0993fbc582e5b3a00778b30"
+          },
+          "parent": "8db1360ea9cd061cc717c2cc7dda58c94e4bc600",
+          "refs": {},
+          "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+          "subdirectory": "."
+        },
+        "resources": {
+          "cpu": 1,
+          "mem_gb": 12,
+          "spool_gb": 2
+        },
+        "needs_gpu": false,
+        "attempts": 1,
+        "returncode": 0,
+        "telemetry_complete": true,
+        "oom_local": 0,
+        "oom_kill": 0,
+        "processes_live": 0,
+        "memory_peak_bytes": 3696713728
+      }
+    ],
+    "applicability": "Exact common native source and current caller composition at sealed8db. Later T16 numeric fixture constants bind these fresh value ELFs; they do not change compiled math or restamp old ELF. Existing historical T16/T4/PM CUDA proofs remain historical. CPU native scopes are reaped; runtime FD-pinned staged loads, CUDA numeric and sanitizer lifetimes require fresh qualification.",
+    "admission": {
+      "observation_unix": 1791059012.3725328,
+      "published_generation": "c43700f9d1d0-1791018557-b6c96bc4bbbb",
+      "sparky_effective_spool_total_free": 0,
+      "sparky_positive_2_gib_source_predicate_refuses": true,
+      "actual_denial_record_claimed": false,
+      "sparklina_spool_total_free": 117,
+      "local_available_kib": 171467868,
+      "local_total_kib": 959785008,
+      "all_named_local_roots_max_bytes": 2147483648,
+      "compiler_objects_elf_home_tmp_xdg_on_nas": true
+    }
+  },
+  "native_source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+  "image": {
+    "fix": null,
+    "gated": true,
+    "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+    "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+    "present": true,
+    "reason": "explicit_digest",
+    "refused": false,
+    "repo_digests": [
+      "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "requested_tag": null,
+    "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "schema": "tessera.runtime_image/1"
+  },
+  "controls": {
+    "action_key": "c8e6beec8510b432efeda40bd0df57748278e681e84be545c9d4f33ee8010981",
+    "passed": 207,
+    "skipped": 43,
+    "skip_scope": "42 CUDA-dependent E2M1 cases and one explicit admitted bank proof",
+    "receipt": {
+      "action_manifest_sha256": "4d0741f7c35c81b06c565a5c575fef570c81e35cefc1dc109c3f3f5aece4a499",
+      "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/c8/c8e6beec8510b432efeda40bd0df57748278e681e84be545c9d4f33ee8010981.json",
+      "present": true,
+      "receipt_sha256": "2d64996bebf43120a3810e6246b90c436069a1ded54d198a208cb533108f83e0",
+      "result": {
+        "bytes": 36926,
+        "sha256": "d67bfb0cb8b81fc4456423803652c45b9eb19604dfa8a53459f49e828ebb4b97"
+      }
+    }
+  },
+  "variants": [
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "c2a5a8c001a9071ad19551089441c9a7e0fa0597e412d9408c32d2e1ebd3ded5",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+      },
+      "libraries": [
+        {
+          "library": "value",
+          "module": "tessera_routed_fused_value",
+          "source_module": "tessera_routed_fused_value",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1/tessera_routed_fused_value.so",
+          "bytes": 1988384,
+          "sha256": "6a8c74671956d680690ebd342bd672cf19db07a0d71fd8285820bcff70d7a90a",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "098f9bf168ef60f84622fd0f2d6f26dbe5016f03ab4a28e7171b96996311c2ad",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-baseline",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/native-build-record.json",
+      "record_sha256": "959e70e647377e443c02bb0f1443c7e93c859ee67f0b09a67a656eeb9a990461",
+      "cas": {
+        "action_manifest_sha256": "8f830c0cf4d7768cbff5ca870c07ab17c3a77f14a8fdbb05fb51ecdd6c979382",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/c2/c2a5a8c001a9071ad19551089441c9a7e0fa0597e412d9408c32d2e1ebd3ded5.json",
+        "present": true,
+        "receipt_sha256": "402fee3a4ecd7f9a78489759eab7ab4533ed4819f58fc475daa5061a923ce725",
+        "result": {
+          "bytes": 1171,
+          "sha256": "0874175ffec58b83c48ef08be40bd8c78baa08f5b781f8489207c5f7c513a6d6"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059032189961500
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "e7b2c82da39708216ce6bfb584e4c8d05daea6655037c18d6960bd488d275f1e",
+            "bytes": 1773,
+            "mtime_ns": 1791059033791663900
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "7ebeb6fc483ba8c42ebf1ea733175679b4ecb9cc9c31735cb09c210fb55d17f5",
+            "bytes": 2536152,
+            "mtime_ns": 1791059077332540000
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1/tessera_routed_fused_value.so": {
+            "sha256": "6a8c74671956d680690ebd342bd672cf19db07a0d71fd8285820bcff70d7a90a",
+            "bytes": 1988384,
+            "mtime_ns": 1791059077496543200
+          }
+        },
+        "log_before_sha256": "ae731e8f18eb999ac0eba350f97515a88015f173c8d39a2f8f4c8fecb958467e",
+        "log_after_sha256": "4ddd4155aee9a2a42dd28b73ff4fabf2b7fa745d26a8e6aec8146bca37f11140",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_value.so\nninja explain: recorded mtime of tessera_routed_fused_value.so older than most recent input routed_fused_window.cuda.o (1791059033792663983 vs 1791059077332539878)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-baseline/tessera_routed_fused_value_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    },
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "aaf5cf7649b29050e5616b67bf9857185b3b615ea6fcdd5096c65ca66b95655f",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "4",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+      },
+      "libraries": [
+        {
+          "library": "value",
+          "module": "tessera_routed_fused_value_prefetch4",
+          "source_module": "tessera_routed_fused_value",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1/tessera_routed_fused_value_prefetch4.so",
+          "bytes": 1988480,
+          "sha256": "df00510cd202b810d28ce46671189f81362efb814fa1df6cccef4d51cd034f6b",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "a0230cc3dbbae9c4350eb5c357ec1f9250a377aae91b06cddb9d1cfdd869a29f",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-candidate",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/native-build-record.json",
+      "record_sha256": "37b8c0585d3d14a416ca8c78db585184ca0120381597d9061eeb8131f89f80e1",
+      "cas": {
+        "action_manifest_sha256": "0964065803b2a1af7cf99e5aff5f2b5f08e73b1a9ece3877171b47711ea51e19",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/aa/aaf5cf7649b29050e5616b67bf9857185b3b615ea6fcdd5096c65ca66b95655f.json",
+        "present": true,
+        "receipt_sha256": "29d33243f3c0aeb2d0140f4bf521ed63b55c777259e93b2e1c2b35ce76761523",
+        "result": {
+          "bytes": 1193,
+          "sha256": "9e1da6b2941336ca0e55ecaaba061e31229e15c519d3ac026f6688501d5e16a2"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059041393829400
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "97eea61b9599cb2fcbf7fd3bef35516bd78e7ca50bde78a938d50fbf2acd7f60",
+            "bytes": 1855,
+            "mtime_ns": 1791059043022849500
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "3c6e4fca038a40a426ea9266eeef5a205b8e9dd50e994ab4c74d5c865141551e",
+            "bytes": 2540896,
+            "mtime_ns": 1791059088135757300
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1/tessera_routed_fused_value_prefetch4.so": {
+            "sha256": "df00510cd202b810d28ce46671189f81362efb814fa1df6cccef4d51cd034f6b",
+            "bytes": 1988480,
+            "mtime_ns": 1791059088304760600
+          }
+        },
+        "log_before_sha256": "c247da4aee15ef790acd32dd820440974a79c3b3ddfe5c86da1b3bc1c8d458f2",
+        "log_after_sha256": "16abe2f1e360dc47e5526042e0bf520f451a84a740ea838f962a53526125b779",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_value_prefetch4.so\nninja explain: recorded mtime of tessera_routed_fused_value_prefetch4.so older than most recent input routed_fused_window.cuda.o (1791059043023849656 vs 1791059088135757265)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-candidate/tessera_routed_fused_value_prefetch4_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    },
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "656d063b8d23b94d609828312c10c502fbe634c700676ee90dc2e9da0f103a42",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+      },
+      "libraries": [
+        {
+          "library": "e4m3",
+          "module": "tessera_routed_fused_e4m3",
+          "source_module": "tessera_routed_fused_e4m3",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_e4m3.so",
+          "bytes": 2324080,
+          "sha256": "6fabcb3c270014a38dca2c318b5115265cf3e5c26230f12238edfedd28988120",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "9ba3e4a0065b4209fd036f0cf68bec789c735306efe64fb71a18974e4a1ad745",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-e4m3",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/native-build-record.json",
+      "record_sha256": "9e0f1a7804e97fce5981abe4008ca60ffceefe943e6348ed052d4a467a40aba6",
+      "cas": {
+        "action_manifest_sha256": "a1027042ee6c576a5d394dbf021a74d07b72aa855888af4aa55408af8713b123",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/65/656d063b8d23b94d609828312c10c502fbe634c700676ee90dc2e9da0f103a42.json",
+        "present": true,
+        "receipt_sha256": "23908efe47ba1463cfd26be76ecf0582f54d7b5ccfed55b60278848ff06399f4",
+        "result": {
+          "bytes": 1159,
+          "sha256": "09a82d376337ffe66b5d87e27f0cefad19a5b6bb53bf8e81d2efdfee1f51566b"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059048687868700
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "2eab04b3a6fbed9722524dbb58cbdb76efbd6a745b47cc500164828db240d58c",
+            "bytes": 1769,
+            "mtime_ns": 1791059050321996500
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "7188fcfd7ee1e12db24ef7c42971b3e8435cb174cd36912bedd2f6df7de7b4e8",
+            "bytes": 2895896,
+            "mtime_ns": 1791059100948015000
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_e4m3.so": {
+            "sha256": "6fabcb3c270014a38dca2c318b5115265cf3e5c26230f12238edfedd28988120",
+            "bytes": 2324080,
+            "mtime_ns": 1791059101122018600
+          }
+        },
+        "log_before_sha256": "3d8de792a423728a3027f034aca8a2cd0853e1a864c6415a50a28c82a0659adf",
+        "log_after_sha256": "b7a41a6c5512570f020c25923db80f01ac6f7062218386b1966883b73b5f73e8",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_e4m3.so\nninja explain: recorded mtime of tessera_routed_fused_e4m3.so older than most recent input routed_fused_window.cuda.o (1791059050322996480 vs 1791059100948015106)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-e4m3/tessera_routed_fused_e4m3_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    },
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "8c133cd214fdb30eb6b1eed26741c440f5a01b16eaf0314740ad1b5f8507e2b8",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+      },
+      "libraries": [
+        {
+          "library": "e4m3mma",
+          "module": "tessera_routed_fused_mma_e4m3",
+          "source_module": "tessera_routed_fused_mma_e4m3",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_mma_e4m3.so",
+          "bytes": 3289064,
+          "sha256": "2f8b37ab600ed0046291507fc60b3bba97727cb5fb14bb241ac5ada11f3bc3bd",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "4b28ef965d7deee7c401c27bc245723dd33adf7a8309db70ebf9b7759b89d331",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-mma8-b0",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/native-build-record.json",
+      "record_sha256": "f8630b9fa0cf533419928ded394403c29e1c4c2ea2b3ad77eba56264b0422b93",
+      "cas": {
+        "action_manifest_sha256": "210e197306d94594e77844314b94fa97d9fbbee7194a3e675725020bfdb3a06c",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/8c/8c133cd214fdb30eb6b1eed26741c440f5a01b16eaf0314740ad1b5f8507e2b8.json",
+        "present": true,
+        "receipt_sha256": "6e799778be895c4aa666f8e29b13be34c0c2de29acb36f2e24a3a5b7a97519e5",
+        "result": {
+          "bytes": 1179,
+          "sha256": "27cdb64af3ebe8181091609a652067d61e1ef6e63beb786900c0215b4640d956"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059056694389800
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "6ddd59bca38c14d9f920db2e0433d264b7f44ed7b91285030c1ff7aed87fe603",
+            "bytes": 1834,
+            "mtime_ns": 1791059058366158300
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "b604f6c61ffd3c7f61c1a8d04b44343d6b12496aa7dbe44c956764851e3c3b57",
+            "bytes": 3910128,
+            "mtime_ns": 1791059120386406400
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_mma_e4m3.so": {
+            "sha256": "2f8b37ab600ed0046291507fc60b3bba97727cb5fb14bb241ac5ada11f3bc3bd",
+            "bytes": 3289064,
+            "mtime_ns": 1791059120569410000
+          }
+        },
+        "log_before_sha256": "2d18a51744d19f1559d01cee52e6c44490e42519689633d432fccbe50b44186f",
+        "log_after_sha256": "ce694a38b9c2783c4ec836355e0db4bbbb16b24abe5938e2ac61ca252c6bb21e",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_mma_e4m3.so\nninja explain: recorded mtime of tessera_routed_fused_mma_e4m3.so older than most recent input routed_fused_window.cuda.o (1791059058369158344 vs 1791059120386406353)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b0/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    },
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "c6b4c6bb25ab2e518842e493913f605edd2d7527b9b225e49559b0ca58f2e68f",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "1"
+      },
+      "libraries": [
+        {
+          "library": "e4m3mma",
+          "module": "tessera_routed_fused_mma_e4m3",
+          "source_module": "tessera_routed_fused_mma_e4m3",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_mma_e4m3.so",
+          "bytes": 3289160,
+          "sha256": "46d456a31754d8e1d25b8aad4fcea779ac6954e7761eab3d3b07174092c084ca",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "6018d4f800d793b384bae679969bb049f0163d7cd326a6da0a96329287b72662",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-mma8-b1",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/native-build-record.json",
+      "record_sha256": "b04c4ddd62ea9e847161241243cfa4338f45165c51e93e1e05e91c5ed5d43c0e",
+      "cas": {
+        "action_manifest_sha256": "be64364c87fce90bafd5ea9616a676341bcb07d16e6dd383d837ca81c3cf7322",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/c6/c6b4c6bb25ab2e518842e493913f605edd2d7527b9b225e49559b0ca58f2e68f.json",
+        "present": true,
+        "receipt_sha256": "d30e1b6a755b7c178996944b1fd663d2ab4e32f8b085ad5026c57042d44e2a49",
+        "result": {
+          "bytes": 1179,
+          "sha256": "45032e3f3cc11c3a84b38c63eac57a9de9b098a8f43cb1cbf9971ad006af0c87"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059065194222600
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "0d23b00b2b6ebb605413a0001248ec176b1f1c5edbac79c847b2eb0693363250",
+            "bytes": 1834,
+            "mtime_ns": 1791059066833328600
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "7e7e42da2a0673a7274910cd03479bf4649cfa9e83550c1637ce40f98201aff8",
+            "bytes": 3940480,
+            "mtime_ns": 1791059126964539000
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1/tessera_routed_fused_mma_e4m3.so": {
+            "sha256": "46d456a31754d8e1d25b8aad4fcea779ac6954e7761eab3d3b07174092c084ca",
+            "bytes": 3289160,
+            "mtime_ns": 1791059127138542300
+          }
+        },
+        "log_before_sha256": "fa2a506e77e964249f8012e92fe07dc429d5f33f4fdac7da70c4926405d10834",
+        "log_after_sha256": "20b79a725439c4d99e950cf0281d67ba0fea39718ecf828c45e8e0ce2f844192",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_mma_e4m3.so\nninja explain: recorded mtime of tessera_routed_fused_mma_e4m3.so older than most recent input routed_fused_window.cuda.o (1791059066835328670 vs 1791059126964538770)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-mma8-b1/tessera_routed_fused_mma_e4m3_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    },
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+      },
+      "libraries": [
+        {
+          "library": "e2m1",
+          "module": "tessera_routed_fused_e2m1",
+          "source_module": "tessera_routed_fused_value",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
+          "bytes": 1889544,
+          "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-fp4-b0",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/native-build-record.json",
+      "record_sha256": "02ab5a7e607895052f4d3683e50eaca40516a1c5a0ccb36fe442a6e7c560b4bc",
+      "cas": {
+        "action_manifest_sha256": "99e65c7de8619c6b9ccb719ad9bddc531a3c4eae65e67c5a4fe429f4a4be3ed0",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/b7/b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd.json",
+        "present": true,
+        "receipt_sha256": "a33c85f8e699b45ba9863eeb9cc390ff5ec999c32aafce9846a36fd01ac0ff02",
+        "result": {
+          "bytes": 1164,
+          "sha256": "496a1a19c768a7468866dc57130d9288faee00bf4ed231c7e1ac7a93f7ae89f8"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059072256511200
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "f0bd6b0a889cbce434053a2d6225188ac58d1656f8cc3ce66ab8e35dbc3739cc",
+            "bytes": 1800,
+            "mtime_ns": 1791059073803468800
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "ed39bf7dcc8c6aa2484bb91027d882122e2e21b6e1f13a887674c54377b90f5f",
+            "bytes": 2336224,
+            "mtime_ns": 1791059110401205200
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so": {
+            "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
+            "bytes": 1889544,
+            "mtime_ns": 1791059110564208600
+          }
+        },
+        "log_before_sha256": "03ff7a647d7b613afd32af091c304739b96da35f104a211968f5936ee5abd6c8",
+        "log_after_sha256": "bfa3c11a39446f28cdf187f89b8947409d2fc6f3ee922208eac9666c8025a5b3",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_e2m1.so\nninja explain: recorded mtime of tessera_routed_fused_e2m1.so older than most recent input routed_fused_window.cuda.o (1791059073805468909 vs 1791059110401205367)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    },
+    {
+      "schema": "tessera.native_build_cohort.v1",
+      "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861",
+      "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
+      "image": {
+        "fix": null,
+        "gated": true,
+        "local_id": "sha256:acc684c06ec79aa303deda50a15c422084690d3252d2449e9702b40de571fe63",
+        "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+        "present": true,
+        "reason": "explicit_digest",
+        "refused": false,
+        "repo_digests": [
+          "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+        ],
+        "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "requested_tag": null,
+        "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+        "schema": "tessera.runtime_image/1"
+      },
+      "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
+      "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+      "selectors": {
+        "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
+        "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "4",
+        "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH": "0"
+      },
+      "libraries": [
+        {
+          "library": "e2m1",
+          "module": "tessera_routed_fused_e2m1_apf4",
+          "source_module": "tessera_routed_fused_value",
+          "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
+          "bytes": 1889584,
+          "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+          "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
+          "finalization_sha256": "fdf833a508705a5409264517ebad607ddde953f56ceb989b7d9367701d4c3be1",
+          "status": "compile gate (no matching device here)"
+        }
+      ],
+      "variant": "ext-fp4-b4",
+      "record_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/native-build-record.json",
+      "record_sha256": "752929fc6444343242cf32c2cb53ed074893cef6c2ca5db4ef1c5b20572c5156",
+      "cas": {
+        "action_manifest_sha256": "b4e1a1e1118e76755dab57457a3fdcf8c0ddf5d1c41872d1ce9ce3907ff1e07d",
+        "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/b4/b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861.json",
+        "present": true,
+        "receipt_sha256": "2fbaeaa773f3490e19a203e20001c4f2414a48644670886c7f4e167c4746b20a",
+        "result": {
+          "bytes": 1173,
+          "sha256": "815dd4b361e096b204083b0f92e395031cf4e989568bb8ab203c357866c1c479"
+        }
+      },
+      "returncode": 0,
+      "attempts": 1,
+      "finalization": {
+        "schema": "tessera.native_build_finalization.v1",
+        "bindings": {
+          "/work/src/tessera/serving/csrc/routed_fused_window.cu": {
+            "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+            "bytes": 189924,
+            "mtime_ns": 1791059079263438600
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/build.ninja": {
+            "sha256": "af9df5c0344390cb3d35a03f0283b707a226bb334e16e6afba6a75b7500a9554",
+            "bytes": 1860,
+            "mtime_ns": 1791059080918612000
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/routed_fused_window.cuda.o": {
+            "sha256": "19ace131c800f6d9cdba30f99255ad8fa0266c36caee2115602d16931d767090",
+            "bytes": 2351432,
+            "mtime_ns": 1791059122071440400
+          },
+          "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so": {
+            "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
+            "bytes": 1889584,
+            "mtime_ns": 1791059122232443400
+          }
+        },
+        "log_before_sha256": "0ef5e01206fb8a9968d6d0554f0ea67a1cd8b8310f854676006e789ef585b757",
+        "log_after_sha256": "ec65fbd358bed0d65e21a35cd96c088224806948a4919e83f4ca1f1a322a3c34",
+        "before_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1'\n[1/1] c++ routed_fused_window.cuda.o -shared -L/usr/local/lib/python3.12/dist-packages/torch/lib -lc10 -lc10_cuda -ltorch_cpu -ltorch_cuda -ltorch -ltorch_python -L/usr/local/cuda/lib64 -lcudart -o tessera_routed_fused_e2m1_apf4.so\nninja explain: recorded mtime of tessera_routed_fused_e2m1_apf4.so older than most recent input routed_fused_window.cuda.o (1791059080921612096 vs 1791059122071440272)\n",
+        "after_explanation": "ninja: Entering directory `/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1'\nninja: no work to do.\n",
+        "reconciled": true,
+        "no_pending_work": true
+      }
+    }
+  ]
+}

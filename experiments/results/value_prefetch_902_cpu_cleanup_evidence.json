@@ -1,0 +1,42 @@
+{
+  "schema": "tessera.value_prefetch_902_cleanup_cpu_evidence.v1",
+  "issue": 902,
+  "scope": "Causal CPU lease model with real output filesystem refusal and existing subprocess failure; no CUDA/sanitizer execution or whole-PR acceptance",
+  "source_commit": "b9b155b307dec2d57317f76dd45675a8b5544c0d",
+  "action_key": "1b7076bb1b218e8cad48b5ca2fc2defdb5e6cdd99e55e6b8b8e566eacf637984",
+  "passed": 3,
+  "deselected": 12,
+  "skipped": 0,
+  "cuda_exercised": false,
+  "returncode": 0,
+  "attempts": 1,
+  "resources": {
+    "cpu": 1,
+    "mem_gb": 12,
+    "spool_gb": 2
+  },
+  "receipt": {
+    "action_manifest_sha256": "ead9a5ff352d9ff0799cd854f9cb8fd305bc3e32823e4889a1a07a574c4f822f",
+    "path": "/mnt/shared/prismabuild-fleet/cas/actions/v3/1b/1b7076bb1b218e8cad48b5ca2fc2defdb5e6cdd99e55e6b8b8e566eacf637984.json",
+    "present": true,
+    "receipt_sha256": "6e3ce48506433a93de4d86b14c54cb9fbd1f3221b9d7a1f6b31325f209a49fa9",
+    "result": {
+      "bytes": 1388,
+      "sha256": "2b581ae53ef8c205e72d1a2f06df258b12ce8da311e9cae91b7a9a3addc98773"
+    }
+  },
+  "telemetry": {
+    "complete": true,
+    "oom_local": 0,
+    "oom_kill": 0,
+    "processes_live": 0,
+    "memory_peak_bytes": 398000128
+  },
+  "specific_finding_review": {
+    "owner": "Astra Tessera kernel backlog review",
+    "verdict": "R0-sanitizer-lease specific correction accepted at b9b155b3; not whole901/source/GO acceptance"
+  },
+  "frozen_previous_protocol_sha256": "5aba40963cb6a1265ef81abb3cfb1fe260b68e0b524f4ac2beadaf7e8c6ff993",
+  "previous_native_fd_preflight_action": "85bfd750c0ac0fb1a4e36cc34796c26f32008afaa1684c30252cf52c8d6a741f",
+  "gpu_authorized": false
+}

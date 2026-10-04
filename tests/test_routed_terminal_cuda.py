@@ -4,7 +4,6 @@ The native entry is called even at M=0, so the empty-work case exercises
 terminal CTAs instead of a Python fast return. Work counters independently
 bind completed item claims plus one terminal claim per launched CTA.
 """
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -34,23 +33,10 @@ CASES = [
 
 
 def record_loaded_native(lib, library):
-    path = Path(lib.__file__).resolve()
-    with path.open('rb') as handle:
-        stat = os.fstat(handle.fileno())
-        digest = hashlib.file_digest(handle, 'sha256').hexdigest()
-    matches = []
-    for line in Path('/proc/self/maps').read_text().splitlines():
-        fields = line.split(None, 5)
-        if len(fields) == 6 and fields[5] == str(path) and 'x' in fields[1]:
-            major, minor = (int(value, 16) for value in fields[3].split(':'))
-            if (major, minor, int(fields[4])) == (os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino):
-                matches.append(line)
-    assert matches, 'returned native module is not mapped from the hashed file inode'
+    from tessera._dev.native_identity import loaded_native_identity
+
     source = Path(rf.__file__).parent / 'serving/csrc/routed_fused_window.cu'
-    identity = dict(
-        library=library, path=str(path), sha256=digest, pid=os.getpid(),
-        source=str(source), source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
-        executable_mappings=matches)
+    identity = dict(library=library, **loaded_native_identity(lib, source))
     directory = os.environ.get('TERMINAL_NATIVE_IDENTITY_DIR')
     if directory:
         target = Path(directory)
