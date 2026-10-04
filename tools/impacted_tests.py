@@ -55,7 +55,14 @@ Other kinds of coupling do not have ordinary import edges:
 * *Data coupling* -- a JSON spec, a wire schema, or a shell harness is read at
   runtime by code that never imports it as Python.  A file a module names by
   an explicit path is a node in the graph under that path, so changing it
-  selects that module's tests.  For the rest the fallback is textual: any test
+  selects that module's tests.  A directory a module *enumerates*
+  (``rglob``, ``iterdir``, ``os.listdir``/``scandir``/``walk``) is a node
+  under its own path too: the reader consumes the directory's membership, so
+  any changed, added or deleted path under it selects the reader --
+  pattern-agnostically, because matching the pattern would trade a sound
+  over-selection for an under-selection any new file can trigger (#923).  A
+  conftest's enumeration is collection machinery and joins the probe
+  exclusion below.  For the rest the fallback is textual: any test
   that mentions the path or its basename is impacted, and a file no test
   mentions and no module reads is inert *for test selection*.
 * *The wire and the packaging* are un-analysable by either route and are named
@@ -116,7 +123,9 @@ OPAQUE = (
 # walking them selects tests that are not the ones about to run.
 SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
              "muse-out", "worktrees", "__pycache__"}
-# Extensions that cannot change behaviour and never force a full run.
+# Extensions that never force a full run.  They can still select readers --
+# through the graph (a named read, or a directory-wide enumeration), the text
+# fallback, or a reader this resolver refused to place.
 INERT = {".md", ".txt", ".rst"}
 
 # Explicit manual-only interfaces, not a guess at pytest collection. Keep
@@ -491,6 +500,17 @@ def import_graph(
                 probes.add((target, node))
         for target in data:
             importers[target].add(node)
+            if (path.name == "conftest.py" and target != DATA_WILDCARD
+                    and target not in by_name and (root / target).is_dir()):
+                # A conftest's directory enumeration is collection machinery:
+                # pytest imports the conftest for every test in its scope
+                # whatever changed, so a per-change edge from an ancestor
+                # listing would reach the conftest from every changed path and
+                # hold every verdict at full -- the cycle the exec-probe rule
+                # already removes.  The edge is kept and probe-marked:
+                # excluded from the walks that select or scope, and recorded
+                # by the uncertainty evidence like any other probe.
+                probes.add((target, node))
     if guarded_edges is not None:
         guarded_edges.update({edge: fact for edge, fact in conditional.items()
                               if edge not in unconditional})
@@ -649,6 +669,7 @@ def _selection_reason(
     tests: list[str],
     text_matched: set[str],
     data_matched: set[str] = frozenset(),
+    directory_matched: set[str] = frozenset(),
     unplaced_reads: bool = False,
 ) -> str:
     if missing:
@@ -674,12 +695,16 @@ def _selection_reason(
     if data_matched:
         parts.append("non-Python changed paths reached their readers "
                      "through the import graph")
-    if non_python - text_matched - data_matched:
+    if directory_matched:
+        parts.append("changed paths under a directory-wide read select that "
+                     "directory's readers")
+    if non_python - text_matched - data_matched - directory_matched:
         parts.append("non-Python changed paths have no text-matched tests")
     if unplaced_reads:
         parts.append("reads of paths this resolver named but refused to place "
                      "conservatively select their readers' consumers")
-    if inert_paths - data_matched - text_matched and not unplaced_reads:
+    if (inert_paths - data_matched - text_matched - directory_matched
+            and not unplaced_reads):
         parts.append("inert changed paths require no tests")
     return "; ".join(parts) or "no changed path requires a test"
 
@@ -725,6 +750,17 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             # path, whatever its suffix.
             seeds.add(f)
             data_changed.add(f)
+        # Every ancestor directory is a seed too.  A directory-wide reader is
+        # held against the directory itself, so a member's ancestors are the
+        # only path from a changed, added or deleted file to the reader that
+        # consumes its directory's membership (#923).  An ancestor with no
+        # edges selects nothing, which is what makes the extra seeds free.
+        directory = Path(f).parent
+        while True:
+            seeds.add(str(directory))
+            if str(directory) == ".":
+                break
+            directory = directory.parent
     # Two kinds of module state an unknown dependency: one that loads a file
     # by a path this cannot resolve, and one that would not parse or read at
     # all.  They seed identically -- their consumers are selected, and a
@@ -773,6 +809,21 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # conservative text fallback for every non-Python suffix: Markdown and
     # other documentation can be executable test inputs too (#358).
     data_matched = {f for f in data_changed if importers.get(f)}
+
+    def _unprobed_readers(node: str) -> set[str]:
+        return {importer for importer in importers.get(node, ())
+                if (node, importer) not in probes}
+
+    directory_matched = set()
+    for f in changed:
+        directory = Path(f).parent
+        while True:
+            if _unprobed_readers(str(directory)):
+                directory_matched.add(f)
+                break
+            if str(directory) == ".":
+                break
+            directory = directory.parent
     text_candidates = {f for f in changed if Path(f).suffix != ".py"}
     text_matched: set[str] = set()
     if text_candidates:
@@ -846,6 +897,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             tests=tests,
             text_matched=text_matched,
             data_matched=data_matched,
+            directory_matched=directory_matched,
             unplaced_reads=bool(unplaced),
         ),
     }

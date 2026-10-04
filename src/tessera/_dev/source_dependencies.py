@@ -329,7 +329,16 @@ _SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
             "SourceFileLoader": "importlib.machinery.SourceFileLoader",
             "run_path": "runpy.run_path"}
 _READ_METHODS = {"read_text", "read_bytes", "open"}
-_KINDS = set(_LOADERS) | _READ_METHODS
+#: Directory-enumeration reads.  A call one of these names consumes the base
+#: directory's *membership*, not one named file: what can change under it is
+#: any path at or below the base -- added, edited or deleted -- so the edge it
+#: resolves to is the base directory itself, and no pattern is matched
+#: (tessera#923).  ``Path.glob`` is deliberately absent: single-directory
+#: globs already resolve to exact matched edges through the expression
+#: resolver, and a recursive pattern stays unbounded there by the same rule
+#: that keeps it from crawling outside the tree.
+_ENUMERATIONS = {"rglob", "iterdir", "listdir", "scandir", "walk"}
+_KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
 
 
 class _Scope:
@@ -970,6 +979,51 @@ def source_execution_modules(trees, modules, targets, *, scanners=None,
     }
 
 
+def _enumeration_bases(loader, call, scope, root, refused, links):
+    """The base directories an enumeration call consumes, or ``None``.
+
+    A directory-wide read consumes the directory's *membership*: what can
+    change under it is any path at or below the base, not one named file.  So
+    the dependency is the base itself -- the selector holds it as a node under
+    its repository path and seeds every changed path's ancestor directories
+    against it, which is what carries added and deleted members a per-file
+    edge would miss (#923).  No pattern is matched and nothing is enumerated
+    here: a pattern, a flat listing and a recursive walk of one base all hold
+    the same node, which is the sound direction -- matching the pattern would
+    trade that over-selection for an under-selection any new file can trigger.
+
+    ``None`` names nothing: the caller applies the named/unnamed rule (#148).
+    A base that was named and then refused by the boundary guard -- or named
+    with a pattern this resolver cannot resolve, which leaves the membership
+    unknown -- is appended to ``refused`` so the caller keeps the #338
+    unplaced-read uncertainty instead of dropping the directory.
+    """
+    if loader == "iterdir":
+        bases = _values(call.func.value, scope, root, refused=refused, links=links)
+        if bases is not None and (call.args or call.keywords):
+            refused.extend(base for base in bases if isinstance(base, Path))
+            return None
+    elif loader in {"listdir", "scandir", "walk"}:
+        if not call.args:
+            return None
+        bases = _values(call.args[0], scope, root, refused=refused, links=links)
+    else:  # rglob: the receiver names the tree, the argument the pattern.
+        bases = _values(call.func.value, scope, root, refused=refused, links=links)
+        if bases is None:
+            return None
+        if len(call.args) != 1 or call.keywords:
+            refused.extend(base for base in bases if isinstance(base, Path))
+            return None
+        patterns = _values(call.args[0], scope, root, refused=refused, links=links)
+        if patterns is None or not all(
+                isinstance(pattern, str) for pattern in patterns):
+            refused.extend(base for base in bases if isinstance(base, Path))
+            return None
+    if bases is None or not all(isinstance(base, Path) for base in bases):
+        return None
+    return _place(bases, root, refused, links)
+
+
 def file_imports(tree, path, root, *, executes_source=None):
     """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
 
@@ -980,6 +1034,12 @@ def file_imports(tree, path, root, *, executes_source=None):
     collapsed the two either lost the dependency (a plain reader is not an
     unknown importer, so it recorded nothing at all) or lost #148 (an
     unnameable read is not "every module in the tree").
+
+    Directory-enumeration calls (``rglob``, ``iterdir``, ``os.listdir``/
+    ``scandir``/``walk``) resolve to the base directory itself, under the same
+    boundary guard and the same named/unnamed split: a resolvable base comes
+    back in ``found`` as one directory node, a named-but-refused one as
+    ``unplaced``, a base nothing names as neither (#923).
     """
     scanner, kind = _file_consumer_scan(tree, path)
     executes = (_executes_python_source(tree) if executes_source is None
@@ -1011,11 +1071,31 @@ def file_imports(tree, path, root, *, executes_source=None):
         loaders = kind(call.func)
         if not loaders:
             continue
-        reading = loaders <= _READ_METHODS
+        reading = loaders <= _READ_METHODS | _ENUMERATIONS
         if len(loaders) != 1:
             unknown = unknown or wildcard(reading)
             continue
         loader = next(iter(loaders))
+        if loader in _ENUMERATIONS:
+            refused, links = [], set()
+            try:
+                targets = _enumeration_bases(
+                    loader, call, scope, root, refused, links)
+            except (OSError, ValueError, TypeError, RecursionError):
+                targets = None
+            if targets is None:
+                # A base this resolver named and the boundary guard refused is
+                # the #338 refusal; a base nothing named follows the #148 rule,
+                # widened by ``reading``: a module that can execute source may
+                # run what any directory holds, so it stays a wildcard.
+                if refused:
+                    refuse(True)
+                else:
+                    unknown = unknown or wildcard(True)
+            else:
+                found.update(targets)
+                found.update(links)
+            continue
         # Refusals by the boundary guard anywhere inside this call's
         # expressions, so the ``values is None`` below can tell "no target
         # was nameable" from "a named target was not placeable".
