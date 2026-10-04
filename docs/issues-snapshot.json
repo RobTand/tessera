@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-03T15:20:04Z",
+ "generated": "2026-10-03T19:08:37Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5147,13 +5147,89 @@
     "state": "OPEN",
     "title": "[P1] Original copy receipts must snapshot coherent pending/completed transitions"
    },
+   "2156": {
+    "state": "OPEN",
+    "title": "Land checkpoint export component on current main (successor to #2117)"
+   },
+   "2157": {
+    "state": "OPEN",
+    "title": "Repair compact spill read-plan metadata integration (#2115)"
+   },
+   "2158": {
+    "state": "OPEN",
+    "title": "Repair B36 remaining public producer test callers"
+   },
+   "2159": {
+    "state": "OPEN",
+    "title": "Remove incidental prefix-location assertion from qualified installed-source identity test"
+   },
    "216": {
     "state": "CLOSED",
     "title": "Export-seal capture context is a hard-coded roster: CAPTURE_CONTEXT_FIELDS is not derived from or pinned to tessera.export.CAPTURE_CONTEXT"
    },
+   "2160": {
+    "state": "OPEN",
+    "title": "fix(tests): migrate B36 remaining public producer callers"
+   },
+   "2161": {
+    "state": "OPEN",
+    "title": "test: identify qualified installed source without prefix-location assumptions"
+   },
+   "2162": {
+    "state": "OPEN",
+    "title": "Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
+   },
+   "2163": {
+    "state": "OPEN",
+    "title": "Track nonactivating Tessera lane-v11 reader compatibility"
+   },
+   "2164": {
+    "state": "OPEN",
+    "title": "Track producer-bound quantum counters completion reference"
+   },
+   "2165": {
+    "state": "OPEN",
+    "title": "Track producer-owned TR3 gold record and uniform-control context plumbing"
+   },
+   "2166": {
+    "state": "OPEN",
+    "title": "Consolidate bounded calibration and consumed-page safetensors prefixes"
+   },
+   "2167": {
+    "state": "OPEN",
+    "title": "Share bounded calibration and consumed-page safetensors prefixes"
+   },
+   "2168": {
+    "state": "OPEN",
+    "title": "[P2] Matched-byte control gate requires a private Tessera experiment checkout"
+   },
+   "2169": {
+    "state": "OPEN",
+    "title": "Share remaining campaign receipt and Fisher dataset file identities"
+   },
    "217": {
     "state": "CLOSED",
     "title": "The dead-override census cannot see an 'except RuntimeError' swallow, which is the shape DeadVendoredOverrideError's own docstring invites"
+   },
+   "2170": {
+    "state": "OPEN",
+    "title": "Share campaign receipt and Fisher dataset file identities"
+   },
+   "2171": {
+    "state": "OPEN",
+    "title": "Execute bounded joint full-domain acquisition requests through existing anchor scheduler"
+   },
+   "2172": {
+    "state": "OPEN",
+    "title": "Share bounded safetensors prefix diagnostics without changing refusal text"
+   },
+   "2173": {
+    "state": "OPEN",
+    "title": "Share bounded safetensors prefix diagnostics"
+   },
+   "2174": {
+    "state": "OPEN",
+    "title": "Consolidate exact campaign JSON and framed-text identity constructors"
    },
    "218": {
     "state": "CLOSED",
@@ -11946,7 +12022,7 @@
     "title": "fix: bound dense split launches before descriptor-slot reuse"
    },
    "847": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Retain and retire overlap allocations on partial failure"
    },
    "848": {
@@ -11966,11 +12042,11 @@
     "title": "[P1] Dense-GEMM sweep's A/B decision reads an upper order statistic, not the median (child of #806)"
    },
    "851": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix(serving): decline unavailable stock facts for empty RoPE"
    },
    "852": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix(serving): decline unavailable stock facts for shared add"
    },
    "853": {
@@ -11994,7 +12070,7 @@
     "title": "Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
    },
    "858": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Add an uninstalled SP mHC tile pipeline with explicit token ownership and retirement"
    },
    "859": {
@@ -12006,7 +12082,7 @@
     "title": "A Linear outside the decoder body is passed through but never named in ignore, and the plugin refuses exactly that"
    },
    "860": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add an uninstalled SP mHC tile pipeline and finite TP2 probe"
    },
    "861": {
@@ -12038,7 +12114,7 @@
     "title": "test: remove repeated pure CI fixture work"
    },
    "868": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add opt-in R4 piece-major placement for routed E4M3 MMA"
    },
    "869": {
@@ -12082,7 +12158,7 @@
     "title": "Experiment: default-off T4 packed activation L1 prefetch (#875)"
    },
    "878": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify retained original token_sum safety without kernel duplication (#859)"
    },
    "879": {
@@ -12094,16 +12170,52 @@
     "title": "The A-side doc forbids the dispatch master already ships: window-gemv-a-side.md \u00a75 item 1 vs 6c521ea"
    },
    "880": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Pin byte-identical public producer digest-cache reuse"
    },
    "881": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Public producer subprocess regression loses PB snapshot import root after cwd change"
+   },
+   "882": {
+    "state": "CLOSED",
+    "title": "[P2] Decline unavailable empty-RoPE stock inspection before rebinding"
+   },
+   "883": {
+    "state": "CLOSED",
+    "title": "[P2] Decline unavailable shared-fold stock inspection before rebinding"
+   },
+   "884": {
+    "state": "CLOSED",
+    "title": "[P2] Retain and retire tile-overlap allocations after partial enqueue failure"
+   },
+   "885": {
+    "state": "OPEN",
+    "title": "U4 comparison input freeze must bind actual export audit, not stale A8SE identity"
+   },
+   "886": {
+    "state": "OPEN",
+    "title": "[P2] Standing uniform-control CLI is absent from installs and imports retired experiment converter"
+   },
+   "887": {
+    "state": "CLOSED",
+    "title": "[P1] Empty-RoPE qualification probe must not replace a failed stock cache writer"
+   },
+   "888": {
+    "state": "CLOSED",
+    "title": "fix: refuse failed stock cache production in empty-RoPE qualification"
+   },
+   "889": {
+    "state": "OPEN",
+    "title": "Paired-K32 timing summary accepts medians unrelated to raw events"
    },
    "89": {
     "state": "CLOSED",
     "title": "At R=8 a non-dyadic window-table sigma costs one dense unit 1.36x h error, at identical reach"
+   },
+   "890": {
+    "state": "OPEN",
+    "title": "Bind paired timing summaries to exact raw-event medians"
    },
    "893": {
     "state": "OPEN",
