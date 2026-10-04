@@ -51,7 +51,8 @@ MODEL = os.environ.get("T508_MODEL", "glm53-stub")
 port, out, arm = sys.argv[1], pathlib.Path(sys.argv[2]), sys.argv[3]
 only = set(sys.argv[4].split(",")) if len(sys.argv) > 4 else None
 out.mkdir(parents=True, exist_ok=True)
-URL = f"http://127.0.0.1:{port}"
+# T508_HOST: the API server's address when it runs on another box (a TP 2 serve's rank 0).
+URL = f"http://{os.environ.get('T508_HOST', '127.0.0.1')}:{port}"
 TOPK = 20
 LIMIT = 2048
 

@@ -32,6 +32,8 @@ eq_member = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(eq_member)
 
 _COUNT = re.compile(r"^(?P<manager>\w+)\|FULL\|tokens=(?P<tokens>\d+)\|reqs=")
+#: <arm>.dispatch.<pid>.json (one box) or <arm>.rank<r>.dispatch.<pid>.json (arm_tp2.sh, per rank).
+_DISPATCH = r"{arm}(?:\.rank(?P<rank>\d+))?\.dispatch\.\d+\.json"
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -48,22 +50,30 @@ def engine_args(arm_dir: pathlib.Path, arm: str) -> dict[str, str]:
 
 
 def graph_record(arm_dir: pathlib.Path, arm: str) -> dict:
-    """Captured and replayed FULL sizes per manager class, and Tessera's per-class counts."""
+    """Captured and replayed FULL sizes per manager class, and Tessera's per-class counts.
+
+    A tensor-parallel arm writes one dispatch log per rank; each rank's managers are
+    keyed ``rank<r>:<class>``, so every rank must replay what it captured on its own.
+    """
     captured, replayed = defaultdict(set), defaultdict(lambda: defaultdict(int))
     classes = {"captured": {}, "replays": {}}
-    for path in sorted(arm_dir.glob(f"{arm}.dispatch.*.json")):
+    pattern = re.compile(_DISPATCH.format(arm=re.escape(arm)))
+    for path in sorted(arm_dir.iterdir()):
+        if not (found := pattern.fullmatch(path.name)):
+            continue
+        tag = f"rank{found['rank']}:" if found["rank"] is not None else ""
         rec = json.loads(path.read_text())
         for owner, sizes in rec.get("captured", {}).items():
             if isinstance(sizes, list):
-                captured[owner.split("@")[0]].update(int(s) for s in sizes)
+                captured[tag + owner.split("@")[0]].update(int(s) for s in sizes)
         for key, count in rec.get("counts", {}).items():
             if (m := _COUNT.match(key)):
-                replayed[m["manager"]][int(m["tokens"])] += count
+                replayed[tag + m["manager"]][int(m["tokens"])] += count
         tc = rec.get("tessera_classes") or {}
         for manager, by_bound in tc.get("captured", {}).items():
-            classes["captured"].setdefault(manager, {}).update(by_bound)
+            classes["captured"].setdefault(tag + manager, {}).update(by_bound)
         for key, count in tc.get("replays", {}).items():
-            classes["replays"][key] = max(classes["replays"].get(key, 0), count)
+            classes["replays"][tag + key] = max(classes["replays"].get(tag + key, 0), count)
     managers = {m: {"captured_sizes": sorted(s), "replayed_sizes": dict(sorted(replayed[m].items()))}
                 for m, s in sorted(captured.items()) if s}
     return {"managers": managers, "classes": classes}
@@ -112,7 +122,7 @@ def arm_record(receipts, manifest, flat, arm, pool) -> dict:
         "kernel_config": json.loads(args["kernel_json"]) if args.get("kernel_json") else None,
         "speculative_tokens": int(spec["num_speculative_tokens"]) if spec else 0,
         "max_model_len": int(args["max_model_len"]), "max_num_seqs": int(args["max_num_seqs"]),
-        "tensor_parallel_size": 1,
+        "tensor_parallel_size": int(args.get("tensor_parallel_size", 1)),
         "image_id": args.get("image_id"), "src_sha256": args.get("src_sha256"),
         "model": args.get("model"), "vllm": serve.get("vllm_version"),
         "resolved": serve.get("dispatch"), "enforce_eager": serve.get("enforce_eager"),
@@ -130,6 +140,8 @@ def main() -> int:
     ap.add_argument("--eager", required=True)
     ap.add_argument("--graph", required=True)
     ap.add_argument("--commit", default="")
+    ap.add_argument("--not-measured", action="append", default=None, metavar="TEXT",
+                    help="what this receipt does not cover, one per flag (default: the stub-B list)")
     ap.add_argument("--image", default="localhost/prismaquant/spark-vllm-nccl230@sha256:"
                     "5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a")
     a = ap.parse_args()
@@ -160,8 +172,9 @@ def main() -> int:
                    "membership against the eager pool's outcomes is a screen, never the verdict",
             "eager_pool": {r["name"]: r["screen_long"] for r in pool_records},
             "arms": {r["name"]: r["screen_long"] for r in arms}}},
-        "not_measured": ["tensor_parallel_size 2", "the full GLM-5.3 artifact (u1 stub B, 8 layers)",
-                         "served KL against BF16 under graphs", "graph-vs-eager speed"],
+        "not_measured": a.not_measured if a.not_measured is not None else [
+            "tensor_parallel_size 2", "the full GLM-5.3 artifact (u1 stub B, 8 layers)",
+            "served KL against BF16 under graphs", "graph-vs-eager speed"],
     }
     graph_receipt.finish(receipt)
     a.out.write_text(json.dumps(receipt, indent=1, sort_keys=True))
