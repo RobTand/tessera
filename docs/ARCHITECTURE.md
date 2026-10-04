@@ -1,5 +1,37 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for the current-base paired-K32 harness/control
+composition (#862 integration-conflict repair). The default-off paired-K32
+experiment's harness and control files return on this composed base, ported
+surgically from the accepted 9604 tuple and adapted to the current PM33
+argument ABI and the #915 SDK/mapped-FD owners. The T8R owner regains its
+explicit closed-world paired numeric mode (pinned A8SE L10 TP2rank0 balanced
+M1/512/2048, retained intermediate and final raw words, token0/experts0..7
+materializing fp64 reference, separate K192 down-boundary and K128 fallback
+synthetic one-CTA controls) and its fixed timing mode that reuses the
+accepted numeric receipt under ABBA flag order with unprofiled CUDA events,
+separate profiles and raw board-power windows. The direct mode it requires
+holds original regular nofollow FDs through the existing input owner, and
+the finite owned-CID container mode (16GiB host memory, no extra swap, two
+CPUs, 240s per arm) stays the only direct admission. Both wrappers pass the
+strict selector `TESSERA_ROUTED_FUSED_PAIRED_K32` through unset versus
+explicitly empty unchanged, so malformed values reach the strict Python
+gate; the compile flag stays default-off. The paired scope is unchanged:
+legacy resident addressing only, routed E4M3 MMA modes0/2, R4 slot8,
+BMT128, K divisible by64 and at least192, input rows at least512, never
+dense or split. Every direct current native caller keeps the 33-argument
+legacy forward with explicit false; piece-major paths read the actual
+`piece_major`. The acting controller keeps strict binding: the historical
+accepted a5… numeric receipt and its 41414 native outputs stay bound to
+their original source/native/readset tuple, timing reuse refuses a changed
+current translation unit or readset by name, and no new source or ELF is
+silently labeled with the old certificate. No new dispatcher, controller,
+cache, math/order/wire/layout/default/census/pin promotion is introduced;
+no GPU, numeric, performance, energy or serving claim is made here, and
+parent verification runs the actual checks. Historical context:
+`measurements/2026-10-02-paired-k32-compile.md` and the #857/#889 stamps
+remain immutable history.
+
 Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
 Both qualification owners derive the mapping device from the held FD's
 exact mount ID and require that backing device plus inode on an executable
