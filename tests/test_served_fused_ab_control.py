@@ -111,7 +111,9 @@ class TestGlmEnvArgs:
 
 def _write_contract(tree: Path, symbols: list[str]):
     d = tree / "src" / "tessera" / "serving"
-    d.mkdir(parents=True)
+    # test_expectation_derived_from_contract_not_magic rewrites the contract
+    # on the fixture's tree, so the directory may already exist
+    d.mkdir(parents=True, exist_ok=True)
     cells = [{"family": fam, "platform": "sm_121",
               "executes": [{"symbol": s, "decoder": "d"} for s in symbols]}
              for fam in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1")]
