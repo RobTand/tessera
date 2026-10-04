@@ -1085,7 +1085,11 @@ def test_a_worker_share_is_never_read_as_this_arms_population(tmp_path):
     record = merge_suite._resume("x86", merge_suite.ARMS["x86"], tmp_path)
     assert record["surface"] is None
     assert "gw6" in record["no_surface_means"]
-    assert "206" not in json.dumps(record), "a share's counts reached the record"
+    # The record names paths under tmp_path, whose pytest counter can itself
+    # contain "206" (pytest-20666 failed exactly so); only the record's own
+    # values may not carry the share's count.
+    assert "206" not in json.dumps(record).replace(str(tmp_path), "<tmp>"), \
+        "a share's counts reached the record"
     assert merge_suite._verdict([record]) == \
         "incomplete: an arm published no population"
 
