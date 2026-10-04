@@ -12241,6 +12241,10 @@
     "state": "OPEN",
     "title": "[P3] Store combined native observed receipts in the established results namespace"
    },
+   "906": {
+    "state": "OPEN",
+    "title": "[P2] Close the composed T4 staged-consumer source prerequisite independently"
+   },
    "91": {
     "state": "CLOSED",
     "title": "The compile-cache key does not see the GEMV lane: two structurally different streamed graphs share one slot"
