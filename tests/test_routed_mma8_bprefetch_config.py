@@ -66,7 +66,7 @@ def native_metadata(module, b_prefetch):
         HAS_WIDE_GATE_UP=module.has_width("e4m3mma", 0, module.BM_WIDE),
         HAS_WIDE_DOWN=module.has_width("e4m3mma", 2, module.BM_WIDE),
         GATE_UP_RATE_MAX=max(module.routed_lane_rates("e4m3mma")),
-        MMA8_GATE_UP_B_PREFETCH=b_prefetch)
+        MMA8_GATE_UP_B_PREFETCH=b_prefetch, MMA8_A_RING=module.MMA8_A_RING)
 
 
 @pytest.mark.parametrize("want,have", [(0, 1), (1, 0)])

@@ -252,6 +252,28 @@ source numerical and matched before/after profile/Netdata/work-per-joule evidenc
 are required: source/CPU controls alone make no speed/energy claim. Neither this
 flag nor PM is promoted as a default, serving cell or pin.
 
+The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_A_RING` experiment
+(Refs #739) moves the E4M3-MMA chunk loop's activation load off its last
+register move. With the flag at 1, on the routed two-run launches only, each
+A-staging producer `cp.async`es its 16 raw E4M3 bytes two chunks ahead into its
+own slot of a per-word-stage ring, in the commit group of that chunk's words.
+The one-run launches keep `prefetch_a` and the dense and shared launches keep
+the register load: there the measured ceiling left nothing the ring could buy.
+On the T8R release stacks, the two-run R1088/R832 routed layers took
+0.93-0.94 of master's time at M = 512, 0.90 at 2048 and 0.93-0.94 at 8192,
+against a no-load ceiling of 0.92-0.94, 0.88 and 0.90. Every timed cell was
+bitwise equal. The served T-8 routed layers are all one-run R1024, where the
+ceiling behind `prefetch_a` is 0.97-0.99 at M <= 2048, so the flag does not
+move served prefill at the current chunk size. Receipt: [the activation
+ring](measurements/2026-10-04-mma8-activation-ring.md). `store_a` reads the slot back and writes the same
+fragment-order A tile, so every MMA and output byte is the register path's. The
+ring is WORD_STAGES raw tiles after the A tiles: `a_region_bytes` grows by 6,144
+B at 64 routes and 12,288 B at 128, so `SMEM_FIXED_MMA8` follows the flag. Every
+E4M3-MMA launch still fits three word stages. At 0 the layout is master's and
+the SASS is master's up to commuted `IADD3` operands. The choice is frozen at import like the dual-B flag's, emitted only
+into MMA8 compile flags, and checked against the loaded export. The value and
+`f16` libraries are untouched.
+
 Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
 (#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
 selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
