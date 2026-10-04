@@ -146,13 +146,23 @@ void lt_run(int64_t pid, int64_t i, torch::Tensor x, torch::Tensor w, torch::Ten
 }
 """
 
+LT_DECLS = r"""
+#include <torch/extension.h>
+#include <vector>
+int64_t lt_setup(int64_t transa, std::vector<int64_t> a, std::vector<int64_t> b, std::vector<int64_t> c,
+                 int64_t batch, int64_t max_algos, int64_t ws_bytes);
+int64_t lt_count(int64_t pid);
+std::vector<int64_t> lt_config(int64_t pid, int64_t i);
+void lt_run(int64_t pid, int64_t i, torch::Tensor x, torch::Tensor w, torch::Tensor out);
+"""
+
 
 def build_lt():
     from torch.utils.cpp_extension import load_inline
 
     return load_inline(
         name="proj_gemm_lt",
-        cpp_sources="",
+        cpp_sources=LT_DECLS,
         cuda_sources=LT_SRC,
         functions=["lt_setup", "lt_count", "lt_config", "lt_run"],
         extra_ldflags=["-lcublasLt"],
