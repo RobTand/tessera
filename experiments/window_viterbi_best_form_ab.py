@@ -23,8 +23,12 @@ Three arms, because two would leave the mechanism unattributed:
             only thing that moved is the width.  A first attempt held the
             width by passing chunk=32 instead; that moved the outer loop too,
             and its sse said so.  The difference between this arm and
-            ``front`` is the store and the front alone; the difference
-            between it and ``best`` is the width.
+            ``front`` is the rewritten recurrence together with
+            final-only front materialisation -- not the store alone; this
+            bench's doc (docs/measurements/tessera-window-best-form-
+            2026-09-09.md) attributes a combined 1.48x at R=3 and does not
+            isolate the store.  The difference between it and ``best`` is
+            the width.
 
 Phases in ONE process, on ONE tensor, in this order:
 
