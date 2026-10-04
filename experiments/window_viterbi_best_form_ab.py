@@ -426,6 +426,24 @@ def _g2_config(cfg, args, dev):
         rec["verdict"] = "an arm does not return the reference's answer"
         return rec
 
+    if args.mode == "ncu":
+        # The NCU driver: one captured group per arm and nothing else.  NCU
+        # replays and serialises every launch it counts, so the profiled run
+        # must be the minimum that still launches the sealed geometry: the
+        # identity above has already proven the bytes, and each arm runs its
+        # group once here, warm, at the production tile and graph rules.
+        for arm, width_cap, tile in G2_ARMS:               # capture, uncounted
+            group(arm, width_cap, tile)
+            torch.cuda.synchronize()
+        rec["ncu_run"] = dict(
+            note="one warm group per arm follows; profile with -k filters "
+                 "on the step kernel names",
+            arms=[arm for arm, _, _ in G2_ARMS])
+        for arm, width_cap, tile in G2_ARMS:
+            group(arm, width_cap, tile)
+            torch.cuda.synchronize()
+        return rec
+
     if args.mode == "pbprofile":
         # Same contract as the legacy rows: one call per arm under the
         # fleet's in-process torch profiler, arms separated by marker, one
@@ -561,7 +579,7 @@ def _joined_w_for(calls, rate):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=("time", "pbprofile"), default="time")
+    ap.add_argument("--mode", choices=("time", "pbprofile", "ncu"), default="time")
     ap.add_argument("--blocks", type=int, default=3, help="ABC blocks")
     ap.add_argument("--min-block-s", type=float, default=5.0,
                     help="inner repeats are sized so a block runs at least this "
