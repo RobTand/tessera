@@ -138,6 +138,14 @@ def netdata_window(after,before):
             for host,addr in [('sparky','127.0.0.1'),('sparklina','192.168.1.110')]}
 
 
+def require_pb_execution():
+    """Held-original-FD transport does not exempt a batch from PB admission."""
+    if not os.environ.get("PRISMABUILD_ACTION_KEY"):
+        raise ValueError("paired custom-op batch requires an admitted PrismaBuild attempt")
+    if os.environ.get("BENCH_STRICT_STAGED"):
+        raise ValueError("held-original-FD paired transport cannot also use staged input transport")
+
+
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--out',required=True)
@@ -149,8 +157,7 @@ def main():
     parser.add_argument('--candidate-sha256',required=True)
     parser.add_argument('--timing',action='store_true')
     args=parser.parse_args()
-    if os.environ.get('PRISMABUILD_ACTION_KEY') or os.environ.get('BENCH_STRICT_STAGED'):
-        raise ValueError('stock vLLM numeric execution must run directly, outside PB admission')
+    require_pb_execution()
     def interrupted(signum,frame):raise KeyboardInterrupt('numeric run interrupted: '+str(signum))
     signal.signal(signal.SIGTERM,interrupted)
     out=Path(args.out);out.mkdir(parents=True,exist_ok=False)

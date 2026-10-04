@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-04 for paired custom-op PB execution admission (#917).
+The paired batch and its wrapper require an admitted PrismaBuild context;
+held-original-FD input transport is not a vLLM service exemption. Existing
+source/native/input/certificate, pressure, affinity and owned-CID fences
+remain unchanged; historical direct evidence is not relabelled as PB proof.
+
 Re-stamped 2026-10-04 for the current-base paired-K32 harness/control
 composition (#862 integration-conflict repair). The default-off paired-K32
 experiment's harness and control files return on this composed base, ported

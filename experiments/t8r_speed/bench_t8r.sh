@@ -79,7 +79,8 @@ fi
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
   if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
-    # The explicit closed paired numeric mode: one finite arm, fixed deadline.
+    # Closed paired batch uses held FDs, but always stays inside PB execution.
+    [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo "paired custom-op batch requires an admitted PrismaBuild attempt" >&2; exit 2; }
     [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }
     DIRECT_TIMEOUT=240
   else

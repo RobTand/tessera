@@ -1,4 +1,4 @@
-"""Finite direct-vLLM bounds and exact owned-container cleanup, no real Docker."""
+"""Finite admitted-PB batch bounds and exact owned cleanup, no real Docker."""
 import importlib.util
 import json
 import copy
@@ -15,6 +15,28 @@ def action(monkeypatch):
     spec=importlib.util.spec_from_file_location('paired_numeric_action_control',PATH)
     module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("admitted,staged", [(False, False), (True, False), (True, True)])
+def test_paired_batch_requires_admitted_pb_without_mixing_input_transports(monkeypatch, admitted, staged):
+    module = action(monkeypatch)
+    if admitted:
+        monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "a" * 64)
+    else:
+        monkeypatch.delenv("PRISMABUILD_ACTION_KEY", raising=False)
+    if staged:
+        monkeypatch.setenv("BENCH_STRICT_STAGED", "1")
+    else:
+        monkeypatch.delenv("BENCH_STRICT_STAGED", raising=False)
+    if not admitted:
+        with pytest.raises(ValueError, match="admitted PrismaBuild"):
+            module.require_pb_execution()
+    elif staged:
+        with pytest.raises(ValueError, match="cannot also use staged"):
+            module.require_pb_execution()
+    else:
+        module.require_pb_execution()
+
 
 
 @pytest.mark.parametrize('state',['owned','foreign','absent','absent_lowercase','absent_wrong_cid','daemon_error'])
