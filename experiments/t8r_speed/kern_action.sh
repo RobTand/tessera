@@ -26,7 +26,8 @@ if [[ -z "${ORACLE_IMAGE:-}" ]]; then
   exit 2
 fi
 FAILED=()
-ROUTING=/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930
+# KERN_ROUTING: another recorded-routing root (the same m<M>/*.pt|*.json layout).
+ROUTING=${KERN_ROUTING:-/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930}
 export BENCH_ARTIFACT=${BENCH_ARTIFACT:-/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported}
 GROUPS_=${KERN_GROUPS:-experts.R1024.L10}
 STEPS=" ${KERN_STEPS:-time ncu} "
