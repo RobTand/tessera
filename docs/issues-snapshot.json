@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-04T19:31:12Z",
+ "generated": "2026-10-04T20:59:43Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -4872,7 +4872,7 @@
     "title": "[P3] PQ test speed: remove the redundant 4x31 s delayed-startup sleeps in test_tessera_plan_input_binding"
    },
    "2094": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Shape-time prices must authenticate independent panel and reload evidence (#1583 follow-up)"
    },
    "2095": {
@@ -4956,8 +4956,8 @@
     "title": "Prepare a genuine checkpoint-export component for PB #905 pacing A/B"
    },
    "2112": {
-    "state": "OPEN",
-    "title": "Bind shape-time prices to reviewed PB checker completions"
+    "state": "CLOSED",
+    "title": "Fix authenticated shape-price reload and current allocator replay intake"
    },
    "2113": {
     "state": "CLOSED",
@@ -5092,7 +5092,7 @@
     "title": "Prepare nonactivating Tessera v11 run-table reader compatibility"
    },
    "2143": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Guard original quantum source authority before profile discovery"
    },
    "2144": {
@@ -5177,7 +5177,7 @@
    },
    "2162": {
     "state": "OPEN",
-    "title": "Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
+    "title": "[P2+] Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
    },
    "2163": {
     "state": "CLOSED",
@@ -5422,6 +5422,14 @@
    "2217": {
     "state": "CLOSED",
     "title": "Integrate approved fixture-cost and corrected image-bootstrap heads"
+   },
+   "2218": {
+    "state": "OPEN",
+    "title": "[P2] test_packed_joint_checkpoint_resume flaked on producer_source_sha256 under xdist (package-tree hash vs concurrent writers?)"
+   },
+   "2219": {
+    "state": "OPEN",
+    "title": "[P1] Cache filenames are not injective in the qualified name: two Linears can share one rendered-weight file and nothing refuses"
    },
    "222": {
     "state": "CLOSED",
@@ -12239,7 +12247,7 @@
    },
    "857": {
     "state": "OPEN",
-    "title": "Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
+    "title": "[P2] Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
    },
    "858": {
     "state": "CLOSED",
@@ -12291,7 +12299,7 @@
    },
    "869": {
     "state": "OPEN",
-    "title": "Retire compact-only routed metadata after successful native selection"
+    "title": "[P2] Retire compact-only routed metadata after successful native selection"
    },
    "87": {
     "state": "CLOSED",
@@ -12362,7 +12370,7 @@
     "title": "[P2] Retain and retire tile-overlap allocations after partial enqueue failure"
    },
    "885": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] U4 comparison input freeze must bind actual export audit, not stale A8SE identity"
    },
    "886": {
@@ -12477,18 +12485,6 @@
     "state": "CLOSED",
     "title": "The compile-cache key does not see the GEMV lane: two structurally different streamed graphs share one slot"
    },
-   "917": {
-    "state": "OPEN",
-    "title": "[P1] Paired custom-op numeric launcher must require admitted PB execution"
-   },
-   "918": {
-    "state": "OPEN",
-    "title": "[P1] Paired telemetry must attribute each Spark independently of PB placement"
-   },
-   "919": {
-    "state": "OPEN",
-    "title": "[P1] Freeze paired compile choice before a cached native bank can be reused"
-   },
    "910": {
     "state": "CLOSED",
     "title": "[P2] Bind the VB1770 baseline serve run: no doc names u4-VAL787-20261001T1231Z-A8SE752VB, its serve image digest, or the 1770.27 tok/s host-L8192-c1 cell"
@@ -12542,20 +12538,24 @@
     "title": "[P1] Refuse known unsafe stock V2 runner in eager NoPE admission"
    },
    "922": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872)"
    },
    "923": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Impacted-test selector silently omits consumers of directory-wide non-Python inputs"
    },
    "924": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Select directory-wide non-Python inputs in the impacted-test selector"
    },
    "925": {
     "state": "OPEN",
     "title": "[P1] GLM-5.3 prefill: fuse SP-aware mHC pre/post (#783)"
+   },
+   "926": {
+    "state": "CLOSED",
+    "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872) - integrator refresh of #922"
    },
    "93": {
     "state": "CLOSED",

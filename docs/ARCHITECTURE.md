@@ -130,6 +130,8 @@ before even the zero-token return. The shared-add lever remains default-off;
 native causal controls and its full CUDA/TR3/served gates remain independent.
 
 Re-stamped 2026-10-02 for the shared-add inspected-stock guard. Shared
+
+Re-stamped 2026-10-02 for the empty-RoPE inspected-stock guard. Shared
 `serving.stock_interface` supplies source/signature facts; this lever's source
 pins and expected parameters remain local and unchanged. Unreadable source,
 missing method, signature or import failures decline before rebinding. The
@@ -628,6 +630,7 @@ unwritten. On GB10 no GLM-5.3 role's split exceeds the bound, at any M or
 rate, so no GLM-5.3 launch changes. Few-row, small-K roles take a smaller
 split; for example, 128 x 256 at M = 1 now takes 4 splits where it took 8.
 No route, cell, rung or schema changes. See §3.3 (the dense identity).
+
 
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
@@ -8050,6 +8053,33 @@ for the first folded call and one for the first kept call.
 
 The flag is off by default. No route, contract or artifact changes.
 
+### 5.1.3 Opt-in: skip the zero-width RoPE query cat (tessera#796)
+
+GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
+`FlashInferMLASparseSM120Impl.forward_mqa` still joins `(q_nope, q_pe)` with
+`torch.cat`, which copies all of `q_nope`: 11 copies of 67 MB per 2048-token
+prefill chunk at TP 2, about 6.4 ms.
+
+With `TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1`, `TesseraConfig.get_quant_method`
+rebinds that method (`serving.glm53_empty_rope`). The rebind passes `q_nope`
+itself when the cat would only copy it: a 2-tuple, a zero-wide second part,
+matching leading shape, dtype and device, and a contiguous, 512-byte-aligned
+`q_nope`. The kernel then reads the same bytes, shape, strides and alignment.
+Every other query reaches the stock code unchanged.
+
+The rebind installs only on a stock source whose sha256 is in the inspected
+set (image `5be13705`); any other source keeps the stock method. Each process
+logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
+whether the first tuple query skipped the cat.
+
+The flag is off by default. No route, contract or artifact changes.
+
+The GPU qualification probe `experiments/t8r_speed/empty_rope_cat_check.py`
+requires the stock `concat_and_cache_mla` producer and successful CUDA
+completion before recording cache provenance. Import, writer and completion
+failures propagate; synthetic cache bytes never replace a failed stock writer
+(tessera#887). CPU failure controls cover this refusal only, not GPU arithmetic
+or the matched served TR3/cat-trace gate required by #796.
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in
