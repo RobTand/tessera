@@ -85,7 +85,8 @@ def test_intake_binds_only_approved_artifact_and_common_source_identity(fixture)
     assert "export TS_PIN_CANDIDATE=" + args.commit[:8] in shell
     assert "_ARTIFACT_EXPORT_COMMIT=" + 'c' * 40 in shell
     assert "_ARTIFACT_CONTRACT_VERSION=54" in shell
-
+    assignments = dict(word.split("=", 1) for word in shlex.split(shell) if word != "export")
+    assert assignments[f"TS_{args.commit[:8]}_ARTIFACT_EXCEPTION_REASON"] == args.artifact_exception_reason
     assert result['artifact_identity']['serialized_weight_bytes'] == 3
     assert result['artifact_identity']['all_files_bytes'] > 3
     assert result['artifact_identity']['metadata_bytes'] == result['artifact_identity']['all_files_bytes'] - 3
