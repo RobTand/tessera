@@ -186,7 +186,10 @@ __device__ void post_phase(const Params& p, int t0, uint64_t keep) {
 // s owns the contiguous range DeepGEMM gives it, and each warp's accumulator
 // chain (and warp 0's sqrsum) is flushed and reset at every split's end, so
 // each split's chain is DeepGEMM's: same blocks, same k-steps, same order.
-constexpr int NSTAGE = 4;
+// Deep enough that a block is requested ~9 iterations before it is consumed:
+// with 4 stages the GEMM ran at 0.5 us per K block (PB fcec146e phase
+// clocks), about 5x its MMA chain, i.e. bound by L2 latency under load.
+constexpr int NSTAGE = 10;
 constexpr int A_LD = BLOCK_K + 8;   // bf16 per staged A row (144 B: 16B-aligned, conflict-free)
 constexpr int B_LD = BLOCK_K + 4;   // fp32 per staged B row (272 B)
 
@@ -411,7 +414,8 @@ __global__ void __launch_bounds__(THREADS) mhc_fused_post_pre_kernel(Params p) {
   __shared__ float s_mix[TM][32];
   __shared__ float s_pre[TM][HC];
   __shared__ float s_red[GROUPS][64];
-  __shared__ __align__(16) GemmSmem s_gemm;
+  extern __shared__ __align__(16) unsigned char dyn_smem[];  // GemmSmem, > 48 KiB
+  GemmSmem& s_gemm = *reinterpret_cast<GemmSmem*>(dyn_smem);
   const uint64_t keep = policy_evict_last();
   const int warp = threadIdx.x / 32;
   const int ntiles = (p.tokens + TM - 1) / TM;
@@ -440,7 +444,11 @@ __global__ void __launch_bounds__(THREADS) mhc_fused_post_pre_kernel(Params p) {
 
 #ifndef __CUDACC_RTC__
 extern "C" int tessera_mhc_fused_post_pre(const tessera_mhc::Params* params, int grid, cudaStream_t stream) {
-  tessera_mhc::mhc_fused_post_pre_kernel<<<grid, tessera_mhc::THREADS, 0, stream>>>(*params);
+  constexpr int smem = sizeof(tessera_mhc::GemmSmem);
+  static const cudaError_t attr = cudaFuncSetAttribute(
+      tessera_mhc::mhc_fused_post_pre_kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem);
+  if (attr != cudaSuccess) return static_cast<int>(attr);
+  tessera_mhc::mhc_fused_post_pre_kernel<<<grid, tessera_mhc::THREADS, smem, stream>>>(*params);
   return static_cast<int>(cudaGetLastError());
 }
 #endif
