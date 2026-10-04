@@ -163,7 +163,7 @@ def test_multi_arm_load_path_fds_remain_distinct_until_teardown(tmp_path, monkey
             reader.close()
 
 
-@pytest.mark.parametrize("fault", ["none", "inode", "device"])
+@pytest.mark.parametrize("fault", ["none", "inode", "device", "path"])
 def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, fault):
     owner, reader, staged, rf, original, calls = owner_fixture(tmp_path, monkeypatch)
     lib = rf.build_library(owner.MODULE, owner.MODULE, lambda *a: pytest.fail("no JIT"))
@@ -172,7 +172,8 @@ def test_mapping_attestation_requires_held_inode(tmp_path, monkeypatch, fault):
     device = mapped_file_device(owner.fd)
     inode = info.st_ino + (fault == "inode")
     minor = device[1] + (fault == "device")
-    maps = f"1000-2000 r-xp 00000000 {device[0]:02x}:{minor:02x} {inode} /sealed/native.so\n"
+    mapped_path = "/sealed/foreign.so" if fault == "path" else os.readlink(f"/proc/self/fd/{owner.fd}")
+    maps = f"1000-2000 r-xp 00000000 {device[0]:02x}:{minor:02x} {inode} {mapped_path}\n"
     original_read = Path.read_text
     monkeypatch.setattr(Path, "read_text", lambda path, *a, **kw: maps if str(path) == "/proc/self/maps" else original_read(path, *a, **kw))
     try:

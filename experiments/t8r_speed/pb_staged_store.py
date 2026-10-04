@@ -380,10 +380,11 @@ class NativeCallback:
         from tessera._dev.native_identity import mapped_file_device
         info = os.fstat(self.fd)
         device = mapped_file_device(self.fd)
+        mapped_path = os.readlink(f"/proc/self/fd/{self.fd}")
         matches = []
         for line in Path("/proc/self/maps").read_text().splitlines():
             fields = line.split(None, 5)
-            if len(fields) >= 5 and "x" in fields[1]:
+            if len(fields) == 6 and fields[5] == mapped_path and "x" in fields[1]:
                 major, minor = (int(v, 16) for v in fields[3].split(":"))
                 if (major, minor, int(fields[4])) == (*device, info.st_ino):
                     matches.append(line)
