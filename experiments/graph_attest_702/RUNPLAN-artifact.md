@@ -90,3 +90,14 @@ python3 $TS/experiments/graph_attest_702/receipt.py $RECEIPTS /tmp/no-pb.json \
   - The default is sockets (`NCCL_IB_DISABLE=1`), the u4 default, chosen for repeatability; the release speed legs ran RoCE.
   - If the card's serve must run RoCE, run the whole plan with `FABRIC=roce`.
 - **Load refusal on the artifact's export.** The artifact was exported at contract v44 (`a5f3b232`). No refusal is expected, since the plugin carries no contract-version gate, but aE1 is the load smoke.
+
+## Follow-up, not in this plan: the index_topk boundary on the GPU
+
+Review of #930 (#3): no GPU case puts a step's `max_seq_len` at exactly `index_topk`
+(2048) and then `index_topk + 1` within one request. The CPU toy runner holds both
+steps for the target and the MTP k=1 draft prefill, which replays on the target step's
+record; draft decode steps (k >= 2) are refused by the plugin. A GPU case would be a
+2040-token prompt generating 24 tokens: steps up to 2048 are in the equality class, and
+later steps only in the screen, because eager does not reproduce itself above
+`index_topk`. It needs a new case in `equal-508.py` and an arm of its own; it is not in
+`plan-artifact.txt`.
