@@ -10,11 +10,15 @@ set -uo pipefail
 # TS: the Tessera tree mounted into the container; defaults to the tree this script lives in.
 TS=${TS:-$(cd "$(dirname "$0")/../.." && pwd)}
 MODEL=${MODEL:-/mnt/shared/tessera-runs/moe/glm53-4layer-a4-e2m1x2-q896-l2}
-# IMG: the GLM serving image the lane's runtime cells name (PQ patch set
-# glm53_mtp_mapper, a5424378 + the MTP mapper edit). Graph arms that must not
-# fault pass the kpool-tail backport image instead (PQ patch set
-# glm53_kpool_tail_slot_mapping).
-IMG=${IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5}
+# IMG: the lane's serving image. tessera#696 adopts the kpool-tail backport
+# image (PQ patch set glm53_kpool_tail_slot_mapping on top of glm53_mtp_mapper,
+# a5424378 + the MTP mapper edit) in EVERY mode: its V2 runner carries
+# vllm-project/vllm#57317 (upstream 70df48dc3d01), so the kpool-tail KV group
+# takes no generic slot mapping -- the out-of-bounds read is gone in eager and
+# under graphs alike. The gate refuses the stock runner digest in every mode
+# (glm53_nope._runner_reason); pass the stock image below only to demonstrate
+# that refusal.
+IMG=${IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b}
 # EXPECT_TREE: optional pin; unset records HEAD. Base of this branch: 02bf6f195
 NAME=t508-stub
 DIR=${T508_DIR:-/home/rob/tmp/claude-campaign-20260926/t508/serve}
