@@ -91,11 +91,32 @@ def adversarial(x, res, post, comb, gen):
 
 
 def fused_call(lib, tk, prm):
-    def call(x, residual, post, comb, grid=None):
+    def call(x, residual, post, comb, grid=None, clocks=None):
         return mf.fused_post_pre(lib, tk, x, residual, post, comb, prm["fn"], prm["scale"], prm["base"],
                                  mp.RMS_EPS, mp.HC_EPS, mp.HC_EPS, mp.POST_MULT, mp.SINKHORN,
-                                 prm["norm"], mp.RMS_EPS, grid=grid)
+                                 prm["norm"], mp.RMS_EPS, grid=grid, clocks=clocks)
     return call
+
+
+PHASES = ("post", "gemm", "mixes", "layer_input")
+
+
+def phase_clocks(fused, ins, reps=3):
+    """Per-tile phase durations (us, median over tiles and reps) from the kernel's own stamps."""
+    tiles = -(-ins[0].shape[0] // mf.TILE_TOKENS)
+    per_phase = {k: [] for k in PHASES}
+    spans = []
+    for _ in range(reps):
+        clocks = torch.zeros(tiles * 5, dtype=torch.int64, device="cuda")
+        fused(*ins, clocks=clocks)
+        torch.cuda.synchronize()
+        c = clocks.view(tiles, 5).double().cpu()
+        for i, k in enumerate(PHASES):
+            per_phase[k] += ((c[:, i + 1] - c[:, i]) / 1e3).tolist()
+        spans.append(float((c[:, 4].max() - c[:, 0].min()) / 1e3))
+    med = lambda v: sorted(v)[len(v) // 2]  # noqa: E731
+    return {"tiles": tiles, "median_tile_us": {k: med(v) for k, v in per_phase.items()},
+            "kernel_span_us": med(spans), "note": "%globaltimer stamps by thread 0; diagnostic, not a timing arm"}
 
 
 def part_bitwise(args, model_dir, lib, tk):
@@ -168,6 +189,7 @@ def part_timing(args, model_dir, lib, tk, sampler):
                         t0 = time.time()
                         samples[name].append(mp.graph_ms(calls, args.reps))
                         power[name].append(sampler.window(t0, time.time()))
+                phases = phase_clocks(fused, ins[0])
                 kern = {}
                 for name in ("stock", "fused_default"):
                     rows = mp.kernel_device_us(lambda fn=arms[name]: [fn(a) for a in ins[:4]], 2)
@@ -178,12 +200,13 @@ def part_timing(args, model_dir, lib, tk, sampler):
                     "default_grid": mf.default_grid(torch, x.device),
                     "ms_per_site": {n: sorted(v) for n, v in samples.items()},
                     "median_ms_per_site": {n: sorted(v)[len(v) // 2] for n, v in samples.items()},
-                    "kernels": kern, "power": power}
+                    "kernels": kern, "power": power, "fused_phases": phases}
             med = cell["median_ms_per_site"]
             cell["fraction_of_floor"] = {n: cell["floor_ms_at_peak"] / v for n, v in med.items()}
             out["cells"].append(cell)
             log("timing", which, tokens, full, "split", cell["split"],
-                " ".join(f"{n}={v:.4f}" for n, v in med.items()), f"floor={cell['floor_ms_at_peak']:.4f}")
+                " ".join(f"{n}={v:.4f}" for n, v in med.items()), f"floor={cell['floor_ms_at_peak']:.4f}",
+                "phases", json.dumps(phases["median_tile_us"]), f"span={phases['kernel_span_us']:.1f}us")
             del ins
     return out
 
@@ -193,7 +216,7 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported")
     ap.add_argument("--parts", default="bitwise,timing")
-    ap.add_argument("--grids", type=int, nargs="+", default=[12, 16, 24, 32, 48])
+    ap.add_argument("--grids", type=int, nargs="+", default=[24, 32, 48])
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--reps", type=int, default=10)
     args = ap.parse_args()

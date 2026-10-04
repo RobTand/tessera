@@ -68,7 +68,18 @@ struct Params {
   int splits;
   float rms_eps, pre_eps, sinkhorn_eps, post_mult, norm_eps;
   int sinkhorn_repeat;
+  unsigned long long* clocks;     // [tiles, 5] %globaltimer ns at phase boundaries, or null
 };
+
+// Diagnostic only: when the caller passes a buffer, thread 0 stamps each tile's
+// phase boundaries (start, post done, GEMM done, mixes done, layer input done).
+__device__ __forceinline__ void stamp(const Params& p, int tile, int k) {
+  if (p.clocks != nullptr && threadIdx.x == 0) {
+    unsigned long long ns;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(ns));
+    p.clocks[tile * 5 + k] = ns;
+  }
+}
 
 __device__ __forceinline__ uint64_t policy_evict_last() {
   uint64_t p;
@@ -170,65 +181,108 @@ __device__ void post_phase(const Params& p, int t0, uint64_t keep) {
 }
 
 // ---------------------------------------------------------------- pre-norm GEMM
-// Task (split s, n-tile nt) on one warp, exactly as DeepGEMM's math warp for
-// rows t0..t0+15 of split s, restricted to n-tile nt.
-__device__ void gemm_task(const Params& p, int t0, int s, int nt) {
-  const int lane = threadIdx.x % 32, g = lane / 4, t = lane % 4;
+// DeepGEMM's math warp for rows t0..t0+15, one warp per n-tile (warp nt), fed
+// by a cp.async ring every thread fills.  K blocks run 0..255 in order; split
+// s owns the contiguous range DeepGEMM gives it, and each warp's accumulator
+// chain (and warp 0's sqrsum) is flushed and reset at every split's end, so
+// each split's chain is DeepGEMM's: same blocks, same k-steps, same order.
+constexpr int NSTAGE = 4;
+constexpr int A_LD = BLOCK_K + 8;   // bf16 per staged A row (144 B: 16B-aligned, conflict-free)
+constexpr int B_LD = BLOCK_K + 4;   // fp32 per staged B row (272 B)
+
+__device__ __forceinline__ void cp_async16(void* smem, const void* gmem, bool valid) {
+  const unsigned dst = static_cast<unsigned>(__cvta_generic_to_shared(smem));
+  // src-size 0 zero-fills: rows past the batch read as zero, as DeepGEMM's TMA fills them.
+  asm volatile("cp.async.cg.shared.global [%0], [%1], 16, %2;"
+               :: "r"(dst), "l"(gmem), "r"(valid ? 16 : 0) : "memory");
+}
+__device__ __forceinline__ void cp_async_commit() { asm volatile("cp.async.commit_group;" ::: "memory"); }
+__device__ __forceinline__ void cp_async_wait_stages() {
+  asm volatile("cp.async.wait_group %0;" :: "n"(NSTAGE - 2) : "memory");
+}
+
+struct GemmSmem {
+  __nv_bfloat16 a[NSTAGE][TM][A_LD];
+  float b[NSTAGE][NMIX][B_LD];
+};
+
+__device__ __forceinline__ void stage_block(const Params& p, GemmSmem& sm, int t0, int kb, int st) {
+  // 16 rows x 8 chunks of A, then 24 rows x 16 chunks of B: 512 16-byte chunks.
+#pragma unroll
+  for (int c = threadIdx.x; c < TM * 8 + NMIX * 16; c += THREADS) {
+    if (c < TM * 8) {
+      const int r = c / 8, q = c % 8, tok = t0 + r;
+      const bool ok = tok < p.tokens;
+      cp_async16(&sm.a[st][r][q * 8], p.residual_out + (int64_t)(ok ? tok : 0) * K + kb * BLOCK_K + q * 8, ok);
+    } else {
+      const int cb = c - TM * 8, n = cb / 16, q = cb % 16;
+      cp_async16(&sm.b[st][n][q * 4], p.fn + (int64_t)n * K + kb * BLOCK_K + q * 4, true);
+    }
+  }
+}
+
+__device__ void gemm_phase(const Params& p, GemmSmem& sm, int t0) {
+  const int warp = threadIdx.x / 32, lane = threadIdx.x % 32, g = lane / 4, t = lane % 4;
+  const int nt = warp;  // warps 0..NTILES-1 compute; the rest only stage
   const int per = KBLOCKS / p.splits, rem = KBLOCKS % p.splits;
-  const int kb0 = s * per + min(s, rem);
-  const int nblocks = per + (s < rem);
   const int r0 = t0 + g, r1 = t0 + g + 8;
   const bool v0 = r0 < p.tokens, v1 = r1 < p.tokens;
-  const __nv_bfloat16* a0 = p.residual_out + (int64_t)(v0 ? r0 : 0) * K;
-  const __nv_bfloat16* a1 = p.residual_out + (int64_t)(v1 ? r1 : 0) * K;
-  const float* bn = p.fn + (int64_t)(nt * 8 + g) * K;
   float acc[4] = {0.f, 0.f, 0.f, 0.f};
   float sqr_sum_acc_0 = 0.f, sqr_sum_acc_1 = 0.f;
-  const __nv_bfloat16 zero = __float2bfloat16_rn(0.f);
-  for (int blk = 0; blk < nblocks; ++blk) {
-    const int kbase = (kb0 + blk) * BLOCK_K;
-    __nv_bfloat16 av[8][4];
-    float bv[8][2];
+  int s = 0, split_end = per + (0 < rem);
 #pragma unroll
-    for (int ks = 0; ks < 8; ++ks) {
-      const int k0 = kbase + ks * 8 + t;
-      av[ks][0] = v0 ? a0[k0] : zero;
-      av[ks][1] = v1 ? a1[k0] : zero;
-      av[ks][2] = v0 ? a0[k0 + 4] : zero;
-      av[ks][3] = v1 ? a1[k0 + 4] : zero;
-      bv[ks][0] = __ldg(bn + k0);
-      bv[ks][1] = __ldg(bn + k0 + 4);
-    }
+  for (int st = 0; st < NSTAGE - 1; ++st) {
+    stage_block(p, sm, t0, st, st);
+    cp_async_commit();
+  }
+  for (int kb = 0; kb < KBLOCKS; ++kb) {
+    cp_async_wait_stages();
+    __syncthreads();  // block kb is resident; every warp is done with the stage refilled below
+    const int nk = kb + NSTAGE - 1;
+    if (nk < KBLOCKS) stage_block(p, sm, t0, nk, nk % NSTAGE);
+    cp_async_commit();
+    if (nt < NTILES) {
+      const int st = kb % NSTAGE;
 #pragma unroll
-    for (int ks = 0; ks < 8; ++ks) {
-      float fa0 = __bfloat162float(av[ks][0]);
-      float fa1 = __bfloat162float(av[ks][1]);
-      float fa2 = __bfloat162float(av[ks][2]);
-      float fa3 = __bfloat162float(av[ks][3]);
-      if (nt == 0) {
-        sqr_sum_acc_0 += fa0 * fa0 + fa2 * fa2;
-        sqr_sum_acc_1 += fa1 * fa1 + fa3 * fa3;
+      for (int ks = 0; ks < 8; ++ks) {
+        const int k0 = ks * 8 + t;
+        float fa0 = __bfloat162float(sm.a[st][g][k0]);
+        float fa1 = __bfloat162float(sm.a[st][g + 8][k0]);
+        float fa2 = __bfloat162float(sm.a[st][g][k0 + 4]);
+        float fa3 = __bfloat162float(sm.a[st][g + 8][k0 + 4]);
+        if (nt == 0) {
+          sqr_sum_acc_0 += fa0 * fa0 + fa2 * fa2;
+          sqr_sum_acc_1 += fa1 * fa1 + fa3 * fa3;
+        }
+        uint32_t a[4] = {__float_as_uint(fa0), __float_as_uint(fa1), __float_as_uint(fa2), __float_as_uint(fa3)};
+        uint32_t b[2] = {__float_as_uint(sm.b[st][nt * 8 + g][k0]), __float_as_uint(sm.b[st][nt * 8 + g][k0 + 4])};
+        tf32_mma(acc, a, b);
       }
-      uint32_t a[4] = {__float_as_uint(fa0), __float_as_uint(fa1), __float_as_uint(fa2), __float_as_uint(fa3)};
-      uint32_t b[2] = {__float_as_uint(bv[ks][0]), __float_as_uint(bv[ks][1])};
-      tf32_mma(acc, a, b);
+      if (kb + 1 == split_end) {
+        if (nt == 0) {
+          // DeepGEMM math::warp_reduce_sum<4>: xor 2, then xor 1.
+          float r0s = sqr_sum_acc_0, r1s = sqr_sum_acc_1;
+          r0s = r0s + __shfl_xor_sync(0xffffffffu, r0s, 2);
+          r0s = r0s + __shfl_xor_sync(0xffffffffu, r0s, 1);
+          r1s = r1s + __shfl_xor_sync(0xffffffffu, r1s, 2);
+          r1s = r1s + __shfl_xor_sync(0xffffffffu, r1s, 1);
+          if (t == 0) {
+            if (v0) p.sqrsum[(int64_t)s * p.tokens + r0] = r0s;
+            if (v1) p.sqrsum[(int64_t)s * p.tokens + r1] = r1s;
+          }
+          sqr_sum_acc_0 = 0.f;
+          sqr_sum_acc_1 = 0.f;
+        }
+        const int col = nt * 8 + t * 2;
+        if (v0) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r0) * NMIX + col) = make_float2(acc[0], acc[1]);
+        if (v1) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r1) * NMIX + col) = make_float2(acc[2], acc[3]);
+        acc[0] = acc[1] = acc[2] = acc[3] = 0.f;
+        ++s;
+        split_end += per + (s < rem);
+      }
     }
   }
-  if (nt == 0) {
-    // DeepGEMM math::warp_reduce_sum<4>: xor 2, then xor 1.
-    float r0s = sqr_sum_acc_0, r1s = sqr_sum_acc_1;
-    r0s = r0s + __shfl_xor_sync(0xffffffffu, r0s, 2);
-    r0s = r0s + __shfl_xor_sync(0xffffffffu, r0s, 1);
-    r1s = r1s + __shfl_xor_sync(0xffffffffu, r1s, 2);
-    r1s = r1s + __shfl_xor_sync(0xffffffffu, r1s, 1);
-    if (t == 0) {
-      if (v0) p.sqrsum[(int64_t)s * p.tokens + r0] = r0s;
-      if (v1) p.sqrsum[(int64_t)s * p.tokens + r1] = r1s;
-    }
-  }
-  const int col = nt * 8 + t * 2;
-  if (v0) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r0) * NMIX + col) = make_float2(acc[0], acc[1]);
-  if (v1) *reinterpret_cast<float2*>(p.part + ((int64_t)s * p.tokens + r1) * NMIX + col) = make_float2(acc[2], acc[3]);
+  asm volatile("cp.async.wait_group 0;" ::: "memory");
 }
 
 // ---------------------------------------------------------------- pre: mixes
@@ -357,23 +411,28 @@ __global__ void __launch_bounds__(THREADS) mhc_fused_post_pre_kernel(Params p) {
   __shared__ float s_mix[TM][32];
   __shared__ float s_pre[TM][HC];
   __shared__ float s_red[GROUPS][64];
+  __shared__ __align__(16) GemmSmem s_gemm;
   const uint64_t keep = policy_evict_last();
   const int warp = threadIdx.x / 32;
   const int ntiles = (p.tokens + TM - 1) / TM;
   for (int tile = blockIdx.x; tile < ntiles; tile += gridDim.x) {
     const int t0 = tile * TM;
+    stamp(p, tile, 0);
     post_phase(p, t0, keep);
     __syncthreads();
-    for (int task = warp; task < p.splits * NTILES; task += WARPS)
-      gemm_task(p, t0, task / NTILES, task % NTILES);
+    stamp(p, tile, 1);
+    gemm_phase(p, s_gemm, t0);
     __syncthreads();
+    stamp(p, tile, 2);
     for (int tl = warp; tl < TM; tl += WARPS)
       if (t0 + tl < p.tokens) mixes_token(p, t0 + tl, s_mix[tl], s_pre[tl]);
     __syncthreads();
+    stamp(p, tile, 3);
     const int group = threadIdx.x / 64;
     for (int tl = group; tl < TM; tl += GROUPS)
       if (t0 + tl < p.tokens) layer_input_token(p, t0 + tl, s_pre[tl], group, s_red[group]);
     __syncthreads();
+    stamp(p, tile, 4);
   }
 }
 

@@ -47,10 +47,8 @@ _log = logging.getLogger(__name__)
 HC_MULT = 4
 HIDDEN = 4096
 NMIX = HC_MULT * 2 + HC_MULT * HC_MULT
-#: The kernel's token tile and the bytes of new residual one tile keeps in L2 between its
-#: post and its pre (bf16).  Must match ``TM`` in ``csrc/mhc_fused.cu``.
+#: The kernel's token tile: one m16 MMA tile.  Must match ``TM`` in ``csrc/mhc_fused.cu``.
 TILE_TOKENS = 16
-TILE_L2_BYTES = TILE_TOKENS * HC_MULT * HIDDEN * 2
 
 MODULE_PREFIX = "tessera_mhc_fused_"
 SOURCE = "mhc_fused.cu"
@@ -103,7 +101,8 @@ class _Params(ctypes.Structure):
         "residual_out", "post_mix", "comb_mix", "layer_input", "part", "sqrsum")] + [
         ("tokens", ctypes.c_int), ("splits", ctypes.c_int),
         ("rms_eps", ctypes.c_float), ("pre_eps", ctypes.c_float), ("sinkhorn_eps", ctypes.c_float),
-        ("post_mult", ctypes.c_float), ("norm_eps", ctypes.c_float), ("sinkhorn_repeat", ctypes.c_int)]
+        ("post_mult", ctypes.c_float), ("norm_eps", ctypes.c_float), ("sinkhorn_repeat", ctypes.c_int),
+        ("clocks", ctypes.c_void_p)]
 
 
 def source_path() -> Path:
@@ -166,17 +165,18 @@ def library() -> MhcFusedLibrary:
 
 
 def default_grid(torch: Any, device: Any) -> int:
-    """CTAs in flight: as many tiles as half the L2 holds, at most one per SM.
+    """One persistent CTA per SM: the kernel's register use admits one 256-thread CTA per SM.
 
-    Each resident CTA keeps one tile of new residual live in L2 between its post
-    and its pre; the other half of the L2 is left to the streams passing through.
-    ``TESSERA_MHC_FUSED_CTAS`` overrides it for measurement only.
+    Measured, not assumed: on GB10 at 1024 tokens, split 1, the grid sweep
+    (12/16/24/32/48) was monotone and 48 was fastest (timing receipt
+    ``timing-6f19bf03``, PB ``7b0c4d46``); an L2-capacity cap on resident
+    tiles (24) was slower.  ``TESSERA_MHC_FUSED_CTAS`` overrides it for
+    measurement only.
     """
     override = os.environ.get("TESSERA_MHC_FUSED_CTAS")
     if override:
         return max(1, int(override))
-    props = torch.cuda.get_device_properties(device)
-    return max(1, min(props.multi_processor_count, props.L2_cache_size // 2 // TILE_L2_BYTES))
+    return torch.cuda.get_device_properties(device).multi_processor_count
 
 
 # ------------------------------------------------------------------ the call
@@ -217,8 +217,12 @@ def fused_post_pre(lib: MhcFusedLibrary, kernels: Any, x: Any, residual: Any, po
                    comb_res_mix: Any, fn: Any, hc_scale: Any, hc_base: Any, rms_eps: float,
                    hc_pre_eps: float, hc_sinkhorn_eps: float, hc_post_mult_value: float,
                    sinkhorn_repeat: int, norm_weight: Any, norm_eps: float,
-                   grid: int | None = None) -> tuple[Any, Any, Any, Any]:
-    """``mhc_fused_post_pre_tilelang``'s outputs from one kernel (caller has checked eligibility)."""
+                   grid: int | None = None, clocks: Any = None) -> tuple[Any, Any, Any, Any]:
+    """``mhc_fused_post_pre_tilelang``'s outputs from one kernel (caller has checked eligibility).
+
+    ``clocks`` (diagnostic): an int64 CUDA tensor of ``tiles * 5`` that receives each
+    tile's phase-boundary ``%globaltimer`` stamps.
+    """
     import torch
 
     outer = residual.shape[:-2]
@@ -237,7 +241,8 @@ def fused_post_pre(lib: MhcFusedLibrary, kernels: Any, x: Any, residual: Any, po
         fn.data_ptr(), hc_scale.data_ptr(), hc_base.data_ptr(), norm_weight.data_ptr(),
         residual_cur.data_ptr(), post_mix.data_ptr(), comb_mix.data_ptr(), layer_input.data_ptr(),
         part.data_ptr(), sqrsum.data_ptr(), tokens, int(splits),
-        rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, norm_eps, int(sinkhorn_repeat))
+        rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, norm_eps, int(sinkhorn_repeat),
+        None if clocks is None else clocks.data_ptr())
     tiles = -(-tokens // TILE_TOKENS)
     grid = min(tiles, grid if grid is not None else default_grid(torch, dev))
     lib.launch(params, grid, torch.cuda.current_stream(dev).cuda_stream)
