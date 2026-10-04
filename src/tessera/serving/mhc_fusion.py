@@ -102,7 +102,7 @@ class _Params(ctypes.Structure):
         ("tokens", ctypes.c_int), ("splits", ctypes.c_int),
         ("rms_eps", ctypes.c_float), ("pre_eps", ctypes.c_float), ("sinkhorn_eps", ctypes.c_float),
         ("post_mult", ctypes.c_float), ("norm_eps", ctypes.c_float), ("sinkhorn_repeat", ctypes.c_int),
-        ("clocks", ctypes.c_void_p)]
+        ("clocks", ctypes.c_void_p), ("overlap", ctypes.c_int)]
 
 
 def source_path() -> Path:
@@ -217,11 +217,13 @@ def fused_post_pre(lib: MhcFusedLibrary, kernels: Any, x: Any, residual: Any, po
                    comb_res_mix: Any, fn: Any, hc_scale: Any, hc_base: Any, rms_eps: float,
                    hc_pre_eps: float, hc_sinkhorn_eps: float, hc_post_mult_value: float,
                    sinkhorn_repeat: int, norm_weight: Any, norm_eps: float,
-                   grid: int | None = None, clocks: Any = None) -> tuple[Any, Any, Any, Any]:
+                   grid: int | None = None, clocks: Any = None,
+                   overlap: bool = False) -> tuple[Any, Any, Any, Any]:
     """``mhc_fused_post_pre_tilelang``'s outputs from one kernel (caller has checked eligibility).
 
     ``clocks`` (diagnostic): an int64 CUDA tensor of ``tiles * 5`` that receives each
-    tile's phase-boundary ``%globaltimer`` stamps.
+    tile's phase-boundary ``%globaltimer`` stamps.  ``overlap``: run each tile's
+    GEMM alongside the next tile's post (same per-tile arithmetic; a schedule).
     """
     import torch
 
@@ -242,7 +244,7 @@ def fused_post_pre(lib: MhcFusedLibrary, kernels: Any, x: Any, residual: Any, po
         residual_cur.data_ptr(), post_mix.data_ptr(), comb_mix.data_ptr(), layer_input.data_ptr(),
         part.data_ptr(), sqrsum.data_ptr(), tokens, int(splits),
         rms_eps, hc_pre_eps, hc_sinkhorn_eps, hc_post_mult_value, norm_eps, int(sinkhorn_repeat),
-        None if clocks is None else clocks.data_ptr())
+        None if clocks is None else clocks.data_ptr(), int(bool(overlap)))
     tiles = -(-tokens // TILE_TOKENS)
     grid = min(tiles, grid if grid is not None else default_grid(torch, dev))
     lib.launch(params, grid, torch.cuda.current_stream(dev).cuda_stream)

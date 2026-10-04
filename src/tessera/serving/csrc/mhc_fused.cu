@@ -69,10 +69,12 @@ struct Params {
   float rms_eps, pre_eps, sinkhorn_eps, post_mult, norm_eps;
   int sinkhorn_repeat;
   unsigned long long* clocks;     // [tiles, 5] %globaltimer ns at phase boundaries, or null
+  int overlap;                    // 1: GEMM of tile i alongside post of tile i+1 (same arithmetic)
 };
 
 // Diagnostic only: when the caller passes a buffer, thread 0 stamps each tile's
-// phase boundaries (start, post done, GEMM done, mixes done, layer input done).
+// phase boundaries: start, then post done (sequential) or GEMM done (overlap),
+// then both done, mixes done, layer input done.
 __device__ __forceinline__ void stamp(const Params& p, int tile, int k) {
   if (p.clocks != nullptr && threadIdx.x == 0) {
     unsigned long long ns;
@@ -125,26 +127,27 @@ __device__ __forceinline__ void named_sync(int id, int threads) {
 }
 
 // ---------------------------------------------------------------- post
-__device__ void post_phase(const Params& p, int t0, uint64_t keep) {
+// Threads tid = 0..nthr-1 of the caller's group run it; bar syncs that group.
+__device__ __noinline__ void post_phase(const Params& p, int t0, uint64_t keep, int tid, int nthr, int bar) {
   __shared__ float s_post[TM][HC];
   __shared__ float s_comb[TM][HC * HC];
-  for (int i = threadIdx.x; i < TM * HC * HC; i += THREADS) {
+  for (int i = tid; i < TM * HC * HC; i += nthr) {
     int tok = t0 + i / (HC * HC);
     s_comb[i / (HC * HC)][i % (HC * HC)] = tok < p.tokens ? p.comb[(int64_t)tok * HC * HC + i % (HC * HC)] : 0.f;
   }
-  for (int i = threadIdx.x; i < TM * HC; i += THREADS) {
+  for (int i = tid; i < TM * HC; i += nthr) {
     int tok = t0 + i / HC;
     s_post[i / HC][i % HC] = tok < p.tokens ? p.post[(int64_t)tok * HC + i % HC] : 0.f;
   }
-  __syncthreads();
+  named_sync(bar, nthr);
   constexpr int H8 = HIDDEN / 8;              // 512 eight-element groups per stream
   constexpr int ITEMS = TM * H8;              // 8192 per tile
   constexpr int UNROLL = 4;
-  for (int base = threadIdx.x; base < ITEMS; base += THREADS * UNROLL) {
+  for (int base = tid; base < ITEMS; base += nthr * UNROLL) {
     uint4 xv[UNROLL], rv[UNROLL][HC];
 #pragma unroll
     for (int u = 0; u < UNROLL; ++u) {
-      int item = base + u * THREADS;
+      int item = base + u * nthr;
       int tl = item / H8, h8 = item % H8, tok = t0 + tl;
       if (item < ITEMS && tok < p.tokens) {
         xv[u] = __ldcs(reinterpret_cast<const uint4*>(p.x + (int64_t)tok * HIDDEN) + h8);
@@ -155,7 +158,7 @@ __device__ void post_phase(const Params& p, int t0, uint64_t keep) {
     }
 #pragma unroll
     for (int u = 0; u < UNROLL; ++u) {
-      int item = base + u * THREADS;
+      int item = base + u * nthr;
       int tl = item / H8, h8 = item % H8, tok = t0 + tl;
       if (item >= ITEMS || tok >= p.tokens) continue;
       float d[8], b[HC][8];
@@ -209,10 +212,11 @@ struct GemmSmem {
   float b[NSTAGE][NMIX][B_LD];
 };
 
-__device__ __forceinline__ void stage_block(const Params& p, GemmSmem& sm, int t0, int kb, int st) {
+__device__ __forceinline__ void stage_block(const Params& p, GemmSmem& sm, int t0, int kb, int st,
+                                            int tid, int nthr) {
   // 16 rows x 8 chunks of A, then 24 rows x 16 chunks of B: 512 16-byte chunks.
 #pragma unroll
-  for (int c = threadIdx.x; c < TM * 8 + NMIX * 16; c += THREADS) {
+  for (int c = tid; c < TM * 8 + NMIX * 16; c += nthr) {
     if (c < TM * 8) {
       const int r = c / 8, q = c % 8, tok = t0 + r;
       const bool ok = tok < p.tokens;
@@ -224,7 +228,9 @@ __device__ __forceinline__ void stage_block(const Params& p, GemmSmem& sm, int t
   }
 }
 
-__device__ void gemm_phase(const Params& p, GemmSmem& sm, int t0) {
+// Threads 0..nthr-1 of the CTA (warps 0..NTILES-1 among them) run it; bar syncs them.
+__device__ __noinline__ void gemm_phase(const Params& p, GemmSmem& sm, int t0, int nthr, int bar) {
+  const int tid = threadIdx.x;
   const int warp = threadIdx.x / 32, lane = threadIdx.x % 32, g = lane / 4, t = lane % 4;
   const int nt = warp;  // warps 0..NTILES-1 compute; the rest only stage
   const int per = KBLOCKS / p.splits, rem = KBLOCKS % p.splits;
@@ -235,14 +241,14 @@ __device__ void gemm_phase(const Params& p, GemmSmem& sm, int t0) {
   int s = 0, split_end = per + (0 < rem);
 #pragma unroll
   for (int st = 0; st < NSTAGE - 1; ++st) {
-    stage_block(p, sm, t0, st, st);
+    stage_block(p, sm, t0, st, st, tid, nthr);
     cp_async_commit();
   }
   for (int kb = 0; kb < KBLOCKS; ++kb) {
     cp_async_wait_stages();
-    __syncthreads();  // block kb is resident; every warp is done with the stage refilled below
+    named_sync(bar, nthr);  // block kb is resident; every warp is done with the stage refilled below
     const int nk = kb + NSTAGE - 1;
-    if (nk < KBLOCKS) stage_block(p, sm, t0, nk, nk % NSTAGE);
+    if (nk < KBLOCKS) stage_block(p, sm, t0, nk, nk % NSTAGE, tid, nthr);
     cp_async_commit();
     if (nt < NTILES) {
       const int st = kb % NSTAGE;
@@ -419,14 +425,32 @@ __global__ void __launch_bounds__(THREADS) mhc_fused_post_pre_kernel(Params p) {
   const uint64_t keep = policy_evict_last();
   const int warp = threadIdx.x / 32;
   const int ntiles = (p.tokens + TM - 1) / TM;
+  constexpr int GEMM_THREADS = NTILES * 32, BAR_ALL = 0, BAR_GEMM = 5, BAR_POST = 6;
+  if (p.overlap && blockIdx.x < ntiles) {
+    // Warps 0..2 run tile i's GEMM while warps 3..7 stream tile i+1's post, so
+    // the GEMM hides behind DRAM time.  Each tile's arithmetic is unchanged.
+    post_phase(p, blockIdx.x * TM, keep, threadIdx.x, THREADS, BAR_ALL);
+    __syncthreads();
+  }
   for (int tile = blockIdx.x; tile < ntiles; tile += gridDim.x) {
     const int t0 = tile * TM;
     stamp(p, tile, 0);
-    post_phase(p, t0, keep);
-    __syncthreads();
-    stamp(p, tile, 1);
-    gemm_phase(p, s_gemm, t0);
-    __syncthreads();
+    if (p.overlap) {
+      const int next = tile + gridDim.x;
+      if (warp < NTILES) {
+        gemm_phase(p, s_gemm, t0, GEMM_THREADS, BAR_GEMM);
+        stamp(p, tile, 1);
+      } else if (next < ntiles) {
+        post_phase(p, next * TM, keep, threadIdx.x - GEMM_THREADS, THREADS - GEMM_THREADS, BAR_POST);
+      }
+      __syncthreads();
+    } else {
+      post_phase(p, t0, keep, threadIdx.x, THREADS, BAR_ALL);
+      __syncthreads();
+      stamp(p, tile, 1);
+      gemm_phase(p, s_gemm, t0, THREADS, BAR_ALL);
+      __syncthreads();
+    }
     stamp(p, tile, 2);
     for (int tl = warp; tl < TM; tl += WARPS)
       if (t0 + tl < p.tokens) mixes_token(p, t0 + tl, s_mix[tl], s_pre[tl]);
