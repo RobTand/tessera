@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-04T18:33:47Z",
+ "generated": "2026-10-04T19:31:12Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1421,7 +1421,7 @@
    },
    "1317": {
     "state": "OPEN",
-    "title": "[P1] Kernel coverage: 0 of 36,309 selected Tessera units have a cell on the serving image; 6 of 7 picked rungs unattested"
+    "title": "[P1] Kernel coverage gaps at pin v45: routed E4M3 880/912 cells (tessera#689), compiled cells (tessera#702), full-model TP2 receipts, evidence grades"
    },
    "1318": {
     "state": "CLOSED",
@@ -3948,7 +3948,7 @@
     "title": "[P2] Route streamed metadata through declared whole-file readers"
    },
    "1887": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Capture identity hashes the 599 GB source serially at 140 MB/s; GPU idles ~70 min"
    },
    "1888": {
@@ -4233,7 +4233,7 @@
    },
    "1950": {
     "state": "OPEN",
-    "title": "[P1] No GB10 interpreter at the pinned PrismaBuild 95a59051: pbtest refuses every GB10 shard at main's head"
+    "title": "[P1] No qualified GB10 host interpreter at the current PrismaBuild pin dc4803da (SDK4): pbtest cannot place GB10 shards"
    },
    "1951": {
     "state": "CLOSED",
@@ -5184,7 +5184,7 @@
     "title": "[P2] Track nonactivating Tessera lane-v11 reader compatibility"
    },
    "2164": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Track producer-bound quantum counters completion reference"
    },
    "2165": {
@@ -5300,7 +5300,7 @@
     "title": "Resume-after-coordinator-death test can leak a forever-spinning orphan: the release write is not in a finally, unlike its sibling test"
    },
    "2190": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Ship the container runtime identity owner for installed GLM consumers"
    },
    "2191": {
@@ -5312,7 +5312,7 @@
     "title": "[P2+] Restore owned PB import contexts after actual next-full source95 failures"
    },
    "2193": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Ship the sole container runtime identity owner"
    },
    "2194": {
@@ -5356,7 +5356,7 @@
     "title": "test: reuse the actual default inventory for source report assertions"
    },
    "2202": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Restore Torch-free GLM derivative image driver contract bootstrap"
    },
    "2203": {
@@ -5368,7 +5368,7 @@
     "title": "[P3] Reuse the real default inventory in report source-state validation"
    },
    "2205": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Restore closed GLM contract stdlib driver bootstrap"
    },
    "2206": {
@@ -5404,11 +5404,11 @@
     "title": "Attest PB SDK3/Tessera b40 interpreters on all three fleet hosts"
    },
    "2213": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Right-size real codec fixtures without reducing suite acceptance"
    },
    "2214": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "test: bound real codec fixture work with unchanged assertions"
    },
    "2215": {
@@ -5418,6 +5418,10 @@
    "2216": {
     "state": "OPEN",
     "title": "[P1] Bind original reader target/producer identities and repin the consumer to SDK5 (Refs #2152)"
+   },
+   "2217": {
+    "state": "CLOSED",
+    "title": "Integrate approved fixture-cost and corrected image-bootstrap heads"
    },
    "222": {
     "state": "CLOSED",
@@ -11551,7 +11555,7 @@
    },
    "702": {
     "state": "OPEN",
-    "title": "[P1] Every runtime-contract cell attests eager only; a graph-mode GLM-5.3 release allocation has no eligible cell"
+    "title": "[P0] Every runtime-contract cell attests eager only; a graph-mode GLM-5.3 release allocation has no eligible cell"
    },
    "703": {
     "state": "CLOSED",
@@ -11939,7 +11943,7 @@
    },
    "790": {
     "state": "OPEN",
-    "title": "[P1] tessera_producer_plan hashes the whole source on every call (~36 min idle GPU per GLM census); pass SourceDigestCache or accept a verified identity"
+    "title": "[P2] tessera_producer_plan hashes the whole source on every call (~36 min idle GPU per GLM census); pass SourceDigestCache or accept a verified identity"
    },
    "791": {
     "state": "CLOSED",
@@ -11986,8 +11990,8 @@
     "title": "channel_sigma's optimum is per-unit, not per-grid: 1.5x spread between the units that want it widest and narrowest"
    },
    "800": {
-    "state": "OPEN",
-    "title": "[P2] Fold the GLM-5.3 MoE shared add into the routed token sum (opt-in, bitwise; merge after served TR3 gate)"
+    "state": "CLOSED",
+    "title": "[P2] Fold the GLM-5.3 MoE shared add into the routed token sum (opt-in, default off, bitwise; served TR3 gate still open)"
    },
    "801": {
     "state": "CLOSED",
@@ -12450,7 +12454,7 @@
     "title": "Bind 793 operative successor to real Root demand and actual exclusion metadata"
    },
    "905": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bind changed-source dual-B numeric protocol without historical proof substitution"
    },
    "906": {
@@ -12458,7 +12462,7 @@
     "title": "[P2] Close the composed T4 staged-consumer source prerequisite independently"
    },
    "907": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "T8: bind changed-source dual-B numeric protocol"
    },
    "908": {
@@ -12532,6 +12536,14 @@
    "923": {
     "state": "OPEN",
     "title": "[P1] Impacted-test selector silently omits consumers of directory-wide non-Python inputs"
+   },
+   "924": {
+    "state": "OPEN",
+    "title": "[P1] Select directory-wide non-Python inputs in the impacted-test selector"
+   },
+   "925": {
+    "state": "OPEN",
+    "title": "[P1] GLM-5.3 prefill: fuse SP-aware mHC pre/post (#783)"
    },
    "93": {
     "state": "CLOSED",
