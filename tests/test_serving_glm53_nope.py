@@ -65,7 +65,7 @@ def test_wrong_geometry_refused(field, value):
     assert field in _config_reason(candidate)
 
 
-def test_configuration_and_device_guards(runner):
+def test_configuration_and_device_guards():
     candidate = config()
     assert _config_reason(candidate) is None
     candidate.parallel_config.decode_context_parallel_size = 2
