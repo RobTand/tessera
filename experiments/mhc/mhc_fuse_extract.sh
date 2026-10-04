@@ -6,6 +6,8 @@
 #   mhc_fuse_extract.sh <image> <out_dir> [<probe_cache_home>]
 set -euo pipefail
 IMAGE=$1; OUT=$(realpath -m "$2"); CACHE=${3:-}
+source "$(dirname "$(realpath "$0")")/../runtime_image.sh"
+runtime_image_require "$IMAGE"
 mkdir -p "$OUT"
 MOUNTS=(-v "$OUT":/out)
 [[ -z "$CACHE" ]] || MOUNTS+=(-v "$(realpath "$CACHE")":/cache:ro)

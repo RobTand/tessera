@@ -135,10 +135,14 @@ class MhcFusedLibrary:
 
             build_directory = _get_build_directory("tessera_mhc_fused", verbose=False)
         Path(build_directory).mkdir(parents=True, exist_ok=True)
-        self.path = load(name=self.name, sources=[str(source)], build_directory=build_directory,
-                         extra_cuda_cflags=list(FLAGS), extra_cflags=["-O3"],
-                         is_python_module=False, verbose=False)
-        lib = ctypes.CDLL(self.path)
+        self.library_path = Path(build_directory) / f"{self.name}.so"
+        built = load(name=self.name, sources=[str(source)], build_directory=build_directory,
+                     extra_cuda_cflags=list(FLAGS), extra_cflags=["-O3"],
+                     is_python_module=False, verbose=False)
+        if Path(built).resolve() != self.library_path.resolve():
+            raise RuntimeError(f"JIT returned {built}, not the declared {self.library_path}")
+        self.path = str(self.library_path)
+        lib = ctypes.CDLL(str(self.library_path))
         self._launch = lib.tessera_mhc_fused_post_pre
         self._launch.argtypes = [ctypes.POINTER(_Params), ctypes.c_int, ctypes.c_void_p]
         self._launch.restype = ctypes.c_int
