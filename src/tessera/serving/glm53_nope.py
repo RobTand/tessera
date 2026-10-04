@@ -88,15 +88,23 @@ _padded_token_counts = padded_token_counts
 #: The key names what shapes the drafter's graph path: (method, draft tokens,
 #: whether draft steps after the first reuse the first step's sparse indices
 #: (``index_share_for_mtp_iteration``; None with one draft token, which has no
-#: later step), compilation mode, CUDA-graph mode), on the graph runner. The
-#: value is the eager-equivalence verdict with every size captured, against
+#: later step), compilation mode, CUDA-graph mode, and the serve's
+#: ``max_model_len``: a FULL capture builds its attention metadata at the
+#: model's ``max_model_len`` (vLLM ``model_states/default.py``), so the
+#: indexer branch the captured graphs freeze -- and with it eager equivalence
+#: -- is a function of the serve's ``max_model_len``, not of the drafter path
+#: alone (measured on the nightly stack: at ``max_model_len`` 2048 the graphs
+#: matched every eager outcome of the suite, at 4096 they matched none,
+#: tessera#702). A receipt measured at one ``max_model_len`` does not speak
+#: for another.
+#: The value is the eager-equivalence verdict with every size captured, against
 #: an eager serve of the same speculative configuration: None when every
 #: output of the equality suite was one such a serve also produced, else what
 #: differs, with its measurement. Each receipt names its scope (model, tensor
 #: parallelism, image). Empty until a qualifying serve measures a drafter's
 #: graph path; until then speculative decoding is served eager.
-_SPECULATIVE_GRAPH_RECEIPTS: dict[tuple[str, int, bool | None, CompilationMode, CUDAGraphMode],
-                                  str | None] = {}
+_SPECULATIVE_GRAPH_RECEIPTS: dict[tuple[str, int, bool | None, CompilationMode, CUDAGraphMode,
+                                  int], str | None] = {}
 
 
 def _speculative_key(config):
@@ -110,15 +118,16 @@ def _speculative_key(config):
         draft_hf = getattr(getattr(spec, "draft_model_config", None), "hf_config", None)
         share = bool(getattr(draft_hf, "index_share_for_mtp_iteration", False))
     compilation = config.compilation_config
-    return (spec.method, draft, share, compilation.mode, _graph_mode(compilation))
+    return (spec.method, draft, share, compilation.mode, _graph_mode(compilation),
+            config.model_config.max_model_len)
 
 
 def _describe_drafter(key) -> str:
-    method, draft, share, mode, graph = key
+    method, draft, share, mode, graph, max_model_len = key
     shared = ("" if share is None else
               f", sparse indices {'shared' if share else 'recomputed'} across draft steps")
     return (f"speculative method {method!r} at {draft} draft tokens{shared}, compilation mode "
-            f"{mode.name}, CUDA-graph mode {graph.name}")
+            f"{mode.name}, CUDA-graph mode {graph.name}, max_model_len {max_model_len}")
 
 
 def _drafter_reason(config) -> str | None:
@@ -150,7 +159,8 @@ def _speculative_reason(config) -> str | None:
     if key in _SPECULATIVE_GRAPH_RECEIPTS:
         return None
     measured = "; ".join(_describe_drafter(k) for k in sorted(
-        _SPECULATIVE_GRAPH_RECEIPTS, key=lambda k: (k[0], k[1], str(k[2]), k[3].name, k[4].name)))
+        _SPECULATIVE_GRAPH_RECEIPTS,
+        key=lambda k: (k[0], k[1], str(k[2]), k[3].name, k[4].name, k[5])))
     return (f"Tessera GLM53 NoPE refuses {_describe_drafter(key)}: no receipt measures this "
             f"drafter graph path (measured: {measured or 'none'}; tessera#695); serve "
             "speculative decoding with CUDA-graph mode NONE")
