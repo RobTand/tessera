@@ -753,7 +753,7 @@ if _GA_DISPATCH_LOG:
     import time as _ga_time
 
     _GA = {"counts": {}, "captured": {}, "serving": _ga_threading.local(), "last": 0.0,
-           "lock": _ga_threading.Lock(), "dirty": False}
+           "lock": _ga_threading.Lock(), "write_lock": _ga_threading.Lock(), "dirty": False}
 
     def _ga_flush(force=False):
         now = _ga_time.monotonic()
@@ -764,10 +764,21 @@ if _GA_DISPATCH_LOG:
             rec = {"pid": os.getpid(), "captured": dict(_GA["captured"]),
                    "counts": dict(_GA["counts"])}
             _GA["dirty"] = False
+        # tessera#702: Tessera's per-max_seq_len-class capture, when installed.
+        gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+        if gg is not None:
+            rec["tessera_classes"] = {
+                "captured": {m: {str(b): n for b, n in by.items()} for m, by in gg.CAPTURED.items()},
+                "replays": {f"{m}|{b}": n for (m, b), n in gg.REPLAYS.items()}}
         path = f"{_GA_DISPATCH_LOG}.{os.getpid()}.json"
-        with open(path + ".tmp", "w") as fh:
-            _ga_json.dump(rec, fh, indent=0, sort_keys=True)
-        os.replace(path + ".tmp", path)
+        # The dispatch path and the flusher thread both write: one writer at a time, each
+        # with its own temporary, or one's rename can find the other's file gone (tessera#702
+        # rG2, 2026-10-04: FileNotFoundError inside execute_model killed the engine).
+        tmp = f"{path}.{_ga_threading.get_ident()}.tmp"
+        with _GA["write_lock"]:
+            with open(tmp, "w") as fh:
+                _ga_json.dump(rec, fh, indent=0, sort_keys=True)
+            os.replace(tmp, path)
 
     def _ga_patch_cudagraph(module):
         cls = module.CudaGraphManager
@@ -832,9 +843,13 @@ if _GA_DISPATCH_LOG:
     def _ga_flusher():
         # The last dispatches of a burst land inside the one-second window; a
         # daemon writes them once the burst is over.
+        seen = -1
         while True:
             _ga_time.sleep(1.0)
-            if _GA["dirty"]:
+            gg = _ga_sys.modules.get("tessera.serving.glm53_graphs")
+            replays = sum(gg.REPLAYS.values()) if gg is not None else 0
+            if _GA["dirty"] or replays != seen:
+                seen = replays
                 try:
                     _ga_flush(force=True)
                 except Exception:  # a full disk must not stop the engine

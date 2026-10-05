@@ -810,11 +810,19 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, fused_decoder)
         # the E4M3 family's dense identity on its own instruction is a third
         # launch the FP8 route makes (attested since contract v47)
-        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
+        # ...and, on the FP8 route, the decode-once prefill lane (contract
+        # v56, tessera#931): default-off, resident only, experimental.
+        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH, module.DENSE_DECODE_ONCE_LAUNCH)
+                 if module is fp8_route else ())
+        decode_once = set()
         if module is fp8_route:
             assert module.DENSE_FUSED_MMA_E4M3_LAUNCH == (
                 FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
             assert module.DENSE_FUSED_MMA_E4M3_LAUNCH not in scheme.EXPERIMENTAL_LAUNCHES
+            assert module.DENSE_DECODE_ONCE_LAUNCH == (
+                scheme.DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+            assert module.DENSE_DECODE_ONCE_LAUNCH in scheme.EXPERIMENTAL_LAUNCHES
+            decode_once = {module.DENSE_DECODE_ONCE_LAUNCH}
         assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
                             include_experimental=True) == set(module.DENSE_LAUNCHES), route
@@ -822,7 +830,8 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
             for mode in ("resident", "streamed"):
                 assert launch_pairs(route, structure=STRUCTURE_DENSE, regime=regime,
                                     mode=mode, include_experimental=True) == set(
-                    module.DENSE_LAUNCHES), (route, regime, mode)
+                    module.DENSE_LAUNCHES) - (decode_once if mode == "streamed" else set()), (
+                    route, regime, mode)
 
     # ...and it BITES.  Put back a launch no ``apply`` makes -- the shape the
     # table was in before this commit -- and the check fails.  The DRIVER is
@@ -1053,9 +1062,13 @@ def test_the_native_route_pairs_are_attested_and_censusable():
                   telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)
     mma_dense = (FUSED_WINDOW_DENSE_SYMBOL,
                  telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-    assert EXPERIMENTAL_LAUNCHES == frozenset()
+    # Contract v56 put ONE pair back: the FP8 dense decode-once prefill lane
+    # (tessera#931), default-off, until a served census earns it a cell.
+    from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
+    decode_once = (DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+    assert EXPERIMENTAL_LAUNCHES == frozenset({decode_once})
     assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == set()
-    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == set()
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {decode_once}
     assert mma_routed in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
     assert mma_dense in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
     assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == set()

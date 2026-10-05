@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-04T19:31:12Z",
+ "generated": "2026-10-05T01:22:58Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -581,7 +581,7 @@
    },
    "1128": {
     "state": "OPEN",
-    "title": "[P3] Stage A chain: move the remaining entry I/O off the compute thread (read-ahead, write-behind, one spool poll per write, off-thread unlinks)"
+    "title": "[P3] Stage A chain: move the remaining entry I/O off the compute thread (read-ahead, write-behind, off-thread unlinks)"
    },
    "1129": {
     "state": "CLOSED",
@@ -1708,7 +1708,7 @@
     "title": "[P2] Tessera export preflight reads no priced wire bytes"
    },
    "1382": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] file_hash_workers defaults to 1 in the joint prepare but 4 in prepare_cache; a plan without it loads renders serially"
    },
    "1383": {
@@ -4232,7 +4232,7 @@
     "title": "Tessera cost-table identity guard ignores the required Hessian identity triple"
    },
    "1950": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] No qualified GB10 host interpreter at the current PrismaBuild pin dc4803da (SDK4): pbtest cannot place GB10 shards"
    },
    "1951": {
@@ -4872,7 +4872,7 @@
     "title": "[P3] PQ test speed: remove the redundant 4x31 s delayed-startup sleeps in test_tessera_plan_input_binding"
    },
    "2094": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Shape-time prices must authenticate independent panel and reload evidence (#1583 follow-up)"
    },
    "2095": {
@@ -4956,8 +4956,8 @@
     "title": "Prepare a genuine checkpoint-export component for PB #905 pacing A/B"
    },
    "2112": {
-    "state": "OPEN",
-    "title": "Bind shape-time prices to reviewed PB checker completions"
+    "state": "CLOSED",
+    "title": "Fix authenticated shape-price reload and current allocator replay intake"
    },
    "2113": {
     "state": "CLOSED",
@@ -5092,7 +5092,7 @@
     "title": "Prepare nonactivating Tessera v11 run-table reader compatibility"
    },
    "2143": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Guard original quantum source authority before profile discovery"
    },
    "2144": {
@@ -5177,7 +5177,7 @@
    },
    "2162": {
     "state": "OPEN",
-    "title": "Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
+    "title": "[P2+] Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
    },
    "2163": {
     "state": "CLOSED",
@@ -5396,12 +5396,12 @@
     "title": "[P2+] Qualify candidate container tickets with real creator-scope membership"
    },
    "2211": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Attest PB SDK3/Tessera b40 interpreter across the three-box fleet"
    },
    "2212": {
-    "state": "OPEN",
-    "title": "Attest PB SDK3/Tessera b40 interpreters on all three fleet hosts"
+    "state": "CLOSED",
+    "title": "Attest the canonical SDK4 (dc4803) GB10 host interpreter across fleet tags; retain SDK3 receipts as history"
    },
    "2213": {
     "state": "CLOSED",
@@ -5423,21 +5423,165 @@
     "state": "CLOSED",
     "title": "Integrate approved fixture-cost and corrected image-bootstrap heads"
    },
+   "2218": {
+    "state": "CLOSED",
+    "title": "[P2] test_packed_joint_checkpoint_resume flaked on producer_source_sha256 under xdist (package-tree hash vs concurrent writers?)"
+   },
+   "2219": {
+    "state": "OPEN",
+    "title": "[P1] Cache filenames are not injective in the qualified name: two Linears can share one rendered-weight file and nothing refuses"
+   },
    "222": {
     "state": "CLOSED",
     "title": "Routed export silently re-encodes from source when an allocation carries no projection at all"
+   },
+   "2220": {
+    "state": "CLOSED",
+    "title": "One file_hash_workers derivation for the joint prepare; name the moved source file on a producer-source mismatch"
+   },
+   "2221": {
+    "state": "CLOSED",
+    "title": "Integrate approved SDK4 interpreter attestation and the Rate pools docstring correction"
+   },
+   "2222": {
+    "state": "OPEN",
+    "title": "[P2] _attest_placement counts retired SDK3 interpreter entries as attested"
+   },
+   "2223": {
+    "state": "OPEN",
+    "title": "Refuse non-injective production cache filename sets at open (#2219)"
+   },
+   "2224": {
+    "state": "CLOSED",
+    "title": "Route remaining header decoders and name grammars to their owners (#1303)"
+   },
+   "2225": {
+    "state": "CLOSED",
+    "title": "test: deduplicate repeated in-process test work; two stale consumer fixtures move from 32 rows to the shared fixture's OUTPUT_FEATURES=8"
+   },
+   "2226": {
+    "state": "CLOSED",
+    "title": "Isolate the checker-config fixture from the packaged tree; name the writer when producer_source_sha256 refuses"
+   },
+   "2227": {
+    "state": "OPEN",
+    "title": "Route raw hashlib hexdigest sites to the digest owners; full remaining-site census (PQ #1301)"
+   },
+   "2228": {
+    "state": "OPEN",
+    "title": "[P2] Untagged suite fan-out fails on Sparks: tests pin a dl380g10-only producer interpreter (pq2131-producer-b770727c)"
+   },
+   "2229": {
+    "state": "CLOSED",
+    "title": "[P1] Census caller omits --source-digest-cache, so every census still hashes the whole checkpoint (tessera#790)"
    },
    "223": {
     "state": "CLOSED",
     "title": "Write the export leg's inputs after the resume identity, not before (#211)"
    },
+   "2230": {
+    "state": "CLOSED",
+    "title": "[P1] Add default-off joint AURA sequence attribution with source-bound controls"
+   },
+   "2231": {
+    "state": "OPEN",
+    "title": "[P2] Remaining write paths still name rendered shards with the non-injective qname mangling (MTP append, campaign encode, wire shards)"
+   },
+   "2232": {
+    "state": "CLOSED",
+    "title": "Integrate approved cache filename injectivity (#2219) and checker-config isolation (#2218)"
+   },
+   "2233": {
+    "state": "CLOSED",
+    "title": "[P2] Deduplicate repeated CPU fixture executions and align row-startup consumers"
+   },
+   "2234": {
+    "state": "OPEN",
+    "title": "[P1] Qualify the PQ1301 byte/text digest routing slice without breaking standalone authentication"
+   },
+   "2235": {
+    "state": "CLOSED",
+    "title": "[P1] Complete remaining header and qname owner slice with real consumer proof"
+   },
+   "2236": {
+    "state": "OPEN",
+    "title": "fix: the io engine seals on interpreters without CPython build-time fcntl/os names (1896)"
+   },
+   "2237": {
+    "state": "OPEN",
+    "title": "[P1] Count and stamp real-vs-synthetic multimodal calibration composition"
+   },
+   "2238": {
+    "state": "OPEN",
+    "title": "Refuse a joint plan without its campaign chain, by name (#1293)"
+   },
+   "2239": {
+    "state": "CLOSED",
+    "title": "Pass the producer's --source-digest-cache from the census caller (#2229)"
+   },
    "224": {
     "state": "CLOSED",
     "title": "Resolve a format name once, in the registry; make the production-cache fill gate total (#218)"
    },
+   "2240": {
+    "state": "CLOSED",
+    "title": "Integrate accepted test dedup (#2233) and checker-config isolation (#2218)"
+   },
+   "2241": {
+    "state": "OPEN",
+    "title": "[P1] The io engine cannot import or open sealed buffers on interpreters without build-time fcntl/os seal names"
+   },
+   "2242": {
+    "state": "CLOSED",
+    "title": "Integrate approved PR2220: one render-file worker default (#1382) and per-file producer source diagnostic"
+   },
+   "2243": {
+    "state": "CLOSED",
+    "title": "[P2] Census caller writes its request file before refusing an output inside the checkpoint; caller key rides inside the producer block"
+   },
+   "2244": {
+    "state": "OPEN",
+    "title": "[P1] Synthetic-only calibration composition stamps the requested count and unlabeled row provenance"
+   },
+   "2245": {
+    "state": "CLOSED",
+    "title": "Fast track: census caller passes the producer's --source-digest-cache (#2229)"
+   },
+   "2246": {
+    "state": "CLOSED",
+    "title": "Integrate approved default-off joint AURA sequence attribution (#1962)"
+   },
+   "2247": {
+    "state": "OPEN",
+    "title": "Price the projected-preparation device reservation in bytes; reap freed credits during the ordered head wait (#2039)"
+   },
+   "2248": {
+    "state": "CLOSED",
+    "title": "Integrate approved remaining safetensors header and name grammar owners (#2235)"
+   },
+   "2249": {
+    "state": "CLOSED",
+    "title": "[P2] Refuse an expert-projection output inside the checkpoint before any write; describe the caller key inside the carried producer block"
+   },
    "225": {
     "state": "CLOSED",
     "title": "Read the capture-context roster from Tessera, widen the dead-override census, stop a test leaking its orphan (#216, #217, #219)"
+   },
+   "2250": {
+    "state": "OPEN",
+    "title": "Refuse colliding cache-filename sets at the MTP append and group joint aura names by resolved root (#2231)"
+   },
+   "2251": {
+    "state": "CLOSED",
+    "title": "Integrate approved expert-projection output refusal before any write (#2243)"
+   },
+   "2252": {
+    "state": "OPEN",
+    "title": "Integrate approved byte/text digest routing slice (#2234; epic #1301 stays open)"
+   },
+   "2253": {
+    "state": "OPEN",
+    "title": "fix: bind acquisition deferred domains to authenticated checkpoint menus (Closes #2195)"
    },
    "226": {
     "state": "CLOSED",
@@ -11886,7 +12030,7 @@
     "title": "[P2] GLM-5.3 MTP draft load re-reads the whole 163 GiB checkpoint (418 s) for 5.5 GiB of its own tensors"
    },
    "778": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Dense E4M3: one launch per module, K split reduced in-kernel (#750 WP2)"
    },
    "779": {
@@ -11970,7 +12114,7 @@
     "title": "[P2] GLM-5.3 sparse MLA: skip the zero-width RoPE query cat (bitwise, about 6.4 ms per prefill chunk)"
    },
    "797": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "GLM-5.3 sparse MLA: opt-in skip of the zero-width RoPE query cat (#796; merge after served TR3 gate)"
    },
    "798": {
@@ -12210,7 +12354,7 @@
     "title": "Refit-objective comparisons on the LUT plane are confounded by the landing, which reorders the arms"
    },
    "850": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Dense-GEMM sweep's A/B decision reads an upper order statistic, not the median (child of #806)"
    },
    "851": {
@@ -12239,7 +12383,7 @@
    },
    "857": {
     "state": "OPEN",
-    "title": "Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
+    "title": "[P2] Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
    },
    "858": {
     "state": "CLOSED",
@@ -12262,7 +12406,7 @@
     "title": "Drain the reused terminal barrier in persistent kernels"
    },
    "862": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Experiment: pair routed R4 E4M3 MMA K32 prefill handoffs"
    },
    "863": {
@@ -12291,14 +12435,14 @@
    },
    "869": {
     "state": "OPEN",
-    "title": "Retire compact-only routed metadata after successful native selection"
+    "title": "[P2] Retire compact-only routed metadata after successful native selection"
    },
    "87": {
     "state": "CLOSED",
     "title": "initial_channel_scale lands its reach bound with round-to-nearest, so 16% of the rows it raised clip anyway"
    },
    "870": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Retire compact routed metadata after native selection"
    },
    "871": {
@@ -12334,7 +12478,7 @@
     "title": "Qualify retained original token_sum safety without kernel duplication (#859)"
    },
    "879": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "routed: terminal-safe mixed history continuation and explicit numeric acceptance (#793)"
    },
    "88": {
@@ -12362,7 +12506,7 @@
     "title": "[P2] Retain and retire tile-overlap allocations after partial enqueue failure"
    },
    "885": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] U4 comparison input freeze must bind actual export audit, not stale A8SE identity"
    },
    "886": {
@@ -12378,7 +12522,7 @@
     "title": "fix: refuse failed stock cache production in empty-RoPE qualification"
    },
    "889": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired-K32 timing summary accepts medians unrelated to raw events"
    },
    "89": {
@@ -12466,7 +12610,7 @@
     "title": "T8: bind changed-source dual-B numeric protocol"
    },
    "908": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Make 793 controller fixture controls portable in the mandatory pure gate"
    },
    "909": {
@@ -12498,7 +12642,7 @@
     "title": "[P1] merge_suite x86 arm runs the suite without the declared test environment: child processes get no PYTHONPATH=src and an undeclared PQ-worktree read fails the gate"
    },
    "915": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Preserve explicit SDK dependencies and strict native mapping controls in the CPU merge batch"
    },
    "916": {
@@ -12506,15 +12650,15 @@
     "title": "merge_suite declares the suite's import env; the pinned accountant rides the sealed artifact-root declaration"
    },
    "917": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired custom-op numeric launcher must require admitted PB execution"
    },
    "918": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired telemetry must attribute each Spark independently of PB placement"
    },
    "919": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Freeze paired compile choice before a cached native bank can be reused"
    },
    "92": {
@@ -12530,28 +12674,96 @@
     "title": "[P1] Refuse known unsafe stock V2 runner in eager NoPE admission"
    },
    "922": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872)"
    },
    "923": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Impacted-test selector silently omits consumers of directory-wide non-Python inputs"
    },
    "924": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Select directory-wide non-Python inputs in the impacted-test selector"
    },
    "925": {
     "state": "OPEN",
     "title": "[P1] GLM-5.3 prefill: fuse SP-aware mHC pre/post (#783)"
    },
+   "926": {
+    "state": "CLOSED",
+    "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872) - integrator refresh of #922"
+   },
+   "927": {
+    "state": "CLOSED",
+    "title": "Compose accepted default-off kernel/harness sources: #862 #870 #797 #879 #778 (D4 correctness)"
+   },
+   "928": {
+    "state": "CLOSED",
+    "title": "[P1] Dense-GEMM sweep: decide A/B on the median, gate on the served reference (#850)"
+   },
+   "929": {
+    "state": "CLOSED",
+    "title": "[P1] t4(875): prepare current-source a3a599ec bank packet (build prep + sealed identities, populations unchanged)"
+   },
    "93": {
     "state": "CLOSED",
     "title": "A dropped arm is invisible: the pair stage's byte-match audit counts survivors, not the grid"
    },
+   "930": {
+    "state": "CLOSED",
+    "title": "[P0] Attest CUDA graph mode for GLM-5.3: per-branch indexer capture and eager operator priority (#702, refs prismaquant#1586)"
+   },
+   "931": {
+    "state": "OPEN",
+    "title": "[P1] T-8 dense lane is 1.7-2.4x slower than BF16 at prefill M=2048 on GLM-5.3 projection shapes"
+   },
+   "932": {
+    "state": "OPEN",
+    "title": "[P1] GLM-5.3 prefill: BF16 projection GEMM attribution and lever screen (no kernel change)"
+   },
+   "933": {
+    "state": "CLOSED",
+    "title": "[P2] pb-cpu interpreter differs by box: Tessera CPU tests fail on sparky (no triton/compressed_tensors) but pass on dl380g10"
+   },
+   "934": {
+    "state": "OPEN",
+    "title": "[P2+] T16 synthetic harness repinned to the actual a3a599ec source bank (Refs #874)"
+   },
+   "935": {
+    "state": "OPEN",
+    "title": "[P1] T-8 dense prefill: decode once to E4M3 and serve large M with a scaled FP8 GEMM (#931, default-off draft)"
+   },
+   "936": {
+    "state": "CLOSED",
+    "title": "[P2] Routed MoE prefill: decomposition and lever table (Goal 2)"
+   },
+   "937": {
+    "state": "OPEN",
+    "title": "[P3] A GPU-arm --gpu-cache-dir on NFS fails the JIT-baton and native-identity tests"
+   },
+   "938": {
+    "state": "OPEN",
+    "title": "[P2] No single sealed image runs the whole strict-CUDA suite: the mla lane needs the 5be13705 nightly, the NoPE graph gates pin c2e75e03"
+   },
+   "939": {
+    "state": "OPEN",
+    "title": "[P3] Two strict-CUDA-arm failures are tests assuming the runner environment, not defects: stageprev's child python and the t4 CPU-mode native proof"
+   },
    "94": {
     "state": "CLOSED",
     "title": "viterbi_window_fused has #13's per-call defect, and the WINDOW body is the default E4M3 wire"
+   },
+   "940": {
+    "state": "OPEN",
+    "title": "[P1] Fused routed lane: pipeline the one-chunk-ahead loads (#739)"
+   },
+   "941": {
+    "state": "OPEN",
+    "title": "[P0] Contain the graph-control TP2 ranks in finite PrismaBuild actions"
+   },
+   "942": {
+    "state": "CLOSED",
+    "title": "[P0] graph_receipt v2: fabric (socket|roce) is receipt scope (#702, refs prismaquant#1586)"
    },
    "95": {
     "state": "CLOSED",

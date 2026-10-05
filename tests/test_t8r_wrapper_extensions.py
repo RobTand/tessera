@@ -169,7 +169,8 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
 @pytest.mark.parametrize("key,on,library", [
     ("TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH", "1", "e4m3mma"),
     ("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "4", "value"),
-    ("TESSERA_ROUTED_FUSED_FP4_A_PREFETCH", "4", "e2m1")])
+    ("TESSERA_ROUTED_FUSED_FP4_A_PREFETCH", "4", "e2m1"),
+    ("TESSERA_ROUTED_FUSED_PAIRED_K32", "1", "e4m3mma")])
 @pytest.mark.parametrize('kind', ['build', 'benchmark'])
 @pytest.mark.parametrize('selection', [None, '', '0', 'on', 'bad'],
                          ids=['unset', 'empty', 'off', 'on', 'invalid'])
@@ -200,3 +201,49 @@ def test_native_build_choice_wrapper_preserves_declared_value(tmp_path, kind, se
         assert choices == ([key + '=0'] if kind == 'build' else [])
     else:
         assert choices == [key + '=' + selection]
+
+
+@pytest.mark.parametrize('extra,expected_rc,message', [
+    (['--paired-k32-numerics', '--direct-vllm-inputs'], 0, None),
+    (['--paired-k32-numerics', '--direct-vllm-inputs', '--comparison-protocol', '/owned/protocol.json'],
+     2, 'paired numeric mode excludes a PM comparison protocol'),
+    ([], 2, 'direct transport requires a closed PM protocol or the closed paired numeric mode'),
+])
+def test_direct_paired_numeric_reuses_owned_container_and_deadline(tmp_path, extra, expected_rc, message):
+    """The closed paired numeric mode rides the same owned-container contract."""
+    wrapper = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/bench_t8r.sh'
+    checkout, source, extensions, argv_path, env = wrapper_environment(tmp_path)
+    artifact = tmp_path / 'artifact'; artifact.mkdir()
+    (artifact / 'config.json').write_text('{}')
+    extensions.mkdir()
+    sdk = tmp_path / 'published'; (sdk / 'src/prismabuild').mkdir(parents=True)
+    fixture_sp = tmp_path / 'qualified-fixture-runner'; fixture_sp.mkdir()
+    for package in ('pytest', '_pytest', 'pluggy', 'iniconfig', 'packaging'):
+        (fixture_sp / package).mkdir()
+    (fixture_sp / 'py.py').write_text('')
+    timeout = Path(env['PATH'].split(os.pathsep)[0]) / 'timeout'
+    timeout.write_text('#!/bin/bash\nprintf "%s\\0" "$@" > "$TIMEOUT_ARGV_PATH"\nshift 3\nexec "$@"\n')
+    timeout.chmod(0o755)
+    env['TIMEOUT_ARGV_PATH'] = str(tmp_path / 'timeout-argv')
+    env.update(BENCH_DIRECT_VLLM='1', BENCH_OWNER_TOKEN='a' * 32,
+               PB_CLIENT_ROOT=str(sdk), BENCH_FIXTURE_RUNNER_SP=str(fixture_sp))
+    env.pop('BENCH_STRICT_STAGED', None)
+    result = subprocess.run(['bash', str(wrapper), str(checkout), str(tmp_path / 'out'),
+                             '--artifact', str(artifact), *extra],
+                            env=env, capture_output=True, text=True)
+    assert result.returncode == expected_rc, result.stderr
+    if expected_rc:
+        assert message in result.stderr
+        return
+    args = argv_path.read_bytes().decode().rstrip('\0').split('\0')
+    timeout_args = Path(env['TIMEOUT_ARGV_PATH']).read_bytes().decode().rstrip('\0').split('\0')
+    assert timeout_args[:3] == ['--signal=TERM', '--kill-after=15s', '240s']
+    assert args[args.index('--label') + 1] == 'tessera.paired_numeric_owner=' + 'a' * 32
+    assert args[args.index('--memory') + 1] == args[args.index('--memory-swap') + 1] == '16g'
+    assert args[args.index('--pids-limit') + 1] == '512' and args[args.index('--cpus') + 1] == '2'
+    assert args[args.index('--cidfile') + 1] == str(tmp_path / 'out/owned.cid')
+    assert str(sdk) + ':' + str(sdk) + ':ro' in args
+    assert str(fixture_sp) + ':' + str(fixture_sp) + ':ro' in args
+    assert 'PYTHONPATH=/work/src:/work/tests:' + str(sdk) + '/src:' + str(fixture_sp) in args
+    assert (tmp_path / 'out/owner-token.txt').read_text().strip() == 'a' * 32
+    assert not any(x.startswith('PRISMABUILD_') for x in args)

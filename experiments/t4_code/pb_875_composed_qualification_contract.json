@@ -1,73 +1,76 @@
 {
   "issue": 875,
-  "pr": 900,
-  "scope": "Finite synthetic numeric and native safety qualification ONLY. No calibrated scientific quality, timing, energy, serving, allocation/default or PACT frontier claim.",
-  "source_revision": "1b90b813125932c0b27ec19a68fc56389271f963",
+  "pr": 929,
+  "scope": "Finite synthetic numeric and native safety qualification ONLY on the current master source a3a599ec47457b6be769c2e3ec55859f5e759aff. No calibrated scientific quality, timing, energy, serving, allocation/default or PACT frontier claim; no menu, runtime pin, census or default promotion.",
+  "source_revision": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
   "snapshot_binding": "Stage the existing NAS source checkout at source_revision before publication. Each admitted payload requires git rev-parse HEAD^ to equal source_revision: published pbrun builds its snapshot commit with that checkout HEAD as parent. Existing per-file SHA256 guards then bind executable bytes. snapshot_ref is an extra branch-advertisement option, not a source pin, and is deliberately absent.",
   "executable_source_sha256": {
-    "experiments/t4_code/prefetch_qualification.py": "87782c230121f09879cff8c3717880f92e5914b0603a607e9d599d9620560da9",
-    "experiments/t4_code/prefetch_qualification_action.sh": "9c2623b94579944808fae5cafade6c76e474a3dc0c61cdd775d8bf7bc19c2757",
-    "experiments/t8r_speed/pb_staged_store.py": "23731086412410435d92b33a1ae9ef5ff81b9d27ea1be8d55e5a8563abfad358",
+    "experiments/t4_code/prefetch_qualification.py": "93a12cfacafbd65455b32e01d45c94d65618f8b1254cbbe948ec2c7be65b32c0",
+    "experiments/t4_code/prefetch_qualification_action.sh": "67c518610e16c5c3e9481cbe55332834442aa76aea2d601002cab47649275dd7",
+    "experiments/t8r_speed/pb_staged_store.py": "e50e8ea621f9f8dbad7ea7848c927732c2ef246f350f232967059b873ba20e75",
     "src/tessera/routed_fused_e2m1.py": "688192fa8b250a3471dbcf98df3ed1354e09531646b61ef3ff302a2a6a21d8d4",
+    "src/tessera/routed_fused.py": "4f2cf0fcf87f3c8a790b4469cc0ad8e0e3c7a1737f14cc4070949b20c37c9293",
     "experiments/t4_code/fused_e2m1_check.py": "c7580f8c1d60b9f2e94ca622adb75393166ec58658012020f97f5f766e3888e7",
-    "src/tessera/serving/csrc/routed_fused_window.cu": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+    "src/tessera/serving/csrc/routed_fused_window.cu": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3",
     "tests/test_routed_fused_e2m1.py": "0da2a5816822774a7277a540e600f8dbe6684675c739d6b08d025e8afdb82368",
     "tests/test_routed_terminal_cuda.py": "d1044a4e671ef8d3f762b3797cb6d85a1ce01798399c032f56066540131bc37a"
   },
   "native_source": {
     "path": "src/tessera/serving/csrc/routed_fused_window.cu",
-    "sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40"
+    "sha256": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3"
   },
   "native_elfs": [
     {
       "arm": 0,
-      "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+      "action_key": "917cc5a474d39d0b97db9fbeb65939dba68dac62c11ad5ff08db340ec5bbf0f7",
       "library": "e2m1",
       "module": "tessera_routed_fused_e2m1",
       "source_module": "tessera_routed_fused_value",
-      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
-      "bytes": 1889544,
-      "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
-      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
-      "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
+      "bytes": 1892000,
+      "sha256": "1302ad713309ef54a62a6a4ff9edeed7d61306803ce820df9c704f3ca279afbf",
+      "finalization_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "5a243e4241e8f5f11b9a395381bb64c57d50626d3c5f0dcafae03a54ccb3a7b6",
       "status": "compile gate (no matching device here)"
     },
     {
       "arm": 4,
-      "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861",
+      "action_key": "b9e2173f70f1bba64b0142454ababd45ad36bb435fc6be12237f2bff1e674b83",
       "library": "e2m1",
       "module": "tessera_routed_fused_e2m1_apf4",
       "source_module": "tessera_routed_fused_value",
-      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
-      "bytes": 1889584,
-      "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
-      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
-      "finalization_sha256": "fdf833a508705a5409264517ebad607ddde953f56ceb989b7d9367701d4c3be1",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
+      "bytes": 1892040,
+      "sha256": "7111322823e7677795e7e18df11bdff5d0e233f0672383125950f950c1cc2c1a",
+      "finalization_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "4e44e45931ea337cf9f16cfc38a69a4d802ef9a257bdbf5f1f7fa787bd28f81c",
       "status": "compile gate (no matching device here)"
     }
   ],
   "readsets": [
     {
-      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/native-readset.json",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/native-readset.json",
       "entries": 6,
-      "bytes": 3788794,
+      "bytes": 3793608,
       "phase": {
         "name": "t4-composed-whole",
         "start_bytes": 0,
-        "end_bytes": 3788794
+        "end_bytes": 3793608
       },
-      "sha256": "4000d93c40e7d00a33779297f6c7be86d77096e967274ed04eac87baffe7416c"
+      "sha256": "ad21148cc15c911cf9392793c74fdd92ae5776602a89f2883b51e86b11bf7bfc",
+      "action_key": "d2b79e5fea14197887189249aae81b4d622f6de35e69980e33cdb48cf2cf7654"
     },
     {
-      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/sanitizer-readset.json",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/sanitizer-readset.json",
       "entries": 15,
-      "bytes": 31454170,
+      "bytes": 31458984,
       "phase": {
         "name": "t4-composed-whole",
         "start_bytes": 0,
-        "end_bytes": 31454170
+        "end_bytes": 31458984
       },
-      "sha256": "60dccdebeeaa169865d556c4533e85583b3108f270e21e37522cd884a82695b5"
+      "sha256": "b61d3a62efd4815070eb39ae1853800263dedadea27712bce162f506e948aff4",
+      "action_key": "397380288d8e58c945e3d47bd8f1c035fc598418a822716d8938df21368c9534"
     }
   ],
   "immutable_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
@@ -237,7 +240,8 @@
       "note": "Real scratch forecasts, not filesystem quota/hard cap; unknown container peak remains unknown."
     }
   },
-  "cpu_provenance": {
+  "retained_1b90_cohort_evidence": {
+    "cpu_provenance": {
     "compile_actions": [
       "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
       "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861"
@@ -397,10 +401,79 @@
     }
   },
   "admission": "Current source 1b90b813125932c0b27ec19a68fc56389271f963/nativebcdd43f6/image5be/cohort: CPU controls/stage rows authorized with the real SL image/bank dependency. NO GPU permission inherited from historical feature-base protocol or CPU acceptance. Before any of the unchanged full15 exclusive gb10 synthetic safety measurement rows: exact parent review and normal source/CI closure, actual current CPU metadata/stage/native-FD/tool compatibility proof, standing exact Root safety GO and controlled-window cleanup, fresh COMPLETE execution claim-ledger SP0 plus verified c437 positive2GiB scratch refusal basis, eligible coordinator and admitted workers>=5% floor+allowance, current public SDK stage/ref/pin/image/platform compatibility. Every actually used storage filesystem must meet fresh floor+aggregate allowance, including coordinator/worker root, NAS and actual assigned DL stage/prewarm whenever used. No retag/retry/alternate runtime/default promotion; PB owns placement/atomic claim/affinity/container scope. Authentic calibrated original-model/provider capture is a separate later scientific/adoption requirement, NOT a prerequisite added to these explicitly synthetic15 safety rows.",
+    "scope": "Historical 1b90 / bcdd43f6 cohort only; every retained value is unchanged and none is current-cohort admission or qualification."
+  },
+  "cpu_provenance": {
+    "source_revision": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
+    "native_source_sha256": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3",
+    "consumer_acceptance": "The current a3a599ec / ebdfa49e cohort has completed CPU prepare, staged-read, held-FD native-map and staged-tool preflight controls. These are CPU code-bank and tool compatibility proofs only, not original-tensor-provider admission, GPU numeric or sanitizer execution, performance, energy, serving or mainline approval.",
+    "compile_actions": [
+      "917cc5a474d39d0b97db9fbeb65939dba68dac62c11ad5ff08db340ec5bbf0f7",
+      "b9e2173f70f1bba64b0142454ababd45ad36bb435fc6be12237f2bff1e674b83"
+    ],
+    "compile_receipts": [
+      "376e80bbb44008a60cfedbae5699a7203af6ab2b1bc2e7c20a75955d7535fee3",
+      "aca1b3a480c45c293183c3891084d6ae7ace5533aedb2ed927e366885df3f4d2"
+    ],
+    "compile_result_sha256": [
+      "4da2e51c87d121a046345279c1ba0d443d626e375b7e4f5734fc8213b855901d",
+      "9b11663962fe7f0b81c2f5f7e5e12e1276e39c8b8bd570c7d345d61480814aef"
+    ],
+    "compile_status": "Both prepare rows completed once with returncode 0 on sparklina; native records report compile gate (no matching device here). No rebuild or reseal is required for this contract correction.",
+    "current_staged_read": {
+      "action_key": "dd258de82a08d90a34b79610c82788f189cb421a011379ac3c74acde7a65a697",
+      "state": "DONE",
+      "returncode": 0,
+      "attempts": 1,
+      "host": "sparklina",
+      "source_parent": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
+      "snapshot_commit": "b7b9e79fbd33d4993e0245b6f1690a194031ef21",
+      "receipt_sha256": "dacf121cdc0f30e15af434863c29331a83355a35e98bf6178152b5740c76b917",
+      "result_sha256": "9fdbf6d612bac2df62eada4ee9c26e5f8b96a623a9c5fc77b97bfd49fb5cfbbe",
+      "readset_sha256": "ad21148cc15c911cf9392793c74fdd92ae5776602a89f2883b51e86b11bf7bfc",
+      "pin_id": "676070945a2bc205afbb34ef3dc4caeb",
+      "ref_id": "43972659f7815d1e357798885f6009a1",
+      "scope": "CPU staged read of the six whole-file native members, 3793608 bytes; not GPU qualification."
+    },
+    "current_stage_native_map": {
+      "action_key": "e60c4dcb10271588de2a230949c7c151fb93e231d5c8c9ed53e90d6e82fcfff1",
+      "state": "DONE",
+      "returncode": 0,
+      "attempts": 1,
+      "host": "sparklina",
+      "source_parent": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
+      "snapshot_commit": "63f9945ea18222e3d3bed2c12bc2874a5e064722",
+      "receipt_sha256": "abe3224051670d32327917535e387a78f9c9371ae28d341a1d928e3ede471e6d",
+      "result_sha256": "9180da54fbbab91dbe00f9bbc4fc6e6c3bd83ba565d336d1c2a5c8a6248902ee",
+      "readset_sha256": "ad21148cc15c911cf9392793c74fdd92ae5776602a89f2883b51e86b11bf7bfc",
+      "pin_id": "20870a36acdc4c2e55defb2366f40f85",
+      "ref_id": "2f91ba689393236614a8d1d4ca35a986",
+      "scope": "Both current production banks loaded from held public-SDK staged FDs and checked through the existing ABI and hash fences; not serving _ext admission or GPU execution."
+    },
+    "current_tool_preflight": {
+      "action_key": "cafd7f01233d6e225b0cf38c4fe8e05aa33bc7230b7665520eabaef254a142cf",
+      "state": "DONE",
+      "returncode": 0,
+      "attempts": 1,
+      "host": "sparklina",
+      "source_parent": "a3a599ec47457b6be769c2e3ec55859f5e759aff",
+      "snapshot_commit": "788873ca6658d9e62e2a382dd77805e4f63ce82b",
+      "receipt_sha256": "649066d04393b15618bde1c58d7a3121dcdff069e407ba6184569743c4df4e9d",
+      "result_sha256": "93059ff56f975dac263ee75f5fa4833854f14d21a38483d6eb2238c4f310123f",
+      "readset_sha256": "b61d3a62efd4815070eb39ae1853800263dedadea27712bce162f506e948aff4",
+      "pin_id": "5fe667dd668ee33533fc0c3005cf3373",
+      "ref_id": "d58c90e2c2e801eb8920176f48d9f4c0",
+      "actual_tool_members": 9,
+      "actual_tool_read_bytes": 27665376,
+      "version": "2025.3.1.0 build36400806",
+      "scope": "CPU staged-tool --version compatibility only; no GPU sanitizer findings."
+    }
+  },
+  "admission": "Current source a3a599ec47457b6be769c2e3ec55859f5e759aff / native ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3 / image 5be13705 / 20261004 readsets: the current CPU prepare and processor controls are recorded in cpu_provenance. D10 permits the unchanged 15-row synthetic numeric/native/four-sanitizer correctness packet under ordinary PrismaBuild admission after fresh D1 checks on every used filesystem and eligible worker. PB must independently admit the sealed current source, image, readsets, ELF/finalization, public SDK stage/ref/pin, platform and resource tuple. CPU success and retained 1b90/bcdd43f6 receipts are not GPU results or admission for another tuple. No performance, energy, calibrated quality, serving, default, menu, pin or census promotion is granted here; a source change needs its own genuine preparation and review, not inferred old-bank proof.",
   "result_binding": "Retain PB action keys/terminal records/logs/CAS receipts and source/image/readset/ELF hashes, actual held pin/ref/stage identities, exact expected/passed/skip counts; report every failure without narrowing population or changing bounds.",
   "real_calibrated_capture_requirement": "Original BF16 production W and disjoint fit/eval BF16 activations, source/model/layer/projection/expert/shape/hashes, static globalA calibration, authentic SDK4 original provider metadata/readset. Existing encode_linear E2M1_GRID WINDOW/LUT/window14 artifacts with original mapper/cache/state/perm/runpair ownership, genuine gate/up/down/routing or dense projections. Historical TCQ or T8 restamps cannot satisfy this. Shared with original scientific/runtime owners; no extra GPU/capture authorization.",
   "readset_binding": "Each whole-file native compile record, finalization and ELF has the exact current-cohort size/digest enforced by validate_readset; immutable sanitizer digest/order is also enforced. Public PB seals the actual full readset content into each action key. Prepare from actual files through the published SDK; no historical manifest identity is reused.",
-  "coordinator_checkout": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261003/source-image-owner",
+  "coordinator_checkout": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/source-image-owner",
   "cpu_filesystem_observation": {
     "scope": "Read-only observation immediately before changed-owner CPU publication; no data manifest means no DL stage/prewarm used by this specific quantum",
     "sparklina_root": {
@@ -460,8 +533,10 @@
       "in_flight_gib": 2,
       "ledger_capacity_stage_gib": 448
     },
-    "requested_readset_bytes": 35242964,
+    "requested_readset_bytes": 35252592,
     "residency_ram": "off",
     "limits": "Stage pool physical free is distinct from dataset available and ledger. Actual PB owns atomic staging/mover resource admission; before execution/future GPU refresh all used floors plus aggregate allowances. RAM stage not requested; observed for mapping only."
-  }
+  },
+  "carrier_branch": "ts875/t4-current-banks-20261004",
+  "provenance_note": "The 20261004 NAS readsets were read and SHA-256 hashed before this contract correction. Previous CPU provenance and admission values are retained unchanged under retained_1b90_cohort_evidence. Current-labelled child keys in that field and retained filesystem observations are historical, not reusable admission. Future CPU prepare/stage rows use tags gb10; the 15 GPU rows already use host_class gb10. The published PB client forbids combining tags with anywhere; an explicit class tag replaces accidental host placement. Existing sparklina receipts describe past execution, not a placement requirement. Prepare rows reserve 12 GiB and allow 1200 seconds for nvcc, versus the old 2 GiB and 180 seconds; this correction changes neither demand nor timeout."
 }

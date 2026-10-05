@@ -64,6 +64,9 @@ runtime_image_require() {
     return 2
   fi
   RUNTIME_IMAGE_DIGEST="$(printf '%s' "$json" | _runtime_image_field resolved_digest)"
+  # The whole reference (repository@digest), as tessera.serving.runtime_image spells it: the
+  # digest half names no image on its own, so a record that must name the image keeps this.
+  RUNTIME_IMAGE_REFERENCE="$(printf '%s' "$json" | _runtime_image_field resolved_reference)"
   RUNTIME_IMAGE_LOCAL_ID="$(printf '%s' "$json" | _runtime_image_field local_id)"
   RUNTIME_IMAGE_CONTAINER_ENV="$(printf '%s' "$json" | _runtime_image_cli container-env)"
   echo "image $image -> ${RUNTIME_IMAGE_DIGEST:-<no manifest digest>} (local id ${RUNTIME_IMAGE_LOCAL_ID:-unknown})"

@@ -94,6 +94,7 @@ __all__ = [
     "DECODER_NATIVE_WINDOW_GEMM_FOLDED",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA",
+    "DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED",
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
@@ -209,6 +210,11 @@ DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 #: census must be able to say which instruction served a stack or a module.
 DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA = "native_routed_fused_window_e4m3mma"
 DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
+#: The E4M3 family's decode-once prefill lane (tessera#931): the module's
+#: weights decoded once to plain E4M3 bytes by its own window decoder, then
+#: ``torch._scaled_mm`` row-wise at large M.  Same function of the wire, a
+#: different launch and accumulation order, so its own string.
+DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_WINDOW_GEMM_FOLDED,
@@ -219,7 +225,8 @@ DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_W
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
                       DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
-                      DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,))
+                      DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
+                      DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,))
 
 ATTR_PREFIX = "_tessera_route_"
 
