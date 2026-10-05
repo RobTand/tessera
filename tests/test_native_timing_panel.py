@@ -176,7 +176,7 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
 
 
 
-def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel):
+def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel, monkeypatch):
     def change(doc):
         cell=next(c for c in doc["lane_eligibility"]["cells"] if c["id"]==panel["rows"][0]["cell_id"])
         cell["runtime"].pop("tessera_commit");cell["runtime"].pop("serving_source_sha256")
@@ -187,7 +187,29 @@ def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel):
     panel["rows"][0]["scope_id"]=panel["plan"]["rows"][0]["id"]
     assert tp.validate_panel(panel,expected_runtime=copy.deepcopy(panel["runtime"]))["cell_id"]==panel["rows"][0]["cell_id"]
     rewrite(panel,"runtime_origins",lambda v:v["installation"].update(installed_commit="9"*40))
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE","0")
     with pytest.raises(ValueError,match="RECORD"):tp.validate_panel(panel,expected_runtime=panel["runtime"])
+
+
+def test_legacy_cell_record_proof_stamps_in_dev_mode(panel, monkeypatch, capsys):
+    """D32: the installed-record proof is a seal on the external panel path;
+    default dev stamps the mismatch and the legacy cell still validates."""
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+
+    def change(doc):
+        cell = next(c for c in doc["lane_eligibility"]["cells"] if c["id"] == panel["rows"][0]["cell_id"])
+        cell["runtime"].pop("tessera_commit");cell["runtime"].pop("serving_source_sha256")
+    rewrite(panel, "contract", change)
+    panel["runtime"]["contract_sha256"] = panel["evidence"]["contract"]["sha256"]
+    rewrite(panel, "runtime", lambda v: v.update(panel["runtime"]))
+    panel["plan"] = census_plan.build_census_plan([panel["plan"]["rows"][0]["scope"]], raw_contract=tp.read_bound(panel["evidence"]["contract"]))
+    panel["rows"][0]["scope_id"] = panel["plan"]["rows"][0]["id"]
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel["runtime"]))["cell_id"] == panel["rows"][0]["cell_id"]
+    rewrite(panel, "runtime_origins", lambda v: v["installation"].update(installed_commit="9" * 40))
+    result = tp.validate_panel(panel, expected_runtime=panel["runtime"])
+    out = capsys.readouterr().out
+    assert out.count("[DEV-MODE]") == 1 and "installed RECORD proof" in out
+    assert result["cell_id"] == panel["rows"][0]["cell_id"]
 
 
 def test_panel_validator_stays_the_local_entry_point_and_the_handoff_is_versioned(panel):

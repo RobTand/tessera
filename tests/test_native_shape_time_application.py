@@ -668,7 +668,8 @@ def _observe_with_source(panel, monkeypatch, source_digest):
     monkeypatch.setenv('TESSERA_SERVE_MODE', 'resident')
     monkeypatch.setattr(worker, 'runtime_origins',
                         lambda root, facts=None: {'package_root': expected['package_root'], 'modules': {}})
-    monkeypatch.setattr(worker, 'observed_commit', lambda package, strict=True: expected['tessera_commit'])
+    monkeypatch.setattr(worker, 'observed_commit',
+                        lambda package, strict=True: (expected['tessera_commit'], []))
     monkeypatch.setitem(sys.modules, 'vllm', SimpleNamespace(__version__=expected['vllm']))
     monkeypatch.setattr(torch, '__version__', expected['torch'])
     monkeypatch.setattr(source_identity, 'serving_source_sha256', lambda: source_digest)
