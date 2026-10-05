@@ -191,16 +191,17 @@ def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path,
     import watch_window_queue as watch
     monkeypatch.setattr(watch, "REQUESTS", tmp_path / "requests")
     (tmp_path / "fixture.py").write_text("# CPU fixture closure")
+    toolchain = {**pb.executable_toolchain_contract(sys.executable), **pb.live_platform_toolchain_contract()}
     actions = []
     for kind in ("generation", "price", "pair"):
         task_class = "generation" if kind == "generation" else "measurement"
-        command = [sys.executable, "fixture.py"] if kind != "pair" else [sys.executable, "rank_window.py", "--rank", "1", "--run", "/mnt/shared/fixture/inputs.json"]
+        command = [sys.executable, "fixture.py"] if kind != "pair" else [sys.executable, "rank_window.py", "--rank", "1", "--run", str(tmp_path / "inputs.json")]
         action = pb.seal_action(dict(schema=pb.ACTION_SCHEMA_V2,
             task=dict(definition_id="tests/window4-census", definition_version="1", task_class=task_class,
                       determinism="deterministic", artifact_family="generic", artifact_kind="generic",
                       argv=command, working_directory=".", result_path="result.json"),
             inputs=[], code_closure=pb.build_code_closure(tmp_path, ["fixture.py"]), params=dict(command=command),
-            environment=dict(variables={"GRAPH_WINDOW_INPUT_SHA256": "a" * 64} if kind == "pair" else {}, toolchain={}),
+            environment=dict(variables={"GRAPH_WINDOW_INPUT_SHA256": "a" * 64} if kind == "pair" else {}, toolchain=toolchain),
             execution_scope=dict(portability="host_class_keyed", platform_key=None, host_class="gb10")))
         path = watch.REQUESTS / action["action_key"][:2] / (action["action_key"] + ".json")
         path.parent.mkdir(parents=True, exist_ok=True)
