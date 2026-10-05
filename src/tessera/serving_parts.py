@@ -891,9 +891,12 @@ def consumed_input_content(path, plan, hessian, authority, scales=None):
     manifest = read_serving_manifest(Path(path) / "tessera_serving_manifest.json")
     options = manifest["export_partition"]["identity"]["options"]
     plan_bytes = Path(plan).read_bytes()
+    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
+    if manifest.get("plan_sha256") != plan_sha256 or options.get("plan_sha256") != plan_sha256:
+        raise ValueError("consumed.plan_sha256: current bytes differ from the manifest's consumed plan snapshot")
     if json.loads(plan_bytes, object_pairs_hook=unique_json_pairs) != options.get("plan"):
         raise ValueError("consumed.plan: current allocation differs from the manifest's consumed plan")
-    current = {"plan_sha256": hashlib.sha256(plan_bytes).hexdigest(),
+    current = {"plan_sha256": plan_sha256,
                "hessian_sha256": sha256_file(Path(hessian)),
                "authority_sha256": sha256_file(Path(authority)),
                "input_scales_sha256": sha256_file(Path(scales)) if scales else None}

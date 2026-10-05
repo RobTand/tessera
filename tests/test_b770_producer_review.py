@@ -48,7 +48,9 @@ def bundle(tmp_path, producer, source_ref):
     receipt = stamp['producer_receipt']
     opts = {'plan': json.loads(launcher.PLAN.read_text()), 'hessian_sha256': parts.sha256_file(capture),
             'producer_authority_sha256': parts.sha256_file(authority), 'input_scales_sha256': None, 'encode_batch': 1}
+    opts["plan_sha256"] = parts.sha256_file(launcher.PLAN)
     manifest = {'schema': parts.SCHEMA, 'producer': receipt, 'encode_batch': 1, 'modules': {},
+                'plan_sha256': parts.sha256_file(launcher.PLAN),
                 'totals': {'passthrough_bytes': 2 * len(owned)},
                 'export_partition': {'schema': parts.SCHEMA, 'index': 0, 'count': 8, 'source_tensors': owned,
                     'identity': {'source': parts.source_part_identity(source), 'producer': receipt, 'options': opts},
@@ -92,6 +94,7 @@ def test_real_installed_python_m_entrypoint(tmp_path):
     assert done.returncode == 0, done.stderr[-4000:]
     manifest = parts.read_serving_manifest(out / 'tessera_serving_manifest.json')
     assert manifest['producer']['git_head'] == selected._git('rev-parse', 'HEAD', cwd=repo).stdout.strip()
+    assert manifest['plan_sha256'] == parts.sha256_file(plan)
 
 
 @pytest.mark.parametrize('defect', ['empty_seals', 'missing_source', 'extra_source', 'missing_index_tensor',
@@ -304,3 +307,32 @@ def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg):
     field = "TESSERA_PRODUCER_PYTHON" if leg == "interpreter" else "TESSERA_PRODUCER_SOURCE"
     assert field in text, f"{leg}: actual process never authenticated: {text}"
     assert "a GPU measurement with no GPU" not in text
+
+
+def test_completion_refuses_formatting_only_plan_mutation(tmp_path):
+    producer = stub_producer(tmp_path)
+    source_ref = tmp_path / 'qualified' / 'src' / 'tessera'
+    source_ref.mkdir(parents=True)
+    source, out, _stamp, manifest = bundle(tmp_path, producer, source_ref)
+    plan = tmp_path / 'experiments' / 't8_census' / f'plan-{launcher.STUB}.json'
+    plan.parent.mkdir(parents=True)
+    shutil.copy2(launcher.PLAN, plan)
+    (tmp_path / 'experiments' / 'runtime_image.sh').write_bytes((ROOT / 'experiments' / 'runtime_image.sh').read_bytes())
+    (out / 'tessera_serving_manifest.json').write_text(json.dumps(manifest))
+    prepared = tmp_path / 'prepared'
+    shutil.copytree(out, prepared)
+    code = producer.read_text().replace(
+        "    raise SystemExit(0)\nif args[:1] == ['-c']:",
+        "    import shutil\n    shutil.copytree(os.environ['PREPARED_PART'], args[3])\n"
+        "    with open(os.environ['PLAN_TO_MUTATE'], 'ab') as f: f.write(b'\\n')\n"
+        "    raise SystemExit(0)\nif args[:1] == ['-c']:")
+    producer.write_text(code)
+    done = subprocess.run(['bash', str(launcher.T8_LAUNCHER), launcher.STUB, '0', '8'], cwd=tmp_path,
+        env=launcher._launch_env(tmp_path, TESSERA_PRODUCER_PYTHON=producer,
+            TESSERA_PRODUCER_SOURCE=source_ref, SOURCE_CHECKPOINT=source, PYTHONPATH=ROOT / 'src',
+            PREPARED_PART=prepared, PLAN_TO_MUTATE=plan, RUNTIME_IMAGE_PY=image_cli(tmp_path)),
+        capture_output=True, text=True, timeout=90)
+    assert 'rc=0' in done.stdout, 'fixture must reach exporter completion'
+    assert done.returncode != 0, 'raw plan mutation with equal parsed allocation published false completion'
+    assert 'consumed.plan_sha256' in done.stdout + done.stderr
+    assert not (out.parent / 'part-0.done.json').exists()

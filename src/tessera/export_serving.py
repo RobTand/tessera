@@ -2840,6 +2840,7 @@ def main():
         if priced_inputs is not None:
             options["priced_inputs_sha256"] = priced_inputs.sha256
         options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
+        options["plan_sha256"] = plan_snapshot.sha256 if plan_snapshot is not None else None
         # The authority file's digest also binds the canonical capture it
         # defines: the file is self-contained and ``producer_authority.load``
         # executes those bytes, keyed by this same digest.  The input-scales
@@ -3686,6 +3687,7 @@ def main():
         # It is the SNAPSHOT that drove the encode, not whatever the path
         # holds now -- the file is not reread here (#301).
         "plan": plan_snapshot.published() if plan_snapshot is not None else None,
+        "plan_sha256": plan_snapshot.sha256 if plan_snapshot is not None else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "activation_aware": None if activation is None else activation.config_block(),
         # What the SERVING gate decided, in the artifact rather than in a shell

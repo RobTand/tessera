@@ -6360,11 +6360,16 @@ than disabling GNU timeout. Completion and verified skip call the source-aware
 `_prove_part_contents` owner for exact source ownership/stamped shards, complete
 index, actual tensor headers and output seals/shards. Integer partition/batch
 carriers must agree across the top-level and sealed identity records.
-Current calibration, authority,
-scale and plan snapshots must equal the exporter's consumed identities before
+Current calibration, authority, scale and plan snapshots must equal the
+exporter's consumed identities before
 an exclusive atomic marker publication; validation/publication failure is
 nonzero even when the exporter returned zero. Reused source digests retain
 the existing cache's explicit proof receipt, never an empty-seal completion.
+The plan's raw SHA-256 is reused from the same PlanSnapshot that drove the
+encode, published in the manifest and part identity options, and checked at
+completion. Equal parsed allocations with different raw bytes are different
+consumed snapshots: they cannot be restamped as the file the exporter read,
+and the existing exact part-identity comparison refuses their join.
 
 The default unit-profile driver authenticates and records this receipt in its
 own process before source or CUDA access. Provisioning constrains environment

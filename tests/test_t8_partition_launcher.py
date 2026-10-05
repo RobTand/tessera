@@ -182,12 +182,14 @@ def _manifest_bytes(authority, scales=None, plan_entries=None,
     """Intentionally incomplete stamp-check fixture, never a skip witness."""
     options = {
         "plan": plan_entries if plan_entries is not None else json.loads(PLAN.read_text()),
+        "plan_sha256": sha_file(PLAN),
         "hessian_sha256": hessian_seal if hessian_seal is not None else sha_file(HESSIAN),
         "producer_authority_sha256": sha_file(authority),
         "input_scales_sha256": input_scales_seal,
     }
     return (json.dumps({
         "schema": "tessera.serving-part.v1",
+        "plan_sha256": sha_file(PLAN),
         "encode_batch": 1,
         "export_partition": {
             "schema": "tessera.serving-part.v1",
