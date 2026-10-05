@@ -139,6 +139,29 @@ def test_zero_bound_refuses_before_authentication(tmp_path, script):
     assert 'PART_BOUND_S' in done.stdout + done.stderr
 
 
+@pytest.mark.parametrize('script', [launcher.T8_LAUNCHER, launcher.T16_LAUNCHER])
+def test_empty_bound_refuses_before_authentication(tmp_path, script):
+    """An explicitly empty PART_BOUND_S is a malformed bound, not an unset one."""
+    done = subprocess.run(['bash', str(script), launcher.STUB, '0', '8'], cwd=ROOT,
+        env=launcher._launch_env(tmp_path, PART_BOUND_S='', TESSERA_PRODUCER_PYTHON='/absent',
+                                TESSERA_PRODUCER_SOURCE='/qualified/src/tessera'),
+        capture_output=True, text=True, timeout=30)
+    assert done.returncode == 2
+    assert 'PART_BOUND_S' in done.stdout + done.stderr
+
+
+def test_empty_bound_refuses_in_the_profile_wrapper_before_any_work(tmp_path):
+    out = tmp_path / 'profile'
+    done = subprocess.run(['bash', str(ROOT / 'experiments/t8_census/profile_unit_encode.sh'), str(out),
+        '--q256', '768', '--hessian', str(tmp_path / 'missing-capture')], cwd=ROOT,
+        env=launcher._launch_env(tmp_path, PART_BOUND_S='', TESSERA_PRODUCER_PYTHON=sys.executable,
+                                TESSERA_PRODUCER_SOURCE='/qualified/src/tessera'),
+        capture_output=True, text=True, timeout=30)
+    assert done.returncode == 2
+    assert 'PART_BOUND_S' in done.stdout + done.stderr
+    assert not out.exists(), 'the refusal must come before the output directory is made'
+
+
 def test_default_profile_authenticates_before_cuda_or_source_access(tmp_path, selected):
     out = tmp_path / 'profile'
     done = subprocess.run(['bash', str(ROOT / 'experiments/t8_census/profile_unit_encode.sh'), str(out),
