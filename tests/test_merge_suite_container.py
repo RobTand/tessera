@@ -551,3 +551,39 @@ def test_all_local_mount_ambiguity_refuses(tmp_path, cache_mount_table, edges):
     with pytest.raises(ValueError, match="mount provenance is ambiguous"):
         owner.require_local_cache(tmp_path)
 
+
+def test_hidden_submount_is_judged_by_the_mount_the_descriptor_serves(
+        tmp_path, monkeypatch, cache_mount_table):
+    """A later, shallower mount can hide an earlier submount entirely; the
+    opened descriptor's mount id, not the deepest mount point, decides (#949)."""
+    from tessera._dev import native_identity
+
+    data = tmp_path / "data"
+    hidden = data / "cache"
+    data.mkdir()
+    hidden.mkdir()
+    cache = hidden / "run"
+    cache_mount_table[:] = [_mount(1, "/", "ext4"),
+                            _mount(30, hidden, "nfs", parent_id=20),
+                            _mount(40, data, "ext4", parent_id=1)]
+    monkeypatch.setattr(native_identity, "_fd_mount_id", lambda fd: "40")
+    assert native_identity.native_cache_mount(cache)[1:] == (data, "ext4")
+    owner.require_local_cache(cache)
+
+
+def test_visible_refused_submount_is_still_refused(tmp_path, monkeypatch, cache_mount_table):
+    """Without a later covering mount, the refused submount itself decides."""
+    from tessera._dev import native_identity
+
+    data = tmp_path / "data"
+    sub = data / "cache"
+    data.mkdir()
+    sub.mkdir()
+    cache = sub / "run"
+    cache_mount_table[:] = [_mount(1, "/", "ext4"),
+                            _mount(30, sub, "nfs", parent_id=1)]
+    monkeypatch.setattr(native_identity, "_fd_mount_id", lambda fd: "30")
+    assert native_identity.native_cache_mount(cache)[1:] == (sub, "nfs")
+    with pytest.raises(ValueError, match="filesystem type nfs"):
+        owner.require_local_cache(cache)
+
