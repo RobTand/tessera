@@ -287,7 +287,7 @@ def _fixture_install(target: Path) -> Path:
 
 
 def _selected_export_argv(src, out, plan_path):
-    return [str(src), str(out),
+    return [str(src), str(out), "--device", "cpu",
             "--grid", "E4M3", "--q256", "1024", "--passthrough-unrouted",
             "--plan-json", str(plan_path), *PART_ARGV]
 
