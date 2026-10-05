@@ -69,7 +69,10 @@ def fixture_inputs(monkeypatch, tmp_path, producer, reviewed):
     monkeypatch.setattr(watch_window_queue, "inspect", reached)
     root = tmp_path / "submitted"
     root.mkdir()
-    (root / "inputs.json").write_text(json.dumps(dict(config=config, predecessors=[], census_action_keys=["1" * 64, "2" * 64])))
+    managed_window.atomic_json(root / "memory-policy.json", getattr(managed_window, "MEMORY_POLICY", {}))
+    (root / "inputs.json").write_text(json.dumps(dict(config=config, predecessors=[],
+        census_action_keys=["1" * 64, "2" * 64],
+        memory_policy_sha256=recipe.sha(root / "memory-policy.json"))))
     (root / "manifest.json").write_text("[]")
     reviews = tmp_path / "reviews.json"
     reviews.write_text(json.dumps({who: dict(verdict="APPROVE", head_sha=reviewed) for who in ("parent", "D5")}))
@@ -125,3 +128,22 @@ def test_parentless_materialization_without_reviewed_git_object_refuses_by_name(
     producer, other = make_producer(tmp_path / "parentless", message="parentless materialization")
     with pytest.raises(managed_window.Refused, match="reviewed Git object unavailable"):
         recipe.require_producer(producer, reviewed, disk_digest(producer), exact_head=False)
+
+
+@pytest.mark.parametrize("fault", ["content", "seal", "restamped"] )
+def test_changed_memory_policy_never_reaches_publication(tmp_path, monkeypatch, fault):
+    producer, reviewed = make_producer(tmp_path)
+    config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
+    path = root / "memory-policy.json"
+    policy = json.loads(path.read_text())
+    setup = json.loads((root / "inputs.json").read_text())
+    if fault in ("content", "restamped"):
+        policy["start_gib"] = 112
+        managed_window.atomic_json(path, policy)
+    if fault == "seal":
+        setup["memory_policy_sha256"] = "0" * 64
+    if fault == "restamped":
+        setup["memory_policy_sha256"] = recipe.sha(path)
+    managed_window.atomic_json(root / "inputs.json", setup)
+    with pytest.raises(managed_window.Refused, match="memory policy changed"):
+        driver.submit(root, reviews)

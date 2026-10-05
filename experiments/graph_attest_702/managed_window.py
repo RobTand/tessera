@@ -1,6 +1,6 @@
 """Attempt-bound rendezvous and deadlines for the existing TP2 graph recipe.
 
-This is payload coordination, not admission: only pbcampaign/pbrun admit ranks.
+This is payload coordination, not admission: only published pbgang/pbrun admit ranks.
 The worker, not a payload, releases the PB scope after its controller exits.
 """
 from __future__ import annotations
@@ -21,10 +21,27 @@ PEER_WAIT_SECONDS = 3600
 HOSTS = ("sparklina", "sparky")
 
 # One owner for the rank lifecycle and its memory admission/abort policy.
-MEMORY_POLICY = dict(start_gib=114, headroom_wait_seconds=900.0,
+MEMORY_POLICY = dict(schema="tessera.window_memory_policy.d30.v1",
+                     model_kv_estimate_gib=98, unmeasured_graph_host_allowance_gib=6,
+                     reserve_gib=3, headroom_wait_seconds=900.0,
                      host_cap_gib=104, gpu_subset_cap_gib=102,
-                     sample_seconds=5.0, abort_below_gib=16.0,
-                     term_grace_seconds=1.0)
+                     sample_seconds=1.0, abort_below_gib=2.0, term_grace_seconds=10.0,
+                     authority="CEO final D30 amendment, 2026-10-05; new reviewed invocation only",
+                     provenance="98 is ceil(max(94.4,96.1)+1.625), a conservative hybrid estimate, not a measured peak. "
+                                "6 is UNMEASURED retained graph/host allowance; 3 is reserve. "
+                                "104 is host cap; 102 caps its GPU subset, not additive memory.",
+                     historical_source="experiments/graph_attest_702/RUNPLAN-artifact.md; "
+                                       "kernels-window4-headroom-equation-packet-20261005",
+                     historical_packet_sha256="1a28bff770790a09b0df4573d46acf31e44aa12c6118cf31b9a32a279ffdb4f8",
+                     counter_definitions={
+                         "mem_available_gib": "Whole-host /proc/meminfo MemAvailable kB / 1048576; includes reclaimable cache, not process RSS.",
+                         "scope_memory": "Owned cgroup v2 host charge; current sampled, peak claim-lifetime; CUDA coverage unproven.",
+                         "host_rss_and_driver_context": "UNKNOWN: not recorded or decomposed by MemAvailable minima; never zero.",
+                         "overlap": "Shared DRAM counters overlap; do not sum GPU used, UVM residual, RSS, cgroup charge or whole-box used.",
+                         "sampling_limit": "One-second sampled guard, not continuous protection against transient OOM."})
+MEMORY_POLICY["start_gib"] = sum(MEMORY_POLICY[key] for key in
+    ("model_kv_estimate_gib", "unmeasured_graph_host_allowance_gib", "reserve_gib"))
+MEMORY_POLICY["hosts"] = {host: {"start_gib": MEMORY_POLICY["start_gib"]} for host in HOSTS}
 
 
 class Refused(RuntimeError):
@@ -81,6 +98,7 @@ class Envelope:
     def __init__(self, end_unix: float, cleanup_seconds: float = CLEANUP_SECONDS):
         self.end_unix = positive_time(end_unix, "window end")
         self.end = time.monotonic() + (self.end_unix - time.time())
+        self.terminations = []
         self.cleanup_seconds = cleanup_seconds
 
     def tighten(self, end_unix: float) -> None:
@@ -123,20 +141,35 @@ class Envelope:
                 raise Refused(f"command failed ({result.returncode}): {argv!r}: {out}")
             return result
         finally:
-            # A command may exit while a grandchild still owns its session.
+            self._terminate(process, argv)
+
+    def _terminate(self, process, argv):
+        """Stop only the session this Envelope created, including owned descendants."""
+        record = dict(pid=process.pid, argv=argv, signals=[], started_unix=time.time())
+        self.terminations.append(record)
+        def alive():
+            process.poll()  # reap leader; a remaining descendant may still own the group
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                os.killpg(process.pid, 0)
+                return True
             except ProcessLookupError:
-                pass
+                return False
+        def send(sig):
             try:
-                process.wait(timeout=min(1, max(.01, self.end - time.monotonic())))
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
+                os.killpg(process.pid, sig)
             except ProcessLookupError:
-                pass
-            process.wait(timeout=max(.01, min(1, self.end - time.monotonic())))
+                return
+            record["signals"].append(dict(signal=sig.name, unix=time.time(), monotonic=time.monotonic()))
+        if alive():
+            send(signal.SIGTERM)
+            stop_at = min(time.monotonic() + MEMORY_POLICY["term_grace_seconds"], self.end)
+            while alive() and time.monotonic() < stop_at:
+                time.sleep(min(.05, max(0, stop_at - time.monotonic())))
+            if alive():
+                record["deadline_shortened_grace"] = stop_at == self.end
+                send(signal.SIGKILL)
+        process.wait(timeout=max(.01, min(1, self.end - time.monotonic())))
+        record.update(returncode=process.returncode, ended_unix=time.time())
 
 
 class Rendezvous:

@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-10-05 — issue959: D30 Window4 107 GiB admission and dual-rank memory abort
+
+Window4 per-host `MemAvailable` admission moves from the historical 114 GiB
+predicate to 107 GiB on both hosts — the retained conservative hybrid model/KV
+estimate 98 plus the explicitly unmeasured graph/host allowance 6 plus reserve
+3 — with the 104 GiB host / 102 GiB GPU-subset caps unchanged. The 98 is
+derived, not measured: the larger of the 94.4/96.1 GiB hybrid estimates plus
+the 1.625 GiB KV uplift from 384 MiB to 2 GiB per rank, rounded conservatively
+up, and those hybrids come from the graph arm's MemAvailable ready drop and the
+eager L512/c4 transient-KV assumption, not from measured 384 MiB peaks. Engine
+RSS and context sizes were never recorded and stay unknown; cgroup charge,
+MemAvailable and GPU-used quantities overlap, so no naive sum of them is a
+measured decomposition. The 900-second bounded headroom wait and the
+model-start recheck are unchanged against the 107 GiB bar. The old 114 GiB
+predicate and its sampled 16 GiB floor are historical only: the b5 run recorded
+under them stays immutable. Historical derivation is documented in
+`/home/rob/fleet/inventory/kernels-window4-headroom-equation-packet-20261005.json`
+(SHA-256 `1a28bff770790a09b0df4573d46acf31e44aa12c6118cf31b9a32a279ffdb4f8`).
+A new 1 Hz whole-box guard fails both exact-owned ranks
+when either host samples strictly below 2 GiB. The failing rank publishes its
+exact-attempt FAILED marker before any termination wait, TERMs its labeled
+owned container promptly and TERMs the Envelope-owned active subprocess group,
+sending SIGKILL only after 10 seconds if still needed, bounded by the finite
+whole-window cleanup deadline and recorded; the rendezvous itself is not
+terminated, and both ranks record a failed-cleaned acknowledgement so an early
+failed-rank exit cannot cause a native withdrawal that shortens the peer's
+10-second grace. A sampled guard is not continuous immunity.
+`window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
+SHA into the submitted inputs; each rank emits
+`rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —
+baseline, minimum, raw samples and counters kept so a future window can measure
+the 6 GiB allowance, not a measured RSS decomposition — and the Envelope
+outcome carries the termination list with container termination evidence.
+Protected sysctl, ARC, cache and service settings are untouched. No
+performance, fit or pin claim is minted, and old
+producer approvals do not transfer: pool review must check both the derivation
+and the guard against the exact new producer head before one fresh native
+gang. The failing-before behavior regression and the admitted CPU physical
+guard smoke are required by the issue and live with its source and test
+slices; this entry records the contract they enforce.
+
 ## 2026-10-05 — issue953: bounded preflight headroom wait (Window4)
 
 `LocalArm.preflight` now waits up to 900 seconds for the unchanged 114 GiB

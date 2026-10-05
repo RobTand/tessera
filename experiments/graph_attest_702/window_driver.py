@@ -15,7 +15,6 @@ from managed_window import (CLEANUP_SECONDS, WINDOW_SECONDS, HOSTS, MEMORY_POLIC
 import tp2_recipe as recipe
 
 PB = Path("/mnt/shared/prismabuild-fleet/repo/tools")
-CLIENT = "/home/rob/tmp/pb-submit-celestia-20261003/bin/python"
 RANK_PYTHON = "/home/rob/venvs/pb-cpu/bin/python"
 QUEUE = Path("/mnt/shared/prismabuild-fleet/pb-queue")
 
@@ -32,7 +31,7 @@ def dry_arm(name: str, env: dict):
         raise Refused("an arm's receipts are never merged into an existing arm")
     print(f"arm {name} (dry run): local PB rank action on each host; start nothing")
     print(f"  5400-second whole-window including rendezvous/all named arms/owned cleanup; {CLEANUP_SECONDS}s cleanup reserve")
-    print("  both hosts: MemAvailable >= 114 GiB; sampled physical floor 16 GiB; native threads=1")
+    print(f"  both hosts: MemAvailable >= {MEMORY_POLICY['start_gib']} GiB; 1 Hz strict <2 GiB dual-rank abort; native threads=1")
     for rank in (0, 1):
         print(f"  serve rank{rank}: {shlex.join(recipe.serve(config, arm, rank))}")
     print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") == recipe.EAGER_MODE else
@@ -125,11 +124,13 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
             directory = Path(config["profile_dir"]) / arm["arm"]
             directory.mkdir(parents=True, exist_ok=False)
             directory.chmod(0o777)
+    atomic_json(root / "memory-policy.json", MEMORY_POLICY)
     setup = dict(schema=("tessera.window4_eager_window.v1" if mode == recipe.EAGER_MODE else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
                  config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
                  requested_pb_timeout_s=WINDOW_SECONDS, effective_pb_timeout_s=None, peer_wait_seconds=3600,
                  predecessors=predecessors, diskcheck=disks,
                  census_action_keys=census_keys,
+                 memory_policy_sha256=recipe.sha(root / "memory-policy.json"),
                  resources=dict(cpu_total=14, shared_host_memory_gib_total=208, gpu_subset_gib_total=204,
                                 exclusive_devices=2, local_output_cap_gib_per_host=8, shared_output_cap_gib=1))
     atomic_json(root / "inputs.json", setup)
@@ -175,6 +176,9 @@ def submit(root: Path, reviews: Path):
     if json.loads((root / "manifest.json").read_text()) != rows(root, setup["config"], env):
         raise Refused("prepared PB manifest changed; never restamp admission/resource inputs")
     review = read_json(reviews)
+    if (recipe.sha(root / "memory-policy.json") != setup["memory_policy_sha256"]
+            or read_json(root / "memory-policy.json") != MEMORY_POLICY):
+        raise Refused("prepared memory policy changed; never restamp a reviewed window")
     for who in ("parent", "D5"):
         if review.get(who, {}).get("verdict") != "APPROVE" or review[who].get("head_sha") != env["PRODUCER_COMMIT"]:
             raise Refused(f"missing exact frozen-source {who} review; no real model start")
@@ -201,18 +205,33 @@ def submit(root: Path, reviews: Path):
     if (root / "submission-started.json").exists():
         raise Refused("this invocation was already submitted; preserve its failed/partial evidence")
     atomic_json(root / "submission-started.json", dict(reviews=review))
-    # The published campaign owns fanout and waits. No detach, SSH launcher, retry, or atomic-pair claim.
+    # Only the published native driver publishes the group; published pbwait
+    # owns completion for BOTH members. No private group writer or dispatcher.
     with (root / "campaign.log").open("w") as log:
-        # Class-scoped GPU measurements must seal live GB10 platform evidence on a Spark (D26).
         import socket
         if socket.gethostname() not in HOSTS:
             raise Refused("measurement submission must use the published PB client on a GB10 origin; celestia has no accelerator evidence")
-        done = subprocess.run([sys.executable, str(PB / "pbcampaign.py"), "--transport", "pool", "--wait-s", "6000",
-                               "--max-inflight", "2", str(root / "manifest.json")], stdout=log, stderr=subprocess.STDOUT)
+        submitted = subprocess.run([sys.executable, str(PB / "pbgang.py"),
+                                    "--manifest", str(root / "manifest.json")],
+                                   capture_output=True, text=True)
+        log.write(submitted.stdout + submitted.stderr)
+        log.flush()
+        if submitted.returncode:
+            raise Refused("native gang publication refused; retain driver/member failure evidence")
+        gang = json.loads(submitted.stdout.strip().splitlines()[-1])
+        if (gang.get("schema") != "prismabuild.pbgang.v1" or len(gang.get("members", [])) != 2
+                or any(not isinstance(key, str) or len(key) != 64 for key in gang["members"])):
+            raise Refused("native gang driver returned an incomplete two-member identity")
+        atomic_json(root / "native-gang.json", gang)
+        with (root / "member-completion.json").open("w") as completed:
+            done = subprocess.run([sys.executable, str(PB / "pbwait.py"), "--json",
+                                   "--wait-s", "6000", *gang["members"]],
+                                  stdout=completed, stderr=log)
     physical = collect(root, QUEUE)
     if not physical["ownership_released"]:
         raise Refused(f"physical handoff unproven; preserve ownership and logs: {physical['error']}")
-    if done.returncode or any(r["identity"]["returncode"] for r in physical["ranks"]):
+    if (done.returncode or any(r["identity"]["returncode"] for r in physical["ranks"])
+            or any((root / f"failed-rank{rank}.json").exists() for rank in (0, 1))):
         return 1
     # Bind both rank keys to every arm without pretending the rank0 key owns the other rank.
     keys = [r["identity"]["action_key"] for r in physical["ranks"]]
