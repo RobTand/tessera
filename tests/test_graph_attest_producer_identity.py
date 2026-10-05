@@ -37,7 +37,7 @@ import window_driver as driver
 
 FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py", "submit.py",
          "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
-         "eager_benchmark.py", "plan-eager-window4.txt")
+         "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt")
 
 
 class ReachedAdmission(RuntimeError):

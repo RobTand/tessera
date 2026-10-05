@@ -61,7 +61,8 @@ class CpuArm:
         return dict(fabric=rank_window.fabric_from_log(banner))
 
     def probes(self, arm, peer):
-        failed_arm = "eager2048" if arm["arm"].startswith("eager") else "aGR"
+        mode = window.read_json(self.root.parent / "scenario-mode.json")["mode"]
+        failed_arm = {"window4-eager-2048-4096": "eager2048", "ship-eager-4096-8192": "eager4096"}.get(mode, "aGR")
         failure = self.scenario in ("probe_failure", "timeout") and arm["arm"] == failed_arm
         program = "import time;print('partial',flush=True);time.sleep(30)" if failure and self.scenario == "timeout" else (
                   "print('partial',flush=True);raise SystemExit(7)" if failure else "print('two full passes and screens simulated',flush=True)")
@@ -166,7 +167,7 @@ def test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name
 
 
 @pytest.mark.parametrize("field", ["image", "src_sha256", "config_sha256"])
-@pytest.mark.parametrize("mode", ["graph-control", "window4-eager-2048-4096"])
+@pytest.mark.parametrize("mode", ["graph-control", "window4-eager-2048-4096", "ship-eager-4096-8192"])
 @pytest.mark.parametrize("dev_mode", [None, "1", "0"], ids=["default-dev", "explicit-dev", "certified"])
 def test_mismatched_rank_preflight_refuses_before_either_launch(tmp_path, monkeypatch, field, mode, dev_mode):
     # Both controller subprocesses use the real rendezvous/protocol; only the
@@ -228,7 +229,9 @@ if __name__ == "__main__":
     owned = window.read_json(root / f"identity{rank}.json")
     envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=.6)
     mode = window.read_json(root / "scenario-mode.json")["mode"]
-    arms = [dict(arm=arm) for arm in (("eager2048", "eager4096") if mode == rank_window.recipe.EAGER_MODE else ("aE1", "aGR", "aE2"))]
+    names = {"window4-eager-2048-4096": ("eager2048", "eager4096"),
+             "ship-eager-4096-8192": ("eager4096", "eager8192")}
+    arms = [dict(arm=arm) for arm in names.get(mode, ("aE1", "aGR", "aE2"))]
     adapter = CpuArm(root / "rdv", owned, envelope, name)
     raise SystemExit(rank_window.run_rank(dict(fabric="socket", window_mode=mode), owned, root / "queue", root / "rdv", arms,
                                          adapter, envelope, poll_seconds=.02))

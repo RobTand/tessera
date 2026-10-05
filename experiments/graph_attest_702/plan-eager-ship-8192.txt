@@ -1,0 +1,4 @@
+# Explicit ship-eager-4096-8192 A8S/socket/TP2/c1 pair; not Window4 or a fit claim.
+# Same D30 guards, resident runtime and October5 clients; no graph receipt/population.
+eager4096 FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}
+eager8192 FABRIC=socket EAGER=1 MAX_BATCHED=8192 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}

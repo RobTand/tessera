@@ -12,12 +12,13 @@ from managed_window import Refused
 from tessera.dev_mode import DEV_MODE_ENV
 
 MODE = "window4-eager-2048-4096"
+SHIP_MODE = "ship-eager-4096-8192"
 
 
-def eager_plan(tmp_path):
+def eager_plan(tmp_path, pair=(("eager2048", 2048), ("eager4096", 4096))):
     path = tmp_path / "plan.txt"
     path.write_text('\n'.join(f'{name} EAGER=1 SPEC_JSON={json.dumps(recipe.MTP, separators=(",", ":"))} MAX_BATCHED={chunk} FABRIC=socket'
-                              for name, chunk in (("eager2048", 2048), ("eager4096", 4096))) + '\n')
+                              for name, chunk in pair) + '\n')
     return path
 
 
@@ -40,6 +41,81 @@ def test_named_eager_serve_changes_only_chunk_within_the_pair(tmp_path):
     assert commands[0][slot] == "2048" and commands[1][slot] == "4096"
     commands[1][slot] = commands[0][slot]
     assert commands[0] == commands[1]
+
+
+def test_ship_mnbt8192_inputs_and_plan_admit_the_exact_pair(tmp_path):
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=SHIP_MODE, MAX_NUM_SEQS="1")
+    arms = recipe.plan(eager_plan(tmp_path, (("eager4096", 4096), ("eager8192", 8192))), mode=SHIP_MODE)
+    assert [(arm["arm"], arm["max_batched"]) for arm in arms] == [("eager4096", 4096), ("eager8192", 8192)]
+    for arm in arms:
+        config = recipe.inputs(dict(env, MAX_BATCHED=str(arm["max_batched"])), live=False)
+        assert config["window_mode"] == SHIP_MODE
+        reference = recipe.serve(dict(config, window_mode=MODE), dict(arm, max_batched=2048), 1)
+        command = recipe.serve(config, arm, 1)
+        slot = command.index("--max-num-batched-tokens") + 1
+        assert command[slot] == str(arm["max_batched"])
+        command[slot] = "2048"
+        assert command == reference
+
+
+def test_ship_mnbt8192_dry_driver_admits_both_exact_arms(tmp_path, capsys):
+    import window_driver as driver
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=SHIP_MODE, EAGER="1", SPEC_JSON=json.dumps(recipe.MTP))
+    for name, chunk in (("eager4096", "4096"), ("eager8192", "8192")):
+        driver.dry_arm(name, dict(env, MAX_BATCHED=chunk))
+    text = capsys.readouterr().out
+    assert "--max-num-batched-tokens 8192" in text and "--max-num-batched-tokens 4096" in text
+    assert text.count("--max-num-seqs 1") == 4
+    assert text.count("--tensor-parallel-size 2 --nnodes 2") == 4
+    assert "107 GiB" in text and "1 Hz strict <2 GiB dual-rank abort" in text
+    with pytest.raises(Refused):
+        driver.dry_arm("eager2048", dict(env, MAX_BATCHED="4096"))
+    with pytest.raises(Refused):
+        driver.dry_arm("eager8192", dict(env, MAX_BATCHED="4096"))
+
+
+@pytest.mark.parametrize("old,new", [("MAX_BATCHED=8192", "MAX_BATCHED=16384"),
+    ("eager8192", "eager4096"), ("FABRIC=socket", "FABRIC=roce"), ("EAGER=1", "EAGER=0"),
+    ("MAX_BATCHED=8192", "MAX_BATCHED=8192 MAX_NUM_SEQS=2")])
+def test_ship_mnbt8192_pair_refuses_scope_substitution(tmp_path, old, new):
+    path = eager_plan(tmp_path, (("eager4096", 4096), ("eager8192", 8192)))
+    path.write_text(path.read_text().replace(old, new))
+    with pytest.raises(Refused):
+        recipe.plan(path, mode=SHIP_MODE)
+
+
+@pytest.mark.parametrize("pair", [(("eager8192", 8192), ("eager4096", 4096)),
+    (("eager8192", 8192),), (("eager2048", 2048), ("eager4096", 4096)),
+    (("eager4096", 4096), ("eager8192", 8192), ("eager2048", 2048))])
+def test_ship_mnbt8192_pair_refuses_order_missing_or_extra_arms(tmp_path, pair):
+    with pytest.raises(Refused):
+        recipe.plan(eager_plan(tmp_path, pair), mode=SHIP_MODE)
+
+
+@pytest.mark.parametrize("override", [dict(MAX_BATCHED="2048"), dict(MAX_BATCHED="16384"),
+    dict(MAX_NUM_SEQS="4"), dict(FABRIC="roce"), dict(SERVE_MODE="streamed"),
+    dict(FLOOR_GIB="1"), dict(EXPECT_PEAK_GIB="97"), dict(KV_BYTES="1073741824")])
+def test_ship_mnbt8192_inputs_refuse_other_scopes(tmp_path, override):
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=SHIP_MODE, MAX_BATCHED="8192", MAX_NUM_SEQS="1")
+    with pytest.raises(Refused):
+        recipe.inputs(dict(env, **override), live=False)
+
+
+@pytest.mark.parametrize("mode", ["graph-control", MODE])
+def test_ship_mnbt8192_does_not_extend_existing_modes(tmp_path, mode):
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=mode, MAX_BATCHED="8192")
+    with pytest.raises(Refused):
+        recipe.inputs(env, live=False)
+    with pytest.raises(Refused):
+        recipe.plan(eager_plan(tmp_path, (("eager4096", 4096), ("eager8192", 8192))), mode=mode)
 
 
 def test_graph_control_does_not_accept_the_eager_plan(tmp_path):
@@ -74,29 +150,66 @@ def test_graph_input_refusal_remains_c4_and_2048(tmp_path):
     assert selected["window_mode"] == MODE
 
 
+
+@pytest.mark.parametrize("dev_mode", ["1", "0"])
+def test_ship_bindings_preserve_the_selected_mode_and_all_other_controls(bound_files, monkeypatch, dev_mode):
+    benchmark, env, artifact, _ = bound_files
+    monkeypatch.setenv(DEV_MODE_ENV, dev_mode)
+    original = benchmark.bindings(env, artifact)
+    selected = benchmark.bindings(dict(env, WINDOW_MODE=SHIP_MODE), artifact)
+    assert selected.pop("window_mode") == SHIP_MODE
+    assert original.pop("window_mode") == MODE
+    assert selected == original
+
+
+def test_ship_rows_keep_the_same_admission_caps_and_profile_namespaces(tmp_path):
+    import window_driver as driver
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=SHIP_MODE, SOURCE_COMMIT="a" * 40, SOURCE_SHA256="b" * 64,
+               PRODUCER_COMMIT="c" * 40, PRODUCER_SHA256="d" * 64)
+    config = recipe.inputs(env, live=False)
+    (tmp_path / "inputs.json").write_text(json.dumps(dict(config=config)))
+    rows = driver.rows(tmp_path, config, env)
+    assert [row["demand"] for row in rows] == [dict(cpu=8, mem_gb=104, gpu=1), dict(cpu=6, mem_gb=104, gpu=1)]
+    assert all(row["gpu_memory_gb"] == 102 and row["exclusive"] and row["measurement"]
+               and row["host_class"] == "gb10" and row["priority"] == 10 and row["max_attempts"] == 1 for row in rows)
+    arms = recipe.plan(HERE / "plan-eager-ship-8192.txt", mode=SHIP_MODE)
+    for arm in arms:
+        command = recipe.container(config, arm, dict(rank=1, run_id="test", nonce="a" * 32),
+                                   tmp_path / "out", tmp_path / "ext", tmp_path / "cid", {})
+        profile = Path(config["profile_dir"]) / arm["arm"]
+        assert f"{profile}:{profile}" in command
+        assert "TESSERA_SERVE_MODE=resident" in command
+        assert str(profile) in command[-1]
+
+
 @pytest.mark.parametrize("name", ["success", "probe_failure", "timeout", "preflight", "floor", "copy_failure"])
-def test_eager_lifecycle_uses_rank1_client_and_stops_later_arm_on_failure(tmp_path, name):
+@pytest.mark.parametrize("mode,arms", [(MODE, ("eager2048", "eager4096")),
+                                      (SHIP_MODE, ("eager4096", "eager8192"))])
+def test_eager_lifecycle_uses_rank1_client_and_stops_later_arm_on_failure(tmp_path, name, mode, arms):
     from test_graph_attest_window_scenarios import scenario
-    outcomes, living, seconds = scenario(tmp_path, name, mode=MODE)
+    outcomes, living, seconds = scenario(tmp_path, name, mode=mode)
     assert seconds < 10 and not living
     assert all(outcome["simulation"] and not outcome["ownership_released"] for outcome in outcomes)
     rdv = tmp_path / "rdv"
-    assert not (rdv / "eager2048-probes-rank0.json").exists()
+    assert not (rdv / f"{arms[0]}-probes-rank0.json").exists()
     if name == "success":
-        assert all(outcome["returncode"] == 0 and outcome["completed_arms"] == ["eager2048", "eager4096"]
+        assert all(outcome["returncode"] == 0 and outcome["completed_arms"] == list(arms)
                    for outcome in outcomes)
-        assert (rdv / "eager2048-probes-rank1.json").exists()
+        assert (rdv / f"{arms[0]}-probes-rank1.json").exists()
     else:
         assert any(outcome["returncode"] for outcome in outcomes)
-        assert not (rdv / "eager4096.rank1.pid").exists()
+        assert not (rdv / f"{arms[1]}.rank1.pid").exists()
 
 
-def test_runtime_candidate_review_is_exact_and_independent_of_producer(tmp_path, monkeypatch):
+@pytest.mark.parametrize("mode", [MODE, SHIP_MODE])
+def test_runtime_candidate_review_is_exact_and_independent_of_producer(tmp_path, monkeypatch, mode):
     from test_graph_attest_producer_identity import make_producer, fixture_inputs, ReachedAdmission
     import window_driver as driver
     producer, reviewed = make_producer(tmp_path)
     config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
-    config.update(window_mode=MODE, pq_pin_commit="e" * 40, artifact_manifest=str(tmp_path / "fixture.json"))
+    config.update(window_mode=mode, pq_pin_commit="e" * 40, artifact_manifest=str(tmp_path / "fixture.json"))
     setup = json.loads((root / "inputs.json").read_bytes())
     setup["config"] = config
     (root / "inputs.json").write_text(json.dumps(setup))

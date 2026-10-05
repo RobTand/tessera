@@ -183,7 +183,7 @@ class LocalArm:
                 self.guard()
             self._persist_memory(sample)
             sample = None  # already durable; do not append it again on a later error
-            if self.config.get("window_mode") == recipe.EAGER_MODE:
+            if self.config.get("window_mode") in recipe.EAGER_PAIRS:
                 scope = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"),
                              mem_available_gib=mem)
                 with (self.work / "memory-scope.jsonl").open("a") as stream:
@@ -192,8 +192,8 @@ class LocalArm:
                 return
             self.last_maintenance_sample = now
             for path, cap in ((self.ext, 6 * (1 << 30)), (self.work, int(6.3 * (1 << 30))),
-                              (self.rdv if self.config.get("window_mode") == recipe.EAGER_MODE else self.rdv / "arms",
-                               (1 << 30) if self.config.get("window_mode") == recipe.EAGER_MODE else int(.2 * (1 << 30)))):
+                              (self.rdv if self.config.get("window_mode") in recipe.EAGER_PAIRS else self.rdv / "arms",
+                               (1 << 30) if self.config.get("window_mode") in recipe.EAGER_PAIRS else int(.2 * (1 << 30)))):
                 if directory_bytes(path) > cap:
                     raise Refused(f"declared disk/output cap exceeded: {path}")
             if self.active and self.active.get("cid"):
@@ -333,7 +333,7 @@ class LocalArm:
         raise TimeoutError("local serve readiness deadline")
 
     def probes(self, arm, peer_meta):
-        if self.config.get("window_mode") == recipe.EAGER_MODE:
+        if self.config.get("window_mode") in recipe.EAGER_PAIRS:
             from eager_benchmark import probes
             return probes(self, arm, peer_meta)
         name = arm["arm"]
@@ -446,7 +446,7 @@ class LocalArm:
                 self.command(["cp", "--", str(self.work / "memwatch.txt"),
                               str(dest / f"{arm['arm']}.rank{self.rank}.memwatch.txt")], cleanup=True, limit=10)
                 atomic_json(dest / f"ownership-rank{self.rank}.json", dict(self.identity, container=active))
-                if self.config.get("window_mode") == recipe.EAGER_MODE:
+                if self.config.get("window_mode") in recipe.EAGER_PAIRS:
                     target = dest / f"{arm['arm']}.rank{self.rank}.memory-scope.jsonl"
                     self.command(["cp", "--", str(self.work / "memory-scope.jsonl"), str(target)], cleanup=True, limit=10)
                     copied.append(target)
@@ -476,7 +476,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
     outcome = dict(owned, simulation=not isinstance(adapter, LocalArm), completed_arms=[],
                    ownership_released=False, local_cleanup=[], returncode=1)
     current = None
-    probe_rank = 1 if config.get("window_mode") == recipe.EAGER_MODE else 0
+    probe_rank = 1 if config.get("window_mode") in recipe.EAGER_PAIRS else 0
     try:
         meeting.bind_peer(tick=adapter.tick)
         owned["window_end_unix"] = envelope.end_unix
@@ -519,7 +519,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
                     envelope.remaining(); meeting.check(); adapter.tick(); time.sleep(poll_seconds)
                 finished = meeting.checked(rdv / f"{stage}-probes-rank{probe_rank}.json", probe_rank)
                 if finished["returncode"] != 0: raise Refused("head probe failed")
-            if config.get("window_mode") == recipe.EAGER_MODE and isinstance(adapter, LocalArm):
+            if config.get("window_mode") in recipe.EAGER_PAIRS and isinstance(adapter, LocalArm):
                 profile = adapter.verify_profiles(arm, finished)
                 meeting.publish(stage + "-verified", profile=profile)
                 meeting.wait(stage + "-verified", tick=adapter.tick)
@@ -656,7 +656,7 @@ def main():
             envelope.run(["bash", "-n", "-c", command[-1]])
         sampler = None
         parsers = []
-        if config.get("window_mode") == recipe.EAGER_MODE:
+        if config.get("window_mode") in recipe.EAGER_PAIRS:
             sampler = scope_memory(owned)
             for arm in setup["arms"]:
                 local_config = dict(config, profile_dir=str(Path(config["profile_dir"]) / arm["arm"]))
