@@ -151,11 +151,16 @@ again in code and retains its view; a partial view refuses a new pair.
 The frozen **runtime** may be merged PR942
 `39e3d950226f1c9fec38d4baaaccb59fc267e12b`. Its source/config/hooks/equality-script
 digests bind the measured Tessera and eventual receipt. The **producer** is this
-separately reviewed PR: `PRODUCER_COMMIT` and `PRODUCER_SHA256` seal the rank,
-recipe, driver, timer, wrappers and plan bytes separately. PB snapshots the
-producer checkout, not the runtime checkout. Neither identity is restamped at
-receipt time. Parent and D5 review JSON binds the exact producer head; runtime
-choice and fabric remain explicit. The old dual-launch #942 wrapper is never
+separately reviewed PR. In both prepare and submit, checkout HEAD must equal the
+full `PRODUCER_COMMIT` and `experiments/graph_attest_702` must be clean. Every
+producer file is read with `git show PRODUCER_COMMIT:path`; those committed bytes
+must equal the executable files and their combined digest must equal
+`PRODUCER_SHA256`. A typed label plus a self-supplied disk digest is not authority.
+PB may materialize a synthetic HEAD, but the rank still checks clean producer
+files against the reviewed Git objects with no PB bypass. A parentless snapshot
+without the reviewed commit fails by the exact missing-object boundary. Parent
+and D5 review JSON must name that verified producer commit. Runtime choice and
+fabric remain explicit. The old dual-launch #942 wrapper is never
 run twice or used to launch an unadmitted remote rank.
 
 Every model row is an exclusive **measurement**, host class gb10, priority **10**
@@ -225,3 +230,32 @@ The approximately 55-minute expected / 80-minute planning-worst / 90-minute hard
 window remains **derived, not measured at TP2**: three 15–22 minute arms, first
 cold JIT +5–10 minutes, graph capture +1–3 minutes, plus rendezvous/cleanup. A fit
 claim requires the later real finite window, not these CPU controls.
+
+## Latest ship-window mandate (pending exact artifact/client inputs)
+
+CEO staged-candidate decision `dec-1005-023421-75cf` supersedes the diagnostic
+90-minute reservation: after the real PR943 identity fix and exact-head review,
+window3 is one exclusive SOCKET pair, approximately two hours. The public
+runtime candidate is `2dbac1910c88254d9c6391f02a34c4b07e516803`, packaged contract
+v56 raw SHA-256 `47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78`,
+from the qualified/reviewed draft PQ2262 candidate. That runtime/package identity
+is separate from this containment producer. Main-pin landing/promotion waits for
+the packet; private608bb/1770 evidence is not transferable.
+
+Campaign must freeze the all-T8-rates artifact (A8S only as an explicit fallback)
+and the actual October5 EXL3 client/protocol before serving. One source, image,
+artifact and fabric are held throughout. The graph receipt preserves the full
+48-choice two-pass population, capture replay and c4 scope. The speed/profile
+matrix is L512/2048/8192, c1, TP2, MNBT2048, using exactly that EXL3 client. Its
+different concurrency is recorded as a separate scope, never borrowed from c4.
+Fresh in-process profiles and both-Spark power belong in the same packet.
+
+Requested ship envelope is approximately7200 seconds; peer admission and live
+measurement bounds must be named separately and effective PB ceiling read from
+actual PB endings. The tested diagnostic source above still enforces5400 and
+the A8 nomination: do not mislabel or launch it as the expanded ship window.
+After its identity review closes, the exact supplied ship tuple requires its own
+finite-plan cutover/review, preserving owned cleanup and one-pair-at-a-time.
+No ship artifact/client identity, effective7200 ceiling, model result, pin
+promotion or scientific qualification is fabricated by this plan. Window4
+follows the controlled ship window.

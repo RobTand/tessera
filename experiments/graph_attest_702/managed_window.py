@@ -90,10 +90,10 @@ class Envelope:
         return left
 
     def run(self, argv: list[str], *, check=True, cleanup=False, tick=None,
-            stdout=None, env=None, input_text=None, limit=30) -> subprocess.CompletedProcess:
+            stdout=None, env=None, input_text=None, limit=30, text=True) -> subprocess.CompletedProcess:
         """A subprocess and its process group share the same finite envelope."""
         cap = min(self.remaining(cleanup=cleanup), limit)
-        process = subprocess.Popen(argv, start_new_session=True, text=True, env=env,
+        process = subprocess.Popen(argv, start_new_session=True, text=text, env=env,
                                    stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
                                    stdout=stdout if stdout is not None else subprocess.PIPE,
                                    stderr=subprocess.STDOUT)

@@ -37,11 +37,48 @@ def src_sha(root: Path) -> str:
                     for path in sorted((root / "src").rglob("*.py")))
     return hashlib.sha256(lines.encode()).hexdigest()
 
+PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
+                  "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt")
+
+
 def producer_sha() -> str:
-    names = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
-             "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt")
+    """Inspection-only disk digest; never an authority to execute reviewed code."""
     return hashlib.sha256("".join(f"{sha(Path(__file__).parent / name)}  {name}\n"
-                                 for name in names).encode()).hexdigest()
+                                 for name in PRODUCER_FILES).encode()).hexdigest()
+
+
+def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool, runner=None) -> str:
+    """Bind a reviewed Git object to the actual executable bytes; no PB exemption.
+
+    prepare/submit require the exact HEAD. A PB snapshot may have a synthetic
+    HEAD, but still needs the reviewed object and identical clean producer files.
+    A parentless checkout lacking that object fails closed by name.
+    """
+    def git(*args, binary=False):
+        argv = ["git", "-C", str(root), *args]
+        try:
+            if runner:
+                return runner(argv, limit=10, text=not binary).stdout
+            return subprocess.check_output(argv, timeout=10, text=not binary, stderr=subprocess.STDOUT)
+        except (subprocess.CalledProcessError, OSError, Refused) as exc:
+            raise Refused(f"producer reviewed Git object unavailable in this checkout: {commit}: {exc}") from exc
+    if not commit or git("rev-parse", "--verify", commit + "^{commit}").strip() != commit:
+        raise Refused("producer label is not a full reviewed commit object")
+    if exact_head and git("rev-parse", "HEAD").strip() != commit:
+        raise Refused("producer checkout HEAD differs from PRODUCER_COMMIT")
+    if git("status", "--porcelain", "--untracked-files=all", "--", "experiments/graph_attest_702").strip():
+        raise Refused("producer experiments/graph_attest_702 is not clean")
+    lines = []
+    for name in PRODUCER_FILES:
+        relative = "experiments/graph_attest_702/" + name
+        blob = git("show", commit + ":" + relative, binary=True)
+        if (root / relative).read_bytes() != blob:
+            raise Refused(f"producer on-disk bytes differ from reviewed git show object: {name}")
+        lines.append(f"{hashlib.sha256(blob).hexdigest()}  {name}\n")
+    digest = hashlib.sha256("".join(lines).encode()).hexdigest()
+    if digest != expected:
+        raise Refused("producer git-object digest differs from PRODUCER_SHA256")
+    return digest
 
 
 def inputs(env: dict, *, live: bool, runner=None) -> dict:
@@ -81,8 +118,8 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
             raise Refused("issues-owned frozen SOURCE_COMMIT/SOURCE_SHA256 differs")
         if git("status", "--porcelain"):
             raise Refused("shared source is not clean/frozen")
-        if producer_sha() != env.get("PRODUCER_SHA256") or not env.get("PRODUCER_COMMIT"):
-            raise Refused("separately sealed producer commit/bytes differ")
+        require_producer(Path(__file__).resolve().parents[2], env.get("PRODUCER_COMMIT", ""),
+                         env.get("PRODUCER_SHA256", ""), exact_head=False, runner=runner)
     return dict(ts=str(root), artifact=str(artifact), receipts=env["RECEIPTS"],
                 fabric=env["FABRIC"], image=IMAGE, src_sha256=src_sha(root),
                 config_sha256=sha(artifact / "config.json"),

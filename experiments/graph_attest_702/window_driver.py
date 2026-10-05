@@ -96,6 +96,8 @@ def diskcheck(*, for_model=True):
 
 
 def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, census_keys: list[str], *, role_preflight=False):
+    recipe.require_producer(Path(__file__).resolve().parents[2], env.get("PRODUCER_COMMIT", ""),
+                            env.get("PRODUCER_SHA256", ""), exact_head=True)
     config = recipe.inputs(env, live=True)
     arms = recipe.plan(path)
     if any(arm.get("fabric", config["fabric"]) != config["fabric"] for arm in arms):
@@ -148,6 +150,8 @@ def submit(root: Path, reviews: Path):
                RECEIPTS=setup["config"]["receipts"], FABRIC=setup["config"]["fabric"],
                SOURCE_COMMIT=setup["config"]["source_commit"], SOURCE_SHA256=setup["config"]["src_sha256"],
                PRODUCER_COMMIT=setup["config"]["producer_commit"], PRODUCER_SHA256=setup["config"]["producer_sha256"])
+    recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
+                            env["PRODUCER_SHA256"], exact_head=True)
     if recipe.inputs(env, live=True) != setup["config"]:
         raise Refused("prepared source/control changed; never restamp or resume an old window")
     if json.loads((root / "manifest.json").read_text()) != rows(root, setup["config"], env):
