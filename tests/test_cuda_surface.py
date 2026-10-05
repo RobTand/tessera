@@ -146,7 +146,6 @@ from pathlib import Path
 
 import pytest
 import conftest
-from xdist.remote import WorkerInteractor
 
 TRACE = Path(os.environ["TESSERA_SURFACE_ORDER_TRACE"])
 
@@ -168,7 +167,9 @@ def pytest_configure(config):
         return
     worker = config.workerinput["workerid"]
     write = conftest._write_surface_json
-    send = WorkerInteractor.sendevent
+    interactor = next(plugin for plugin in config.pluginmanager.get_plugins()
+                      if type(plugin).__name__ == "WorkerInteractor")
+    send = interactor.sendevent
 
     def traced_write(*args, **kwargs):
         _record(worker, "share write start")
@@ -179,16 +180,16 @@ def pytest_configure(config):
         _record(worker, "share write end")
         return result
 
-    def traced_send(self, name, **kwargs):
+    def traced_send(name, **kwargs):
         if name == "workerfinished":
             path = _share(config, worker)
             _record(worker, "workerfinished sent", share_exists=path.exists(),
                     share=json.loads(path.read_text()) if path.exists() else None,
                     identity=kwargs["workeroutput"].get("tessera_source_identity"))
-        return send(self, name, **kwargs)
+        return send(name, **kwargs)
 
     conftest._write_surface_json = traced_write
-    WorkerInteractor.sendevent = traced_send
+    interactor.sendevent = traced_send
 
 
 @pytest.hookimpl(optionalhook=True)
