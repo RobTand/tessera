@@ -387,6 +387,20 @@ def test_an_installed_payload_that_drifts_from_the_source_refuses(tmp_path, monk
     assert not out.exists() or not (out / "tessera_serving_manifest.json").exists()
 
 
+def test_an_installed_payload_with_an_extra_file_refuses_by_roster(tmp_path, monkeypatch):
+    """The roster is compared before any byte: a file the source never shipped
+    refuses by name, with the file in the message."""
+    repo, _base = _source_reference(tmp_path)
+    site = _fixture_install(tmp_path / "site")
+    (site / "tessera" / "unshipped_module.py").write_text("# not in the source\n")
+    monkeypatch.chdir(tmp_path)
+    done, out = _run_selected_exporter(tmp_path, site, repo)
+    assert done.returncode != 0
+    assert "TESSERA_PRODUCER_PYTHON" in done.stderr
+    assert "projected wheel roster" in done.stderr and "unshipped_module.py" in done.stderr
+    assert not out.exists() or not (out / "tessera_serving_manifest.json").exists()
+
+
 # --------------------------------------------------------------------------
 # Merge: one producer per checkpoint, one scale file, one batch schedule
 # --------------------------------------------------------------------------
