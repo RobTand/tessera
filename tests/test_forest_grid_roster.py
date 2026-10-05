@@ -41,6 +41,10 @@ def test_importing_the_grid_roster_does_not_fit_lloyd_grids():
     import subprocess
     import sys
 
+    # Function-local, not module-level: this test's own child re-executes this
+    # file as a module, and that child's sys.path carries no ``tests/``.
+    import child_env
+
     program = '''
 import importlib.util, sys
 from tessera import alphabet
@@ -53,6 +57,7 @@ spec.loader.exec_module(module)
 '''
     result = subprocess.run([sys.executable, "-c", program, str(Path(__file__))],
                             cwd=Path(__file__).resolve().parents[1],
+                            env=child_env.child_env(),
                             capture_output=True, text=True, timeout=60)
     assert result.returncode == 0, result.stdout + result.stderr
 
