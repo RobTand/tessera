@@ -13,7 +13,8 @@ def _mountinfo_fields() -> list[list[str]]:
 
 
 def native_cache_mount(path) -> tuple[Path, Path, str]:
-    """Resolve a cache's nearest existing parent to its deepest Linux mount.
+    """Resolve a cache's nearest existing parent to the mount the kernel
+    serves it through.
 
     Missing, malformed or ambiguous provenance cannot identify a mount.
     """
@@ -30,44 +31,38 @@ def native_cache_mount(path) -> tuple[Path, Path, str]:
                 raise RuntimeError(f"cache path {cache}: no existing parent for mount lookup")
             parent = parent.parent
 
-    matches = []
-    for fields in _mountinfo_fields():
-        try:
-            separator = fields.index("-")
-            if separator < 6 or len(fields) < separator + 4:
-                raise ValueError("incomplete mount fields")
-            mount_id, parent_id = int(fields[0]), int(fields[1])
-            if mount_id <= 0 or parent_id <= 0:
-                raise ValueError("invalid mount identity")
-            mountpoint = Path(re.sub(r"\\([0-7]{3})",
-                                    lambda match: chr(int(match[1], 8)), fields[4]))
-            if not mountpoint.is_absolute():
-                raise ValueError("relative mount point")
-            filesystem = fields[separator + 1]
-        except (ValueError, IndexError) as exc:
-            raise RuntimeError(f"cache path {cache}: mount provenance is malformed") from exc
-        if parent.is_relative_to(mountpoint):
-            matches.append((mountpoint, filesystem, mount_id, parent_id))
-    if not matches:
+    descriptor = os.open(parent, getattr(os, "O_PATH", os.O_RDONLY) | os.O_CLOEXEC)
+    try:
+        mount_id = _fd_mount_id(descriptor)
+    finally:
+        os.close(descriptor)
+    entries = [fields for fields in _mountinfo_fields() if fields[0] == mount_id]
+    if not entries:
         raise RuntimeError(f"cache path {cache}: mount provenance is not recorded")
-    depth = max(len(match[0].parts) for match in matches)
-    deepest = [match for match in matches if len(match[0].parts) == depth]
-    parents = {mount_id: parent_id for _, _, mount_id, parent_id in deepest}
-    covered = {parent_id for mount_id, parent_id in parents.items() if parent_id != mount_id}
-    visible = [match for match in deepest if match[2] not in covered]
-    if len(parents) != len(deepest) or len(visible) != 1:
+    if len(entries) > 1:
         raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
-    # A stack is one parent chain ending at its visible top, not sibling
-    # mounts or a disconnected cycle. Mount IDs are identities, not order.
-    seen = set()
-    current = visible[0][2]
-    while current in parents and current not in seen:
-        seen.add(current)
-        current = parents[current]
-    if len(seen) != len(parents):
-        raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
-    mountpoint, filesystem, _, _ = visible[0]
+    try:
+        separator = entries[0].index("-")
+        if separator < 6 or len(entries[0]) < separator + 4:
+            raise ValueError("incomplete mount fields")
+        mountpoint = Path(re.sub(r"\\([0-7]{3})",
+                                 lambda match: chr(int(match[1], 8)), entries[0][4]))
+        if not mountpoint.is_absolute():
+            raise ValueError("relative mount point")
+        filesystem = entries[0][separator + 1]
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(f"cache path {cache}: mount provenance is malformed") from exc
     return cache, mountpoint, filesystem
+
+
+def _fd_mount_id(fd: int) -> str:
+    """The mount id the kernel serves this held descriptor through."""
+    ids = [line.split(":", 1)[1].strip()
+           for line in Path(f"/proc/self/fdinfo/{fd}").read_text().splitlines()
+           if line.startswith("mnt_id:")]
+    if len(ids) != 1:
+        raise RuntimeError("native file mount identity is incomplete")
+    return ids[0]
 
 
 def mapped_file_device(fd: int) -> tuple[int, int]:
@@ -77,12 +72,7 @@ def mapped_file_device(fd: int) -> tuple[int, int]:
     the backing superblock device. FD mount provenance bridges those views
     without dropping the mapped-device or inode check.
     """
-    ids = [line.split(":", 1)[1].strip()
-           for line in Path(f"/proc/self/fdinfo/{fd}").read_text().splitlines()
-           if line.startswith("mnt_id:")]
-    if len(ids) != 1:
-        raise RuntimeError("native file mount identity is incomplete")
-    mounts = [fields for fields in _mountinfo_fields() if fields[0] == ids[0]]
+    mounts = [fields for fields in _mountinfo_fields() if fields[0] == _fd_mount_id(fd)]
     if len(mounts) != 1 or len(mounts[0]) < 3:
         raise RuntimeError("native file mount identity is not recorded")
     try:

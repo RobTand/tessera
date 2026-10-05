@@ -299,11 +299,13 @@ def admission(tmp_path, monkeypatch):
     tool = root / "tools" / "merge_suite.py"
     monkeypatch.setattr(module, "DEFAULT_RECEIPT_ROOT", tmp_path / "receipts")
     original_read = Path.read_text
-    mount_table = []
+    mount_table, reported = [], ["1"]
 
     def read(path, *args, **kwargs):
         if str(path) == "/proc/self/mountinfo":
             return "".join(mount_table)
+        if str(path).startswith("/proc/self/fdinfo/"):
+            return "pos:\t0\nmnt_id:\t" + reported[0] + "\n"
         return original_read(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", read)
@@ -313,8 +315,9 @@ def admission(tmp_path, monkeypatch):
 
     monkeypatch.setattr(module, "_submit", submit)
 
-    def run(cache, mounts):
+    def run(cache, mounts, mnt_id=1):
         mount_table[:] = mounts
+        reported[0] = str(mnt_id)
         monkeypatch.setattr(sys, "argv", [str(tool), "--arm", "gpu",
             "--gpu-tag", "fake-worker", "--checkout", str(root),
             "--gpu-image", "sha256:" + "a" * 64,
@@ -350,9 +353,10 @@ def test_nested_network_mount_wins_over_local_root(tmp_path, admission, capsys):
     mountpoint.mkdir()
     cache = mountpoint / "cache"
     cache.mkdir()
-    # Deliberately put the parent last: matching must follow depth, not order.
+    # The cache sits inside the network mount, so its descriptor reports
+    # mount 2; table order and mount-point depth play no part.
     with pytest.raises(SystemExit):
-        admission(cache, [_mount(2, mountpoint, "nfs"), _mount(1, "/", "ext4")])
+        admission(cache, [_mount(2, mountpoint, "nfs"), _mount(1, "/", "ext4")], mnt_id=2)
     assert f"mount point {mountpoint}" in capsys.readouterr().err
 
 
@@ -360,19 +364,20 @@ def test_nested_network_mount_wins_over_local_root(tmp_path, admission, capsys):
 def test_missing_cache_uses_nearest_existing_parent(tmp_path, admission, capsys, filesystem, refused):
     cache = tmp_path / "not yet created" / "cache"
     assert not cache.exists()
-    # The deeper fake mount does not exist; it must not determine admission.
+    # The mount entry at the not-yet-created parent is never consulted: the
+    # walk stops at tmp_path, whose descriptor reports mount 2.
     mounts = [_mount(1, "/", "ext4"), _mount(2, tmp_path, filesystem),
               _mount(3, cache.parent, "ext4" if refused else "nfs")]
     if refused:
         with pytest.raises(SystemExit):
-            admission(cache, mounts)
+            admission(cache, mounts, mnt_id=2)
         message = capsys.readouterr().err
         assert str(cache) in message
         assert f"mount point {tmp_path}" in message
         assert f"filesystem type {filesystem}" in message
     else:
         with pytest.raises(SubmissionReached):
-            admission(cache, mounts)
+            admission(cache, mounts, mnt_id=2)
     assert not cache.exists()
 
 
@@ -391,7 +396,7 @@ def test_cache_symlink_is_judged_by_its_target(tmp_path, admission, capsys):
     alias = tmp_path / "local-alias"
     alias.symlink_to(mountpoint, target_is_directory=True)
     with pytest.raises(SystemExit):
-        admission(alias / "cache", [_mount(1, "/", "ext4"), _mount(2, mountpoint, "nfs")])
+        admission(alias / "cache", [_mount(1, "/", "ext4"), _mount(2, mountpoint, "nfs")], mnt_id=2)
     assert f"mount point {mountpoint}" in capsys.readouterr().err
 
 
@@ -405,14 +410,24 @@ def test_unknown_mount_provenance_refuses(tmp_path, admission, capsys, mounts):
     assert "mount" in message
 
 
+class _MountTable(list):
+    """Fake kernel state: mountinfo lines plus the id an opened fd reports."""
+
+    def __init__(self):
+        super().__init__()
+        self.reported = ["1"]
+
+
 @pytest.fixture
 def cache_mount_table(monkeypatch):
     original_read = Path.read_text
-    table = []
+    table = _MountTable()
 
     def read(path, *args, **kwargs):
         if str(path) == "/proc/self/mountinfo":
             return "".join(table)
+        if str(path).startswith("/proc/self/fdinfo/"):
+            return "pos:\t0\nmnt_id:\t" + table.reported[0] + "\n"
         return original_read(path, *args, **kwargs)
 
     monkeypatch.setattr(Path, "read_text", read)
@@ -424,6 +439,7 @@ def test_container_network_cache_refuses_before_command(tmp_path, monkeypatch, c
     source, spec, env = mounts(tmp_path)
     monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     cache_mount_table[:] = [_mount(1, "/", "ext4"), _mount(2, tmp_path, filesystem)]
+    cache_mount_table.reported[0] = "2"
     with pytest.raises(ValueError) as error:
         owner.docker_command(spec, source, env)
     message = str(error.value)
@@ -452,6 +468,7 @@ def test_container_missing_cache_uses_existing_mount(tmp_path, monkeypatch, cach
     spec["--cache-dir"] = str(cache)
     cache_mount_table[:] = [_mount(1, "/", "ext4"), _mount(2, tmp_path, filesystem),
                            _mount(3, cache.parent, "ext4" if refused else "nfs")]
+    cache_mount_table.reported[0] = "2"
     if refused:
         with pytest.raises(ValueError, match=f"mount point {tmp_path}"):
             owner.docker_command(spec, source, env)
@@ -464,6 +481,7 @@ def test_container_cache_refuses_before_creating_or_launching(tmp_path, monkeypa
     source, spec, env = mounts(tmp_path)
     monkeypatch.setattr(owner, "PB_VERIFIER", tmp_path / "data/pbsnapshot.py")
     cache_mount_table[:] = [_mount(1, "/", "ext4"), _mount(2, tmp_path, "nfs4")]
+    cache_mount_table.reported[0] = "2"
     monkeypatch.chdir(source)
     monkeypatch.setenv("PRISMABUILD_ACTION_KEY", "fake-action")
     monkeypatch.setenv("PRISMABUILD_ACTION_SCOPE", "fake-scope")
@@ -518,8 +536,13 @@ def test_real_fleet_shared_mounts_refuse_by_type_and_admit_local_cache(
     monkeypatch.setattr(Path, "resolve", resolve)
     monkeypatch.setattr(Path, "stat", stat)
     automount, network = _FLEET_SHARED_MOUNTS[host]
-    # Reverse the entries: visibility follows parent identity, not table order.
+    # Reverse the entries: the descriptor reports the id of the mount the
+    # kernel serves, not table order. The descriptor itself is faked so no
+    # test opens /mnt/shared.
     cache_mount_table[:] = ([network, automount] if mounted else [automount]) + [_CELESTIA_LOCAL_MOUNT]
+    monkeypatch.setattr(os, "open", lambda path, flags, *args, **kwargs: 17)
+    monkeypatch.setattr(os, "close", lambda fd: None)
+    cache_mount_table.reported[0] = (network if mounted else automount).split()[0]
     expected = (
         "suite container: --cache-dir (merge-suite --gpu-cache-dir): "
         f"cache path /mnt/shared is on mount point /mnt/shared with filesystem type {filesystem}; "
@@ -529,25 +552,67 @@ def test_real_fleet_shared_mounts_refuse_by_type_and_admit_local_cache(
         owner.require_local_cache(cache)
     assert str(error.value) == expected
     # The same real mount table must still admit an unrelated local directory.
+    cache_mount_table.reported[0] = _CELESTIA_LOCAL_MOUNT.split()[0]
     owner.require_local_cache(tmp_path)
 
 
 
-@pytest.mark.parametrize("edges", [
-    pytest.param([(101, 44), (102, 44)], id="siblings"),
-    pytest.param([(101, 44), (101, 44), (102, 101)], id="duplicate-id"),
-    pytest.param([(101, 102), (102, 101)], id="pure-cycle"),
-    pytest.param([(101, 44), (102, 101), (201, 202), (202, 201)],
-                 id="chain-and-disconnected-cycle"),
-    pytest.param([(101, 44), (102, 101), (201, 44), (202, 201)],
-                 id="two-disconnected-stacks"),
+_MALFORMED_ENTRY = "103 44 0:103 relative rw - nfs source rw\n"
+
+
+@pytest.mark.parametrize("mount_id,refusal", [
+    pytest.param("101", "mount provenance is ambiguous", id="duplicate-id"),
+    pytest.param("102", "mount provenance is not recorded", id="absent-id"),
+    pytest.param("103", "mount provenance is malformed", id="malformed-entry"),
 ])
-def test_all_local_mount_ambiguity_refuses(tmp_path, cache_mount_table, edges):
-    """A pure cycle has no top; a separate cycle escapes the top's parent walk."""
-    cache_mount_table[:] = [_mount(44, "/", "ext4")] + [
-        _mount(mount_id, tmp_path, "ext4", parent_id=parent_id)
-        for mount_id, parent_id in edges
-    ]
-    with pytest.raises(ValueError, match="mount provenance is ambiguous"):
+def test_served_mount_provenance_refuses(tmp_path, cache_mount_table, mount_id, refusal):
+    """The descriptor's mount id must resolve to exactly one well-formed entry.
+
+    The former table-geometry refusals (sibling stacks, parent cycles) tested
+    visibility inference the descriptor's own mount id replaces: geometry the
+    kernel does not serve can no longer decide anything.
+    """
+    cache_mount_table[:] = [_mount(44, "/", "ext4"),
+                            _mount(101, tmp_path, "ext4", parent_id=44),
+                            _mount(101, tmp_path, "nfs", parent_id=44),
+                            _MALFORMED_ENTRY]
+    cache_mount_table.reported[0] = mount_id
+    with pytest.raises(ValueError, match=refusal):
         owner.require_local_cache(tmp_path)
+
+
+def test_hidden_submount_is_judged_by_the_mount_the_descriptor_serves(
+        tmp_path, monkeypatch, cache_mount_table):
+    """A later, shallower mount can hide an earlier submount entirely; the
+    opened descriptor's mount id, not the deepest mount point, decides (#949)."""
+    from tessera._dev import native_identity
+
+    data = tmp_path / "data"
+    hidden = data / "cache"
+    data.mkdir()
+    hidden.mkdir()
+    cache = hidden / "run"
+    cache_mount_table[:] = [_mount(1, "/", "ext4"),
+                            _mount(30, hidden, "nfs", parent_id=20),
+                            _mount(40, data, "ext4", parent_id=1)]
+    monkeypatch.setattr(native_identity, "_fd_mount_id", lambda fd: "40")
+    assert native_identity.native_cache_mount(cache)[1:] == (data, "ext4")
+    owner.require_local_cache(cache)
+
+
+def test_visible_refused_submount_is_still_refused(tmp_path, monkeypatch, cache_mount_table):
+    """Without a later covering mount, the refused submount itself decides."""
+    from tessera._dev import native_identity
+
+    data = tmp_path / "data"
+    sub = data / "cache"
+    data.mkdir()
+    sub.mkdir()
+    cache = sub / "run"
+    cache_mount_table[:] = [_mount(1, "/", "ext4"),
+                            _mount(30, sub, "nfs", parent_id=1)]
+    monkeypatch.setattr(native_identity, "_fd_mount_id", lambda fd: "30")
+    assert native_identity.native_cache_mount(cache)[1:] == (sub, "nfs")
+    with pytest.raises(ValueError, match="filesystem type nfs"):
+        owner.require_local_cache(cache)
 
