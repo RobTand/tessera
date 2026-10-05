@@ -13,6 +13,38 @@ quality, ship admission or a serving-pin claim; only a later admitted leg can
 measure those. The independent merged-code 4096 leg need not wait for this selector.
 See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
+Contract v57 (2026-10-05, #967) separates the executed routed stack from
+its plannable unit: one expert projection. A stack plan may carry
+`unit_q256` overrides keyed by canonical projected unit name, without
+`.weight`; the common grid/body/plane and source slicing stay stack facts.
+Every fresh, joined and cached encode selects that unit's rung; cached
+intake still validates its priced receipt and original source slice before
+framing. Unit payloads and containers do not change. A uniform assignment
+normalizes to the original scalar stack plan/scheme. Only genuinely
+across-expert differences use expert-major `groups.<group>.q256` matrices;
+per-projection decode tables, run pairs and TP cuts retain their v45 owners.
+The loader validates each expert/projection against its declared rung,
+preserving full-wire integrity and TP2 rank symmetry. Exact unit BODY/run
+storage is priced per unit, not at the largest rung in a stack. Before the
+shard write, every mixed unit's verified manifest must agree with the
+q256-derived word/run sizes on TP1 and both TP2 ranks. A non-aligned
+importance placement that changes those counts is refused by unit/rank;
+no guessed size, padding or large serialized per-column rate copy is used.
+
+**Performance boundary:** the fused lane still requires uniform strides
+and run schedules across each projection's expert axis, with equal gate/up
+tile strides. Divergent expert or gate/up schedules reach the compact-adapter
+cliff. A cross-group-only rung difference can satisfy the existing fused
+predicate; shape eligibility is not served qualification. Both cases are
+expressible/correct in explicit research/export, and production refuses
+non-uniform assignments without that qualification. Serving requires the
+existing explicit `ResearchSelectedMoeConfig` construction. This CPU-only
+change does not
+produce served GPU/performance qualification: that is a separate evidence
+packet before production admission. No cell, default or serving pin moves.
+The packaged `producer_interface.routed_units` is the capability a
+consumer reads; a pre-v57 installation refuses the new request by version.
+
 Re-stamped 2026-10-05 for D32 dev-mode run-identity seals in the managed
 window (Rob: sealing off until further notice). Dev mode is ON unless
 `PRISMAQUANT_DEV_MODE` is exactly `0`; the run-identity comparisons in

@@ -780,6 +780,7 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             f"missing declared={sorted(planned_stacks - set(stack_schemes))}, "
             f"extra declared={sorted(set(stack_schemes) - planned_stacks)}")
     from .serving.scheme import MOE_GROUP_PROJECTIONS, validate_tessera_moe_scheme
+    from .serving.scheme import expert_role_declarations
 
     for name, spec in requested.items():
         wanted_grid, wanted_rung = spec["grid"], int(spec["q256"])
@@ -803,12 +804,28 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                 consumed = {r.get("source_tensor", r["tensor"]) for r in roles}
                 if consumed != expected_sources:
                     raise ValueError(f"explicit plan stack {name}: source projection coverage differs")
-            if record.get("grid") != wanted_grid or record.get("q256") != wanted_rung:
-                raise ValueError(f"explicit plan stack {name}: manifest grid/rung differs from plan")
-            if scheme.get("grid") != wanted_grid or any(
-                    any(rung != wanted_rung for rung in group["role_q256"])
-                    for group in declared["groups"].values()):
-                raise ValueError(f"explicit plan stack {name}: declared grid/rung differs from plan")
+            if record.get("grid") != wanted_grid or scheme.get("grid") != wanted_grid:
+                raise ValueError(f"explicit plan stack {name}: manifest/declared grid differs from plan")
+            by_unit = spec.get("unit_q256", {})
+            names = {r["tensor"].removesuffix(".weight") for r in roles}
+            unknown = sorted(set(by_unit) - names)
+            if unknown:
+                raise ValueError(f"explicit plan stack {name}: unknown projected units {unknown[:5]}")
+            declared_rungs = {
+                (expert, role["roles"][0][0]): role["q256"]
+                for expert in range(experts) for group in declared["groups"].values()
+                for role in expert_role_declarations(group, expert=expert)}
+            selected_rungs = {by_unit.get(r["tensor"].removesuffix(".weight"), wanted_rung)
+                              for r in roles}
+            manifest_baseline = next(iter(selected_rungs)) if len(selected_rungs) == 1 else wanted_rung
+            if record.get("q256") != manifest_baseline:
+                raise ValueError(f"explicit plan stack {name}: manifest baseline rung differs from plan")
+            for role in roles:
+                want = by_unit.get(role["tensor"].removesuffix(".weight"), wanted_rung)
+                if role.get("q256") != want:
+                    raise ValueError(f"explicit plan {role['tensor']}: manifest unit rung differs from plan")
+                if declared_rungs[role["expert"], role["role"]] != want:
+                    raise ValueError(f"explicit plan {role['tensor']}: declared unit rung differs from plan")
         else:
             roles = [r for r in all_roles if r.get("tensor") == name]
             if not roles:
@@ -829,7 +846,8 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                         f"explicit plan tensor {name}: {len(roles)} emitted roles do not tile "
                         f"the tensor by row (windows {windows}, source rows {sorted(totals)})")
         for role in roles:
-            if role.get("grid") != wanted_grid or role.get("q256") != wanted_rung:
+            want = spec.get("unit_q256", {}).get(role["tensor"].removesuffix(".weight"), wanted_rung)
+            if role.get("grid") != wanted_grid or role.get("q256") != want:
                 raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")
 
 def _require_part_carriers(part, manifest):
