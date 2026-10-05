@@ -193,9 +193,11 @@ class PreparedTesseraFp8Module:
                 tuple(r.window for r in self.__roles), self.__scale)
 
     @classmethod
-    def axis(cls, experts: int, parts: Optional[int] = None) -> PreparedModuleAxis:
+    def axis(cls, experts: int, parts: Optional[int] = None, *,
+             heterogeneous: bool = False) -> PreparedModuleAxis:
         """An empty expert axis these modules are placed on as they are prepared."""
-        return PreparedModuleAxis(experts, PreparedTesseraFp8Batch, "FP8", parts)
+        return PreparedModuleAxis(experts, PreparedTesseraFp8Batch, "FP8", parts,
+                                  heterogeneous=heterogeneous)
 
     @classmethod
     def stack(cls, modules: Sequence[PreparedTesseraFp8Module]) -> PreparedTesseraFp8Batch:

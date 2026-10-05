@@ -467,7 +467,8 @@ def test_a_window_axis_holds_mixed_units_in_exact_flat_storage_matching_the_unit
         for e, unit in enumerate(units):
             axis.put("gate_proj", e, unit)
         soa = axis.finish()["gate_proj"]
-        reference = prepare_grouped_window_gemm(units, arithmetic="epilogue")
+        # Only packed constants are compared; CPU preparation needs no vLLM A quantizer.
+        reference = prepare_grouped_window_gemm(units, arithmetic="epilogue", quantizer=None)
         assert torch.equal(soa["words"].reshape(-1), reference.words_all)
         assert torch.equal(soa["runs"].reshape(-1, 4), reference.runs_all)
         # word_off is an int32 [E] here (the priced per-unit scalar); the

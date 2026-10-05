@@ -456,7 +456,8 @@ def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, 
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
         plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
-        axis = PreparedTesseraFp8Module.axis(len(blobs[group]))
+        axis = PreparedTesseraFp8Module.axis(len(blobs[group]),
+                                           heterogeneous=expert_rungs_mixed(declaration))
         for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
                                                        f"{target} {group}", device)):
             axis.put(expert, prepare_tessera_fp8_module(shard_parsed_roles(roles, plan),
@@ -489,7 +490,8 @@ def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
         plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
-        axis = PreparedTesseraBf16Module.axis(len(blobs[group]))
+        axis = PreparedTesseraBf16Module.axis(len(blobs[group]),
+                                            heterogeneous=expert_rungs_mixed(declaration))
         for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
                                                        f"{target} {group}", device)):
             axis.put(expert, prepare_tessera_bf16_module(shard_parsed_roles(roles, plan),
@@ -722,7 +724,8 @@ class _RankLocalPackedIntake:
 
             module_type = (PreparedTesseraFp8Module if self.family == TESSERA_FP8
                            else PreparedTesseraBf16Module)
-            self.axes = {g: module_type.axis(int(declared['experts']), parts=len(self.roles[g]))
+            self.axes = {g: module_type.axis(int(declared['experts']), parts=len(self.roles[g]),
+                         heterogeneous=expert_rungs_mixed(declared['groups'][g]))
                          for g in MOE_GROUPS}
 
     def placed_projections(self) -> int:

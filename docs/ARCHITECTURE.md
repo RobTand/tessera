@@ -31,6 +31,15 @@ q256-derived word/run sizes on TP1 and both TP2 ranks. A non-aligned
 importance placement that changes those counts is refused by unit/rank;
 no guessed size, padding or large serialized per-column rate copy is used.
 
+Explicit selected-expert research preparation also supports heterogeneous
+packed windows on CPU: it transfers each window's sole packed owner into
+the existing module axis, with no padded/duplicate weight stack at finish.
+Selection decodes only requested units through the original torch window
+reader, with one temporary tile at a time. Uniform preparation retains its
+batched layout. This reference-only route refuses the uniform-layout Triton
+decoder rather than claiming its qualification; production compact intake
+continues to use the exact flat BODY/run axis above.
+
 **Performance boundary:** the fused lane still requires uniform strides
 and run schedules across each projection's expert axis, with equal gate/up
 tile strides. Divergent expert or gate/up schedules reach the compact-adapter
