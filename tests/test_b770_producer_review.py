@@ -301,5 +301,6 @@ def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg):
         capture_output=True, text=True, timeout=90)
     text = done.stdout + done.stderr
     assert done.returncode != 0
-    assert "TESSERA_PRODUCER_PYTHON" in text, f"{leg}: actual process never authenticated: {text}"
+    field = "TESSERA_PRODUCER_PYTHON" if leg == "interpreter" else "TESSERA_PRODUCER_SOURCE"
+    assert field in text, f"{leg}: actual process never authenticated: {text}"
     assert "a GPU measurement with no GPU" not in text
