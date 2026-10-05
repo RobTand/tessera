@@ -482,9 +482,13 @@ Current file roster, byte lengths and all non-shard metadata hashes are checked;
 shipping-body hashes reuse the supplied authenticated full-file audit, not a
 new175GB body rehash. This does not attest the later all-T8-rate v1 artifact.
 
-`eager_benchmark.py` binds the exact October5 `stock-client-source` identity,
-timing/profile programs and existing prompt/profile manifest hashes supplied by
-campaign. No instrument source, prompt, formula or request population changes.
+`eager_benchmark.py` consumes the issue981 single-buffer profile-receipt client
+at `stock-client-source-profile-receipt-v2-20261005`, client head
+`ada886b910f0c0b1719d9c6cc5ebd50ba0746e38`. Its profile helper parses and hashes
+one captured byte buffer, then records the post-read stat; the verifier is
+unchanged. This binding is submitted for review, not approval to run a model.
+The October5 timing program, prompt/profile manifests, formula and request
+population are unchanged. Old failed profiles and client bytes remain immutable.
 Rank1/sparky runs the original host client, as EXL3 did. Endpoint8142, target
 model ID, eager/socket/runtime labels and the fresh output/profile namespaces
 are explicit differences. The original profile helper's SSH only inspects rank0
