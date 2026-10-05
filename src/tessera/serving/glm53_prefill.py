@@ -1337,7 +1337,7 @@ def recompile_kda_forward(module: Any) -> tuple[Callable | None, str]:
 
 
 def install_kda_conv_split(config: Any) -> bool:
-    """Rebind ``Glm5NextLinearAttention._forward`` when this serve is the inspected one."""
+    """Rebind ``Glm5NextLinearAttention._forward`` for a supported callable API."""
     if kda_conv_split_mode() == "off":
         return False
     decided = _INSTALLED.get(("kda", id(config)))

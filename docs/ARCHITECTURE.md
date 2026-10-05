@@ -6974,8 +6974,10 @@ qualification; the original served gates below are unchanged.
 
 The module docstring records the decline rules and the exactness argument.
 Every flag that rebinds a stock method or changes a stock default stays off by default until a served
-TR3 A/B against stock, on the same pin and in the same window, shows identical
-KL. For SP mHC and the conv split that A/B is the VAL787 window (arms VS, VK
+TR3 A/B against stock under matched experimental inputs in the same window
+shows identical KL; recorded pin/source labels and their drift are D32 dev
+stamps, not identity-admission gates. For SP mHC and the conv split that A/B
+is the VAL787 window (arms VS, VK
 and VB against V0). For the mHC tiles it is the prefill lead window's VBMC arm
 (VB plus tiles) against V0. The all-reduce overlap never runs on an SP pass, so
 an SP arm cannot measure it; it needs an arm with SP off, and none is scheduled.

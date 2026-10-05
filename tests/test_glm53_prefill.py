@@ -946,9 +946,9 @@ def test_kda_recompile_compiles_exactly_the_edited_stock_method(tmp_path):
 
 
 def test_serve_start_imports_and_install_order(monkeypatch):
-    """What ``install_for_current_config`` does at serve start with every flag on and no
-    inspected interface matching: the ONORM append, then SP mHC (importing ``SP_MODULES``
-    in order), then the KDA conv split (importing ``KDA_MODULES``), and nothing else."""
+    """Serve start with every flag on but no supported callable API:
+    ONORM append, then SP mHC (importing ``SP_MODULES`` in order),
+    then KDA conv split (importing ``KDA_MODULES``), and nothing else."""
     import sys
     import types
 
@@ -968,7 +968,7 @@ def test_serve_start_imports_and_install_order(monkeypatch):
 
     def fake_import(name):
         events.append(("import", name))
-        return types.ModuleType(name)  # no __file__, so no digest and no interface matches
+        return types.ModuleType(name)  # required callable API is absent: stay stock
 
     monkeypatch.setattr(gp, "importlib", NS(import_module=fake_import))
     for fn_name in ("enable_onorm_cuda", "install_sp_mhc", "install_kda_conv_split"):
