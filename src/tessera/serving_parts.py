@@ -953,6 +953,12 @@ def _merged_batch_widths(loaded) -> dict | None:
     widths = {}
     for row in loaded:
         for width, calls in row[3]["encode_batch_observed"].items():
+            # Exactly an integer: a boolean would sum as 0 or 1 and a fraction would
+            # stay one, claiming a count the part's own input does not establish.
+            if type(calls) is not int or calls < 0:
+                raise ValueError(
+                    f"partition {row[0]}: encode_batch_observed[{width!r}] must be a "
+                    f"non-negative integer count, got {calls!r}")
             widths[width] = widths.get(width, 0) + calls
     return dict(sorted(widths.items(), key=lambda item: int(item[0])))
 
