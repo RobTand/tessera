@@ -20,12 +20,14 @@ PQ_PIN_COMMIT = "e36e60b77b3d2ab0c5265272515958a0cb67d32b"
 MODE = "window4-eager-2048-4096"
 SHIP_MODE = "ship-eager-4096-8192"
 GRAPH_SHIP_MODE = "ship-graph-2048"
+EAGER_LEVER_MODE = "ship-eager-levers-4096"
 LEVER_VALUES = {"TESSERA_E4M3_DECODE_ONCE": ("0", "1"),
                 "TESSERA_GLM53_KDA_CONV_SPLIT": ("off", "on"),
                 "TESSERA_ROUTED_PIECE_MAJOR": ("0", "1")}
 PAIRS = {MODE: [("eager2048", "2048"), ("eager4096", "4096")],
          SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")],
-         GRAPH_SHIP_MODE: [("graph2048_off", "2048"), ("graph2048_on", "2048")]}
+         GRAPH_SHIP_MODE: [("graph2048_off", "2048"), ("graph2048_on", "2048")],
+         EAGER_LEVER_MODE: [("eager4096_off", "4096"), ("eager4096_on", "4096")]}
 
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
 CONTRACT_SHA = "47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78"
@@ -48,6 +50,8 @@ def pair_refusal(mode):
         return "Ship window is exactly eager4096/4096 then eager8192/8192"
     if mode == GRAPH_SHIP_MODE:
         return "Ship graph window is exactly graph2048_off/2048 then graph2048_on/2048"
+    if mode == EAGER_LEVER_MODE:
+        return "Ship eager lever window is exactly eager4096_off/4096 then eager4096_on/4096"
     return "unknown WINDOW_MODE; no inferred benchmark scope"
 
 
@@ -149,6 +153,53 @@ def require_timing(result):
                     or not request["generation"]["done"] or request["completion_tokens"] != 128):
                 raise Refused("Window4 timing request counts/stream incomplete")
 
+def output_hashes(result, prompts, prompt_sha256):
+    """All 33 deterministic decoded-text/finish outputs, not token IDs or KL."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("eager_generation_instrument", CLIENT / "u4_speed_client.py")
+    instrument = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(instrument)
+    geometry = dict(lens=[512, 2048, 8192], conc=[1], trials=10, warmup=1,
+                    output=128, temperature=0.0, ignore_eos=True)
+    labels = [f"host-L{length}-c1" for length in geometry["lens"]]
+    if (result.get("prompts_sha256") != prompt_sha256 or result.get("model") != MODEL
+            or result.get("labels", {}).get("mode") != "eager"
+            or result.get("labels", {}).get("fabric") != "socket"
+            or any(result.get("config", {}).get(key) != value for key, value in geometry.items())
+            or set(result.get("cells", {})) != set(labels) or prompts.get("warmup") != 1):
+        raise Refused("Ship eager lever output population/model/input geometry differs")
+    hashes = {}
+    try:
+        for length, label in zip(geometry["lens"], labels):
+            cell = result["cells"][label]
+            if cell.get("skipped") is not False or cell.get("complete") is not True:
+                raise ValueError("incomplete output cell")
+            entries = [cell["warmup"]] + cell["trials"]
+            if len(entries) != 11:
+                raise ValueError("missing or extra output trials")
+            for trial, entry in enumerate(entries):
+                if entry["trial"] != trial or len(entry["requests"]) != 1:
+                    raise ValueError("output trial/slot population differs")
+                prompt = prompts["prompts"][str(length)]["1"][trial][0]
+                if len(prompt) != length:
+                    raise ValueError("output prompt length differs")
+                value = instrument.generation_value(entry["requests"][0], prompt, 128)
+                hashes[f"{label}/trial{trial}/slot0"] = hashlib.sha256(
+                    json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        raise Refused(f"Ship eager lever incomplete or unbound generated output: {exc}") from exc
+    return dict(schema="tessera.eager_lever_outputs.v1", prompts_sha256=prompt_sha256,
+                requests_per_arm=33, geometry=geometry, outputs=hashes,
+                equality="decoded UTF-8 text and length finish; warmup plus every timed request",
+                not_claimed="token-ID/logit equality, KL or quality qualification")
+
+
+def compare_output_hashes(reference, candidate):
+    """Compare an entire validated same-input output population; never a subset."""
+    return dict(schema="tessera.eager_lever_output_comparison.v1", passed=reference == candidate,
+                requests_per_arm=33, equality=reference["equality"], not_claimed=reference["not_claimed"])
+
+
 
 def probes(adapter, arm, peer):
     config, name = adapter.config, arm["arm"]
@@ -157,14 +208,16 @@ def probes(adapter, arm, peer):
     profile_dir = Path(config["profile_dir"]) / name
     invocation = uuid.uuid4().hex
     graph_ship = config.get("window_mode") == GRAPH_SHIP_MODE
-    binding = dict(schema=("tessera.ship_graph_invocation.v1" if graph_ship else "tessera.window4_eager_invocation.v1"), invocation=invocation,
+    eager_levers = config.get("window_mode") == EAGER_LEVER_MODE
+    binding = dict(schema=("tessera.ship_graph_invocation.v1" if graph_ship else
+                           "tessera.eager_lever_invocation.v1" if eager_levers else "tessera.window4_eager_invocation.v1"), invocation=invocation,
                    source_bindings=config, arm=arm, identity=adapter.identity, peer=peer,
                    client_host="sparky", base_url=BASE, target_model=MODEL,
                    differences_from_EXL3=["endpoint :8142", "model glm53-artifact", "eager/socket/public-runtime labels",
                                           "fresh output namespace", "A8S runtime, MTP1 and unchanged 2GiB KV"],
                    timing_started_unix=time.time(), profile_timing_samples=False)
-    if graph_ship:
-        binding["differences_from_EXL3"][2] = "graph/socket/public-runtime labels and explicit per-arm lever env"
+    if graph_ship or eager_levers:
+        binding["differences_from_EXL3"][2] = ("graph" if graph_ship else "eager") + "/socket/public-runtime labels and explicit per-arm lever env"
         binding["lever_env"] = arm["lever_env"]
     atomic_json(out / "invocation.json", binding)
     argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
@@ -176,7 +229,19 @@ def probes(adapter, arm, peer):
     with (out / "client.log").open("w") as stream:
         adapter.command(argv, stdout=stream, tick=adapter.tick, limit=adapter.envelope.remaining())
     binding["timing_finished_unix"] = time.time()
-    require_timing(json.loads((out / "timing.json").read_bytes()))
+    timing = json.loads((out / "timing.json").read_bytes())
+    require_timing(timing)
+    if eager_levers:
+        prompt_path = Path(config["prompts"])
+        outputs = output_hashes(timing, json.loads(prompt_path.read_bytes()), sha(prompt_path))
+        atomic_json(out / "output-hashes.json", outputs)
+        binding["output_hashes_sha256"] = sha(out / "output-hashes.json")
+        if name == PAIRS[EAGER_LEVER_MODE][1][0]:
+            reference = adapter.rdv / "arms" / PAIRS[EAGER_LEVER_MODE][0][0] / "output-hashes.json"
+            comparison = compare_output_hashes(json.loads(reference.read_bytes()), outputs)
+            atomic_json(out / "output-comparison.json", comparison)
+            if not comparison["passed"]:
+                raise Refused("Ship eager lever OFF/ON decoded output/finish hashes differ")
     atomic_json(out / "invocation.json", binding)
     # Execute the frozen instrument's own declared order, not a second roster.
     import importlib.util

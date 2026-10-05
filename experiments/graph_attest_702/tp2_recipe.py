@@ -10,7 +10,7 @@ import subprocess
 
 from managed_window import MEMORY_POLICY, NOT_COMPUTED, Refused, dev_mode_enabled, seal_check
 from submit import parse_plan, IMAGE
-from eager_benchmark import GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
+from eager_benchmark import EAGER_LEVER_MODE, GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
 
 CONTROL = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 CONFIG_SHA = "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898"
@@ -40,7 +40,8 @@ def src_sha(root: Path) -> str:
 
 PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
                   "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
-                  "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt", "plan-graph-ship.txt")
+                  "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt", "plan-graph-ship.txt",
+                  "plan-eager-levers-4096.txt")
 
 
 def producer_sha() -> str:
@@ -199,21 +200,25 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
         raise Refused(pair_refusal(mode))
     arm = arm_settings(name, env)
     graph_ship = mode == GRAPH_SHIP_MODE
+    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE)
+    label = "Ship graph" if graph_ship else "Ship eager lever"
     fields = {"EAGER", "SPEC_JSON", "FABRIC", "MAX_BATCHED"}
     if graph_ship:
-        fields |= {"COMPILATION_JSON", *LEVER_VALUES}
+        fields.add("COMPILATION_JSON")
+    if lever_pair:
+        fields.update(LEVER_VALUES)
     if (arm["eager"] != ("0" if graph_ship else "1") or env.get("FABRIC") != "socket"
             or (exact_keys and set(env) != fields)):
-        raise Refused("Ship graph plan fixes graph/socket/MTP1 and explicit lever env with no other override" if graph_ship else
+        raise Refused(f"{label} plan fixes {'graph' if graph_ship else 'eager'}/socket/MTP1 and explicit lever env with no other override" if lever_pair else
                       "Window4 plan fixes eager/socket/MTP1 with no other override")
-    if graph_ship:
+    if lever_pair:
         levers = {key: env.get(key) for key in LEVER_VALUES}
         for key, choices in LEVER_VALUES.items():
             if levers[key] not in choices:
-                raise Refused(f"Ship graph plan requires explicit {key}={'/'.join(choices)}")
+                raise Refused(f"{label} plan requires explicit {key}={'/'.join(choices)}")
         enabled = [levers[key] == choices[1] for key, choices in LEVER_VALUES.items()]
         if any(enabled) != (name == BENCHMARK_PAIRS[mode][1][0]):
-            raise Refused("Ship graph pair requires all levers off in the first arm and at least one on in the second")
+            raise Refused(f"{label} pair requires all levers off in the first arm and at least one on in the second")
         arm["lever_env"] = levers
     return dict(arm, max_batched=int(env["MAX_BATCHED"]), fabric="socket")
 
@@ -288,7 +293,7 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1",
                MAX_JOBS="1", VLLM_HOST_IP=("10.100.96.2", "10.100.96.1")[rank],
                T695_GC_BEFORE_DRAFTER="1", TESSERA_FUSED_E4M3_MMA="e4m3", **image_env)
-    if config.get("window_mode") == GRAPH_SHIP_MODE:
+    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE):
         env.update(arm["lever_env"])
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]

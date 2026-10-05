@@ -126,6 +126,7 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
             directory.chmod(0o777)
     atomic_json(root / "memory-policy.json", MEMORY_POLICY)
     setup = dict(schema=("tessera.ship_graph_window.v1" if mode == recipe.GRAPH_SHIP_MODE else
+                         "tessera.eager_lever_window.v1" if mode == recipe.EAGER_LEVER_MODE else
                          "tessera.window4_eager_window.v1" if mode in recipe.BENCHMARK_PAIRS else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
                  config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
                  requested_pb_timeout_s=WINDOW_SECONDS, effective_pb_timeout_s=None, peer_wait_seconds=3600,

@@ -347,6 +347,57 @@ No ship artifact/client identity, effective7200 ceiling, model result, pin
 promotion or scientific qualification is fabricated by this plan. The latest CEO
 order below supersedes the former ship-before-Window4 sequencing.
 
+## Explicit eager MNBT4096 lever pair (issue984)
+
+Select `WINDOW_MODE=ship-eager-levers-4096` with
+`plan-eager-levers-4096.txt`. The exact pair is `eager4096_off` then
+`eager4096_on`, both eager/A8S/socket/TP2/resident/c1 at the SAME MNBT4096.
+The shared `PAIRS` owner, `pair_refusal` and `pair_arm` from issue980
+own this mode too; no second plan convention or runtime launcher is added.
+Every row explicitly declares decode-once `0|1`, KDA split `off|on` and
+piece-major `0|1`. OFF disables all three; ON enables at least one.
+The supplied plan enables all three. A reviewed single-lever plan may leave
+the other two OFF. Exact row values override image env on both ranks; a
+missing/invalid flag or an ON arm with no delta refuses.
+The new plan belongs to `PRODUCER_FILES`; approvals bind the changed roster.
+
+Timing/profile programs, prompt bytes, L512/2048/8192 c1 output128 ten-trial
+population, manifest-declared profiles and both-box power collection remain
+unchanged. Only this eager lever mode adds `output-hashes.json` per arm:
+the existing generation validator checks all 33 requests (one warmup plus
+ten timed requests at each length), exact prompt/usage counts and completed
+length termination, then hashes decoded UTF-8 text plus finish reason.
+SSE chunking is deliberately ignored. The ON arm writes
+`output-comparison.json` and refuses any full-population mismatch before
+profiling. This is NOT token-ID/logit equality, teacher-forced KL, quality
+qualification or a replacement ship gate. Its invocation/window schemas
+are `tessera.eager_lever_invocation.v1`/`tessera.eager_lever_window.v1`.
+
+Runtime reader inspection is pinned to `2dbac191`, not the producer:
+`serving/e4m3_prefill.py:49-53` reads the latched decode-once flag;
+`serving/fp8_route.py:430-438` attaches the decoded resident copy;
+`serving/native_window.py:359-367` selects its distinct launch at M>=256.
+`serving/glm53_prefill.py:857-861,923-931` reads KDA split and installs
+its source-checked replacement; a stock interface mismatch still declines.
+`serving/moe_route.py:130-153,638-648` reads piece-major, gates it on the
+fused E4M3 MMA reader, and re-lays eligible one-run R4 words at intake.
+CPU controls check those actual frozen source bytes/readers, decoded launch
+selection, KDA replacement installation and real intake word-layout changes.
+They do not claim actual served ON activation or CUDA numerical equivalence.
+A later served ON arm must demonstrate these paths in its retained profiles,
+not merely label a flag. No default, threshold, route, pin or policy moves.
+
+Existing graph-control, Window4 and ship-eager pairs remain unchanged.
+D30 107GiB/900s/1Hz strict <2GiB dual-rank abort,104 host/102 GPU caps,
+5400s whole-window bound, cleanup and pair isolation remain unchanged.
+The real driver CPU dry run through PB x86 is D38 preflight, not a model
+run. Parent Sol plus D5 exact-head source reviews precede any served lever
+gang; separately reviewed frozen-client trace-writer adoption remains a
+prerequisite. Graph runs go first once runnable; independently authorized
+eager measurements may run while the graph selector is reviewed.
+
+
+
 ## Explicit graph ship lever pair (issue980)
 
 Select `WINDOW_MODE=ship-graph-2048` with `plan-graph-ship.txt`. The exact
