@@ -2887,9 +2887,11 @@ An explicit `--gpu-image` enables the container GPU arm. It requires
 owner refuses known network filesystem types before command construction,
 cache creation or launch, naming the path, mount point and filesystem type.
 The coordinator calls the same rule before any action is submitted. A
-not-yet-created cache uses its nearest existing parent and the deepest
-containing mount. Same-path stacks resolve their visible top using mount and
-parent identities, not table order or numeric mount-ID order. An `autofs`
+not-yet-created cache uses its nearest existing parent, judged by the mount
+id its opened descriptor reports in `/proc/self/fdinfo` — the mount the
+kernel actually serves at that path — resolved to its single mountinfo
+entry; mount-point depth, table order and parent identities play no part.
+An `autofs`
 entry alone refuses because its backing filesystem is not stably mounted.
 The shared mount reader in `tessera._dev.native_identity` also owns native
 mapped-device provenance; unresolved cache mount provenance fails closed.
