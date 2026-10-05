@@ -166,6 +166,7 @@ def _frozen_flag_paths():
 
 
 def test_frozen_2db_flags_reach_different_runtime_selectors(tmp_path):
+    pytest.importorskip("torch")
     import inspect
     import io
     import os
