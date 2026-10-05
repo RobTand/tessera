@@ -1223,7 +1223,9 @@ reads both facts off the runtime. A drafter under CUDA graphs is no longer
 refused wholesale: `glm53_nope._SPECULATIVE_GRAPH_RECEIPTS` admits a drafter
 graph path by receipt, keyed by method, draft tokens, whether later draft
 steps reuse the first step's sparse indices (`index_share_for_mtp_iteration`),
-compilation mode and CUDA-graph mode. The table is empty, so every drafter
+compilation mode, CUDA-graph mode and the serve's `max_model_len`, whose value
+the captured indexer branch follows (a receipt measured at one
+`max_model_len` does not speak for another). The table is empty, so every drafter
 still serves eager, and the refusal names the configuration and what is
 measured. `eager_equivalence_gap` now checks the drafter's graph families for
 padding: target verification and the drafter's first step, at whole requests
@@ -7950,8 +7952,11 @@ STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
 vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
 drafter graph path without a receipt (tessera#695). Drafters are admitted
 under CUDA graphs only through `_SPECULATIVE_GRAPH_RECEIPTS`, keyed by method,
-draft tokens, sparse-index sharing across draft steps, compilation mode and
-CUDA-graph mode; the table is empty, so drafters serve eager. Speculative
+draft tokens, sparse-index sharing across draft steps, compilation mode,
+CUDA-graph mode and the serve's `max_model_len` (a FULL capture builds its
+attention metadata at it, so the indexer branch the captured graphs freeze --
+and with it eager equivalence -- follows it); the table is empty, so drafters
+serve eager. Speculative
 method `dflash` is refused in every mode, eager included: the pinned vLLM
 cannot load it for GLM5-next (no `SupportsEagle3` on either GLM5-next class,
 and no KV cache grouping for sliding-window drafter layers).

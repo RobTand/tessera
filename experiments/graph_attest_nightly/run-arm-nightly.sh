@@ -19,7 +19,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 Q=$HERE/../glm53_508_graph_qual
 ARM=${1:?usage: run-arm-nightly.sh ARM}
 export ARM
-export SRV_OUT=${SRV_OUT:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve/receipts}
+SRV_OUT=${SRV_OUT:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve/receipts}
+# The serve logs where srv-nightly.sh puts them: GA_DIR when set (its savelogs
+# target), else that script's own default. Reading a hardcoded path here made
+# every GA_DIR run grep a file the run never wrote.
+DIR=${GA_DIR:-/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve}
 OUT=$SRV_OUT
 PORT=${PORT:-8141}; export PORT
 PROBES=${PROBES:-eq,eq2}
@@ -96,7 +100,9 @@ done
 sleep 3  # the dispatch counter rewrites its totals at most once a second
 curl -s -m 10 127.0.0.1:$PORT/metrics > "$OUT/$ARM.metrics.txt" 2>/dev/null
 "$HERE/srv-nightly.sh" savelogs "$ARM"
-LOG=/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve/logs/$ARM.log
+# DIR was set above to follow GA_DIR; this grep must read the same file
+# savelogs just wrote, never the hardcoded default of another campaign.
+LOG=$DIR/logs/$ARM.log
 grep -E "compilation_config|cudagraph|CUDA graph|Capturing|Graph capturing|ga702|t695|Tessera MTP|speculative" "$LOG" > "$OUT/$ARM.cg.txt" 2>/dev/null
 touch "$TEN_STOP"; wait $ten
 echo "rc=$rc" >> "$OUT/engine-args-$ARM.txt"
