@@ -20,7 +20,12 @@ def _run_published_sdk(program):
     """Inspect actual published owners in a fresh process, not the suite SDK."""
     tools = BOX.skip_now("prismabuild_tools", "pbrun.py").parent.resolve()
     published = tools.parent
-    paths = [published / "src", ROOT / "experiments/t8r_speed", tools]
+    # pytest must stay importable in the child wherever this session got it
+    # from: in a sealed dependency site the interpreter's own site carries no
+    # pytest, and the replaced PYTHONPATH below would drop exactly that
+    # directory (tessera#939).
+    paths = [published / "src", ROOT / "experiments/t8r_speed", tools,
+             Path(pytest.__file__).resolve().parents[1]]
     env = {**os.environ, "PYTHONPATH": os.pathsep.join(map(str, paths))}
     prefix = """from pathlib import Path
 import sys

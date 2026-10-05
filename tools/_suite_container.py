@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 RUNNER = "tools/suite_container.py"
 OWNER = "tools/_suite_container.py"
 SOURCE_FILES = (RUNNER, OWNER)
@@ -30,6 +32,33 @@ THREAD_LIMITS = dict.fromkeys(("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_N
 def _require(condition, reason):
     if not condition:
         raise ValueError("suite container: " + reason)
+
+
+_NONLOCAL_CACHE_FILESYSTEMS = {
+    "autofs", "9p", "afs", "ceph", "cifs", "glusterfs", "lustre", "ncpfs", "nfs", "nfs4",
+    "smb3", "smbfs", "davfs", "fuse.ceph", "fuse.curlftpfs", "fuse.davfs",
+    "fuse.gcsfuse", "fuse.glusterfs", "fuse.rclone", "fuse.s3fs", "fuse.smbnetfs",
+    "fuse.sshfs",
+}
+
+
+def require_local_cache(path):
+    """One cache admission rule for the coordinator and container launcher.
+
+    The mount owner has no exhaustive local filesystem classification, so
+    refuse known network types and unresolved automounts, not a local roster.
+    """
+    from tessera._dev.native_identity import native_cache_mount
+
+    option = "--cache-dir (merge-suite --gpu-cache-dir)"
+    try:
+        cache, mountpoint, filesystem = native_cache_mount(path)
+    except (OSError, RuntimeError) as exc:
+        _require(False, f"{option}: {exc}")
+    _require(filesystem not in _NONLOCAL_CACHE_FILESYSTEMS,
+             f"{option}: cache path {cache} is on mount point {mountpoint} "
+             f"with filesystem type {filesystem}; use local disk for native build "
+             "locks and mapped inode identity")
 
 
 def absolute(value):
@@ -218,6 +247,7 @@ def dependency_manifest(site):
 
 def docker_command(spec, checkout, environment):
     """Construct only this contract; PB's Docker shim owns scope and affinity."""
+    require_local_cache(spec["--cache-dir"])
     checkout = absolute(str(checkout))
     paths = [checkout, absolute(spec["--deps-site"]), absolute(spec["--surface-dir"]), absolute(spec["--cache-dir"])]
     _require(all(path.resolve() == path for path in paths), "source/dependency/output/cache symlink refused")

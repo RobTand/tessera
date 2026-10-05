@@ -83,6 +83,10 @@ def test_post_acquire_directory_failure_releases_reader(tmp_path, monkeypatch, m
     monkeypatch.setattr(pb_staged_store, "StagedInputs", lambda path: reader)
     if mode == "native":
         pytest.importorskip("torch", reason="native FD owner control requires Torch; pure metadata tests do not")
+        import torch
+        if torch.cuda.is_available():
+            pytest.skip("the CPU native-map proof requires GPU visibility disabled and "
+                        "this session shows a visible CUDA device (tessera#939)")
         target = tmp_path / "not-a-directory"
         target.write_bytes(b"real directory-creation failure")
         with pytest.raises(FileExistsError):
