@@ -230,8 +230,9 @@ def test_completion_binds_consumed_input_identity(tmp_path):
 def _refuses_the_installed_payload(text: str) -> bool:
     """Whether ``text`` is the exporter refusing an installed payload that differs
     from its source: the roster refusal or the byte-digest refusal."""
-    return "the installed payload" in text and (
-        "projected wheel roster" in text or "TESSERA_PRODUCER_SOURCE" in text)
+    roster = "TESSERA_PRODUCER_PYTHON: the installed payload" in text and "projected wheel roster" in text
+    digest = "TESSERA_PRODUCER_SOURCE: the installed payload" in text
+    return roster or digest
 
 
 _PYTHONPATH_REFUSAL = (
