@@ -210,8 +210,7 @@ def _write_marker(tmp_path, stamp, manifest_bytes=None):
     part_out = parts / "part-0"
     part_out.mkdir(exist_ok=True)
     manifest = part_out / "tessera_serving_manifest.json"
-    if manifest_bytes is not None:
-        manifest.write_bytes(manifest_bytes)
+    manifest.write_bytes(manifest_bytes if manifest_bytes is not None else b"{}\n")
     stamp = dict(stamp)
     stamp.setdefault("output", {"manifest_sha256": sha_file(manifest)})
     mark = parts / "part-0.done.json"

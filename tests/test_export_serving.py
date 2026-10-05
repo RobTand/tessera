@@ -269,7 +269,7 @@ def _fixture_ancestor(root):
 def _fixture_install(target: Path) -> Path:
     """A synthetic site-packages: the package plus a dist-info naming it."""
     target.mkdir()
-    config = source_profiles.packaged_projection_config(ROOT)
+    config = source_profiles.packaged_projection_config((ROOT / "pyproject.toml").read_bytes())
     tracked = [p.relative_to(ROOT).as_posix() for p in (ROOT / "src" / "tessera").rglob("*")
                if p.is_file() and "__pycache__" not in p.parts]
     for name in source_profiles.shipped_payload_paths(config, tracked):
