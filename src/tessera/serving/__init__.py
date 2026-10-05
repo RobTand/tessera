@@ -63,6 +63,13 @@ def register() -> None:
         # Already registered.
         pass
 
+    # A Tessera GLM-5.3 graph serve resolves eager's operators (tessera#702
+    # cause 1). Registered here because vLLM loads plugins before it builds
+    # any VllmConfig, and resolves those defaults while building one.
+    from .glm53_graphs import install_operator_pin
+
+    install_operator_pin()
+
     # Separate, explicit research attention extension. It does not change the
     # quantization contract or replace a stock attention enum implementation.
     import os

@@ -1,0 +1,20 @@
+# tessera#702: the 2026-09-30 arm table re-run on the release image at the release
+# max_model_len (8448), with Tessera's per-max_seq_len-class capture and the eager
+# operator pin. Every arm: the #508 equality suite twice, and the long-context screen.
+# eager pool (judges every graph arm)
+rE1 EAGER=1 LONG=1
+rE2 EAGER=1 LONG=1
+# graph arms: sbG1 sbG2 sbP1 sbG3 sbG4 of 2026-09-30, now at max_model_len 8448
+rG1 EAGER=0 LONG=1 COMPILATION_JSON={"cudagraph_mode":"FULL_DECODE_ONLY"}
+rG2 EAGER=0 LONG=1 COMPILATION_JSON={"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,3,4,5,6,7,8]}
+rP1 EAGER=0 LONG=1 COMPILATION_JSON={"cudagraph_mode":"FULL_AND_PIECEWISE"}
+rG3 EAGER=0 LONG=1 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,3,4,5,6,7,8]}
+rG4 EAGER=0 LONG=1 KERNEL_JSON={"enable_flashinfer_autotune":false,"ir_op_priority":{"rms_norm":["vllm_c","native"],"fused_add_rms_norm":["vllm_c","native"]}} COMPILATION_JSON={"custom_ops":["all"],"cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,3,4,5,6,7,8]}
+# drafter (MTP k=1): mtE1 mtE2 mtG1 mtG3 of 2026-09-30, now at max_model_len 8448
+mtE1 MODEL=/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"moe_backend":"triton","model":"/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1-draft"} EAGER=1 LONG=1
+mtE2 MODEL=/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"moe_backend":"triton","model":"/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1-draft"} EAGER=1 LONG=1
+mtG1 MODEL=/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"moe_backend":"triton","model":"/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1-draft"} EAGER=0 LONG=1 COMPILATION_JSON={"cudagraph_mode":"FULL_DECODE_ONLY"}
+mtG3 MODEL=/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"moe_backend":"triton","model":"/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1-draft"} EAGER=0 LONG=1 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]}
+# the release serve's own compilation flags (u4_window.sh LAT_SERVE), default capture sizes
+rGR EAGER=0 LONG=1 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}
+mtGR MODEL=/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"moe_backend":"triton","model":"/mnt/shared/tessera-runs/moe/graph-attest-20260930/stub-B-mtp1-draft"} EAGER=0 LONG=1 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}

@@ -523,6 +523,7 @@ class TesseraConfig(QuantizationConfig):
                          prefix: str) -> QuantizeMethodBase | None:
         from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
         from .glm53_empty_rope import install_for_current_config as install_empty_rope
+        from .glm53_graphs import install_for_current_config as install_glm53_graphs
         from .glm53_prefill import install_for_current_config as install_glm53_prefill
         from .glm53_shared_fold import install_for_current_config as install_shared_fold
         from .mtp_draft_lifetime import install_for_current_config
@@ -531,6 +532,7 @@ class TesseraConfig(QuantizationConfig):
         install_glm53_prefill()
         install_shared_fold()
         install_empty_rope()
+        install_glm53_graphs()
         lookup_prefix, target_scheme, ignored = self._module_lookup(prefix)
 
         moe_classes = _moe_layer_classes()
