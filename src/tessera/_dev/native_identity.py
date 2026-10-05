@@ -70,6 +70,16 @@ def native_cache_mount(path) -> tuple[Path, Path, str]:
     return cache, mountpoint, filesystem
 
 
+def _fd_mount_id(fd: int) -> str:
+    """The mount id the kernel serves this held descriptor through."""
+    ids = [line.split(":", 1)[1].strip()
+           for line in Path(f"/proc/self/fdinfo/{fd}").read_text().splitlines()
+           if line.startswith("mnt_id:")]
+    if len(ids) != 1:
+        raise RuntimeError("native file mount identity is incomplete")
+    return ids[0]
+
+
 def mapped_file_device(fd: int) -> tuple[int, int]:
     """Kernel mapping device for this held FD, via its exact mount identity.
 
@@ -77,12 +87,7 @@ def mapped_file_device(fd: int) -> tuple[int, int]:
     the backing superblock device. FD mount provenance bridges those views
     without dropping the mapped-device or inode check.
     """
-    ids = [line.split(":", 1)[1].strip()
-           for line in Path(f"/proc/self/fdinfo/{fd}").read_text().splitlines()
-           if line.startswith("mnt_id:")]
-    if len(ids) != 1:
-        raise RuntimeError("native file mount identity is incomplete")
-    mounts = [fields for fields in _mountinfo_fields() if fields[0] == ids[0]]
+    mounts = [fields for fields in _mountinfo_fields() if fields[0] == _fd_mount_id(fd)]
     if len(mounts) != 1 or len(mounts[0]) < 3:
         raise RuntimeError("native file mount identity is not recorded")
     try:
