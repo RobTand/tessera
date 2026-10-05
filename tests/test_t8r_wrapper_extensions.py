@@ -168,6 +168,7 @@ def test_direct_pm_numeric_reuses_owned_container_and_canonical_namespace(tmp_pa
 
 @pytest.mark.parametrize("key,on,library", [
     ("TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH", "1", "e4m3mma"),
+    ("TESSERA_ROUTED_FUSED_MMA8_A_RING", "1", "e4m3mma"),
     ("TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH", "4", "value"),
     ("TESSERA_ROUTED_FUSED_FP4_A_PREFETCH", "4", "e2m1"),
     ("TESSERA_ROUTED_FUSED_PAIRED_K32", "1", "e4m3mma")])
