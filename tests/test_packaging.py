@@ -11,8 +11,10 @@ is published.  Torch-free by construction so the bytes-only job runs them.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import ast
 import re
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 
@@ -202,6 +204,24 @@ def test_every_excluded_package_pattern_matches_a_package():
         assert any(fnmatch(package, pattern) for package in packages), (
             f"packages.find exclude {pattern!r} matches no package under "
             f"{SRC}; it excludes nothing and the modules it named ship")
+
+
+def test_the_wheel_checker_reads_the_project_through_tomli_without_tomllib(monkeypatch):
+    """Python 3.10 has no ``tomllib`` and declares the ``tomli`` backport.
+
+    The checker is the packaging gate run in CI; one that cannot even import on
+    a supported interpreter is a gate that is not there.  ``tomllib`` is hidden
+    and ``tomli`` stands in for the backport, so the fallback is taken whatever
+    interpreter runs this test."""
+    real = tomllib
+    monkeypatch.setitem(sys.modules, "tomllib", None)  # `import tomllib` now raises
+    monkeypatch.setitem(sys.modules, "tomli", real)
+    spec = importlib.util.spec_from_file_location(
+        "check_wheel_without_tomllib", ROOT / "tools" / "check_wheel.py")
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    assert checker.tomllib is real
+    assert checker._pyproject() == _pyproject()
 
 
 def _excluded_references(source: str, package: str, patterns: list[str]) -> list[int]:
