@@ -20,7 +20,10 @@ from pathlib import Path
 
 import pytest
 
-tomllib = pytest.importorskip("tomllib")
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10; declared conditional dependency.
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
