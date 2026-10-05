@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for worker surface-share publication before completion.
+The ordinary session-finish hook writes the named worker share after finalizing
+its source identity and before xdist reports that the worker finished. The
+controller still publishes the aggregate from terminal summary; schema version
+three, population roles and retention of earlier runs are unchanged.
+
 Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
 adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
 The default c4/MNBT2048 eager/graph/eager equality population and refusal stay
@@ -2975,7 +2981,15 @@ wrapper resume, so the controller read the seed `pytest_sessionstart` had left
 in `workeroutput` and published a worker as agreeing while that worker's own
 share said `unknown` (#291). The measurement no longer depends on
 `--surface-json` either, and the share and the population now carry the same
-record rather than two hashes taken at two instants. An entry identity remains
+record rather than two hashes taken at two instants. With `--surface-json`, the
+same plain session-finish hook also completes the worker share write before
+`workerfinished` can be sent. Writing that file from terminal summary was still
+too late: the controller could observe completion and tear down a worker before
+its share reached disk, even while the aggregate and final identities were
+correct. Terminal summary writes only the controller or serial population now;
+every worker writes exactly once, including workers with no assigned tests.
+The schema, named worker-share paths and `_keep_any_previous` retention rule
+are unchanged. An entry identity remains
 a seed and never establishes agreement: only an entry-BOUND record -- one
 carrying a `measurement_span`, which `suite_source.is_entry_bound` is the one
 home for -- counts, and a worker that supplies only the seed, or no identity at
