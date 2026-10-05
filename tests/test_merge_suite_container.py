@@ -287,9 +287,9 @@ class SubmissionReached(Exception):
     pass
 
 
-def _mount(mount_id, mountpoint, filesystem):
+def _mount(mount_id, mountpoint, filesystem, *, parent_id=1):
     escaped = str(mountpoint).replace("\\", r"\134").replace(" ", r"\040")
-    return f"{mount_id} 1 0:{mount_id} / {escaped} rw - {filesystem} source rw\n"
+    return f"{mount_id} {parent_id} 0:{mount_id} / {escaped} rw - {filesystem} source rw\n"
 
 
 @pytest.fixture
@@ -530,4 +530,24 @@ def test_real_fleet_shared_mounts_refuse_by_type_and_admit_local_cache(
     assert str(error.value) == expected
     # The same real mount table must still admit an unrelated local directory.
     owner.require_local_cache(tmp_path)
+
+
+
+@pytest.mark.parametrize("edges", [
+    pytest.param([(101, 44), (102, 44)], id="siblings"),
+    pytest.param([(101, 44), (101, 44), (102, 101)], id="duplicate-id"),
+    pytest.param([(101, 102), (102, 101)], id="pure-cycle"),
+    pytest.param([(101, 44), (102, 101), (201, 202), (202, 201)],
+                 id="chain-and-disconnected-cycle"),
+    pytest.param([(101, 44), (102, 101), (201, 44), (202, 201)],
+                 id="two-disconnected-stacks"),
+])
+def test_all_local_mount_ambiguity_refuses(tmp_path, cache_mount_table, edges):
+    """A pure cycle has no top; a separate cycle escapes the top's parent walk."""
+    cache_mount_table[:] = [_mount(44, "/", "ext4")] + [
+        _mount(mount_id, tmp_path, "ext4", parent_id=parent_id)
+        for mount_id, parent_id in edges
+    ]
+    with pytest.raises(ValueError, match="mount provenance is ambiguous"):
+        owner.require_local_cache(tmp_path)
 
