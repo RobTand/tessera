@@ -449,8 +449,12 @@ exact) and attaches the copy to the module
 (`PreparedDenseNativeModule.attach_decoded`). The module then serves
 M >= `e4m3_prefill.MIN_M` (256, the measured crossover) with
 `torch._scaled_mm` row-wise on the unchanged E4M3 epilogue contract, and every
-smaller M on its window lane. `apply` stamps `launch_pair_for(M)`, the pair
-that ran. The copy is one byte per weight plus the fp32 row scale, yielded by
+smaller M on its window lane. The lane is EAGER-ONLY: the M branch is host
+Python, so `apply` refuses under `torch.compile` by name, and a copy-holding
+module declares a distinct compile-cache dispatch fact
+(`<window op>|<decode-once op>`). The route stamps `launch_pair_for(M)` (the
+pair that ran) only for a copy-holding module; every other module stamps its
+one `launch_pair` without reading the token count, as before v56. The copy is one byte per weight plus the fp32 row scale, yielded by
 `named_tensors`, so the residency accounting prices it. The launch
 `(tessera.serving.e4m3_prefill.prefill_apply, native_window_decode_once_e4m3)`
 enters `scheme.ROUTE_LAUNCHES[TESSERA_FP8]` (dense, both regimes, resident

@@ -1,8 +1,11 @@
 # Decode-once E4M3 for T-8 dense prefill (tessera#931): first operator receipt
 
 **Status:** operator timings and a correctness receipt on one GB10, with
-seeded Gaussian weights encoded at q256 1024. The lane is default-off and is
-not wired into any route yet. No serve was run.
+seeded Gaussian weights encoded at q256 1024. The receipt below (PB
+`58e2764f9fd7`) covers commit `46f802a672`, before the served integration.
+The integration (contract v56: the default-off, eager-only route dispatch, the
+residency accounting, the launch pair) landed after it, and its tests have not
+yet passed at the current head (see the end of this note). No serve was run.
 
 T-8 dense modules (`TESSERA_E4M3_K1`) decode the wire inside the GEMM, and at
 prefill M that decode sets the time
@@ -16,14 +19,19 @@ In short:
 - **At the served M = 2048 the decoded lane is 2.7–3.7× faster than today's
   T-8 lane** (both before the quantiser they share) **and 1.3–2.0× faster
   than BF16** (quantiser charged).
-- **Over the four main GLM-5.3 projection classes, that is 65 ms per
-  2048-token chunk per rank against BF16 if they were T-8.** Against today's
-  T-8 lane it is 171 ms.
+- **Over the four main GLM-5.3 projection classes, that is a conditional
+  65 ms per 2048-token chunk per rank against BF16**, summed from operator
+  timings, IF those projections were T-8 (campaign's accuracy decision). It is
+  not a served gain. Against today's T-8 lane the same sum is 171 ms; the two
+  figures are alternatives, not additive.
 - **The decode is exact.** It reproduces the stock materialisation's E4M3
   values and row scale bitwise at q256 832, 1024 and 1088.
-- **From M = 256 up, the output was bitwise equal to the served fused T-8
-  lane** on every shape measured. Below that M the fused lane splits K and the
-  two differ, inside the derived bound.
+- **The contract is the derived bound.** As an observation on the four shapes,
+  seeds and cuBLAS heuristic measured, the output was also bitwise equal to the
+  served fused T-8 lane from M = 256 up. Nothing relies on that: below that M
+  the fused lane splits K and the two differ, inside the bound. The bound
+  ratio is dominated by its final bf16 half-ulp term, so it is not evidence
+  about accumulator precision.
 - **The lane should take M ≥ 256.** That is the smallest measured M at which
   it beats today's T-8 lane on all four shapes. At M = 64 it loses on the KDA
   input projection (0.95×) and on MLA `o_proj` (0.61×).
@@ -157,18 +165,35 @@ So a T-8-projection artifact with this lane holds about the same projection
 bytes per rank as today's BF16 artifact. The two TP2 ranks each hold their own
 copy, so the decoded copies total 6.09 GB across the pair.
 
-## What is not done
+## The served integration (contract v56) and what is not done
 
-The lane is not wired into any route. The served integration still needs:
+Wired after this receipt, default-off:
 
-- dispatch in `PreparedDenseNativeModule.apply` at M ≥ 256, behind a
-  default-off flag;
-- the decoded copy held and counted by the module's residency accounting
-  (`named_tensors`/`packed_bytes`);
-- a launch symbol and decoder for the census;
-- a runtime-contract cell for the lane;
-- an artifact whose projections are T-8. That is campaign's accuracy
-  decision; today's A8SE752VB export keeps the projections in BF16.
+- `TESSERA_E4M3_DECODE_ONCE=1` makes `fp8_route.process_weights_after_loading`
+  decode each RESIDENT dense module once and attach the copy
+  (`PreparedDenseNativeModule.attach_decoded`). `named_tensors` yields it, so
+  `packed_bytes` and the residency accounting include it.
+- `apply` serves M >= 256 from the copy and smaller M on the window lane. The
+  lane is EAGER-ONLY: under `torch.compile` it refuses by name, and a
+  copy-holding module declares its own compile-cache dispatch fact.
+- The route stamps the pair that ran (`launch_pair_for(M)`) only for a
+  copy-holding module. With the flag unset it stamps `launch_pair` without
+  reading the token count, as before.
+- The launch `(tessera.serving.e4m3_prefill.prefill_apply,
+  native_window_decode_once_e4m3)` is in `scheme.ROUTE_LAUNCHES[TESSERA_FP8]`
+  and in `EXPERIMENTAL_LAUNCHES`; no contract cell names it.
+
+Not done:
+
+- the integration's tests passing at the current head (queued);
+- a contract cell, which needs a served census of a T-8-projection artifact
+  with the flag on. That artifact is campaign's accuracy decision; today's
+  A8SE752VB export keeps the projections in BF16;
+- timing the projections not measured here (q_a+kv_a, the indexer, shared
+  experts), which also take the lane at M >= 256;
+- a full-model memory fit with the flag on (the GB figures above are
+  arithmetic);
+- logging or measuring the load-time decode across all modules.
 
 ## Reproduce
 
