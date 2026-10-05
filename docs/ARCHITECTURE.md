@@ -8011,16 +8011,21 @@ paths are not split). Anything else refuses. An eager serve, and a graph serve
 at `max_model_len <= index_topk`, need no class split.
 
 **The receipt.** `src/tessera/graph_receipt.py` is the one home of the
-`tessera.graph_equals_eager.v1` receipt, its rule and `verify(receipt,
+`tessera.graph_equals_eager.v2` receipt, its rule and `verify(receipt,
 serve)`. It sits outside `tessera.serving` so a producer (PrismaQuant's
 ship-card check) can import it without the serving plugin. An arm is equal
 when every choice of both passes of the tessera#508 equality set is
 bit-identical to some eager run of the same batch, and every captured size
 and class replayed. `verify` re-applies the rule and matches the serve's
 image, model config digest, Tessera source digest, compilation config,
-speculative tokens, `max_model_len`, `max_num_seqs` and TP size exactly;
-nothing is extrapolated. Contexts above `index_topk` are a screen only:
-there eager does not reproduce itself.
+speculative tokens, `max_model_len`, `max_num_seqs`, TP size and fabric
+exactly; nothing is extrapolated. The fabric (v2, CEO decision
+dec-1005-003356-6ba2) is what every rank's NCCL banner reported: `socket` or
+`roce` at TP 2 or more, `none` for a one-rank serve. An all-reduce over
+sockets and one over RoCE are two serves, so a receipt on one attests no card
+on the other. A v1 receipt (no fabric) stays readable, but `verify` refuses it
+for a card. Contexts above `index_topk` are a screen only: there eager does
+not reproduce itself.
 
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 

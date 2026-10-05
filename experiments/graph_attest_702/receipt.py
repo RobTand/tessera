@@ -1,4 +1,4 @@
-"""tessera#702: build a ``tessera.graph_equals_eager.v1`` receipt from equality arms.
+"""tessera#702: build a ``tessera.graph_equals_eager.v2`` receipt from equality arms.
 
   receipt.py RECEIPTS MANIFEST OUT --eager rE1,rE2 --graph rG1,rG3 [--commit SHA]
 
@@ -115,9 +115,11 @@ SHARED_SCOPE = tuple(f for f in graph_receipt.SCOPE_FIELDS if f != "compilation_
 #: What else every arm must share to be one measurement, though no verify() scope names it:
 #: the equality script and the runner hooks that ran, the serve flags other than the
 #: execution mode, the kernel config other than the operator priority a graph arm may pin
-#: (cause 1, judged by the plugin), the Tessera env and the fabric.
+#: (cause 1, judged by the plugin) and the Tessera env. The fabric is scope (v2).
 SHARED_SETUP = ("equal_script_sha256", "hooks_sha256", "serve_flags", "kernel_config",
-                "tessera_env", "fabric_requested")
+                "tessera_env")
+#: What NCCL's banner says per fabric (arm_tp2.sh records ``fabric_observed`` from both ranks).
+_BANNER = {"roce": "Using network IB", "socket": "Using network Socket"}
 #: The flags that are the execution mode under test, or compared on their own.
 _MODE_FLAGS = {"--enforce-eager": 0, "--compilation-config": 1, "--kernel-config": 1}
 _REFERENCE = re.compile(r"[a-z0-9./:_-]+@sha256:[0-9a-f]{64}")
@@ -184,7 +186,24 @@ def arm_scope(arm_dir: pathlib.Path, arm: str, legacy_scripts: dict | None = Non
             "equal_script_sha256": script, "hooks_sha256": args["hooks_sha256"],
             "serve_flags": _serve_flags(argv), "kernel_config": kernel,
             "tessera_env": args.get("tessera_env") or None,
-            "fabric_requested": args.get("fabric_requested") or None}
+            "fabric": arm_fabric(args, int(values["tensor_parallel_size"]), arm)}
+
+
+def arm_fabric(args: dict, tensor_parallel_size: int, arm: str) -> str:
+    """The fabric this arm reduced over: none at one rank; else what EVERY rank's NCCL banner
+    reported, which must be the fabric the arm asked for. A request alone proves nothing."""
+    if tensor_parallel_size == 1:
+        return graph_receipt.NO_FABRIC
+    requested = args.get("fabric_requested")
+    ranks = dict(part.split(":", 1) for part in (args.get("fabric_observed") or "").split(";")
+                 if ":" in part)
+    want = {f"rank{r}" for r in range(tensor_parallel_size)}
+    if requested not in _BANNER or set(ranks) != want:
+        raise SystemExit(f"{arm}: fabric unknown: requested {requested!r}, banners from "
+                         f"{sorted(ranks)} (need {sorted(want)})")
+    if any(banner != _BANNER[requested] for banner in ranks.values()):
+        raise SystemExit(f"{arm}: fabric requested {requested!r} but the NCCL banners say {ranks}")
+    return requested
 
 
 def one_measurement(scopes: dict[str, dict]) -> dict:
@@ -271,7 +290,8 @@ def main() -> int:
     text = text.get("text_config", text)
     receipt = {
         "schema": graph_receipt.SCHEMA, "issue": "tessera#702",
-        "runtime": {"image": scope["image"], "vllm": arms[0]["vllm"], "interface": "nightly-20260929"},
+        "runtime": {"image": scope["image"], "fabric": scope["fabric"], "vllm": arms[0]["vllm"],
+                    "interface": "nightly-20260929"},
         "tessera": {"commit": a.commit, "src_sha256": scope["tessera_src_sha256"]},
         "model": {"path": model, "config_sha256": scope["model_config_sha256"],
                   "index_topk": text.get("index_topk")},

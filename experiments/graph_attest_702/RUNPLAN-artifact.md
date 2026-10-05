@@ -5,7 +5,7 @@ from PrismaBuild, so the arms run directly, on sparky, inside that window.
 
 ## What it produces
 
-A `tessera.graph_equals_eager.v1` receipt whose one graph arm attests the serve the
+A `tessera.graph_equals_eager.v2` receipt whose one graph arm attests the serve the
 ship card publishes:
 
 | Scope field | Value |
@@ -17,6 +17,7 @@ ship card publishes:
 | speculative_tokens | 1 (MTP, draft TP 2, triton MoE) |
 | max_model_len / max_num_seqs | 8448 / 4 |
 | tensor_parallel_size | 2 (rank 0 + API on sparklina, rank 1 headless on sparky; mp executor, `--nnodes 2`) |
+| fabric | `socket` (both ranks' NCCL banners; `FABRIC=socket` on every arm) |
 
 Other settings, as the release latency serve (pact/u4 `LAT_SERVE`, arm A8SE752MN):
 - `fp8_ds_mla` KV, `--moe-backend triton`, resident, `TESSERA_FUSED_E4M3_MMA=e4m3`;
@@ -35,7 +36,7 @@ git -C /mnt/shared/tessera-measurements/graph-attest-702/src/tessera-$SHA checko
 # 2. dry run: checks inputs, prints both ranks' commands, starts nothing
 export TS=/mnt/shared/tessera-measurements/graph-attest-702/src/tessera-$SHA
 export ARTIFACT=/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported
-export RECEIPTS=/mnt/shared/tessera-measurements/graph-attest-702/artifact-$SHA FABRIC=socket
+export RECEIPTS=/mnt/shared/tessera-measurements/graph-attest-702/artifact-$SHA   # every plan arm sets FABRIC=socket
 bash $TS/experiments/graph_attest_702/drive_tp2.sh $TS/experiments/graph_attest_702/plan-artifact.txt --dry-run
 
 # 3. the window: aE1 (eager), aGR (graph), aE2 (eager); stops at the first failed arm
@@ -86,9 +87,8 @@ python3 $TS/experiments/graph_attest_702/receipt.py $RECEIPTS /tmp/no-pb.json \
   - The stub arms were TP 1. Under graphs vLLM may route the tensor-parallel all-reduce differently from eager (custom or symmetric-memory all-reduce inside a captured graph).
   - If aGR departs from eager while aE1 and aE2 agree, that is the finding. The receipt says `not_equal`, and the cause must be isolated: the next arm captures with the eager all-reduce path.
 - **Eager not reproducing itself at TP 2.** If aE1 and aE2 disagree, the pool cannot judge anything; the cause is the fabric or NCCL reduction order.
-  - `FABRIC` is fixed per receipt and checked against both ranks' NCCL banners.
-  - The default is sockets (`NCCL_IB_DISABLE=1`), the u4 default, chosen for repeatability; the release speed legs ran RoCE.
-  - If the card's serve must run RoCE, run the whole plan with `FABRIC=roce`.
+  - The fabric is receipt scope (schema v2, dec-1005-003356-6ba2). Every plan arm sets `FABRIC=socket`: the Spark pair serves on sockets (RoCE `ibv_reg_mr` fails ENOMEM there; PrismaQuant `tools/gold_engine_options.py`), and PrismaQuant's quality evidence runs on sockets. `receipt.py` reads it from both ranks' NCCL banners (`Using network Socket`).
+  - `arm_tp2.sh` takes no default fabric. An arm whose banners name another fabric than the one requested is refused (exit 5), and `receipt.py` refuses arms that disagree: one receipt is one fabric, never mixed. A card served on another fabric needs its own receipt; `verify` refuses a mismatch.
 - **Load refusal on the artifact's export.** The artifact was exported at contract v44 (`a5f3b232`). No refusal is expected, since the plugin carries no contract-version gate, but aE1 is the load smoke.
 
 ## Follow-up, not in this plan: the index_topk boundary on the GPU
