@@ -595,3 +595,16 @@ def test_explicit_plan_requires_every_source_expert(tmp_path):
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="plan.*coverage"):
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_merge_observed_batch_widths_cover_every_part(tmp_path):
+    source, paths = _fixture(tmp_path)
+    histograms = ({"2": 1, "8": 2}, {"4": 3, "8": 5})
+    for path, histogram in zip(paths, histograms):
+        def stamped(manifest):
+            manifest["encode_batch"] = 8
+            manifest["export_partition"]["identity"]["options"]["encode_batch"] = 8
+            manifest["encode_batch_observed"] = histogram
+        _change(path, stamped)
+    merged = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert merged["encode_batch_observed"] == {"2": 1, "4": 3, "8": 7}

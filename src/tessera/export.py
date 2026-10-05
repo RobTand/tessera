@@ -1984,6 +1984,15 @@ def encode_linear_planes(
 _PER_UNIT_KEYS = ("ldl", "refit_metric", "refit_metric_trailing")
 
 
+#: The per-unit mapping keys the JOINED trellis must share: encoder settings
+#: that are one value per batch, not per unit.  The batched entry refuses a
+#: mixed mapping by key; a caller that PREPARES batches -- the exporter's
+#: joined fresh encodes -- partitions on this set first, so a valid run is
+#: split where its schedules genuinely differ instead of refused.
+SHARED_PER_UNIT_SETTINGS = frozenset(
+    {"ldl_block", "refit_reach_floor", "refit_gauss_seidel"})
+
+
 def encode_linears_planes(
     weights: "Sequence[torch.Tensor]",
     *,
@@ -2086,13 +2095,12 @@ def encode_linears_planes(
                         "The joined trellis runs one schedule, so an encoder "
                         "setting is one value per batch -- split the batch"
                     )
-        allowed = {"ldl_block", "refit_reach_floor", "refit_gauss_seidel"}
-        unknown = set(shared) - allowed
+        unknown = set(shared) - SHARED_PER_UNIT_SETTINGS
         if unknown:
             raise GrammarError(
                 f"per_unit carries keys this entry point does not route: "
                 f"{sorted(unknown)}; it accepts what ActivationSource.for_unit "
-                f"returns ({sorted(allowed | set(_PER_UNIT_KEYS))})"
+                f"returns ({sorted(SHARED_PER_UNIT_SETTINGS | set(_PER_UNIT_KEYS))})"
             )
         if "ldl_block" in shared:
             ldl_block = shared["ldl_block"][1]

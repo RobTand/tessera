@@ -11,6 +11,7 @@ is published.  Torch-free by construction so the bytes-only job runs them.
 from __future__ import annotations
 
 import importlib
+import ast
 import re
 from fnmatch import fnmatch
 from pathlib import Path
@@ -211,11 +212,29 @@ def test_no_runtime_module_imports_the_excluded_tooling():
     test that runs from this checkout would ever see it -- the tree has the
     modules the wheel does not."""
     offenders = []
+    patterns = _excluded_packages()
     for path in sorted(SRC.joinpath("tessera").rglob("*.py")):
         if "_dev" in path.relative_to(SRC).parts or "__pycache__" in path.parts:
             continue
-        if "tessera._dev" in path.read_text(encoding="utf-8"):
-            offenders.append(str(path.relative_to(SRC)))
+        package = ".".join(path.relative_to(SRC).parts[:-1])
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                prefix = node.module or ""
+                if node.level:
+                    prefix = importlib.util.resolve_name("." * node.level + prefix, package)
+                names = [prefix, *(prefix + "." + alias.name for alias in node.names)]
+            elif isinstance(node, ast.Call) and node.args:
+                callee = node.func.attr if isinstance(node.func, ast.Attribute) else (
+                    node.func.id if isinstance(node.func, ast.Name) else "")
+                argument = node.args[0]
+                if callee in {"import_module", "__import__"} and isinstance(argument, ast.Constant):
+                    if isinstance(argument.value, str):
+                        names = [argument.value]
+            if any(fnmatch(name, pattern) for name in names for pattern in patterns):
+                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
     assert not offenders, (
         "shipped modules name tessera._dev, which the wheel does not carry: "
         f"{offenders}")
