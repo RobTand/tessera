@@ -57,7 +57,7 @@ def test_certified_refusal_preserves_the_site_exception() -> None:
     with pytest.raises(PinRefusal, match="source pin differs"):
         seal_check("source pin", "a", "b", where="t", refusal=PinRefusal,
                    environ={DEV_MODE_ENV: "0"})
-    with pytest.raises(PinRefusal, match="source pin differs"):
+    with pytest.raises(PinRefusal, match="^made$"):
         seal_check("source pin", "a", "b", where="t", refusal=lambda: PinRefusal("made"),
                    environ={DEV_MODE_ENV: "0"})
 

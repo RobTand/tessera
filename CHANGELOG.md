@@ -76,6 +76,36 @@ and the guard against the exact new producer head before one fresh native
 gang. The failing-before behavior regression and the admitted CPU physical
 guard smoke are required by the issue and live with its source and test
 slices; this entry records the contract they enforce.
+## 2026-10-05 — issue964: the serving source pin stamps instead of refusing (D32)
+
+The native shape-time pipeline's run-identity gates no longer refuse a serve
+whose running Tessera tree differs from the frozen expected context. The
+worker's before-device code identity and frozen-software comparison, the
+installed CPU preflight's recorded commit and observed software context, and
+the panel/observation validators' observed-vs-frozen runtime now go through
+the new stdlib `tessera.dev_mode.seal_check` (the twin of
+`prismaquant.dev_mode`, prismaquant#1147): dev mode is ON unless
+`PRISMAQUANT_DEV_MODE` is exactly `0`, a mismatch prints one `[DEV-MODE]`
+line naming both values and the run continues with the stored data, and
+certified `0` raises each site's verbatim refusal. The GLM MTP draft shard
+narrowing (`mtp_draft_shards.install`) treats its inspected loader source
+digest the same way: default dev mode stamps one `[DEV-MODE]` line per
+module and still installs the narrowing (the 164 GiB whole-checkpoint
+fallback becomes the certified-mode decline); an unreadable source and a
+rebound loader signature still fail closed in both modes. A dev-mode
+installation proof verifies intact installed bytes at the commit the running
+tree claims instead of the pinned one, so the receipt stays honest without
+re-imposing the stamped pin. Still refusing in both modes: which CASE
+executed (execution mode, residency, TP geometry, requested serve flags --
+comparability, not run identity), the installed `runtime_contract.json`
+bytes against their own pinned digest, preflight module byte bindings,
+every evidence/bound-bytes check, foreign runtime origins and
+import-environment isolation, mid-run stability re-observations, and the
+fail-closed VCS commit resolution that names what ran. Regressions in
+`tests/test_native_timing_panel.py` and `tests/test_native_shape_time_application.py`
+demand stamp-and-continue on a source-pin difference (failing on the
+pre-change refusal) and the verbatim certified refusal; `tests/test_dev_mode_seal_check.py`
+pins the helper. `docs/ARCHITECTURE.md` is re-stamped in the same commit.
 
 ## 2026-10-05 — issue953: bounded preflight headroom wait (Window4)
 

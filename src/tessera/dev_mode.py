@@ -5,7 +5,7 @@ until further notice." A run-identity seal -- a recorded source, commit,
 digest, producer, pin or provenance identity compared with the running one --
 stamps and continues in dev mode instead of refusing. This module is the one
 home for that switch in this package, mirroring ``prismaquant.dev_mode``
-(PQ #1147) so both sides of the repository boundary share one default: dev
+(prismaquant#1147) so both sides of the repository boundary share one default: dev
 mode is ON unless ``PRISMAQUANT_DEV_MODE`` is exactly ``0``.
 
 The contract:
@@ -51,7 +51,7 @@ __all__ = [
 DEV_MODE_ENV = "PRISMAQUANT_DEV_MODE"
 
 #: The ``actual`` side a dev-mode site passes when satisfying the comparison
-#: would require computing a digest over existing data (PQ #1147). The
+#: would require computing a digest over existing data (prismaquant#1147). The
 #: ``[DEV-MODE]`` line names it; certified mode never passes it, and a
 #: certified check that meets it refuses, because it differs from every
 #: recorded identity.
