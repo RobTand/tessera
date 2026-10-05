@@ -2,7 +2,8 @@
 
 **Status:** operator timings and a correctness receipt on one GB10, with
 seeded Gaussian weights encoded at q256 1024. The receipt below (PB
-`58e2764f9fd7`) covers commit `46f802a672`, before the served integration.
+`58e2764f9fd7`) covers branch commit `a29e76dcc` (PB snapshot `46f802a672`),
+before the served integration.
 The integration (contract v56: the default-off, eager-only route dispatch, the
 residency accounting, the launch pair) landed after it, and its tests have not
 yet passed at the current head (see the end of this note). No serve was run.
@@ -199,8 +200,10 @@ Wired after this receipt, default-off:
   (`PreparedDenseNativeModule.attach_decoded`). `named_tensors` yields it, so
   `packed_bytes` and the residency accounting include it.
 - `apply` serves M >= 256 from the copy and smaller M on the window lane. The
-  lane is EAGER-ONLY: under `torch.compile` it refuses by name, and a
-  copy-holding module declares its own compile-cache dispatch fact.
+  lane is EAGER-ONLY: the route refuses the flag at load when vLLM's
+  compilation mode is not NONE (an `apply`-time raise under `torch.compile`
+  is only a backstop), and a copy-holding module declares its own
+  compile-cache dispatch fact.
 - The route stamps the pair that ran (`launch_pair_for(M)`) only for a
   copy-holding module. With the flag unset it stamps `launch_pair` without
   reading the token count, as before.
@@ -210,7 +213,8 @@ Wired after this receipt, default-off:
 
 Not done:
 
-- the integration's tests passing at the current head (queued);
+- the integration's tests at the current head: green at `007dbc86a` (PB
+  `1ecee0a04245`); the load-time refusal that followed is queued;
 - a contract cell, which needs a served census of a T-8-projection artifact
   with the flag on. That artifact is campaign's accuracy decision; today's
   A8SE752VB export keeps the projections in BF16;

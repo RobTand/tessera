@@ -450,8 +450,10 @@ exact) and attaches the copy to the module
 M >= `e4m3_prefill.MIN_M` (256, the measured crossover) with
 `torch._scaled_mm` row-wise on the unchanged E4M3 epilogue contract, and every
 smaller M on its window lane. The lane is EAGER-ONLY: the M branch is host
-Python, so `apply` refuses under `torch.compile` by name, and a copy-holding
-module declares a distinct compile-cache dispatch fact
+Python, so the route refuses the flag AT LOAD when vLLM's compilation mode is
+not NONE (`compile_identity.current_forward_is_compiled`); a raise in `apply`
+under `torch.compile` is only a backstop, since Dynamo may run around it. A
+copy-holding module declares a distinct compile-cache dispatch fact
 (`<window op>|<decode-once op>`). The route stamps `launch_pair_for(M)` (the
 pair that ran) only for a copy-holding module; every other module stamps its
 one `launch_pair` without reading the token count, as before v56. The copy is one byte per weight plus the fp32 row scale, yielded by
