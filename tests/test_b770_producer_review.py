@@ -234,6 +234,33 @@ def _refuses_the_installed_payload(text: str) -> bool:
         "projected wheel roster" in text or "TESSERA_PRODUCER_SOURCE" in text)
 
 
+_PYTHONPATH_REFUSAL = (
+    "TESSERA_PRODUCER_PYTHON: the process imports tessera from /site/tessera/__init__.py. "
+    "A PYTHONPATH override is not the installed payload, whatever its bytes say.")
+
+
+@pytest.mark.parametrize("text, refuses", [
+    pytest.param(
+        "TESSERA_PRODUCER_PYTHON: the installed payload /site/tessera is not the projected wheel "
+        "roster (missing [], extra ['x.py']); the shipped code and declared package-data must match",
+        True, id="roster-refusal"),
+    pytest.param(
+        "TESSERA_PRODUCER_SOURCE: the installed payload /site/tessera does not match the source",
+        True, id="digest-refusal"),
+    pytest.param(
+        _PYTHONPATH_REFUSAL + "\nTESSERA_PRODUCER_SOURCE=/qualified/src/tessera",
+        False, id="pythonpath-refusal-plus-an-unrelated-source-line"),
+    pytest.param(
+        _PYTHONPATH_REFUSAL + "\nthe projected wheel roster is documented elsewhere",
+        False, id="pythonpath-refusal-plus-roster-words"),
+    pytest.param("", False, id="no-output"),
+])
+def test_the_payload_oracle_accepts_only_the_two_payload_refusals(text, refuses):
+    """The oracle must not be satisfied by a different refusal that happens to
+    mention the same words or variable."""
+    assert _refuses_the_installed_payload(text) is refuses
+
+
 @pytest.mark.parametrize("leg", ["interpreter", "payload"])
 def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, frozen_source):
     site = selected._fixture_install(tmp_path / "site")
