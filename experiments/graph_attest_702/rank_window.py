@@ -88,16 +88,25 @@ class LocalArm:
                 sample = dict(unix=time.time(), monotonic=time.monotonic(),
                               available_gib=available_gib())
                 samples.append(sample)
+                left = self.envelope.remaining()  # raises TimeoutError at the deadline
                 if sample["available_gib"] >= threshold_gib:
                     self.tick()  # live guard recheck immediately before declaring ready
+                    left = self.envelope.remaining()  # recheck lifetime after the guard
+                    if time.monotonic() >= deadline:
+                        reason = "headroom_timeout"
+                        break
                     reason = "ready"
                     break
-                left = self.envelope.remaining()  # raises TimeoutError at the deadline
                 if time.monotonic() >= deadline:
                     reason = "headroom_timeout"
                     break
                 self.tick()  # existing guard every poll; peer cancel/floor propagate
-                time.sleep(min(getattr(self, "poll_seconds", .2), left, deadline - time.monotonic()))
+                left = self.envelope.remaining()  # recompute after the guard/tick
+                bound_left = deadline - time.monotonic()
+                if bound_left <= 0:
+                    reason = "headroom_timeout"
+                    break
+                time.sleep(min(getattr(self, "poll_seconds", .2), left, bound_left))
         except Refused as exc:
             reason, terminal = "lifecycle_cancelled", exc
         except TimeoutError as exc:
