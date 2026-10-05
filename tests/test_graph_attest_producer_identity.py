@@ -51,7 +51,8 @@ def make_producer(tmp_path, *, message="reviewed producer"):
 
 
 def fixture_inputs(monkeypatch, tmp_path, producer, reviewed):
-    config = dict(ts="/mnt/shared/runtime", artifact="/mnt/shared/control", receipts="/mnt/shared/fixture-root/arms",
+    config = dict(ts=str(tmp_path / "runtime"), artifact=str(tmp_path / "control"),
+                  receipts=str(tmp_path / "fixture-root" / "arms"),
                   fabric="socket", source_commit="c" * 40, src_sha256="d" * 64,
                   producer_commit=reviewed, producer_sha256=disk_digest(producer))
     env = dict(TS=config["ts"], ARTIFACT=config["artifact"], RECEIPTS=config["receipts"], FABRIC="socket",
@@ -88,7 +89,7 @@ def test_reviewed_label_and_forged_disk_digest_do_not_authorize_changed_code(tmp
     assert env["PRODUCER_SHA256"] == disk_digest(producer)
     with pytest.raises(managed_window.Refused, match="producer"):
         if entry == "prepare":
-            driver.prepare(Path("/mnt/shared/fixture-root"), Path("unused"), env, None, ["1" * 64, "2" * 64])
+            driver.prepare(Path(env["RECEIPTS"]).parent, tmp_path / "unused", env, None, ["1" * 64, "2" * 64])
         else:
             driver.submit(root, reviews)
 
@@ -97,10 +98,13 @@ def test_reviewed_label_and_forged_disk_digest_do_not_authorize_changed_code(tmp
 def test_clean_exact_reviewed_producer_reaches_the_next_real_gate(tmp_path, monkeypatch, entry):
     producer, reviewed = make_producer(tmp_path)
     config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
-    with pytest.raises(ReachedAdmission):
-        if entry == "prepare":
-            driver.prepare(Path("/mnt/shared/fixture-root"), Path("unused"), env, None, ["1" * 64, "2" * 64])
-        else:
+    if entry == "prepare":
+        # A portable local fixture reaches the production shared-storage boundary
+        # after its real reviewed-producer checks; it must not impersonate a box.
+        with pytest.raises(managed_window.Refused, match="rendezvous must be shared"):
+            driver.prepare(Path(env["RECEIPTS"]).parent, tmp_path / "unused", env, None, ["1" * 64, "2" * 64])
+    else:
+        with pytest.raises(ReachedAdmission):
             driver.submit(root, reviews)
 
 def test_pb_synthetic_head_keeps_reviewed_object_and_identical_clean_producer(tmp_path):

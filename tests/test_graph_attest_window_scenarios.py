@@ -161,7 +161,7 @@ def test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name
 
 def test_supported_campaign_rows_own_each_rank_and_aggregate_peaks(tmp_path):
     (tmp_path / "inputs.json").write_text("{}")
-    env = dict(TS="/mnt/shared/source", ARTIFACT="/mnt/shared/control", RECEIPTS="/mnt/shared/receipts",
+    env = dict(TS=str(tmp_path / "source"), ARTIFACT=str(tmp_path / "control"), RECEIPTS=str(tmp_path / "receipts"),
                FABRIC="socket", SOURCE_COMMIT="c" * 40, SOURCE_SHA256="a" * 64,
                PRODUCER_COMMIT="d" * 40, PRODUCER_SHA256="e" * 64)
     config = dict(ts=env["TS"], image=rank_window.recipe.IMAGE)

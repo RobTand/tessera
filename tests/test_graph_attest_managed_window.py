@@ -125,6 +125,7 @@ def terminal(owned):
 
 @pytest.mark.parametrize("mutation", ["no_export", "tickets", "populated", "nonce", "late", "settle"])
 def test_exit_zero_alone_is_not_a_physical_handoff(mutation):
+    pytest.importorskip("prismabuild", reason="requires the published PB SDK")
     owned = identity()
     value = terminal(owned)
     cleanup = value["resource_scope_cleanup"]
@@ -217,6 +218,7 @@ def test_simulated_outcomes_never_release_live_window_ownership(tmp_path):
 
 @pytest.mark.parametrize("field,value", [("released", 1), ("retired", None), ("settled", "yes")])
 def test_broker_release_flags_are_exact_typed_proof(field, value):
+    pytest.importorskip("prismabuild", reason="requires the published PB SDK")
     owned = identity()
     value_record = terminal(owned)
     value_record["resource_scope_cleanup"]["export"][field] = value
