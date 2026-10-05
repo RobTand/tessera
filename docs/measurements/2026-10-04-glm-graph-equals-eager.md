@@ -125,5 +125,5 @@ reason "a `tessera.graph_equals_eager.v1` receipt names no fabric, so it cannot
 attest a card's serve; produce a `tessera.graph_equals_eager.v2` receipt". So
 the sentence in "Scope" that `verify` matches every one of those fields
 describes the v1-era `verify`, not the current one. A v1 receipt stays readable:
-`finish` still re-derives it. `tests/test_graph_receipt.py::
-test_a_v1_receipt_stays_readable_but_verifies_no_card` pins both halves.
+`finish` still re-derives it. The test that pins both halves is
+`tests/test_graph_receipt.py::test_a_v1_receipt_stays_readable_but_verifies_no_card`.
