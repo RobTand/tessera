@@ -481,3 +481,53 @@ def test_container_cache_refuses_before_creating_or_launching(tmp_path, monkeypa
     assert "filesystem type nfs4" in capsys.readouterr().err
     assert launches == []
     assert not Path(spec["--cache-dir"]).exists()
+
+
+# Exact /proc/self/mountinfo lines read on 2026-10-05. No test accesses /mnt/shared.
+_FLEET_SHARED_MOUNTS = {
+    "celestia": (
+        "8498 44 0:106 / /mnt/shared rw,relatime shared:783 - autofs systemd-1 rw,fd=101,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=626733\n",
+        "8533 8498 0:109 / /mnt/shared rw,noatime shared:802 - nfs4 192.168.1.107:/storage_pool/shared rw,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,hard,fatal_neterrors=none,proto=tcp,nconnect=8,timeo=600,retrans=2,sec=sys,clientaddr=192.168.1.68,local_lock=none,addr=192.168.1.107\n",
+    ),
+    "sparky": (
+        "52 36 0:40 / /mnt/shared rw,relatime shared:30 - autofs systemd-1 rw,fd=62,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=20555\n",
+        "211 52 0:66 / /mnt/shared rw,noatime shared:729 - nfs4 10.100.98.3:/storage_pool/shared rw,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,hard,fatal_neterrors=none,proto=rdma,nconnect=16,port=20049,timeo=600,retrans=2,sec=sys,clientaddr=0.0.0.0,local_lock=none,addr=10.100.98.3\n",
+    ),
+    "sparklina": (
+        "52 37 0:41 / /mnt/shared rw,relatime shared:30 - autofs systemd-1 rw,fd=64,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=21625\n",
+        "772 52 0:76 / /mnt/shared rw,noatime shared:751 - nfs4 10.100.99.3:/storage_pool/shared rw,vers=4.2,rsize=1048576,wsize=1048576,namlen=255,hard,fatal_neterrors=none,proto=rdma,nconnect=16,port=20049,timeo=600,retrans=2,sec=sys,clientaddr=10.100.99.2,local_lock=none,addr=10.100.99.3\n",
+    ),
+}
+_CELESTIA_LOCAL_MOUNT = "44 1 259:14 / / rw,relatime shared:1 - ext4 /dev/nvme0n1p2 rw\n"
+
+
+@pytest.mark.parametrize("host", _FLEET_SHARED_MOUNTS)
+@pytest.mark.parametrize("mounted,filesystem", [(True, "nfs4"), (False, "autofs")])
+def test_real_fleet_shared_mounts_refuse_by_type_and_admit_local_cache(
+        tmp_path, monkeypatch, cache_mount_table, host, mounted, filesystem):
+    cache = Path("/mnt/shared")
+    directory_stat = tmp_path.stat()
+    original_resolve, original_stat = Path.resolve, Path.stat
+
+    def resolve(path, *args, **kwargs):
+        return cache if path == cache else original_resolve(path, *args, **kwargs)
+
+    def stat(path, *args, **kwargs):
+        return directory_stat if path == cache else original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+    monkeypatch.setattr(Path, "stat", stat)
+    automount, network = _FLEET_SHARED_MOUNTS[host]
+    # Reverse the entries: visibility follows parent identity, not table order.
+    cache_mount_table[:] = ([network, automount] if mounted else [automount]) + [_CELESTIA_LOCAL_MOUNT]
+    expected = (
+        "suite container: --cache-dir (merge-suite --gpu-cache-dir): "
+        f"cache path /mnt/shared is on mount point /mnt/shared with filesystem type {filesystem}; "
+        "use local disk for native build locks and mapped inode identity"
+    )
+    with pytest.raises(ValueError) as error:
+        owner.require_local_cache(cache)
+    assert str(error.value) == expected
+    # The same real mount table must still admit an unrelated local directory.
+    owner.require_local_cache(tmp_path)
+

@@ -34,8 +34,8 @@ def _require(condition, reason):
         raise ValueError("suite container: " + reason)
 
 
-_NETWORK_CACHE_FILESYSTEMS = {
-    "9p", "afs", "ceph", "cifs", "glusterfs", "lustre", "ncpfs", "nfs", "nfs4",
+_NONLOCAL_CACHE_FILESYSTEMS = {
+    "autofs", "9p", "afs", "ceph", "cifs", "glusterfs", "lustre", "ncpfs", "nfs", "nfs4",
     "smb3", "smbfs", "davfs", "fuse.ceph", "fuse.curlftpfs", "fuse.davfs",
     "fuse.gcsfuse", "fuse.glusterfs", "fuse.rclone", "fuse.s3fs", "fuse.smbnetfs",
     "fuse.sshfs",
@@ -46,7 +46,7 @@ def require_local_cache(path):
     """One cache admission rule for the coordinator and container launcher.
 
     The mount owner has no exhaustive local filesystem classification, so
-    refuse known network types rather than invent a local filesystem roster.
+    refuse known network types and unresolved automounts, not a local roster.
     """
     from tessera._dev.native_identity import native_cache_mount
 
@@ -55,7 +55,7 @@ def require_local_cache(path):
         cache, mountpoint, filesystem = native_cache_mount(path)
     except (OSError, RuntimeError) as exc:
         _require(False, f"{option}: {exc}")
-    _require(filesystem not in _NETWORK_CACHE_FILESYSTEMS,
+    _require(filesystem not in _NONLOCAL_CACHE_FILESYSTEMS,
              f"{option}: cache path {cache} is on mount point {mountpoint} "
              f"with filesystem type {filesystem}; use local disk for native build "
              "locks and mapped inode identity")
