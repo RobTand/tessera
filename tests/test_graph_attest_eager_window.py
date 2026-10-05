@@ -95,7 +95,7 @@ def test_runtime_candidate_review_is_exact_and_independent_of_producer(tmp_path,
     import window_driver as driver
     producer, reviewed = make_producer(tmp_path)
     config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
-    config.update(window_mode=MODE, pq_pin_commit="e" * 40, artifact_manifest="/mnt/shared/fixture.json")
+    config.update(window_mode=MODE, pq_pin_commit="e" * 40, artifact_manifest=str(tmp_path / "fixture.json"))
     setup = json.loads((root / "inputs.json").read_bytes())
     setup["config"] = config
     (root / "inputs.json").write_text(json.dumps(setup))
