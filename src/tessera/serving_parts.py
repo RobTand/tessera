@@ -1079,6 +1079,15 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                                       "config_groups": groups, "ignore": sorted(ignore)}
     manifest = copy.deepcopy(loaded[0][3])
     manifest.pop("export_partition")
+    if all("encode_batch_observed" in row[3] for row in loaded):
+        widths = {}
+        for row in loaded:
+            for width, calls in row[3]["encode_batch_observed"].items():
+                widths[width] = widths.get(width, 0) + calls
+        manifest["encode_batch_observed"] = dict(sorted(widths.items(), key=lambda item: int(item[0])))
+    else:
+        # A partial observation is not a histogram of the whole merged run.
+        manifest.pop("encode_batch_observed", None)
     manifest["modules"] = modules
     manifest["merged_from"] = [{"index": r[0], "path": str(r[1]),
                                  "output_sha256": r[2]["output_sha256"]} for r in loaded]

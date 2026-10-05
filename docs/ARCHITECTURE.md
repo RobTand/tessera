@@ -6400,7 +6400,9 @@ sealed anyway: the effective value is recorded in the manifest
 (`encode_batch`, plus the observed per-call width histogram
 `encode_batch_observed`) and carried in a part identity's options, so parts
 batched differently refuse to merge.  A width-N throughput claim cites the
-observed histogram, never the requested knob alone.  The byte-proof harness
+observed histogram, never the requested knob alone. Merged artifacts sum the
+observed-width counts across every part, and omit the whole-run histogram
+when any legacy part supplies no observation. The byte-proof harness
 (`experiments/audit_byte_baseline.py`) carries a `batch` matrix over the
 joined entry at the rungs the routed census selects, so a change that moves
 only joined-call bytes is seen; `tests/test_audit_byte_baseline.py` proves
