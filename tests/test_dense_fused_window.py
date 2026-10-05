@@ -822,18 +822,21 @@ def test_the_dense_identity_is_a_published_launch_of_both_window_routes():
             (fp8_route, TESSERA_FP8, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE),
             (bf16_route, TESSERA_BF16, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)):
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, decoder)
-        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
+        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH, module.DENSE_DECODE_ONCE_LAUNCH)
+                 if module is fp8_route else ())
         assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
+        # contract v47 (tessera#747) earned the E4M3 instruction's pair its
+        # cells; the decode-once pair (v56, tessera#931) is resident-only and
+        # experimental, so the attested view is every launch the route makes
+        # but that one, and the experimental view adds it at resident only
+        decode_once = {getattr(module, "DENSE_DECODE_ONCE_LAUNCH", None)} - {None}
         for mode in ("resident", "streamed"):
             for regime in ("decode", "batch"):
-                # contract v47 (tessera#747) earned the E4M3 instruction's pair
-                # its cells, so EXPERIMENTAL_LAUNCHES is empty again and the
-                # attested view is every launch the route makes
-                assert set(module.DENSE_LAUNCHES) == launch_pairs(
+                assert set(module.DENSE_LAUNCHES) - decode_once == launch_pairs(
                     route, structure=STRUCTURE_DENSE, regime=regime, mode=mode), (route, regime, mode)
-                assert set(module.DENSE_LAUNCHES) == launch_pairs(
-                    route, structure=STRUCTURE_DENSE, regime=regime, mode=mode,
-                    include_experimental=True), (route, regime, mode)
+                assert set(module.DENSE_LAUNCHES) - (decode_once if mode == "streamed" else set()) \
+                    == launch_pairs(route, structure=STRUCTURE_DENSE, regime=regime, mode=mode,
+                                    include_experimental=True), (route, regime, mode)
 
 
 # --- every rate, and the two-rate schedules (tessera#694) -------------------------

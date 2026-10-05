@@ -98,6 +98,7 @@ __all__ = [
     "ROUTED_FUSED_WINDOW_SYMBOL",
     "FUSED_WINDOW_DENSE_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
+    "DECODE_ONCE_DENSE_SYMBOL",
     "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
     "parse_compact_tessera_expert_blob",
@@ -459,6 +460,11 @@ ROUTED_FUSED_WINDOW_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__
 #: different launch than ``WINDOW_GEMM_SYMBOL`` over the same function of the
 #: wire (its MMA accumulation order differs), so its own symbol and decoders.
 FUSED_WINDOW_DENSE_SYMBOL = "tessera::fused_window_dense"
+#: The E4M3 family's decode-once dense prefill lane (tessera#931): the
+#: module's weights decoded once at load (``serving.e4m3_prefill``) and
+#: served by ``torch._scaled_mm`` row-wise for M at or above
+#: ``e4m3_prefill.MIN_M``.  Below that M the module's window lane runs.
+DECODE_ONCE_DENSE_SYMBOL = "tessera.serving.e4m3_prefill.prefill_apply"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -504,6 +510,7 @@ _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 #: order, so their own strings.
 _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA = "native_routed_fused_window_e4m3mma"
 _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
+_DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -603,6 +610,16 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         # Attested since contract v47 (see ``EXPERIMENTAL_LAUNCHES``).
         {"symbol": FUSED_WINDOW_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": "tessera_routed_fused_mma_e4m3",
+         "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
+        # The decode-once prefill lane (tessera#931, contract v56): default-off
+        # (``TESSERA_E4M3_DECODE_ONCE=1``), resident only -- the route attaches
+        # the decoded copy only to a resident module -- and taken for M at or
+        # above ``e4m3_prefill.MIN_M`` in whichever phase M occurs.  No
+        # extension lane: the decode runs the module's own Triton decoder and
+        # the GEMM is torch's.  Experimental until a served census earns it a
+        # cell (``EXPERIMENTAL_LAUNCHES``).
+        {"symbol": DECODE_ONCE_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
     ) + (
         # The compact window MoE adapter: routed experts served from the
@@ -789,8 +806,15 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: ``tessera_e4m3_k1_{dense,routed_moe}_sm121_{decode,batch}_resident`` cells
 #: (``tests/test_glm_u1_census_cells.py``).  The 16-bit library's pairs stay
 #: attested beside them: ``TESSERA_FUSED_E4M3_MMA=f16`` still selects it.  The
-#: set is empty again, kept so the next unattested launch has a place to stand.
-EXPERIMENTAL_LAUNCHES: frozenset = frozenset()
+#: set was empty again, kept so the next unattested launch has a place to stand.
+#:
+#: ONE PAIR ENTERED at contract v56: the E4M3 family's decode-once dense
+#: prefill lane, ``(DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)``
+#: (tessera#931), default-off.  It leaves when a served census of a T-8
+#: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
+EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
+    (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
+})
 
 
 def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,

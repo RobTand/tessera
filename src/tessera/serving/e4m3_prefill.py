@@ -30,9 +30,27 @@ import dataclasses
 
 import torch
 
-__all__ = ["DecodedE4M3", "decode_e4m3", "prefill_apply"]
+__all__ = ["DecodedE4M3", "FLAG", "MIN_M", "decode_e4m3", "enabled", "prefill_apply"]
 
 E4M3 = torch.float8_e4m3fn
+
+#: Default off.  ``1`` makes the FP8 dense route decode each resident module
+#: once at load and serve M >= ``MIN_M`` from the decoded copy.
+FLAG = "TESSERA_E4M3_DECODE_ONCE"
+
+#: The smallest M the decoded lane takes.  Measured, not chosen: 256 is the
+#: smallest M at which it beat the fused window lane on all four GLM-5.3
+#: projection shapes timed (kda_in, KDA o_proj, MLA q_b, MLA o_proj); at
+#: M = 64 it lost on two of them (0.95x, 0.61x).  Receipt:
+#: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md (PB 58e2764f9fd7).
+MIN_M = 256
+
+
+def enabled() -> bool:
+    """``TESSERA_E4M3_DECODE_ONCE``, strictly parsed and latched per process."""
+    from .flags import latched_bool
+
+    return latched_bool(FLAG, meaning="the decode-once E4M3 dense prefill lane")
 
 
 @dataclasses.dataclass(frozen=True)

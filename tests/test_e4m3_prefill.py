@@ -94,3 +94,98 @@ def test_the_scaled_gemm_is_the_e4m3_contract_within_the_derived_bound(m):
     same = float((got == served).float().mean())
     print(f"E4M3-PREFILL M={m} decoded/bound={ratio:.4f} pair/(2*bound)={pair:.4f} "
           f"bitwise_equal_frac={same:.6f}")
+
+
+# --- the served integration (contract v56) ---------------------------------------
+
+def _inputs(m, cols, seed):
+    x = torch.randn(m, cols, device="cuda",
+                    generator=torch.Generator(device="cuda").manual_seed(seed)).bfloat16()
+    xq, a = _quant(x)
+    return x, xq.contiguous(), a.reshape(-1).contiguous().float()
+
+
+@cuda
+def test_the_module_serves_from_its_decoded_copy_at_and_above_min_m():
+    """Below ``MIN_M`` the window lane runs and is stamped; at and above it the
+    decoded copy runs and is stamped -- each bitwise the function it names."""
+    from tessera.serving.e4m3_prefill import MIN_M, decode_e4m3, prefill_apply
+    from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
+    from tessera.serving.telemetry import DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3
+
+    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=21)
+    module, twin = _module(blob, scheme), _module(blob, scheme)
+    window_pair = module.launch_pair
+    dec = decode_e4m3(module)
+    module.attach_decoded(dec)
+    assert module.decoded is dec and twin.decoded is None
+    for m in (1, MIN_M - 1):
+        _x, xq, a = _inputs(m, 512, m)
+        assert module.launch_pair_for(m) == window_pair
+        assert torch.equal(module.apply(xq, a), twin.apply(xq, a)), m
+    for m in (MIN_M, 2 * MIN_M + 3):
+        _x, xq, a = _inputs(m, 512, m)
+        assert module.launch_pair_for(m) == (DECODE_ONCE_DENSE_SYMBOL,
+                                             DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+        assert torch.equal(module.apply(xq, a), prefill_apply(dec, xq, a)), m
+        # the copy-less twin never takes it
+        assert twin.launch_pair_for(m) == window_pair
+
+
+@cuda
+def test_the_decoded_copy_is_counted_and_attached_once_and_only_where_it_fits():
+    from tessera.serving.e4m3_prefill import DecodedE4M3, decode_e4m3
+
+    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=22)
+    module = _module(blob, scheme)
+    before, names_before = module.packed_bytes(), dict(module.named_tensors())
+    dec = decode_e4m3(module)
+    module.attach_decoded(dec)
+    named = dict(module.named_tensors())
+    assert set(named) - set(names_before) == {"decoded.weight", "decoded.scale"}
+    assert named["decoded.weight"] is dec.weight and named["decoded.scale"] is dec.scale
+    assert module.packed_bytes() - before == dec.nbytes == 416 * 512 + 4 * 416
+    with pytest.raises(ValueError, match="already holds"):
+        module.attach_decoded(dec)
+    other = _module(blob, scheme)
+    wrong = DecodedE4M3(weight=dec.weight[:, :256].contiguous(), scale=dec.scale)
+    with pytest.raises(ValueError, match="does not fit"):
+        other.attach_decoded(wrong)
+
+
+@cuda
+@pytest.mark.parametrize("flag,mode,attached", [("1", "resident", True), ("", "resident", False),
+                                                ("0", "resident", False), ("1", "streamed", False)])
+def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached):
+    """The route's load path decides: flag on and a resident module, or no
+    copy at all; ``apply`` stamps the pair that actually ran."""
+    pytest.importorskip("vllm")   # the route's A side is vLLM's native FP8 quantiser
+    from tessera.serving import e4m3_prefill, flags, telemetry
+    from tessera.serving.lane import build_tessera_method
+    from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
+
+    monkeypatch.delitem(flags._LATCHED, e4m3_prefill.FLAG, raising=False)
+    monkeypatch.setenv(e4m3_prefill.FLAG, flag)
+    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=23)
+
+    class _Layer(torch.nn.Module):
+        tp_rank, tp_size = 0, 1
+
+    method = build_tessera_method(scheme, "test.layer", mode=mode)
+    layer = _Layer()
+    method.create_weights(layer, input_size_per_partition=512,
+                          output_partition_sizes=[r for _, r in ROLES], input_size=512,
+                          output_size=scheme["rows"], params_dtype=torch.bfloat16)
+    layer.wire_bytes.data = torch.frombuffer(bytearray(blob), dtype=torch.uint8).cuda()
+    method.process_weights_after_loading(layer)
+    native = layer.tessera_native
+    assert (native.decoded is not None) == attached
+    for m in (8, e4m3_prefill.MIN_M):
+        x = torch.randn(m, 512, device="cuda").bfloat16()
+        y = method.apply(layer, x)
+        assert y.shape == (m, scheme["rows"])
+        record = telemetry.read_route(layer)
+        assert (record["symbol"], record["decoder"]) == native.launch_pair_for(m)
+        took = (record["symbol"], record["decoder"]) == (
+            DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+        assert took == (attached and m >= e4m3_prefill.MIN_M), (flag, mode, m)
