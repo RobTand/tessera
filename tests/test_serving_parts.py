@@ -632,7 +632,26 @@ def test_merge_refuses_an_observed_count_that_is_not_a_nonnegative_integer(tmp_p
     """A count the input does not establish must not be summed into a histogram."""
     source, paths = _fixture(tmp_path)
     _stamp_observed(paths, ({"2": 1, "8": 2}, {"4": 3, "8": calls}))
-    with pytest.raises(ValueError, match="encode_batch_observed"):
+    with pytest.raises(ValueError, match=r"partition 1: encode_batch_observed\['8'\]"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+@pytest.mark.parametrize("histogram, named", [
+    pytest.param({"8": 2, "08": 1}, "'08'", id="leading-zero-duplicates-a-width"),
+    pytest.param({"8": 2, "0": 1}, "'0'", id="zero-width"),
+    pytest.param({"8": 2, "-1": 1}, "'-1'", id="negative-width"),
+    pytest.param({"8": 2, "x": 1}, "'x'", id="non-numeric-width"),
+    pytest.param({"8": 2, "9": 1}, "'9'", id="width-above-encode-batch"),
+    pytest.param([1, 2], "object", id="not-an-object"),
+])
+def test_merge_refuses_an_observed_histogram_that_is_not_widths_up_to_encode_batch(
+        tmp_path, histogram, named):
+    """Keys are decimal widths from 1 up to the part's encode_batch, one entry per
+    width, and the histogram is an object; anything else is not a width count."""
+    source, paths = _fixture(tmp_path)
+    _stamp_observed(paths, ({"2": 1, "8": 2}, histogram))
+    with pytest.raises(ValueError, match=rf"partition 1: encode_batch_observed.*{named}"):
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
     assert not (tmp_path / "merged").exists()
 
