@@ -13,8 +13,13 @@ Routed MoE is the largest bucket. This note breaks it down and prices the levers
 
 Source: the A8SE752VB traces (`glm-pact-u4-20260927/results/A8SE752VB-val787-20261001/run`,
 rank 0 on sparklina, rank 1 on sparky), kernel events inside the four GPU-side
-`execute_context_1(2048)` windows, divided by four. The forward is effectively one
-stream, so kernel sums are wall time.
+`execute_context_1(2048)` windows, divided by four. The table sums kernel time.
+Against the GPU-complete windows (`kernels-2500-critical-path-reconciliation-20261004`,
+analysis v2), the windows are 1151.2 ms per chunk on rank 0 (4604.74 ms / 4) and
+1151.0 ms on rank 1 (4603.99 ms / 4). The kernels that start inside them sum to 1147.8
+and 1147.7 ms per chunk, so the device is idle for about 3.4 ms per chunk (0.3%). The
+kernel sum stands in for wall time to within that, provided kernels do not overlap.
+The same record puts the kernel-interval overlap at 0.066%.
 
 | Part | Kernel | rank 0 ms | rank 1 ms |
 |---|---|---|---|
@@ -47,21 +52,41 @@ stream, so kernel sums are wall time.
   232 to 244 GB/s the repo has measured (`2026-09-30-fp8-prefill-roofline.md`).
 - **E4M3 MMA:** 17.3 TFLOP per rank per chunk of routed work at 246.5 TFLOP/s = ~70 ms.
 - **Today:** the two fused launches take ~560 ms, 1.7 to 1.8 times the weight-stream
-  floor. They run at ~150 GB/s effective (gate/up) and ~131 GB/s (down). Power is
+  floor. Effective weight-read rate: served, 51.0 GB / 0.360 s = ~142 GB/s for gate/up
+  and 25.5 GB / 0.199 s = ~128 GB/s for down; on the bench at M = 2048 (balanced),
+  1.215 GB / 7.90 ms = ~154 GB/s and 0.607 GB / 4.43 ms = ~137 GB/s. Bench power is
   ~60 W of the 140 W envelope.
 
 So the most any routed-kernel change can remove at MNBT 2048 is about 230 to 250 ms
 per chunk.
 
-## The fused kernel, decomposed (one GB10, served layer)
+## The fused kernel, decomposed (one GB10, layer 10)
 
 `kern_action.sh` on sparklina, PB `ecfd04bc` (diagnostics) and `fbde999d` (prefetch),
-layer 10 of the served artifact (`glm53-a8-bf16menu-20260930`), TP2 rank-0 shapes,
-balanced routing plus recorded prefill routing (two M = 2048 layers, one M = 4096 and
-one M = 8192 concatenation; `routing/` under the root). Each arm runs forward then
+TP2 rank-0 shapes. The weights are layer 10 of `pact-e4m3-accuracy-20260928/release-t8/exported`,
+the bench's default artifact. Every `bench_t8r.json` records it. An earlier revision of
+this note named the served artifact `glm53-a8-bf16menu-20260930`, because
+`kern_action.sh` exported that path, but `bench_t8r.sh` never read the export. The
+export is now gone, in its own commit. The bench layer stands in for the served layer
+for these reasons:
+- In both artifacts the layer-10 experts are R1024, one run, `wire_bytes_rank` 1.82 GB.
+- Their 864 expert tensors have the same names, dtypes, shapes and byte sizes
+  (3,643,435,584 bytes each).
+- Nine sampled tensors (experts 0, 143 and 287; gate, up and down) are byte-identical.
+  Expert 0's gate hash `c721ddc3…` matches the served wire hash that the #826
+  diagnosis recorded.
+- Not every tensor was hashed.
+
+release-t8 as a whole mixes rungs (R1024, R1088 and R832). Only its layer-10 stack ran
+here. Routing is balanced, plus recorded prefill routing (`routing/` under the root):
+two M = 2048 captures (layer 3 chunk 0, `ids-414-000000`; layer 10 chunk 0,
+`ids-414-000007`), and layer 3's chunks concatenated for M = 4096 (chunks 0 to 1) and
+M = 8192 (chunks 0 to 3). Recorded ids from another layer replayed through layer 10's
+weights are a routing-skew proxy, not that layer's own traffic. Each arm runs forward then
 reverse; ratios are the two passes summed against master's two. Source: master
 `9cb2f04a`. Diagnostic arms are master with one edit, and their output is wrong by
-design; each bounds what removing that one cost could save.
+design, with one exception noted below. Each bounds what removing that one cost
+could save.
 
 Root: `/mnt/shared/tessera-measurements/opus-moe-prefill-20261004T223553Z`
 (`ab_table_round1.json`, `ab_table_round2.json`, `<arm>-time[b]/bench_t8r.json`).
@@ -84,6 +109,12 @@ down 4.43 to 4.67 ms.
 | A prefetch distance 8 (correct) | 1.006 | 0.998 / 0.999 | 1.004 | 0.996 / 0.995 |
 
 - Every correct arm's output was bitwise equal to master's in every cell and pass.
+- `noTable` (load the tables only for a block's first item) was meant as a
+  wrong-output diagnostic, but its output equals master's in all 16 round-1 cells.
+  Either this layer's per-expert tables are identical, so the reload is redundant, or
+  the edit changed nothing for these inputs. That is unresolved: the tables were not
+  compared. If the tables are identical, a bitwise no-reload variant is worth only its
+  0 to 2%.
 - `noWords` is not a valid ceiling. Without the copies, the decode reads stale shared
   memory, and the lookup pattern (so the bank conflicts) changes with it. It is
   reported, not used.
@@ -91,9 +122,10 @@ down 4.43 to 4.67 ms.
   reloads and the activation loads (#739's `noA`: gate/up 0.986, down 1.00 on this
   rung) are each at most ~3%. Only the down launch's output stores reach ~10%.
 - Claiming several consecutive items per block keeps an expert's table resident but
-  spreads one expert's items over time. Today ~48 blocks work on ~3 experts at once and
-  share those experts' activation rows in L2. NCU: L2 hit rate 86% -> 71%, issued
-  warps per scheduler 0.32 -> 0.16. Rejected; it is not on the branch.
+  spreads one expert's items over time. Measured (NCU): L2 hit rate 86% -> 71%, issued
+  warps per scheduler 0.32 -> 0.16. Inference, not measured: with one item per claim,
+  the ~48 blocks work on about 3 experts at once and share those experts' activation
+  rows in L2. Rejected; it is not on the branch.
 - The activation prefetch distance of 4 is at the optimum. Distance 0 costs up to 49%
   under recorded routing.
 
@@ -110,17 +142,20 @@ down 4.43 to 4.67 ms.
 | stall cycles per issue: barrier / wait / MIO / short scoreboard / long scoreboard | 5.2 / 2.4 / 1.4 / 1.2 / 0.4 | 5.6 / 2.3 / 1.3 / 1.2 / 1.1 |
 
 One 512-thread block per SM (121 registers, 57.6 KB of shared memory for gate/up) and
-eight producer warps that move in lockstep per chunk. The time goes to the serial
-chain inside that one block: wait for the words, producer barrier, decode (16
-conflicted byte lookups per thread), store, then the consumers' barrier. No single
-ablation shortens that chain much, because each removes one link and the rest still
-serialise. L2 is the busiest unit (~4.8 GB of L2 reads per gate/up launch, against a
-1.2 GB wire), so a restructure must not raise L2 traffic, which is exactly how the
-claim-group arm failed.
+eight producer warps that move in lockstep per chunk. Measured: low issue and
+eligibility, barrier-dominated stalls, and no single ablation worth more than ~3% (the
+down stores aside). L2 is the busiest unit, with ~4.8 GB of L2 reads per gate/up
+launch (150M sectors) against a 1.2 GB wire. Inference, not shown by these
+measurements: the time goes to the serial per-chunk chain inside the one block (wait
+for the words, producer barrier, decode, store, consumers' barrier), and each
+ablation removes one link while the rest still serialise. Inference too: a restructure
+that raises L2 traffic would lose, as the claim-group arm did.
 
 ## Batch size changes the picture
 
-Recorded routing, layer 3, R1024, per layer:
+Layer 10's weights (R1024), with layer 3's recorded routing: `ids-414-000000` at
+M = 2048, chunks 0 to 1 at 4096, chunks 0 to 3 at 8192. Per layer, forward and reverse
+mean:
 
 | M per step | gate/up + down | per 2048 tokens |
 |---|---|---|
@@ -141,7 +176,9 @@ there, so #739 becomes relevant if the step grows.
 ## Lever table (ms per 2048-token chunk per rank)
 
 Served scale: gate/up ~360 ms, down ~199 ms. Bench deltas are scaled by the served
-launch time.
+launch time. The single-removal ceilings are not additive. Each was measured with
+everything else in place, so they overlap one another, and all of them overlap the
+restructure row's 0 to ~230 ms. Do not sum the rows.
 
 | Lever | Removable | Output | Confidence | Effort |
 |---|---|---|---|---|
@@ -165,8 +202,10 @@ unmeasured.
 
 ## Correction to the planning table
 
-The kernels lever table credits the routed row with a #739 ceiling of about 84 ms per
-chunk (15% of the fused kernels). That 15% was measured on the R1088 and R832 two-run
+Historical, now withdrawn. As of 2026-10-04 (`kernels-family-qualification`,
+`prefill_2500_ranked_levers_20261004`, generated 20:58Z), the kernels lever table
+credited the routed row with a #739 ceiling of about 84 ms per chunk (15% of the
+fused kernels). The parent review of this note withdrew that credit. That 15% was measured on the R1088 and R832 two-run
 rungs and at M = 8192. On the R1024 one-run rung, which is every served layer, #739's
 own A/B at M = 2048 has the no-load ceiling at 1.4% (gate/up) and 0% (down), and the
 ring itself at 1.00 to 1.05 times master. It is worth about 0 ms on the served chunk
