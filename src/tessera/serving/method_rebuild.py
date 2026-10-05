@@ -2,19 +2,18 @@
 
 A serve-time override that changes a few lines inside a stock vLLM method
 (``glm53_prefill``'s KDA conv split) recompiles that method from the stock
-module's own source.  The caller reads the source, after its digest check has
-matched the bytes to an inspected interface.  This module turns that text
-into a function and reads no file itself.
+module's own source. The caller checks its callable API and stamps source
+identity in dev mode; certified mode alone compares the inspected digest.
+This module turns that text into a function and reads no file itself.
 
 The two halves stay in separate modules because of what
 ``tools/impacted_tests.py`` can see.  A module that reads a file whose path
 it cannot name statically (``module.__file__``) is a plain data reader.  A
 module that also executes source is classed as able to import anything in
-the tree.  ``glm53_prefill`` reads vLLM's files for its digest checks, and
-``tests/conftest.py`` reaches it through ``serving.config``.  With the exec
-in the same module, every change forced the whole test population.  The
-source executed here is vLLM's, outside this tree and pinned by digest, so
-the split hides no in-tree dependency.
+the tree. ``glm53_prefill`` reads vLLM's files, and ``tests/conftest.py``
+reaches it through ``serving.config``. With the exec in the same module, every
+change forced the whole test population. The source executed here is vLLM's,
+outside this tree, so the split hides no in-tree dependency.
 """
 from __future__ import annotations
 
