@@ -6360,7 +6360,7 @@ than disabling GNU timeout. Completion and verified skip call the source-aware
 `_prove_part_contents` owner for exact source ownership/stamped shards, complete
 index, actual tensor headers and output seals/shards. Integer partition/batch
 carriers must agree across the top-level and sealed identity records.
-top-level and identity producer/batch records. Current calibration, authority,
+Current calibration, authority,
 scale and plan snapshots must equal the exporter's consumed identities before
 an exclusive atomic marker publication; validation/publication failure is
 nonzero even when the exporter returned zero. Reused source digests retain
