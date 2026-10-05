@@ -477,10 +477,17 @@ def test_actual_cpu_batch_and_anchor_keep_reads_outside_both_timers(tmp_path, mo
     monkeypatch.setattr(encoder, 'encode_linear_planes', one_once)
     monkeypatch.setattr(ab, 'Power', NoDevicePower)
     monkeypatch.setattr(ab.time, 'perf_counter', lambda: clock[0])
+    before_batch = clock[0]
     batch = ab.run_owner_batch(positions, units, {stack: plan}, recipe, None, source, tmp_path, 'cpu-batch', device='cpu')
+    batch_work = clock[0] - before_batch - 100 * len(positions)
+    before_anchor = clock[0]
     anchor = ab.anchor_units(positions, units, source, grid, rung, recipe, None, tmp_path, 'cpu-anchor', device='cpu')
+    anchor_work = clock[0] - before_anchor - 100 * len(positions)
     assert batch['digests'] == anchor['digests']
-    assert batch['wall_s'] == anchor['wall_s'] == 7
+    # Batch verification may invoke sequential references internally. Its
+    # work cost need not equal the anchor: neither timer may price source IO.
+    assert batch['wall_s'] == batch_work
+    assert anchor['wall_s'] == anchor_work == 7
     assert len(reads) == 2 * len(positions)
     assert batch['widths_observed'] == [len(positions)]
     assert batch['power']['samples'] == anchor['power']['samples'] == 0
