@@ -71,7 +71,7 @@ sys.path.insert(0, str(ROOT / "experiments"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from tessera.export import served_recipe                                   # noqa: E402
-from tessera.export_serving import (expert_stacks, fresh_joined_encode,     # noqa: E402
+from tessera.export_serving import (expert_stacks, expert_work_units, fresh_joined_encode,     # noqa: E402
                                     grid_for, load_producer_authority,
                                     plan_expert_stack, plan_joined_encodes,
                                     quantizable)
@@ -510,7 +510,7 @@ def main() -> int:
     for rung_i, (grid_name, q) in enumerate(rungs):
         grid = grid_for(grid_name)
         plan_record = plan_expert_stack(stack, stacks[stack], grid, q, config=config)
-        units = plan_record["units"]
+        units = expert_work_units(stack, plan_record)
         keys = [(u["stack"], u["rows"], u["cols"]) for u in units]
         schedule = plan_joined_encodes(keys, args.batch)
         recipe = served_recipe(grid, q, STRUCTURE_ROUTED_MOE)

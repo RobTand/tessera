@@ -1768,6 +1768,11 @@ def default_intake_threads() -> int:
 DEFAULT_INTAKE_WINDOW_BYTES = 8 << 30
 
 
+def expert_work_units(stack, record):
+    """Bind planned units to their owning stack in original plan order."""
+    return [dict(unit, stack=stack) for unit in record["units"]]
+
+
 def fresh_expert_units(names, plan, expert_units):
     """One shard's fresh expert units, in the shard loop's commit order.
 
@@ -3002,9 +3007,8 @@ def main():
     # exactly when ``config.json`` is written.
     expert_units: dict[str, list[dict]] = {}
     for stack, record in stack_plan.items():
-        for unit in record["units"]:
-            expert_units.setdefault(unit["source_tensor"], []).append(
-                dict(unit, stack=stack))
+        for unit in expert_work_units(stack, record):
+            expert_units.setdefault(unit["source_tensor"], []).append(unit)
     # ``attested_by`` is the routed_moe cells that cover the stack's rung
     # (``contract.cell_covers_rung``: a census rung, or an allowable rung of
     # one of the cell's run tables) -- the gate above read them, and the record says which

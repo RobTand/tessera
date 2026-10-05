@@ -450,7 +450,7 @@ def test_actual_cpu_batch_and_anchor_keep_reads_outside_both_timers(tmp_path, mo
     stack = fixture.STACK
     grid, rung = owner.grid_for('E4M3'), 896
     plan = owner.plan_expert_stack(stack, owner.expert_stacks(routed)[stack], grid, rung, config=fixture._config())
-    units = plan['units']
+    units = owner.expert_work_units(stack, plan)
     keys = [(u['stack'], u['rows'], u['cols']) for u in units]
     positions = next(p for p in owner.plan_joined_encodes(keys, 2) if len(p) == 2)
     recipe = owner.served_recipe(grid, rung, STRUCTURE_ROUTED_MOE)

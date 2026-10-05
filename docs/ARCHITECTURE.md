@@ -6411,7 +6411,9 @@ only joined-call bytes is seen; `tests/test_audit_byte_baseline.py` proves
 each row is the digest of one real joined call.
 
 The bounded original-source probe uses that same fresh prepare/encode/finish
-owner, without publishing a partial census checkpoint. Its sequential anchor
+owner, without publishing a partial census checkpoint. It uses the same
+`expert_work_units` stack binding as the exporter, preserving actual planned
+names, membership and order rather than requiring a fixture-only carrier. Its sequential anchor
 and joined leg exclude the same source-read interval. Every scheduled batch
 is anchored on its exact original units, including tail and shared-setting
 widths; a skipped identity cohort cannot enter the timed population. Timed
