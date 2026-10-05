@@ -222,6 +222,10 @@ In every measured tree that word was staged in shared memory.
   head the two-run loop also waits on the previous-word load (above), so the
   ring's gain here is unmeasured. Flag 1 on this head has GPU
   correctness tests (above) but no timing, SASS or spill measurement.
+- **The paired-K32 shared-memory mirror.** With the flag on, a paired-K32
+  build leaves the Python shared-memory mirror 24576 B short of the kernel
+  layout. That gap is open: the options are to refuse the combination or to
+  mirror the layout, and neither is done here.
 - **The E4M3-on-f16 library** (`TESSERA_FUSED_E4M3_MMA=f16`). Untouched and
   unmeasured.
 - **R1024 at M = 8192.** The one-run ceiling there is 0.86 and `ring2` reached
