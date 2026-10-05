@@ -67,11 +67,20 @@ launch still fits three word stages, the largest at 75,984 B.
 - GPU tests in the serving image (`experiments/routed_fused_tests.sh`,
   `--strict-cuda`): `tests/test_routed_fused_window.py`,
   `tests/test_dense_fused_window.py` and `tests/test_routed_mma8_a_ring_config.py`.
-  - The receipts' snapshot parent is `e68557031` (snapshot commits `25206930`
-    and `dbfa706b`), on the old base `f1c07473`. It is not this head's tree;
-    see "The measured trees and this head" below. They ran 717 passed /
-    0 failed / 0 skipped at flag 0 (`8db983b5`) and at flag 1 (`893f8ce5`),
-    with 684 tests allocating on the device.
+  - **At `eb02204a`, whose kernel is this head's** (`routed_fused_window.cu`
+    `4e93959a`; the later merge of master touched no kernel, no
+    `routed_fused.py` and none of the three tested files): 747 passed /
+    0 failed / 0 skipped at flag 0 (PB `7e09ad62`) and at flag 1 (PB
+    `0a366f87`), with 711 tests allocating on the device, 0 modules not
+    collected. PrismaBuild placed both on sparky's GB10 (tags `gb10`, no
+    host pin) in image `5be13705`; each flag had its own native build
+    directory. Each snapshot is `eb02204a` plus its one `.pbrun-closure`
+    stamp file.
+  - Older receipts, before the rebase onto #927: snapshot parent `e68557031`
+    (snapshot commits `25206930` and `dbfa706b`), on the old base `f1c07473`,
+    not this head's tree; see "The measured trees and this head" below. They
+    ran 717 passed / 0 failed / 0 skipped at flag 0 (`8db983b5`) and at flag 1
+    (`893f8ce5`), with 684 tests allocating on the device.
   - At the previous head, with flag values 0/1/2, they ran 719 / 0 / 0 each.
 - Pre-fix failures: at flags 1 and 2 two layout identities failed because
   they had been derived without the ring. They now derive it from
@@ -157,7 +166,7 @@ Full table: `opus-739-20261004T182357Z/ncu_stalls.json`.
 
 ## The measured trees and this head
 
-Every GPU receipt here predates PR #927, which this branch now sits on
+Every timing, NCU and older GPU-test receipt here predates PR #927, which this branch now sits on
 (base `52d6c44a`). Kernel `routed_fused_window.cu`, sha256 prefix per tree:
 
 | Tree | Kernel | Used for |
@@ -166,7 +175,7 @@ Every GPU receipt here predates PR #927, which this branch now sits on
 | `src-ring1` (`13e41726` + ring, flag 0/1/2) | `9513645491f0c6f5` | A/B `ring1`, `ring2` |
 | `e68557031` (base `f1c07473` + ring) | `40b5a95f79faee66` | GPU tests `8db983b5`, `893f8ce5` |
 | `52d6c44a` (this head's base, #927) | `80554582d9478318` | none |
-| `ecd084ac` (this head) | `4e93959a2a265dcd` | none |
+| `ecd084ac` (this head's kernel; unchanged since) | `4e93959a2a265dcd` | GPU tests `7e09ad62`, `0a366f87` (at `eb02204a`) |
 
 **What is the same.** The ring's own change is the same in every tree.
 `git diff f1c07473 e68557031` and `git diff 52d6c44a ecd084ac` on the kernel
@@ -196,8 +205,10 @@ In every measured tree that word was staged in shared memory.
 - The bitwise and GPU-test results establish that the ring's statements are
   correct in a loop where they precede and follow the same `cp_async_wait`,
   barrier and `store_a`. On this head they sit beside a `load_prev` register
-  path that the measured trees did not take on two-run launches; that
-  combination has no GPU test.
+  path that the measured trees did not take on two-run launches. That
+  combination is covered for correctness by the GPU tests at flag 0 and flag 1
+  on this head's kernel (PB `7e09ad62` and `0a366f87`, 747 passed each), and
+  has no timing.
 
 ## What this does not show
 
@@ -209,7 +220,8 @@ In every measured tree that word was staged in shared memory.
   kernel. A confirming A/B against `f1c07473` was withdrawn by the CEO in
   favour of the Goal-1 measurement window, and #927 has landed since. On this
   head the two-run loop also waits on the previous-word load (above), so the
-  ring's gain here is unmeasured. Flag 1 on this head has no GPU test either.
+  ring's gain here is unmeasured. Flag 1 on this head has GPU
+  correctness tests (above) but no timing, SASS or spill measurement.
 - **The E4M3-on-f16 library** (`TESSERA_FUSED_E4M3_MMA=f16`). Untouched and
   unmeasured.
 - **R1024 at M = 8192.** The one-run ceiling there is 0.86 and `ring2` reached
