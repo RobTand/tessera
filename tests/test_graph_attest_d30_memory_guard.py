@@ -269,7 +269,7 @@ def test_guard_accepts_exactly_2_gib_then_refuses_1_99_one_second_later(tmp_path
 def test_guard_samples_at_one_hz_while_docker_health_keeps_five_seconds(tmp_path, monkeypatch):
     import rank_window
     clock = FakeClock()
-    adapter = d30_adapter(tmp_path, monkeypatch, read=lambda: 2.0, clock=clock)
+    adapter = d30_adapter(tmp_path, monkeypatch, read=lambda: 200.0, clock=clock)
     owned = adapter.identity
     inspects = []
 
@@ -290,18 +290,19 @@ def test_guard_samples_at_one_hz_while_docker_health_keeps_five_seconds(tmp_path
         adapter.tick()
         clock.advance(1.0)
     memwatch = (adapter.work / "memwatch.txt").read_text().splitlines()
+    assert len(memwatch) == 6, "the guard samples once per second"
     samples = (adapter.rdv / "memory-samples-rank0.jsonl").read_text().splitlines()
-    assert len(memwatch) == 6 and len(samples) == 6, "the guard samples once per second"
+    assert len(samples) == 6
     assert inspects == [100.0, 105.0], "docker health keeps its five-second cadence"
     assert len(adapter.guard_calls) == 6, "the peer guard still runs on every tick"
     summary = window.read_json(adapter.rdv / "memory-summary-rank0.json")
-    assert summary["samples"] == 6 and summary["minimum_gib"] == 2.0
+    assert summary["samples"] == 6 and summary["minimum_gib"] == 200.0
 
 
 def test_eager_scope_sampling_follows_the_one_hz_guard(tmp_path, monkeypatch):
     import rank_window
     clock = FakeClock()
-    adapter = d30_adapter(tmp_path, monkeypatch, read=lambda: 3.0, clock=clock, eager=True)
+    adapter = d30_adapter(tmp_path, monkeypatch, read=lambda: 200.0, clock=clock, eager=True)
     for _ in range(3):
         adapter.tick()
         clock.advance(1.0)
@@ -442,11 +443,10 @@ def test_cooperative_child_exits_within_grace_without_a_kill(tmp_path):
         envelope.run([sys.executable, "-c", COOPERATIVE_CHILD, str(marker)], limit=2.0)
     child = int(marker.read_text().splitlines()[0].split()[1])
     assert not alive(child)
+    assert "graceful-exit" in marker.read_text(), "the cooperative handler ran to completion"
     (record,) = envelope.terminations
     grace = record["ended_unix"] - record["signals"][0]["unix"]
     assert 2.5 <= grace <= 9.5, "the cooperative handler gets its actual TERM grace"
-    assert "graceful-exit" in marker.read_text(), "the cooperative handler ran to completion"
-    (record,) = envelope.terminations
     assert record["pid"] == child
     assert signal_names(record) == ["SIGTERM"], "a cooperative exit needs no SIGKILL"
     assert record["returncode"] == 0
