@@ -11,14 +11,19 @@ is published.  Torch-free by construction so the bytes-only job runs them.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import ast
 import re
+import sys
 from fnmatch import fnmatch
 from pathlib import Path
 
 import pytest
 
-tomllib = pytest.importorskip("tomllib")
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10; declared conditional dependency.
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
@@ -204,6 +209,60 @@ def test_every_excluded_package_pattern_matches_a_package():
             f"{SRC}; it excludes nothing and the modules it named ship")
 
 
+def test_the_wheel_checker_reads_the_project_through_tomli_without_tomllib(monkeypatch):
+    """Python 3.10 has no ``tomllib`` and declares the ``tomli`` backport.
+
+    The checker is the packaging gate run in CI; one that cannot even import on
+    a supported interpreter is a gate that is not there.  ``tomllib`` is hidden
+    and ``tomli`` stands in for the backport, so the fallback is taken whatever
+    interpreter runs this test."""
+    real = tomllib
+    monkeypatch.setitem(sys.modules, "tomllib", None)  # `import tomllib` now raises
+    monkeypatch.setitem(sys.modules, "tomli", real)
+    spec = importlib.util.spec_from_file_location(
+        "check_wheel_without_tomllib", ROOT / "tools" / "check_wheel.py")
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    assert checker.tomllib is real
+    assert checker._pyproject() == _pyproject()
+
+
+def _excluded_references(source: str, package: str, patterns: list[str]) -> list[int]:
+    """Lines of ``source`` that name a module the wheel excludes.
+
+    The one home of what counts as naming a module: the syntax tree, so a
+    comment or docstring never counts. ``package`` resolves relative imports.
+    """
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            prefix = node.module or ""
+            if node.level:
+                prefix = importlib.util.resolve_name("." * node.level + prefix, package)
+            names = [prefix, *(prefix + "." + alias.name for alias in node.names)]
+        elif isinstance(node, ast.Call) and node.args:
+            callee = node.func.attr if isinstance(node.func, ast.Attribute) else (
+                node.func.id if isinstance(node.func, ast.Name) else "")
+            argument = node.args[0]
+            if callee in {"import_module", "__import__"} and isinstance(argument, ast.Constant):
+                if isinstance(argument.value, str):
+                    names = [argument.value]
+        elif isinstance(node, (ast.List, ast.Tuple)):
+            # A literal ``-m MODULE`` argument pair: a launch of the module by name.
+            # Only a literal pair is read; a computed name is not analysed.
+            names = [
+                module.value for flag, module in zip(node.elts, node.elts[1:])
+                if isinstance(flag, ast.Constant) and flag.value == "-m"
+                and isinstance(module, ast.Constant) and isinstance(module.value, str)
+            ]
+        if any(fnmatch(name, pattern) for name in names for pattern in patterns):
+            lines.append(node.lineno)
+    return lines
+
+
 def test_no_runtime_module_imports_the_excluded_tooling():
     """The exclusion is only safe while nothing shipped needs what it drops.
 
@@ -217,27 +276,35 @@ def test_no_runtime_module_imports_the_excluded_tooling():
         if "_dev" in path.relative_to(SRC).parts or "__pycache__" in path.parts:
             continue
         package = ".".join(path.relative_to(SRC).parts[:-1])
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                prefix = node.module or ""
-                if node.level:
-                    prefix = importlib.util.resolve_name("." * node.level + prefix, package)
-                names = [prefix, *(prefix + "." + alias.name for alias in node.names)]
-            elif isinstance(node, ast.Call) and node.args:
-                callee = node.func.attr if isinstance(node.func, ast.Attribute) else (
-                    node.func.id if isinstance(node.func, ast.Name) else "")
-                argument = node.args[0]
-                if callee in {"import_module", "__import__"} and isinstance(argument, ast.Constant):
-                    if isinstance(argument.value, str):
-                        names = [argument.value]
-            if any(fnmatch(name, pattern) for name in names for pattern in patterns):
-                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
+        for line in _excluded_references(path.read_text(encoding="utf-8"), package, patterns):
+            offenders.append(f"{path.relative_to(SRC)}:{line}")
     assert not offenders, (
         "shipped modules name tessera._dev, which the wheel does not carry: "
         f"{offenders}")
+
+
+@pytest.mark.parametrize("source, reported", [
+    pytest.param("import tessera._dev.x\n", [1], id="import"),
+    pytest.param("from tessera._dev import x\n", [1], id="from-import"),
+    pytest.param("from tessera import _dev\n", [1], id="from-import-of-the-package"),
+    pytest.param("import importlib\nimportlib.import_module('tessera._dev.x')\n", [2], id="import_module"),
+    pytest.param("__import__('tessera._dev.x')\n", [1], id="__import__"),
+    pytest.param("import subprocess, sys\nsubprocess.run([sys.executable, '-m', 'tessera._dev.x'])\n",
+                 [2], id="subprocess-list"),
+    pytest.param("import subprocess\nsubprocess.run(('python', '-m', 'tessera._dev.x'))\n",
+                 [2], id="subprocess-tuple"),
+    pytest.param('"""run python -m tessera._dev.x"""\n# python -m tessera._dev.x\n', [],
+                 id="docstring-and-comment"),
+    pytest.param("import subprocess\nname = 'x'\nsubprocess.run(['python', '-m', 'tessera._dev.' + name])\n",
+                 [], id="computed-name-is-not-analysed"),
+    pytest.param("import subprocess\nsubprocess.run(['python', '-m', 'tessera.export_serving'])\n", [],
+                 id="a-shipped-module"),
+])
+def test_the_exclusion_walk_reports_literal_references_and_only_those(source, reported):
+    """The walk reads the syntax tree: an import, a literal import call or a
+    literal ``-m MODULE`` launch of an excluded module is reported with its
+    line; prose and computed names are not."""
+    assert _excluded_references(source, "tessera", ["tessera._dev*"]) == reported
 
 
 def test_the_sdist_policy_names_paths_that_exist():
