@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-05 — issue968: explicit MNBT8192 ship-window selector
+
+Add `WINDOW_MODE=ship-eager-4096-8192` and the exact eager4096/eager8192
+plan to the existing D30 managed-rank harness. Both arms retain the same
+A8S/socket/TP2/resident/c1 bindings, rank1 client, profilers, ownership,
+review gates and D30 guards/caps. Neither the graph-control default nor the
+Window4 eager2048/eager4096 pair is extended. CPU selection, refusal and
+subprocess-lifecycle tests qualify source behavior only, not 8192 memory fit,
+quality, performance, shipping or pin admission. Parent and D5 exact-head
+review precede any admitted 8192 model leg.
+
 ## 2026-10-05 — D32 (PR961): managed-window run-identity seals stamp and continue
 
 Rob's standing D32 direction (sealing off until further notice) reaches the

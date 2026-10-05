@@ -347,6 +347,26 @@ No ship artifact/client identity, effective7200 ceiling, model result, pin
 promotion or scientific qualification is fabricated by this plan. The latest CEO
 order below supersedes the former ship-before-Window4 sequencing.
 
+## Separate issue968 MNBT8192 ship-window selector
+
+Select `WINDOW_MODE=ship-eager-4096-8192` with
+`plan-eager-ship-8192.txt` for exactly eager4096 then eager8192. This is a
+new opt-in pair, not a third Window4 arm or a Window4 reopen. The existing
+`graph-control` default and `window4-eager-2048-4096` pair remain unchanged.
+The mode gate, per-mode MAX_BATCHED allowlist, exact plan and dry-run arm
+selector share the declared pair. Live bindings retain the selected mode;
+prepare, submit and both ranks retain the existing eager client/profile,
+output-cap, pair-isolation and corrected-runtime parent/D5 review paths.
+
+The artifact, runtime, clients, panel, TP2/resident/c1 geometry, 107 GiB start,
+900-second wait, 1 Hz strict below-2 GiB dual-rank guard, 10-second SIGKILL
+grace, 104/102 GiB caps and all other controls below remain unchanged. Fresh
+parent and D5 exact-executing-head review is required before any 8192 gang
+publication. The independently requested 4096 leg can proceed on merged code.
+This selector makes no 8192 fit or speed claim: a later admitted served leg
+must measure actual fit, profiles and both-box power. No TP1 or streamed
+substitution, default, threshold, policy, pin or ship gate change is admitted.
+
 ## Separate issue946 eager Window4 mode
 
 PR943 is merged at `f1c457dc16f9909e00b5d582a5da14b3a19dff10`. Its local-rank

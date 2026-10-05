@@ -1,5 +1,18 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for issue968: the separate opt-in
+`WINDOW_MODE=ship-eager-4096-8192` selects only
+`experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
+It reuses the existing A8S/socket/TP2/resident/c1 timing/profile lifecycle,
+rank1 client, artifact/client controls and exact executing-code parent/D5 reviews.
+The graph-control default and Window4's eager2048/4096 pair remain unchanged.
+The D30 107 GiB start predicate, 900-second wait, 1 Hz strictly-below-2 GiB
+dual-rank abort, 10-second kill grace, 104 GiB host and 102 GiB GPU-subset caps
+are unchanged. CPU selector/protocol qualification is not 8192 fit, throughput,
+quality, ship admission or a serving-pin claim; only a later admitted leg can
+measure those. The independent merged-code 4096 leg need not wait for this selector.
+See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Re-stamped 2026-10-05 for D32 dev-mode run-identity seals in the managed
 window (Rob: sealing off until further notice). Dev mode is ON unless
 `PRISMAQUANT_DEV_MODE` is exactly `0`; the run-identity comparisons in

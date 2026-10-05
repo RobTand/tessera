@@ -18,6 +18,9 @@ SHARED_ROOT = Path("/mnt/shared")
 PQ_PIN_COMMIT = "e36e60b77b3d2ab0c5265272515958a0cb67d32b"
 
 MODE = "window4-eager-2048-4096"
+SHIP_MODE = "ship-eager-4096-8192"
+PAIRS = {MODE: [("eager2048", "2048"), ("eager4096", "4096")],
+         SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")]}
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
 CONTRACT_SHA = "47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78"
 ARTIFACT_SHA = "45407d43e09381b73197498d7f37c848c167c03a83d415c68e63c615d99eb840"
@@ -106,7 +109,7 @@ def bindings(env, artifact):
     for name, digest in json.loads((CLIENT / "source_identity.json").read_bytes())["files"].items():
         if sha(CLIENT / name) != digest:
             raise Refused(f"Window4 EXL3 source identity member changed: {name}")
-    return dict(window_mode=MODE, artifact_manifest=str(manifest_path), artifact_content_sha256=ARTIFACT_SHA,
+    return dict(window_mode=env.get("WINDOW_MODE", MODE), artifact_manifest=str(manifest_path), artifact_content_sha256=ARTIFACT_SHA,
                 artifact_bytes=sum(entry["bytes"] for entry in entries), artifact_files=len(entries),
                 artifact_authentication="Campaign full-body hashes retained; current roster/lengths and metadata checked",
                 client_source=str(CLIENT), client_identity_sha256=SOURCE_IDENTITY_SHA,
