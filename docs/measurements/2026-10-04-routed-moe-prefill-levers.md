@@ -16,12 +16,16 @@ rank 0 on sparklina, rank 1 on sparky), kernel events inside the four GPU-side
 `execute_context_1(2048)` windows, divided by four. The table sums kernel time.
 Against the GPU-complete windows (`kernels-2500-critical-path-reconciliation-20261004`,
 analysis v2), the windows are 1151.2 ms per chunk on rank 0 (4604.74 ms / 4) and
-1151.0 ms on rank 1 (4603.99 ms / 4). The kernel events inside them (the record's
-`busy_inside_gpu_windows`) sum to 4590.573 ms on rank 0 and 4589.892 ms on rank 1,
-1147.6 and 1147.5 ms per chunk, so the device is idle inside the windows for 14.17
-and 14.10 ms per request (about 3.5 ms per chunk, 0.31%). The record's leaf-sum line
-runs 1.00065 times its busy-union line, a 0.065% kernel-interval overlap, so the
-kernel sum stands in for wall time to within that.
+1151.0 ms on rank 1 (4603.99 ms / 4). The GPU-busy interval unions inside them (the
+record's `busy_inside_gpu_windows`) total 4590.573 ms on rank 0 and 4589.892 ms on
+rank 1 — 1147.6 and 1147.5 ms per chunk — so the device is idle inside the windows
+for 14.17 and 14.10 ms per request (about 3.5 ms per chunk, 0.31%). In-window kernel
+intervals barely overlap: the record's `overlap_factor_leaf_over_busy` is 1.00065,
+and its scope is in-window — rank 0's leaf-sum line over its busy-union line inside
+these windows (the same two fields give 1.00071 on rank 1); it is not a whole-trace
+figure. The table below is a kernel-time sum inside those windows: it approximates
+the in-window total to within the idle and the overlap just stated, and nothing
+beyond them.
 
 | Part | Kernel | rank 0 ms | rank 1 ms |
 |---|---|---|---|
