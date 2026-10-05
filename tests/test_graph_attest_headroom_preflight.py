@@ -6,7 +6,12 @@ patched into both ``rank_window.time`` and ``managed_window.time``, so the
 real Envelope, Refused, 107 GiB start threshold, 2 GiB abort floor and 1 Hz
 guard machinery and the rendezvous report file all move on the same
 deterministic clock. The subprocess, frozen-source comparison and eager
-cgroup-counter boundaries are substituted. Real admitted cgroup sampling is
+cgroup-counter boundaries are substituted. The mid-window frozen-control
+drift comparison is a D32 run-identity seal: default dev mode stamps one
+``[DEV-MODE]`` line and continues with the stored frozen inputs, certified
+``PRISMAQUANT_DEV_MODE=0`` keeps the verbatim refusal; every OOM-floor,
+headroom, lifecycle and foreign-safety refusal below stays in both modes.
+Real admitted cgroup sampling is
 covered separately by test_graph_attest_eager_window.py; the D30 threshold
 boundary, guard-cadence and owned-termination regressions live in
 test_graph_attest_d30_memory_guard.py.
@@ -19,6 +24,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+
+from tessera.dev_mode import DEV_MODE_ENV
 
 ROOT = Path(__file__).resolve().parents[1]
 HERE = ROOT / "experiments/graph_attest_702"
@@ -327,6 +334,26 @@ def test_launch_rechecks_headroom_after_successful_preflight(tmp_path, monkeypat
     sample = json.loads((adapter.rdv / f"launch-check-launch-headroom-rank{rank}.json").read_text())
     assert sample["mem_available_gib"] == 106.9 and sample["threshold_gib"] == 107
     assert sample["rank"] == rank
+
+
+def test_preflight_control_drift_is_a_dev_stamp_and_a_certified_refusal(tmp_path, monkeypatch, capsys):
+    """D32: the mid-window frozen control/source drift comparison is a
+    run-identity seal. Dev mode stamps one ``[DEV-MODE]`` line and continues
+    with the stored frozen inputs; certified mode keeps the verbatim refusal.
+    Only the identity comparison moves: the wait, floor, guard and launch
+    rechecks are the real machinery throughout."""
+    import rank_window
+    clock = FakeClock()
+    adapter = rank_adapter(tmp_path, monkeypatch, rank=0, read=lambda: 107.25, clock=clock)
+    stub_boundaries(adapter, monkeypatch)
+    drifted = dict(adapter.config, src_sha256="9" * 64)
+    monkeypatch.setattr(rank_window.recipe, "inputs", lambda environ, live, runner: drifted)
+    monkeypatch.setenv(DEV_MODE_ENV, "1")
+    assert adapter.preflight()["image"] == adapter.config["image"]
+    assert "[DEV-MODE]" in capsys.readouterr().out
+    monkeypatch.setenv(DEV_MODE_ENV, "0")
+    with pytest.raises(window.Refused, match="immutable control/source inputs changed"):
+        adapter.preflight()
 
 
 def test_headroom_read_error_retains_unknown_values_and_propagates(tmp_path, monkeypatch):

@@ -1,5 +1,29 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for D32 dev-mode run-identity seals in the managed
+window (Rob: sealing off until further notice). Dev mode is ON unless
+`PRISMAQUANT_DEV_MODE` is exactly `0`; the run-identity comparisons in
+`experiments/graph_attest_702` go through the existing
+`tessera.dev_mode.seal_check` and, on a mismatch, print one `[DEV-MODE]`
+line and continue with the stored data instead of refusing:
+`require_producer` keeps its signature and returns the stored expected
+producer digest without Git or digest computes in dev, `producer_sha`
+reports the stored `PRODUCER_SHA256` (or `NOT_COMPUTED`) instead of hashing,
+and the `inputs`/`prepare`/`submit`/`preflight`/`run_rank` provenance,
+source-hash and frozen-control drift comparisons stamp rather than refuse.
+The restamped memory-policy value comparison against the running policy is a
+seal: it stamps in dev and refuses certified. Unchanged in both modes: the
+exact-HEAD checkout gate and the exact-head parent/D5 review, the
+`inputs.json` `GRAPH_WINDOW_INPUT_SHA256` and memory-policy SHA own-byte
+integrity and the policy content check, PB claims/nonces/action keys/owned
+scope, the OOM floor and disk admission, the manifest resource/safety fields
+and every format gate. Dev mode adds no release gate: no recompute, archive,
+re-seal, re-pin or identity-proof packet is required or performed for
+identity drift, and no format pin or serving default moves. Regressions:
+`tests/test_graph_attest_producer_identity.py` and
+`tests/test_graph_attest_headroom_preflight.py`. See
+`experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Re-stamped 2026-10-05 for issue959 (D30 Window4 107 GiB admission and dual-rank
 memory abort). The Window4 per-host `MemAvailable` admission predicate moves
 from the historical 114 GiB to **107 GiB on both hosts** — the retained
