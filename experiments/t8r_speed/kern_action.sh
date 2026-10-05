@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One PB action (sparklina, exclusive): routed-kernel timing + NCU at the A8S
-# release artifact's R1024 layer 10, for the L512 TTFT work (2026-09-30).
+# One PB action (sparklina, exclusive): routed-kernel timing + NCU at R1024 layer 10
+# of bench_t8r.py's default artifact (release-t8), for the L512 TTFT work (2026-09-30).
 #   kern_action.sh <out_root> <arm> [<arm> ...]
 # Each arm's source is <out_root>/src-<arm>/src; the harness is the cwd
 # (this tree).  Steps per arm:
@@ -28,7 +28,9 @@ fi
 FAILED=()
 # KERN_ROUTING: another recorded-routing root (the same m<M>/*.pt|*.json layout).
 ROUTING=${KERN_ROUTING:-/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930}
-export BENCH_ARTIFACT=${BENCH_ARTIFACT:-/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported}
+# The weights are bench_t8r.py's default ARTIFACT (the T8R release-t8 export):
+# this harness passes no --artifact.  An exported BENCH_ARTIFACT here was never
+# read by bench_t8r.sh, so it named an artifact the runs did not load (#936 review).
 GROUPS_=${KERN_GROUPS:-experts.R1024.L10}
 STEPS=" ${KERN_STEPS:-time ncu} "
 step() {
