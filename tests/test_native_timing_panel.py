@@ -256,3 +256,12 @@ def test_panel_byte_integrity_still_refuses_in_dev_mode(panel, monkeypatch):
     Path(panel["evidence"]["samples"]["path"]).write_bytes(b"tampered")
     with pytest.raises(ValueError, match="file evidence differs"):
         tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel["runtime"]))
+
+
+def test_execution_semantics_refuse_in_dev_mode(panel, monkeypatch):
+    """D32 boundary: a different execution case refuses even in default dev."""
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    expected = copy.deepcopy(panel["runtime"])
+    expected["execution_mode"] = "compiled"
+    with pytest.raises(ValueError, match="observed runtime differs from independent expected context"):
+        tp.validate_panel(panel, expected_runtime=expected)

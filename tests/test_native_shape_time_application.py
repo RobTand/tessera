@@ -837,3 +837,27 @@ def test_certified_zero_keeps_tampered_raw_contract_refusal(tmp_path, panel, mon
     kwargs['raw_contract'] = b'changed owned contract'
     with pytest.raises(ValueError, match='preflight software/contract differs'):
         app.tp._verify_runtime_preflight(result, **kwargs)
+
+
+def test_execution_semantics_refuse_in_dev_mode(panel, monkeypatch):
+    """D32 boundary: which case executed is comparability, not run identity.
+
+    A different TP degree refuses the observation even in default dev; only
+    code and origin identity stamps.
+    """
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    expected, verifier = _observe_with_source(
+        panel, monkeypatch, panel['runtime']['serving_source_sha256'])
+    expected = {**expected, 'tp_degree': 2}
+    with pytest.raises(ValueError, match='actually imported software differs'):
+        worker.observe_software_runtime(expected, verifier)
+
+
+def test_preflight_execution_semantics_refuse_in_dev_mode(tmp_path, panel, monkeypatch):
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    result, kwargs = preflight_inputs(tmp_path, panel)
+    runtime = copy.deepcopy(kwargs['expected_runtime'])
+    runtime['tp_degree'] = 2
+    kwargs['expected_runtime'] = runtime
+    with pytest.raises(ValueError, match='preflight software/contract differs'):
+        app.tp._verify_runtime_preflight(result, **kwargs)

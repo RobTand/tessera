@@ -1460,10 +1460,13 @@ installation proof: the VCS provenance facts stamp (a tree with no derivable
 identity retains the stored commit), no source digest is computed, the
 installed contract against the frozen expected pin seals like every other
 cross-pin comparison, and the panel seals the installed-record proof and the
-preflight origin pair the same way. The GLM MTP draft shard narrowing
-(`mtp_draft_shards.install`) seals its inspected loader source digest the
-same way: dev mode stamps and still installs the narrowing; the
-whole-checkpoint fallback is the certified-mode decline. Unchanged in both
+preflight origin pair the same way. Only the
+recorded RUN identity seals: execution semantics -- execution mode,
+residency, TP geometry and requested serve flags, which say which case
+actually executed -- refuse on any mismatch in both modes. The GLM MTP
+draft shard narrowing (`mtp_draft_shards.install`) seals its inspected
+loader source digest the same way: dev mode stamps and still installs the
+narrowing; the whole-checkpoint fallback is the certified-mode decline. Unchanged in both
 modes: the installed `runtime_contract.json` bytes against their own pinned
 digest, the preflight module byte bindings, every evidence/bound-bytes
 check, foreign runtime origins and import-environment isolation, mid-run

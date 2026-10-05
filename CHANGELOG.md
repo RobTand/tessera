@@ -19,11 +19,13 @@ fallback becomes the certified-mode decline); an unreadable source and a
 rebound loader signature still fail closed in both modes. A dev-mode
 installation proof verifies intact installed bytes at the commit the running
 tree claims instead of the pinned one, so the receipt stays honest without
-re-imposing the stamped pin. Still refusing in both modes: the installed
-`runtime_contract.json` bytes against their own pinned digest, preflight
-module byte bindings, every evidence/bound-bytes check, foreign runtime
-origins and import-environment isolation, mid-run stability re-observations,
-and the fail-closed VCS commit resolution that names what ran. Regressions in
+re-imposing the stamped pin. Still refusing in both modes: which CASE
+executed (execution mode, residency, TP geometry, requested serve flags --
+comparability, not run identity), the installed `runtime_contract.json`
+bytes against their own pinned digest, preflight module byte bindings,
+every evidence/bound-bytes check, foreign runtime origins and
+import-environment isolation, mid-run stability re-observations, and the
+fail-closed VCS commit resolution that names what ran. Regressions in
 `tests/test_native_timing_panel.py` and `tests/test_native_shape_time_application.py`
 demand stamp-and-continue on a source-pin difference (failing on the
 pre-change refusal) and the verbatim certified refusal; `tests/test_dev_mode_seal_check.py`

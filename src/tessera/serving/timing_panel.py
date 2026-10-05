@@ -38,6 +38,21 @@ SCHEMA = "tessera.shape_time_panel.v1"
 OBSERVATION_SCHEMA = "tessera.shape_time_observation.v1"
 CLAIMS = {"time_claim": "operator_sum_proposal", "certifies_placement": False,
           "served_p95": "not_claimed"}
+#: D32 boundary: which CASE executed is comparability, not run identity. The
+#: execution fields refuse on any mismatch in both modes; only the code and
+#: origin identity fields seal.
+_RUNTIME_EXECUTION_FIELDS = ("execution_mode", "residency", "tp_rank", "tp_degree",
+                             "serve_flags")
+_RUNTIME_IDENTITY_FIELDS = ("image", "tessera_commit", "serving_source_sha256",
+                            "contract_sha256", "torch", "vllm", "package_root")
+
+
+def _runtime_execution(value):
+    return {k: value[k] for k in _RUNTIME_EXECUTION_FIELDS if k in value}
+
+
+def _runtime_identity(value):
+    return {k: value[k] for k in _RUNTIME_IDENTITY_FIELDS if k in value}
 #: ``bench_native_operator.time_apply`` times ONE complete apply per CUDA-event
 #: pair; a consumer may key the row as one operator at batch size 1 for the
 #: panel's own M prompt rows, but this is not end-to-end batch-1 serving
@@ -314,12 +329,16 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
         raise ValueError("requires actual installed CPU contract validation")
     # The observed software context AND the raw contract bytes against the
     # frozen expected pin are cross-pin run identity: they seal in dev mode
-    # (D32) and refuse verbatim in certified mode.
+    # (D32) and refuse verbatim in certified mode. Execution semantics in
+    # the observed context refuse in both modes.
+    if canonical(_runtime_execution(result["software"])) != canonical(_runtime_execution(expected)):
+        raise ValueError("preflight software/contract differs from independent context")
     seal_check("preflight software/contract",
-               {"software": {k: v for k, v in expected.items() if k != "platform"},
+               {"software": _runtime_identity(expected),
                 "contract_sha256": expected["contract_sha256"],
                 "raw_contract_sha256": expected["contract_sha256"]},
-               {"software": result["software"], "contract_sha256": result["contract_sha256"],
+               {"software": _runtime_identity(result["software"]),
+                "contract_sha256": result["contract_sha256"],
                 "raw_contract_sha256": hashlib.sha256(raw_contract).hexdigest()},
                where="installed CPU contract preflight",
                refusal=ValueError("preflight software/contract differs from independent context"))
@@ -352,10 +371,14 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     if panel["schema"] != SCHEMA or panel["status"] != "measured" or canonical(panel["claims"]) != canonical(CLAIMS):
         raise ValueError("panel schema/status/claims differ")
     runtime = runtime_context(panel["runtime"])
-    # D32: observed-vs-frozen runtime code is a run-identity seal; the panel's
-    # own bound bytes stay integrity-checked and refuse in both modes.
-    seal_check("observed runtime", runtime_context(expected_runtime), runtime,
-               where="native shape-time panel",
+    expected_ctx = runtime_context(expected_runtime)
+    # Which case executed is comparability: execution fields refuse in both
+    # modes; the code/origin identity seals in dev mode. The panel's own
+    # bound bytes stay integrity-checked and refuse in both modes.
+    if canonical(_runtime_execution(runtime)) != canonical(_runtime_execution(expected_ctx)):
+        raise ValueError("observed runtime differs from independent expected context")
+    seal_check("observed runtime identity", _runtime_identity(expected_ctx),
+               _runtime_identity(runtime), where="native shape-time panel",
                refusal=ValueError("observed runtime differs from independent expected context"))
     evidence = _object(panel["evidence"], EVIDENCE, "evidence")
     raw = {name: read_bound(bound) for name, bound in evidence.items()}
@@ -588,10 +611,14 @@ def observation(panel, *, panel_binding, expected_panel_sha256, request_binding,
     result = validate_external_panel(panel, expected_runtime=expected_runtime,
                                      runtime_validation=runtime_validation)
     runtime = runtime_context(panel["runtime"])
-    # D32: observed-vs-frozen runtime code is a run-identity seal; the panel's
-    # own bound bytes stay integrity-checked and refuse in both modes.
-    seal_check("observed runtime", runtime_context(expected_runtime), runtime,
-               where="native shape-time panel",
+    expected_ctx = runtime_context(expected_runtime)
+    # Which case executed is comparability: execution fields refuse in both
+    # modes; the code/origin identity seals in dev mode. The panel's own
+    # bound bytes stay integrity-checked and refuse in both modes.
+    if canonical(_runtime_execution(runtime)) != canonical(_runtime_execution(expected_ctx)):
+        raise ValueError("observed runtime differs from independent expected context")
+    seal_check("observed runtime identity", _runtime_identity(expected_ctx),
+               _runtime_identity(runtime), where="native shape-time panel",
                refusal=ValueError("observed runtime differs from independent expected context"))
     plan_row = panel["plan"]["rows"][0]
     scope = plan_row["scope"]

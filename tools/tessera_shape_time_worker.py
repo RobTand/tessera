@@ -242,9 +242,16 @@ def observe_software_runtime(expected, record_verifier=None):
   "package_root":origins["package_root"],
   "serve_flags":{k:os.environ[k] for k in expected["serve_flags"] if k in os.environ}}
  frozen={k:v for k,v in expected.items() if k!="platform"}
- seal("actually imported software",frozen,value,
-      ValueError("actually imported software differs from frozen expected context"),
-      same=canonical(value)==canonical(frozen))
+ # D32 boundary: which CASE executed is comparability, not run identity.
+ # Execution semantics (mode, residency, TP geometry, requested serve flags)
+ # refuse on any mismatch in both modes; only the code/origin identity seals.
+ execution={k:value[k] for k in ("execution_mode","residency","tp_rank","tp_degree","serve_flags") if k in value}
+ frozen_execution={k:frozen[k] for k in ("execution_mode","residency","tp_rank","tp_degree","serve_flags") if k in frozen}
+ if canonical(execution)!=canonical(frozen_execution):raise ValueError("actually imported software differs from frozen expected context")
+ identity={k:value[k] for k in ("image","tessera_commit","serving_source_sha256","contract_sha256","torch","vllm","package_root") if k in value}
+ frozen_identity={k:frozen[k] for k in ("image","tessera_commit","serving_source_sha256","contract_sha256","torch","vllm","package_root") if k in frozen}
+ seal("actually imported software identity",frozen_identity,identity,
+      ValueError("actually imported software differs from frozen expected context"))
  # The installed reader owns all loader, source and registry checks. No caller roster.
  if Path(contract.validate_serving_contract.__code__.co_filename).resolve()!=Path(contract.__file__).resolve():raise ValueError("foreign installed contract validator")
  contract.validate_serving_contract(json_bytes(raw_contract))
