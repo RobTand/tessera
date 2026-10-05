@@ -33,7 +33,10 @@ import json
 import os
 import subprocess
 import sys
+import struct
 from pathlib import Path
+
+from tessera import serving_parts as parts
 
 import pytest
 
@@ -102,6 +105,45 @@ STUB_SCRIPT = (
 
 def sha_file(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+
+def tensor_file(path, names):
+    header = {n: {'dtype': 'BF16', 'shape': [1], 'data_offsets': [2*i, 2*i+2]}
+              for i, n in enumerate(names)}
+    raw = json.dumps(header).encode()
+    path.write_bytes(struct.pack('<Q', len(raw)) + raw + b'\0\0' * len(names))
+
+
+def bundle(tmp_path, producer, source_ref):
+    source = tmp_path / 'checkpoint'
+    source.mkdir()
+    names = ['model.layers.0.norm.weight', 'model.layers.1.norm.weight', 'lm_head.weight']
+    tensor_file(source / 'model.safetensors', names)
+    (source / 'config.json').write_text(json.dumps({'architectures': ['Example']}))
+    authority = tmp_path / 'producer_authority.py'
+    authority.write_text('authority-placeholder\n')
+    capture = tmp_path / 'capture.json'
+    capture.write_text('{}\n')
+    HESSIAN = capture
+    stamp = _full_stamp(tmp_path, producer, source_ref)
+    out = tmp_path / 'census' / 'stubs' / f'parts-{STUB}' / 'part-0'
+    out.mkdir(parents=True)
+    owned = [n for n in names if parts.partition_owner(n, 8) == 0]
+    tensor_file(out / 'model.safetensors', owned)
+    (out / 'model.safetensors.index.json').write_text(json.dumps({'weight_map': {n: 'model.safetensors' for n in owned}}))
+    (out / 'tessera_part_config.json').write_text(json.dumps({'architectures': ['Example'], 'quantization_config': {
+        'quant_method': 'tessera', 'format': 'mixed-precision', 'config_groups': {}, 'ignore': []}}))
+    receipt = stamp['producer_receipt']
+    opts = {'plan': json.loads(PLAN.read_text()), 'hessian_sha256': parts.sha256_file(capture),
+            'producer_authority_sha256': parts.sha256_file(authority), 'input_scales_sha256': None, 'encode_batch': 1}
+    opts["plan_sha256"] = parts.sha256_file(PLAN)
+    manifest = {'schema': parts.SCHEMA, 'producer': receipt, 'encode_batch': 1, 'modules': {},
+                'plan_sha256': parts.sha256_file(PLAN),
+                'totals': {'passthrough_bytes': 2 * len(owned)},
+                'export_partition': {'schema': parts.SCHEMA, 'index': 0, 'count': 8, 'source_tensors': owned,
+                    'identity': {'source': parts.source_part_identity(source), 'producer': receipt, 'options': opts},
+                    'output_sha256': {'model.safetensors': parts.sha256_file(out / 'model.safetensors')}}}
+    return source, out, stamp, manifest
 
 @pytest.fixture(scope="session", autouse=True)
 def local_hessian_capture(tmp_path_factory):
@@ -393,7 +435,6 @@ def test_t8_honors_exact_done_marker(tmp_path, producer_python, qualified_source
     makes this test fail on the old wrapper, which skipped ANY marker with
     no producer, source or content validation at all.
     """
-    from test_b770_producer_review import bundle
     source, _out, stamp, manifest = bundle(tmp_path, producer_python, qualified_source)
     _write_marker(tmp_path, stamp, json.dumps(manifest).encode())
     proc = _run_t8(tmp_path, _launch_env(

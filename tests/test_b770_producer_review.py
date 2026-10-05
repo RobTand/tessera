@@ -10,52 +10,22 @@ import sys
 from pathlib import Path
 
 import pytest
+import box_artifacts
 
+pytest.importorskip("torch")
+pytest.importorskip("safetensors")
 import test_export_serving as selected
 import test_t8_partition_launcher as launcher
 from tessera import serving_parts as parts
 
 ROOT = Path(__file__).resolve().parents[1]
-FROZEN_SOURCE = Path('/mnt/shared/tessera-measurements/b770-partition-producer-20261005/producer-source-d735aa23b')
+@pytest.fixture
+def frozen_source():
+    return box_artifacts.skip_now("measurements", "b770-partition-producer-20261005", "producer-source-d735aa23b")
 
 
-def tensor_file(path, names):
-    header = {n: {'dtype': 'BF16', 'shape': [1], 'data_offsets': [2*i, 2*i+2]}
-              for i, n in enumerate(names)}
-    raw = json.dumps(header).encode()
-    path.write_bytes(struct.pack('<Q', len(raw)) + raw + b'\0\0' * len(names))
-
-
-def bundle(tmp_path, producer, source_ref):
-    source = tmp_path / 'checkpoint'
-    source.mkdir()
-    names = ['model.layers.0.norm.weight', 'model.layers.1.norm.weight', 'lm_head.weight']
-    tensor_file(source / 'model.safetensors', names)
-    (source / 'config.json').write_text(json.dumps({'architectures': ['Example']}))
-    authority = tmp_path / 'producer_authority.py'
-    authority.write_text('authority-placeholder\n')
-    capture = tmp_path / 'capture.json'
-    capture.write_text('{}\n')
-    launcher.HESSIAN = capture
-    stamp = launcher._full_stamp(tmp_path, producer, source_ref)
-    out = tmp_path / 'census' / 'stubs' / f'parts-{launcher.STUB}' / 'part-0'
-    out.mkdir(parents=True)
-    owned = [n for n in names if parts.partition_owner(n, 8) == 0]
-    tensor_file(out / 'model.safetensors', owned)
-    (out / 'model.safetensors.index.json').write_text(json.dumps({'weight_map': {n: 'model.safetensors' for n in owned}}))
-    (out / 'tessera_part_config.json').write_text(json.dumps({'architectures': ['Example'], 'quantization_config': {
-        'quant_method': 'tessera', 'format': 'mixed-precision', 'config_groups': {}, 'ignore': []}}))
-    receipt = stamp['producer_receipt']
-    opts = {'plan': json.loads(launcher.PLAN.read_text()), 'hessian_sha256': parts.sha256_file(capture),
-            'producer_authority_sha256': parts.sha256_file(authority), 'input_scales_sha256': None, 'encode_batch': 1}
-    opts["plan_sha256"] = parts.sha256_file(launcher.PLAN)
-    manifest = {'schema': parts.SCHEMA, 'producer': receipt, 'encode_batch': 1, 'modules': {},
-                'plan_sha256': parts.sha256_file(launcher.PLAN),
-                'totals': {'passthrough_bytes': 2 * len(owned)},
-                'export_partition': {'schema': parts.SCHEMA, 'index': 0, 'count': 8, 'source_tensors': owned,
-                    'identity': {'source': parts.source_part_identity(source), 'producer': receipt, 'options': opts},
-                    'output_sha256': {'model.safetensors': parts.sha256_file(out / 'model.safetensors')}}}
-    return source, out, stamp, manifest
+tensor_file = launcher.tensor_file
+bundle = launcher.bundle
 
 
 def stub_producer(tmp_path):
@@ -72,10 +42,10 @@ def run_part(tmp_path, producer, source_ref, source, **env):
         SOURCE_CHECKPOINT=source, PYTHONPATH=ROOT / 'src', **env))
 
 
-def test_real_installed_python_m_entrypoint(tmp_path):
+def test_real_installed_python_m_entrypoint(tmp_path, frozen_source):
     """Real -m invocation, genuine ancestry, no canonical-module driver/alias."""
     repo = tmp_path / 'genuine'
-    subprocess.run(['git', 'clone', '--quiet', '--shared', str(FROZEN_SOURCE), str(repo)], check=True)
+    subprocess.run(['git', 'clone', '--quiet', '--shared', str(frozen_source), str(repo)], check=True)
     subprocess.run(['git', '-C', str(repo), 'config', 'user.name', 'fixture'], check=True)
     subprocess.run(['git', '-C', str(repo), 'config', 'user.email', 'fixture@tessera'], check=True)
     shutil.rmtree(repo / 'src' / 'tessera')  # Only this test's newly created clone.
@@ -290,7 +260,7 @@ def test_completion_binds_consumed_input_identity(tmp_path):
 
 
 @pytest.mark.parametrize("leg", ["interpreter", "payload"])
-def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg):
+def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, frozen_source):
     site = selected._fixture_install(tmp_path / "site")
     python = Path(sys.executable)
     if leg == "interpreter":
@@ -300,7 +270,7 @@ def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg):
     done = subprocess.run(["bash", str(ROOT / "experiments/t8_census/profile_unit_encode.sh"),
         str(tmp_path / "profile"), "--q256", "768", "--hessian", str(tmp_path / "missing-capture")],
         cwd=ROOT, env=launcher._launch_env(tmp_path, TESSERA_PRODUCER_PYTHON=python,
-            TESSERA_PRODUCER_SOURCE=FROZEN_SOURCE / "src" / "tessera", PYTHONPATH=site),
+            TESSERA_PRODUCER_SOURCE=frozen_source / "src" / "tessera", PYTHONPATH=site),
         capture_output=True, text=True, timeout=90)
     text = done.stdout + done.stderr
     assert done.returncode != 0
