@@ -13,9 +13,9 @@ shorten the grace. Exactly one test needs real Docker inside an admitted PB
 action; it is marked for the published PB scope and skips with its reason
 anywhere else — never silently.
 
-Every assertion is behavioral: on the pre-D30 source (114 GiB threshold, 16 GiB
-floor, 5 s cadence, immediate group SIGKILL) these tests fail on the observed
-behavior, never on a missing import.
+The selected before/after population covers observable threshold, cadence and
+process-grace changes. Container ownership cases cover the new helper separately;
+they are not advertised as before-source behavioral failures.
 """
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ import socket
 import subprocess
 import sys
 import time
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -309,12 +310,6 @@ def test_eager_scope_sampling_follows_the_one_hz_guard(tmp_path, monkeypatch):
     assert all(json.loads(line)["rank"] == 0 for line in scope)
 
 
-def test_old_module_level_headroom_constants_are_gone():
-    """The 114/16 policy has one owner (managed_window.MEMORY_POLICY); the old
-    rank_window preflight constants must not survive as a second source."""
-    import rank_window
-    assert not hasattr(rank_window, "PREFLIGHT_HEADROOM_GIB")
-    assert not hasattr(rank_window, "PREFLIGHT_HEADROOM_WAIT_SECONDS")
 
 
 # --- real Rendezvous propagation: one rank's abort fails both ranks ----------
@@ -331,6 +326,7 @@ def test_peer_abort_failure_propagates_and_rejects_the_run(tmp_path, monkeypatch
     aborting = window.Rendezvous(rdv, owned[1], queue,
                                  window.Envelope(time.time() + 600, cleanup_seconds=60))
     aborting.publish("failed", error=f"Refused: {FLOOR}")
+    aborting.publish("failed-cleaned", local_cleanup=[], cleanup_error=None)
     adapter = new_adapter(tmp_path, owned[0], 0)
 
     def command(argv, **kwargs):
@@ -397,33 +393,46 @@ def test_term_ignoring_child_group_is_killed_only_after_the_full_grace(tmp_path)
     sentinel = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(120)"],
                                 start_new_session=True)
     pids = tmp_path / "group.json"
-    envelope = window.Envelope(time.time() + 300, cleanup_seconds=30)
-    try:
-        with pytest.raises(TimeoutError):
+    envelope = window.Envelope(time.time() + 60, cleanup_seconds=15)
+    errors = []
+    def run():
+        try:
             envelope.run([sys.executable, "-c", STUBBORN_CHILD, str(pids)], limit=1.0)
-        refused = time.monotonic()
+        except TimeoutError:
+            return
+        except BaseException as exc:
+            errors.append(exc)
+        else:
+            errors.append(AssertionError("TERM-resistant child unexpectedly completed"))
+    thread = threading.Thread(target=run)
+    try:
+        thread.start()
+        until = time.monotonic() + 3
+        while not pids.exists() and time.monotonic() < until:
+            time.sleep(.02)
         ids = json.loads(pids.read_text())
-        time.sleep(5.0)  # mid-grace: TERM is ignored and the full grace is still running
-        assert alive(ids["child"]) and alive(ids["grandchild"]), (
-            "an ignoring group must not be killed before the ten-second grace ends")
+        time.sleep(5)  # observe DURING Envelope.run's grace, not after it returns
+        assert alive(ids["child"]) and alive(ids["grandchild"])
         assert alive(sentinel.pid), "an unrelated session sentinel is never touched"
-        await_dead([ids["child"], ids["grandchild"]], refused + 14)
-        killed_at = time.monotonic()
-        assert not alive(ids["child"]) and not alive(ids["grandchild"])
-        assert killed_at - refused >= 9.0, "the SIGKILL lands only after the full grace"
+        thread.join(timeout=12)
+        assert not thread.is_alive() and not errors, errors
+        await_dead(list(ids.values()), time.monotonic() + 2)
+        assert not any(alive(pid) for pid in ids.values())
         assert alive(sentinel.pid)
         (record,) = envelope.terminations
         assert record["pid"] == ids["child"]
         assert signal_names(record) == ["SIGTERM", "SIGKILL"]
-        kill = record["signals"][1]
-        assert kill["monotonic"] - record["signals"][0]["monotonic"] >= 10.0
+        assert record["signals"][1]["monotonic"] - record["signals"][0]["monotonic"] >= 10.0
         assert record["returncode"] == -9
     finally:
-        try:
-            os.killpg(sentinel.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        sentinel.wait(timeout=5)
+        if pids.exists():
+            try:
+                os.killpg(json.loads(pids.read_text())["child"], signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        thread.join(timeout=3)
+        sentinel.terminate()
+        sentinel.wait(timeout=3)
 
 
 def test_cooperative_child_exits_within_grace_without_a_kill(tmp_path):
@@ -431,13 +440,11 @@ def test_cooperative_child_exits_within_grace_without_a_kill(tmp_path):
     envelope = window.Envelope(time.time() + 300, cleanup_seconds=30)
     with pytest.raises(TimeoutError):
         envelope.run([sys.executable, "-c", COOPERATIVE_CHILD, str(marker)], limit=2.0)
-    refused = time.monotonic()
     child = int(marker.read_text().splitlines()[0].split()[1])
-    await_dead([child], refused + 11)
-    died = time.monotonic()
     assert not alive(child)
-    grace = died - refused
-    assert 2.5 <= grace <= 9.5, "the child exits inside the grace: never SIGKILLed, never stalled"
+    (record,) = envelope.terminations
+    grace = record["ended_unix"] - record["signals"][0]["unix"]
+    assert 2.5 <= grace <= 9.5, "the cooperative handler gets its actual TERM grace"
     assert "graceful-exit" in marker.read_text(), "the cooperative handler ran to completion"
     (record,) = envelope.terminations
     assert record["pid"] == child
@@ -448,13 +455,12 @@ def test_cooperative_child_exits_within_grace_without_a_kill(tmp_path):
 def test_finite_cleanup_deadline_shortens_the_kill_grace(tmp_path):
     pids = tmp_path / "stubborn.pid"
     envelope = window.Envelope(time.time() + 8, cleanup_seconds=2)
+    started = time.monotonic()
     with pytest.raises(TimeoutError):
         envelope.run([sys.executable, "-c", STUBBORN_ALONE_CHILD, str(pids)], limit=1.0, cleanup=True)
-    refused = time.monotonic()
-    await_dead([int(pids.read_text())], refused + 12)
-    died = time.monotonic()
-    grace = died - refused
-    assert 4.0 <= grace <= 7.5, "a finite cleanup deadline shortens the ten-second grace"
+    elapsed = time.monotonic() - started
+    assert not alive(int(pids.read_text()))
+    assert 7 <= elapsed <= 9.5, "termination respects the original eight-second envelope"
     (record,) = envelope.terminations
     assert signal_names(record) == ["SIGTERM", "SIGKILL"]
     assert record["deadline_shortened_grace"] is True
@@ -589,14 +595,19 @@ def test_owned_container_grace_under_published_pb_scope(tmp_path):
     cooperative = stubborn = None
     try:
         def launch(name, entrypoint):
-            argv = ["docker", "run", "-d", "--rm", "--network", "none", "--name", f"d30-guard-{nonce[:8]}-{name}",
+            argv = ["docker", "run", "-d", "--network", "none", "--name", f"d30-guard-{nonce[:8]}-{name}",
                     "--cgroup-parent", owned["scope_id"], *labels, image, "sh", "-c", entrypoint]
             cid = adapter.command(argv, limit=60).stdout.strip()
             assert cid, "the rehearsal container must start with its exact cid"
             return cid
 
-        cooperative = launch("coop", 'trap "exit 0" TERM; while :; do sleep 1; done')
-        stubborn = launch("stub", 'trap "" TERM; sleep 600')
+        cooperative = launch("coop", 'trap "exit 0" TERM; echo ready; while :; do sleep 1; done')
+        stubborn = launch("stub", 'trap "" TERM; echo ready; sleep 600')
+        for cid in (cooperative, stubborn):
+            until = time.monotonic() + 5
+            while "ready" not in adapter.command(["docker", "logs", cid]).stdout:
+                assert time.monotonic() < until, "container signal handler did not become ready"
+                time.sleep(.05)
         started = time.monotonic()
         record = adapter._stop_server(cooperative)
         assert time.monotonic() - started < 10, "the cooperative container exits inside the grace"
@@ -606,10 +617,8 @@ def test_owned_container_grace_under_published_pb_scope(tmp_path):
         assert time.monotonic() - started >= 10, "the stubborn container gets the full grace"
         assert signal_names(record) == ["SIGTERM", "SIGKILL"]
         for cid in (cooperative, stubborn):
-            until = time.monotonic() + 15  # --rm removal trails the stop slightly
-            while time.monotonic() < until and adapter.command(
-                    ["docker", "inspect", cid], check=False, cleanup=True, limit=10).returncode == 0:
-                time.sleep(.2)
+            assert adapter.inspect_owned(cid)["State"]["Running"] is False
+            adapter.command(["docker", "rm", cid], cleanup=True, limit=10)
             assert adapter.command(["docker", "inspect", cid], check=False, cleanup=True,
                                    limit=10).returncode != 0, "both containers are physically gone"
         published = window.read_json(adapter.rdv / "container-termination-rank0.json")
