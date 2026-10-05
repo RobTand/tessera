@@ -791,12 +791,12 @@ class PlanSnapshot:
 
     __slots__ = ("path", "sha256", "entries", "schema")
 
-    def __init__(self, path: Path, text: str):
+    def __init__(self, path: Path, raw: bytes):
         self.path = Path(path)
-        self.sha256 = hashlib.sha256(text.encode()).hexdigest()
+        self.sha256 = hashlib.sha256(raw).hexdigest()
         try:
-            entries = json.loads(text)
-        except json.JSONDecodeError as exc:
+            entries = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise SystemExit(f"--plan-json {self.path} is not valid JSON: {exc}") from exc
         if not isinstance(entries, dict):
             raise SystemExit(
@@ -818,7 +818,7 @@ class PlanSnapshot:
 
     @classmethod
     def read(cls, path: Path) -> "PlanSnapshot":
-        return cls(Path(path), Path(path).read_text())
+        return cls(Path(path), Path(path).read_bytes())
 
     def published(self) -> dict:
         """A private copy, for a consumer that keeps or serialises the plan."""

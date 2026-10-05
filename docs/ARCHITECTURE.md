@@ -6367,7 +6367,9 @@ exporter's consumed identities before
 an exclusive atomic marker publication; validation/publication failure is
 nonzero even when the exporter returned zero. Reused source digests retain
 the existing cache's explicit proof receipt, never an empty-seal completion.
-The plan's raw SHA-256 is reused from the same PlanSnapshot that drove the
+The plan's raw SHA-256 is over the same single `read_bytes` snapshot parsed
+as UTF-8, preserving CRLF and every original byte, and is reused from the
+PlanSnapshot that drove the
 encode, published in the manifest and part identity options, and checked at
 completion. Equal parsed allocations with different raw bytes are different
 consumed snapshots: they cannot be restamped as the file the exporter read,
