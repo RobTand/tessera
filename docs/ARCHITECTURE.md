@@ -1452,9 +1452,15 @@ validators' observed-vs-frozen runtime — go through
 (PQ #1147): dev mode is ON unless `PRISMAQUANT_DEV_MODE` is exactly `0`; on a
 mismatch it prints one `[DEV-MODE]` line naming both values and the run
 continues with the stored data, and certified `0` raises the site's verbatim
-refusal. A dev-mode installation proof verifies intact installed bytes at the
-commit the running tree claims instead of the pinned one, so the receipt stays
-honest without re-imposing the stamped pin. The GLM MTP draft shard narrowing
+refusal. The worker loads the stamp policy from the producer checkout by
+path under a private module name, never from the measured runtime, so a
+legacy installed candidate without the helper still gets default-dev
+semantics. A dev run also demands no clean tree, no Git identity and no
+installation proof: the VCS provenance facts stamp (a tree with no derivable
+identity retains the stored commit), no source digest is computed, the
+installed contract against the frozen expected pin seals like every other
+cross-pin comparison, and the panel seals the installed-record proof and the
+preflight origin pair the same way. The GLM MTP draft shard narrowing
 (`mtp_draft_shards.install`) seals its inspected loader source digest the
 same way: dev mode stamps and still installs the narrowing; the
 whole-checkpoint fallback is the certified-mode decline. Unchanged in both

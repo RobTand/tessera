@@ -185,9 +185,10 @@ def test_origin_boundary_refuses_before_native_setup(installed_origins,monkeypat
 
 def test_changed_runtime_contract_refuses_before_device_query(panel,monkeypatch):
     import sys
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE','0')
     expected=panel['runtime']
-    monkeypatch.setattr(worker,'runtime_origins',lambda p:{'package_root':p,'modules':{}})
-    monkeypatch.setattr(worker,'observed_commit',lambda p:expected['tessera_commit'])
+    monkeypatch.setattr(worker,'runtime_origins',lambda p,facts=None:{'package_root':p,'modules':{}})
+    monkeypatch.setattr(worker,'observed_commit',lambda p,strict=True:expected['tessera_commit'])
     monkeypatch.setitem(sys.modules,'vllm',SimpleNamespace(__version__=expected['vllm']))
     monkeypatch.setattr(torch,'__version__',expected['torch'])
     monkeypatch.setattr(source_identity,'serving_source_sha256',lambda:expected['serving_source_sha256'])
@@ -329,7 +330,8 @@ def preflight_inputs(tmp_path, panel):
 
 
 @pytest.mark.parametrize('fault',['rc','bool_rc','argv','job','request','worker','raw','root','validator','module_bytes','copied_roster'])
-def test_preflight_refuses_unbound_or_failed_runtime_proof(panel,tmp_path,fault):
+def test_preflight_refuses_unbound_or_failed_runtime_proof(panel,tmp_path,monkeypatch,fault):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE','0')
     result,kwargs=preflight_inputs(tmp_path,panel)
     if fault=='rc':kwargs['phase']['returncode']=2
     elif fault=='bool_rc':kwargs['phase']['returncode']=False
@@ -664,8 +666,9 @@ def _observe_with_source(panel, monkeypatch, source_digest):
     import sys
     expected = panel['runtime']
     monkeypatch.setenv('TESSERA_SERVE_MODE', 'resident')
-    monkeypatch.setattr(worker, 'runtime_origins', lambda _: {'package_root': expected['package_root'], 'modules': {}})
-    monkeypatch.setattr(worker, 'observed_commit', lambda _: expected['tessera_commit'])
+    monkeypatch.setattr(worker, 'runtime_origins',
+                        lambda root, facts=None: {'package_root': expected['package_root'], 'modules': {}})
+    monkeypatch.setattr(worker, 'observed_commit', lambda package, strict=True: expected['tessera_commit'])
     monkeypatch.setitem(sys.modules, 'vllm', SimpleNamespace(__version__=expected['vllm']))
     monkeypatch.setattr(torch, '__version__', expected['torch'])
     monkeypatch.setattr(source_identity, 'serving_source_sha256', lambda: source_digest)
@@ -695,23 +698,79 @@ def test_certified_zero_keeps_before_device_refusal(panel, monkeypatch):
         worker.observe_software_runtime(expected, verifier)
 
 
-def test_installation_proof_verifies_the_observed_commit_in_dev_mode(panel, monkeypatch):
-    """Dev mode proves the installation at the commit the running tree claims."""
+def test_dev_run_requires_no_installation_proof(panel, monkeypatch):
+    """D32: a dev run continues with no verifier, no Git identity and no
+    source digest call -- the stored identities are what the record carries."""
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
-    expected, verifier = _observe_with_source(panel, monkeypatch, 'e' * 64)
-    staged = 'f' * 40
-    monkeypatch.setattr(worker, 'observed_commit', lambda _: staged)
-    code = (f"def verify_install(module, commit):\n"
-            f"    assert commit == '{staged}', commit\n"
-            f"    return {{'verified_files': 1}}\n")
-    monkeypatch.setattr(worker, 'record_verifier_bytes', lambda _: code.encode())
-    got, origins, _ = worker.observe_software_runtime(expected, verifier)
-    assert origins['installation'] == {'verified_files': 1}
+    expected, _ = _observe_with_source(panel, monkeypatch,
+                                       panel['runtime']['serving_source_sha256'])
+    monkeypatch.setattr(worker, 'record_verifier_bytes',
+                        lambda _: pytest.fail('dev run must not read an installation verifier'))
+    monkeypatch.setattr(source_identity, 'serving_source_sha256',
+                        lambda: pytest.fail('dev run must not compute the source digest'))
+    import sys
+    # A pre-helper installed candidate: the worker must not read
+    # tessera.dev_mode from the measured runtime at all.
+    monkeypatch.delattr(sys.modules['tessera'], 'dev_mode', raising=False)
+    monkeypatch.setattr(sys.modules['tessera'], '__file__',
+                        expected['package_root'] + '/__init__.py')
+    got, origins, raw = worker.observe_software_runtime(expected, None)
+    assert origins['installation']['distribution'] == 'unverified (D32 dev mode)'
+    assert origins['installation']['expected_commit'] == expected['tessera_commit']
+    assert origins['record_verifier'] is None
+    assert got['tessera_commit'] == expected['tessera_commit']
+    assert got['serving_source_sha256'] == expected['serving_source_sha256']
 
 
-def test_changed_runtime_contract_still_refuses_in_dev_mode(panel, monkeypatch):
-    """Contract bytes against their own pinned digest are integrity, not a seal."""
+def test_dirty_unversioned_candidate_stamps_and_continues(panel, monkeypatch, tmp_path, capsys):
+    """The reported case: a staged candidate with no helper, no clean VCS
+    identity and no verifier, on the old pin -- default dev stamps the
+    provenance facts and continues with the stored identities."""
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    expected, _ = _observe_with_source(panel, monkeypatch,
+                                       panel['runtime']['serving_source_sha256'])
+    import subprocess
+    staged = tmp_path / 'staged-candidate' / 'tessera'
+    staged.mkdir(parents=True)
+    (staged / '__init__.py').write_text('# staged candidate\n')
+    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'init'], capture_output=True)
+    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'config', 'user.email', 't@t'],
+                   capture_output=True)
+    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'config', 'user.name', 't'],
+                   capture_output=True)
+    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'add', '__init__.py'],
+                   capture_output=True)
+    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'commit', '-m', 'staged',
+                    '--no-gpg-sign'], capture_output=True)
+    (staged / 'dirty_edit.py').write_text('# uncommitted\n')  # dirty AFTER the commit
+    import sys
+    # The imported runtime's __file__ lives in the dirty, partially tracked
+    # staged tree; the worker must never read tessera.dev_mode from it.
+    monkeypatch.delattr(sys.modules['tessera'], 'dev_mode', raising=False)
+    monkeypatch.setattr(sys.modules['tessera'], '__file__', str(staged / '__init__.py'))
+    got, origins, _ = worker.observe_software_runtime(expected, None)
+    out = capsys.readouterr().out
+    assert 'checkout is dirty' in out and 'not tracked' in out
+    assert got['tessera_commit'] != expected['tessera_commit']  # the real staged HEAD
+    assert origins['installation']['distribution'] == 'unverified (D32 dev mode)'
+
+
+def test_changed_runtime_contract_stamps_in_dev_mode(panel, monkeypatch, capsys):
+    """D32: the installed contract against the frozen pin is cross-pin
+    identity -- it stamps and the run continues with the actual bytes."""
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    expected, verifier = _observe_with_source(
+        panel, monkeypatch, panel['runtime']['serving_source_sha256'])
+    Path(panel['evidence']['contract']['path']).write_bytes(b'changed contract')
+    got, origins, raw = worker.observe_software_runtime(expected, verifier)
+    import hashlib
+    assert got['contract_sha256'] == hashlib.sha256(b'changed contract').hexdigest()
+    out = capsys.readouterr().out
+    assert out.count('[DEV-MODE]') == 2  # the code-identity seal and the software seal
+
+
+def test_certified_zero_keeps_changed_contract_refusal(panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
     expected, verifier = _observe_with_source(
         panel, monkeypatch, panel['runtime']['serving_source_sha256'])
     Path(panel['evidence']['contract']['path']).write_bytes(b'changed contract')
@@ -744,8 +803,18 @@ def test_preflight_installation_commit_difference_stamps(tmp_path, panel, monkey
     assert capsys.readouterr().out.count('[DEV-MODE]') == 1
 
 
-def test_preflight_tampered_raw_contract_still_refuses_in_dev_mode(tmp_path, panel, monkeypatch):
+def test_preflight_tampered_raw_contract_stamps_in_dev_mode(tmp_path, panel, monkeypatch, capsys):
+    '''Cross-pin: changed contract bytes against the frozen pin stamp in dev.'''
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    result, kwargs = preflight_inputs(tmp_path, panel)
+    kwargs['raw_contract'] = b'changed owned contract'
+    app.tp._verify_runtime_preflight(result, **kwargs)
+    out = capsys.readouterr().out
+    assert out.count('[DEV-MODE]') == 1 and 'preflight software/contract' in out
+
+
+def test_certified_zero_keeps_tampered_raw_contract_refusal(tmp_path, panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
     result, kwargs = preflight_inputs(tmp_path, panel)
     kwargs['raw_contract'] = b'changed owned contract'
     with pytest.raises(ValueError, match='preflight software/contract differs'):
