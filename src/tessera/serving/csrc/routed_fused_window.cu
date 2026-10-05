@@ -232,6 +232,32 @@ static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself
 static_assert(TESSERA_ROUTED_FUSED_MMA8_A_RING >= 0 && TESSERA_ROUTED_FUSED_MMA8_A_RING <= 1,
               "the activation ring is 0 or 1");
 constexpr int MMA8_A_RING = FAMILY_MMA8 ? TESSERA_ROUTED_FUSED_MMA8_A_RING : 0;
+// The item claimed ahead on the E4M3 instruction's routed launches, default
+// off.  NCU source counters on the R1024 launches (M 256 and 2048) put 9%
+// (gate/up) and 16% (down) of the producers' samples outside the chunk loop,
+// on the per-item chain the producers run in lockstep: two producer barriers
+// around the work-counter ``atomicAdd``, then a binary search of ``item_off``
+// that is ~8 dependent global loads (one ISETP waiting on them was 3.8% of
+// the down launch's producer samples).  The consumers wait at FULL meanwhile.
+// At 1, producer thread 0 claims the NEXT item during the current item's last
+// ITEM_AHEAD_LEAD chunks and walks its search one step per chunk, so each
+// load's latency hides behind a chunk; it publishes (item, expert) in the
+// claim slots, and the next item starts after one producer barrier.  Every
+// item is the same (expert, n-block, superblock) with the same chunks, so
+// each output element is computed by the same operations: the output is
+// bitwise the default path's.  Only the order in which SMs take items moves.
+#ifndef TESSERA_ROUTED_FUSED_ITEM_AHEAD
+#define TESSERA_ROUTED_FUSED_ITEM_AHEAD 0
+#endif
+static_assert(TESSERA_ROUTED_FUSED_ITEM_AHEAD == 0 || TESSERA_ROUTED_FUSED_ITEM_AHEAD == 1,
+              "the item claimed ahead is 0 or 1");
+constexpr bool MMA8_ITEM_AHEAD = FAMILY_MMA8 && TESSERA_ROUTED_FUSED_ITEM_AHEAD;
+// Chunks before an item's end at which the next claim starts: the claim and a
+// search over up to 2^10 experts, one step per chunk, with a chunk to spare.
+// Claiming later keeps an SM from holding an item while others go idle at the
+// launch's tail; an item shorter than this claims at its first chunk, and any
+// step left at the item's end runs there, as the default path's search does.
+constexpr int ITEM_AHEAD_LEAD = 12;
 // Folded BF16 qualification arm (tessera#874), never enabled by default.
 // Reuses load_a addressing; no additional shared-memory allocation.
 #ifndef TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH
@@ -880,6 +906,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     // #793: only single-run MMA8 launches stage stream history.
     // Keep PREV_REGION_BYTES allocated so layout/ABI and bank mapping stay fixed.
     constexpr bool STAGE_PREV = PREV_STAGED && !TWO;
+    // The item claimed ahead (MMA8_ITEM_AHEAD): routed launches, one-K32 loop.
+    constexpr bool ITEM_AHEAD = MMA8_ITEM_AHEAD && !DENSE && !PAIRED;
     // One A tile of BMT rows, and the consumers' rows: two warp rows of
     // BMT / 2, in MI blocks of 16.  E4M3: threads 0 .. 2 * BMT - 1 stage the
     // tile, two per row.
@@ -915,11 +943,61 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                     // (low-rate, high-rate) order -- see col_map
         const int j = tid & 7;      // eight rows (8j..8j+7) within the half
         int last_e = -1;            // the expert whose table(s) shared memory holds
+        // ITEM_AHEAD: thread 0's claim of the next item and its search
+        // (``ahead``), published as (item, expert) in claim slot ``ah_slot``.
+        // ah_step: 0 not started, 1 claim in flight, 2 search load in flight,
+        // 3 published.
+        [[maybe_unused]] int ah_slot = 0, ah_step = 0, ah_item = 0, ah_sbg = 0, ah_lo = 0, ah_hi = 0, ah_v = 0;
+        [[maybe_unused]] auto ahead = [&](int ic, int nkc) {
+            if (ah_step == 0) {
+                if (ic < nkc - ITEM_AHEAD_LEAD) return;
+                ah_item = atomicAdd(p.counter, 1);
+                ah_step = 1;
+                return;
+            }
+            if (ah_step == 1) {
+                ah_sbg = ah_item / p.n_blocks;
+                ah_lo = 0;
+                ah_hi = p.E;
+                if (ah_item < total_items && ah_hi - ah_lo > 1) {
+                    ah_v = p.item_off[(ah_lo + ah_hi) >> 1];
+                    ah_step = 2;
+                    return;
+                }
+            } else if (ah_step == 2) {
+                if (ah_v <= ah_sbg) ah_lo = (ah_lo + ah_hi) >> 1; else ah_hi = (ah_lo + ah_hi) >> 1;
+                if (ah_hi - ah_lo > 1) {
+                    ah_v = p.item_off[(ah_lo + ah_hi) >> 1];
+                    return;
+                }
+            } else {
+                return;
+            }
+            claim[2 * ah_slot] = ah_item;       // the expert is meaningless past the last item
+            claim[2 * ah_slot + 1] = ah_lo;
+            ah_step = 3;
+        };
+        [[maybe_unused]] auto ahead_finish = [&]() {
+            while (ah_step != 3) ahead(std::numeric_limits<int>::max(), 0);
+        };
+        if constexpr (ITEM_AHEAD) {
+            if (tid == 0) ahead_finish();       // the first item, before the first barrier
+        }
         for (;;) {
             bar_sync(BAR_PROD, PRODUCER_THREADS);   // every producer is done with the last item's smem
-            if (tid == 0) claim[0] = atomicAdd(p.counter, 1);
-            bar_sync(BAR_PROD, PRODUCER_THREADS);
-            const int item = claim[0];
+            int item, ah_e = 0;
+            if constexpr (ITEM_AHEAD) {
+                // Published before thread 0 reached the barrier; the other
+                // slot was last read before it, so thread 0 may refill it.
+                item = claim[2 * ah_slot];
+                ah_e = claim[2 * ah_slot + 1];
+                ah_slot ^= 1;
+                ah_step = 0;
+            } else {
+                if (tid == 0) claim[0] = atomicAdd(p.counter, 1);
+                bar_sync(BAR_PROD, PRODUCER_THREADS);
+                item = claim[0];
+            }
             const int slot = item_idx & 1;
             if (item >= total_items) {
                 // FULL(gc) reuses FULL(gc-2), just like an ordinary chunk.
@@ -956,13 +1034,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 kc0 = (int)(((long)ks * nk) / p.k_split);
                 nkc = (int)(((long)(ks + 1) * nk) / p.k_split) - kc0;
             } else {
-                const int sbg = item / p.n_blocks;
-                int lo = 0, hi = p.E;
-                while (hi - lo > 1) {
-                    const int mid = (lo + hi) >> 1;
-                    if (p.item_off[mid] <= sbg) lo = mid; else hi = mid;
+                if constexpr (ITEM_AHEAD) {
+                    e = ah_e;
+                } else {
+                    const int sbg = item / p.n_blocks;
+                    int lo = 0, hi = p.E;
+                    while (hi - lo > 1) {
+                        const int mid = (lo + hi) >> 1;
+                        if (p.item_off[mid] <= sbg) lo = mid; else hi = mid;
+                    }
+                    e = lo;
                 }
-                e = lo;
                 const int nsb = p.item_off[e + 1] - p.item_off[e];
                 const int local = item - p.item_off[e] * p.n_blocks;
                 nb = local / nsb;
@@ -1534,6 +1616,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 } else {
                     for (int ic = 0; ic < nkc; ++ic, ++gc) {
                         const int kc = kc0 + ic;
+                        if constexpr (ITEM_AHEAD) {
+                            if (tid == 0) ahead(ic, nkc);
+                        }
                         // The two orders are the measured ones: a one-run loop that
                         // issues the activation chunk first waits longer at M = 1.
                         if constexpr (A_RING) {
@@ -1574,6 +1659,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // Every item of a launch carries the kernel's pair (one run table
             // per stack, gate and up alike; checked above).
             run();
+            if constexpr (ITEM_AHEAD) {
+                if (tid == 0) ahead_finish();   // an item shorter than the lead
+            }
             ++item_idx;
         }
     } else {
@@ -3718,6 +3806,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
     m.attr("MMA8_GATE_UP_B_PREFETCH") = MMA8_GATE_UP_B_PREFETCH;
     m.attr("MMA8_A_RING") = MMA8_A_RING;
+    m.attr("MMA8_ITEM_AHEAD") = MMA8_ITEM_AHEAD;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;

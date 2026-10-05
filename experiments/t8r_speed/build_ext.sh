@@ -56,6 +56,7 @@ docker run --rm -i --network=none --cpuset-cpus "$CPUS" --user "$(id -u):$(id -g
   -e TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH="${TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH-0}" \
   -e TESSERA_ROUTED_FUSED_PAIRED_K32="${TESSERA_ROUTED_FUSED_PAIRED_K32-0}" \
   -e TESSERA_ROUTED_FUSED_MMA8_A_RING="${TESSERA_ROUTED_FUSED_MMA8_A_RING-0}" \
+  -e TESSERA_ROUTED_FUSED_ITEM_AHEAD="${TESSERA_ROUTED_FUSED_ITEM_AHEAD-0}" \
   "${IMAGE_ENV[@]}" --entrypoint python3 -w /work "$IMAGE_REF" - "${LIBS[@]}" <<'PY'
 import glob, hashlib, json, os, sys, time
 from pathlib import Path

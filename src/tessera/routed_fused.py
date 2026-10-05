@@ -188,6 +188,16 @@ if _mma8_a_ring_choice not in ("0", "1"):
     raise GrammarError(f"{ENV_MMA8_A_RING}={_mma8_a_ring_choice!r}; one of ('0', '1')")
 MMA8_A_RING = int(_mma8_a_ring_choice)
 del _mma8_a_ring_choice
+# Build-scoped experiment, frozen like the two above: the E4M3 instruction's
+# routed launches claim and resolve the next work item during the current
+# one's last chunks (``MMA8_ITEM_AHEAD`` in the kernel).  0 off; 1 on.  No
+# layout moves; the output is bitwise the default's.
+ENV_MMA8_ITEM_AHEAD = "TESSERA_ROUTED_FUSED_ITEM_AHEAD"
+_mma8_item_ahead_choice = os.environ.get(ENV_MMA8_ITEM_AHEAD, "0")
+if _mma8_item_ahead_choice not in ("0", "1"):
+    raise GrammarError(f"{ENV_MMA8_ITEM_AHEAD}={_mma8_item_ahead_choice!r}; one of ('0', '1')")
+MMA8_ITEM_AHEAD = int(_mma8_item_ahead_choice)
+del _mma8_item_ahead_choice
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
@@ -567,6 +577,7 @@ def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> lis
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
             *([f"-D{ENV_MMA8_GATE_UP_B_PREFETCH}={MMA8_GATE_UP_B_PREFETCH}"] if mma8 else []),
             *([f"-D{ENV_MMA8_A_RING}={MMA8_A_RING}"] if mma8 else []),
+            *([f"-D{ENV_MMA8_ITEM_AHEAD}=1"] if mma8 and MMA8_ITEM_AHEAD else []),
             *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
             *(["-DTESSERA_ROUTED_FUSED_PAIRED_K32=1"] if _paired_k32_build_enabled(mma8) else []),
             *offload_flags(token, arch_specific=fp4)]
@@ -713,6 +724,11 @@ def _ext(library: str):
         if actual != MMA8_A_RING:
             raise GrammarError(
                 f"{module} was built with MMA8_A_RING={actual!r}; this process expects {MMA8_A_RING!r}")
+        actual = getattr(lib, "MMA8_ITEM_AHEAD", None)
+        if actual != bool(MMA8_ITEM_AHEAD):
+            raise GrammarError(
+                f"{module} was built with MMA8_ITEM_AHEAD={actual!r}; "
+                f"this process expects {bool(MMA8_ITEM_AHEAD)!r}")
     return lib
 
 
