@@ -16,10 +16,12 @@ rank 0 on sparklina, rank 1 on sparky), kernel events inside the four GPU-side
 `execute_context_1(2048)` windows, divided by four. The table sums kernel time.
 Against the GPU-complete windows (`kernels-2500-critical-path-reconciliation-20261004`,
 analysis v2), the windows are 1151.2 ms per chunk on rank 0 (4604.74 ms / 4) and
-1151.0 ms on rank 1 (4603.99 ms / 4). The kernels that start inside them sum to 1147.8
-and 1147.7 ms per chunk, so the device is idle for about 3.4 ms per chunk (0.3%). The
-kernel sum stands in for wall time to within that, provided kernels do not overlap.
-The same record puts the kernel-interval overlap at 0.066%.
+1151.0 ms on rank 1 (4603.99 ms / 4). The kernel events inside them (the record's
+`busy_inside_gpu_windows`) sum to 4590.573 ms on rank 0 and 4589.892 ms on rank 1,
+1147.6 and 1147.5 ms per chunk, so the device is idle inside the windows for 14.17
+and 14.10 ms per request (about 3.5 ms per chunk, 0.31%). The record's leaf-sum line
+runs 1.00065 times its busy-union line, a 0.065% kernel-interval overlap, so the
+kernel sum stands in for wall time to within that.
 
 | Part | Kernel | rank 0 ms | rank 1 ms |
 |---|---|---|---|
@@ -70,12 +72,17 @@ this note named the served artifact `glm53-a8-bf16menu-20260930`, because
 export is now gone, in its own commit. The bench layer stands in for the served layer
 for these reasons:
 - In both artifacts the layer-10 experts are R1024, one run, `wire_bytes_rank` 1.82 GB.
-- Their 864 expert tensors have the same names, dtypes, shapes and byte sizes
-  (3,643,435,584 bytes each).
-- Nine sampled tensors (experts 0, 143 and 287; gate, up and down) are byte-identical.
-  Expert 0's gate hash `c721ddc3…` matches the served wire hash that the #826
-  diagnosis recorded.
-- Not every tensor was hashed.
+- Their 864 expert tensors have the same names, dtypes, shapes and byte sizes. The
+  3,643,435,584 bytes is the combined expert-tensor population of one artifact,
+  not a per-tensor size.
+- Nine sampled tensors (experts 0, 143 and 287; gate, up and down) are byte-identical:
+  9 of 864 hashed, not all. Expert 0's gate hash `c721ddc3…` matches the served wire
+  hash that the #826 diagnosis recorded, and every served digest matches the pin in
+  `routed_gate_826_inputs.json`.
+- Receipt: `layer10_expert_tensor_hash_receipt.json` with its script
+  `hash_layer10_sample.py`, both under the measurement root. The script re-derives
+  every digest from the two artifacts (CPU-only PrismaBuild action `65757292`,
+  CAS receipt `1fc629ea`).
 
 release-t8 as a whole mixes rungs (R1024, R1088 and R832). Only its layer-10 stack ran
 here. Routing is balanced, plus recorded prefill routing (`routing/` under the root):
@@ -205,8 +212,10 @@ unmeasured.
 Historical, now withdrawn. As of 2026-10-04 (`kernels-family-qualification`,
 `prefill_2500_ranked_levers_20261004`, generated 20:58Z), the kernels lever table
 credited the routed row with a #739 ceiling of about 84 ms per chunk (15% of the
-fused kernels). The parent review of this note withdrew that credit. That 15% was measured on the R1088 and R832 two-run
-rungs and at M = 8192. On the R1024 one-run rung, which is every served layer, #739's
+fused kernels). That credit is withdrawn in the same record (row note
+`withdrawn_739_ceiling`: "15 percent was a scope-level planning ceiling, not the
+one-run served artifact opportunity"). The 15% was measured on the R1088 and R832
+two-run rungs and at M = 8192. On the R1024 one-run rung, which is every served layer, #739's
 own A/B at M = 2048 has the no-load ceiling at 1.4% (gate/up) and 0% (down), and the
 ring itself at 1.00 to 1.05 times master. It is worth about 0 ms on the served chunk
 today.
