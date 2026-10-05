@@ -252,6 +252,30 @@ def test_no_runtime_module_imports_the_excluded_tooling():
         f"{offenders}")
 
 
+@pytest.mark.parametrize("source, reported", [
+    pytest.param("import tessera._dev.x\n", [1], id="import"),
+    pytest.param("from tessera._dev import x\n", [1], id="from-import"),
+    pytest.param("from tessera import _dev\n", [1], id="from-import-of-the-package"),
+    pytest.param("import importlib\nimportlib.import_module('tessera._dev.x')\n", [2], id="import_module"),
+    pytest.param("__import__('tessera._dev.x')\n", [1], id="__import__"),
+    pytest.param("import subprocess, sys\nsubprocess.run([sys.executable, '-m', 'tessera._dev.x'])\n",
+                 [2], id="subprocess-list"),
+    pytest.param("import subprocess\nsubprocess.run(('python', '-m', 'tessera._dev.x'))\n",
+                 [2], id="subprocess-tuple"),
+    pytest.param('"""run python -m tessera._dev.x"""\n# python -m tessera._dev.x\n', [],
+                 id="docstring-and-comment"),
+    pytest.param("import subprocess\nname = 'x'\nsubprocess.run(['python', '-m', 'tessera._dev.' + name])\n",
+                 [], id="computed-name-is-not-analysed"),
+    pytest.param("import subprocess\nsubprocess.run(['python', '-m', 'tessera.export_serving'])\n", [],
+                 id="a-shipped-module"),
+])
+def test_the_exclusion_walk_reports_literal_references_and_only_those(source, reported):
+    """The walk reads the syntax tree: an import, a literal import call or a
+    literal ``-m MODULE`` launch of an excluded module is reported with its
+    line; prose and computed names are not."""
+    assert _excluded_references(source, "tessera", ["tessera._dev*"]) == reported
+
+
 def test_the_sdist_policy_names_paths_that_exist():
     """``MANIFEST.in`` is the whole sdist policy, and setuptools sweeps
     directories when the policy is silent: a directive naming a path that has
