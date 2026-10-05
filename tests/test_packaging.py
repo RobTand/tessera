@@ -204,6 +204,34 @@ def test_every_excluded_package_pattern_matches_a_package():
             f"{SRC}; it excludes nothing and the modules it named ship")
 
 
+def _excluded_references(source: str, package: str, patterns: list[str]) -> list[int]:
+    """Lines of ``source`` that name a module the wheel excludes.
+
+    The one home of what counts as naming a module: the syntax tree, so a
+    comment or docstring never counts. ``package`` resolves relative imports.
+    """
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            prefix = node.module or ""
+            if node.level:
+                prefix = importlib.util.resolve_name("." * node.level + prefix, package)
+            names = [prefix, *(prefix + "." + alias.name for alias in node.names)]
+        elif isinstance(node, ast.Call) and node.args:
+            callee = node.func.attr if isinstance(node.func, ast.Attribute) else (
+                node.func.id if isinstance(node.func, ast.Name) else "")
+            argument = node.args[0]
+            if callee in {"import_module", "__import__"} and isinstance(argument, ast.Constant):
+                if isinstance(argument.value, str):
+                    names = [argument.value]
+        if any(fnmatch(name, pattern) for name in names for pattern in patterns):
+            lines.append(node.lineno)
+    return lines
+
+
 def test_no_runtime_module_imports_the_excluded_tooling():
     """The exclusion is only safe while nothing shipped needs what it drops.
 
@@ -217,24 +245,8 @@ def test_no_runtime_module_imports_the_excluded_tooling():
         if "_dev" in path.relative_to(SRC).parts or "__pycache__" in path.parts:
             continue
         package = ".".join(path.relative_to(SRC).parts[:-1])
-        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            names = []
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                prefix = node.module or ""
-                if node.level:
-                    prefix = importlib.util.resolve_name("." * node.level + prefix, package)
-                names = [prefix, *(prefix + "." + alias.name for alias in node.names)]
-            elif isinstance(node, ast.Call) and node.args:
-                callee = node.func.attr if isinstance(node.func, ast.Attribute) else (
-                    node.func.id if isinstance(node.func, ast.Name) else "")
-                argument = node.args[0]
-                if callee in {"import_module", "__import__"} and isinstance(argument, ast.Constant):
-                    if isinstance(argument.value, str):
-                        names = [argument.value]
-            if any(fnmatch(name, pattern) for name in names for pattern in patterns):
-                offenders.append(f"{path.relative_to(SRC)}:{node.lineno}")
+        for line in _excluded_references(path.read_text(encoding="utf-8"), package, patterns):
+            offenders.append(f"{path.relative_to(SRC)}:{line}")
     assert not offenders, (
         "shipped modules name tessera._dev, which the wheel does not carry: "
         f"{offenders}")
