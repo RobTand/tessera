@@ -13,6 +13,54 @@ from tessera.dev_mode import DEV_MODE_ENV
 
 MODE = "window4-eager-2048-4096"
 SHIP_MODE = "ship-eager-4096-8192"
+GRAPH_SHIP_MODE = "ship-graph-2048"
+
+
+def graph_ship_plan(tmp_path):
+    path = tmp_path / "graph-plan.txt"
+    rows = []
+    for suffix, switch, split in (("off", "0", "off"), ("on", "1", "on")):
+        rows.append(f'graph2048_{suffix} FABRIC=socket EAGER=0 MAX_BATCHED=2048 '
+                    f'COMPILATION_JSON={json.dumps(recipe.GRAPH, separators=(",", ":"))} '
+                    f'SPEC_JSON={json.dumps(recipe.MTP, separators=(",", ":"))} '
+                    f'TESSERA_E4M3_DECODE_ONCE={switch} TESSERA_GLM53_KDA_CONV_SPLIT={split} '
+                    f'TESSERA_ROUTED_PIECE_MAJOR={switch}')
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+def test_graph_ship_inputs_admit_c1_without_reopening_c4_control(tmp_path):
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=GRAPH_SHIP_MODE, MAX_NUM_SEQS="1", MAX_BATCHED="2048")
+    config = recipe.inputs(env, live=False)
+    assert config["window_mode"] == GRAPH_SHIP_MODE
+
+
+def test_graph_ship_plan_admits_same_mnbt_graph_off_on_with_row_levers(tmp_path):
+    arms = recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE)
+    assert [(a["arm"], a["max_batched"], a["eager"]) for a in arms] == [
+        ("graph2048_off", 2048, "0"), ("graph2048_on", 2048, "0")]
+    assert [a["lever_env"] for a in arms] == [
+        dict(TESSERA_E4M3_DECODE_ONCE="0", TESSERA_GLM53_KDA_CONV_SPLIT="off", TESSERA_ROUTED_PIECE_MAJOR="0"),
+        dict(TESSERA_E4M3_DECODE_ONCE="1", TESSERA_GLM53_KDA_CONV_SPLIT="on", TESSERA_ROUTED_PIECE_MAJOR="1")]
+
+
+def test_graph_ship_cpu_entrypoint_dry_run_renders_exact_pair(tmp_path):
+    import os
+    import subprocess
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(os.environ, TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path),
+               RECEIPTS=str(tmp_path / "arms"), FABRIC="socket", WINDOW_MODE=GRAPH_SHIP_MODE)
+    result = subprocess.run(["bash", str(HERE / "drive_tp2.sh"), str(graph_ship_plan(tmp_path)), "--dry-run"],
+                            env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "graph2048_off" in result.stdout and "graph2048_on" in result.stdout
+    assert result.stdout.count("--max-num-seqs 1") == 4
+    assert result.stdout.count("--compilation-config") == 4
+    assert "107 GiB" in result.stdout and "1 Hz strict <2 GiB dual-rank abort" in result.stdout
+    assert "TESSERA_E4M3_DECODE_ONCE=1" in result.stdout
+
 
 
 def eager_plan(tmp_path, pair=(("eager2048", 2048), ("eager4096", 4096))):
@@ -412,3 +460,150 @@ def test_sampler_reads_the_actual_admitted_cpu_cgroup_not_a_gpu_claim():
     assert sample["scope_id"] == scope and sample["scope_memory_peak_bytes"] >= sample["scope_memory_current_bytes"]
     assert "CUDA coverage is unproven" in sample["note"]
     with pytest.raises(Refused, match="outside its owned"): rank_window.scope_memory(dict(rank=0, scope_id="foreign.slice"))
+
+
+@pytest.mark.parametrize("old,new", [
+    ("MAX_BATCHED=2048", "MAX_BATCHED=4096"), ("graph2048_off", "graph2048_on"),
+    ("FABRIC=socket", "FABRIC=roce"), ("EAGER=0", "EAGER=1"),
+    ("FULL_DECODE_ONLY", "FULL"), ("MAX_BATCHED=2048", "MAX_BATCHED=2048 MAX_NUM_SEQS=2"),
+    ("TESSERA_E4M3_DECODE_ONCE=0", "TESSERA_E4M3_DECODE_ONCE=1"),
+    ("TESSERA_E4M3_DECODE_ONCE=1", "TESSERA_E4M3_DECODE_ONCE=maybe"),
+    ("TESSERA_GLM53_KDA_CONV_SPLIT=on", "TESSERA_GLM53_KDA_CONV_SPLIT=maybe"),
+    ("TESSERA_ROUTED_PIECE_MAJOR=1", "TESSERA_ROUTED_PIECE_MAJOR=maybe"),
+    ("TESSERA_ROUTED_PIECE_MAJOR=0", ""),
+])
+def test_graph_ship_plan_refuses_scope_or_undeclared_levers(tmp_path, old, new):
+    path = graph_ship_plan(tmp_path)
+    path.write_text(path.read_text().replace(old, new))
+    with pytest.raises(Refused, match="Ship graph|nominated graph|EAGER=1"):
+        recipe.plan(path, mode=GRAPH_SHIP_MODE)
+
+
+@pytest.mark.parametrize("which", ["reverse", "missing", "extra", "no-on"])
+def test_graph_ship_plan_refuses_wrong_pair_or_no_delta(tmp_path, which):
+    path = graph_ship_plan(tmp_path)
+    rows = path.read_text().splitlines()
+    if which == "reverse": rows.reverse()
+    if which == "missing": rows.pop()
+    if which == "extra": rows.append(rows[0])
+    if which == "no-on":
+        rows[1] = rows[1].replace("=1", "=0").replace("SPLIT=on", "SPLIT=off")
+    path.write_text("\n".join(rows) + "\n")
+    with pytest.raises(Refused, match="Ship graph"):
+        recipe.plan(path, mode=GRAPH_SHIP_MODE)
+
+
+@pytest.mark.parametrize("key", ["TESSERA_E4M3_DECODE_ONCE", "TESSERA_GLM53_KDA_CONV_SPLIT", "TESSERA_ROUTED_PIECE_MAJOR"])
+def test_graph_ship_one_declared_lever_can_be_paired_without_enabling_others(tmp_path, key):
+    path = graph_ship_plan(tmp_path)
+    rows = recipe.parse_plan(path)
+    on = rows[1][1]
+    for lever, value in (("TESSERA_E4M3_DECODE_ONCE", "0"),
+                         ("TESSERA_GLM53_KDA_CONV_SPLIT", "off"), ("TESSERA_ROUTED_PIECE_MAJOR", "0")):
+        if lever != key: on[lever] = value
+    path.write_text("\n".join(name + " " + " ".join(f"{k}={v}" for k, v in env.items()) for name, env in rows) + "\n")
+    arm = recipe.plan(path, mode=GRAPH_SHIP_MODE)[1]
+    assert arm["lever_env"] == {k: on[k] for k in ("TESSERA_E4M3_DECODE_ONCE", "TESSERA_GLM53_KDA_CONV_SPLIT", "TESSERA_ROUTED_PIECE_MAJOR")}
+
+
+@pytest.mark.parametrize("rank", [0, 1])
+def test_graph_ship_container_passes_each_row_levers_and_keeps_admission_caps(tmp_path, rank):
+    import window_driver as driver
+    (tmp_path / "config.json").write_text("{}")
+    env = dict(TS=str(HERE.parents[1]), ARTIFACT=str(tmp_path), RECEIPTS=str(tmp_path / "arms"),
+               FABRIC="socket", WINDOW_MODE=GRAPH_SHIP_MODE, SOURCE_COMMIT="a" * 40, SOURCE_SHA256="b" * 64,
+               PRODUCER_COMMIT="c" * 40, PRODUCER_SHA256="d" * 64)
+    arms = recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE)
+    assert recipe.plan(HERE / "plan-graph-ship.txt", mode=GRAPH_SHIP_MODE) == arms
+    assert "plan-graph-ship.txt" in recipe.PRODUCER_FILES
+    config = recipe.inputs(env, live=False)
+    (tmp_path / "inputs.json").write_text(json.dumps(dict(config=config, arms=arms)))
+    rows = driver.rows(tmp_path, config, env)
+    assert [row["demand"] for row in rows] == [dict(cpu=8, mem_gb=104, gpu=1), dict(cpu=6, mem_gb=104, gpu=1)]
+    assert all(row["gpu_memory_gb"] == 102 and row["exclusive"] and row["measurement"] and row["priority"] == 10
+               and row["max_attempts"] == 1 and row["timeout_s"] == 5400 for row in rows)
+    commands = []
+    for arm in arms:
+        command = recipe.serve(config, arm, rank)
+        assert "--enforce-eager" not in command and "--compilation-config" in command
+        assert command[command.index("--max-num-seqs") + 1] == "1"
+        assert command[command.index("--max-num-batched-tokens") + 1] == "2048"
+        assert command[command.index("--kv-cache-memory-bytes") + 1] == "2147483648"
+        commands.append(command)
+        container = recipe.container(config, arm, dict(rank=rank, run_id="test", nonce="a" * 32),
+                                     tmp_path / "out", tmp_path / "ext", tmp_path / "cid", {})
+        for key, value in arm["lever_env"].items(): assert f"{key}={value}" in container
+        profile = Path(config["profile_dir"]) / arm["arm"]
+        assert f"{profile}:{profile}" in container and str(profile) in container[-1]
+    assert commands[0] == commands[1]  # The lever env, not the vLLM tuple, changes.
+
+
+@pytest.mark.parametrize("name", ["success", "probe_failure", "timeout", "preflight", "floor", "copy_failure"])
+def test_graph_ship_lifecycle_uses_rank1_client_and_stops_on_failure(tmp_path, name):
+    from test_graph_attest_window_scenarios import scenario
+    recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE)
+    outcomes, living, seconds = scenario(tmp_path, name, mode=GRAPH_SHIP_MODE)
+    assert seconds < 10 and not living
+    assert all(outcome["simulation"] and not outcome["ownership_released"] for outcome in outcomes)
+    assert not (tmp_path / "rdv/graph2048_off-probes-rank0.json").exists()
+    if name == "success":
+        assert all(outcome["returncode"] == 0 and outcome["completed_arms"] == ["graph2048_off", "graph2048_on"] for outcome in outcomes)
+        assert (tmp_path / "rdv/graph2048_off-probes-rank1.json").exists()
+    else:
+        assert any(outcome["returncode"] for outcome in outcomes)
+        assert not (tmp_path / "rdv/graph2048_on.rank1.pid").exists()
+
+
+def test_graph_ship_retains_exact_runtime_parent_and_D5_reviews(tmp_path, monkeypatch):
+    recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE)
+    test_runtime_candidate_review_is_exact_and_independent_of_producer(tmp_path, monkeypatch, GRAPH_SHIP_MODE)
+
+
+
+def test_graph_ship_probe_dispatch_preserves_october5_population_and_graph_labels(tmp_path, monkeypatch):
+    import eager_benchmark as benchmark
+    import rank_window
+    from types import SimpleNamespace
+    arms = recipe.plan(graph_ship_plan(tmp_path), mode=GRAPH_SHIP_MODE)
+    client = tmp_path / "client"
+    client.mkdir()
+    # Only the manifest reader is a fixture; production constructs every command.
+    (client / "comparison_inputs.py").write_text(
+        "import json\nfrom pathlib import Path\n"
+        "def load_manifest(path): return json.loads(Path(path).read_text()), None, None, None\n"
+        "def declared_cells(manifest): return manifest['cells']\n")
+    manifest = tmp_path / "profile-manifest.json"
+    cells = [dict(kind="TP1", L=512), dict(kind="TP1", L=8192), dict(kind="TP8", L=512)]
+    manifest.write_text(json.dumps(dict(cells=cells)))
+    monkeypatch.setattr(benchmark, "CLIENT", client)
+    commands = []
+    config = dict(window_mode=GRAPH_SHIP_MODE, profile_dir=str(tmp_path / "profiles"),
+                  prompts=str(tmp_path / "prompts.json"), profile_manifest=str(manifest))
+    def command(argv, **kwargs):
+        commands.append(argv)
+        if "--trials" in argv:
+            request = dict(error=None, usage=dict(prompt_tokens=0, completion_tokens=128),
+                           generation=dict(done=True), completion_tokens=128)
+            population = {}
+            for length in (512, 2048, 8192):
+                req = dict(request, usage=dict(prompt_tokens=length, completion_tokens=128))
+                population[f"host-L{length}-c1"] = dict(complete=True,
+                    trials=[dict(trial=i, requests=[req]) for i in range(1, 11)])
+            Path(argv[argv.index("--out") + 1]).write_text(json.dumps(dict(cells=population)))
+            Path(argv[argv.index("--events") + 1]).write_text("fixture events\n")
+    adapter = SimpleNamespace(config=config, rdv=tmp_path / "rdv", identity=dict(rank=1),
+                              command=command, tick=lambda: None, envelope=SimpleNamespace(remaining=lambda: 30))
+    probe = rank_window.LocalArm.probes(adapter, arms[1], dict(rank=0))
+    timing = commands[0]
+    assert timing[timing.index("--label-mode") + 1] == "graph"
+    assert timing[timing.index("--lens") + 1:timing.index("--conc")] == ["512", "2048", "8192"]
+    assert timing[timing.index("--conc") + 1] == "1"
+    assert timing[timing.index("--trials") + 1] == "10" and timing[timing.index("--output") + 1] == "128"
+    profiles = [argv for argv in commands if "profile" in argv]
+    assert [(argv[argv.index("--kind") + 1], int(argv[argv.index("--length") + 1])) for argv in profiles] == [
+        (cell["kind"], cell["L"]) for cell in cells]
+    assert [argv[argv.index("--host") + 1] for argv in commands if "--host" in argv] == ["sparklina", "sparky"]
+    binding = json.loads((adapter.rdv / "arms/graph2048_on/invocation.json").read_text())
+    assert binding["schema"] == "tessera.ship_graph_invocation.v1" and binding["lever_env"] == arms[1]["lever_env"]
+    assert probe["profile_dir"].endswith("/graph2048_on")
+

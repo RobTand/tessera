@@ -1,4 +1,4 @@
-"""Window4's fixed A8S bindings and unchanged October 5 served instruments.
+"""Named A8S pairs and unchanged October 5 served instruments.
 
 This is an adapter for the existing admitted rank lifecycle, not a launcher.
 The stock profile instrument's SSH is read-only trace inspection, never a rank.
@@ -19,8 +19,14 @@ PQ_PIN_COMMIT = "e36e60b77b3d2ab0c5265272515958a0cb67d32b"
 
 MODE = "window4-eager-2048-4096"
 SHIP_MODE = "ship-eager-4096-8192"
+GRAPH_SHIP_MODE = "ship-graph-2048"
+LEVER_VALUES = {"TESSERA_E4M3_DECODE_ONCE": ("0", "1"),
+                "TESSERA_GLM53_KDA_CONV_SPLIT": ("off", "on"),
+                "TESSERA_ROUTED_PIECE_MAJOR": ("0", "1")}
 PAIRS = {MODE: [("eager2048", "2048"), ("eager4096", "4096")],
-         SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")]}
+         SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")],
+         GRAPH_SHIP_MODE: [("graph2048_off", "2048"), ("graph2048_on", "2048")]}
+
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
 CONTRACT_SHA = "47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78"
 ARTIFACT_SHA = "45407d43e09381b73197498d7f37c848c167c03a83d415c68e63c615d99eb840"
@@ -34,6 +40,15 @@ MANIFEST_SHA = "7410e55b8696c566cf47a98ddc394537c5fcadfed559c91ff0c3526c135d7cea
 POWER_SHA = "e56e704d671bd0e629ddfbf9374de122009cc454f59f011371c59119aef3bb7c"
 MODEL = "glm53-artifact"
 BASE = "http://10.100.96.2:8142"
+
+def pair_refusal(mode):
+    if mode == MODE:
+        return "Window4 is exactly eager2048/2048 then eager4096/4096"
+    if mode == SHIP_MODE:
+        return "Ship window is exactly eager4096/4096 then eager8192/8192"
+    if mode == GRAPH_SHIP_MODE:
+        return "Ship graph window is exactly graph2048_off/2048 then graph2048_on/2048"
+    return "unknown WINDOW_MODE; no inferred benchmark scope"
 
 
 def sha(path):
@@ -141,17 +156,21 @@ def probes(adapter, arm, peer):
     out.mkdir(parents=True, exist_ok=True)
     profile_dir = Path(config["profile_dir"]) / name
     invocation = uuid.uuid4().hex
-    binding = dict(schema="tessera.window4_eager_invocation.v1", invocation=invocation,
+    graph_ship = config.get("window_mode") == GRAPH_SHIP_MODE
+    binding = dict(schema=("tessera.ship_graph_invocation.v1" if graph_ship else "tessera.window4_eager_invocation.v1"), invocation=invocation,
                    source_bindings=config, arm=arm, identity=adapter.identity, peer=peer,
                    client_host="sparky", base_url=BASE, target_model=MODEL,
                    differences_from_EXL3=["endpoint :8142", "model glm53-artifact", "eager/socket/public-runtime labels",
                                           "fresh output namespace", "A8S runtime, MTP1 and unchanged 2GiB KV"],
                    timing_started_unix=time.time(), profile_timing_samples=False)
+    if graph_ship:
+        binding["differences_from_EXL3"][2] = "graph/socket/public-runtime labels and explicit per-arm lever env"
+        binding["lever_env"] = arm["lever_env"]
     atomic_json(out / "invocation.json", binding)
     argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
             "--prompts", config["prompts"], "--out", str(out / "timing.json"),
             "--lens", "512", "2048", "8192", "--conc", "1", "--trials", "10", "--output", "128",
-            "--label-mode", "eager", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
+            "--label-mode", "graph" if graph_ship else "eager", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
             "--events", str(out / "events.jsonl")]
     binding["timing_argv"] = argv
     with (out / "client.log").open("w") as stream:

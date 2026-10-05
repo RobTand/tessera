@@ -35,10 +35,6 @@ import tp2_recipe as recipe
 import watch_window_queue
 import window_driver as driver
 
-FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py", "submit.py",
-         "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
-         "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt")
-
 
 class ReachedAdmission(RuntimeError):
     pass
@@ -50,13 +46,13 @@ def git(root, *args):
 
 def disk_digest(root):
     return hashlib.sha256("".join(f"{hashlib.sha256((root / 'experiments/graph_attest_702' / name).read_bytes()).hexdigest()}  {name}\n"
-                                 for name in FILES).encode()).hexdigest()
+                                 for name in recipe.PRODUCER_FILES).encode()).hexdigest()
 
 
 def make_producer(tmp_path, *, message="reviewed producer"):
     root = tmp_path / "producer"
     (root / "experiments/graph_attest_702").mkdir(parents=True)
-    for name in FILES:
+    for name in recipe.PRODUCER_FILES:
         (root / "experiments/graph_attest_702" / name).write_bytes((HERE / name).read_bytes())
     git(root, "init", "-q")
     git(root, "config", "user.name", "CPU fixture")

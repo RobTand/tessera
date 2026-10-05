@@ -1,5 +1,24 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for issue980: opt-in `WINDOW_MODE=ship-graph-2048`
+selects `experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
+then graph2048_on at the SAME MNBT2048, A8S/socket/TP2/resident/c1 and the
+unchanged release graph compilation flags. Each row explicitly declares
+decode-once, KDA-split and piece-major env; the first disables all three,
+the second enables at least one. No caller environment supplies a missing
+lever, and both ranks receive that row's exact values. The single pair
+owner now covers eager and graph benchmarks without extending their rosters.
+Graph arms reuse the frozen October5 L512/2048/8192 timing population and
+manifest-declared profile order, rank1 client, both-rank profile verification
+and both-box power collection. Their window/invocation schemas and graph
+labels are distinct from eager, and this c1 benchmark is not the c4 graph
+equality/replay receipt. Graph-control, Window4, ship-eager and all D30
+107 GiB/900s/1 Hz dual-rank strict <2 GiB/104 host/102 GPU caps stay unchanged.
+Exact producer parent/D5 and runtime reviews still precede any gang.
+CPU selector qualification grants no graph compatibility, lever publication,
+performance, quality, ship or serving-pin claim; runtime route refusals remain.
+See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Re-stamped 2026-10-05 for issue968: the separate opt-in
 `WINDOW_MODE=ship-eager-4096-8192` selects only
 `experiments/graph_attest_702/plan-eager-ship-8192.txt`, eager4096 then eager8192.
