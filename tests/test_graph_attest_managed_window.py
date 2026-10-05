@@ -146,6 +146,7 @@ def test_production_local_cleanup_surfaces_errors_without_foreign_deletion(tmp_p
     owned = identity()
     adapter = rank_window.LocalArm.__new__(rank_window.LocalArm)
     adapter.identity, adapter.rank = owned, 0
+    adapter.config = {}
     adapter.envelope = window.Envelope(time.time() + 8, cleanup_seconds=1)
     adapter.work, adapter.rdv = tmp_path / "work", tmp_path / "rdv"
     adapter.work.mkdir(); adapter.rdv.mkdir()
