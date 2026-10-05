@@ -265,7 +265,9 @@ def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
     from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
 
     assert int(contract["contract_version"]) >= 47
-    assert EXPERIMENTAL_LAUNCHES == frozenset()
+    assert not EXPERIMENTAL_LAUNCHES & {
+        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window_e4m3mma"),
+        ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma")}
     dense_mma = "native_fused_window_dense_e4m3mma"
     routed_mma = "native_routed_fused_window_e4m3mma"
     named = {}
@@ -660,3 +662,20 @@ def test_the_changelog_is_newest_first_and_heads_at_the_contract_version(contrac
     assert versions[0] == int(contract["contract_version"]), versions[:3]
     assert all(a > b for a, b in zip(versions, versions[1:])), [
         (a, b) for a, b in zip(versions, versions[1:]) if a <= b]
+
+
+def test_v56_publishes_the_decode_once_prefill_lane_unattested(contract):
+    """v56 (tessera#931): the FP8 dense route's decode-once prefill lane enters
+    ``scheme.ROUTE_LAUNCHES`` (dense, resident only, no extension lane) and
+    ``EXPERIMENTAL_LAUNCHES`` together, so no cell names it."""
+    from tessera.serving.scheme import (DECODE_ONCE_DENSE_SYMBOL, EXPERIMENTAL_LAUNCHES,
+                                        ROUTE_LAUNCHES, TESSERA_FP8)
+
+    assert int(contract["contract_version"]) >= 56
+    pair = (DECODE_ONCE_DENSE_SYMBOL, "native_window_decode_once_e4m3")
+    assert pair in EXPERIMENTAL_LAUNCHES
+    rows = [l for l in ROUTE_LAUNCHES[TESSERA_FP8] if (l["symbol"], l["decoder"]) == pair]
+    assert len(rows) == 1
+    assert rows[0]["modes"] == ("resident",) and rows[0]["lane"] is None
+    for cell in contract["lane_eligibility"]["cells"]:
+        assert pair not in {(e["symbol"], e["decoder"]) for e in cell["executes"]}, cell["id"]

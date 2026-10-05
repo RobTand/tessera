@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-05T00:33:18Z",
+ "generated": "2026-10-05T01:22:58Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5536,7 +5536,7 @@
     "title": "Integrate approved PR2220: one render-file worker default (#1382) and per-file producer source diagnostic"
    },
    "2243": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Census caller writes its request file before refusing an output inside the checkpoint; caller key rides inside the producer block"
    },
    "2244": {
@@ -5560,7 +5560,7 @@
     "title": "Integrate approved remaining safetensors header and name grammar owners (#2235)"
    },
    "2249": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Refuse an expert-projection output inside the checkpoint before any write; describe the caller key inside the carried producer block"
    },
    "225": {
@@ -5570,6 +5570,18 @@
    "2250": {
     "state": "OPEN",
     "title": "Refuse colliding cache-filename sets at the MTP append and group joint aura names by resolved root (#2231)"
+   },
+   "2251": {
+    "state": "CLOSED",
+    "title": "Integrate approved expert-projection output refusal before any write (#2243)"
+   },
+   "2252": {
+    "state": "OPEN",
+    "title": "Integrate approved byte/text digest routing slice (#2234; epic #1301 stays open)"
+   },
+   "2253": {
+    "state": "OPEN",
+    "title": "fix: bind acquisition deferred domains to authenticated checkpoint menus (Closes #2195)"
    },
    "226": {
     "state": "CLOSED",
@@ -12018,7 +12030,7 @@
     "title": "[P2] GLM-5.3 MTP draft load re-reads the whole 163 GiB checkpoint (418 s) for 5.5 GiB of its own tensors"
    },
    "778": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Dense E4M3: one launch per module, K split reduced in-kernel (#750 WP2)"
    },
    "779": {
@@ -12102,7 +12114,7 @@
     "title": "[P2] GLM-5.3 sparse MLA: skip the zero-width RoPE query cat (bitwise, about 6.4 ms per prefill chunk)"
    },
    "797": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "GLM-5.3 sparse MLA: opt-in skip of the zero-width RoPE query cat (#796; merge after served TR3 gate)"
    },
    "798": {
@@ -12394,7 +12406,7 @@
     "title": "Drain the reused terminal barrier in persistent kernels"
    },
    "862": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Experiment: pair routed R4 E4M3 MMA K32 prefill handoffs"
    },
    "863": {
@@ -12430,7 +12442,7 @@
     "title": "initial_channel_scale lands its reach bound with round-to-nearest, so 16% of the rows it raised clip anyway"
    },
    "870": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Retire compact routed metadata after native selection"
    },
    "871": {
@@ -12466,7 +12478,7 @@
     "title": "Qualify retained original token_sum safety without kernel duplication (#859)"
    },
    "879": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "routed: terminal-safe mixed history continuation and explicit numeric acceptance (#793)"
    },
    "88": {
@@ -12510,7 +12522,7 @@
     "title": "fix: refuse failed stock cache production in empty-RoPE qualification"
    },
    "889": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired-K32 timing summary accepts medians unrelated to raw events"
    },
    "89": {
@@ -12598,7 +12610,7 @@
     "title": "T8: bind changed-source dual-B numeric protocol"
    },
    "908": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Make 793 controller fixture controls portable in the mandatory pure gate"
    },
    "909": {
@@ -12638,15 +12650,15 @@
     "title": "merge_suite declares the suite's import env; the pinned accountant rides the sealed artifact-root declaration"
    },
    "917": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired custom-op numeric launcher must require admitted PB execution"
    },
    "918": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired telemetry must attribute each Spark independently of PB placement"
    },
    "919": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Freeze paired compile choice before a cached native bank can be reused"
    },
    "92": {
@@ -12682,7 +12694,7 @@
     "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872) - integrator refresh of #922"
    },
    "927": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Compose accepted default-off kernel/harness sources: #862 #870 #797 #879 #778 (D4 correctness)"
    },
    "928": {
@@ -12722,7 +12734,7 @@
     "title": "[P1] T-8 dense prefill: decode once to E4M3 and serve large M with a scaled FP8 GEMM (#931, default-off draft)"
    },
    "936": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Routed MoE prefill: decomposition and lever table (Goal 2)"
    },
    "937": {
@@ -12740,6 +12752,18 @@
    "94": {
     "state": "CLOSED",
     "title": "viterbi_window_fused has #13's per-call defect, and the WINDOW body is the default E4M3 wire"
+   },
+   "940": {
+    "state": "OPEN",
+    "title": "[P1] Fused routed lane: pipeline the one-chunk-ahead loads (#739)"
+   },
+   "941": {
+    "state": "OPEN",
+    "title": "[P0] Contain the graph-control TP2 ranks in finite PrismaBuild actions"
+   },
+   "942": {
+    "state": "CLOSED",
+    "title": "[P0] graph_receipt v2: fabric (socket|roce) is receipt scope (#702, refs prismaquant#1586)"
    },
    "95": {
     "state": "CLOSED",
