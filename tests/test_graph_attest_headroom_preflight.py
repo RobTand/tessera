@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -83,6 +82,7 @@ def rank_adapter(tmp_path, monkeypatch, *, rank=0, read, clock, eager=False,
     monkeypatch.setattr(rank_window, "time", clock)
     monkeypatch.setattr(window, "time", clock)
     owned = identity(rank)
+    if eager:
         monkeypatch.setattr(rank_window, "scope_memory",
                             lambda identity: dict(rank=identity["rank"],
                                                   scope_id=identity["scope_id"]))
