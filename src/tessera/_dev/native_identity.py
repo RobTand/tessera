@@ -6,6 +6,68 @@ import os
 from pathlib import Path
 
 
+def _mountinfo_fields() -> list[list[str]]:
+    """The single reader of Linux mount provenance for native files."""
+    return [line.split() for line in Path("/proc/self/mountinfo").read_text().splitlines()
+            if line.strip()]
+
+
+def require_local_native_cache(path) -> None:
+    """Refuse network caches whose locks or mapped inode identity can differ.
+
+    Mount provenance owns no exhaustive local-filesystem classification, so
+    refuse known network types rather than invent a local filesystem roster.
+    Missing or malformed provenance cannot admit a cache.
+    """
+    import re
+
+    cache = Path(path).resolve()
+    parent = cache
+    while True:
+        try:
+            parent.stat()
+            break
+        except FileNotFoundError:
+            if parent == parent.parent:
+                raise RuntimeError(f"cache path {cache}: no existing parent for mount lookup")
+            parent = parent.parent
+
+    matches = []
+    for fields in _mountinfo_fields():
+        try:
+            separator = fields.index("-")
+            if separator < 6 or len(fields) < separator + 4:
+                raise ValueError("incomplete mount fields")
+            mountpoint = Path(re.sub(r"\\([0-7]{3})",
+                                    lambda match: chr(int(match[1], 8)), fields[4]))
+            if not mountpoint.is_absolute():
+                raise ValueError("relative mount point")
+            filesystem = fields[separator + 1]
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(f"cache path {cache}: mount provenance is malformed") from exc
+        if parent.is_relative_to(mountpoint):
+            matches.append((mountpoint, filesystem))
+    if not matches:
+        raise RuntimeError(f"cache path {cache}: mount provenance is not recorded")
+    depth = max(len(mountpoint.parts) for mountpoint, _ in matches)
+    deepest = [(mountpoint, filesystem) for mountpoint, filesystem in matches
+               if len(mountpoint.parts) == depth]
+    if len(deepest) != 1:
+        raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
+    mountpoint, filesystem = deepest[0]
+    network_types = {
+        "9p", "afs", "ceph", "cifs", "glusterfs", "lustre", "ncpfs", "nfs", "nfs4",
+        "smb3", "smbfs", "davfs", "fuse.ceph", "fuse.curlftpfs", "fuse.davfs",
+        "fuse.gcsfuse", "fuse.glusterfs", "fuse.rclone", "fuse.s3fs", "fuse.smbnetfs",
+        "fuse.sshfs",
+    }
+    if filesystem in network_types:
+        raise RuntimeError(
+            f"cache path {cache} is on mount point {mountpoint} "
+            f"with filesystem type {filesystem}; use local disk for native build "
+            "locks and mapped inode identity")
+
+
 def mapped_file_device(fd: int) -> tuple[int, int]:
     """Kernel mapping device for this held FD, via its exact mount identity.
 
@@ -18,11 +80,7 @@ def mapped_file_device(fd: int) -> tuple[int, int]:
            if line.startswith("mnt_id:")]
     if len(ids) != 1:
         raise RuntimeError("native file mount identity is incomplete")
-    mounts = []
-    for line in Path("/proc/self/mountinfo").read_text().splitlines():
-        fields = line.split()
-        if fields and fields[0] == ids[0]:
-            mounts.append(fields)
+    mounts = [fields for fields in _mountinfo_fields() if fields[0] == ids[0]]
     if len(mounts) != 1 or len(mounts[0]) < 3:
         raise RuntimeError("native file mount identity is not recorded")
     try:

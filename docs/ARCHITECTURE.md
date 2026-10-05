@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for local disk admission of the container suite cache.
+The merge-suite coordinator refuses known network filesystem types before
+submitting either arm. Its native mount-provenance owner resolves the deepest
+mount covering the cache's nearest existing parent; absent, malformed or
+ambiguous provenance fails closed. CPU tests inject mount tables; no real
+network mount, native build or graphics processor result is newly measured.
+
 
 
 Re-stamped 2026-10-04 for the serve-comparison intake identity publication
@@ -2787,7 +2794,12 @@ from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
 An explicit `--gpu-image` enables the container GPU arm. It requires
 `--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
+`--gpu-cache-dir` on local disk outside the checkout. The coordinator refuses
+known network filesystem types, naming the path, mount point and filesystem
+type before any action is submitted; a not-yet-created cache uses its nearest
+existing parent and the deepest containing mount. The shared mount reader in
+`tessera._dev.native_identity` also owns native mapped-device provenance;
+unresolved cache mount provenance fails closed. `tools/_suite_container.py` owns
 the finite runner grammar and Docker argv; `tools/suite_container.py` launches
 it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
 --dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
