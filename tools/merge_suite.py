@@ -1560,7 +1560,8 @@ def main() -> int:
     ap.add_argument("--gpu-image", default="", help="immutable PB-local image; enables GPU xdist")
     ap.add_argument("--gpu-deps-site", default="", help="readonly scoped pytest/xdist site")
     ap.add_argument("--gpu-deps-sha256", default="", help="suite_dependencies.v1 content seal")
-    ap.add_argument("--gpu-cache-dir", default="", help="new owned writable directory outside the source")
+    ap.add_argument("--gpu-cache-dir", default="",
+                    help="new owned writable directory on local disk outside the source")
     ap.add_argument("--gpu-data-root", action="append", default=[str(POOL_ROOT)],
                     help="canonical same-path readonly data mount; repeatable")
     ap.add_argument("--artifact-root", action="append", default=[], metavar="ENV=PATH",
@@ -1606,6 +1607,11 @@ def main() -> int:
             ap.error("--gpu-image requires --gpu-deps-site, --gpu-deps-sha256 and --gpu-cache-dir")
     elif any((args.gpu_deps_site, args.gpu_deps_sha256, args.gpu_cache_dir)):
         ap.error("container dependencies/cache require --gpu-image")
+    if args.gpu_cache_dir and not args.resume:
+        try:
+            suite_container.require_local_cache(args.gpu_cache_dir)
+        except (OSError, ValueError) as exc:
+            ap.error(str(exc))
 
     # Module-level because that is where the readers look, and because a test
     # that monkeypatches them is doing the same thing this flag does.

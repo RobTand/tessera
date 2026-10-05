@@ -152,10 +152,11 @@ def owner_launch_pairs(wire, *, world=1):
 def owner_research_selected(shape, wire, request_block):
     """The explicit selected-owner block this stack needs, or None.
 
-    One stack needs one and two must not have one.  The production FP8
-    expert builder exceeds its TP1 scope past one rank, so that stack takes
-    the versioned ``research_selected_moe`` owner.  A family with its own
-    expert builder keeps it.  For ``TESSERA_NVFP4`` the selected block refuses
+    This harness requires the versioned ``research_selected_moe`` owner for
+    an FP8 stack above one rank.  That is its own selection rule, not a
+    single-rank limit in the ordinary expert builder, which reads the live
+    degree and rank.  A family with its own expert builder keeps it.  For
+    ``TESSERA_NVFP4`` the selected block refuses
     to name a target it does not serve, so attaching one to an A4 owner is a
     refusal rather than a wider admission.  ``TESSERA_BF16`` is refused here
     by name (tessera#613): the plugin's selected owner still serves it, but
