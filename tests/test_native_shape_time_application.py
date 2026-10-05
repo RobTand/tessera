@@ -712,7 +712,8 @@ def test_installation_proof_verifies_the_observed_commit_in_dev_mode(panel, monk
 def test_changed_runtime_contract_still_refuses_in_dev_mode(panel, monkeypatch):
     """Contract bytes against their own pinned digest are integrity, not a seal."""
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
-    expected, verifier = _observe_with_source(panel, monkeypatch, expected['serving_source_sha256'])
+    expected, verifier = _observe_with_source(
+        panel, monkeypatch, panel['runtime']['serving_source_sha256'])
     Path(panel['evidence']['contract']['path']).write_bytes(b'changed contract')
     with pytest.raises(ValueError, match='runtime source/contract/version differs before device setup'):
         worker.observe_software_runtime(expected, verifier)

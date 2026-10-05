@@ -537,12 +537,10 @@ def observation(panel, *, panel_binding, expected_panel_sha256, request_binding,
     if json_bytes(raw_panel) != panel:
         raise ValueError("parsed panel differs from the bound bytes")
     raw_runtime = read_bound(expected_runtime_binding)
-    # Same D32 seal family: the recorded runtime document against the frozen
-    # expected context stamps in dev mode; document-internal byte bindings
-    # (the panel's runtime against its own evidence) stay refusing.
-    seal_check("bound runtime", expected_runtime, json_bytes(raw_runtime),
-               where="native shape-time observation",
-               refusal=ValueError("expected runtime differs from the bound bytes"))
+    # Integrity, not a seal: this cross-check refuses a caller whose
+    # expected_runtime argument contradicts the request's own bound bytes.
+    if json_bytes(raw_runtime) != expected_runtime:
+        raise ValueError("expected runtime differs from the bound bytes")
     _object(request_binding, {"path", "bytes", "sha256"}, "request binding")
     read_bound(request_binding)
     _object(replay, {"source_tree_sha256", "source_tree_members", "tool_source_sha256", "tool"},
