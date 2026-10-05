@@ -10,6 +10,7 @@ import subprocess
 
 from managed_window import Refused
 from submit import parse_plan, IMAGE
+from eager_benchmark import MODE as EAGER_MODE
 
 CONTROL = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 CONFIG_SHA = "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898"
@@ -38,7 +39,8 @@ def src_sha(root: Path) -> str:
     return hashlib.sha256(lines.encode()).hexdigest()
 
 PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
-                  "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt")
+                  "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
+                  "eager_benchmark.py", "plan-eager-window4.txt")
 
 
 def producer_sha() -> str:
@@ -82,6 +84,9 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
 
 
 def inputs(env: dict, *, live: bool, runner=None) -> dict:
+    mode = env.get("WINDOW_MODE", "graph-control")
+    if mode not in ("graph-control", EAGER_MODE):
+        raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
     for name in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC"):
         if not env.get(name):
             raise Refused(f"{name} is required; no fabric/source default")
@@ -90,7 +95,7 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
     root, artifact = Path(env["TS"]).resolve(), Path(env["ARTIFACT"])
     if not (artifact / "config.json").is_file():
         raise Refused(f"ARTIFACT has no config.json: {artifact}")
-    for name, expected in {"MAX_NUM_SEQS": "4", "MAX_MODEL_LEN": "8448",
+    for name, expected in {"MAX_NUM_SEQS": "1" if mode == EAGER_MODE else "4", "MAX_MODEL_LEN": "8448",
                            "KV_BYTES": "2147483648", "FLOOR_GIB": "16",
                            "EXPECT_PEAK_GIB": "98", "MAX_BATCHED": "2048",
                            "GPU_UTIL": "0.5", "MOE_BACKEND": "triton",
@@ -99,6 +104,8 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
                            "IMG": IMAGE, "LONG_CASES": LONG_CASES,
                            "TESSERA_ENV": "TESSERA_FUSED_E4M3_MMA=e4m3",
                            "KERNEL_JSON": '{"enable_flashinfer_autotune":false}'}.items():
+        if mode == EAGER_MODE and name == "MAX_BATCHED" and env.get(name, "2048") in ("2048", "4096"):
+            continue
         if name in env and env[name] != expected:
             raise Refused(f"the nominated control fixes {name}={expected}; no scope substitution")
     if live:
@@ -120,13 +127,23 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
             raise Refused("shared source is not clean/frozen")
         require_producer(Path(__file__).resolve().parents[2], env.get("PRODUCER_COMMIT", ""),
                          env.get("PRODUCER_SHA256", ""), exact_head=False, runner=runner)
-    return dict(ts=str(root), artifact=str(artifact), receipts=env["RECEIPTS"],
+    result = dict(ts=str(root), artifact=str(artifact), receipts=env["RECEIPTS"],
                 fabric=env["FABRIC"], image=IMAGE, src_sha256=src_sha(root),
                 config_sha256=sha(artifact / "config.json"),
                 source_commit=env.get("SOURCE_COMMIT", "dry-run-unfrozen"),
                 producer_commit=env.get("PRODUCER_COMMIT", "dry-run-unfrozen"), producer_sha256=producer_sha(),
                 hooks_sha256=sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
                 equal_script_sha256=sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
+    if mode == EAGER_MODE:
+        if env["FABRIC"] != "socket":
+            raise Refused("Window4 is eager A8S/socket/TP2/c1 only")
+        if live:
+            from eager_benchmark import bindings
+            result.update(bindings(env, artifact))
+        else:
+            result["window_mode"] = EAGER_MODE
+            result["profile_dir"] = str(Path(env["RECEIPTS"]).parent / "profiles")
+    return result
 
 
 def arm_settings(arm: str, env: dict) -> dict:
@@ -143,8 +160,22 @@ def arm_settings(arm: str, env: dict) -> dict:
     return dict(arm=arm, eager=eager, compilation=compilation, spec=env["SPEC_JSON"])
 
 
-def plan(path: Path) -> list[dict]:
+def plan(path: Path, *, mode="graph-control") -> list[dict]:
     rows = parse_plan(path)
+    if mode == EAGER_MODE:
+        expected = [("eager2048", "2048"), ("eager4096", "4096")]
+        if [(name, env.get("MAX_BATCHED")) for name, env in rows] != expected:
+            raise Refused("Window4 is exactly eager2048/2048 then eager4096/4096")
+        result = []
+        for name, env in rows:
+            arm = arm_settings(name, env)
+            if (arm["eager"] != "1" or env.get("FABRIC") != "socket"
+                    or set(env) != {"EAGER", "SPEC_JSON", "FABRIC", "MAX_BATCHED"}):
+                raise Refused("Window4 plan fixes eager/socket/MTP1 with no other override")
+            result.append(dict(arm, max_batched=int(env["MAX_BATCHED"]), fabric="socket"))
+        return result
+    if mode != "graph-control":
+        raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
     if [arm for arm, _ in rows] != ["aE1", "aGR", "aE2"]:
         raise Refused("the finite control is exactly aE1/aGR/aE2; no fourth arm")
     result = [arm_settings(arm, env) for arm, env in rows]
@@ -159,16 +190,22 @@ def plan(path: Path) -> list[dict]:
 
 
 def serve(config: dict, arm: dict, rank: int, *, master_port=29541, api_port=8142) -> list[str]:
+    eager_window = config.get("window_mode") == EAGER_MODE
     argv = ["vllm", "serve", config["artifact"], "--node-rank", str(rank)]
     argv += ["--headless"] if rank else ["--host", "0.0.0.0", "--port", str(api_port)]
     argv += ["--tensor-parallel-size", "2", "--nnodes", "2", "--master-addr", "10.100.96.2",
              "--master-port", str(master_port), "--distributed-executor-backend", "mp",
              "--kv-cache-dtype", "fp8_ds_mla", "--moe-backend", "triton", "--kernel-config",
              '{"enable_flashinfer_autotune":false}', "--max-model-len", "8448", "--language-model-only",
-             "--max-num-seqs", "4", "--max-num-batched-tokens", "2048", "--enable-chunked-prefill",
+             "--max-num-seqs", "1" if eager_window else "4", "--max-num-batched-tokens",
+             str(arm["max_batched"]) if eager_window else "2048", "--enable-chunked-prefill",
              "--no-enable-prefix-caching", "--gpu-memory-utilization", "0.5", "--kv-cache-memory-bytes",
              "2147483648", "--trust-remote-code", "--max-logprobs", "20", "--served-model-name", "glm53-artifact"]
     argv += ["--enforce-eager"] if arm["eager"] == "1" else ["--compilation-config", arm["compilation"]]
+    if eager_window:
+        argv += ["--profiler-config", json.dumps(dict(profiler="torch",
+                 torch_profiler_dir=config["profile_dir"], torch_profiler_with_stack=False,
+                 torch_profiler_record_shapes=True, ignore_frontend=True), separators=(",", ":"))]
     return argv + ["--speculative-config", arm["spec"]]
 
 
@@ -202,5 +239,10 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                T695_GC_BEFORE_DRAFTER="1", TESSERA_FUSED_E4M3_MMA="e4m3", **image_env)
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
+    local_config = config
+    if config.get("window_mode") == EAGER_MODE:
+        directory = Path(config["profile_dir"]) / arm["arm"]
+        argv += ["-v", f"{directory}:{directory}"]
+        local_config = dict(config, profile_dir=str(directory))
     return argv + ["-w", "/ext", "--entrypoint", "bash", config["image"], "-c",
-                   PREP + "exec " + shlex.join(serve(config, arm, rank, master_port=master_port, api_port=api_port))]
+                   PREP + "exec " + shlex.join(serve(local_config, arm, rank, master_port=master_port, api_port=api_port))]

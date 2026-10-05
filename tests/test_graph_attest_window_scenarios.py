@@ -57,7 +57,8 @@ class CpuArm:
         return dict(fabric=rank_window.fabric_from_log(banner))
 
     def probes(self, arm, peer):
-        failure = self.scenario in ("probe_failure", "timeout") and arm["arm"] == "aGR"
+        failed_arm = "eager2048" if arm["arm"].startswith("eager") else "aGR"
+        failure = self.scenario in ("probe_failure", "timeout") and arm["arm"] == failed_arm
         program = "import time;print('partial',flush=True);time.sleep(30)" if failure and self.scenario == "timeout" else (
                   "print('partial',flush=True);raise SystemExit(7)" if failure else "print('two full passes and screens simulated',flush=True)")
         with (self.root / f"{arm['arm']}.probes.log").open("w") as stream:
@@ -97,9 +98,10 @@ def alive(pid):
     return path.exists() and path.read_text().split()[2] != "Z"
 
 
-def scenario(root, name):
+def scenario(root, name, *, mode="graph-control"):
     queue, rdv = root / "queue", root / "rdv"
     rdv.mkdir()
+    window.atomic_json(root / "scenario-mode.json", dict(mode=mode))
     start = time.time()
     # Shortened only in this simulated CPU fixture; production always has the fixed 5400s envelope.
     end = start + (3 if name == "timeout" else 8)
@@ -198,7 +200,8 @@ if __name__ == "__main__":
     rank, root, name = int(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
     owned = window.read_json(root / f"identity{rank}.json")
     envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=.6)
-    arms = [dict(arm=arm) for arm in ("aE1", "aGR", "aE2")]
+    mode = window.read_json(root / "scenario-mode.json")["mode"]
+    arms = [dict(arm=arm) for arm in (("eager2048", "eager4096") if mode == rank_window.recipe.EAGER_MODE else ("aE1", "aGR", "aE2"))]
     adapter = CpuArm(root / "rdv", owned, envelope, name)
-    raise SystemExit(rank_window.run_rank(dict(fabric="socket"), owned, root / "queue", root / "rdv", arms,
+    raise SystemExit(rank_window.run_rank(dict(fabric="socket", window_mode=mode), owned, root / "queue", root / "rdv", arms,
                                          adapter, envelope, poll_seconds=.02))

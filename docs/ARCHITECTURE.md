@@ -1,5 +1,19 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
+adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
+The default c4/MNBT2048 eager/graph/eager equality population and refusal stay
+unchanged. Window4 binds the public2dbac191/v56 runtime, corrected reviewed PQ2264
+candidate, full authenticated A8S inventory and exact October5 EXL3 client and
+profile bytes. One published two-half exclusive campaign retains ownership,
+deadline, physical floor and cleanup; the sole PACT publisher must be stopped
+and physically drained before publication and resumes only after pair cleanup.
+Model fit/speed require actual served requests, per-rank memory, matching
+profiles and both-Spark Netdata coverage. No default, serving pin, format,
+scientific gate, graph receipt, ship artifact or performance claim is promoted
+by this source change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
+
 
 
 Re-stamped 2026-10-04 for the serve-comparison intake identity publication

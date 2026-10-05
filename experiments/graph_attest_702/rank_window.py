@@ -83,6 +83,19 @@ class LocalArm:
         mem = available_gib()
         with (self.work / "memwatch.txt").open("a") as stream:
             stream.write(f"{time.time()} rank{self.rank} MemAvailable_GiB={mem}\n")
+        if self.config.get("window_mode") == recipe.EAGER_MODE:
+            relative = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[1]
+            prefix = relative.split(self.identity["scope_id"], 1)
+            if len(prefix) != 2:
+                raise Refused("Window4 memory sample is outside its owned aggregate scope")
+            scope = Path("/sys/fs/cgroup") / (prefix[0] + self.identity["scope_id"]).lstrip("/")
+            sample = dict(unix=time.time(), rank=self.rank, arm=(self.active or {}).get("arm"),
+                          mem_available_gib=mem, scope_id=self.identity["scope_id"],
+                          scope_memory_current_bytes=int((scope / "memory.current").read_text()),
+                          scope_memory_peak_bytes=int((scope / "memory.peak").read_text()),
+                          note="Shared DRAM aggregate, including GPU; peak is claim-lifetime, current is a five-second sample")
+            with (self.work / "memory-scope.jsonl").open("a") as stream:
+                stream.write(json.dumps(sample, sort_keys=True) + "\n")
         if mem < 16:
             raise Refused("local 16 GiB physical memory floor breached")
         for path, cap in ((self.ext, 6 * (1 << 30)), (self.work, int(6.3 * (1 << 30))),
@@ -144,6 +157,9 @@ class LocalArm:
         raise TimeoutError("local serve readiness deadline")
 
     def probes(self, arm, peer_meta):
+        if self.config.get("window_mode") == recipe.EAGER_MODE:
+            from eager_benchmark import probes
+            return probes(self, arm, peer_meta)
         name = arm["arm"]
         out = Path(self.active["out"])
         root = Path(self.config["ts"])
@@ -243,6 +259,10 @@ class LocalArm:
                 self.command(["cp", "--", str(self.work / "memwatch.txt"),
                               str(dest / f"{arm['arm']}.rank{self.rank}.memwatch.txt")], cleanup=True, limit=10)
                 atomic_json(dest / f"ownership-rank{self.rank}.json", dict(self.identity, container=active))
+                if self.config.get("window_mode") == recipe.EAGER_MODE:
+                    target = dest / f"{arm['arm']}.rank{self.rank}.memory-scope.jsonl"
+                    self.command(["cp", "--", str(self.work / "memory-scope.jsonl"), str(target)], cleanup=True, limit=10)
+                    copied.append(target)
                 copied += [dest / f"{arm['arm']}.rank{self.rank}.memwatch.txt", dest / f"ownership-rank{self.rank}.json"]
                 with (dest / f"{arm['arm']}.rank{self.rank}.SHA256SUMS").open("w") as sums:
                     self.command(["sha256sum", "--", *(str(path) for path in copied)],
@@ -267,6 +287,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
     outcome = dict(owned, simulation=not isinstance(adapter, LocalArm), completed_arms=[],
                    ownership_released=False, local_cleanup=[], returncode=1)
     current = None
+    probe_rank = 1 if config.get("window_mode") == recipe.EAGER_MODE else 0
     try:
         meeting.bind_peer(tick=adapter.tick)
         owned["window_end_unix"] = envelope.end_unix
@@ -300,13 +321,13 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             peer_ready = meeting.wait(stage + "-ready", tick=adapter.tick)
             if peer_ready["fabric"] != config["fabric"]:
                 raise Refused("peer observed fabric differs from frozen tuple")
-            if owned["rank"] == 0:
+            if owned["rank"] == probe_rank:
                 adapter.probes(arm, peer_ready)
                 meeting.publish(stage + "-probes", returncode=0)
             else:
-                while not (rdv / f"{stage}-probes-rank0.json").exists():
+                while not (rdv / f"{stage}-probes-rank{probe_rank}.json").exists():
                     envelope.remaining(); meeting.check(); adapter.tick(); time.sleep(poll_seconds)
-                finished = meeting.checked(rdv / f"{stage}-probes-rank0.json", 0)
+                finished = meeting.checked(rdv / f"{stage}-probes-rank{probe_rank}.json", probe_rank)
                 if finished["returncode"] != 0: raise Refused("head probe failed")
             current = None
             try:

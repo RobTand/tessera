@@ -23,14 +23,20 @@ QUEUE = Path("/mnt/shared/prismabuild-fleet/pb-queue")
 def dry_arm(name: str, env: dict):
     config = recipe.inputs(env, live=False)
     arm = recipe.arm_settings(name, env)
+    if config.get("window_mode") == recipe.EAGER_MODE:
+        expected = {"eager2048": "2048", "eager4096": "4096"}
+        if env.get("MAX_BATCHED") != expected.get(name) or arm["eager"] != "1":
+            raise Refused("Window4 is exactly eager2048/2048 then eager4096/4096")
+        arm["max_batched"] = int(env["MAX_BATCHED"])
     if (Path(config["receipts"]) / name).exists():
         raise Refused("an arm's receipts are never merged into an existing arm")
     print(f"arm {name} (dry run): local PB rank action on each host; start nothing")
-    print(f"  5400-second whole-window including rendezvous/three arms/owned cleanup; {CLEANUP_SECONDS}s cleanup reserve")
+    print(f"  5400-second whole-window including rendezvous/all named arms/owned cleanup; {CLEANUP_SECONDS}s cleanup reserve")
     print("  both hosts: MemAvailable >= 114 GiB; sampled physical floor 16 GiB; native threads=1")
     for rank in (0, 1):
         print(f"  serve rank{rank}: {shlex.join(recipe.serve(config, arm, rank))}")
-    print("  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
+    print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") == recipe.EAGER_MODE else
+          "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
 
 
 def rows(root: Path, config: dict, env: dict) -> list[dict]:
@@ -41,10 +47,13 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
                            demand=dict(cpu=8 if rank == 0 else 6, mem_gb=104, gpu=1),
                            gpu_memory_gb=102, exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
-                           priority=10, priority_reason="Goal: full nominated A8 graph control after exact-head review; one paired window at a time",
+                           priority=10, priority_reason=("Goal: exact reviewed A8S eager Window4 MNBT2048/4096"
+                                                        if config.get("window_mode") == recipe.EAGER_MODE else
+                                                        "Goal: full nominated A8 graph control after exact-head review; one paired window at a time"),
                            container_images=[config["image"]], timeout_s=WINDOW_SECONDS,
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
                                                           "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
+                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT") if key in env},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
                                 "GRAPH_PEER_WAIT_SECONDS": "3600",
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
@@ -99,7 +108,8 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
     recipe.require_producer(Path(__file__).resolve().parents[2], env.get("PRODUCER_COMMIT", ""),
                             env.get("PRODUCER_SHA256", ""), exact_head=True)
     config = recipe.inputs(env, live=True)
-    arms = recipe.plan(path)
+    mode = config.get("window_mode", "graph-control")
+    arms = recipe.plan(path, mode=mode)
     if any(arm.get("fabric", config["fabric"]) != config["fabric"] for arm in arms):
         raise Refused("plan and frozen issues-owned fabric differ")
     if not str(root).startswith("/mnt/shared/"):
@@ -110,7 +120,12 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
     disks = diskcheck(for_model=not role_preflight)
     root.mkdir(parents=True, exist_ok=False)
     (root / "arms").mkdir()
-    setup = dict(schema="tessera.graph_control_window.v1", run_id=uuid.uuid4().hex,
+    if mode == recipe.EAGER_MODE:
+        for arm in arms:
+            directory = Path(config["profile_dir"]) / arm["arm"]
+            directory.mkdir(parents=True, exist_ok=False)
+            directory.chmod(0o777)
+    setup = dict(schema=("tessera.window4_eager_window.v1" if mode == recipe.EAGER_MODE else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
                  config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
                  requested_pb_timeout_s=WINDOW_SECONDS, effective_pb_timeout_s=None, peer_wait_seconds=3600,
                  predecessors=predecessors, diskcheck=disks,
@@ -150,6 +165,9 @@ def submit(root: Path, reviews: Path):
                RECEIPTS=setup["config"]["receipts"], FABRIC=setup["config"]["fabric"],
                SOURCE_COMMIT=setup["config"]["source_commit"], SOURCE_SHA256=setup["config"]["src_sha256"],
                PRODUCER_COMMIT=setup["config"]["producer_commit"], PRODUCER_SHA256=setup["config"]["producer_sha256"])
+    for key, field in (("WINDOW_MODE", "window_mode"), ("ARTIFACT_MANIFEST", "artifact_manifest"), ("PQ_PIN_COMMIT", "pq_pin_commit")):
+        if field in setup["config"]:
+            env[key] = setup["config"][field]
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
                             env["PRODUCER_SHA256"], exact_head=True)
     if recipe.inputs(env, live=True) != setup["config"]:
@@ -160,6 +178,11 @@ def submit(root: Path, reviews: Path):
     for who in ("parent", "D5"):
         if review.get(who, {}).get("verdict") != "APPROVE" or review[who].get("head_sha") != env["PRODUCER_COMMIT"]:
             raise Refused(f"missing exact frozen-source {who} review; no real model start")
+    if setup["config"].get("window_mode") == recipe.EAGER_MODE:
+        for who in ("parent", "D5"):
+            candidate = review.get("runtime", {}).get(who, {})
+            if candidate.get("verdict") != "APPROVE" or candidate.get("head_sha") != setup["config"]["pq_pin_commit"]:
+                raise Refused(f"missing exact corrected runtime candidate {who} review; no Window4 model start")
     for predecessor in setup["predecessors"]:
         terminal_cleanup(predecessor["identity"], read_terminal(predecessor["identity"], QUEUE))
     from datetime import datetime, timezone
@@ -168,6 +191,9 @@ def submit(root: Path, reviews: Path):
     if not observed["submit_allowed"]:
         raise Refused("campaign769 is queued/claimed or queue view incomplete; never queue a second paired window")
     atomic_json(root / "launch-diskcheck.json", dict(checks=diskcheck()))
+    if setup["config"].get("window_mode") == recipe.EAGER_MODE:
+        from eager_benchmark import require_drain
+        atomic_json(root / "pact-drain-at-submit.json", require_drain(QUEUE))
     if (root / "submission-started.json").exists():
         raise Refused("this invocation was already submitted; preserve its failed/partial evidence")
     atomic_json(root / "submission-started.json", dict(reviews=review))
@@ -178,7 +204,7 @@ def submit(root: Path, reviews: Path):
         if socket.gethostname() not in HOSTS:
             raise Refused("measurement submission must use the published PB client on a GB10 origin; celestia has no accelerator evidence")
         done = subprocess.run([sys.executable, str(PB / "pbcampaign.py"), "--transport", "pool", "--wait-s", "6000",
-                               str(root / "manifest.json")], stdout=log, stderr=subprocess.STDOUT)
+                               "--max-inflight", "2", str(root / "manifest.json")], stdout=log, stderr=subprocess.STDOUT)
     physical = collect(root, QUEUE)
     if not physical["ownership_released"]:
         raise Refused(f"physical handoff unproven; preserve ownership and logs: {physical['error']}")
@@ -206,10 +232,10 @@ def main():
         for arm, env in recipe.parse_plan(args.plan):
             print(f"== arm {arm}")
             dry_arm(arm, {**os.environ, **env})
-        recipe.plan(args.plan)
+        recipe.plan(args.plan, mode=os.environ.get("WINDOW_MODE", "graph-control"))
         return 0
     if args.prepare and not args.submit:
-        if len(args.census_key) != 2:
+        if os.environ.get("WINDOW_MODE", "graph-control") != recipe.EAGER_MODE and len(args.census_key) != 2:
             raise Refused("supply the two exact current campaign769 action keys")
         prepare(args.prepare, args.plan, os.environ, args.handoffs, args.census_key,
                 role_preflight=args.prepare_role_preflight)

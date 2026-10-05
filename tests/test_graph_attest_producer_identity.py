@@ -20,8 +20,7 @@ import tp2_recipe as recipe
 import watch_window_queue
 import window_driver as driver
 
-FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py", "submit.py",
-         "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt")
+FILES = recipe.PRODUCER_FILES
 
 
 class ReachedAdmission(RuntimeError):
@@ -60,7 +59,7 @@ def fixture_inputs(monkeypatch, tmp_path, producer, reviewed):
                PRODUCER_COMMIT=reviewed, PRODUCER_SHA256=config["producer_sha256"])
     monkeypatch.setattr(driver, "__file__", str(producer / "experiments/graph_attest_702/window_driver.py"))
     monkeypatch.setattr(recipe, "inputs", lambda *a, **kw: config)
-    monkeypatch.setattr(recipe, "plan", lambda p: [dict(arm="aE1", fabric="socket")])
+    monkeypatch.setattr(recipe, "plan", lambda p, **kw: [dict(arm="aE1", fabric="socket")])
     monkeypatch.setattr(driver, "rows", lambda *a, **kw: [])
     def reached(*args, **kwargs):
         raise ReachedAdmission("unreviewed producer reached admission/queue inspection")
