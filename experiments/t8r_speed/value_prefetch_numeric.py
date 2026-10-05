@@ -24,10 +24,10 @@ from tessera import routed_fused as rf
 from experiments.t8r_speed.pb_staged_store import NativeCallback, StagedInputs
 
 SCOPE = 'syntheticgeometry/nonshipping'
-SOURCE_SHA = '80554582d94783180a7b583c35284ede7fb638dd8357c24c2b04a6ea6f708984'
+SOURCE_SHA = '4e93959a2a265dcd560e827fe65bbfe703b25b0e7769aef221bd426b882c802a'
 ARMS = {
-    'baseline': ('tessera_routed_fused_value', 0, '24a7b4321dc93dcbfc023798e1ec125ea4aeda60c4f13b043c375b4be0a9400b'),
-    'candidate': ('tessera_routed_fused_value_prefetch4', 4, '0a9fd0a086d4264f74f1cc9e2bfdae28f15cafa6ef7285cffaa40c96971023b2'),
+    'baseline': ('tessera_routed_fused_value', 0, '388e8aed425ad05cbf998451d041187fe37170cebb2f05870cac1f3d85e833a8'),
+    'candidate': ('tessera_routed_fused_value_prefetch4', 4, '8f7e60f5ab1ae1664b05b8866bb9f84b2442793ebdcc08c5b4a5ca60e5489899'),
 }
 SANITIZER_SHA = '7a7fcdefb67042731daf021478176f4919e1843d0b10cb697af28a7d8a3d108b'
 MS = [1, 7, 71]
