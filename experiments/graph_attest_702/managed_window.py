@@ -173,11 +173,13 @@ class Rendezvous:
             raise Refused("stage timestamp outside this admitted attempt")
         return value
 
-    def bind_peer(self) -> None:
+    def bind_peer(self, *, tick=None) -> None:
         path = self.root / f"rank{1 - self.rank}.json"
         while not path.exists():
             self.envelope.remaining()
             require_claim(self.identity, self.queue)
+            if tick:
+                tick()
             time.sleep(min(self.poll_seconds, self.envelope.remaining()))
         value = read_json(path)
         if (value.get("rank") != 1 - self.rank or value.get("host") != HOSTS[1 - self.rank]
@@ -189,11 +191,13 @@ class Rendezvous:
         self.envelope.tighten(value["claimed_unix"] + WINDOW_SECONDS)
         self.check()
 
-    def wait(self, stage: str) -> dict:
+    def wait(self, stage: str, *, tick=None) -> dict:
         path = self.root / f"{stage}-rank{1 - self.rank}.json"
         while True:
             self.envelope.remaining()
             self.check()
+            if tick:
+                tick()
             if path.exists():
                 return self.checked(path, 1 - self.rank)
             time.sleep(min(self.poll_seconds, self.envelope.remaining()))
@@ -204,6 +208,14 @@ def terminal_cleanup(identity: dict, terminal: dict) -> dict:
     control = terminal.get("resource_scope", {})
     cleanup = terminal.get("resource_scope_cleanup", {})
     export = cleanup.get("export", {})
+    # Reuse the published broker proof rule; release/ticket retirement is not emptiness.
+    import sys
+    helper = Path(os.environ.get("PRISMABUILD_READER_HELPER_ROOT", "/mnt/shared/prismabuild-fleet/repo"))
+    sys.path.insert(0, str(helper / "src"))
+    from prismabuild.reader_lease import export_verdict_proves_empty
+    proven, reason = export_verdict_proves_empty(export, scope_id=identity["scope_id"])
+    if not proven:
+        raise Refused(f"broker scope cleanup unproven: {reason}")
     if (terminal.get("action_key") != identity["action_key"]
             or terminal.get("claimed_host") != identity["host"]
             or terminal.get("claimed_unix") != identity["claimed_unix"]

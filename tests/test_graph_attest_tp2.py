@@ -129,7 +129,7 @@ def test_the_committed_artifact_plan_dry_runs_end_to_end(tmp_path):
     artifact.mkdir()
     (artifact / "config.json").write_text("{}")
     env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TS": str(ROOT), "ARTIFACT": str(artifact),
-           "RECEIPTS": str(tmp_path / "receipts")}
+           "RECEIPTS": str(tmp_path / "receipts"), "FABRIC": "socket"}
     here = ROOT / "experiments" / "graph_attest_702"
     done = subprocess.run(["bash", str(here / "drive_tp2.sh"), str(here / "plan-artifact.txt"), "--dry-run"],
                           env=env, capture_output=True, text=True, timeout=300)
@@ -316,3 +316,15 @@ def test_the_window_plan_runs_on_sockets():
 def test_an_arm_names_its_fabric_or_does_not_run(tmp_path):
     done = _dry_run(tmp_path, FABRIC="")
     assert done.returncode != 0 and "FABRIC" in (done.stdout + done.stderr)
+def test_dry_recipe_never_launches_a_remote_rank_by_ssh(tmp_path):
+    done = _dry_run(tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "ssh" not in done.stdout.lower()
+    assert "local PB rank action" in done.stdout
+
+
+def test_dry_recipe_declares_one_window_including_owned_cleanup(tmp_path):
+    done = _dry_run(tmp_path)
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "5400-second whole-window" in done.stdout
+    assert "cleanup reserve" in done.stdout

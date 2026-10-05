@@ -1,103 +1,215 @@
-# Run plan: the artifact-scope graph-equals-eager receipt (tessera#702, prismaquant#1586)
+# Run plan: the managed artifact graph control (tessera#702, prismaquant#1586)
 
-Not run. It needs a two-Spark window granted by the kernels lead. vLLM serving is exempt
-from PrismaBuild, so the arms run directly, on sparky, inside that window.
+**Not a model-run result or a launch authorization.** The repair is based on merged
+PR930 (`f1c07473a74bb5999cce51134c769ed7efb45d6c`). It first extracts ownership and
+deadlines into `managed_window.py`, then cuts the existing TP2 recipe over to two
+published PrismaBuild actions. The serving exemption does not exempt the batch
+48-choice equality validation. Neither rank starts the other host, by SSH or any
+other unadmitted launcher. PrismaBuild alone owns admission, placement and scope
+release; this recipe does not provide atomic two-host reservation.
 
-## What it produces
+## Frozen control, not the future headline artifact
 
-A `tessera.graph_equals_eager.v2` receipt whose one graph arm attests the serve the
-ship card publishes:
-
-| Scope field | Value |
+| Input | Required value |
 |---|---|
-| image | `localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705…` |
-| model | the release artifact (default here: A8SE752MN's, `/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported`, 158 GiB). The issues lead names the card's artifact; the receipt binds its `config.json` sha256 |
-| Tessera | the tree the card will pin. Run from a clean clone of the merged #930 master commit staged on `/mnt/shared`; the receipt binds its `src/` digest |
-| compilation_config | `{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}` (release flags; the plugin pins capture sizes 2,4,6,8) |
-| speculative_tokens | 1 (MTP, draft TP 2, triton MoE) |
-| max_model_len / max_num_seqs | 8448 / 4 |
-| tensor_parallel_size | 2 (rank 0 + API on sparklina, rank 1 headless on sparky; mp executor, `--nnodes 2`) |
-| fabric | `socket` (both ranks' NCCL banners; `FABRIC=socket` on every arm) |
+| Artifact | `/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported` (A8SE752MN control) |
+| `config.json` SHA-256 | `3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898` |
+| Image | `localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a` |
+| Source | One clean, frozen, reviewed/landed shared checkout; explicit issues-owned `SOURCE_COMMIT` and `SOURCE_SHA256`, never a receipt-time restamp |
+| Fabric | **SOCKET**, explicitly supplied as `FABRIC=socket`, `NCCL_IB_DISABLE=1`; CEO clarification `dec-1005-005132-3a81` supersedes the earlier RoCE relay |
+| Topology | TP2, mp executor, nnodes 2; rank0/API on sparklina `10.100.96.2`, local rank1/headless on sparky `10.100.96.1` |
+| Concurrency / length | c4 / 8,448 |
+| MTP | One speculative token, draft TP2, triton MoE |
+| Graph flags | `{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}`; existing plugin captures sizes 2/4/6/8 |
+| KV | 2,147,483,648 bytes **per rank**, `fp8_ds_mla` |
+| Other flags | resident, triton MoE, `TESSERA_FUSED_E4M3_MMA=e4m3`, autotune off, chunked prefill 2048, prefix caching off, breakable graphs off, NoPE off |
 
-Other settings, as the release latency serve (pact/u4 `LAT_SERVE`, arm A8SE752MN):
-- `fp8_ds_mla` KV, `--moe-backend triton`, resident, `TESSERA_FUSED_E4M3_MMA=e4m3`;
-- FlashInfer autotune off, chunked prefill at 2048, no prefix caching, breakable graphs off, GLM53 NoPE off.
+Order is exactly `aE1 eager / aGR graph / aE2 eager`. Each arm runs two passes of
+the entire unchanged 48-choice equality set, then all four existing single-request
+long screens. No fourth arm, reduced case set, smaller cache or automatic retry is
+approved. Long traffic above `index_topk` remains a screen, not long-context
+equality, served BF16 KL or a speed result. Inconsistent eager passes are
+non-qualifying; preserve them without guessing a fabric/NCCL cause.
 
-KV: 2 GiB per rank, the arm's c4 budget (`ARM_LAT_KV_BYTES`). Its MTP speed legs ran 384 MiB at c1. The equality set needs 4 resident requests, and one MTP request occupies a 4352-token block (about 0.47 GiB).
+The A8 control receipt is not transferable to the new all-allowable T8 headline
+artifact, whose true bytes and config digest must be supplied separately. Full
+artifact equality, compiled runtime cells, D13 serving pin, scientific quality,
+served profiling/power and ship-card qualification remain separate gates.
 
-## Commands (on sparky, in the window)
+## Receipt-source dependency and shared-file integration
+
+The CEO engineer owns PR942, `opus/702-receipt-fabric-v2`, pushed head
+`f7403d1dc49dd87c81d021287afa884e81cc0120` when inspected. It adds
+`graph_equals_eager.v2`, with fabric as a ninth scope field. At TP2 the builder
+reads **both ranks' actual NCCL banners**, refuses requested/observed mismatch,
+and v1 receipts remain inspectable but cannot verify cards. This repair does not
+copy or edit that schema/parser implementation. Its measured `fabric_observed`
+record retains the builder's `rank0:Using network Socket;rank1:Using network Socket`
+grammar, derived from each local log, not from socket defaults.
+
+PR942 and this repair both change `arm_tp2.sh`, `RUNPLAN-artifact.md` and portions
+of `test_graph_attest_tp2.py`. Integrate only reviewed/landed source: retain the
+managed local-rank entrypoint, explicit SOCKET nomination, v2 parser/tests and the
+observed-banner record. The plan reader also accepts PR942's explicit per-arm
+`FABRIC=socket`, but refuses an arm that differs from the frozen common tuple.
+Do not freeze a live writer's worktree or silently use the pre-v2 source for a
+card. Parent and D5 review of the final frozen source precede any real model start.
+
+## Published actions and finite ownership
+
+`drive_tp2.sh` now delegates to `window_driver.py`. `--dry-run` only inspects
+inputs and renders the two local serve commands. It launches nothing. A direct
+`arm_tp2.sh ARM` no longer starts containers; the one-arm wrapper is command
+inspection only. `--prepare` creates one fresh invocation root, input digest and
+a supported `pbcampaign.py` manifest. `--submit` checks exact-source parent/D5
+approval, unchanged manifest/inputs, both preceding handoffs and fresh D1, then
+runs the published campaign **with its completion client**, not detached.
+
+Each action executes `rank_window.py --rank 0|1` on its nominated host. Local
+Docker uses PB's ordinary shim, inherited CPU affinity and memory parent. The
+local rank/controller and rank0's equality subprocesses are admitted children,
+not recursive submitters. A fresh invocation UUID, full action key, broker nonce,
+scope, container owner, claimed host/start and input SHA bind every rendezvous
+and stage marker. Only a matching **live CLAIMED** peer can authorize a launch;
+DONE, FAILED, touched stale files and a new attempt of the same key cannot.
+
+The deadline is the **earliest rank claim time + 5,400 seconds**. Rendezvous,
+image/source/memory preflight, all three arms, probes and owned cleanup consume
+that single envelope. It never restarts for a new arm or the later-admitted rank.
+Work stops before the final 180-second cleanup reserve. Subprocess timeouts kill
+the exact owned process group, including its CPU descendants. Startup also has
+an 1,800-second bound, clipped to what remains. A failure or timeout publishes
+partial evidence and stops all later arms; there is no automatic fourth arm.
+
+Each launch records its full CID/cidfile and launch intent before proceeding.
+Cleanup checks CID, scope/owner labels, attempt/run labels and Docker cgroup
+parent before removing **that exact local container**. Ambiguous launch failures
+use the unique name only for discovery, then require the same ownership checks.
+Log, removal and bounded-copy failures remain failures, not discarded stderr.
+Local output and cache directories survive failure; no model, unrelated cache,
+foreign container or tagged image is deleted. The install copy replaces only
+`/ext/tessera` inside this invocation's unique owned cache directory; compiled
+extension/Triton caches are reused across the three arms.
+
+Before the next arm, each rank proves its owned containers and GPU descendants
+empty. After both controllers exit, the worker's exact-attempt broker export must
+prove stopped/empty/tickets-settled/released inside the common deadline. The
+collector reuses PB's `export_verdict_proves_empty`; payload exit zero or a missing
+old CID is not enough. `handoff.json` releases logical ownership only after both
+terminal records, all local cleanup records and both broker proofs agree. A
+failed/copy-incomplete handoff retains ownership/evidence, even if ordinary PB
+reservations have already been safely released by the worker. A waiter expiry is
+not terminal or cleanup proof: retain exact keys and renew the published
+completion client, never drain the other owner or silently start a new window.
+
+## Resource contract (caps, not measured fit)
+
+| Per action | rank0 / sparklina | rank1 / sparky |
+|---|---:|---:|
+| Aggregate CPU ceiling | 8 | 6 |
+| Shared host DRAM cap, GiB | 104 | 104 |
+| GPU subset of that shared DRAM, GiB | 102 | 102 |
+| Physical GPU | 1 exclusive | 1 exclusive |
+| Native OMP/MKL/OpenBLAS/NumExpr/MAX_JOBS threads | 1 | 1 |
+| Declared local scratch/output allowance, GiB | 8 | 8 |
+
+Combined peaks are 14 CPUs, 208 GiB host DRAM, a 204 GiB GPU **subset** (not extra
+DRAM), and two exclusive physical devices. CPU demand covers target/draft engine
+processes, NCCL progress/helpers and the local controller; rank0 additionally
+has the API and one-at-a-time equality client. These are conservative declared
+ceilings, not measured concurrent-use claims. The 104 GiB cap budgets the derived
+98 GiB model/KV peak plus 6 GiB unmeasured graph/host allowance; the GPU subset
+leaves 2 GiB inside the host cap for host-only work. This does **not** establish
+that graph pools or cold JIT fit; refusal/OOM must retain its exact attempt and
+memory evidence. Do not copy EXL3's 100 GiB budget or reduce demand to force admission.
+
+Both hosts still require **114 GiB MemAvailable** before each arm. The derivation
+is the historical 94.4/96.1 GiB release peaks at 384 MiB KV, plus 1.625 GiB for
+2 GiB KV, rounded conservatively to 98 GiB plus the unchanged **16 GiB physical
+floor**. The floor is sampled every five seconds, not a proof against transient
+undershoot. No cache reduction is approved; four resident requests and all
+capture sizes/cases remain required.
+
+Runtime disk caps cover the unique local cache (6 GiB), local work including
+cache/logs (6.3 GiB) and shared arm records (0.2 GiB total). The declared 8 GiB
+local allowance also covers checkout/PB-log overhead; shared output/CAS allowance
+is 1 GiB. The artifact is read in place, not copied. Staging a new image/artifact
+is not included: declare its actual output and take a separate fresh D1 if needed.
+Preparation and submission each run D1 on both local scratch mounts (`--need-gb 8`)
+and shared output (`--need-gb 1`). Historical free-space figures do not qualify a run.
+
+## Order and commands (not executed as a model window)
+
+The newer CEO order is ready-first: whichever corrected/reviewed census769 or
+EXL3 baseline is ready goes first, then the other, **then 702**. Campaign must
+supply both hosts' terminal physical handoffs for **both** preceding windows.
+`--handoffs` reads a JSON object with exactly `census769` and `EXL3`; each value is
+the two owner-supplied identities (`action_key`, `nonce`, `scope_id`, `host`,
+`claimed_unix`, `window_end_unix`). The recipe looks up their real PB terminal
+records and broker cleanup, not caller-written “empty” assertions. It never
+edits another owner's record or drains a foreign scope.
+
+Run preparation from celestia against a clean shared checkout containing the
+reviewed/landed managed repair and v2 dependency. Issues supplies the source
+commit/digest; do not infer a tuple from the socket setting or choose a future
+headline artifact. Supply exact-source review records before submission:
+`parent` and `D5` objects each with `verdict: APPROVE`, `head_sha` equal to the
+frozen source and the retained review URL/evidence. Use a fresh root every attempt.
 
 ```bash
-# 1. stage the tree the card will pin (once; any box; a clean clone, never edited)
-SHA=<merged #930 master commit>
-git clone --no-checkout https://github.com/RobTand/tessera.git /mnt/shared/tessera-measurements/graph-attest-702/src/tessera-$SHA
-git -C /mnt/shared/tessera-measurements/graph-attest-702/src/tessera-$SHA checkout --detach $SHA
-
-# 2. dry run: checks inputs, prints both ranks' commands, starts nothing
-export TS=/mnt/shared/tessera-measurements/graph-attest-702/src/tessera-$SHA
+PB=/mnt/shared/prismabuild-fleet/repo/tools
+CLIENT=/home/rob/tmp/pb-submit-celestia-20261003/bin/python
+: "${TS:?clean frozen shared source}" "${SOURCE_COMMIT:?issues-owned commit}"
+: "${SOURCE_SHA256:?issues-owned src digest}" "${RUN:?fresh shared invocation root}"
+: "${HANDOFFS:?both preceding terminal physical handoffs}" "${REVIEWS:?parent and D5 reviews}"
+export TS SOURCE_COMMIT SOURCE_SHA256
 export ARTIFACT=/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported
-export RECEIPTS=/mnt/shared/tessera-measurements/graph-attest-702/artifact-$SHA   # every plan arm sets FABRIC=socket
-bash $TS/experiments/graph_attest_702/drive_tp2.sh $TS/experiments/graph_attest_702/plan-artifact.txt --dry-run
+export FABRIC=socket RECEIPTS="$RUN/arms"
 
-# 3. the window: aE1 (eager), aGR (graph), aE2 (eager); stops at the first failed arm
-bash $TS/experiments/graph_attest_702/drive_tp2.sh $TS/experiments/graph_attest_702/plan-artifact.txt
+# Command inspection is also a check: submit it through PB, CPU-only.
+"$CLIENT" "$PB/pbrun.py" --cwd "$TS" --tag x86 --cpus 1 --demand mem_gb=2 \
+  --env TS="$TS" --env ARTIFACT="$ARTIFACT" --env RECEIPTS="$RECEIPTS" --env FABRIC=socket \
+  --timeout-s 120 -- /bin/bash experiments/graph_attest_702/drive_tp2.sh \
+  experiments/graph_attest_702/plan-artifact.txt --dry-run
 
-# 4. the receipt (no GPU; any box)
-echo '{}' > /tmp/no-pb.json
-python3 $TS/experiments/graph_attest_702/receipt.py $RECEIPTS /tmp/no-pb.json \
-  /mnt/shared/tessera-measurements/graph-attest-702/receipt-artifact-$SHA.json \
-  --eager aE1,aE2 --graph aGR --commit $SHA \
+# Preparation is read-only inspection/submission bookkeeping; no container starts.
+bash "$TS/experiments/graph_attest_702/drive_tp2.sh" \
+  "$TS/experiments/graph_attest_702/plan-artifact.txt" --prepare "$RUN" --handoffs "$HANDOFFS"
+
+# Only after parent/D5 review and the recorded window handoffs. Never run this during repair.
+bash "$TS/experiments/graph_attest_702/drive_tp2.sh" \
+  "$TS/experiments/graph_attest_702/plan-artifact.txt" --submit "$RUN" --reviews "$REVIEWS"
+
+# After complete terminal physical handoff: existing receipt builder, CPU-only PB.
+"$CLIENT" "$PB/pbrun.py" --cwd "$TS" --tag x86 --cpus 2 --demand mem_gb=2 --timeout-s 120 \
+  -- /home/rob/venvs/tessera-train-8bff20d0/bin/python \
+  experiments/graph_attest_702/receipt.py "$RECEIPTS" "$RUN/receipt-manifest.json" "$RUN/receipt.json" \
+  --eager aE1,aE2 --graph aGR --commit "$SOURCE_COMMIT" \
   --not-measured "served KL against BF16 under graphs" --not-measured "graph-vs-eager speed"
 ```
 
-`--dry-run` was exercised on the CPU (`tests/test_graph_attest_tp2.py`). It checks that:
-- the two ranks serve one engine argv, apart from the rank flags;
-- the eager and graph arms differ only in `--enforce-eager` versus `--compilation-config`.
+Inspect eager repeatability, require 48/48 for both complete passes in every arm,
+both ranks' captured-size/class replay evidence and all source/image/fabric
+fields, then call the unchanged v2 verifier against the exact serve tuple.
+Retain hashes, both rank keys/nonces/CIDs, terminal records, logs and CAS receipts.
+No receipt builder success alone establishes a scientific release or compiled cell.
 
-## Time (derived, not measured at TP 2 with this harness)
+## Verification scope
 
-| Step | Expected | Basis |
-|---|---|---|
-| load, per arm | 8 min | measured 7:07 + 27 s on the GLM body (u4.conf); `LOAD_DEADLINE_S` 1800 |
-| first arm's cold JIT (Tessera extensions, Triton) | +5 to 10 min | `EXT=/home/rob/tmp/ga702-tp2-ext` is box-local and starts empty |
-| graph capture, aGR | 1 to 3 min | two classes × sizes 2,4,6,8 × target + draft = 16 FULL graphs |
-| equality set, two passes | 4 to 8 min | 20 cases of 24 to 32 tokens, 2 s pause per batched case |
-| long single-block cases | 1 min | 4 cases, 2100 to 4000 tokens |
-| teardown and copy | 1 min | |
-| **per arm** | **15 to 22 min** | |
-| **three arms** | **about 55 min, 80 min worst; ask for a 90-minute window** | |
+Selected independent CPU tests use published `pbtest.py` fanout, xdist worksteal
+and durations, after fresh D1. The before controls test the real old dry-run:
+remote rank launch and missing whole-window declaration fail. After controls
+render the corrected real recipe. The real protocol is also exercised with two
+CPU controller subprocesses and real child-process failures/timeouts/termination.
+Only the local device adapter and private claim records are simulated; the
+production local cleanup control flow additionally uses bounded CPU CLI exits to
+exercise wrong-owner, log, removal and copy failures. These are not live Docker
+shim/broker qualification, CUDA/NCCL, two-Spark rendezvous, GPU descendants,
+physical memory-floor, full-artifact equality, residency, speed or power evidence.
+No local suite, full suite, real model window or source/pin/quality promotion is
+part of this repair.
 
-## Disk and memory, per Spark
-
-- **Memory** (MemTotal 121.6 GiB on each box):
-  - Release MTP peaks were measured at 384 MiB KV: sparky 94.4 GiB, sparklina 96.1 GiB.
-  - At 2 GiB KV the derived peaks are about 96 and 98 GiB. Two graph classes add graph-pool memory that has not been measured.
-  - The preflight refuses unless MemAvailable ≥ `FLOOR_GIB` (16) + `EXPECT_PEAK_GIB` (98) = 114 GiB on **both** boxes. Today sparklina read 113.5 GiB with another container up; an idle box should clear it, but that is not guaranteed.
-  - During the run, a 5-second watchdog removes both ranks if either box drops under 16 GiB.
-  - If the preflight refuses at 114 GiB, do not lower the floor. The decision (kernels) is to shrink KV, which caps residency and changes scheduling, so the eager pool and graph arm must share whatever is chosen.
-- **Disk:**
-  - box-local `EXT` cache: about 3 to 6 GiB per box (sparky 134 GiB free, sparklina 155 GiB free);
-  - box-local work directory with NCCL INFO logs: under 100 MB per arm;
-  - receipts on `/mnt/shared`: about 30 MB per arm.
-  - The artifact is read from `/mnt/shared` and not copied.
-
-## What can still fail, and what each outcome means
-
-- **A fourth cause at TP 2.**
-  - The stub arms were TP 1. Under graphs vLLM may route the tensor-parallel all-reduce differently from eager (custom or symmetric-memory all-reduce inside a captured graph).
-  - If aGR departs from eager while aE1 and aE2 agree, that is the finding. The receipt says `not_equal`, and the cause must be isolated: the next arm captures with the eager all-reduce path.
-- **Eager not reproducing itself at TP 2.** If aE1 and aE2 disagree, the pool cannot judge anything; the cause is the fabric or NCCL reduction order.
-  - The fabric is receipt scope (schema v2, dec-1005-003356-6ba2). Every plan arm sets `FABRIC=socket`: the Spark pair serves on sockets (RoCE `ibv_reg_mr` fails ENOMEM there; PrismaQuant `tools/gold_engine_options.py`), and PrismaQuant's quality evidence runs on sockets. `receipt.py` reads it from both ranks' NCCL banners (`Using network Socket`).
-  - `arm_tp2.sh` takes no default fabric. An arm whose banners name another fabric than the one requested is refused (exit 5), and `receipt.py` refuses arms that disagree: one receipt is one fabric, never mixed. A card served on another fabric needs its own receipt; `verify` refuses a mismatch.
-- **Load refusal on the artifact's export.** The artifact was exported at contract v44 (`a5f3b232`). No refusal is expected, since the plugin carries no contract-version gate, but aE1 is the load smoke.
-
-## Follow-up, not in this plan: the index_topk boundary on the GPU
-
-Review of #930 (#3): no GPU case puts a step's `max_seq_len` at exactly `index_topk`
-(2048) and then `index_topk + 1` within one request. The CPU toy runner holds both
-steps for the target and the MTP k=1 draft prefill, which replays on the target step's
-record; draft decode steps (k >= 2) are refused by the plugin. A GPU case would be a
-2040-token prompt generating 24 tokens: steps up to 2048 are in the equality class, and
-later steps only in the screen, because eager does not reproduce itself above
-`index_topk`. It needs a new case in `equal-508.py` and an arm of its own; it is not in
-`plan-artifact.txt`.
+The approximately 55-minute expected / 80-minute planning-worst / 90-minute hard
+window remains **derived, not measured at TP2**: three 15–22 minute arms, first
+cold JIT +5–10 minutes, graph capture +1–3 minutes, plus rendezvous/cleanup. A fit
+claim requires the later real finite window, not these CPU controls.
