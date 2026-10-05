@@ -69,7 +69,57 @@ class LocalArm:
     def command(self, argv, **kwargs):
         return self.envelope.run(argv, **kwargs)
 
+    def headroom(self):
+        """CEO-authorized bounded wait for the unchanged 114 GiB preflight predicate.
+
+        Waits at most 900 seconds, capped by the existing envelope lifetime, polling on
+        the run_rank cadence with the live guard checked every poll. Never launches a
+        model below threshold; expiry raises the original refusal text unchanged. One
+        terminal wait report is appended to the shared rendezvous per call, including
+        on refusal/cancellation/deadline.
+        """
+        threshold_gib, wait_bound_seconds = 114, 900.0
+        deadline = time.monotonic() + wait_bound_seconds
+        started_unix = time.time()
+        samples = []
+        reason, terminal = None, None
+        try:
+            while True:
+                sample = dict(unix=time.time(), monotonic=time.monotonic(),
+                              available_gib=available_gib())
+                samples.append(sample)
+                if sample["available_gib"] >= threshold_gib:
+                    self.tick()  # live guard recheck immediately before declaring ready
+                    reason = "ready"
+                    break
+                left = self.envelope.remaining()  # raises TimeoutError at the deadline
+                if time.monotonic() >= deadline:
+                    reason = "headroom_timeout"
+                    break
+                self.tick()  # existing guard every poll; peer cancel/floor propagate
+                time.sleep(min(getattr(self, "poll_seconds", .2), left, deadline - time.monotonic()))
+        except Refused as exc:
+            reason, terminal = "lifecycle_cancelled", exc
+        except TimeoutError as exc:
+            reason, terminal = "deadline", exc
+        finally:
+            ended_unix = time.time()
+            report = dict(threshold_gib=threshold_gib, wait_bound_seconds=wait_bound_seconds,
+                          initial_available_gib=samples[0]["available_gib"] if samples else None,
+                          last_available_gib=samples[-1]["available_gib"] if samples else None,
+                          started_unix=started_unix, ended_unix=ended_unix,
+                          elapsed_seconds=ended_unix - started_unix,
+                          samples=samples, reason=reason)
+            with (self.rdv / f"headroom-preflight-rank{self.rank}.jsonl").open("a") as stream:
+                stream.write(json.dumps(report, sort_keys=True) + "\n")
+        if terminal is not None:
+            raise terminal
+        if reason != "ready":
+            raise Refused("local MemAvailable below unchanged 114 GiB preflight")
+        return samples
+
     def preflight(self):
+        self.headroom()
         if available_gib() < 114:
             raise Refused("local MemAvailable below unchanged 114 GiB preflight")
         runtime = Path(self.config["ts"]) / "src"
@@ -304,6 +354,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
     """The real finite protocol; CPU scenarios substitute only the LOCAL device adapter."""
     meeting = Rendezvous(rdv, owned, queue, envelope, poll_seconds=poll_seconds)
     adapter.guard = meeting.check
+    adapter.poll_seconds = poll_seconds
     outcome = dict(owned, simulation=not isinstance(adapter, LocalArm), completed_arms=[],
                    ownership_released=False, local_cleanup=[], returncode=1)
     current = None
