@@ -304,16 +304,21 @@ table below.
 
 Read at `src/tessera/serving/moe_route.py` on master.
 
-**The ordinary expert route is single-rank by construction.** Without a
-`research_selected_moe` declaration the method pins `_tp_size = 1` and
-`_tp_rank = 0` (`moe_route.py:430`), expands the stack to native FP8 at load and
-never consults `moe_parallel_config`. There is no TP story to document for it.
+**The ordinary expert route reads the live tensor-parallel coordinates.**
+Without a `research_selected_moe` declaration, the constructor sets `_tp_size`
+to `int(moe.moe_parallel_config.tp_size)` and `_tp_rank` to
+`int(moe.moe_parallel_config.tp_rank)`; it does not pin them to one and zero
+(`TesseraMoEMethod.__init__` in `moe_route.py`). The compact native window
+lane uses those coordinates for rank-local loading; the materialising FP8
+branch is the fallback when that lane is unavailable. The research parallel
+refusal below runs only for an explicit research declaration. Reading the live
+coordinates does not by itself qualify a multi-rank serve.
 
 **The research selected owner declares its own degree, and the checkpoint seals
 it.** `expected_tensor_parallel_size` is a `research_selected_moe` field
-restricted to exactly 1 or 2 (`moe_execution.py:33`), and
-`_require_research_parallel_contract` refuses a live `tp_size` that disagrees
-(`moe_route.py:449`). A TP1 checkpoint therefore cannot be served at TP2, and a
+restricted to exactly 1 or 2 (`ResearchSelectedMoeConfig.__post_init__`), and
+`_require_research_parallel_contract` refuses a live `tp_size` that disagrees.
+A TP1 checkpoint therefore cannot be served at TP2, and a
 TP2 checkpoint cannot be served at TP1. Both are the same encoded bytes with a
 different declaration, so covering both degrees costs two exports. That is a
 deliberate property of a sealed declaration, not an oversight.

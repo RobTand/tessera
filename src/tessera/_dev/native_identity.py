@@ -6,6 +6,70 @@ import os
 from pathlib import Path
 
 
+def _mountinfo_fields() -> list[list[str]]:
+    """The single reader of Linux mount provenance for native files."""
+    return [line.split() for line in Path("/proc/self/mountinfo").read_text().splitlines()
+            if line.strip()]
+
+
+def native_cache_mount(path) -> tuple[Path, Path, str]:
+    """Resolve a cache's nearest existing parent to its deepest Linux mount.
+
+    Missing, malformed or ambiguous provenance cannot identify a mount.
+    """
+    import re
+
+    cache = Path(path).resolve()
+    parent = cache
+    while True:
+        try:
+            parent.stat()
+            break
+        except FileNotFoundError:
+            if parent == parent.parent:
+                raise RuntimeError(f"cache path {cache}: no existing parent for mount lookup")
+            parent = parent.parent
+
+    matches = []
+    for fields in _mountinfo_fields():
+        try:
+            separator = fields.index("-")
+            if separator < 6 or len(fields) < separator + 4:
+                raise ValueError("incomplete mount fields")
+            mount_id, parent_id = int(fields[0]), int(fields[1])
+            if mount_id <= 0 or parent_id <= 0:
+                raise ValueError("invalid mount identity")
+            mountpoint = Path(re.sub(r"\\([0-7]{3})",
+                                    lambda match: chr(int(match[1], 8)), fields[4]))
+            if not mountpoint.is_absolute():
+                raise ValueError("relative mount point")
+            filesystem = fields[separator + 1]
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(f"cache path {cache}: mount provenance is malformed") from exc
+        if parent.is_relative_to(mountpoint):
+            matches.append((mountpoint, filesystem, mount_id, parent_id))
+    if not matches:
+        raise RuntimeError(f"cache path {cache}: mount provenance is not recorded")
+    depth = max(len(match[0].parts) for match in matches)
+    deepest = [match for match in matches if len(match[0].parts) == depth]
+    parents = {mount_id: parent_id for _, _, mount_id, parent_id in deepest}
+    covered = {parent_id for mount_id, parent_id in parents.items() if parent_id != mount_id}
+    visible = [match for match in deepest if match[2] not in covered]
+    if len(parents) != len(deepest) or len(visible) != 1:
+        raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
+    # A stack is one parent chain ending at its visible top, not sibling
+    # mounts or a disconnected cycle. Mount IDs are identities, not order.
+    seen = set()
+    current = visible[0][2]
+    while current in parents and current not in seen:
+        seen.add(current)
+        current = parents[current]
+    if len(seen) != len(parents):
+        raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
+    mountpoint, filesystem, _, _ = visible[0]
+    return cache, mountpoint, filesystem
+
+
 def mapped_file_device(fd: int) -> tuple[int, int]:
     """Kernel mapping device for this held FD, via its exact mount identity.
 
@@ -18,11 +82,7 @@ def mapped_file_device(fd: int) -> tuple[int, int]:
            if line.startswith("mnt_id:")]
     if len(ids) != 1:
         raise RuntimeError("native file mount identity is incomplete")
-    mounts = []
-    for line in Path("/proc/self/mountinfo").read_text().splitlines():
-        fields = line.split()
-        if fields and fields[0] == ids[0]:
-            mounts.append(fields)
+    mounts = [fields for fields in _mountinfo_fields() if fields[0] == ids[0]]
     if len(mounts) != 1 or len(mounts[0]) < 3:
         raise RuntimeError("native file mount identity is not recorded")
     try:

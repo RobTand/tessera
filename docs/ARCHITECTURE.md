@@ -13,8 +13,24 @@ profiles and both-Spark Netdata coverage. No default, serving pin, format,
 scientific gate, graph receipt, ship artifact or performance claim is promoted
 by this source change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
+Re-stamped 2026-10-05 for local disk admission of the container suite cache.
+The shared container owner refuses known network filesystem types before
+building a container command, creating its cache or launching it. The
+merge-suite coordinator calls the same rule before submitting either arm.
+The native mount-provenance owner resolves the deepest mount covering the
+cache's nearest existing parent. Same-path mount stacks follow mount and
+parent identities to their visible top, so a network mount above an automount
+is named correctly. An unresolved `autofs` mount refuses as unstable local
+storage; absent, malformed or unresolvable provenance still fails closed.
+CPU tests inject exact mount entries read from the fleet; no native build
+or graphics processor result is newly measured.
 
 
+Re-stamped 2026-10-05 for the bounded CPU controls in tessera#442: the
+ordinary expert constructor reads the live tensor-parallel degree and rank;
+only an explicit research declaration invokes the research parallel refusal.
+The standalone operator harness keeps its independent selected-owner rule.
+No serving behavior, runtime cell, wire, default or qualification changes.
 
 Re-stamped 2026-10-04 for the serve-comparison intake identity publication
 (#885, with its accepted #872 dependency). The operational seam that a serve
@@ -1220,7 +1236,9 @@ reads both facts off the runtime. A drafter under CUDA graphs is no longer
 refused wholesale: `glm53_nope._SPECULATIVE_GRAPH_RECEIPTS` admits a drafter
 graph path by receipt, keyed by method, draft tokens, whether later draft
 steps reuse the first step's sparse indices (`index_share_for_mtp_iteration`),
-compilation mode and CUDA-graph mode. The table is empty, so every drafter
+compilation mode, CUDA-graph mode and the serve's `max_model_len`, whose value
+the captured indexer branch follows (a receipt measured at one
+`max_model_len` does not speak for another). The table is empty, so every drafter
 still serves eager, and the refusal names the configuration and what is
 measured. `eager_equivalence_gap` now checks the drafter's graph families for
 padding: target verification and the drafter's first step, at whole requests
@@ -2801,7 +2819,17 @@ from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
 An explicit `--gpu-image` enables the container GPU arm. It requires
 `--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
+`--gpu-cache-dir` on local disk outside the checkout. The shared container
+owner refuses known network filesystem types before command construction,
+cache creation or launch, naming the path, mount point and filesystem type.
+The coordinator calls the same rule before any action is submitted. A
+not-yet-created cache uses its nearest existing parent and the deepest
+containing mount. Same-path stacks resolve their visible top using mount and
+parent identities, not table order or numeric mount-ID order. An `autofs`
+entry alone refuses because its backing filesystem is not stably mounted.
+The shared mount reader in `tessera._dev.native_identity` also owns native
+mapped-device provenance; unresolved cache mount provenance fails closed.
+`tools/_suite_container.py` owns
 the finite runner grammar and Docker argv; `tools/suite_container.py` launches
 it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
 --dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
@@ -4148,10 +4176,12 @@ backend the factory cannot construct refuses by name; the harness never
 falls back to `auto`.  Scope, world equality, family coverage and exit codes
 are unchanged for both shapes.
 
-**One stack needs the explicit selected owner, and two must not have it.** The
-production FP8 expert builder is TP1-only, so an FP8 owner above one rank takes
-the versioned `research_selected_moe` block, which is a request field here and
-must declare this owner's own `expected_tensor_parallel_size`. A family with its
+**The standalone harness selects its owner explicitly.** Its
+`owner_needs_selected` rule requires the versioned `research_selected_moe`
+block for an FP8 owner above one rank; this is a harness restriction, not a
+single-rank limit in the ordinary expert constructor. That constructor reads
+the live `moe_parallel_config.tp_size` and `tp_rank`. The request block must
+declare this owner's own `expected_tensor_parallel_size`. A family with its
 own expert builder keeps it. For `TESSERA_NVFP4` the selected block refuses to
 name a target it does not serve, so attaching one to an A4 owner is a refusal
 rather than a wider admission. `TESSERA_BF16` is priced on its production
@@ -7935,8 +7965,11 @@ STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
 vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
 drafter graph path without a receipt (tessera#695). Drafters are admitted
 under CUDA graphs only through `_SPECULATIVE_GRAPH_RECEIPTS`, keyed by method,
-draft tokens, sparse-index sharing across draft steps, compilation mode and
-CUDA-graph mode; the table is empty, so drafters serve eager. Speculative
+draft tokens, sparse-index sharing across draft steps, compilation mode,
+CUDA-graph mode and the serve's `max_model_len` (a FULL capture builds its
+attention metadata at it, so the indexer branch the captured graphs freeze --
+and with it eager equivalence -- follows it); the table is empty, so drafters
+serve eager. Speculative
 method `dflash` is refused in every mode, eager included: the pinned vLLM
 cannot load it for GLM5-next (no `SupportsEagle3` on either GLM5-next class,
 and no KV cache grouping for sliding-window drafter layers).
