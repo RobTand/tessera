@@ -322,6 +322,34 @@ def test_a_mixed_fp8_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
                                down["weight_scale"].reshape(-1))
 
 
+def test_compact_intake_with_only_w13_mixed_constructs_both_axes(monkeypatch):
+    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR, raising=False)
+    declared = validate_tessera_moe_scheme(_moe(
+        q256_w13=[[1024, 1024], [1088, 1024], [1024, 1024]]), "one-group")
+    for size in (1, 2):
+        for rank in range(size):
+            intake = moe_route._RankLocalPackedIntake(
+                declared, "one-group", torch.device("cpu"), rank, size, compact=True)
+            assert set(intake.axis) == set(moe_route.MOE_GROUPS)
+            assert intake.axis["w13"]._sizes
+            assert not intake.axis["w2"]._sizes
+            assert intake.resident_bytes() == 0
+
+
+def test_compact_intake_with_only_w2_mixed_constructs_both_axes(monkeypatch):
+    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR, raising=False)
+    declared = validate_tessera_moe_scheme(_moe(
+        q256_w2=[[1024], [1088], [1024]]), "one-group")
+    for size in (1, 2):
+        for rank in range(size):
+            intake = moe_route._RankLocalPackedIntake(
+                declared, "one-group", torch.device("cpu"), rank, size, compact=True)
+            assert set(intake.axis) == set(moe_route.MOE_GROUPS)
+            assert not intake.axis["w13"]._sizes
+            assert intake.axis["w2"]._sizes
+            assert intake.resident_bytes() == 0
+
+
 # ------------------------------------------------------------ the mixed guard
 
 def test_a_production_mixed_stack_refuses_research_only_by_name():

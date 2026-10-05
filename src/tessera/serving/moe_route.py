@@ -714,7 +714,7 @@ class _RankLocalPackedIntake:
                 int(declared['experts']),
                 tuple(str(role['roles'][0][0]) for role in self.roles[g]),
                 family=window_family,
-                word_runs=None if word_runs is None else word_runs[g]) for g in MOE_GROUPS}
+                word_runs=None if word_runs is None else word_runs.get(g)) for g in MOE_GROUPS}
             self.axes = {g: None for g in MOE_GROUPS}
         else:
             from .bf16_route import PreparedTesseraBf16Module
