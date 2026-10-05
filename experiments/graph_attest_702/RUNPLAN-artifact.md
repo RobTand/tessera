@@ -277,9 +277,10 @@ only the declared chunk setting changes. MNBT8192 is not a third arm.
 
 Runtime is frozen independently at public `2dbac1910c88254d9c6391f02a34c4b07e516803`,
 v56 raw contract `47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78`.
-`PQ_PIN_COMMIT` names the actual CPU/install-qualified corrected PQ2264 head.
-Both that pin head and this separate producer head require actual parent/D5
-approval before submit. A runtime approval never approves new producer bytes.
+`PQ_PIN_COMMIT` is exactly the CPU/install-qualified, parent/CEO/D5-approved
+corrective PQ2264 head `e36e60b77b3d2ab0c5265272515958a0cb67d32b` for controlled use.
+This separate producer head still requires actual parent/D5 approval before
+submit. A runtime approval never approves new producer bytes.
 
 `ARTIFACT_MANIFEST` is a shared copy of campaign's complete128-file A8S inventory,
 canonical content digest `45407d43e09381b73197498d7f37c848c167c03a83d415c68e63c615d99eb840`.
@@ -300,11 +301,11 @@ run after timing. No profiled response is pooled into throughput.
 The conservative104GiB host/102GiB GPU-subset caps per rank are admission
 ceilings, not the old98GiB/c4 fit claim. CPU ceilings remain8/6 including the
 single client on rank1; threads are bounded at1. Both hosts still need114GiB
-MemAvailable at preflight and retain the sampled16GiB physical floor. The real
-4096 model must fit this unchanged contract or retain its refusal. Five-second
-per-rank MemAvailable and aggregate cgroup current/peak measurements accompany
-the actual requests. The cgroup peak is claim-lifetime across arms; it must not
-be relabelled as a reset4096-only GPU allocation peak.
+MemAvailable at model preflight and retain the sampled16GiB physical floor.
+The real4096 model must fit this unchanged contract or retain its refusal.
+Five-second per-rank MemAvailable and actual cgroup current/claim-lifetime peak
+host charges accompany requests. CUDA coverage of cgroup charges is unproven;
+these must never be relabelled as4096-only GPU allocation peaks.
 
 Existing `box_power_window.py` collects both-Spark Netdata over the exact timing
 episode, requesting one-second cadence and retaining actual returned grouping,
@@ -314,27 +315,33 @@ same population and observed coverage. Missing data is not a power/utilization
 inference. Model fit or speed is never inferred from warmup or the190ms operator
 screen.
 
-The latest CEO order makes Window4 immediate once its real correctness, review,
-CPU role preflight, candidate and D1 inputs are ready; it no longer waits for the
-v1 export/ship window. Until then PACT costs continue. At immediate readiness,
-the sole paced publisher pauses new publication, drains its at-most-two live
-measurements and supplies `single-paced-window4-drain.json`. Submit authenticates
-that complete zero-live/physical-cleanup proof and freshly checks the exact
-publisher PID, raw argv hash, frozen manifest and stopped state on sparky. One
-supported `pbcampaign --max-inflight 2` then publishes the two exclusive
-priority10 measurement halves with the legitimate fixed-rank topology tags.
-No second pair or four-row exception is allowed. Actual both-claimed markers
-and terminal/owned cleanup are the reporting boundaries; only after that
-physical handoff may the same PACT publisher resume.
+The newest CEO order supersedes caller-manual drain: PACT priority0 quanta run
+while recipe qualification/review proceeds. At real Window4 readiness, publish
+the two priority10 exclusive measurement halves. PrismaBuild's host election
+fences new lower-priority work and lets already-running quanta finish normally.
+The temporary D28 supply cap was lifted at the witnessed f577 rollout; the
+two rows here are the one pair, not an assertion that the old cap still applies.
+No stopped-publisher permission, zero-live price marker, caller queue withdrawal,
+payload kill or new scheduling layer is used. The complete already-taken queue
+snapshot authenticates sealed managed-pair ownership: another paired window or
+invalid ownership refuses, while legitimate lower-priority price rows do not.
+One supported `pbcampaign --max-inflight 2` owns the fixed-rank topology pair.
+Only actual both-claimed and terminal/owned cleanup observations are reported.
 
 Use the existing driver with `WINDOW_MODE`, `PQ_PIN_COMMIT`, `ARTIFACT_MANIFEST`,
 and the usual frozen source/producer/artifact/receipt environment.
 `--prepare ROOT --prepare-role-preflight` prepares only CPU role inputs, then
-published PB runs `rank_window.py --role-preflight` on each real rank host with
-no container/model/CUDA start. A separate fresh model root reserves full D1
+published PB runs `rank_window.py --role-preflight` on each real rank host. It
+reads that admitted role's real cgroup sampler and runs CPU-only temporary
+profiler-config parsers in the exact pinned image, with GPU visibility disabled
+and owned containers proven absent afterward. No model or CUDA workload starts.
+A separate fresh model root reserves full D1
 allowances; `--submit ROOT --reviews JSON` requires both producer approvals and
 `runtime.parent`/`runtime.D5` approvals naming the exact pin head. All failed
 attempts, logs, CAS receipts and requested/effective PB bounds are retained.
+Both ranks execute the unchanged instrument's `verify-profile` within their own
+admitted scopes, then rendezvous on the verified stage before cleanup or the
+next arm. Profile order comes from frozen `declared_cells`, not a second roster.
 
 CPU failing-before control: action `f585e74f487a11271d07a2ca7d88a2960b1b6cb37ad5142199874725a1cc927e`
 ran5 tests:4 new named-mode controls failed,1 legacy refusal passed;0 skips,

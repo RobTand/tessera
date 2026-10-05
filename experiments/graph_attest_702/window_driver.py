@@ -190,10 +190,14 @@ def submit(root: Path, reviews: Path):
     observed = inspect_queue(datetime.now(timezone.utc).isoformat(), setup["census_action_keys"], root / "launch-queue.json")
     if not observed["submit_allowed"]:
         raise Refused("campaign769 is queued/claimed or queue view incomplete; never queue a second paired window")
-    atomic_json(root / "launch-diskcheck.json", dict(checks=diskcheck()))
     if setup["config"].get("window_mode") == recipe.EAGER_MODE:
-        from eager_benchmark import require_drain
-        atomic_json(root / "pact-drain-at-submit.json", require_drain(QUEUE))
+        from watch_window_queue import other_windows
+        live_windows = other_windows(observed)
+        atomic_json(root / "pair-isolation.json", dict(complete=True, live_windows=live_windows,
+                    reason="One paired window; PB priority election fences lower-priority prices, with no caller drain"))
+        if live_windows:
+            raise Refused("another paired window is live; never publish a second pair")
+    atomic_json(root / "launch-diskcheck.json", dict(checks=diskcheck()))
     if (root / "submission-started.json").exists():
         raise Refused("this invocation was already submitted; preserve its failed/partial evidence")
     atomic_json(root / "submission-started.json", dict(reviews=review))

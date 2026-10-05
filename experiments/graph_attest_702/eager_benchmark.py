@@ -5,18 +5,17 @@ The stock profile instrument's SSH is read-only trace inspection, never a rank.
 """
 from __future__ import annotations
 
-import os
-import socket
 import hashlib
 import json
 import math
 from pathlib import Path
-import re
 import sys
 import time
 import uuid
 
 from managed_window import Refused, atomic_json
+SHARED_ROOT = Path("/mnt/shared")
+PQ_PIN_COMMIT = "e36e60b77b3d2ab0c5265272515958a0cb67d32b"
 
 MODE = "window4-eager-2048-4096"
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
@@ -31,7 +30,6 @@ PROMPTS_SHA = "8cd21019b03ffe1875704441878acf3bbd8546177036e2734ab5cfa85f1a4cb8"
 MANIFEST_SHA = "7410e55b8696c566cf47a98ddc394537c5fcadfed559c91ff0c3526c135d7cea"
 POWER_SHA = "e56e704d671bd0e629ddfbf9374de122009cc454f59f011371c59119aef3bb7c"
 MODEL = "glm53-artifact"
-DRAIN = Path("/mnt/shared/tessera-measurements/pact-unit-costs-20261005/single-paced-window4-drain.json")
 BASE = "http://10.100.96.2:8142"
 
 
@@ -45,12 +43,12 @@ def bindings(env, artifact):
     contract = Path(env["TS"]) / "src/tessera/serving/runtime_contract.json"
     if sha(contract) != CONTRACT_SHA:
         raise Refused("Window4 raw runtime contract differs from v56/47f180ef")
-    if not re.fullmatch("[a-f0-9]{40}", env.get("PQ_PIN_COMMIT", "")):
-        raise Refused("Window4 requires the actual corrected qualified PQ pin commit")
+    if env.get("PQ_PIN_COMMIT") != PQ_PIN_COMMIT:
+        raise Refused("Window4 requires the exact approved corrected PQ e36e60b7 pin commit")
     if sha(Path(__file__).resolve().parents[1] / "box_power_window.py") != POWER_SHA:
         raise Refused("Window4 existing power instrument bytes changed")
     manifest_path = Path(env.get("ARTIFACT_MANIFEST", ""))
-    if not manifest_path.is_file() or not str(manifest_path).startswith("/mnt/shared/"):
+    if not manifest_path.is_file() or not manifest_path.is_relative_to(SHARED_ROOT):
         raise Refused("Window4 requires the supplied complete A8S manifest on shared storage")
     entries = json.loads(manifest_path.read_bytes())
     canonical = json.dumps(entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -105,56 +103,10 @@ def require_timing(result):
                 raise Refused("Window4 timing request counts/stream incomplete")
 
 
-def require_drain(queue):
-    """Authenticate the sole stopped publisher and its actual empty handoff."""
-    from managed_window import read_json
-    proof = read_json(DRAIN)
-    zero = proof.get("zero_live", {})
-    if (proof.get("schema") != "tessera.pact_measurement_drain.v1" or proof.get("ready_for_pair") is not True
-            or zero.get("complete") is not True or zero.get("timed_out") != []
-            or zero.get("ready") != [] or zero.get("claimed") != [] or zero.get("owned_scopes_empty") is not True
-            or zero.get("queue_root") != str(queue)):
-        raise Refused("Window4 requires the actual zero-live PACT measurement drain")
-    publisher = proof["publisher"]
-    if socket.gethostname() != publisher["host"] or publisher.get("paused_state") != "T":
-        raise Refused("Window4 must submit on the stopped sole publisher host")
-    pid = publisher["pid"]
-    if type(pid) is not int or pid <= 0:
-        raise Refused("Window4 publisher PID is not an exact positive process identity")
-    proc = Path("/proc") / str(pid)
-    command = (proc / "cmdline").read_bytes()
-    argv = [part.decode() for part in command.rstrip(b"\0").split(b"\0")]
-    state = (proc / "stat").read_text().rsplit(")", 1)[1].split()[0]
-    if (argv != publisher["cmdline"] or hashlib.sha256(command).hexdigest() != publisher["cmdline_sha256"]
-            or state != "T" or sha(publisher["manifest_path"]) != publisher["manifest_sha256"]):
-        raise Refused("Window4 sole publisher identity changed or publication is not paused")
-    sys.path.insert(0, str(Path(os.environ.get("PRISMABUILD_READER_HELPER_ROOT", "/mnt/shared/prismabuild-fleet/repo")) / "src"))
-    from prismabuild.reader_lease import export_verdict_proves_empty
-    for drained in proof["drained_actions"]:
-        key = drained["action_key"]
-        if not re.fullmatch("[a-f0-9]{64}", key):
-            raise Refused("Window4 drained action has no full key")
-        if any((queue / state / (key + ".json")).exists() for state in ("ready", "claimed")):
-            raise Refused("Window4 cost measurement is still live")
-        terminal = Path(drained["terminal_path"])
-        if terminal not in [queue / state / (key + ".json") for state in ("done", "failed")]:
-            raise Refused("Window4 drain terminal path does not bind its action")
-        if sha(terminal) != drained["terminal_sha256"]:
-            raise Refused("Window4 drain terminal changed")
-        ending = read_json(terminal)
-        cleanup = ending.get("resource_scope_cleanup", {})
-        scope = ending.get("resource_scope", {})
-        empty, reason = export_verdict_proves_empty(cleanup.get("export", {}), scope_id=scope.get("scope_id"))
-        if (ending.get("action_key") != key or cleanup != drained["resource_scope_cleanup"]
-                or cleanup.get("complete") is not True or cleanup.get("nonce") != scope.get("nonce")
-                or cleanup.get("settle_error") or cleanup.get("remaining") or not empty):
-            raise Refused("Window4 cost attempt has no physical cleanup proof: " + str(reason))
-    return dict(path=str(DRAIN), sha256=sha(DRAIN), observed_unix=time.time(), proof=proof)
-
-
 def probes(adapter, arm, peer):
     config, name = adapter.config, arm["arm"]
-    out = Path(adapter.active["out"])
+    out = adapter.rdv / "arms" / name
+    out.mkdir(parents=True, exist_ok=True)
     profile_dir = Path(config["profile_dir"]) / name
     invocation = uuid.uuid4().hex
     binding = dict(schema="tessera.window4_eager_invocation.v1", invocation=invocation,
@@ -175,8 +127,14 @@ def probes(adapter, arm, peer):
     binding["timing_finished_unix"] = time.time()
     require_timing(json.loads((out / "timing.json").read_bytes()))
     atomic_json(out / "invocation.json", binding)
-    # Exact frozen profile cells, after timing, with the same source and manifest.
-    for kind, length in (("prefill", 512), ("prefill", 8192), ("decode", 512)):
+    # Execute the frozen instrument's own declared order, not a second roster.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("window4_profile_instrument", CLIENT / "comparison_inputs.py")
+    profiles = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(profiles)
+    manifest, _, _, _ = profiles.load_manifest(config["profile_manifest"])
+    for cell in profiles.declared_cells(manifest):
+        kind, length = cell["kind"], cell["L"]
         argv = [sys.executable, str(CLIENT / "comparison_inputs.py"), "--manifest", config["profile_manifest"],
                 "profile", "--base-url", BASE, "--length", str(length), "--kind", kind,
                 "--events", str(out / "events.jsonl"), "--directory", str(profile_dir), "--invocation", invocation]
@@ -196,3 +154,4 @@ def probes(adapter, arm, peer):
     binding.update(timing_sha256=sha(out / "timing.json"), events_sha256=sha(out / "events.jsonl"),
                    energy_scope="Entire timing episode including three excluded warmups; profile windows excluded. Raw Netdata coverage governs any work/J claim.")
     atomic_json(out / "invocation.json", binding)
+    return dict(invocation=invocation, events=str(out / "events.jsonl"), profile_dir=str(profile_dir))
