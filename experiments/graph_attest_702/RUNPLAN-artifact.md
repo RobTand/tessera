@@ -213,15 +213,31 @@ The frozen **runtime** may be merged PR942
 `39e3d950226f1c9fec38d4baaaccb59fc267e12b`. Its source/config/hooks/equality-script
 digests bind the measured Tessera and eventual receipt. The **producer** is this
 separately reviewed PR. In both prepare and submit, checkout HEAD must equal the
-full `PRODUCER_COMMIT` and `experiments/graph_attest_702` must be clean. Every
-producer file is read with `git show PRODUCER_COMMIT:path`; those committed bytes
-must equal the executable files and their combined digest must equal
-`PRODUCER_SHA256`. A typed label plus a self-supplied disk digest is not authority.
-PB may materialize a synthetic HEAD, but the rank still checks clean producer
-files against the reviewed Git objects with no PB bypass. A parentless snapshot
-without the reviewed commit fails by the exact missing-object boundary. Parent
-and D5 review JSON must name that verified producer commit. Runtime choice and
-fabric remain explicit. The old dual-launch #942 wrapper is never
+full `PRODUCER_COMMIT` — the exact-HEAD review gate refuses in dev and
+certified modes alike — while the remaining producer identity comparisons
+(`experiments/graph_attest_702` clean, every producer file equal to its
+`git show PRODUCER_COMMIT:path` object, and the combined digest equal to
+`PRODUCER_SHA256`) are D32 run-identity seals: under default dev mode
+(`PRISMAQUANT_DEV_MODE` not exactly `0`) each mismatch prints one
+`[DEV-MODE]` line and the run continues with the stored data —
+`require_producer` returns the stored expected digest without Git or digest
+computes, and `producer_sha` reports the stored `PRODUCER_SHA256` or
+`NOT_COMPUTED` — while certified `PRISMAQUANT_DEV_MODE=0` keeps the legacy
+refusals verbatim, including the exact missing-object boundary for a
+parentless snapshot. A typed label plus a self-supplied disk digest is still
+not authority, and dev mode adds no release gate: no recompute, archive,
+re-seal, re-pin or identity-proof packet is performed or required for
+identity drift. Parent and D5 review JSON must still name the producer
+commit in both modes. The rank's own-byte seals never stamp: the submitted
+`inputs.json` against its action-environment `GRAPH_WINDOW_INPUT_SHA256`,
+`memory-policy.json` against its recorded SHA, and the policy content
+itself refuse in both modes; only the restamped policy-value comparison
+against the running policy stamps in dev and refuses certified, as do the
+prepared source/control drift comparisons in `prepare`/`submit`/`preflight`/
+`run_rank`. PB claims, nonces, action keys, owned scope, the OOM floor, disk
+admission, the manifest resource/safety fields and every format gate are
+unchanged. Runtime choice and fabric remain explicit. The old dual-launch
+#942 wrapper is never
 run twice or used to launch an unadmitted remote rank.
 
 Every model row is an exclusive **measurement**, host class gb10, priority **10**
