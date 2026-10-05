@@ -113,3 +113,17 @@ Not measured:
 The arm harness gained its runtime-image gate (`runtime_image_require`)
 after these arms ran; they declared the image to PrismaBuild by digest and
 record its local id in `engine-args-<arm>.txt`.
+
+## Clarification, 2026-10-05: the v1 receipts and `verify` (tessera#973)
+
+The two receipts above carry schema `tessera.graph_equals_eager.v1`, which names
+no fabric. Their recorded evidence stands as written: the receipts and the raw
+arms were not regenerated, and nothing above was re-measured. What changed is
+the checker. Since tessera#942 (receipt schema v2, the fabric is scope),
+`tessera.graph_receipt.verify` **refuses a v1 receipt for a card**, with the
+reason "a `tessera.graph_equals_eager.v1` receipt names no fabric, so it cannot
+attest a card's serve; produce a `tessera.graph_equals_eager.v2` receipt". So
+the sentence in "Scope" that `verify` matches every one of those fields
+describes the v1-era `verify`, not the current one. A v1 receipt stays readable:
+`finish` still re-derives it. The test that pins both halves is
+`tests/test_graph_receipt.py::test_a_v1_receipt_stays_readable_but_verifies_no_card`.
