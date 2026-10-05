@@ -12,12 +12,10 @@ def _mountinfo_fields() -> list[list[str]]:
             if line.strip()]
 
 
-def require_local_native_cache(path) -> None:
-    """Refuse network caches whose locks or mapped inode identity can differ.
+def native_cache_mount(path) -> tuple[Path, Path, str]:
+    """Resolve a cache's nearest existing parent to its deepest Linux mount.
 
-    Mount provenance owns no exhaustive local-filesystem classification, so
-    refuse known network types rather than invent a local filesystem roster.
-    Missing or malformed provenance cannot admit a cache.
+    Missing, malformed or ambiguous provenance cannot identify a mount.
     """
     import re
 
@@ -55,17 +53,7 @@ def require_local_native_cache(path) -> None:
     if len(deepest) != 1:
         raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
     mountpoint, filesystem = deepest[0]
-    network_types = {
-        "9p", "afs", "ceph", "cifs", "glusterfs", "lustre", "ncpfs", "nfs", "nfs4",
-        "smb3", "smbfs", "davfs", "fuse.ceph", "fuse.curlftpfs", "fuse.davfs",
-        "fuse.gcsfuse", "fuse.glusterfs", "fuse.rclone", "fuse.s3fs", "fuse.smbnetfs",
-        "fuse.sshfs",
-    }
-    if filesystem in network_types:
-        raise RuntimeError(
-            f"cache path {cache} is on mount point {mountpoint} "
-            f"with filesystem type {filesystem}; use local disk for native build "
-            "locks and mapped inode identity")
+    return cache, mountpoint, filesystem
 
 
 def mapped_file_device(fd: int) -> tuple[int, int]:
