@@ -13,11 +13,9 @@ import subprocess
 import sys
 import time
 
-from managed_window import (WINDOW_SECONDS, Envelope, HOSTS, Refused,
+from managed_window import (WINDOW_SECONDS, MEMORY_POLICY, Envelope, HOSTS, Refused,
                             Rendezvous, atomic_json, read_json, require_claim)
 import tp2_recipe as recipe
-PREFLIGHT_HEADROOM_GIB = 114
-PREFLIGHT_HEADROOM_WAIT_SECONDS = 900.0
 
 
 def directory_bytes(path: Path) -> int:
@@ -80,7 +78,8 @@ class LocalArm:
         terminal wait report is appended to the shared rendezvous per call, including
         on refusal/cancellation/deadline.
         """
-        threshold_gib, wait_bound_seconds = PREFLIGHT_HEADROOM_GIB, PREFLIGHT_HEADROOM_WAIT_SECONDS
+        threshold_gib = MEMORY_POLICY["start_gib"]
+        wait_bound_seconds = MEMORY_POLICY["headroom_wait_seconds"]
         deadline = time.monotonic() + wait_bound_seconds
         started_unix = time.time()
         samples = []
@@ -131,7 +130,7 @@ class LocalArm:
 
     def preflight(self):
         self.headroom()
-        if available_gib() < PREFLIGHT_HEADROOM_GIB:
+        if available_gib() < MEMORY_POLICY["start_gib"]:
             raise Refused("local MemAvailable below unchanged 114 GiB preflight")
         runtime = Path(self.config["ts"]) / "src"
         env = dict(os.environ, PYTHONPATH=str(runtime), OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
@@ -155,7 +154,7 @@ class LocalArm:
     def tick(self):
         if self.guard:
             self.guard()
-        if time.monotonic() - self.last_sample < 5:
+        if time.monotonic() - self.last_sample < MEMORY_POLICY["sample_seconds"]:
             return
         self.last_sample = time.monotonic()
         mem = available_gib()
@@ -165,7 +164,7 @@ class LocalArm:
             sample = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"))
             with (self.work / "memory-scope.jsonl").open("a") as stream:
                 stream.write(json.dumps(sample, sort_keys=True) + "\n")
-        if mem < 16:
+        if mem < MEMORY_POLICY["abort_below_gib"]:
             raise Refused("local 16 GiB physical memory floor breached")
         for path, cap in ((self.ext, 6 * (1 << 30)), (self.work, int(6.3 * (1 << 30))),
                           (self.rdv if self.config.get("window_mode") == recipe.EAGER_MODE else self.rdv / "arms",
@@ -183,8 +182,8 @@ class LocalArm:
         available = available_gib()
         atomic_json(self.rdv / f"{arm['arm']}-launch-headroom-rank{self.rank}.json",
                     dict(unix=time.time(), rank=self.rank, mem_available_gib=available,
-                         threshold_gib=PREFLIGHT_HEADROOM_GIB))
-        if available < PREFLIGHT_HEADROOM_GIB:
+                         threshold_gib=MEMORY_POLICY["start_gib"]))
+        if available < MEMORY_POLICY["start_gib"]:
             raise Refused("local MemAvailable below unchanged 114 GiB preflight")
         out = self.work / arm["arm"]
         out.mkdir()

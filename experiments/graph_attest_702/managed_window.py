@@ -20,6 +20,12 @@ CLEANUP_SECONDS = 180
 PEER_WAIT_SECONDS = 3600
 HOSTS = ("sparklina", "sparky")
 
+# One owner for the rank lifecycle and its memory admission/abort policy.
+MEMORY_POLICY = dict(start_gib=114, headroom_wait_seconds=900.0,
+                     host_cap_gib=104, gpu_subset_cap_gib=102,
+                     sample_seconds=5.0, abort_below_gib=16.0,
+                     term_grace_seconds=1.0)
+
 
 class Refused(RuntimeError):
     pass

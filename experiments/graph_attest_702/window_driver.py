@@ -10,7 +10,7 @@ import subprocess
 import sys
 import uuid
 
-from managed_window import (CLEANUP_SECONDS, WINDOW_SECONDS, HOSTS, Refused, atomic_json,
+from managed_window import (CLEANUP_SECONDS, WINDOW_SECONDS, HOSTS, MEMORY_POLICY, Refused, atomic_json,
                             read_json, terminal_cleanup)
 import tp2_recipe as recipe
 
@@ -45,8 +45,8 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
         result.append(dict(argv=[RANK_PYTHON, "experiments/graph_attest_702/rank_window.py",
                                 "--rank", str(rank), "--run", str(root / "inputs.json")],
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
-                           demand=dict(cpu=8 if rank == 0 else 6, mem_gb=104, gpu=1),
-                           gpu_memory_gb=102, exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
+                           demand=dict(cpu=8 if rank == 0 else 6, mem_gb=MEMORY_POLICY["host_cap_gib"], gpu=1),
+                           gpu_memory_gb=MEMORY_POLICY["gpu_subset_cap_gib"], exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
                            priority=10, priority_reason=("Goal: exact reviewed A8S eager Window4 MNBT2048/4096"
                                                         if config.get("window_mode") == recipe.EAGER_MODE else
                                                         "Goal: full nominated A8 graph control after exact-head review; one paired window at a time"),
