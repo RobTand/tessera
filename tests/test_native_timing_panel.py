@@ -262,6 +262,6 @@ def test_execution_semantics_refuse_in_dev_mode(panel, monkeypatch):
     """D32 boundary: a different execution case refuses even in default dev."""
     monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
     expected = copy.deepcopy(panel["runtime"])
-    expected["execution_mode"] = "compiled"
+    expected["serve_flags"] = {"TESSERA_SERVE_MODE": "streamed"}  # valid, but the wrong case
     with pytest.raises(ValueError, match="observed runtime differs from independent expected context"):
         tp.validate_panel(panel, expected_runtime=expected)

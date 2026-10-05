@@ -857,7 +857,7 @@ def test_preflight_execution_semantics_refuse_in_dev_mode(tmp_path, panel, monke
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
     result, kwargs = preflight_inputs(tmp_path, panel)
     runtime = copy.deepcopy(kwargs['expected_runtime'])
-    runtime['tp_degree'] = 2
+    runtime['serve_flags'] = {'TESSERA_SERVE_MODE': 'streamed'}  # valid, but the wrong case
     kwargs['expected_runtime'] = runtime
     with pytest.raises(ValueError, match='preflight software/contract differs'):
         app.tp._verify_runtime_preflight(result, **kwargs)
