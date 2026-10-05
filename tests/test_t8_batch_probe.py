@@ -51,6 +51,12 @@ UNIT_PROFILE = EXPERIMENTS / "t8_census" / "profile_unit_encode.py"
 STAGE_WRAPPER = EXPERIMENTS / "t8_census" / "ab_stage.sh"
 
 
+@pytest.fixture
+def torch_runtime():
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+
+
 class TestAuthCallContract:
     """The core sibling owns the function; the probe owns the call."""
 
@@ -88,7 +94,7 @@ class TestAuthCallContract:
         assert "batch_observed" in text, (
             "the owner's own per-call width evidence is recorded, never the knob alone")
 
-    def test_auth_call_takes_no_arguments(self):
+    def test_auth_call_takes_no_arguments(self, torch_runtime):
         """Env-selected source, no flags: the core owns the semantics.
 
         PREREQUIREMENT REGRESSION (retained red until the core sibling's
@@ -115,6 +121,7 @@ class TestProbeImportArrangement:
                         f"{path.name}:{lineno}: {line.strip()}")
 
 
+@pytest.mark.usefixtures("torch_runtime")
 class TestStagedRungScope:
     def test_rungs_are_explicit_never_historical(self):
         import ab_batched_best_form as ab
@@ -139,6 +146,7 @@ class TestStagedRungScope:
             ab.parse_rungs("E9M9:768", grid=None)
 
 
+@pytest.mark.usefixtures("torch_runtime")
 class TestBudgetGuard:
     def test_whole_action_budget_stops_with_named_unmeasured(self):
         import ab_batched_best_form as ab
@@ -216,6 +224,7 @@ class TestBudgetGuard:
             assert source.index("read_tensor(") < source.index("t0 = time.perf_counter()")
 
 
+@pytest.mark.usefixtures("torch_runtime")
 class TestPowerReceipt:
     def test_work_per_joule_derives_observed_joules(self):
         import ab_batched_best_form as ab
@@ -232,6 +241,7 @@ class TestPowerReceipt:
         assert info["joules_observed"] is None
 
 
+@pytest.mark.usefixtures("torch_runtime")
 class TestSourceBinding:
     def test_shards_for_reads_only_the_shards_the_units_live_on(self, tmp_path):
         import profile_unit_encode as pue
