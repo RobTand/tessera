@@ -11,7 +11,7 @@ import sys
 import uuid
 
 from managed_window import (CLEANUP_SECONDS, WINDOW_SECONDS, HOSTS, MEMORY_POLICY, Refused, atomic_json,
-                            read_json, terminal_cleanup)
+                            seal_check, check_memory_policy, read_json, terminal_cleanup)
 import tp2_recipe as recipe
 
 PB = Path("/mnt/shared/prismabuild-fleet/repo/tools")
@@ -171,22 +171,37 @@ def submit(root: Path, reviews: Path):
             env[key] = setup["config"][field]
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
                             env["PRODUCER_SHA256"], exact_head=True)
-    if recipe.inputs(env, live=True) != setup["config"]:
-        raise Refused("prepared source/control changed; never restamp or resume an old window")
-    if json.loads((root / "manifest.json").read_text()) != rows(root, setup["config"], env):
-        raise Refused("prepared PB manifest changed; never restamp admission/resource inputs")
+    current = recipe.inputs(env, live=True)
+    recipe.check_control_record(setup["config"], current, where="Window4 submission",
+                              refusal=Refused("prepared source/control changed; never restamp or resume an old window"))
+    stored_rows = json.loads((root / "manifest.json").read_text())
+    expected_rows = rows(root, setup["config"], env)
+    safety_keys = ("tags", "demand", "gpu_memory_gb", "exclusive", "measurement", "host_class",
+                   "max_attempts", "priority", "timeout_s")
+    if (
+            [{key: row.get(key) for key in safety_keys} for row in stored_rows] !=
+            [{key: row.get(key) for key in safety_keys} for row in expected_rows]):
+        raise Refused("prepared PB safety/resource manifest changed")
+    seal_check("prepared manifest identity", stored_rows, expected_rows, where="Window4 submission",
+               refusal=Refused("prepared PB manifest changed; never restamp admission/resource inputs"))
     review = read_json(reviews)
-    if (recipe.sha(root / "memory-policy.json") != setup["memory_policy_sha256"]
-            or read_json(root / "memory-policy.json") != MEMORY_POLICY):
-        raise Refused("prepared memory policy changed; never restamp a reviewed window")
+    if recipe.sha(root / "memory-policy.json") != setup["memory_policy_sha256"]:
+        raise Refused("prepared memory policy changed; own digest does not match")
+    check_memory_policy(read_json(root / "memory-policy.json"), where="Window4 submission")
+    # Exact executing-code review is safety, not a recorded run-identity seal.
+    code_roots = {str(Path(__file__).resolve().parents[2]), *(row["cwd"] for row in stored_rows)}
+    code_heads = {subprocess.check_output(["git", "-C", source, "rev-parse", "HEAD"],
+                                        text=True, timeout=10).strip() for source in code_roots}
     for who in ("parent", "D5"):
-        if review.get(who, {}).get("verdict") != "APPROVE" or review[who].get("head_sha") != env["PRODUCER_COMMIT"]:
-            raise Refused(f"missing exact frozen-source {who} review; no real model start")
+        accepted = review.get(who, {})
+        if accepted.get("verdict") != "APPROVE" or code_heads != {accepted.get("head_sha")}:
+            raise Refused(f"missing exact executing-code {who} review; no real model start")
     if setup["config"].get("window_mode") == recipe.EAGER_MODE:
         for who in ("parent", "D5"):
             candidate = review.get("runtime", {}).get(who, {})
-            if candidate.get("verdict") != "APPROVE" or candidate.get("head_sha") != setup["config"]["pq_pin_commit"]:
-                raise Refused(f"missing exact corrected runtime candidate {who} review; no Window4 model start")
+            seal_check(f"runtime candidate {who}", {"verdict": "APPROVE", "head_sha": setup["config"]["pq_pin_commit"]},
+                       candidate, where="Window4 runtime provenance",
+                       refusal=Refused(f"missing exact corrected runtime candidate {who} review; no Window4 model start"))
     for predecessor in setup["predecessors"]:
         terminal_cleanup(predecessor["identity"], read_terminal(predecessor["identity"], QUEUE))
     from datetime import datetime, timezone

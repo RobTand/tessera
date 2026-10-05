@@ -44,6 +44,7 @@ def _identity(compute):
     is sealing; dev mode stamps ``NOT_COMPUTED`` instead of computing one.
     Certified mode (``PRISMAQUANT_DEV_MODE=0``) computes and compares for real.
     """
+    from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled
     return NOT_COMPUTED if dev_mode_enabled() else compute()
 
 

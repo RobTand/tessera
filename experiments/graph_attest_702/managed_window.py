@@ -15,6 +15,12 @@ import signal
 import subprocess
 import time
 
+# The script checkout supplies the same standalone helper as the package; no
+# serving or encoder module is imported into this lifecycle controller.
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
+from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check
+
 WINDOW_SECONDS = 5400
 CLEANUP_SECONDS = 180
 PEER_WAIT_SECONDS = 3600
@@ -46,6 +52,15 @@ MEMORY_POLICY["hosts"] = {host: {"start_gib": MEMORY_POLICY["start_gib"]} for ho
 
 class Refused(RuntimeError):
     pass
+
+
+def check_memory_policy(recorded, *, where):
+    """The recorded policy versus the running one is a run-identity seal (D32):
+    dev mode stamps one [DEV-MODE] line and the live MEMORY_POLICY keeps
+    governing; certified mode keeps the verbatim refusal. Byte damage against
+    the policy's own recorded digest stays integrity at the call sites."""
+    seal_check("memory policy identity", recorded, MEMORY_POLICY, where=where,
+               refusal=Refused("prepared memory policy changed; never restamp a reviewed window"))
 
 
 def atomic_json(path: Path, value: dict) -> None:

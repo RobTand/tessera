@@ -14,6 +14,7 @@ import sys
 import time
 
 from managed_window import (WINDOW_SECONDS, CLEANUP_SECONDS, MEMORY_POLICY, Envelope, HOSTS, Refused,
+                            seal_check, check_memory_policy,
                             Rendezvous, atomic_json, read_json, require_claim)
 import tp2_recipe as recipe
 
@@ -140,17 +141,17 @@ class LocalArm:
                    OPENBLAS_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1", MAX_JOBS="1")
         record = json.loads(self.command([sys.executable, "-m", "tessera.serving.runtime_image",
                                          "resolve", "--image", self.config["image"]], env=env, tick=self.tick).stdout)
-        if record.get("resolved_reference") != self.config["image"]:
-            raise Refused("local image does not resolve to the frozen full image reference")
+        seal_check("image reference", self.config["image"], record.get("resolved_reference"),
+                   where="Window4 local preflight", refusal=Refused("local image does not resolve to the frozen full image reference"))
         from_source = self.command([sys.executable, "-m", "tessera.serving.runtime_image", "container-env"],
                                    env=env, input_text=json.dumps(record), tick=self.tick).stdout
         self.image_env = dict(line.split("=", 1) for line in from_source.splitlines())
         self.image_id = record["local_id"]
         self.assert_empty()
-        # Repeat the frozen small-file/source checks between arms; never restamp them.
-        if recipe.inputs(os.environ, live=True,
-                         runner=lambda argv, **kw: self.command(argv, tick=self.tick, **kw)) != self.config:
-            raise Refused("immutable control/source inputs changed during the window")
+        current = recipe.inputs(os.environ, live=True,
+                   runner=lambda argv, **kw: self.command(argv, tick=self.tick, **kw))
+        recipe.check_control_record(self.config, current, where="Window4 local preflight",
+                                  refusal=Refused("immutable control/source inputs changed during the window"))
         return dict(image=self.config["image"], image_id=record["local_id"],
                     src_sha256=self.config["src_sha256"], config_sha256=self.config["config_sha256"])
 
@@ -495,8 +496,8 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             meeting.publish(stage + "-preflight", metadata=metadata)
             peer = meeting.wait(stage + "-preflight", tick=adapter.tick)
             for key in ("image", "src_sha256", "config_sha256"):
-                if metadata.get(key) != peer["metadata"].get(key):
-                    raise Refused(f"rank preflight differs in {key}")
+                seal_check(f"peer preflight {key}", metadata.get(key), peer["metadata"].get(key),
+                           where="Window4 paired preflight", refusal=Refused(f"rank preflight differs in {key}"))
             meeting.check()  # live peer authority immediately before every local launch
             envelope.remaining()
             started = adapter.start(arm)
@@ -622,9 +623,9 @@ def main():
     if recipe.sha(args.run) != os.environ.get("GRAPH_WINDOW_INPUT_SHA256"):
         raise Refused("window inputs differ from sealed action environment")
     policy_path = args.run.parent / "memory-policy.json"
-    if (recipe.sha(policy_path) != setup["memory_policy_sha256"]
-            or read_json(policy_path) != MEMORY_POLICY):
-        raise Refused("rank memory policy differs from reviewed sealed inputs")
+    if recipe.sha(policy_path) != setup["memory_policy_sha256"]:
+        raise Refused("rank memory policy differs from its own recorded digest")
+    check_memory_policy(read_json(policy_path), where="Window4 rank")
     if socket.gethostname() != HOSTS[args.rank]:
         raise Refused("rank claimed on the wrong physical host")
     queue = Path(os.environ["PRISMABUILD_QUEUE_ROOT"])
@@ -637,16 +638,17 @@ def main():
                  window_end_unix=row["claimed_unix"] + WINDOW_SECONDS)
     require_claim(owned, queue)
     envelope = Envelope(owned["window_end_unix"])
-    config = recipe.inputs(os.environ, live=True, runner=envelope.run)
-    if config != setup["config"]:
-        raise Refused("frozen source/control differs from prepared window inputs")
+    current = recipe.inputs(os.environ, live=True, runner=envelope.run)
+    recipe.check_control_record(setup["config"], current, where="Window4 rank",
+                              refusal=Refused("frozen source/control differs from prepared window inputs"))
+    config = setup["config"]  # stored data, never an identity-triggered regeneration
     rdv = args.run.parent
     if args.role_preflight:
         image = json.loads(envelope.run([sys.executable, "-m", "tessera.serving.runtime_image", "resolve",
                                        "--image", config["image"]],
                                       env=dict(os.environ, PYTHONPATH=str(Path(config["ts"]) / "src"))).stdout)
-        if image.get("resolved_reference") != config["image"]:
-            raise Refused("role preflight image differs from frozen image")
+        seal_check("role image identity", config["image"], image.get("resolved_reference"),
+                   where="Window4 role", refusal=Refused("role preflight image differs from frozen image"))
         for arm in setup["arms"]:
             command = recipe.container(config, arm, owned, rdv / "unused-out", rdv / "unused-ext",
                                        rdv / "unused-cid", {})

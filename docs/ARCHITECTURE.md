@@ -13,9 +13,10 @@ and the `inputs`/`prepare`/`submit`/`preflight`/`run_rank` provenance,
 source-hash and frozen-control drift comparisons stamp rather than refuse.
 The restamped memory-policy value comparison against the running policy is a
 seal: it stamps in dev and refuses certified. Unchanged in both modes: the
-exact-HEAD checkout gate and the exact-head parent/D5 review, the
-`inputs.json` `GRAPH_WINDOW_INPUT_SHA256` and memory-policy SHA own-byte
-integrity and the policy content check, PB claims/nonces/action keys/owned
+exact executing-code parent/D5 review (submit compares every executing-code
+root's HEAD with the reviewed head), the `inputs.json`
+`GRAPH_WINDOW_INPUT_SHA256` and memory-policy SHA own-byte integrity, PB
+claims/nonces/action keys/owned
 scope, the OOM floor and disk admission, the manifest resource/safety fields
 and every format gate. Dev mode adds no release gate: no recompute, archive,
 re-seal, re-pin or identity-proof packet is required or performed for

@@ -9,9 +9,11 @@ signature and returns the stored expected digest without Git or digest
 computes, and ``producer_sha`` reports the stored ``PRODUCER_SHA256`` (or
 ``NOT_COMPUTED``) without hashing. Certified ``0`` keeps every legacy
 refusal, so the producer/Git-object/self-label regressions pin ``0``
-explicitly. Unchanged in both modes: the exact-HEAD checkout gate, the
-exact-head parent/D5 review, the ``inputs.json``/memory-policy own-byte seals
-and every admission/ownership/safety gate.
+explicitly. Unchanged in both modes: the exact executing-code parent/D5
+review, the inputs.json/memory-policy own-byte seals and every
+admission/ownership/safety gate. The exact-HEAD checkout comparison itself
+is a D32 seal: certified keeps its refusal, dev stamps and the
+executing-code review still refuses.
 """
 from __future__ import annotations
 
@@ -130,8 +132,9 @@ def test_clean_exact_reviewed_producer_reaches_the_next_real_gate(tmp_path, monk
 
 def test_pb_synthetic_head_keeps_reviewed_object_and_identical_clean_producer(tmp_path, monkeypatch):
     # Certified mode: the full reviewed-Git-object binding (byte equality
-    # against `git show` objects) is pinned here; the dev-mode stamping of the
-    # digest identity and the still-on exact-HEAD gate have their own tests.
+    # against git show objects) is pinned here; the dev-mode stamping of the
+    # checkout/digest identities and the executing-code review gate have
+    # their own tests.
     monkeypatch.setenv(DEV_MODE_ENV, "0")
     producer, reviewed = make_producer(tmp_path)
     (producer / ".pb-closure.json").write_text("{}")
@@ -244,14 +247,15 @@ def test_dev_mode_digest_mismatch_stamps_and_returns_the_stored_expected(tmp_pat
         recipe.require_producer(producer, reviewed, stored, exact_head=False)
 
 
-def test_dev_mode_keeps_the_exact_head_review_gate(tmp_path, monkeypatch):
-    """The exact-HEAD checkout gate is a code-review gate, not a run-identity
-    seal: a moved HEAD still refuses in dev mode."""
+def test_dev_mode_keeps_the_exact_executing_code_review_gate(tmp_path, monkeypatch):
     producer, reviewed = make_producer(tmp_path)
-    git(producer, "commit", "--allow-empty", "-qm", "unreviewed dev head")
+    config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
     monkeypatch.setenv(DEV_MODE_ENV, "1")
-    with pytest.raises(managed_window.Refused, match="HEAD"):
-        recipe.require_producer(producer, reviewed, disk_digest(producer), exact_head=True)
+    (producer / "changed-code.py").write_text("# controlled new code revision\n")
+    git(producer, "add", "changed-code.py")
+    git(producer, "commit", "-qm", "new code not covered by recorded review")
+    with pytest.raises(managed_window.Refused, match="executing-code"):
+        driver.submit(root, reviews)
 
 
 def test_dev_mode_producer_sha_reports_the_stored_env_without_hashing(monkeypatch):

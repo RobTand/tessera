@@ -212,9 +212,12 @@ again in code and retains its view; a partial view refuses a new pair.
 The frozen **runtime** may be merged PR942
 `39e3d950226f1c9fec38d4baaaccb59fc267e12b`. Its source/config/hooks/equality-script
 digests bind the measured Tessera and eventual receipt. The **producer** is this
-separately reviewed PR. In both prepare and submit, checkout HEAD must equal the
-full `PRODUCER_COMMIT` — the exact-HEAD review gate refuses in dev and
-certified modes alike — while the remaining producer identity comparisons
+separately reviewed PR. In both prepare and submit the checkout comparison
+against the full `PRODUCER_COMMIT` is itself a D32 seal: default dev mode
+stamps one `[DEV-MODE]` line and continues, certified keeps the verbatim
+refusal, and the exact executing-code parent/D5 review — submit compares
+every executing-code root's HEAD with the reviewed head — refuses in dev
+and certified modes alike. The remaining producer identity comparisons
 (`experiments/graph_attest_702` clean, every producer file equal to its
 `git show PRODUCER_COMMIT:path` object, and the combined digest equal to
 `PRODUCER_SHA256`) are D32 run-identity seals: under default dev mode

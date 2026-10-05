@@ -8,7 +8,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
-from managed_window import MEMORY_POLICY, Refused
+from managed_window import MEMORY_POLICY, NOT_COMPUTED, Refused, dev_mode_enabled, seal_check
 from submit import parse_plan, IMAGE
 from eager_benchmark import MODE as EAGER_MODE
 
@@ -45,6 +45,8 @@ PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "windo
 
 def producer_sha() -> str:
     """Inspection-only disk digest; never an authority to execute reviewed code."""
+    if dev_mode_enabled():
+        return os.environ.get("PRODUCER_SHA256", NOT_COMPUTED)
     return hashlib.sha256("".join(f"{sha(Path(__file__).parent / name)}  {name}\n"
                                  for name in PRODUCER_FILES).encode()).hexdigest()
 
@@ -56,6 +58,10 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
     HEAD, but still needs the reviewed object and identical clean producer files.
     A parentless checkout lacking that object fails closed by name.
     """
+    if dev_mode_enabled():
+        seal_check("producer identity", {"commit": commit, "digest": expected}, NOT_COMPUTED,
+                   where="Window4 producer", refusal=Refused)
+        return expected
     def git(*args, binary=False):
         argv = ["git", "-C", str(root), *args]
         try:
@@ -64,27 +70,45 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
             return subprocess.check_output(argv, timeout=10, text=not binary, stderr=subprocess.STDOUT)
         except (subprocess.CalledProcessError, OSError, Refused) as exc:
             raise Refused(f"producer reviewed Git object unavailable in this checkout: {commit}: {exc}") from exc
-    if not commit or git("rev-parse", "--verify", commit + "^{commit}").strip() != commit:
-        raise Refused("producer label is not a full reviewed commit object")
-    if exact_head and git("rev-parse", "HEAD").strip() != commit:
-        raise Refused("producer checkout HEAD differs from PRODUCER_COMMIT")
-    if git("status", "--porcelain", "--untracked-files=all", "--", "experiments/graph_attest_702").strip():
-        raise Refused("producer experiments/graph_attest_702 is not clean")
+    actual_commit = git("rev-parse", "--verify", commit + "^{commit}").strip() if commit else "missing"
+    seal_check("producer commit", commit, actual_commit, where="Window4 producer",
+               same=bool(commit) and actual_commit == commit,
+               refusal=Refused("producer label is not a full reviewed commit object"))
+    if exact_head:
+        seal_check("producer checkout", commit, git("rev-parse", "HEAD").strip(),
+                   where="Window4 producer", refusal=Refused("producer checkout HEAD differs from PRODUCER_COMMIT"))
+    state = git("status", "--porcelain", "--untracked-files=all", "--", "experiments/graph_attest_702").strip()
+    seal_check("producer working tree", "clean", state, where="Window4 producer", same=not bool(state),
+               refusal=Refused("producer experiments/graph_attest_702 is not clean"))
     lines = []
     for name in PRODUCER_FILES:
         relative = "experiments/graph_attest_702/" + name
         blob = git("show", commit + ":" + relative, binary=True)
-        if (root / relative).read_bytes() != blob:
-            raise Refused(f"producer on-disk bytes differ from reviewed git show object: {name}")
+        seal_check("producer file", name, "current", where="Window4 producer",
+                   same=(root / relative).read_bytes() == blob,
+                   refusal=Refused(f"producer on-disk bytes differ from reviewed git show object: {name}"))
         lines.append(f"{hashlib.sha256(blob).hexdigest()}  {name}\n")
     digest = hashlib.sha256("".join(lines).encode()).hexdigest()
-    if digest != expected:
-        raise Refused("producer git-object digest differs from PRODUCER_SHA256")
+    seal_check("producer digest", expected, digest, where="Window4 producer",
+               refusal=Refused("producer git-object digest differs from PRODUCER_SHA256"))
     return digest
+
+
+def check_control_record(recorded, current, *, where, refusal):
+    """Scope/geometry/comparability must still match exactly; only the recorded
+    run identity (commits, digests, stamps) is a D32 seal that dev mode stamps."""
+    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts"}
+    identity.update(key for key in set(recorded) | set(current) if key.endswith("sha256"))
+    comparable = (set(recorded) | set(current)) - identity
+    if {key: recorded.get(key) for key in comparable} != {key: current.get(key) for key in comparable}:
+        raise Refused(f"{where}: control scope/geometry/comparability differs")
+    seal_check("control run identity", {key: recorded.get(key) for key in identity},
+               {key: current.get(key) for key in identity}, where=where, refusal=refusal)
 
 
 def inputs(env: dict, *, live: bool, runner=None) -> dict:
     mode = env.get("WINDOW_MODE", "graph-control")
+    development = dev_mode_enabled(env)
     if mode not in ("graph-control", EAGER_MODE):
         raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
     for name in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC"):
@@ -111,8 +135,12 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
     if live:
         if env["FABRIC"] != "socket":
             raise Refused("issues/CEO nominated SOCKET for this A8 control; no fabric substitution")
-        if str(artifact) != CONTROL or sha(artifact / "config.json") != CONFIG_SHA:
-            raise Refused("nominated A8 control path/config differs")
+        seal_check("artifact path", CONTROL, str(artifact), where="Window4 control", environ=env,
+                   refusal=Refused("nominated A8 control path/config differs"))
+        seal_check("artifact config identity", CONFIG_SHA,
+                   NOT_COMPUTED if development else sha(artifact / "config.json"),
+                   where="Window4 control", environ=env,
+                   refusal=Refused("nominated A8 control path/config differs"))
         if not str(root).startswith("/mnt/shared/") or not env["RECEIPTS"].startswith("/mnt/shared/"):
             raise Refused("live source and receipts must be shared")
         def git(*args):
@@ -120,20 +148,24 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
             if runner:
                 return runner(argv, limit=10).stdout.strip()
             return subprocess.check_output(argv, text=True, timeout=10).strip()
-        head = git("rev-parse", "HEAD")
-        if head != env.get("SOURCE_COMMIT") or src_sha(root) != env.get("SOURCE_SHA256"):
-            raise Refused("issues-owned frozen SOURCE_COMMIT/SOURCE_SHA256 differs")
-        if git("status", "--porcelain"):
-            raise Refused("shared source is not clean/frozen")
+        seal_check("runtime source", {"commit": env.get("SOURCE_COMMIT"), "digest": env.get("SOURCE_SHA256")},
+                   NOT_COMPUTED if development else {"commit": git("rev-parse", "HEAD"), "digest": src_sha(root)},
+                   where="Window4 runtime", environ=env,
+                   refusal=Refused("issues-owned frozen SOURCE_COMMIT/SOURCE_SHA256 differs"))
+        seal_check("runtime working tree", "clean", NOT_COMPUTED if development else git("status", "--porcelain"),
+                   where="Window4 runtime", environ=env, same=None if development else not bool(git("status", "--porcelain")),
+                   refusal=Refused("shared source is not clean/frozen"))
         require_producer(Path(__file__).resolve().parents[2], env.get("PRODUCER_COMMIT", ""),
                          env.get("PRODUCER_SHA256", ""), exact_head=False, runner=runner)
     result = dict(ts=str(root), artifact=str(artifact), receipts=env["RECEIPTS"],
-                fabric=env["FABRIC"], image=IMAGE, src_sha256=src_sha(root),
-                config_sha256=sha(artifact / "config.json"),
+                fabric=env["FABRIC"], image=IMAGE,
+                src_sha256=env.get("SOURCE_SHA256", NOT_COMPUTED) if development else src_sha(root),
+                config_sha256=env.get("CONFIG_SHA256", CONFIG_SHA) if development else sha(artifact / "config.json"),
                 source_commit=env.get("SOURCE_COMMIT", "dry-run-unfrozen"),
-                producer_commit=env.get("PRODUCER_COMMIT", "dry-run-unfrozen"), producer_sha256=producer_sha(),
-                hooks_sha256=sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
-                equal_script_sha256=sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
+                producer_commit=env.get("PRODUCER_COMMIT", "dry-run-unfrozen"),
+                producer_sha256=env.get("PRODUCER_SHA256", NOT_COMPUTED) if development else producer_sha(),
+                hooks_sha256=env.get("HOOKS_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
+                equal_script_sha256=env.get("EQUAL_SCRIPT_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
     if mode == EAGER_MODE:
         if env["FABRIC"] != "socket":
             raise Refused("Window4 is eager A8S/socket/TP2/c1 only")
