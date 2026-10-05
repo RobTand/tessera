@@ -25,6 +25,12 @@ identity drift, and no format pin or serving default moves. Regressions:
 `tests/test_graph_attest_headroom_preflight.py`. See
 `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
+Both live TP2 ranks must agree on image, source digest and config digest before
+either local launch, in dev and certified modes alike. This is execution
+comparability, not recorded-versus-running identity; mismatched gang halves
+fail both ranks without starting a server or emitting probes. Regression:
+`tests/test_graph_attest_window_scenarios.py::test_mismatched_rank_preflight_refuses_before_either_launch`.
+
 Re-stamped 2026-10-05 for issue959 (D30 Window4 107 GiB admission and dual-rank
 memory abort). The Window4 per-host `MemAvailable` admission predicate moves
 from the historical 114 GiB to **107 GiB on both hosts** — the retained

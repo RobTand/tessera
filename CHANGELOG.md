@@ -30,6 +30,11 @@ verbatim certified refusals; every pre-existing OOM/headroom/lifecycle/
 own-byte/foreign-safety assertion is retained. `docs/ARCHITECTURE.md` and
 `experiments/graph_attest_702/RUNPLAN-artifact.md` are re-stamped in the
 same commit.
+Corrective review restores the live TP2 rank-agreement check (image, source
+digest and config digest) as a plain refusal in both modes. These compare the
+two executing gang halves, not a run against recorded identity. Real-protocol
+CPU regressions cover each mismatch in default dev, explicit dev and certified
+modes for graph and eager windows, requiring neither server to launch.
 
 ## 2026-10-05 — issue959: D30 Window4 107 GiB admission and dual-rank memory abort
 

@@ -243,6 +243,11 @@ unchanged. Runtime choice and fabric remain explicit. The old dual-launch
 #942 wrapper is never
 run twice or used to launch an unadmitted remote rank.
 
+Before each arm starts, the two live rank preflights must have identical
+`image`, `src_sha256` and `config_sha256`. A mismatch is execution-comparability
+failure in both modes: no local server launch, no probes, both ranks failed.
+It never goes through `seal_check`, regardless of the dev-mode setting.
+
 Every model row is an exclusive **measurement**, host class gb10, priority **10**
 with a Goal reason, fixed legitimate rank-host tags, and 3600-second peer admission
 cap inside the unchanged 5400-second common window. Requested PB timeout is 5400;

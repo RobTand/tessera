@@ -495,9 +495,10 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             stage = arm["arm"]
             meeting.publish(stage + "-preflight", metadata=metadata)
             peer = meeting.wait(stage + "-preflight", tick=adapter.tick)
+            # Agreement between live gang halves is comparability, not a recorded-run seal.
             for key in ("image", "src_sha256", "config_sha256"):
-                seal_check(f"peer preflight {key}", metadata.get(key), peer["metadata"].get(key),
-                           where="Window4 paired preflight", refusal=Refused(f"rank preflight differs in {key}"))
+                if metadata.get(key) != peer["metadata"].get(key):
+                    raise Refused(f"rank preflight differs in {key}")
             meeting.check()  # live peer authority immediately before every local launch
             envelope.remaining()
             started = adapter.start(arm)
