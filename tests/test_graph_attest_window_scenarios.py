@@ -62,7 +62,8 @@ class CpuArm:
 
     def probes(self, arm, peer):
         mode = window.read_json(self.root.parent / "scenario-mode.json")["mode"]
-        failed_arm = {"window4-eager-2048-4096": "eager2048", "ship-eager-4096-8192": "eager4096"}.get(mode, "aGR")
+        failed_arm = {"window4-eager-2048-4096": "eager2048", "ship-eager-4096-8192": "eager4096",
+                      "ship-graph-2048": "graph2048_off"}.get(mode, "aGR")
         failure = self.scenario in ("probe_failure", "timeout") and arm["arm"] == failed_arm
         program = "import time;print('partial',flush=True);time.sleep(30)" if failure and self.scenario == "timeout" else (
                   "print('partial',flush=True);raise SystemExit(7)" if failure else "print('two full passes and screens simulated',flush=True)")
@@ -230,7 +231,8 @@ if __name__ == "__main__":
     envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=.6)
     mode = window.read_json(root / "scenario-mode.json")["mode"]
     names = {"window4-eager-2048-4096": ("eager2048", "eager4096"),
-             "ship-eager-4096-8192": ("eager4096", "eager8192")}
+             "ship-eager-4096-8192": ("eager4096", "eager8192"),
+             "ship-graph-2048": ("graph2048_off", "graph2048_on")}
     arms = [dict(arm=arm) for arm in names.get(mode, ("aE1", "aGR", "aE2"))]
     adapter = CpuArm(root / "rdv", owned, envelope, name)
     raise SystemExit(rank_window.run_rank(dict(fabric="socket", window_mode=mode), owned, root / "queue", root / "rdv", arms,

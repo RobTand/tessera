@@ -347,6 +347,42 @@ No ship artifact/client identity, effective7200 ceiling, model result, pin
 promotion or scientific qualification is fabricated by this plan. The latest CEO
 order below supersedes the former ship-before-Window4 sequencing.
 
+## Explicit graph ship lever pair (issue980)
+
+Select `WINDOW_MODE=ship-graph-2048` with `plan-graph-ship.txt`. The exact
+pair is `graph2048_off` then `graph2048_on`, BOTH graph/socket/TP2/c1 at
+MNBT2048, with the unchanged `NONE/FULL_DECODE_ONLY` compilation tuple.
+This is a same-MNBT lever OFF/ON comparison, not eager-versus-graph or an MNBT
+step. Every row declares `TESSERA_E4M3_DECODE_ONCE=0|1`,
+`TESSERA_GLM53_KDA_CONV_SPLIT=off|on` and `TESSERA_ROUTED_PIECE_MAJOR=0|1`.
+The OFF row disables all three; the ON row must enable at least one. The
+supplied plan enables all three in ON; an explicitly reviewed single-lever
+plan can leave the other two OFF without changing the pair or workload.
+No undeclared row override or missing/invalid lever value is accepted.
+Row values are retained in the frozen inputs and invocation and passed into
+both containers; ambient values never supply the production plan's levers.
+
+Both arms reuse the exact October5 c1 L512/2048/8192 output128 ten-trial
+timing requests and the existing manifest-declared profile cells/order.
+Timing labels are graph; `tessera.ship_graph_window.v1` and
+`tessera.ship_graph_invocation.v1` distinguish these outputs from eager.
+Rank1 owns the client, both ranks verify their profiles, and power is sampled
+on both Sparks. This is NOT the c4 equality/replay graph receipt, and cannot
+fill its ship gate. Window4, ship-eager and default graph-control are untouched.
+
+The D30 107 GiB start bar/900s wait/1 Hz strict <2 GiB dual-rank guard,
+104 GiB host/102 GiB GPU-subset caps, 5400s shared envelope, cleanup reserve,
+pair isolation and exact producer/runtime parent/D5 reviews are unchanged.
+The added plan is part of `PRODUCER_FILES`; old producer approvals do not
+transfer. CPU dry-run qualification runs the real `drive_tp2.sh --dry-run`
+entry point through PB x86/tmp/native1 under D1 (D38); it starts no model.
+No graph gang or lever publication is authorized here. Runtime refusals
+(including the pinned decode-once compiled-forward restriction) remain; this
+source change claims no native compatibility, performance, quality, ship or pin.
+The separately required client trace-writer repair is not performed in this
+selector or in frozen client bytes; it must be reviewed before later GPU work.
+
+
 ## Separate issue968 MNBT8192 ship-window selector
 
 Select `WINDOW_MODE=ship-eager-4096-8192` with

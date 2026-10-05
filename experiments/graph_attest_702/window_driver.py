@@ -22,12 +22,10 @@ QUEUE = Path("/mnt/shared/prismabuild-fleet/pb-queue")
 def dry_arm(name: str, env: dict):
     config = recipe.inputs(env, live=False)
     arm = recipe.arm_settings(name, env)
-    if config.get("window_mode") in recipe.EAGER_PAIRS:
-        expected = dict(recipe.EAGER_PAIRS[config["window_mode"]])
-        if env.get("MAX_BATCHED") != expected.get(name) or arm["eager"] != "1":
-            raise Refused("Window4 is exactly eager2048/2048 then eager4096/4096" if config["window_mode"] == recipe.EAGER_MODE else
-                          "Ship window is exactly eager4096/4096 then eager8192/8192")
-        arm["max_batched"] = int(env["MAX_BATCHED"])
+    if config.get("window_mode") in recipe.BENCHMARK_PAIRS:
+        arm = recipe.pair_arm(name, env, config["window_mode"])
+    if "lever_env" in arm:
+        print("  explicit per-arm lever env: " + shlex.join(f"{key}={value}" for key, value in arm["lever_env"].items()))
     if (Path(config["receipts"]) / name).exists():
         raise Refused("an arm's receipts are never merged into an existing arm")
     print(f"arm {name} (dry run): local PB rank action on each host; start nothing")
@@ -35,7 +33,7 @@ def dry_arm(name: str, env: dict):
     print(f"  both hosts: MemAvailable >= {MEMORY_POLICY['start_gib']} GiB; 1 Hz strict <2 GiB dual-rank abort; native threads=1")
     for rank in (0, 1):
         print(f"  serve rank{rank}: {shlex.join(recipe.serve(config, arm, rank))}")
-    print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.EAGER_PAIRS else
+    print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
           "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
 
 
@@ -47,8 +45,9 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
                            demand=dict(cpu=8 if rank == 0 else 6, mem_gb=MEMORY_POLICY["host_cap_gib"], gpu=1),
                            gpu_memory_gb=MEMORY_POLICY["gpu_subset_cap_gib"], exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
-                           priority=10, priority_reason=("Goal: exact reviewed A8S eager pair " + config["window_mode"]
-                                                        if config.get("window_mode") in recipe.EAGER_PAIRS else
+                           priority=10, priority_reason=(("Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
+                                                        "Goal: exact reviewed A8S eager pair ") + config["window_mode"]
+                                                        if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
                                                         "Goal: full nominated A8 graph control after exact-head review; one paired window at a time"),
                            container_images=[config["image"]], timeout_s=WINDOW_SECONDS,
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
@@ -120,13 +119,14 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
     disks = diskcheck(for_model=not role_preflight)
     root.mkdir(parents=True, exist_ok=False)
     (root / "arms").mkdir()
-    if mode in recipe.EAGER_PAIRS:
+    if mode in recipe.BENCHMARK_PAIRS:
         for arm in arms:
             directory = Path(config["profile_dir"]) / arm["arm"]
             directory.mkdir(parents=True, exist_ok=False)
             directory.chmod(0o777)
     atomic_json(root / "memory-policy.json", MEMORY_POLICY)
-    setup = dict(schema=("tessera.window4_eager_window.v1" if mode in recipe.EAGER_PAIRS else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
+    setup = dict(schema=("tessera.ship_graph_window.v1" if mode == recipe.GRAPH_SHIP_MODE else
+                         "tessera.window4_eager_window.v1" if mode in recipe.BENCHMARK_PAIRS else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
                  config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
                  requested_pb_timeout_s=WINDOW_SECONDS, effective_pb_timeout_s=None, peer_wait_seconds=3600,
                  predecessors=predecessors, diskcheck=disks,
@@ -197,7 +197,7 @@ def submit(root: Path, reviews: Path):
         accepted = review.get(who, {})
         if accepted.get("verdict") != "APPROVE" or code_heads != {accepted.get("head_sha")}:
             raise Refused(f"missing exact executing-code {who} review; no real model start")
-    if setup["config"].get("window_mode") in recipe.EAGER_PAIRS:
+    if setup["config"].get("window_mode") in recipe.BENCHMARK_PAIRS:
         # The corrected-runtime candidate review is an exact-head code review of the
         # PQ pin commit, not a recorded run identity: it refuses in dev and certified.
         for who in ("parent", "D5"):
@@ -211,7 +211,7 @@ def submit(root: Path, reviews: Path):
     observed = inspect_queue(datetime.now(timezone.utc).isoformat(), setup["census_action_keys"], root / "launch-queue.json")
     if not observed["submit_allowed"]:
         raise Refused("campaign769 is queued/claimed or queue view incomplete; never queue a second paired window")
-    if setup["config"].get("window_mode") in recipe.EAGER_PAIRS:
+    if setup["config"].get("window_mode") in recipe.BENCHMARK_PAIRS:
         from watch_window_queue import other_windows
         live_windows = other_windows(observed)
         atomic_json(root / "pair-isolation.json", dict(complete=True, live_windows=live_windows,
@@ -275,7 +275,7 @@ def main():
         recipe.plan(args.plan, mode=os.environ.get("WINDOW_MODE", "graph-control"))
         return 0
     if args.prepare and not args.submit:
-        if os.environ.get("WINDOW_MODE", "graph-control") not in recipe.EAGER_PAIRS and len(args.census_key) != 2:
+        if os.environ.get("WINDOW_MODE", "graph-control") not in recipe.BENCHMARK_PAIRS and len(args.census_key) != 2:
             raise Refused("supply the two exact current campaign769 action keys")
         prepare(args.prepare, args.plan, os.environ, args.handoffs, args.census_key,
                 role_preflight=args.prepare_role_preflight)
