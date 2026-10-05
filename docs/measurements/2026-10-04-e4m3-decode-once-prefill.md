@@ -131,14 +131,39 @@ preceding norm, or shared between GEMMs on one input, would add to the
 saving. The remaining small projections (q_a+kv_a, the indexer) were not
 measured here.
 
-**Large-M anomaly (outside the served regime).** When the activation reaches
-32 Mi elements (M·K ≥ 2^25: `kda_in` at M = 8192, MLA `o_proj` at M ≥ 4096),
-both FP8 lanes slow by 4–6× per doubling of M. For example, decoded `kda_in`
-takes 2.48 ms at M = 4096 and 16.2 ms at M = 8192. BF16 does not slow. The
-cause was not measured. Re-reading an activation that no longer stays in L2,
-once per output-tile column, would account for it. The serve's MNBT 2048 keeps
-every call at M ≤ 2048. If MNBT is raised, a fixed M chunk inside
-`prefill_apply` is the first thing to measure.
+**Large-M anomaly (outside the served regime): it is the row-wise kernel
+choice.** When the activation reaches 32 Mi elements (M·K ≥ 2^25: `kda_in`
+at M = 8192, MLA `o_proj` at M ≥ 4096), both FP8 lanes in this table slow by
+4–6× per doubling of M, while BF16 does not. PB `018d984f384c` (sparky,
+head `7527cc362`) ran `experiments/t8r_speed/bench_fp8_large_m.py` on seeded
+operands and timed five arms. Each cell is the mean of a forward and a
+reverse pass, which agree within 10% except `kda_in` tensor-wise at
+M = 2048. Results:
+`/mnt/shared/tessera-measurements/e4m3-prefill-20261004/integ2-20261005T001754Z/probe/fp8_large_m.json`.
+
+| Shape | M | row-wise `_scaled_mm` | tensor-wise `_scaled_mm` | row-wise, 2048-row chunks | quantiser | BF16 |
+|---|---|---|---|---|---|---|
+| kda_in (12448 x 4096) | 2048 | 1.22 ms, 171 TF/s | 1.69 ms | 1.69 ms | 0.08 ms | 2.76 ms |
+| | 4096 | 2.77 ms, 151 | 2.69 ms, 155 | 3.54 ms, 118 | 0.27 ms | 5.66 ms |
+| | 8192 | **16.8 ms, 50** | 5.29 ms, 158 | 7.23 ms, 116 | 0.46 ms | 10.7 ms |
+| MLA o_proj (4096 x 8192) | 2048 | 0.92 ms, 150 | 0.93 ms, 148 | 1.16 ms, 119 | 0.25 ms | 1.84 ms |
+| | 4096 | **5.12 ms, 54** | 1.92 ms, 143 | 2.28 ms, 121 | 0.48 ms | 3.85 ms |
+| | 8192 | **10.7 ms, 51** | 3.45 ms, 160 | 4.55 ms, 121 | 0.87 ms | 7.36 ms |
+
+- **Not the quantiser:** it costs at most 0.87 ms.
+- **Not memory as such:** the same operands at the same M run at
+  143–160 TFLOP/s through the tensor-wise path.
+- **It is the kernel the row-wise path selects.** PyTorch's row-wise
+  `_scaled_mm` launches its own CUTLASS 3.x kernel
+  (`enable_3x_kernel_for_sm10x...`). The tensor-wise path launches cuBLASLt's
+  `nvjet_sm121_qqtst_mma_*`. The CUTLASS kernel collapses to 50–54 TFLOP/s at
+  these sizes. Why it collapses (tile schedule or raster order) was not
+  profiled.
+- **The served M = 2048 is unaffected:** the row-wise kernel runs at
+  150–171 TFLOP/s there.
+- **If MNBT is raised**, two fixes are available. Splitting M into 2048-row
+  calls recovers 115–121 TFLOP/s at a small per-call overhead. A per-row-scaled
+  cuBLASLt path would be the other route; it was not tried.
 
 **Load-time decode cost:** 0.247 s for `kda_in` (12448 x 4096), 0.013 s for
 `o_proj`, 0.053 s for MLA `o_proj` and 0.004 s for `q_b`. At 34 KDA and 11 MLA
