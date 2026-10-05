@@ -247,6 +247,14 @@ def _excluded_references(source: str, package: str, patterns: list[str]) -> list
             if callee in {"import_module", "__import__"} and isinstance(argument, ast.Constant):
                 if isinstance(argument.value, str):
                     names = [argument.value]
+        elif isinstance(node, (ast.List, ast.Tuple)):
+            # A literal ``-m MODULE`` argument pair: a launch of the module by name.
+            # Only a literal pair is read; a computed name is not analysed.
+            names = [
+                module.value for flag, module in zip(node.elts, node.elts[1:])
+                if isinstance(flag, ast.Constant) and flag.value == "-m"
+                and isinstance(module, ast.Constant) and isinstance(module.value, str)
+            ]
         if any(fnmatch(name, pattern) for name in names for pattern in patterns):
             lines.append(node.lineno)
     return lines
