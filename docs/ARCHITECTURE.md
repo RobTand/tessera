@@ -6355,10 +6355,11 @@ wrote the part; a selected host producer executes its own venv, and its
 environment is the receipt, not the image.
 
 Both export wrappers require `PART_BOUND_S` in 1..2700; zero refuses rather
-than disabling GNU timeout. Completion and verified skip call the same
-source-aware `serving_parts.validate_serving_part` owner as assembly: exact
-source ownership/stamped shards, complete index and actual tensor headers,
-all output seals/shards, and integer partition/batch carriers with matching
+than disabling GNU timeout. Completion and verified skip call the source-aware
+`serving_parts.validate_serving_part`, reusing assembly's single
+`_prove_part_contents` owner for exact source ownership/stamped shards, complete
+index, actual tensor headers and output seals/shards. Integer partition/batch
+carriers must agree across the top-level and sealed identity records.
 top-level and identity producer/batch records. Current calibration, authority,
 scale and plan snapshots must equal the exporter's consumed identities before
 an exclusive atomic marker publication; validation/publication failure is
