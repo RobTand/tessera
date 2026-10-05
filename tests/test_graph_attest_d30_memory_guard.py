@@ -132,6 +132,7 @@ def d30_adapter(tmp_path, monkeypatch, *, rank=0, read, clock, eager=False):
                             lambda owned: dict(rank=owned["rank"], scope_id=owned["scope_id"]))
     adapter = new_adapter(tmp_path, owned, rank)
     adapter.config = dict(window_mode=recipe.EAGER_MODE if eager else "graph-control")
+    adapter.envelope = window.Envelope(clock.time() + 1200, cleanup_seconds=60)
     return adapter
 
 
