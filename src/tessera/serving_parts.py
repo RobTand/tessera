@@ -926,8 +926,7 @@ def _prove_part_contents(rank, count, path, part, manifest, index, whole, hash_f
     files = set(local_map.values())
     if files != set(part["output_sha256"]):
         raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
-    if files != {p.name for p in path.glob("*.safetensors")} or (owned and not files):
-        raise ValueError(f"partition {rank}: output shard coverage disagrees with directory")
+
     actual, payloads = {}, []
     for filename in sorted(files):
         filename = _leaf(filename)
@@ -939,6 +938,8 @@ def _prove_part_contents(rank, count, path, part, manifest, index, whole, hash_f
                 raise ValueError(f"tensor appears in two files: {name}")
             actual[name] = filename
         payloads.append((payload, filename))
+    if files != {p.name for p in path.glob("*.safetensors")} or (owned and not files):
+        raise ValueError(f"partition {rank}: output shard coverage disagrees with directory")
     if actual != local_map:
         raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
     return owned, local_map, payloads
