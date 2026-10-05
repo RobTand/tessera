@@ -67,29 +67,30 @@ RUNG = 1024
 
 
 def _moe(q256_w13=RUNG, q256_w2=RUNG, family=TESSERA_FP8, grid="E4M3",
-         body="WINDOW", plane="CHANNEL", experts=EXPERTS, **over):
+         body="WINDOW", plane="CHANNEL", experts=EXPERTS, hidden=HIDDEN, inter=INTER, **over):
     s = {
         "family": family, "structure": STRUCTURE_ROUTED_MOE,
         "grid": grid, "body": body, "plane": plane, "experts": experts,
         "groups": {
-            "w13": {"rows": 2 * INTER, "columns": HIDDEN, "q256": q256_w13,
+            "w13": {"rows": 2 * inter, "columns": hidden, "q256": q256_w13,
                     "wire_stride": 8192,
-                    "roles": [["gate_proj", INTER], ["up_proj", INTER]]},
-            "w2": {"rows": HIDDEN, "columns": INTER, "q256": q256_w2,
+                    "roles": [["gate_proj", inter], ["up_proj", inter]]},
+            "w2": {"rows": hidden, "columns": inter, "q256": q256_w2,
                    "wire_stride": 8192,
-                   "roles": [["down_proj", HIDDEN]]},
+                   "roles": [["down_proj", hidden]]},
         },
     }
     s.update(over)
     return s
 
 
-def _encode_fp8(rows, cols, name, seed, q256):
+def _encode_fp8(rows, cols, name, seed, q256, *, window_bits=14):
     """One E4M3 unit at ``q256``: its container, and the stock tile it decodes to."""
     export, stock, alphabet, fused = _tessera()
     w = torch.randn(rows, cols, generator=torch.Generator().manual_seed(seed)) * 0.02
     written, unit, forests = export.encode_linear_planes(
-        w.contiguous(), grid=alphabet.E4M3_GRID, q256=q256, name=name, verify=False)
+        w.contiguous(), grid=alphabet.E4M3_GRID, q256=q256, name=name,
+        window_bits=window_bits, verify=False)
     blob = fused.pack_fused([(name, rows, written.blob)])
     return blob, stock.materialize_stock(unit, forests, export.DEFAULT_CODE)
 
@@ -113,20 +114,20 @@ def _tessera():
 
 
 def _mixed_stack(encode, q256_w13, q256_w2, *, family=TESSERA_FP8, grid="E4M3",
-                 body="WINDOW", plane="CHANNEL"):
+                 body="WINDOW", plane="CHANNEL", hidden=HIDDEN, inter=INTER):
     """E experts of (gate, up, down) containers at per-unit rungs, with the
     per-unit reference tile each unit must decode to."""
     w13_blobs, w2_blobs, reference = [], [], []
     for e in range(EXPERTS):
-        gate, gate_ref = encode(INTER, HIDDEN, "gate_proj", 100 + e,
+        gate, gate_ref = encode(inter, hidden, "gate_proj", 100 + e,
                                 q256_w13[e][0])
-        up, up_ref = encode(INTER, HIDDEN, "up_proj", 200 + e, q256_w13[e][1])
-        down, down_ref = encode(HIDDEN, INTER, "down_proj", 300 + e, q256_w2[e][0])
+        up, up_ref = encode(inter, hidden, "up_proj", 200 + e, q256_w13[e][1])
+        down, down_ref = encode(hidden, inter, "down_proj", 300 + e, q256_w2[e][0])
         w13_blobs.append([gate, up])
         w2_blobs.append([down])
         reference.append({"gate": gate_ref, "up": up_ref, "down": down_ref})
     scheme = _moe(q256_w13=list(q256_w13), q256_w2=list(q256_w2), family=family,
-                  grid=grid, body=body, plane=plane)
+                  grid=grid, body=body, plane=plane, hidden=hidden, inter=inter)
     scheme["groups"]["w13"]["wire_stride"] = max(
         len(b) for pair in w13_blobs for b in pair)
     scheme["groups"]["w2"]["wire_stride"] = max(len(pair[0]) for pair in w2_blobs)
@@ -278,8 +279,10 @@ def test_the_compact_reader_resolves_each_experts_declaration():
 # ------------------------------------------------ research TP2 rank cuts, CPU
 
 def test_a_mixed_bf16_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
+    # R1088 down cuts must cover whole256-column quota superblocks at TP2.
+    inter = 512
     w13_blobs, w2_blobs, scheme, reference = _mixed_stack(
-        _encode_bf16, MIXED_W13, MIXED_W2, family=TESSERA_BF16, grid="BF16")
+        _encode_bf16, MIXED_W13, MIXED_W2, family=TESSERA_BF16, grid="BF16", inter=inter)
     declared = validate_tessera_moe_scheme(scheme, "m")
     ids = torch.tensor([1, 0], dtype=torch.int32)
     for rank in (0, 1):
@@ -287,17 +290,21 @@ def test_a_mixed_bf16_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
             {"w13": w13_blobs, "w2": w2_blobs}, declared, "m", device="cpu",
             tp_rank=rank, tp_size=2)
         selected = owner.decode_folded(ids, max_experts_per_chunk=2)
-        lo, hi = rank * (INTER // 2), (rank + 1) * (INTER // 2)
+        lo, hi = rank * (inter // 2), (rank + 1) * (inter // 2)
         for slot, expert in enumerate(ids.tolist()):
             gate, up, down = (reference[expert][k] for k in ("gate", "up", "down"))
             full13 = torch.cat([gate, up])
             assert torch.equal(selected.w13_weight[slot],
-                               torch.cat([full13[lo:hi], full13[INTER + lo:INTER + hi]]))
+                               torch.cat([full13[lo:hi], full13[inter + lo:inter + hi]]))
             assert torch.equal(selected.w2_weight[slot], down[:, lo:hi])
 
 
 def test_a_mixed_fp8_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
-    w13_blobs, w2_blobs, scheme, reference = _mixed_stack(_encode_fp8, MIXED_W13, MIXED_W2)
+    inter = 512
+    def encode(rows, cols, name, seed, q256):
+        return _encode_fp8(rows, cols, name, seed, q256, window_bits=8)
+    w13_blobs, w2_blobs, scheme, reference = _mixed_stack(
+        encode, MIXED_W13, MIXED_W2, inter=inter)
     declared = validate_tessera_moe_scheme(scheme, "m")
     ids = torch.tensor([2, 0], dtype=torch.int32)
     for rank in (0, 1):
@@ -305,19 +312,19 @@ def test_a_mixed_fp8_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
             {"w13": w13_blobs, "w2": w2_blobs}, declared, "m", device="cpu",
             tp_rank=rank, tp_size=2)
         selected = owner.decode(ids, max_experts_per_chunk=2)
-        lo, hi = rank * (INTER // 2), (rank + 1) * (INTER // 2)
+        lo, hi = rank * (inter // 2), (rank + 1) * (inter // 2)
         for slot, expert in enumerate(ids.tolist()):
             gate, up, down = (reference[expert][k] for k in ("gate", "up", "down"))
             weight = selected.w13_weight[slot].view(torch.uint8)
-            assert torch.equal(weight[:INTER // 2], gate["weight"][lo:hi].view(torch.uint8))
-            assert torch.equal(weight[INTER // 2:], up["weight"][lo:hi].view(torch.uint8))
+            assert torch.equal(weight[:inter // 2], gate["weight"][lo:hi].view(torch.uint8))
+            assert torch.equal(weight[inter // 2:], up["weight"][lo:hi].view(torch.uint8))
             assert torch.equal(selected.w2_weight[slot].view(torch.uint8),
                                down["weight"][:, lo:hi].view(torch.uint8))
             scale = selected.w13_weight_scale[slot].reshape(-1)
-            assert torch.equal(scale[:INTER // 2],
+            assert torch.equal(scale[:inter // 2],
                                gate["weight_scale"].reshape(-1)[lo:hi])
-            assert torch.equal(scale[INTER // 2:],
-                               up["weight_scale"].reshape(-1)[lo:hi])
+            assert torch.equal(scale[inter // 2:], up["weight_scale"].reshape(-1)[lo:hi])
+
             assert torch.equal(selected.w2_weight_scale[slot].reshape(-1),
                                down["weight_scale"].reshape(-1))
 

@@ -1498,7 +1498,7 @@ def routed_unit_rank_cut(layout: dict, tp_size: int, tp_rank: int) -> dict:
     return cut
 
 
-def require_plannable_unit_layout(layout, q256, target):
+def require_plannable_unit_layout(layout, q256, target, *, manifest=None):
     """Refuse a mixed unit whose TP sizes cannot be declared from its rung.
 
     Full/quota-aligned cuts have exact grammar counts for every legal
@@ -1510,6 +1510,14 @@ def require_plannable_unit_layout(layout, q256, target):
 
     canonical = bresenham_rate_schedule(root_from_q256(q256), int(layout["cols"]), cap=8)
     for size in (1, 2):
+        if manifest is not None:
+            from tessera.layout import can_shard, shard_granularity
+            axis = "row" if layout["group"] == "w13" else "column"
+            if not can_shard(manifest, size, axis):
+                granularity = shard_granularity(manifest)
+                raise SystemExit(
+                    f"{target}: TP{size} {axis} cut is refused by the wire grammar "
+                    f"(granularity {granularity}); refusing before the shard write")
         for rank in range(size):
             try:
                 actual = routed_unit_rank_cut(layout, size, rank)
@@ -3323,7 +3331,8 @@ def main():
                                     f"{layout['rows']}x{layout['cols']} for a unit exported as "
                                     f"{exported.rows}x{exported.columns}")
                             if "unit_q256" in stack_spec:
-                                require_plannable_unit_layout(layout, unit_q256, unit["tensor"])
+                                require_plannable_unit_layout(layout, unit_q256, unit["tensor"],
+                                                             manifest=unit_manifest)
                             try:
                                 stack_record["resident_bytes_resident_mode"] += (
                                     routed_window_unit_resident_bytes(
