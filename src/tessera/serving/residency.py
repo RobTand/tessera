@@ -49,3 +49,21 @@ def layer_resident_tensors(layer, attributes: Iterable[str]) -> Iterator[Tuple[s
     """The declared attributes of ``layer``; an attribute not yet set yields nothing."""
     for attribute in attributes:
         yield from named_resident_tensors(vars(layer).get(attribute), attribute)
+
+
+def resident_storage_bytes(tensors: Iterable[Tuple[str, torch.Tensor]]) -> int:
+    """Backing bytes held by declared views, charging each allocation once.
+
+    A slice keeps its whole allocation alive. Neither a tensor's logical
+    shape nor the number of aliases changes that charge. This is ownership
+    accounting, not an allocator-reserved or process-wide memory reading;
+    references held outside this declaration still keep their storage alive.
+    """
+    allocations = {}
+    for name, tensor in tensors:
+        if tensor.device.type == "meta":
+            raise TypeError(f"{name}: a meta tensor has no resident backing storage")
+        storage = tensor.untyped_storage()
+        size = storage.nbytes()
+        allocations[(tensor.device, storage.data_ptr(), size)] = size
+    return sum(allocations.values())

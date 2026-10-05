@@ -8,8 +8,11 @@ from types import SimpleNamespace
 
 def collect_fixture(tmp_path, population):
     source = Path(__file__).resolve().parents[1] / 'experiments/t8r_speed/routed_gate_netdata.py'
-    functions = [n for n in ast.parse(source.read_text()).body
-                 if isinstance(n, ast.FunctionDef) and n.name in ('retain_query','main')]
+    tree = ast.parse(source.read_text())
+    functions = [n for n in tree.body
+                 if isinstance(n, ast.FunctionDef) and n.name in ("retain_query", "main")]
+    endpoints = next(n for n in tree.body if isinstance(n, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == "BOX_ENDPOINTS" for t in n.targets))
     owner = SimpleNamespace(collect=lambda address, a, z, points: {'window': [a, z]},
                             _fetch=lambda *a: {'url': 'inert', 'doc': {}},
                             _stats=lambda *a: {})
@@ -23,7 +26,7 @@ def collect_fixture(tmp_path, population):
     timing = tmp_path / 'timing'
     timing.mkdir()
     (timing / 'bench_t8r.json').write_text(json.dumps(population))
-    exec(compile(ast.Module(body=functions, type_ignores=[]), str(source), 'exec'), scope)
+    exec(compile(ast.Module(body=[endpoints, *functions], type_ignores=[]), str(source), "exec"), scope)
     scope['main']()
     return json.loads((tmp_path / 'netdata.json').read_text())
 

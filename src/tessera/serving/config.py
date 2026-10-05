@@ -522,6 +522,7 @@ class TesseraConfig(QuantizationConfig):
     def get_quant_method(self, layer: torch.nn.Module,
                          prefix: str) -> QuantizeMethodBase | None:
         from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+        from .glm53_empty_rope import install_for_current_config as install_empty_rope
         from .glm53_graphs import install_for_current_config as install_glm53_graphs
         from .glm53_prefill import install_for_current_config as install_glm53_prefill
         from .glm53_shared_fold import install_for_current_config as install_shared_fold
@@ -530,6 +531,7 @@ class TesseraConfig(QuantizationConfig):
         install_for_current_config()
         install_glm53_prefill()
         install_shared_fold()
+        install_empty_rope()
         install_glm53_graphs()
         lookup_prefix, target_scheme, ignored = self._module_lookup(prefix)
 
