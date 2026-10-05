@@ -194,7 +194,7 @@ def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path,
     actions = []
     for kind in ("generation", "price", "pair"):
         task_class = "generation" if kind == "generation" else "measurement"
-        command = ["python3", "fixture.py"] if kind != "pair" else ["python3", "rank_window.py", "--rank", "1", "--run", "/mnt/shared/fixture/inputs.json"]
+        command = [sys.executable, "fixture.py"] if kind != "pair" else [sys.executable, "rank_window.py", "--rank", "1", "--run", "/mnt/shared/fixture/inputs.json"]
         action = pb.seal_action(dict(schema=pb.ACTION_SCHEMA_V2,
             task=dict(definition_id="tests/window4-census", definition_version="1", task_class=task_class,
                       determinism="deterministic", artifact_family="generic", artifact_kind="generic",
