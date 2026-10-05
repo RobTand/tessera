@@ -1,5 +1,31 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for issue953 (CEO-authorized bounded preflight headroom
+wait, Window4). `LocalArm.preflight` now calls a shared `LocalArm.headroom`
+step before every arm, graph and eager alike: it waits at most 900 seconds for
+`MemAvailable` to reach the unchanged 114 GiB predicate, polling on the
+existing `run_rank` cadence with the live guard checked every poll, capped by
+the existing `Envelope.remaining` lifetime (cleanup reserve and any tightened
+absolute window). A ready wait rechecks envelope and bound after the guard; an
+expired bound raises the original unchanged refusal text, and the 16 GiB floor
+still refuses inside the wait. One terminal wait report per call (threshold,
+bound, initial/last GiB, wall/monotonic times, every exact sample, and reason
+`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error`) is appended
+to `rdv/headroom-preflight-rank<rank>.jsonl`, persisting through refusal,
+cancellation and deadline; a failed reading retains unknown values rather
+than inventing availability. The actual model-start boundary rechecks the
+same 114 GiB bar after source checks and the peer barrier, recording its
+per-arm synchronous sample before any container work. No threshold, floor,
+cache/KV/shape, artifact, runtime, client or container semantic moves. The
+unchanged 104/102 GiB per-arm demand caps and every existing
+admission predicate stay exactly as they were: this wait is a bounded
+predicate-satisfaction wait, not a new admission mechanism, and it mints no
+114 GiB admission, no performance or fit evidence, and no transfer of the
+historical frozen producer's source approval. Deterministic regressions live
+in `tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
+regression fails before the change, which refused below threshold instantly
+with no wait report. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
 adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
 The default c4/MNBT2048 eager/graph/eager equality population and refusal stay
