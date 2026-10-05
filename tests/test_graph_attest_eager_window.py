@@ -9,6 +9,7 @@ HERE = Path(__file__).resolve().parents[1] / "experiments/graph_attest_702"
 sys.path.insert(0, str(HERE))
 import tp2_recipe as recipe
 from managed_window import Refused
+from tessera.dev_mode import DEV_MODE_ENV
 
 MODE = "window4-eager-2048-4096"
 
@@ -169,9 +170,13 @@ def bound_files(tmp_path, monkeypatch):
     return benchmark, env, artifact, entries
 
 
-@pytest.mark.parametrize("fault", ["none", "inventory", "roster", "metadata", "client", "prompts", "contract", "pin"])
-def test_actual_binding_hashes_and_roster_refuse_drift(bound_files, fault):
+IDENTITY_FAULTS = ("client", "prompts", "contract", "pin", "power")
+
+
+@pytest.mark.parametrize("fault", ["none", "inventory", "roster", "metadata", "client", "prompts", "contract", "pin", "power"])
+def test_actual_binding_hashes_and_roster_refuse_drift(bound_files, fault, monkeypatch):
     benchmark, env, artifact, entries = bound_files
+    monkeypatch.delenv(DEV_MODE_ENV, raising=False)  # data damage refuses with dev ON; identity faults force 0 below
     if fault == "none":
         result = benchmark.bindings(env, artifact)
         assert result["artifact_files"] == 128 and result["pq_pin_commit"] == benchmark.PQ_PIN_COMMIT
@@ -183,7 +188,73 @@ def test_actual_binding_hashes_and_roster_refuse_drift(bound_files, fault):
     if fault == "prompts": (benchmark.PANEL / "prompts.json").write_text("changed")
     if fault == "contract": (Path(env["TS"]) / "src/tessera/serving/runtime_contract.json").write_text("changed")
     if fault == "pin": env["PQ_PIN_COMMIT"] = "e" * 40
+    if fault == "power": monkeypatch.setattr(benchmark, "POWER_SHA", "f" * 64)
+    if fault in IDENTITY_FAULTS:
+        monkeypatch.setenv(DEV_MODE_ENV, "0")  # identity seals refuse only in certified mode
     with pytest.raises(Refused): benchmark.bindings(env, artifact)
+
+
+@pytest.mark.parametrize("fault", ["source", "pin", "contract", "prompts"])
+def test_dev_mode_stamps_identity_drift_and_continues_with_stored(bound_files, fault, monkeypatch, capsys):
+    """D32: identity drift stamps [DEV-MODE] lines and returns the stored bindings."""
+    benchmark, env, artifact, entries = bound_files
+    monkeypatch.delenv(DEV_MODE_ENV, raising=False)
+    if fault == "source": env["SOURCE_COMMIT"] = "0" * 40
+    if fault == "pin": env["PQ_PIN_COMMIT"] = "e" * 40
+    if fault == "contract": (Path(env["TS"]) / "src/tessera/serving/runtime_contract.json").write_text("changed")
+    if fault == "prompts": (benchmark.PANEL / "prompts.json").write_text("changed")
+    if fault == "power": monkeypatch.setattr(benchmark, "POWER_SHA", "f" * 64)
+    result = benchmark.bindings(env, artifact)
+    out = capsys.readouterr().out
+    # Dev stamps every suspended digest seal (8 not-computed) plus a drifted
+    # stored-value seal for source/pin.
+    assert out.count("[DEV-MODE]") == (9 if fault in ("source", "pin") else 8)
+    assert out.count("not computed") == 8 and "continuing with the stored data" in out
+    assert result["artifact_files"] == 128 and result["artifact_bytes"] == sum(e["bytes"] for e in entries)
+    if fault == "source": assert "seal source commit differs" in out
+    if fault == "pin":
+        assert "seal PQ pin commit differs" in out
+        assert result["pq_pin_commit"] == benchmark.PQ_PIN_COMMIT
+    if fault == "contract": assert result["runtime_contract_sha256"] == benchmark.CONTRACT_SHA
+    if fault == "prompts": assert result["prompts_sha256"] == benchmark.PROMPTS_SHA
+
+
+def test_dev_mode_stamps_drifted_instrument_whose_members_still_match(bound_files, monkeypatch, capsys):
+    """An evolved instrument stamps its fixed historical seal, then passes member integrity."""
+    benchmark, env, artifact, entries = bound_files
+    monkeypatch.delenv(DEV_MODE_ENV, raising=False)
+    program = benchmark.CLIENT / "u4_speed_client.py"
+    program.write_text("evolved program")
+    identity = benchmark.CLIENT / "source_identity.json"
+    members = json.loads(identity.read_text())
+    members["files"]["u4_speed_client.py"] = benchmark.sha(program)
+    identity.write_text(json.dumps(members))
+    monkeypatch.setattr(benchmark, "SOURCE_IDENTITY_SHA", benchmark.sha(identity))
+    result = benchmark.bindings(env, artifact)
+    out = capsys.readouterr().out
+    assert out.count("[DEV-MODE]") == 8 and out.count("not computed") == 8
+    assert result["timing_program_sha256"] == benchmark.TIMING_SHA  # the stored October 5 program
+
+
+def test_dev_mode_still_refuses_source_identity_member_drift(bound_files, monkeypatch):
+    """Corrupting a member's bytes refuses even in dev: recorded-hash integrity, not sealing."""
+    benchmark, env, artifact, entries = bound_files
+    monkeypatch.delenv(DEV_MODE_ENV, raising=False)
+    program = benchmark.CLIENT / "u4_speed_client.py"
+    program.write_text("corrupted")
+    monkeypatch.setattr(benchmark, "TIMING_SHA", benchmark.sha(program))  # its historical identity agrees
+    with pytest.raises(Refused, match="source identity member changed"):
+        benchmark.bindings(env, artifact)
+
+
+def test_certified_mode_computes_identity_digests_and_agrees(bound_files, monkeypatch, capsys):
+    """PRISMAQUANT_DEV_MODE=0 computes every identity digest and passes the matching fixture."""
+    benchmark, env, artifact, entries = bound_files
+    monkeypatch.setenv(DEV_MODE_ENV, "0")
+    result = benchmark.bindings(env, artifact)
+    assert capsys.readouterr().out == ""
+    assert result["artifact_content_sha256"] == benchmark.ARTIFACT_SHA
+    assert result["runtime_contract_sha256"] == benchmark.CONTRACT_SHA
 
 
 def test_complete_census_allows_prices_but_refuses_another_sealed_pair(tmp_path, monkeypatch):
