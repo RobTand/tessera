@@ -36,24 +36,14 @@ artifact, whose true bytes and config digest must be supplied separately. Full
 artifact equality, compiled runtime cells, D13 serving pin, scientific quality,
 served profiling/power and ship-card qualification remain separate gates.
 
-## Receipt-source dependency and shared-file integration
+## Reviewed v2 integration
 
-The CEO engineer owns PR942, `opus/702-receipt-fabric-v2`, pushed head
-`f7403d1dc49dd87c81d021287afa884e81cc0120` when inspected. It adds
-`graph_equals_eager.v2`, with fabric as a ninth scope field. At TP2 the builder
-reads **both ranks' actual NCCL banners**, refuses requested/observed mismatch,
-and v1 receipts remain inspectable but cannot verify cards. This repair does not
-copy or edit that schema/parser implementation. Its measured `fabric_observed`
-record retains the builder's `rank0:Using network Socket;rank1:Using network Socket`
-grammar, derived from each local log, not from socket defaults.
-
-PR942 and this repair both change `arm_tp2.sh`, `RUNPLAN-artifact.md` and portions
-of `test_graph_attest_tp2.py`. Integrate only reviewed/landed source: retain the
-managed local-rank entrypoint, explicit SOCKET nomination, v2 parser/tests and the
-observed-banner record. The plan reader also accepts PR942's explicit per-arm
-`FABRIC=socket`, but refuses an arm that differs from the frozen common tuple.
-Do not freeze a live writer's worktree or silently use the pre-v2 source for a
-card. Parent and D5 review of the final frozen source precede any real model start.
+PR942 is merged as `39e3d950226f1c9fec38d4baaaccb59fc267e12b`; the reviewed eight
+files are retained, including v2 schema/parser/tests and explicit socket plan.
+This branch was rebased only onto that landed source. Shared wrapper/doc/test
+conflicts retain local-rank containment plus the producer's v2 fabric coverage.
+The v2 builder consumes both measured NCCL banners; v1 is inspectable, not a card
+qualification. Runtime and producer identities are separately bound below.
 
 ## Published actions and finite ownership
 
@@ -61,9 +51,9 @@ card. Parent and D5 review of the final frozen source precede any real model sta
 inputs and renders the two local serve commands. It launches nothing. A direct
 `arm_tp2.sh ARM` no longer starts containers; the one-arm wrapper is command
 inspection only. `--prepare` creates one fresh invocation root, input digest and
-a supported `pbcampaign.py` manifest. `--submit` checks exact-source parent/D5
-approval, unchanged manifest/inputs, both preceding handoffs and fresh D1, then
-runs the published campaign **with its completion client**, not detached.
+a supported `pbcampaign.py` manifest. `--submit` checks exact producer parent/D5
+approval, unchanged inputs/manifest, the current census queue condition and fresh
+D1, then keeps the published campaign completion client attached.
 
 Each action executes `rank_window.py --rank 0|1` on its nominated host. Local
 Docker uses PB's ordinary shim, inherited CPU affinity and memory parent. The
@@ -76,6 +66,8 @@ DONE, FAILED, touched stale files and a new attempt of the same key cannot.
 The deadline is the **earliest rank claim time + 5,400 seconds**. Rendezvous,
 image/source/memory preflight, all three arms, probes and owned cleanup consume
 that single envelope. It never restarts for a new arm or the later-admitted rank.
+Peer admission has its own 3600-second cap, claim-relative, inside this same
+envelope. It is not a separate 3600+5400 allocation or a per-arm budget reset.
 Work stops before the final 180-second cleanup reserve. Subprocess timeouts kill
 the exact owned process group, including its CPU descendants. Startup also has
 an 1,800-second bound, clipped to what remains. A failure or timeout publishes
@@ -138,55 +130,75 @@ is not included: declare its actual output and take a separate fresh D1 if neede
 Preparation and submission each run D1 on both local scratch mounts (`--need-gb 8`)
 and shared output (`--need-gb 1`). Historical free-space figures do not qualify a run.
 
-## Order and commands (not executed as a model window)
+## Superseding execution order and separate source identities
 
-The newer CEO order is ready-first: whichever corrected/reviewed census769 or
-EXL3 baseline is ready goes first, then the other, **then 702**. Campaign must
-supply both hosts' terminal physical handoffs for **both** preceding windows.
-`--handoffs` reads a JSON object with exactly `census769` and `EXL3`; each value is
-the two owner-supplied identities (`action_key`, `nonce`, `scope_id`, `host`,
-`claimed_unix`, `window_end_unix`). The recipe looks up their real PB terminal
-records and broker cleanup, not caller-written “empty” assertions. It never
-edits another owner's record or drains a foreign scope.
+CEO decision `dec-1005-012825-0f3f` supersedes the old no-launch hold and the
+census/EXL3 ready-first ordering. After exact-head parent/D5 approval, start this
+control only when the current campaign769 halves are not READY/CLAIMED; if they
+are, wait for their terminal physical owned cleanup. Never queue a second paired
+window before PB1519 rollout. EXL3 is not an additional prerequisite. Optional
+`--handoffs` now names only `census769`, binding actual owner identities and
+terminal broker proofs. No foreign drain or implicit cleanup inference is allowed.
 
-Run preparation from celestia against a clean shared checkout containing the
-reviewed/landed managed repair and v2 dependency. Issues supplies the source
-commit/digest; do not infer a tuple from the socket setting or choose a future
-headline artifact. Supply exact-source review records before submission:
-`parent` and `D5` objects each with `verdict: APPROVE`, `head_sha` equal to the
-frozen source and the retained review URL/evidence. Use a fresh root every attempt.
+The read-only `watch_window_queue.py` timer reads the published `pbstatus --json`
+and the two explicit full campaign keys, records complete/partial status and
+actual read time, and never submits. The requested 01:30 UTC read was actually
+entered at 01:31:37.306 UTC: its complete later view had no named census half
+READY/CLAIMED and only two CPU jobs. It is **not** evidence of the queue at 01:30.
+That miss is preserved in the record, not restamped. Submission checks the queue
+again in code and retains its view; a partial view refuses a new pair.
 
-```bash
-PB=/mnt/shared/prismabuild-fleet/repo/tools
-CLIENT=/home/rob/tmp/pb-submit-celestia-20261003/bin/python
-: "${TS:?clean frozen shared source}" "${SOURCE_COMMIT:?issues-owned commit}"
-: "${SOURCE_SHA256:?issues-owned src digest}" "${RUN:?fresh shared invocation root}"
-: "${HANDOFFS:?both preceding terminal physical handoffs}" "${REVIEWS:?parent and D5 reviews}"
-export TS SOURCE_COMMIT SOURCE_SHA256
-export ARTIFACT=/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported
-export FABRIC=socket RECEIPTS="$RUN/arms"
+The frozen **runtime** may be merged PR942
+`39e3d950226f1c9fec38d4baaaccb59fc267e12b`. Its source/config/hooks/equality-script
+digests bind the measured Tessera and eventual receipt. The **producer** is this
+separately reviewed PR: `PRODUCER_COMMIT` and `PRODUCER_SHA256` seal the rank,
+recipe, driver, timer, wrappers and plan bytes separately. PB snapshots the
+producer checkout, not the runtime checkout. Neither identity is restamped at
+receipt time. Parent and D5 review JSON binds the exact producer head; runtime
+choice and fabric remain explicit. The old dual-launch #942 wrapper is never
+run twice or used to launch an unadmitted remote rank.
 
-# Command inspection is also a check: submit it through PB, CPU-only.
-"$CLIENT" "$PB/pbrun.py" --cwd "$TS" --tag x86 --cpus 1 --demand mem_gb=2 \
-  --env TS="$TS" --env ARTIFACT="$ARTIFACT" --env RECEIPTS="$RECEIPTS" --env FABRIC=socket \
-  --timeout-s 120 -- /bin/bash experiments/graph_attest_702/drive_tp2.sh \
-  experiments/graph_attest_702/plan-artifact.txt --dry-run
+Every model row is an exclusive **measurement**, host class gb10, priority **10**
+with a Goal reason, fixed legitimate rank-host tags, and 3600-second peer admission
+cap inside the unchanged 5400-second common window. Requested PB timeout is 5400;
+effective timeout/worker ceiling must be taken separately from actual terminal
+`detail.execution_timeout_s`, `execution_timeout_requested_s`,
+`execution_timeout_ceiling_s` and `execution_timeout_clamped`. Unknown before
+execution is recorded as null, never asserted equal to the request. Once both
+live attempts meet, each rank publishes an exact `both_halves_claimed` event;
+this is admission evidence, not model readiness or qualification.
 
-# Preparation is read-only inspection/submission bookkeeping; no container starts.
-bash "$TS/experiments/graph_attest_702/drive_tp2.sh" \
-  "$TS/experiments/graph_attest_702/plan-artifact.txt" --prepare "$RUN" --handoffs "$HANDOFFS"
+`rank_window.py --role-preflight` is an admitted CPU-only check on each actual
+rank host: frozen runtime/producer/artifact identity, real local image resolution
+and generated shell syntax, with zero containers/model/CUDA work. It does not
+waive the later 114 GiB preflight or 16 GiB floor. `--prepare-role-preflight`
+prepares these checks with 1 GiB output admission; model submission still repeats
+fresh D1 for its full 8 GiB local/1 GiB shared allowance.
 
-# Only after parent/D5 review and the recorded window handoffs. Never run this during repair.
-bash "$TS/experiments/graph_attest_702/drive_tp2.sh" \
-  "$TS/experiments/graph_attest_702/plan-artifact.txt" --submit "$RUN" --reviews "$REVIEWS"
+Preparation/CPU checks use the published client from celestia. GPU measurement
+**submission** uses the published PB client on a GB10 origin per D26, because
+celestia cannot seal live accelerator evidence. SSH may transport that PB client
+command only; all containers and equality clients remain admitted local children.
+The producer checkout must be staged read-only on shared storage for that origin.
 
-# After complete terminal physical handoff: existing receipt builder, CPU-only PB.
-"$CLIENT" "$PB/pbrun.py" --cwd "$TS" --tag x86 --cpus 2 --demand mem_gb=2 --timeout-s 120 \
-  -- /home/rob/venvs/tessera-train-8bff20d0/bin/python \
-  experiments/graph_attest_702/receipt.py "$RECEIPTS" "$RUN/receipt-manifest.json" "$RUN/receipt.json" \
-  --eager aE1,aE2 --graph aGR --commit "$SOURCE_COMMIT" \
-  --not-measured "served KL against BF16 under graphs" --not-measured "graph-vs-eager speed"
-```
+`drive_tp2.sh PLAN --prepare ROOT --census-key KEY0 --census-key KEY1` requires
+explicit `TS, SOURCE_COMMIT, SOURCE_SHA256, PRODUCER_COMMIT, PRODUCER_SHA256,
+ARTIFACT, FABRIC=socket, RECEIPTS=ROOT/arms`. Add `--prepare-role-preflight` for
+CPU role checks. Submit each CPU row through published PB using `--rank 0|1
+--run ROOT/inputs.json --role-preflight`, demand cpu=1/mem_gb=2, no GPU, timeout
+120 and one native thread. After actual role receipts and exact-head reviews,
+`drive_tp2.sh PLAN --submit ROOT --reviews JSON` submits the supported measurement
+manifest and keeps its published completion client alive. The review JSON's
+`parent` and `D5` objects each carry `verdict: APPROVE` and the producer
+`head_sha`, with real review provenance. Never resume/rewrite a submitted root.
+
+After terminal physical handoff, run the **frozen runtime's** existing v2
+`receipt.py` through CPU PB, using `ROOT/arms`, `ROOT/receipt-manifest.json`,
+`--eager aE1,aE2 --graph aGR --commit SOURCE_COMMIT`. Keep the not-measured
+served BF16 KL and graph-vs-eager speed exclusions. Inspect every full 48-choice
+pass, eager repeatability, both ranks' replay/classes and exact v2 serve tuple;
+receipt building alone qualifies no compiled cell, pin, scientific release or
+future T8 artifact.
 
 Inspect eager repeatability, require 48/48 for both complete passes in every arm,
 both ranks' captured-size/class replay evidence and all source/image/fabric

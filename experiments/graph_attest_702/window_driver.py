@@ -38,13 +38,15 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
     for rank in (0, 1):
         result.append(dict(argv=[RANK_PYTHON, "experiments/graph_attest_702/rank_window.py",
                                 "--rank", str(rank), "--run", str(root / "inputs.json")],
-                           cwd=config["ts"], tags=[HOSTS[rank]],
+                           cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
                            demand=dict(cpu=8 if rank == 0 else 6, mem_gb=104, gpu=1),
-                           gpu_memory_gb=102, exclusive=True, max_attempts=1,
+                           gpu_memory_gb=102, exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
+                           priority=10, priority_reason="Goal: full nominated A8 graph control after exact-head review; one paired window at a time",
                            container_images=[config["image"]], timeout_s=WINDOW_SECONDS,
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
-                                                          "SOURCE_COMMIT", "SOURCE_SHA256")},
+                                                          "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
+                                "GRAPH_PEER_WAIT_SECONDS": "3600",
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                                                         "NUMEXPR_NUM_THREADS", "MAX_JOBS")},
                                 "PYTHONDONTWRITEBYTECODE": "1"}))
@@ -64,8 +66,8 @@ def read_terminal(identity: dict, queue: Path) -> dict:
 
 def handoffs(path: Path, queue: Path) -> list[dict]:
     supplied = read_json(path)
-    if set(supplied) != {"census769", "EXL3"}:
-        raise Refused("702 follows both census769 and EXL3, in readiness-first order")
+    if set(supplied) != {"census769"}:
+        raise Refused("only the current census769 terminal/physical handoff is required by the superseding CEO order")
     proofs = []
     for name, ranks in supplied.items():
         if len(ranks) != 2 or {rank["host"] for rank in ranks} != set(HOSTS):
@@ -77,9 +79,9 @@ def handoffs(path: Path, queue: Path) -> list[dict]:
     return proofs
 
 
-def diskcheck():
+def diskcheck(*, for_model=True):
     evidence = []
-    for need, hosts, paths in ((8, "sparky,sparklina", "/home/rob/tmp"),
+    for need, hosts, paths in ((8 if for_model else 1, "sparky,sparklina", "/home/rob/tmp"),
                                (1, "sparky,sparklina", "/mnt/shared")):
         done = subprocess.run(["fleet-diskcheck", "--need-gb", str(need), "--hosts", hosts,
                                "--paths", paths], capture_output=True, text=True, timeout=30)
@@ -93,7 +95,7 @@ def diskcheck():
     return evidence
 
 
-def prepare(root: Path, path: Path, env: dict, predecessor_path: Path):
+def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, census_keys: list[str], *, role_preflight=False):
     config = recipe.inputs(env, live=True)
     arms = recipe.plan(path)
     if any(arm.get("fabric", config["fabric"]) != config["fabric"] for arm in arms):
@@ -102,13 +104,15 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path):
         raise Refused("rendezvous must be shared and fresh for each submission")
     if env["RECEIPTS"] != str(root / "arms"):
         raise Refused("RECEIPTS must be this fresh invocation ROOT/arms")
-    predecessors = handoffs(predecessor_path, QUEUE)
-    disks = diskcheck()
+    predecessors = handoffs(predecessor_path, QUEUE) if predecessor_path else []
+    disks = diskcheck(for_model=not role_preflight)
     root.mkdir(parents=True, exist_ok=False)
     (root / "arms").mkdir()
     setup = dict(schema="tessera.graph_control_window.v1", run_id=uuid.uuid4().hex,
                  config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
+                 requested_pb_timeout_s=WINDOW_SECONDS, effective_pb_timeout_s=None, peer_wait_seconds=3600,
                  predecessors=predecessors, diskcheck=disks,
+                 census_action_keys=census_keys,
                  resources=dict(cpu_total=14, shared_host_memory_gib_total=208, gpu_subset_gib_total=204,
                                 exclusive_devices=2, local_output_cap_gib_per_host=8, shared_output_cap_gib=1))
     atomic_json(root / "inputs.json", setup)
@@ -142,24 +146,34 @@ def submit(root: Path, reviews: Path):
     setup = read_json(root / "inputs.json")
     env = dict(os.environ, TS=setup["config"]["ts"], ARTIFACT=setup["config"]["artifact"],
                RECEIPTS=setup["config"]["receipts"], FABRIC=setup["config"]["fabric"],
-               SOURCE_COMMIT=setup["config"]["source_commit"], SOURCE_SHA256=setup["config"]["src_sha256"])
+               SOURCE_COMMIT=setup["config"]["source_commit"], SOURCE_SHA256=setup["config"]["src_sha256"],
+               PRODUCER_COMMIT=setup["config"]["producer_commit"], PRODUCER_SHA256=setup["config"]["producer_sha256"])
     if recipe.inputs(env, live=True) != setup["config"]:
         raise Refused("prepared source/control changed; never restamp or resume an old window")
     if json.loads((root / "manifest.json").read_text()) != rows(root, setup["config"], env):
         raise Refused("prepared PB manifest changed; never restamp admission/resource inputs")
     review = read_json(reviews)
     for who in ("parent", "D5"):
-        if review.get(who, {}).get("verdict") != "APPROVE" or review[who].get("head_sha") != env["SOURCE_COMMIT"]:
+        if review.get(who, {}).get("verdict") != "APPROVE" or review[who].get("head_sha") != env["PRODUCER_COMMIT"]:
             raise Refused(f"missing exact frozen-source {who} review; no real model start")
     for predecessor in setup["predecessors"]:
         terminal_cleanup(predecessor["identity"], read_terminal(predecessor["identity"], QUEUE))
+    from datetime import datetime, timezone
+    from watch_window_queue import inspect as inspect_queue
+    observed = inspect_queue(datetime.now(timezone.utc).isoformat(), setup["census_action_keys"], root / "launch-queue.json")
+    if not observed["submit_allowed"]:
+        raise Refused("campaign769 is queued/claimed or queue view incomplete; never queue a second paired window")
     atomic_json(root / "launch-diskcheck.json", dict(checks=diskcheck()))
     if (root / "submission-started.json").exists():
         raise Refused("this invocation was already submitted; preserve its failed/partial evidence")
     atomic_json(root / "submission-started.json", dict(reviews=review))
     # The published campaign owns fanout and waits. No detach, SSH launcher, retry, or atomic-pair claim.
     with (root / "campaign.log").open("w") as log:
-        done = subprocess.run([CLIENT, str(PB / "pbcampaign.py"), "--transport", "pool", "--wait-s", "6000",
+        # Class-scoped GPU measurements must seal live GB10 platform evidence on a Spark (D26).
+        import socket
+        if socket.gethostname() not in HOSTS:
+            raise Refused("measurement submission must use the published PB client on a GB10 origin; celestia has no accelerator evidence")
+        done = subprocess.run([sys.executable, str(PB / "pbcampaign.py"), "--transport", "pool", "--wait-s", "6000",
                                str(root / "manifest.json")], stdout=log, stderr=subprocess.STDOUT)
     physical = collect(root, QUEUE)
     if not physical["ownership_released"]:
@@ -178,6 +192,8 @@ def main():
     ap.add_argument("plan", type=Path)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--prepare", type=Path)
+    ap.add_argument("--census-key", action="append", default=[], help="current exact campaign769 GPU action key; two keys, no inferred roster")
+    ap.add_argument("--prepare-role-preflight", action="store_true", help="prepare CPU role checks, no model output reservation or submission")
     ap.add_argument("--handoffs", type=Path)
     ap.add_argument("--submit", type=Path)
     ap.add_argument("--reviews", type=Path)
@@ -188,8 +204,11 @@ def main():
             dry_arm(arm, {**os.environ, **env})
         recipe.plan(args.plan)
         return 0
-    if args.prepare and args.handoffs and not args.submit:
-        prepare(args.prepare, args.plan, os.environ, args.handoffs)
+    if args.prepare and not args.submit:
+        if len(args.census_key) != 2:
+            raise Refused("supply the two exact current campaign769 action keys")
+        prepare(args.prepare, args.plan, os.environ, args.handoffs, args.census_key,
+                role_preflight=args.prepare_role_preflight)
         return 0
     if args.submit and args.reviews and not args.prepare:
         return submit(args.submit, args.reviews)

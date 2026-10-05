@@ -159,6 +159,7 @@ class LocalArm:
                     image=self.config["image"], image_resolved_reference=self.config["image"],
                     image_id=self.image_id, image_id_peer=peer_meta["image_id"],
                     equal_script_sha256=self.config["equal_script_sha256"],
+                    producer_commit=self.config["producer_commit"], producer_sha256=self.config["producer_sha256"],
                     host="sparklina+sparky", tree=self.config["ts"], tree_sha=self.config["source_commit"],
                     src_sha256=self.config["src_sha256"], hooks_sha256=self.config["hooks_sha256"],
                     model=self.config["artifact"], pb_action=self.identity["action_key"],
@@ -270,6 +271,12 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
         meeting.bind_peer(tick=adapter.tick)
         owned["window_end_unix"] = envelope.end_unix
         atomic_json(meeting.path, owned)
+        if isinstance(adapter, LocalArm):
+            event = dict(event="both_halves_claimed", identities=[owned, meeting.peer],
+                         requested_pb_timeout_s=5400, effective_pb_timeout_s=None, peer_wait_seconds=3600,
+                         runtime_commit=config["source_commit"], producer_commit=config["producer_commit"])
+            atomic_json(rdv / f"both-claimed-rank{owned['rank']}.json", event)
+            print(json.dumps(event, sort_keys=True), flush=True)
         for arm in arms:
             current = arm
             meeting.check()
@@ -342,6 +349,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rank", type=int, choices=(0, 1), required=True)
     ap.add_argument("--run", type=Path, required=True)
+    ap.add_argument("--role-preflight", action="store_true", help="CPU-only real role/source/image/shell check; start no container")
     args = ap.parse_args()
     # Public identity is stamped by the broker; a truthy action-key alone is not admission.
     key = os.environ.get("PRISMABUILD_ACTION_KEY", "")
@@ -356,6 +364,8 @@ def main():
         raise Refused("rank claimed on the wrong physical host")
     queue = Path(os.environ["PRISMABUILD_QUEUE_ROOT"])
     row = read_json(queue / "claimed" / (key + ".json"))
+    if not args.role_preflight and not row.get("gpu_admission"):
+        raise Refused("model rank has no admitted GPU evidence; a CPU action cannot launch it")
     owned = dict(rank=args.rank, action_key=key, nonce=nonce, scope_id=scope, host=HOSTS[args.rank],
                  container_owner=os.environ["PRISMABUILD_CONTAINER_OWNER"], claimed_unix=row["claimed_unix"],
                  run_id=setup["run_id"], input_sha256=recipe.sha(args.run),
@@ -366,6 +376,23 @@ def main():
     if config != setup["config"]:
         raise Refused("frozen source/control differs from prepared window inputs")
     rdv = args.run.parent
+    if args.role_preflight:
+        image = json.loads(envelope.run([sys.executable, "-m", "tessera.serving.runtime_image", "resolve",
+                                       "--image", config["image"]],
+                                      env=dict(os.environ, PYTHONPATH=str(Path(config["ts"]) / "src"))).stdout)
+        if image.get("resolved_reference") != config["image"]:
+            raise Refused("role preflight image differs from frozen image")
+        for arm in setup["arms"]:
+            command = recipe.container(config, arm, owned, rdv / "unused-out", rdv / "unused-ext",
+                                       rdv / "unused-cid", {})
+            envelope.run(["bash", "-n", "-c", command[-1]])
+        proof = dict(owned, config=config, image=image, native_gpu_work=False, containers_started=0,
+                     requested_pb_timeout_s=120, effective_pb_timeout_s=None,
+                     model_window_seconds=WINDOW_SECONDS, peer_wait_seconds=3600,
+                     rendered_arms=[a["arm"] for a in setup["arms"]])
+        atomic_json(rdv / f"cpu-role-preflight-rank{args.rank}.json", proof)
+        print(json.dumps(proof, sort_keys=True), flush=True)
+        return 0
     local = LocalArm(config, owned, envelope, rdv)
     def interrupted(signum, frame):
         raise Refused(f"rank interrupted by signal {signum}")

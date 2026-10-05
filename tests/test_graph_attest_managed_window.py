@@ -254,3 +254,12 @@ def test_local_container_and_entrypoint_shells_compile_without_launching(tmp_pat
     subprocess.run(["bash", "-n", "-c", argv[-1]], check=True, timeout=10)
     for name in ("arm_tp2.sh", "drive_tp2.sh"):
         subprocess.run(["bash", "-n", str(HERE / name)], check=True, timeout=10)
+
+def test_peer_wait_is_3600_seconds_and_does_not_inherit_the_live_window(tmp_path):
+    owned = identity()
+    owned["claimed_unix"] = time.time() - 3601
+    queue, rdv = tmp_path / "queue", tmp_path / "rdv"
+    rdv.mkdir(); claim(queue, owned)
+    meeting = window.Rendezvous(rdv, owned, queue, window.Envelope(time.time() + 8, cleanup_seconds=1))
+    with pytest.raises(TimeoutError, match="3600-second peer"):
+        meeting.bind_peer()

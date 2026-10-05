@@ -37,6 +37,12 @@ def src_sha(root: Path) -> str:
                     for path in sorted((root / "src").rglob("*.py")))
     return hashlib.sha256(lines.encode()).hexdigest()
 
+def producer_sha() -> str:
+    names = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
+             "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt")
+    return hashlib.sha256("".join(f"{sha(Path(__file__).parent / name)}  {name}\n"
+                                 for name in names).encode()).hexdigest()
+
 
 def inputs(env: dict, *, live: bool, runner=None) -> dict:
     for name in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC"):
@@ -75,13 +81,13 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
             raise Refused("issues-owned frozen SOURCE_COMMIT/SOURCE_SHA256 differs")
         if git("status", "--porcelain"):
             raise Refused("shared source is not clean/frozen")
-        for name in ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py", "submit.py"):
-            if sha(root / "experiments/graph_attest_702" / name) != sha(Path(__file__).parent / name):
-                raise Refused(f"rank snapshot and frozen shared execution source differ: {name}")
+        if producer_sha() != env.get("PRODUCER_SHA256") or not env.get("PRODUCER_COMMIT"):
+            raise Refused("separately sealed producer commit/bytes differ")
     return dict(ts=str(root), artifact=str(artifact), receipts=env["RECEIPTS"],
                 fabric=env["FABRIC"], image=IMAGE, src_sha256=src_sha(root),
                 config_sha256=sha(artifact / "config.json"),
                 source_commit=env.get("SOURCE_COMMIT", "dry-run-unfrozen"),
+                producer_commit=env.get("PRODUCER_COMMIT", "dry-run-unfrozen"), producer_sha256=producer_sha(),
                 hooks_sha256=sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
                 equal_script_sha256=sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
 

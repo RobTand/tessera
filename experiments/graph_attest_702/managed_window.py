@@ -17,6 +17,7 @@ import time
 
 WINDOW_SECONDS = 5400
 CLEANUP_SECONDS = 180
+PEER_WAIT_SECONDS = 3600
 HOSTS = ("sparklina", "sparky")
 
 
@@ -175,8 +176,13 @@ class Rendezvous:
 
     def bind_peer(self, *, tick=None) -> None:
         path = self.root / f"rank{1 - self.rank}.json"
+        peer_end = time.monotonic() + (self.identity["claimed_unix"] + PEER_WAIT_SECONDS - time.time())
+        if time.monotonic() >= peer_end:
+            raise TimeoutError("3600-second peer admission deadline expired")
         while not path.exists():
             self.envelope.remaining()
+            if time.monotonic() >= peer_end:
+                raise TimeoutError("3600-second peer admission deadline expired")
             require_claim(self.identity, self.queue)
             if tick:
                 tick()

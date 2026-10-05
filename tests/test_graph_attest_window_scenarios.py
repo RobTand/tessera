@@ -162,7 +162,8 @@ def test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name
 def test_supported_campaign_rows_own_each_rank_and_aggregate_peaks(tmp_path):
     (tmp_path / "inputs.json").write_text("{}")
     env = dict(TS="/mnt/shared/source", ARTIFACT="/mnt/shared/control", RECEIPTS="/mnt/shared/receipts",
-               FABRIC="socket", SOURCE_COMMIT="c" * 40, SOURCE_SHA256="a" * 64)
+               FABRIC="socket", SOURCE_COMMIT="c" * 40, SOURCE_SHA256="a" * 64,
+               PRODUCER_COMMIT="d" * 40, PRODUCER_SHA256="e" * 64)
     config = dict(ts=env["TS"], image=rank_window.recipe.IMAGE)
     rows = window_driver.rows(tmp_path, config, env)
     assert [row["tags"] for row in rows] == [["sparklina"], ["sparky"]]
@@ -170,6 +171,8 @@ def test_supported_campaign_rows_own_each_rank_and_aggregate_peaks(tmp_path):
     assert sum(row["demand"]["mem_gb"] for row in rows) == 208
     assert sum(row["gpu_memory_gb"] for row in rows) == 204
     assert all(row["exclusive"] and row["demand"]["gpu"] == 1 and row["timeout_s"] == 5400 for row in rows)
+    assert all(row["measurement"] is True and row["host_class"] == "gb10" and row["priority"] == 10 for row in rows)
+    assert all(row["env"]["GRAPH_PEER_WAIT_SECONDS"] == "3600" and row["priority_reason"].startswith("Goal:") for row in rows)
     assert all(row["max_attempts"] == 1 and row["env"]["OMP_NUM_THREADS"] == "1" for row in rows)
     assert all("ssh" not in word for row in rows for word in row["argv"])
 
