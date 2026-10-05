@@ -1478,6 +1478,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _validate_construction(contract["construction"], "runtime_contract.construction")
     validate_producer_interface(contract["producer_interface"],
                                 "runtime_contract.producer_interface")
+    if contract["contract_version"] >= 57 and "routed_units" not in contract["producer_interface"]:
+        raise ValueError("runtime_contract v57 requires producer_interface.routed_units")
 
     families = {}
     for i, entry in enumerate(contract["formats"]):
@@ -3322,7 +3324,12 @@ def validate_producer_interface(block: Any, where: str) -> None:
     since tessera#687) -- so its equality with the tree is held by
     ``tests/test_producer_authority_drivers.py``.
     """
-    _require_keys(block, where, required={"schema", "reuse_authority"})
+    _require_keys(block, where, required={"schema", "reuse_authority"},
+                  optional={"routed_units"})
+    if "routed_units" in block:
+        from ..serving_plan import ROUTED_UNIT_ASSIGNMENT
+        if block["routed_units"] != ROUTED_UNIT_ASSIGNMENT:
+            raise ValueError(f"{where}.routed_units must match the per-unit plan/loader contract")
     if block["schema"] != PRODUCER_INTERFACE_SCHEMA:
         raise ValueError(f"{where}.schema must be {PRODUCER_INTERFACE_SCHEMA!r}")
     reuse = block["reuse_authority"]
