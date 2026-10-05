@@ -4,10 +4,9 @@ CPU-only: the real common preflight path (LocalArm.headroom inside
 LocalArm.preflight, both graph and eager) runs against one shared FakeClock
 patched into both ``rank_window.time`` and ``managed_window.time``, so the
 real Envelope, Refused, tick guard/floor machinery and the rendezvous report
-file all move on the same deterministic clock. Only the subprocess boundary
-(``LocalArm.command``) and the frozen-source comparison boundary are
-substituted; the eager cgroup sampler executes for real against the running
-process's own cgroup.
+file all move on the same deterministic clock. The subprocess, frozen-source
+comparison and eager cgroup-counter boundaries are substituted. Real admitted
+cgroup sampling is covered separately by test_graph_attest_eager_window.py.
 """
 from __future__ import annotations
 
@@ -67,12 +66,6 @@ def memory_trace(clock, schedule):
     return read
 
 
-def real_scope_leaf():
-    line = next(l for l in Path("/proc/self/cgroup").read_text().splitlines()
-                if l.startswith("0::"))
-    parts = Path(line.split(":", 2)[2]).parts
-    assert parts, "no cgroup v2 leaf: the eager sampler cannot run here"
-    return parts[-1]
 
 
 def identity(rank=0, **fields):
@@ -90,8 +83,9 @@ def rank_adapter(tmp_path, monkeypatch, *, rank=0, read, clock, eager=False,
     monkeypatch.setattr(rank_window, "time", clock)
     monkeypatch.setattr(window, "time", clock)
     owned = identity(rank)
-    if eager:
-        owned["scope_id"] = real_scope_leaf()
+        monkeypatch.setattr(rank_window, "scope_memory",
+                            lambda identity: dict(rank=identity["rank"],
+                                                  scope_id=identity["scope_id"]))
     adapter = rank_window.LocalArm.__new__(rank_window.LocalArm)
     adapter.identity, adapter.rank = owned, rank
     adapter.config = dict(window_mode=recipe.EAGER_MODE if eager else "graph-control")
@@ -193,7 +187,7 @@ def test_never_reaching_threshold_times_out_at_900_and_refuses_without_a_model(t
     assert report["initial_available_gib"] == 100.0 and report["last_available_gib"] == 100.0
     assert report["elapsed_seconds"] == pytest.approx(900.0)
     assert clock.monotonic_value == pytest.approx(100.0 + 900.0)
-    assert len(report["samples"]) == 4500
+    assert report["samples"][-1]["monotonic"] == pytest.approx(clock.monotonic())
     assert len(adapter.guard_calls) >= 1, "the live guard is checked during the whole wait"
 
 
