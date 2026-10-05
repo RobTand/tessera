@@ -1128,9 +1128,11 @@ def test_the_e4m3_instructions_layout_and_rates():
     stages = 2 * (rf.BK * rf.BN + rf.BM * rf.BK)
     # ... and it alone stages each half's stream history word (768 B)
     assert rf.PREV_REGION_BYTES_MMA8 == 3 * 2 * rf.BK * 4 == 768
-    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages - rf.PREV_REGION_BYTES_MMA8
-    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages - rf.PREV_REGION_BYTES_MMA8
-    assert rf.smem_bytes(0, 16, mma8=True) == 59_600 <= rf.SM121_MAX_DYNAMIC_SMEM
+    # ... and, with the default-off activation ring (MMA8_A_RING), its raw tiles
+    ring = rf.A_RING_BYTES_MMA8
+    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages - rf.PREV_REGION_BYTES_MMA8 - ring
+    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages - rf.PREV_REGION_BYTES_MMA8 - ring
+    assert rf.smem_bytes(0, 16, mma8=True) == 59_600 + ring <= rf.SM121_MAX_DYNAMIC_SMEM
     assert rf.routed_lane_rates("e4m3mma") == rf.RATES
     assert rf.routed_lane_rates("e4m3") == rf.routed_lane_rates("value") == rf.ROUTED_LANE_RATES
     assert ext.ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES["column_rates_routed_moe"] \
@@ -1261,7 +1263,9 @@ def test_the_superblock_width_is_a_host_choice_of_the_launch(monkeypatch):
         rf.superblock_rows("e4m3", 2, 1)
     for library, modes in wide_modes.items():
         mma8 = rf.library_mma8(library)
-        extra = rf.BM * rf.BK * 2 * (1 if mma8 else 2)
+        # two more A tiles, and on the E4M3 instruction the activation ring's
+        # raw tiles at twice the rows (A_RING_BYTES_MMA8 is its 64-route size)
+        extra = rf.BM * rf.BK * 2 * (1 if mma8 else 2) + (rf.A_RING_BYTES_MMA8 if mma8 else 0)
         assert rf.a_region_bytes(rf.BM_WIDE, mma8=mma8) - rf.a_region_bytes(rf.BM, mma8=mma8) == extra
         for mode in modes:
             rates = rf.RATES if mode == 2 else rf.routed_lane_rates(library)

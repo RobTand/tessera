@@ -205,6 +205,33 @@ static_assert(TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH == 0 ||
 constexpr bool MMA8_GATE_UP_B_PREFETCH =
     FAMILY_MMA8 && TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH;
 static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself");
+// The activation ring on the E4M3 instruction (tessera#739), default off.
+// Instead of loading each chunk's A row into registers one chunk ahead
+// (``load_a``), whose wait is the chunk loop's last register move, every
+// A-staging producer copies its 16 raw E4M3 bytes (``cp_async16``) two chunks
+// ahead into a per-word-stage slot of its own, in the word stages' commit
+// group, so the chunk's ``cp_async_wait`` covers it; ``store_a`` then reads the
+// slot back from shared memory and writes the same fragment-order bytes as
+// before.  Only the thread that copies a slot ever reads it, so no barrier is
+// added.  The bytes, the A tile and every MMA are unchanged: the output is
+// bitwise the register path's.  At 1 the ring serves the routed two-run
+// launches only.  Measured against the no-load ceiling (the A load replaced by
+// a register value; opus-739-20261004T182357Z, T8R release stacks, every cell
+// bitwise): the two-run routed R1088/R832 launches run at 0.90-0.94 of master
+// for M >= 512 (ceiling 0.87-0.94); the one-run R1024 launch's ceiling is
+// 0.97-0.99 behind ``prefetch_a``, which the ring did not beat (at most
+// +3.1%); and the dense and shared launches have no load wait to hide
+// (ceiling ~1.0)
+// and lost up to 5% to the ring's extra instructions
+// (docs/measurements/2026-10-04-mma8-activation-ring.md).  The ring is
+// WORD_STAGES * bmt * BK bytes after the A tiles (``a_region_bytes``),
+// allocated in every launch's layout when the flag is on.
+#ifndef TESSERA_ROUTED_FUSED_MMA8_A_RING
+#define TESSERA_ROUTED_FUSED_MMA8_A_RING 0
+#endif
+static_assert(TESSERA_ROUTED_FUSED_MMA8_A_RING >= 0 && TESSERA_ROUTED_FUSED_MMA8_A_RING <= 1,
+              "the activation ring is 0 or 1");
+constexpr int MMA8_A_RING = FAMILY_MMA8 ? TESSERA_ROUTED_FUSED_MMA8_A_RING : 0;
 // Folded BF16 qualification arm (tessera#874), never enabled by default.
 // Reuses load_a addressing; no additional shared-memory allocation.
 #ifndef TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH
@@ -276,9 +303,11 @@ constexpr int PREV_REGION_BYTES = PREV_STAGED ? WORD_STAGES * PREV_STAGE_INTS * 
 // launch (``routed_fused.superblock_rows``).  The value family stages four
 // threads per A row, so it keeps BM.
 constexpr int BM_WIDE = 128;
-// The A region: STAGES tiles of ``bmt`` rows.
-__host__ __device__ constexpr int a_region_bytes(int bmt) { return STAGES * bmt * BK * ELEM_BYTES; }
-static_assert(a_region_bytes(BM) == STAGES * A_STAGE_BYTES, "the 64-route layout is the published one");
+// The A region: STAGES tiles of ``bmt`` rows, then (MMA8_A_RING) the
+// activation ring's WORD_STAGES raw tiles.
+constexpr int A_RING_STAGES = MMA8_A_RING ? WORD_STAGES : 0;
+__host__ __device__ constexpr int a_region_bytes(int bmt) { return (STAGES + A_RING_STAGES) * bmt * BK * ELEM_BYTES; }
+static_assert(a_region_bytes(BM) == (STAGES + A_RING_STAGES) * A_STAGE_BYTES, "the 64-route layout is the published one");
 template <int MODE, int BMT = BM, bool PAIRED = false> struct Layout {
     static constexpr int MICROS = PAIRED ? 2 : 1;
     static constexpr int TABLES = (MODE == 2) ? 1 : 2;
@@ -841,7 +870,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     using L = Layout<MODE, BMT, PAIRED>;
     constexpr int PREFETCH_DISTANCE = FAMILY_MMA8 ? A_PREFETCH
         : (!FAMILY_FP8 && !FAMILY_FP4 ? VALUE_A_PREFETCH : 0);
-    constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO;
+    // The activation ring (MMA8_A_RING): the routed two-run launches.
+    constexpr bool A_RING = MMA8_A_RING && TWO && !DENSE;
+    constexpr bool PREFETCH_A = PREFETCH_DISTANCE > 0 && !DENSE && !TWO && !A_RING;
     // The E4M3 libraries' dense launch: a module's roles in one launch, its K
     // split reduced in-kernel (``DenseRoles``, ``fixup``).  The value family's
     // dense launch and every routed launch keep their code.
@@ -861,6 +892,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     TabT* tab = reinterpret_cast<TabT*>(smem + L::OFF_TABLES);
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
+    uint8_t* Ar = As + STAGES * A_STAGE;    // the activation ring (A_RING only)
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
     int32_t* Ps = reinterpret_cast<int32_t*>(smem + L::OFF_PREV);   // STAGE_PREV only
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
@@ -1204,6 +1236,19 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         }
                     }
                 };
+                // Chunk kc's 16 raw activation bytes of this thread's A row
+                // into its own slot of the activation ring (A_RING; see
+                // MMA8_A_RING), in the commit group of chunk kc's words.  The
+                // slot is the words' stage, so it is free once this thread's
+                // ``store_a`` of chunk kc - WS has read it.
+                static_assert(!A_RING || WS == WORD_STAGES, "the activation ring rides three word stages");
+                auto issue_a = [&](int kc) {
+                    if constexpr (A_RING) {
+                        if (arow >= 0)
+                            cp_async16(Ar + (kc % WS) * A_STAGE + tid * 16,
+                                       reinterpret_cast<const uint8_t*>(p.x) + arow * p.K + kc * BK + (tid & 1) * 16);
+                    }
+                };
                 // The words of chunk kc for half ih, lane group mm (``copy_half``).
                 // SW never exceeds the launch's slot (the trap check above), so
                 // the stages fit the shared memory the host sized.
@@ -1349,10 +1394,11 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         }
                     }
                     issue_words(kc0, false);
+                    issue_a(kc0);
                     if (nkc > 2) issue_desc(kc0 + 2);
                     cp_async_commit();                     // group 0
                     if constexpr (WS == WORD_STAGES) {
-                        if (nkc > 1) issue_words(kc0 + 1, false);
+                        if (nkc > 1) { issue_words(kc0 + 1, false); issue_a(kc0 + 1); }
                     }
                     if (nkc > 3) issue_desc(kc0 + 3);
                     cp_async_commit();                     // group 1
@@ -1362,7 +1408,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 ColMap cm_cur[2], cm_nxt[2];
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur, TWO);
-                load_a(kc0, a_cur);
+                if constexpr (!A_RING) load_a(kc0, a_cur);
                 if constexpr (PREFETCH_A) {
                     #pragma unroll
                     for (int d = 2; d < PREFETCH_DISTANCE; ++d)
@@ -1384,8 +1430,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 {
                     const int32_t zero = p.K >> 31;
                     if constexpr (!STAGE_PREV) { prev_cur[0] ^= zero; prev_cur[1] ^= zero; }
-                    a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
-                    a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
+                    if constexpr (!A_RING) {
+                        a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
+                        a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
+                    }
                 }
                 // Ordinary K32 decode/store, shared verbatim by both schedules.
                 auto publish_micro = [&](int kc, int stage) {
@@ -1444,7 +1492,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 auto advance_micro = [&]() {
                     if constexpr (!STAGE_PREV) { prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1]; }
                     cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
-                    a_cur = a_nxt;
+                    if constexpr (!A_RING) a_cur = a_nxt;
                 };
                 if constexpr (PAIRED) {
                     const int np = nkc / 2;
@@ -1488,7 +1536,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         const int kc = kc0 + ic;
                         // The two orders are the measured ones: a one-run loop that
                         // issues the activation chunk first waits longer at M = 1.
-                        if constexpr (TWO) {
+                        if constexpr (A_RING) {
+                            if (ic + 1 < nkc) load_prev(kc + 1, prev_nxt, cm_nxt, TWO);
+                        } else if constexpr (TWO) {
                             if (ic + 1 < nkc) { load_a(kc + 1, a_nxt); load_prev(kc + 1, prev_nxt, cm_nxt, true); }
                         } else {
                             if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt, false); load_a(kc + 1, a_nxt); }
@@ -1499,9 +1549,15 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         // Chunk kc's words (and the tables) have landed ...
                         if constexpr (WS == WORD_STAGES) cp_async_wait<1>();
                         else cp_async_wait<0>();
+                        // A_RING: chunk kc's activation bytes landed with its words,
+                        // and this thread copied them, so they are visible to it
+                        // now; read here, the load's latency hides behind the barrier.
+                        if constexpr (A_RING) {
+                            if (arow >= 0) a_cur = *reinterpret_cast<const uint4*>(Ar + (kc % WS) * A_STAGE + tid * 16);
+                        }
                         bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
                         if constexpr (WS == WORD_STAGES) {
-                            if (ic + 2 < nkc) issue_words(kc + 2, TWO);
+                            if (ic + 2 < nkc) { issue_words(kc + 2, TWO); issue_a(kc + 2); }
                         } else {
                             if (ic + 1 < nkc) issue_words(kc + 1, TWO);
                         }
@@ -3661,6 +3717,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("WORD_STAGES") = WORD_STAGES;
     m.attr("WORD_STAGES_MIN") = WORD_STAGES_MIN;
     m.attr("MMA8_GATE_UP_B_PREFETCH") = MMA8_GATE_UP_B_PREFETCH;
+    m.attr("MMA8_A_RING") = MMA8_A_RING;
     m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
