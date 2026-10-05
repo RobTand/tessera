@@ -333,17 +333,18 @@ to the current kernel: since #793 (`STAGE_PREV = PREV_STAGED && !TWO`) the
 two-run loop also waits on a global previous-word load, which the measured
 tree had staged. The ring's gain there is unmeasured; flag 1 on the current
 kernel has GPU correctness tests (747 passed at each flag value) but no timing.
-The served T-8 routed layers are all one-run R1024, where the
-ceiling behind `prefetch_a` is 0.97-0.99 at M <= 2048, so the flag does not
-move served prefill at the current chunk size. Receipt: [the activation
-ring](measurements/2026-10-04-mma8-activation-ring.md). `store_a` reads the slot back and writes the same
-fragment-order A tile, so every MMA and output byte is the register path's. The
-ring is WORD_STAGES raw tiles after the A tiles: `a_region_bytes` grows by 6,144
-B at 64 routes and 12,288 B at 128, so `SMEM_FIXED_MMA8` follows the flag. Every
-E4M3-MMA launch still fits three word stages. At 0 the layout is master's and
-the SASS is master's up to commuted `IADD3` operands. The choice is frozen at import like the dual-B flag's, emitted only
-into MMA8 compile flags, and checked against the loaded export. The value and
-`f16` libraries are untouched.
+The served T-8 routed layers are all one-run R1024, where the ceiling behind
+`prefetch_a` is 0.97-0.99 at M <= 2048, so the flag does not move served prefill
+at the current chunk size. Receipt: [the activation
+ring](measurements/2026-10-04-mma8-activation-ring.md). `store_a` reads the slot
+back and writes the same fragment-order A tile, so every MMA and output byte is
+the register path's. The ring is WORD_STAGES raw tiles after the A tiles:
+`a_region_bytes` grows by 6,144 B at 64 routes and 12,288 B at 128, so
+`SMEM_FIXED_MMA8` follows the flag. Every E4M3-MMA launch still fits three word
+stages. At 0 the layout is master's and the SASS is master's up to commuted
+`IADD3` operands. The choice is frozen at import like the dual-B flag's, emitted
+only into MMA8 compile flags, and checked against the loaded export. The value
+and `f16` libraries are untouched.
 
 Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
 (#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
