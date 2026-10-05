@@ -425,3 +425,41 @@ def test_resident_matrix_reaches_piece_major_and_pins_wire_and_bijection():
     assert result['r4-two-tiles/serialized_legacy'] == result['r4-two-tiles/serialized_piece_major']
     assert result['r4-two-tiles/original_words'] == result['r4-two-tiles/restored_words']
     assert result['r4-two-tiles/piece_major_words'] != result['r4-two-tiles/original_words']
+
+
+def test_the_batch_matrix_joins_the_exporter_shape(monkeypatch):
+    """The joined fresh encode (``--encode-batch``) is a condition neither
+    other encode matrix reaches: ``encode_linears_planes`` at B>1 with the
+    exporter's ``per_unit`` mappings.  Every batch case must arrive as ONE
+    joined call of more than one weight, and its row must hash exactly the
+    blobs that call returned -- otherwise the row hashes something else and
+    reads like proof of a path it never ran.
+    """
+    import hashlib as _hashlib
+
+    import tessera.export as export_module
+
+    module = _load()
+    observed = []
+
+    real = export_module.encode_linears_planes
+
+    def spy(weights, **kwargs):
+        encoded = real(weights, **kwargs)
+        observed.append((len(weights), "per_unit" in kwargs,
+                         b"".join(unit.blob for unit, _u, _f in encoded)))
+        return encoded
+
+    monkeypatch.setattr(export_module, "encode_linears_planes", spy)
+    digests = module.batch_hashes()
+    assert digests, "the batch matrix is empty, so the joined call is unreached"
+    assert len(observed) == len(digests), (
+        f"{len(digests)} batch rows but {len(observed)} joined calls: a row "
+        "hashed something other than one encode_linears_planes call")
+    for (label, digest), (size, per_unit, blobs) in zip(digests.items(), observed):
+        assert not digest.startswith("REFUSED"), f"{label}: {digest}"
+        assert size > 1 and per_unit, (
+            f"{label} reached the joined entry as {size} weight(s), "
+            f"per_unit={per_unit}: the exporter's shape is B>1 with per_unit")
+        assert digest == _hashlib.sha256(blobs).hexdigest(), (
+            f"{label}'s row is not the digest of the blobs the joined call returned")
