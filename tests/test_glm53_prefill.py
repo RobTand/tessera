@@ -145,20 +145,21 @@ def test_sp_mode_defaults_off(monkeypatch):
 
 
 def test_source_identity_matches_only_inspected_bytes(tmp_path, monkeypatch):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     files = []
     for i, name in enumerate(gp.SP_MODULES):
         f = tmp_path / f"m{i}.py"
         f.write_bytes(f"# {name}\n".encode())
         files.append(f)
     mods = tuple(NS(__name__=n, __file__=str(f)) for n, f in zip(gp.SP_MODULES, files))
-    interface, why = gp._match_interface(mods)
+    interface, why = gp._match_source_identity(mods, gp.SP_MODULES, gp._INTERFACES)
     assert interface is None and "no inspected interface matches" in why
     digests = tuple(hashlib.sha256(f.read_bytes()).hexdigest() for f in files)
     monkeypatch.setattr(gp, "_INTERFACES", (gp._Interface("test", digests),))
-    interface, why = gp._match_interface(mods)
+    interface, why = gp._match_source_identity(mods, gp.SP_MODULES, gp._INTERFACES)
     assert interface is not None and interface.name == "test" and why == ""
     files[2].write_bytes(b"# edited\n")
-    assert gp._match_interface(mods)[0] is None
+    assert gp._match_source_identity(mods, gp.SP_MODULES, gp._INTERFACES)[0] is None
 
 
 def test_pinned_interface_names_every_module():
@@ -985,7 +986,8 @@ def test_serve_start_imports_and_install_order(monkeypatch):
     assert cfg.compilation_config.custom_ops == ["none", "+fused_rms_norm_gated"]
 
 
-def test_kda_install_off_by_default_and_declines_on_digest_mismatch(monkeypatch, tmp_path):
+def test_kda_install_off_by_default_and_certified_digest_mismatch(monkeypatch, tmp_path):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     monkeypatch.delenv("TESSERA_GLM53_KDA_CONV_SPLIT", raising=False)
     assert gp.kda_conv_split_mode() == "off" and gp.install_kda_conv_split(_config()) is False
     monkeypatch.setenv("TESSERA_GLM53_KDA_CONV_SPLIT", "sometimes")
@@ -993,7 +995,8 @@ def test_kda_install_off_by_default_and_declines_on_digest_mismatch(monkeypatch,
         gp.kda_conv_split_mode()
     monkeypatch.setenv("TESSERA_GLM53_KDA_CONV_SPLIT", "on")
     mod = _kda_module(tmp_path, gp.KDA_STOCK_CONV_BLOCK.rstrip("\n"))
-    conv = NS(__name__=gp.KDA_MODULES[1], __file__=str(tmp_path / "kda_fake.py"))
+    conv = NS(__name__=gp.KDA_MODULES[1], __file__=str(tmp_path / "kda_fake.py"),
+              causal_conv1d_fn=_ref_conv)
     monkeypatch.setattr(gp, "_import_all", lambda names=gp.SP_MODULES: ((mod, conv), ""))
     stock = mod.Glm5NextLinearAttention._forward
     assert gp._install_kda_conv_split(_config()) is False  # digests are not the inspected ones

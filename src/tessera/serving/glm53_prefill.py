@@ -1,8 +1,8 @@
 """GLM-5.3 (Glm5Next) prefill: the KDA output norm's CUDA path, SP mHC, tiles and overlap.
 
 Serve-time changes to the pinned vLLM's stock GLM-5.3 model, installed from
-``TesseraConfig.get_quant_method`` (the hook ``mtp_draft_lifetime`` uses), and
-each declining to stock when the serve is not the one it was measured on.
+``TesseraConfig.get_quant_method`` (the hook ``mtp_draft_lifetime`` uses).
+Source identity stamps in default dev mode; unsupported APIs and serve shapes decline to stock.
 
 **The KDA output norm.**  vLLM serves Glm5Next with breakable CUDA graphs by
 default, which set compilation mode ``NONE`` and so ``custom_ops`` ``all``.  A
@@ -127,8 +127,8 @@ output on a channel-last slice is dense token-major, so FlashKDA's copies
 become no-ops.  :func:`install_kda_conv_split` rebinds
 ``Glm5NextLinearAttention._forward`` to the stock method compiled from its own
 source with that one block replaced (:data:`KDA_STOCK_CONV_BLOCK`), only when
-both touched files are byte-identical to an inspected interface and the block
-occurs exactly once; the stock decorator is applied to the result.  A conv
+the consumed callable API is supported and the block occurs exactly once;
+the stock decorator is applied to the result. A conv
 bias (stock passes ``q_conv1d.bias`` with the merged 3P-channel weight, so it
 is ``None`` on every inspected serve) keeps the stock merged call.
 
@@ -146,19 +146,20 @@ Environment:
 - ``TESSERA_GLM53_COMM_OVERLAP``: ``off`` (default) or ``on``: on a tiled
   pass without SP, all-reduce each tile's part of an mHC site's input under
   the previous tile's kernels (see above).  Needs ``TESSERA_GLM53_MHC_TILE``;
-  declines to the stock all-reduces when ``OVERLAP_MODULES`` do not match an
-  inspected interface.
+  declines to stock for unsupported callable APIs, not source drift in dev mode.
 - ``TESSERA_GLM53_SP_MHC_SPEC=1``: allow SP with speculative decoding (the MTP
   arm).  Without it a serve with a speculative config declines until an MTP
   row shows tolerance and acceptance hold.
 - ``TESSERA_GLM53_ONORM_CUDA``: ``1`` appends the op as above; ``0`` (the
   default) leaves ``custom_ops`` as the serve set it.
 
-Decline (stock behaviour, one warning): a touched module's sha256 is not an
-inspected interface's, or TP != 2, PP > 1, DP > 1, EP, sequence-parallel MoE
-already on, decode or prefill context parallelism, mHC off, or speculative
-decoding without the opt-in.  A recognized interface whose objects do not look
-as inspected (``o_proj`` not reducing, a MoE whose output is already reduced
+Decline (stock behaviour, one warning): a real import or callable-API failure,
+or TP != 2, PP > 1, DP > 1, EP, sequence-parallel MoE already on, decode or
+prefill context parallelism, mHC off, or speculative decoding without the opt-in.
+Source identity only stamps through ``tessera.dev_mode.seal_check`` unless
+``PRISMAQUANT_DEV_MODE`` is exactly ``0``; dev mode does not hash modules for
+that comparison. Objects that do not look as inspected (``o_proj`` not reducing,
+a MoE whose output is already reduced
 or whose final reduction is already skipped, a zero-expert MoE) also declines:
 each layer is checked, before anything on it changes, on its first forward in
 vLLM's profile run, which never takes SP; a layer that fails runs the stock
@@ -173,6 +174,7 @@ import contextlib
 from dataclasses import dataclass
 import hashlib
 import importlib
+import inspect
 import logging
 import math
 import os
@@ -180,6 +182,8 @@ from pathlib import Path
 import threading
 from types import SimpleNamespace
 from typing import Any, Callable
+
+from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check
 
 _log = logging.getLogger(__name__)
 
@@ -387,14 +391,77 @@ def _sha256(module: Any) -> str | None:
         return None
 
 
+def _interface_decline(modules: tuple[Any, ...], names: tuple[str, ...]) -> str:
+    """Validate consumed call shapes, independently of recorded source identity."""
+    if len(modules) != len(names):
+        return "module count does not match the supported interface"
+    if names == SP_MODULES:
+        calls = ((0, "Glm5NextDecoderLayer.forward", 6, ()),
+                 (0, "hc_expand", 2, ()), (0, "hc_contract", 2, ()),
+                 (3, "sp_shard", 1, ()), (3, "sp_all_gather", 1, ()),
+                 (3, "sp_reduce_scatter", 1, ()),
+                 (4, "tensor_model_parallel_all_reduce", 1, ()),
+                 (5, "compute_num_split", 3, ()),
+                 (5, "mhc_fused_post_pre_split_config", 3, ()),
+                 (5, "_MHC_POST_TILELANG_KERNEL", 7, ()),
+                 (5, "_MHC_PRE_BIG_FUSE_TILELANG_KERNEL", 13, ("norm_weight", "norm_eps")),
+                 (6, "_hc_prenorm_gemm_outputs", 2, ("hidden_size", "hc_mult")),
+                 (8, "is_deep_gemm_supported", 0, ()))
+    elif names == OVERLAP_MODULES:
+        calls = ((0, "CudaCommunicator.all_reduce", 2, ()),
+                 (1, "should_nccl_symm_mem_allreduce", 2, ()),
+                 (2, "PyNcclCommunicator.all_reduce", 2, ("out_tensor", "stream")),
+                 (3, "GroupCoordinator.all_reduce", 2, ()),
+                 (4, "current_stream", 0, ()))
+    elif names == KDA_MODULES:
+        # The method body/decorator contract is also checked by recompile_kda_forward.
+        calls = ((0, f"{KDA_CLASS}.{KDA_METHOD}", None, ()),
+                 (0, KDA_DECORATOR, 1, ()),
+                 (1, "causal_conv1d_fn", 3, ("activation", "conv_states",
+                  "has_initial_state", "cache_indices", "query_start_loc", "metadata")))
+    else:
+        return "unsupported module API"
+    for index, path, positional, keywords in calls:
+        value = modules[index]
+        try:
+            for part in path.split("."):
+                value = getattr(value, part)
+            if not callable(value):
+                return f"{names[index]}.{path} is not callable"
+            if positional is not None:
+                inspect.signature(value).bind(*(None,) * positional,
+                                              **dict.fromkeys(keywords))
+        except (AttributeError, TypeError, ValueError) as exc:
+            return f"unsupported callable interface {names[index]}.{path}: {exc}"
+    return ""
+
+
 def _match(modules: tuple[Any, ...], names: tuple[str, ...],
            interfaces: tuple[_Interface, ...]) -> tuple[_Interface | None, str]:
-    actual = tuple(_sha256(m) for m in modules)
-    for interface in interfaces:
-        if actual == interface.digests:
-            return interface, ""
-    detail = ", ".join(f"{name}={digest}" for name, digest in zip(names, actual))
-    return None, f"no inspected interface matches ({detail})"
+    why = _interface_decline(modules, names)
+    if why:
+        return None, why
+    if not interfaces or any(len(i.digests) != len(names) for i in interfaces):
+        return None, "no supported inspected interface"
+    return _match_source_identity(modules, names, interfaces)
+
+
+def _match_source_identity(modules: tuple[Any, ...], names: tuple[str, ...],
+                           interfaces: tuple[_Interface, ...]) -> tuple[_Interface | None, str]:
+    # Source hashing only satisfies an identity seal; D32 does not pay that cost.
+    actual = (NOT_COMPUTED if dev_mode_enabled() else
+              tuple(_sha256(m) for m in modules))
+    interface = next((i for i in interfaces if actual == i.digests), interfaces[0])
+    detail = (actual if actual == NOT_COMPUTED else
+              ", ".join(f"{name}={digest}" for name, digest in zip(names, actual)))
+    why = f"no inspected interface matches ({detail})"
+    try:
+        seal_check("vLLM module source identity", dict(zip(names, interface.digests)),
+                   NOT_COMPUTED if actual == NOT_COMPUTED else dict(zip(names, actual)),
+                   where=f"glm53_prefill {interface.name}", refusal=RuntimeError(why))
+    except RuntimeError:
+        return None, why
+    return interface, ""
 
 
 def _match_interface(modules: tuple[Any, ...]) -> tuple[_Interface | None, str]:
@@ -1087,7 +1154,7 @@ _INSTALLED: dict[str, Any] = {}
 
 
 def install_sp_mhc(config: Any) -> bool:
-    """Rebind the layer forward when this serve is the inspected one; True when active."""
+    """Rebind the layer forward for a supported callable API; True when active."""
     mode, tile, overlap = sp_mode(), mhc_tile(), comm_overlap()
     if mode == "off" and tile is None:
         if overlap:
@@ -1240,7 +1307,7 @@ def recompile_kda_forward(module: Any) -> tuple[Callable | None, str]:
     """``KDA_CLASS.KDA_METHOD`` compiled from ``module``'s source with the conv block replaced.
 
     Returns ``(function, "")`` with the stock decorator applied, or ``(None, why)``.  Reads the
-    file the digest check covered; the function's globals are a copy of the module's plus the
+    module's source file; the function's globals are a copy of the module's plus the
     helper, so nothing is added to vLLM's namespace.  :func:`.method_rebuild.rebuild_method`
     compiles it (see that module for why the read and the compile live apart).
     """
