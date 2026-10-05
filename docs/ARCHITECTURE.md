@@ -259,10 +259,14 @@ A-staging producer `cp.async`es its 16 raw E4M3 bytes two chunks ahead into its
 own slot of a per-word-stage ring, in the commit group of that chunk's words.
 The one-run launches keep `prefetch_a` and the dense and shared launches keep
 the register load: there the measured ceiling left nothing the ring could buy.
-On the T8R release stacks, the two-run R1088/R832 routed layers took
-0.93-0.94 of master's time at M = 512, 0.90 at 2048 and 0.93-0.94 at 8192,
-against a no-load ceiling of 0.92-0.94, 0.88 and 0.90. Every timed cell was
-bitwise equal. The served T-8 routed layers are all one-run R1024, where the
+On the T8R release stacks, measured on master `13e41726` (before #927), the
+two-run R1088/R832 routed layers took 0.93-0.94 of master's time at M = 512,
+0.90 at 2048 and 0.93-0.94 at 8192, against a no-load ceiling of 0.92-0.94,
+0.88 and 0.90. Every timed cell was bitwise equal. Those numbers do not carry
+to the current kernel: since #793 (`STAGE_PREV = PREV_STAGED && !TWO`) the
+two-run loop also waits on a global previous-word load, which the measured
+tree had staged. The ring's gain there, and flag 1 on the current kernel, are
+unmeasured. The served T-8 routed layers are all one-run R1024, where the
 ceiling behind `prefetch_a` is 0.97-0.99 at M <= 2048, so the flag does not
 move served prefill at the current chunk size. Receipt: [the activation
 ring](measurements/2026-10-04-mma8-activation-ring.md). `store_a` reads the slot back and writes the same

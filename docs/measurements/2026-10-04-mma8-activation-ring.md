@@ -7,8 +7,10 @@ on it. #750 staged the previous stream word and #746 L1-prefetches A on the
 one-run launches. How much does the remaining A load still cost, and does
 copying A with `cp.async` two chunks ahead recover it, bitwise?
 
-**Answer.** On the two-run routed stacks (R1088, R832) it recovers most of
-the ceiling: 0.93-0.94 of master at M = 512, 0.90 at M = 2048 and 0.93-0.94
+**Answer.** On the tree it was measured on (master `13e41726`, where two-run
+launches staged the previous stream word; this head no longer does, see
+"The measured trees and this head"), on the two-run routed stacks (R1088,
+R832) it recovers most of the ceiling: 0.93-0.94 of master at M = 512, 0.90 at M = 2048 and 0.93-0.94
 at M = 8192, against a ceiling of 0.92-0.94, 0.88 and 0.90. On the one-run
 R1024 stack, which every served T-8 routed layer uses, the ceiling behind
 #746's prefetch is 0.97-0.99 at M <= 2048. The ring did not beat the prefetch
@@ -66,10 +68,10 @@ launch still fits three word stages, the largest at 75,984 B.
   `--strict-cuda`): `tests/test_routed_fused_window.py`,
   `tests/test_dense_fused_window.py` and `tests/test_routed_mma8_a_ring_config.py`.
   - The receipts' snapshot parent is `e68557031` (snapshot commits `25206930`
-    and `dbfa706b`), a pre-rebase sibling of this head that differs from it
-    only by a kernel comment. They ran 717 passed / 0 failed / 0 skipped at
-    flag 0 (`8db983b5`) and at flag 1 (`893f8ce5`), with 684 tests allocating
-    on the device.
+    and `dbfa706b`), on the old base `f1c07473`. It is not this head's tree;
+    see "The measured trees and this head" below. They ran 717 passed /
+    0 failed / 0 skipped at flag 0 (`8db983b5`) and at flag 1 (`893f8ce5`),
+    with 684 tests allocating on the device.
   - At the previous head, with flag values 0/1/2, they ran 719 / 0 / 0 each.
 - Pre-fix failures: at flags 1 and 2 two layout identities failed because
   they had been derived without the ring. They now derive it from
@@ -153,17 +155,61 @@ M = 1 and M = 16 rows; all cells are in `ab1_summary.json`.
 
 Full table: `opus-739-20261004T182357Z/ncu_stalls.json`.
 
+## The measured trees and this head
+
+Every GPU receipt here predates PR #927, which this branch now sits on
+(base `52d6c44a`). Kernel `routed_fused_window.cu`, sha256 prefix per tree:
+
+| Tree | Kernel | Used for |
+|---|---|---|
+| `13e41726` (master) | `bcdd43f61005bb03` | A/B `master`, `noA` (+ patch) |
+| `src-ring1` (`13e41726` + ring, flag 0/1/2) | `9513645491f0c6f5` | A/B `ring1`, `ring2` |
+| `e68557031` (base `f1c07473` + ring) | `40b5a95f79faee66` | GPU tests `8db983b5`, `893f8ce5` |
+| `52d6c44a` (this head's base, #927) | `80554582d9478318` | none |
+| `ecd084ac` (this head) | `4e93959a2a265dcd` | none |
+
+**What is the same.** The ring's own change is the same in every tree.
+`git diff f1c07473 e68557031` and `git diff 52d6c44a ecd084ac` on the kernel
+add and remove the same statements; they differ only in indentation and in
+comment text, because #927 moved the chunk loop one level deeper. #927's
+paired loop is one-run only (`!TWO`) and never meets the ring.
+
+**What changed under it.** #927 rewrote 847 lines of the kernel. One change
+reaches the ring's launches directly. #793 (`63644f09`) set
+`STAGE_PREV = PREV_STAGED && !TWO`, so on this head a two-run launch again
+loads each half's previous stream word from global memory one chunk ahead
+(`load_prev`), and the loop's last move waits on it, as it did before #750.
+In every measured tree that word was staged in shared memory.
+
+**What that means for the numbers.**
+
+- The timing table and the NCU stall table measured the ring where the A
+  load was the only global load left in the two-run chunk loop. On this
+  head the ring removes the A load, but the previous-word load stays on the
+  same critical path. #739's own diagnostic found each load alone worth
+  about 5% and both together about 15%, because the loop waited until both
+  had landed.
+- So the two-run ratios above do not transfer to this head. The ring's gain
+  here is unmeasured and may be much smaller.
+- The flag-0 claims still hold by construction: at 0 `A_RING` is false and
+  the ring adds no code.
+- The bitwise and GPU-test results establish that the ring's statements are
+  correct in a loop where they precede and follow the same `cp_async_wait`,
+  barrier and `store_a`. On this head they sit beside a `load_prev` register
+  path that the measured trees did not take on two-run launches; that
+  combination has no GPU test.
+
 ## What this does not show
 
 - **Served prefill.** Every served T-8 routed layer is R1024 one-run (draft
   tessera#936), and this lever does not move R1024 at M <= 2048. Its gains
   apply to R1088/R832 stacks, and to M = 8192 chunks, which serving reaches
   only with a larger `max_num_batched_tokens`. No served A/B was run.
-- **The narrowed flag.** It was not timed on its own: a confirming A/B
-  (master `f1c07473` against it) was withdrawn by the CEO in favour of the
-  Goal-1 measurement window. Its routed code is `ring1`'s and its dense code
-  is master's, so its routed numbers are `ring1`'s above. That is inferred
-  from the source, not measured.
+- **The narrowed flag, and this head at all.** No arm ran this head's
+  kernel. A confirming A/B against `f1c07473` was withdrawn by the CEO in
+  favour of the Goal-1 measurement window, and #927 has landed since. On this
+  head the two-run loop also waits on the previous-word load (above), so the
+  ring's gain here is unmeasured. Flag 1 on this head has no GPU test either.
 - **The E4M3-on-f16 library** (`TESSERA_FUSED_E4M3_MMA=f16`). Untouched and
   unmeasured.
 - **R1024 at M = 8192.** The one-run ceiling there is 0.86 and `ring2` reached
