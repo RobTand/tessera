@@ -57,7 +57,7 @@ BOUND=${PART_BOUND_S:-2700}
 case "$BOUND" in
   ''|*[!0-9]*) refuse "PART_BOUND_S=${PART_BOUND_S:-} is not a whole number of seconds";;
 esac
-[ "$BOUND" -le 2700 ] || refuse "PART_BOUND_S=$BOUND exceeds the 2700 s action cap"
+[ "$BOUND" -ge 1 ] && [ "$BOUND" -le 2700 ] || refuse "PART_BOUND_S=$BOUND must be in 1..2700 seconds"
 
 PRODUCER_PY=${TESSERA_PRODUCER_PYTHON:-}
 [ -n "$PRODUCER_PY" ] || refuse "TESSERA_PRODUCER_PYTHON is not set: name the producer interpreter that will run the exporter"

@@ -514,15 +514,16 @@ def _require_loaded_origins(installed_pkg: Path, payload: "dict[str, bytes]") ->
     digest binds, however equal the bytes.  This exporter's own module is
     bound explicitly -- it is the code executing this check.
     """
-    exporter = sys.modules.get("tessera.export_serving")
-    if exporter is None or not getattr(exporter, "__file__", None):
-        raise SystemExit(
-            f"{PRODUCER_PYTHON}: the running exporter is not an imported "
-            "tessera.export_serving module; selection cannot bind the code that "
-            "executes this check")
-    for name, module in sorted(sys.modules.items()):
-        if name != "tessera" and not name.startswith("tessera."):
-            continue
+    # Bind THIS executing module, including Python's real -m __main__.
+    # Importing a canonical copy would authenticate different code.
+    exporter = sys.modules.get(__name__)
+    if exporter is None or getattr(exporter, "__file__", None) != __file__:
+        raise SystemExit(f"{PRODUCER_PYTHON}: the executing exporter states no file origin")
+    loaded = [(name, module) for name, module in sys.modules.items()
+              if name == "tessera" or name.startswith("tessera.")]
+    if __name__ != "tessera.export_serving":
+        loaded.append((__name__, exporter))
+    for name, module in sorted(loaded):
         # ``__file__`` is a file of the payload and is bound to it by
         # module-relative name; ``__path__`` entries are package DIRECTORIES
         # and are bound by containment alone.

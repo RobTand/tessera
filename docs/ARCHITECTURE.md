@@ -6328,7 +6328,8 @@ field is earned or there is no receipt:
   be that interpreter's installed distribution --
   `importlib.metadata` restricted to the imported holder, `locate_file`
   demonstrating the payload, and every already-loaded `tessera.*` module --
-  the running exporter included -- originating in that payload, bound by
+  the actual executing exporter included, whether canonically imported or
+  Python's `-m` `__main__` -- originating in that payload, bound by
   module-relative name, so an installed `__init__` beside a shadowed
   submodule is a refusal and a PYTHONPATH or experiments-shim shadow is
   refused even when its bytes are equal.  The two payload digests
@@ -6352,6 +6353,24 @@ what it always was: the reader/runtime image the parts are destined to serve
 on, pinned by the dispatch command -- never a claim about the process that
 wrote the part; a selected host producer executes its own venv, and its
 environment is the receipt, not the image.
+
+Both export wrappers require `PART_BOUND_S` in 1..2700; zero refuses rather
+than disabling GNU timeout. Completion and verified skip call the same
+source-aware `serving_parts.validate_serving_part` owner as assembly: exact
+source ownership/stamped shards, complete index and actual tensor headers,
+all output seals/shards, and integer partition/batch carriers with matching
+top-level and identity producer/batch records. Current calibration, authority,
+scale and plan snapshots must equal the exporter's consumed identities before
+an exclusive atomic marker publication; validation/publication failure is
+nonzero even when the exporter returned zero. Reused source digests retain
+the existing cache's explicit proof receipt, never an empty-seal completion.
+
+The default unit-profile driver authenticates and records this receipt in its
+own process before source or CUDA access. Provisioning constrains environment
+names to one parent-relative component and exclusively reserves a fresh venv
+and owned temporary build directory; no pre-existing build path is removed.
+The committed packaging parser preserves Python 3.10 through the declared
+conditional `tomli` dependency, not an implicit interpreter-version cutover.
 
 ### 4.4f The joined fresh encode: a machine schedule, sealed anyway
 
@@ -6379,13 +6398,16 @@ each row is the digest of one real joined call.
 
 The bounded original-source probe uses that same fresh prepare/encode/finish
 owner, without publishing a partial census checkpoint. Its sequential anchor
-and joined leg exclude the same source-read interval, require bitwise equality
-before timing claims, and capture both in-process profiles before consuming
-the remaining action deadline. A partial schedule reports completed unit names,
-actual group widths and observed GPU joules, with the unmeasured remainder
-named. Complete-stack minutes are extrapolated from each measured shape's
-cost weighted by the declared whole-stack shape population; an imbalanced
-prefix is not treated as the population, and a missing shape stays unmeasured.
+and joined leg exclude the same source-read interval. Every scheduled batch
+is anchored on its exact original units, including tail and shared-setting
+widths; a skipped identity cohort cannot enter the timed population. Timed
+digests and observed widths are retained and compared again against that
+same-unit qualification before any measurement is accepted. Both in-process
+profiles precede consumption of the remaining action deadline. A partial
+schedule names the remainder and reports only completed qualified work; it
+does not publish complete-stack minutes. A completed schedule prices each
+measured shape against the declared whole-stack population, never an
+imbalanced prefix or an unmeasured effective-width population.
 Neither this packet nor a new producer adopts a native reader or serving pin.
 
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement

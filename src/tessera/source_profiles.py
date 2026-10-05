@@ -52,7 +52,10 @@ def packaged_projection_config(data: bytes, *, name: str = "pyproject.toml") -> 
     shipped.  The same framing the wheel build reads decides, from the same
     bytes it would have read.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10; declared conditional dependency.
+        import tomli as tomllib
 
     try:
         return tomllib.loads(data.decode("utf-8"))

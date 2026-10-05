@@ -93,7 +93,7 @@ AUTH=${PRODUCER_AUTHORITY:?set PRODUCER_AUTHORITY to the producer authority file
 IMAGE=${PART_IMAGE:?set PART_IMAGE to the exact repo@sha256 image the parts are destined to serve on}
 PRODUCER_SOURCE=${TESSERA_PRODUCER_SOURCE:-}
 R=${CENSUS_ROOT:-/mnt/shared/tessera-measurements/t8-coverage-20260930}
-SRC=/mnt/shared/tessera-runs/moe/u1-stubs-20260926/source-l8
+SRC=${SOURCE_CHECKPOINT:-/mnt/shared/tessera-runs/moe/u1-stubs-20260926/source-l8}
 U=/mnt/shared/tessera-measurements/glm-canonical-census-20260908/activation-runtime-allocation-20260911/union-a4a8a16-01/cache
 HESSIAN=${HESSIAN_CAPTURE:-$U/hessian_capture.references.json}
 PLAN=experiments/t8_census/plan-$NAME.json
@@ -116,7 +116,7 @@ BOUND=${PART_BOUND_S:-2700}
 case "$BOUND" in
   ''|*[!0-9]*) refuse "PART_BOUND_S=${PART_BOUND_S:-} is not a whole number of seconds";;
 esac
-[ "$BOUND" -le 2700 ] || refuse "PART_BOUND_S=$BOUND exceeds the 2700 s action cap; split the part rather than silently extending an export"
+[ "$BOUND" -ge 1 ] && [ "$BOUND" -le 2700 ] || refuse "PART_BOUND_S=$BOUND must be in 1..2700 seconds; split longer work"
 
 case "${ENCODE_BATCH:-1}" in
   ''|*[!0-9]*) refuse "ENCODE_BATCH=${ENCODE_BATCH:-} is not a whole number";;
@@ -156,7 +156,7 @@ export TESSERA_PRODUCER_SOURCE="$PRODUCER_SOURCE"
 # digests of the bytes on disk NOW, not the paths.
 CONTENT_ARGS=("$PLAN" "$HESSIAN" "$AUTH" "${INPUT_SCALES:-}")
 VERIFY_STAMP_CODE='import hashlib, json, os, sys
-mark_path, out_dir, plan, hessian, authority, scales, receipt_json = sys.argv[1:8]
+mark_path, out_dir, plan, hessian, authority, scales, receipt_json, name, index, count, image, batch = sys.argv[1:]
 def sha_file(p):
     h = hashlib.sha256()
     with open(p, "rb") as f:
@@ -165,6 +165,9 @@ def sha_file(p):
     return h.hexdigest()
 mark = json.load(open(mark_path))
 bad = []
+for field, value in (("stub", name), ("partition", index + "/" + count), ("image", image), ("encode_batch", int(batch))):
+    if mark.get(field) != value or (field == "encode_batch" and type(mark.get(field)) is not int):
+        bad.append(f"{field}: marker disagrees with this run")
 content = mark.get("content")
 if not isinstance(content, dict):
     bad.append("content: done marker carries no content-digest block (an unvalidated historical marker)")
@@ -194,69 +197,36 @@ else:
     except ValueError as exc:
         manifest = None
         bad.append(f"output: manifest is not JSON ({exc})")
-    if manifest is not None:
-        # The identity the export ACTUALLY CONSUMED, sealed by the exporter
-        # core into export_partition.identity.options: the current files must
-        # match it, and so must the marker, or a file mutated after the
-        # exporter took its snapshot could ride behind a re-stamped marker.
-        opts = (((manifest.get("export_partition") or {}).get("identity") or {}).get("options")) or {}
-        if opts or isinstance(content, dict):
-            consumed = {"hessian_sha256": opts.get("hessian_sha256"),
-                        "authority_sha256": opts.get("producer_authority_sha256"),
-                        "input_scales_sha256": opts.get("input_scales_sha256")}
-            for k, v in consumed.items():
-                if v is None:
-                    continue
-                if current[k] != v:
-                    bad.append(f"consumed.{k}: the manifest consumed a file digesting {v!r}, the file now digests {current[k]!r}")
-                elif isinstance(content, dict) and content.get(k) != v:
-                    bad.append(f"consumed.{k}: the marker claims {content.get(k)!r} but the manifest consumed {v!r}")
-            plan_opts = opts.get("plan")
-            if plan_opts is not None:
-                try:
-                    entries = json.load(open(plan))
-                except ValueError as exc:
-                    bad.append(f"consumed.plan: the current plan file is not JSON ({exc})")
-                else:
-                    if entries != plan_opts:
-                        bad.append("consumed.plan: the manifest consumed a different plan allocation than the current file states")
 if bad:
     print("; ".join(bad))
 '
-MEMBERSHIP_CODE='# TESSERA_PARTITION_MEMBERSHIP_OWNER_STEP: the manifest identity is read
-# through the serving_parts owners (schema, membership, output seal, the
-# sealed producer receipt and encode_batch), never re-derived here.
+MEMBERSHIP_CODE='# TESSERA_PARTITION_MEMBERSHIP_OWNER_STEP
 import json, sys
 from pathlib import Path
-import tessera.serving_parts as sp
-mark_path, out_dir, index, count, batch_s, receipt_json = sys.argv[1:7]
-manifest = json.load(open(Path(out_dir) / "tessera_serving_manifest.json"))
-record = manifest.get("export_partition") or {}
-if record.get("schema") != sp.SCHEMA:
-    raise SystemExit("export_partition schema %r is not %s" % (record.get("schema"), sp.SCHEMA))
-if (int(record["index"]), int(record["count"])) != sp.parse_partition(index + "/" + count):
-    raise SystemExit("manifest membership %s/%s is not the requested %s/%s" % (record["index"], record["count"], index, count))
-if manifest.get("producer") != json.loads(receipt_json):
-    raise SystemExit("manifest producer receipt differs from the fresh authentication")
-batch = int(batch_s)
-if manifest.get("encode_batch") != batch:
-    raise SystemExit("manifest encode_batch %r is not the requested %d" % (manifest.get("encode_batch"), batch))
-for rel, digest in sorted((record.get("output_sha256") or {}).items()):
-    p = Path(out_dir) / rel
-    if not p.is_file():
-        raise SystemExit("sealed output %s is absent from %s" % (rel, out_dir))
-    if sp.sha256_file(p) != digest:
-        raise SystemExit("sealed output %s no longer matches the digest the export sealed" % rel)
-print("ok")
+from tessera import serving_parts as sp
+from tessera.source_digest_cache import SourceDigestCache
+out_dir, index, count, batch_s, receipt_json, source, cache, plan, hessian, authority, scales = sys.argv[1:]
+try:
+    content = sp.consumed_input_content(out_dir, plan, hessian, authority, scales or None)
+    proof = sp.validate_serving_part(out_dir, source,
+        partition=sp.parse_partition(index + "/" + count), producer=json.loads(receipt_json),
+        encode_batch=int(batch_s), source_digest_cache=SourceDigestCache(cache, source=source))
+except (ValueError, KeyError, TypeError, OSError) as exc:
+    raise SystemExit(str(exc))
+print(json.dumps({"output": proof, "content": content}))
 '
+verify_part() {
+  "$PRODUCER_PY" -c "$MEMBERSHIP_CODE" "$OUT" "$INDEX" "$COUNT" "${ENCODE_BATCH:-1}" "$AUTH_RECEIPT" \
+    "$SRC" "$R/stubs/source-digests" "${CONTENT_ARGS[@]}" 2>>"$AUTH_ERR"
+}
 
 if [ -f "$MARK" ]; then
-  MISMATCH=$("$PRODUCER_PY" -c "$VERIFY_STAMP_CODE" "$MARK" "$OUT" "${CONTENT_ARGS[@]}" "$AUTH_RECEIPT" 2>>"$AUTH_ERR") || \
+  MISMATCH=$("$PRODUCER_PY" -c "$VERIFY_STAMP_CODE" "$MARK" "$OUT" "${CONTENT_ARGS[@]}" "$AUTH_RECEIPT" "$NAME" "$INDEX" "$COUNT" "$IMAGE" "${ENCODE_BATCH:-1}" 2>>"$AUTH_ERR") || \
     MISMATCH="stamp verification failed: $MISMATCH"
   [ -z "$MISMATCH" ] || refuse "done marker $MARK does not match this run ($MISMATCH); old receipts stay untouched -- point CENSUS_ROOT at a fresh directory"
-  MEMBER=$("$PRODUCER_PY" -c "$MEMBERSHIP_CODE" "$MARK" "$OUT" "$INDEX" "$COUNT" "${ENCODE_BATCH:-1}" "$AUTH_RECEIPT" 2>>"$AUTH_ERR") || \
-    refuse "done marker $MARK output failed the serving_parts owner checks ($MEMBER); old receipts stay untouched -- point CENSUS_ROOT at a fresh directory"
-  echo "[export_routed_part] $NAME $INDEX/$COUNT already done and verified: $MARK" | tee -a "$LOG"; exit 0
+  MEMBER=$(verify_part) || \
+    refuse "done marker $MARK output failed the serving_parts owner checks ($MEMBER): $(tail -n 3 "$AUTH_ERR" | tr '\n' ' '); old receipts stay untouched -- point CENSUS_ROOT at a fresh directory"
+  echo "[export_routed_part] $NAME $INDEX/$COUNT already done and verified: $MARK; proof=$MEMBER" | tee -a "$LOG"; exit 0
 fi
 
 source experiments/runtime_image.sh
@@ -321,19 +291,15 @@ T1=$(date +%s)
 echo "[export_routed_part] compute apps at end: $(apps | tr '\n' ';')" | tee -a "$LOG"
 echo "[export_routed_part] $NAME part $INDEX/$COUNT rc=$rc elapsed=$((T1 - T0))s end=$(date -u +%FT%TZ)" | tee -a "$LOG"
 if [ "$rc" = 0 ]; then
+  MEMBER=$(verify_part) || refuse "completed exporter output failed validation ($MEMBER): $(tail -n 3 "$AUTH_ERR" | tr '\n' ' '); done marker NOT written"
   python3 - "$MARK" "$NAME" "$INDEX" "$COUNT" "$(hostname)" "$T0" "$T1" \
     "$PRODUCER_PY" "$PRODUCER_SOURCE" "$IMAGE" "$LOG" "$BOUND" "${PROF:-}" \
-    "${ENCODE_BATCH:-1}" "${BEST_FORM:-}" "${INPUT_SCALES:-}" "${CONTENT_ARGS[@]}" "$AUTH_RECEIPT" <<'PY'
-import hashlib, json, os, statistics, sys
+    "${ENCODE_BATCH:-1}" "${BEST_FORM:-}" "${INPUT_SCALES:-}" "${CONTENT_ARGS[@]}" "$AUTH_RECEIPT" "$MEMBER" <<'PY'
+import json, os, statistics, sys, tempfile
 (mark, name, index, count, host, t0, t1, pypath, psource, image, log, bound,
  prof, batch, best, scales, plan, hessian, authority, _scales_arg,
- receipt_json) = sys.argv[1:]
-def sha_file(p):
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+ receipt_json, proof_json) = sys.argv[1:]
+proof = json.loads(proof_json)
 rec = {"stub": name, "partition": f"{index}/{count}", "host": host,
        "start_unix": int(t0), "end_unix": int(t1), "elapsed_s": int(t1) - int(t0),
        # The producer: the selected interpreter and the explicit qualified
@@ -344,12 +310,9 @@ rec = {"stub": name, "partition": f"{index}/{count}", "host": host,
        "log": log, "bound_s": int(bound),
        "encode_batch": int(batch), "window_best_form": best or None,
        "input_scales": scales or None,
-       "content": {"plan_sha256": sha_file(plan), "hessian_sha256": sha_file(hessian),
-                   "authority_sha256": sha_file(authority),
-                   "input_scales_sha256": sha_file(scales) if scales and scales != "None" else None},
+       "content": proof["content"],
        "producer_receipt": json.loads(receipt_json),
-       "output": {"manifest_sha256": sha_file(os.path.join(
-           os.path.dirname(mark), "part-" + index, "tessera_serving_manifest.json"))}}
+       "output": proof["output"]}
 if prof:
     rec["profile_dir"] = prof
     watts = []
@@ -380,12 +343,14 @@ if prof:
         rec["gpu_power_w"] = {"samples": len(watts), "mean": round(statistics.fmean(watts), 2),
                               "p50": watts[len(watts) // 2], "p90": watts[int(len(watts) * 0.9)],
                               "max": watts[-1], "envelope_w": 140}
-tmp = mark + ".tmp"
-with open(tmp, "w") as f:
+with tempfile.NamedTemporaryFile(mode="w", dir=os.path.dirname(mark),
+        prefix=os.path.basename(mark) + ".", delete=False) as f:
+    tmp = f.name
     json.dump(rec, f, indent=1)
-os.replace(tmp, mark)
+os.link(tmp, mark)  # Atomic publication; never overwrite an existing marker.
+os.unlink(tmp)
 print(json.dumps(rec))
 PY
-  [ "$?" -eq 0 ] || { echo "[export_routed_part] $NAME part $INDEX/$COUNT: output manifest missing; done marker NOT written" | tee -a "$LOG"; exit "$rc"; }
+  [ "$?" -eq 0 ] || { echo "[export_routed_part] $NAME part $INDEX/$COUNT: completion publication failed; done marker NOT written" | tee -a "$LOG"; exit 2; }
 fi
 exit "$rc"

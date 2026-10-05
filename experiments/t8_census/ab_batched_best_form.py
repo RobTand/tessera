@@ -524,21 +524,15 @@ def main() -> int:
                          "units": len(units)},
             "widths": {}, "batches": [], "unmeasured": []}
 
-        # Warm + anchor the FIRST batch of each join key: the width compiles and
-        # captures its plan through the owner, and the exporter's per-unit
-        # finish anchors those exact units bitwise.
-        seen_keys = set()
-        warm_and_anchor = []
-        for positions in schedule:
-            k = keys[positions[0]]
-            if k in seen_keys:
-                continue
-            seen_keys.add(k)
-            warm_and_anchor.append(positions)
+        # Qualify the exact members of every scheduled batch, including tails
+        # and the owner's actual shared-setting splits. Unqualified work is
+        # never admitted to the timed population.
+        warm_and_anchor = schedule
         stages = []
         for positions in warm_and_anchor:
             k = keys[positions[0]]
-            stages.append({"stage": f"warm+anchor {k[1]}x{k[2]}", "units": len(positions) * 2,
+            width_key = qualification_key(k, positions)
+            stages.append({"stage": f"warm+anchor {width_key}", "units": len(positions) * 2,
                            "s_per_unit_prior": COARSE_PRIOR_S_PER_UNIT})
         plan = plan_stages(stages, budget_s=args.budget_s, elapsed_s=time.perf_counter() - started)
         r["stage_plan"] = plan
@@ -548,7 +542,7 @@ def main() -> int:
 
         for positions in warm_and_anchor:
             k = keys[positions[0]]
-            width_key = f"{k[1]}x{k[2]}"
+            width_key = qualification_key(k, positions)
             if decision.get(f"warm+anchor {width_key}", "run") == "skip":
                 continue
             batch = run_owner_batch(positions, units, stack_plan, recipe, activation,
@@ -569,6 +563,7 @@ def main() -> int:
                              "differing_units": differing,
                              "batch_observed": observed_summary(batch["widths_observed"])},
                 "blobs": batch["digests"]}
+            r["widths"][width_key]["anchor_blobs"] = anchor["digests"]
             print(f"[{grid_name}:{q}] w{width_key}: owner {batch['s_per_unit']:.3f} s/unit, "
                   f"anchor {anchor['s_per_unit']:.3f} s/unit, same "
                   f"{len(positions) - len(differing)}/{len(positions)}, "
@@ -586,7 +581,7 @@ def main() -> int:
             r["captures"] = {}
             for positions in warm_and_anchor:
                 k = keys[positions[0]]
-                width_key = f"{k[1]}x{k[2]}"
+                width_key = qualification_key(k, positions)
                 measured_width = r["widths"].get(width_key)
                 if measured_width is None:
                     continue
@@ -618,9 +613,18 @@ def main() -> int:
         stopped = None
         for b_i, positions in enumerate(schedule):
             k = keys[positions[0]]
-            width_key = f"{k[1]}x{k[2]}"
-            prior = (r["widths"].get(width_key, {}).get("owner_batch", {})
-                     .get("s_per_unit", COARSE_PRIOR_S_PER_UNIT))
+            width_key = qualification_key(k, positions)
+            qualification = r["widths"].get(width_key)
+            if qualification is None:
+                stopped = b_i
+                remaining = schedule[b_i:]
+                r["unmeasured_batches"] = {"reason": "identity not qualified", "at_batch_index": b_i,
+                    "batches_remaining": len(remaining), "units_remaining": sum(map(len, remaining))}
+                rec["unmeasured"].append({"stage": f"{grid_name}:{q}/schedule_batches_{b_i}..{len(schedule)-1}",
+                                          "reason": "identity not qualified"})
+                save()
+                break
+            prior = qualification["owner_batch"]["s_per_unit"]
             projected = len(positions) * prior
             elapsed = time.perf_counter() - started
             if elapsed + projected > args.budget_s:
@@ -640,7 +644,16 @@ def main() -> int:
                 break
             batch = run_owner_batch(positions, units, stack_plan, recipe, activation,
                                     args.src, args.out, f"{grid_name}-{q}-b{b_i:03d}")
-            batch.pop("digests", None)
+            differing = sorted(set(batch["digests"]) ^ set(qualification["anchor_blobs"]))
+            differing += sorted(n for n, digest in batch["digests"].items()
+                                if digest != qualification["anchor_blobs"].get(n))
+            if differing or batch["widths_observed"] != qualification["owner_batch"]["widths_observed"]:
+                rec["failure"] = {"reason": "timed batch differs from its qualified identity or effective widths",
+                                  "rung": f"{grid_name}:{q}", "qualification": width_key,
+                                  "differing_units": differing, "observed_widths": batch["widths_observed"]}
+                save()
+                return 4
+            batch["qualification"] = width_key
             batch.update(leg_evidence(s_per_unit=batch["s_per_unit"],
                                       units=len(positions), wall_s=batch["wall_s"],
                                       power=batch["power"]))
@@ -691,6 +704,10 @@ def main() -> int:
                            {tuple(b["widths_observed"]) for b in r["batches"]}),
                        "schedule_batches_total": len(schedule),
                        "workload": "encode+frame+verify; full export IO not measured"})
+            if stopped is not None:
+                r["extrapolated"]["complete_stack"] = {
+                    "complete_864_unit_stack_estimate_min": None,
+                    "kind": "unmeasured: exact scheduled width/settings population was not timed completely"}
 
     rec["scope"] = {
         "rungs_measured": sorted(key for key, row in rec["rungs"].items() if row["batches"]),
@@ -700,7 +717,12 @@ def main() -> int:
     }
     save()
     print(f"wrote {outp}")
-    return 0
+    return 3 if rec["unmeasured"] else 0
+
+
+def qualification_key(key, positions):
+    """Exact same-unit scheduled cohort, not the requested batch knob."""
+    return f"{key[1]}x{key[2]}-first{positions[0]}-n{len(positions)}"
 
 
 def observed_summary(widths):

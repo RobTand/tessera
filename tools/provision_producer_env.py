@@ -38,9 +38,11 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 CHECKOUT = Path(__file__).resolve().parents[1]
@@ -150,6 +152,8 @@ def main() -> int:
                          "src/tessera the authentication binds; a PB snapshot path is not "
                          "one, so qualify refuses without it")
     args = ap.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.name):
+        ap.error("--name must be one directory component under the base environment parent")
 
     if not (CHECKOUT / "src" / "tessera").is_dir() or not (CHECKOUT / "pyproject.toml").is_file():
         raise SystemExit(f"{CHECKOUT} is not a Tessera checkout")
@@ -202,10 +206,9 @@ def main() -> int:
         dirty_files = git_in(build_root, "status", "--porcelain",
                              "--untracked-files=no").splitlines()
 
-    work = Path(f"/home/rob/tmp/{args.name}-build")
-    if work.exists():
-        shutil.rmtree(work)
-    work.mkdir(parents=True)
+    # Exclusively reserve only fresh paths; never remove a pre-existing path.
+    venv_root.mkdir()
+    work = Path(tempfile.mkdtemp(prefix=f"{args.name}-build-", dir="/home/rob/tmp"))
 
     # 1. The clean committed tree of the BUILD root, as an archive, built into a
     #    genuine wheel.

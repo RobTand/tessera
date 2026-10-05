@@ -209,6 +209,10 @@ def main() -> int:
                     help="stop before the timed units when stamping the shards cost more "
                          "than this; the partial receipt with the binding is the record")
     args = ap.parse_args()
+    from tessera.export_serving import authenticate_producer_python
+    auth = authenticate_producer_python()
+    if auth is None:
+        raise SystemExit("TESSERA_PRODUCER_PYTHON must select the scoped producer interpreter")
     if not torch.cuda.is_available():
         raise SystemExit("a GPU measurement with no GPU")
     args.out.mkdir(parents=True, exist_ok=True)
@@ -232,6 +236,8 @@ def main() -> int:
     bound = bind_source(args.src, names, args.source_digest_cache)
     rec = {
         "schema": "tessera.t8_census.profile_unit_encode.v1",
+        "auth": auth,
+        "producer_source": auth["source_root"],
         "tree": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
                                cwd=ROOT).stdout.strip() or None,
         "torch": torch.__version__, "device": torch.cuda.get_device_name(0),

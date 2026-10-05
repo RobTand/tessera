@@ -832,6 +832,115 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if role.get("grid") != wanted_grid or role.get("q256") != wanted_rung:
                 raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")
 
+def _require_part_carriers(part, manifest):
+    rank, count = part.get("index"), part.get("count")
+    if type(rank) is not int or type(count) is not int or count < 1 or not 0 <= rank < count:
+        raise ValueError("partition index/count must be integer carriers with 0 <= INDEX < COUNT")
+    identity = part["identity"]
+    if "producer" in manifest or "producer" in identity:
+        if not isinstance(identity.get("producer"), dict) or manifest.get("producer") != identity["producer"]:
+            raise ValueError(f"partition {rank}: producer disagrees with sealed export identity")
+    options = identity["options"]
+    if "encode_batch" in manifest or "encode_batch" in options:
+        batch = manifest.get("encode_batch")
+        sealed = options.get("encode_batch")
+        if type(batch) is not int or type(sealed) is not int or batch < 1 or batch != sealed:
+            raise ValueError(f"partition {rank}: encode_batch disagrees with integer sealed export identity")
+
+
+def validate_serving_part(path, source, *, partition=None, producer=None, encode_batch=None,
+                          source_digest_cache=None):
+    """Prove one completed part with the same contents owner as assembly.
+
+    Source inventory/config/auxiliary coverage is whole; only the owned input
+    shards need body hashes. A reused digest is exposed in source_proof.
+    """
+    path, source = Path(path), Path(source)
+    manifest = read_serving_manifest(path / "tessera_serving_manifest.json")
+    part = manifest.get("export_partition") or {}
+    if part.get("schema") != SCHEMA:
+        raise ValueError(f"{path}: unsupported serving partition schema")
+    _require_part_carriers(part, manifest)
+    rank, count = part["index"], part["count"]
+    if partition is not None and (rank, count) != partition:
+        raise ValueError("manifest membership differs from requested partition")
+    if producer is not None and manifest.get("producer") != producer:
+        raise ValueError("manifest producer receipt differs from fresh authentication")
+    if encode_batch is not None and manifest.get("encode_batch") != encode_batch:
+        raise ValueError("manifest encode_batch differs from requested batch")
+    stamped_files = part["identity"]["source"]["files"]
+    whole = source_part_identity(source, stamped_files, digest_cache=source_digest_cache)
+    prove_source_part(part["identity"]["source"], whole, f"partition {rank}")
+    index = read_serving_manifest(path / "model.safetensors.index.json")
+    _prove_part_contents(rank, count, path, part, manifest, index, whole, sha256_file)
+    config = read_serving_manifest(path / "tessera_part_config.json")
+    source_config = read_serving_manifest(source / "config.json")
+    source_config.pop("quantization_config", None)
+    if {k: v for k, v in config.items() if k != "quantization_config"} != source_config:
+        raise ValueError(f"partition {rank}: model config disagrees with source identity")
+    qconfig = config["quantization_config"]
+    declarations = {target for group in qconfig["config_groups"].values() for target in group["targets"]}
+    if qconfig["quant_method"] != "tessera" or declarations != set(manifest["modules"]):
+        raise ValueError(f"partition {rank}: config targets disagree with manifest modules")
+    return {"manifest_sha256": sha256_file(path / "tessera_serving_manifest.json"),
+            "source_proof": source_digest_cache.receipt() if source_digest_cache is not None else None}
+
+
+def consumed_input_content(path, plan, hessian, authority, scales=None):
+    """Current input snapshots must equal the identities consumed by this part."""
+    manifest = read_serving_manifest(Path(path) / "tessera_serving_manifest.json")
+    options = manifest["export_partition"]["identity"]["options"]
+    plan_bytes = Path(plan).read_bytes()
+    if json.loads(plan_bytes, object_pairs_hook=unique_json_pairs) != options.get("plan"):
+        raise ValueError("consumed.plan: current allocation differs from the manifest's consumed plan")
+    current = {"plan_sha256": hashlib.sha256(plan_bytes).hexdigest(),
+               "hessian_sha256": sha256_file(Path(hessian)),
+               "authority_sha256": sha256_file(Path(authority)),
+               "input_scales_sha256": sha256_file(Path(scales)) if scales else None}
+    for field, sealed in (("hessian_sha256", "hessian_sha256"),
+                          ("authority_sha256", "producer_authority_sha256"),
+                          ("input_scales_sha256", "input_scales_sha256")):
+        if sealed not in options or current[field] != options[sealed]:
+            raise ValueError(f"consumed.{field}: current bytes differ from the manifest's consumed identity")
+    return current
+
+
+def _prove_part_contents(rank, count, path, part, manifest, index, whole, hash_file):
+    """The single-part ownership and written-payload proof used by assembly."""
+    _require_part_carriers(part, manifest)
+    owned = set(part["source_tensors"])
+    expected = {n for n in whole["tensors"] if partition_owner(n, count) == rank}
+    if owned != expected or len(owned) != len(part["source_tensors"]):
+        raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
+    read = {whole["tensors"][name] for name in owned}
+    if read != set(part["identity"]["source"]["files"]):
+        raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
+                         f"its source tensors live in: stamped "
+                         f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
+    local_map = index["weight_map"]
+    if set(local_map) != _expected_outputs(owned, manifest["modules"]):
+        raise ValueError(f"partition {rank}: written tensor coverage disagrees with source and encoded modules")
+    files = set(local_map.values())
+    if files != set(part["output_sha256"]):
+        raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
+    if files != {p.name for p in path.glob("*.safetensors")} or (owned and not files):
+        raise ValueError(f"partition {rank}: output shard coverage disagrees with directory")
+    actual, payloads = {}, []
+    for filename in sorted(files):
+        filename = _leaf(filename)
+        payload = path / filename
+        if hash_file(payload) != part["output_sha256"][filename]:
+            raise ValueError(f"partition {rank}: output sha256 mismatch: {filename}")
+        for name in tensor_names(payload):
+            if name in actual:
+                raise ValueError(f"tensor appears in two files: {name}")
+            actual[name] = filename
+        payloads.append((payload, filename))
+    if actual != local_map:
+        raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
+    return owned, local_map, payloads
+
+
 
 def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                         source_digest_cache=None) -> dict:
@@ -906,17 +1015,10 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
     # loop hashed that file, so a refusal names the file it named before.
     with _HashAhead(_output_payloads(loaded)) as hashed:
         for rank, path, part, manifest, config, index in loaded:
-            owned = set(part["source_tensors"])
-            expected = {n for n in expected_source if partition_owner(n, count) == rank}
-            if owned != expected or len(owned) != len(part["source_tensors"]) or covered & owned:
+            owned, local_map, payloads = _prove_part_contents(
+                rank, count, path, part, manifest, index, whole, hashed.sha256)
+            if covered & owned:
                 raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
-            # A part that stamped fewer shards than its tensors live in left bytes
-            # it read unproved; one that stamped more claims input it did not use.
-            read = {whole["tensors"][name] for name in owned}
-            if read != set(part["identity"]["source"]["files"]):
-                raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
-                                 f"its source tensors live in: stamped "
-                                 f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
             covered.update(owned)
             qconfig = config["quantization_config"]
             # Validate every carrier before equality: JSON floats and booleans can
@@ -950,26 +1052,8 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
             modules.update(manifest["modules"])
             groups.update(qconfig["config_groups"])
             ignore.update(qconfig["ignore"])
-            local_map = index["weight_map"]
-            if set(local_map) != _expected_outputs(owned, manifest["modules"]):
-                raise ValueError(f"partition {rank}: written tensor coverage disagrees with source and encoded modules")
-            files = set(local_map.values())
-            if files != set(part["output_sha256"]):
-                raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
-            actual = {}
-            for filename in sorted(files):
-                filename = _leaf(filename)
-                payload = path / filename
-                if hashed.sha256(payload) != part["output_sha256"][filename]:
-                    raise ValueError(f"partition {rank}: output sha256 mismatch: {filename}")
-                for name in tensor_names(payload):
-                    if name in actual:
-                        raise ValueError(f"tensor appears in two files: {name}")
-                    actual[name] = filename
-                target = f"part-{rank:05d}-{filename}"
-                copies.append((payload, target))
-            if actual != local_map:
-                raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
+            for payload, filename in payloads:
+                copies.append((payload, f"part-{rank:05d}-{filename}"))
             if weight_map.keys() & local_map.keys():
                 raise ValueError("tensor appears in two partitions")
             weight_map.update({n: f"part-{rank:05d}-{s}" for n, s in local_map.items()})

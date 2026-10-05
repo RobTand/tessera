@@ -23,12 +23,10 @@ test here:
 
 The producer interpreter here is a stub that answers the launcher's
 authentication call with a fixed receipt, so the launcher's refusal order and
-marker logic are what runs; the stamp-verification code IS executed for real
-(the stub execs it), while the serving_parts owner step is canned in tests --
-its logic lives in serving_parts and is that module's own contract.  One test
-drives the real API through the launcher, and one drives a real end-to-end
-t16 invocation to prove the exporter's environment.  No GPU, docker or
-exporter bytes are exercised.
+marker logic are what runs. Both stamp and source-aware serving_parts owner
+checks execute for real; only the authentication/export legs are stubbed.
+The real producer API is exercised separately through the launcher. These
+CPU control-flow tests make no GPU, container or native-byte claim.
 """
 import hashlib
 import json
@@ -94,8 +92,6 @@ STUB_SCRIPT = (
     _STUB_COMMON
     + f"    if {AUTH_SENTINEL!r} in code:\n"
     + _STUB_RECEIPT_INDENTED
-    + "        raise SystemExit(0)\n"
-    + f"    if {OWNER_SENTINEL!r} in code:\n"
     + "        raise SystemExit(0)\n"
     + "    sys.argv = ['stub-producer'] + args[2:]\n"
     + "    exec(compile(code, '<launcher-verification>', 'exec'))\n"
@@ -183,9 +179,7 @@ def _full_stamp(tmp_path, producer, source, input_scales=None,
 
 def _manifest_bytes(authority, scales=None, plan_entries=None,
                     input_scales_seal=None, hessian_seal=None, index=0, count=8):
-    """A minimal exporter-sealed manifest: identity.options carry the digests
-    the export CONSUMED (the core seals these before any encode), and the
-    partition membership the merge reads."""
+    """Intentionally incomplete stamp-check fixture, never a skip witness."""
     options = {
         "plan": plan_entries if plan_entries is not None else json.loads(PLAN.read_text()),
         "hessian_sha256": hessian_seal if hessian_seal is not None else sha_file(HESSIAN),
@@ -397,12 +391,13 @@ def test_t8_honors_exact_done_marker(tmp_path, producer_python, qualified_source
     makes this test fail on the old wrapper, which skipped ANY marker with
     no producer, source or content validation at all.
     """
-    authority = tmp_path / "producer_authority.py"
-    stamp = _full_stamp(tmp_path, producer_python, qualified_source)
-    _write_marker(tmp_path, stamp, _manifest_bytes(authority))
+    from test_b770_producer_review import bundle
+    source, _out, stamp, manifest = bundle(tmp_path, producer_python, qualified_source)
+    _write_marker(tmp_path, stamp, json.dumps(manifest).encode())
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer_python,
-        TESSERA_PRODUCER_SOURCE=qualified_source))
+        TESSERA_PRODUCER_SOURCE=qualified_source, SOURCE_CHECKPOINT=source,
+        PYTHONPATH=CHECKOUT / "src"))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 0, f"exact marker must skip cleanly, got rc={proc.returncode}\n{text}"
     assert "already done and verified" in text
