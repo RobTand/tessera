@@ -1,6 +1,23 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for local disk admission of the container suite cache.
+The shared container owner refuses known network filesystem types before
+building a container command, creating its cache or launching it. The
+merge-suite coordinator calls the same rule before submitting either arm.
+The native mount-provenance owner resolves the deepest mount covering the
+cache's nearest existing parent. Same-path mount stacks follow mount and
+parent identities to their visible top, so a network mount above an automount
+is named correctly. An unresolved `autofs` mount refuses as unstable local
+storage; absent, malformed or unresolvable provenance still fails closed.
+CPU tests inject exact mount entries read from the fleet; no native build
+or graphics processor result is newly measured.
 
+
+Re-stamped 2026-10-05 for the bounded CPU controls in tessera#442: the
+ordinary expert constructor reads the live tensor-parallel degree and rank;
+only an explicit research declaration invokes the research parallel refusal.
+The standalone operator harness keeps its independent selected-owner rule.
+No serving behavior, runtime cell, wire, default or qualification changes.
 
 Re-stamped 2026-10-04 for the serve-comparison intake identity publication
 (#885, with its accepted #872 dependency). The operational seam that a serve
@@ -2789,7 +2806,17 @@ from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
 An explicit `--gpu-image` enables the container GPU arm. It requires
 `--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
+`--gpu-cache-dir` on local disk outside the checkout. The shared container
+owner refuses known network filesystem types before command construction,
+cache creation or launch, naming the path, mount point and filesystem type.
+The coordinator calls the same rule before any action is submitted. A
+not-yet-created cache uses its nearest existing parent and the deepest
+containing mount. Same-path stacks resolve their visible top using mount and
+parent identities, not table order or numeric mount-ID order. An `autofs`
+entry alone refuses because its backing filesystem is not stably mounted.
+The shared mount reader in `tessera._dev.native_identity` also owns native
+mapped-device provenance; unresolved cache mount provenance fails closed.
+`tools/_suite_container.py` owns
 the finite runner grammar and Docker argv; `tools/suite_container.py` launches
 it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
 --dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
@@ -4136,10 +4163,12 @@ backend the factory cannot construct refuses by name; the harness never
 falls back to `auto`.  Scope, world equality, family coverage and exit codes
 are unchanged for both shapes.
 
-**One stack needs the explicit selected owner, and two must not have it.** The
-production FP8 expert builder is TP1-only, so an FP8 owner above one rank takes
-the versioned `research_selected_moe` block, which is a request field here and
-must declare this owner's own `expected_tensor_parallel_size`. A family with its
+**The standalone harness selects its owner explicitly.** Its
+`owner_needs_selected` rule requires the versioned `research_selected_moe`
+block for an FP8 owner above one rank; this is a harness restriction, not a
+single-rank limit in the ordinary expert constructor. That constructor reads
+the live `moe_parallel_config.tp_size` and `tp_rank`. The request block must
+declare this owner's own `expected_tensor_parallel_size`. A family with its
 own expert builder keeps it. For `TESSERA_NVFP4` the selected block refuses to
 name a target it does not serve, so attaching one to an A4 owner is a refusal
 rather than a wider admission. `TESSERA_BF16` is priced on its production
