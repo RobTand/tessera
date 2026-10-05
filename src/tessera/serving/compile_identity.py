@@ -205,24 +205,28 @@ def reset_for_tests() -> None:
     _STATE["dispatch"] = {}
 
 
-def declare_compile_identity(**facts: str) -> dict | None:
-    """``declare_compile_identity_in`` on vLLM's current config.
-
-    None when vLLM is absent or no config is current (methods built bare in
-    tests): there is no compile cache to key.
-    """
+def _current_vllm_config():
+    """vLLM's current config, or None when vLLM is absent or none is current."""
     try:
         from vllm import config as vllm_config_module
     except ImportError:
         return None
     getter = getattr(vllm_config_module, "get_current_vllm_config_or_none", None)
     if getter is not None:
-        config = getter()
-    else:  # older vLLM: the getter asserts when nothing is current
-        try:
-            config = vllm_config_module.get_current_vllm_config()
-        except AssertionError:
-            config = None
+        return getter()
+    try:  # older vLLM: the getter asserts when nothing is current
+        return vllm_config_module.get_current_vllm_config()
+    except AssertionError:
+        return None
+
+
+def declare_compile_identity(**facts: str) -> dict | None:
+    """``declare_compile_identity_in`` on vLLM's current config.
+
+    None when vLLM is absent or no config is current (methods built bare in
+    tests): there is no compile cache to key.
+    """
+    config = _current_vllm_config()
     if config is None:
         return None
     return declare_compile_identity_in(config, **facts)
