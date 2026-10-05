@@ -21,7 +21,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.10"
-dependencies = ["torch>=2.4", "numpy", "safetensors"]
+dependencies = ["torch>=2.4", "numpy", "safetensors", "tomli>=2; python_version < '3.11'"]
 
 [project.optional-dependencies]
 # The serving half registers with vLLM; the fused kernels are Triton (bundled

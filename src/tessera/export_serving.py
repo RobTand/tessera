@@ -152,6 +152,7 @@ import hashlib
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -178,7 +179,7 @@ from tessera.layout import tp_agnostic_at_minor  # noqa: E402
 from tessera.manifest import body_rate_cap  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
-    ActivationSource, encode_linear_planes, served_recipe)
+    ActivationSource, encode_linear_planes, encode_linears_planes, served_recipe)
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, classify_construction, construction_entry,
@@ -199,6 +200,7 @@ from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
+    exporter_code_root, git_hash,
     mtp_draft_embed_head_duplicate_bytes, parse_partition, make_artifact_readable,
     partition_owner, per_rank_fit_items, require_json, routed_fused_unit_bytes,
     routed_window_part_resident_bytes, routed_window_unit_resident_bytes, sha256_file,
@@ -325,6 +327,378 @@ FP8 = "TESSERA_FP8"
 BF16 = BF16_FAMILY
 
 
+# --------------------------------------------------------------------------
+# THE SELECTED PRODUCER (TESSERA_PRODUCER_PYTHON / TESSERA_PRODUCER_SOURCE).
+#
+# A partition producer that claims a genuine lineage names its interpreter and
+# its source; this module authenticates both BEFORE any source or output
+# operation, and seals the receipt into the partition identity.  The three
+# facts the receipt binds are each proved, never asserted: the interpreter by
+# exact path (different environments share one resolved binary, so the file
+# alone proves nothing), the source by its checkout's own Git object store --
+# clean at a HEAD that descends from the genuine ancestor -- and the bytes by
+# a projection to exactly the payload a wheel built from that packaging
+# config ships, equal to the installed distribution the selected interpreter
+# actually imported.  No environment claim (``TESSERA_GIT`` least of all)
+# substitutes for any of it.
+
+PRODUCER_PYTHON = "TESSERA_PRODUCER_PYTHON"
+PRODUCER_SOURCE = "TESSERA_PRODUCER_SOURCE"
+PRODUCER_RECEIPT_SCHEMA = "tessera.producer_python.v1"
+GENUINE_PRODUCER_ANCESTOR = "b770727c50eef822132518bdc4fd6efe84359c9e"
+
+
+def _git_proof(directory: Path, *args: str) -> str:
+    """A git answer from the source reference's own object store, or a refusal."""
+    done = subprocess.run(["git", "-C", str(directory), *args],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: {directory} is not a usable Git checkout "
+            f"(git {' '.join(args[:2])} failed: {done.stderr.strip()[:300] or done.returncode}); "
+            "a selected producer's source reference is proved from its checkout's "
+            "object store, and no environment claim substitutes for it")
+    return done.stdout
+
+
+def _source_package_dir(named: Path) -> Path:
+    """The package directory the source reference names.
+
+    Wrappers provide ``checkout/src/tessera``; a checkout root that holds
+    ``src/tessera`` is accepted in the same spelling.  Anything else is
+    refused by variable name rather than guessed at.
+    """
+    if (named / "serving").is_dir():
+        return named
+    if (named / "src" / "tessera" / "serving").is_dir():
+        return named / "src" / "tessera"
+    raise SystemExit(
+        f"{PRODUCER_SOURCE}: {named} is neither a tessera package directory "
+        "(holding serving/) nor a checkout root (holding src/tessera/)")
+
+
+def _require_clean_head(package_dir: Path) -> None:
+    """The package's tracked files are HEAD's, and no untracked file joins them.
+
+    A dirty clone cannot claim its HEAD commit: the expected payload is
+    hashed from the worktree precisely because this check proved those bytes
+    ARE the committed ones.
+    """
+    status = subprocess.run(
+        ["git", "-C", str(package_dir), "status", "--porcelain=v1",
+         "--untracked-files=all", "--", "."],
+        capture_output=True, text=True)
+    if status.returncode != 0:
+        raise SystemExit(f"{PRODUCER_SOURCE}: git status failed in {package_dir}: "
+                         f"{status.stderr.strip()[:300]}")
+    dirty = [line for line in status.stdout.splitlines() if line.strip()]
+    if dirty:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: {package_dir} is dirty at HEAD ({len(dirty)} "
+            f"modified or untracked file(s), e.g. {dirty[:3]}). A source "
+            "reference must be clean at its HEAD, so its committed content -- "
+            "not merely its ancestry -- is what the projection digests.")
+
+
+def _git_archive_files(checkout_root: Path, paths: "list[str]") -> "dict[str, bytes]":
+    """The HEAD-tree bytes of ``paths``, one ``git archive`` pass, or a refusal.
+
+    The expected payload is read from the OBJECT STORE, never the worktree:
+    assume-unchanged and skip-worktree can conceal tracked edits from a
+    status check, and the committed bytes are what a receipt may bind.
+    """
+    done = subprocess.run(
+        ["git", "-C", str(checkout_root), "archive", "HEAD", "--", *paths],
+        capture_output=True)
+    if done.returncode != 0:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: reading {paths[:2]} from the HEAD tree of "
+            f"{checkout_root} failed: {done.stderr.decode().strip()[:300]}")
+    import io
+    import tarfile
+
+    with tarfile.open(fileobj=io.BytesIO(done.stdout)) as tar:
+        return {member.name: tar.extractfile(member).read()
+                for member in tar.getmembers() if member.isfile()}
+
+
+def _expected_payload(checkout_root: Path, package_dir: Path) -> "dict[str, bytes]":
+    """The committed package, projected to what a wheel built here ships.
+
+    ``tessera._dev`` is repository tooling and no wheel carries it; the
+    packaging owners decide, via the projection owner -- which speaks
+    checkout-relative names, so the tracked paths are passed in that
+    spelling and the answer normalised back to package-relative.  Every
+    byte, the packaging config included, comes from the HEAD tree's objects.
+    """
+    from tessera.source_profiles import packaged_projection_config, shipped_payload_paths
+
+    packaged = _git_archive_files(checkout_root, ["pyproject.toml"])
+    if "pyproject.toml" not in packaged:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: HEAD of {checkout_root} carries no pyproject.toml; "
+            "the shipped-payload projection is derived from the committed packaging "
+            "owners, and a commit without them projects nothing")
+    config = packaged_projection_config(packaged["pyproject.toml"])
+    listing = _git_proof(checkout_root, "ls-tree", "-r", "--name-only", "-z", "HEAD")
+    tracked = [path for path in listing.split("\0") if path]
+    prefix = package_dir.relative_to(checkout_root).as_posix() + "/"
+    under_package = [path for path in tracked if path.startswith(prefix)]
+    if not under_package:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: HEAD of {checkout_root} carries no package under "
+            f"{prefix}; a source reference must name the genuine checkout's package")
+    # The owner's answer is where-root-relative ("tessera/x.py"); the payload
+    # is package-relative ("x.py").
+    shipped = shipped_payload_paths(config, under_package)
+    wanted = [f"{prefix}{name.split('/', 1)[1]}" for name in shipped]
+    files = _git_archive_files(checkout_root, wanted)
+    absent = sorted(set(wanted) - set(files))
+    if absent:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: the packaging config projects {absent[:3]} but "
+            f"HEAD's tree does not carry them under {prefix}")
+    return {name[len(prefix):]: files[name] for name in wanted}
+
+
+def _installed_payload() -> "tuple[Path, dict[str, bytes]]":
+    """The tessera the selected interpreter actually imported, as an install.
+
+    The import must come from the selected interpreter's INSTALLED
+    distribution -- ``importlib.metadata`` restricted to the holder of the
+    imported package, and ``locate_file`` demonstrating that this is the
+    payload that distribution provides.  A sys.path insert (the legacy
+    experiments shim, or an inherited PYTHONPATH) has no distribution behind
+    it and is refused by variable name whatever its bytes say.
+    """
+    import tessera
+
+    from importlib.metadata import distributions
+
+    imported_init = Path(tessera.__file__).resolve()
+    holder = imported_init.parents[1]
+    distribution_name = getattr(tessera, "DISTRIBUTION", "tessera-quant")
+    found = None
+    for dist in distributions(path=[str(holder)]):
+        if (dist.metadata.get("Name") or "").strip().lower() == distribution_name.lower():
+            found = dist
+            break
+    if found is None:
+        raise SystemExit(
+            f"{PRODUCER_PYTHON}: the running interpreter imported tessera from "
+            f"{holder}, which provides no installed {distribution_name} distribution. "
+            "That is a sys.path/PYTHONPATH shadow (an experiments shim or an "
+            "inherited environment), not the selected interpreter's install: "
+            "run the exporter with ``python -m tessera.export_serving`` under the "
+            "selected interpreter's installed distribution.")
+    installed_init = Path(found.locate_file("tessera/__init__.py")).resolve()
+    if installed_init != imported_init:
+        raise SystemExit(
+            f"{PRODUCER_PYTHON}: this process imported tessera from {imported_init}, "
+            f"but the selected interpreter's installed {distribution_name} provides "
+            f"{installed_init}. A PYTHONPATH override is not the installed payload, "
+            "and the exporter never runs from one.")
+    installed_pkg = installed_init.parent
+    payload = {path.relative_to(installed_pkg).as_posix(): path.read_bytes()
+               for path in sorted(installed_pkg.rglob("*"))
+               if path.is_file() and "__pycache__" not in path.parts}
+    return installed_pkg, payload
+
+
+def _require_loaded_origins(installed_pkg: Path, payload: "dict[str, bytes]") -> None:
+    """Every loaded tessera module comes from the authenticated payload.
+
+    An installed ``tessera/__init__`` beside a submodule imported from
+    elsewhere (an experiments shim inserting ``checkout/src``, an inherited
+    PYTHONPATH) is a MIXED ORIGIN: the running code is not the payload the
+    digest binds, however equal the bytes.  This exporter's own module is
+    bound explicitly -- it is the code executing this check.
+    """
+    # Bind THIS executing module, including Python's real -m __main__.
+    # Importing a canonical copy would authenticate different code.
+    exporter = sys.modules.get(__name__)
+    if exporter is None or getattr(exporter, "__file__", None) != __file__:
+        raise SystemExit(f"{PRODUCER_PYTHON}: the executing exporter states no file origin")
+    loaded = [(name, module) for name, module in sys.modules.items()
+              if name == "tessera" or name.startswith("tessera.")]
+    if __name__ != "tessera.export_serving":
+        loaded.append((__name__, exporter))
+    for name, module in sorted(loaded):
+        # ``__file__`` is a file of the payload and is bound to it by
+        # module-relative name; ``__path__`` entries are package DIRECTORIES
+        # and are bound by containment alone.
+        file = getattr(module, "__file__", None)
+        if file is not None:
+            origin = Path(file).resolve()
+            if installed_pkg not in origin.parents:
+                raise SystemExit(
+                    f"{PRODUCER_PYTHON}: loaded module {name!r} comes from {origin}, "
+                    f"outside the authenticated installed payload {installed_pkg}. A "
+                    "mixed origin is a refusal: the running code is not the payload "
+                    "the receipt binds.")
+            relative = origin.relative_to(installed_pkg).as_posix()
+            if relative not in payload:
+                raise SystemExit(
+                    f"{PRODUCER_PYTHON}: loaded module {name!r} is {relative}, which "
+                    f"the authenticated payload of {installed_pkg} does not ship")
+            continue
+        paths = getattr(module, "__path__", None) or ()
+        if not paths:
+            raise SystemExit(
+                f"{PRODUCER_PYTHON}: loaded module {name!r} states no file origin; "
+                "a selected producer's modules must come from the authenticated "
+                "installed payload")
+        for path in paths:
+            path = Path(path).resolve()
+            if installed_pkg not in path.parents:
+                raise SystemExit(
+                    f"{PRODUCER_PYTHON}: loaded package {name!r} resolves at {path}, "
+                    f"outside the authenticated installed payload {installed_pkg}")
+
+
+def authenticate_producer_python(expected_package=None, *,
+                                 descends_from: str = GENUINE_PRODUCER_ANCESTOR,
+                                 ) -> "dict | None":
+    """Authenticate the selected producer interpreter, or return ``None``.
+
+    Reads ``TESSERA_PRODUCER_PYTHON`` in the real exporter, before any
+    source or output operation.  With no selection the exporter keeps its
+    existing behaviour and this returns ``None``; with one, every refusal
+    names its variable, and the exporter never silently runs a different
+    interpreter.  The receipt binds requested and actual interpreter, the
+    executable's hash, ``sys.prefix``, the observed Python and torch of the
+    producer process, the projected expected package digest and the actual
+    installed digest (equal, and equal to the exact shipped roster a wheel
+    built from the packaging config carries, with ``runtime_contract.json``
+    proved byte-equal besides -- the source profiles cover code, not data),
+    and the verified source commit with its ancestry.  ``descends_from``
+    exists so tests can exercise the ancestry machinery on fixture trees;
+    the exporter main passes the genuine reference.
+
+    ``expected_package`` overrides the source reference's package directory
+    for the projection; it does not relax any check.
+    """
+    selected = os.environ.get(PRODUCER_PYTHON)
+    if not selected:
+        return None
+    if not os.path.isabs(selected):
+        raise SystemExit(
+            f"{PRODUCER_PYTHON}: {selected!r} is not an absolute executable path")
+    if os.path.abspath(selected) != os.path.abspath(sys.executable):
+        raise SystemExit(
+            f"{PRODUCER_PYTHON}: selected {selected}, but this exporter is running "
+            f"under {sys.executable}. Different environments share one resolved "
+            "binary, so the resolved file alone proves nothing: the exporter never "
+            "silently runs an interpreter other than the one selected.")
+    source_named = os.environ.get(PRODUCER_SOURCE)
+    if not source_named:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: a selected producer ({selected}) requires "
+            f"{PRODUCER_SOURCE} naming the genuine checkout (its src/tessera package)")
+    source_dir = Path(source_named)
+    if not source_dir.is_dir():
+        raise SystemExit(f"{PRODUCER_SOURCE}: {source_named} is not a directory")
+    package_dir = _source_package_dir(source_dir)
+    _require_clean_head(package_dir)
+    checkout_root = Path(_git_proof(package_dir, "rev-parse", "--show-toplevel").strip())
+    head = _git_proof(package_dir, "rev-parse", "HEAD").strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise SystemExit(f"{PRODUCER_SOURCE}: HEAD of {checkout_root} is {head!r}, "
+                         "not a 40-hex commit")
+    ancestry = subprocess.run(
+        ["git", "-C", str(package_dir), "merge-base", "--is-ancestor", descends_from, head],
+        capture_output=True, text=True)
+    if ancestry.returncode == 1:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: HEAD {head} of {checkout_root} does not descend from "
+            f"{descends_from}; a selected producer must be a genuine descendant")
+    if ancestry.returncode != 0:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: ancestry check failed in {checkout_root} "
+            f"({descends_from} against HEAD {head}): {ancestry.stderr.strip()[:300]}")
+    expected = (Path(expected_package) if expected_package is not None else package_dir)
+    expected_payload = _expected_payload(checkout_root, expected)
+    from tessera.source_profiles import PACKAGE_SOURCE_V2, shipped_payload_profiles
+
+    expected_profiles = shipped_payload_profiles(expected_payload)
+    installed_pkg, actual_payload = _installed_payload()
+    # Before anything else passes: the code ALREADY LOADED in this process --
+    # this exporter module included -- must come from the payload that is
+    # about to be digested.  All of this precedes any source or output
+    # operation of the exporter.
+    _require_loaded_origins(installed_pkg, actual_payload)
+    missing = sorted(set(expected_payload) - set(actual_payload))
+    extra = sorted(set(actual_payload) - set(expected_payload))
+    if missing or extra:
+        raise SystemExit(
+            f"{PRODUCER_PYTHON}: the installed payload {installed_pkg} is not the "
+            f"projected wheel roster (missing {missing[:3]}, extra {extra[:3]}); the "
+            "shipped code and declared package-data must match exactly")
+    actual_profiles = shipped_payload_profiles(actual_payload)
+    if actual_profiles[PACKAGE_SOURCE_V2] != expected_profiles[PACKAGE_SOURCE_V2]:
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: the installed payload {installed_pkg} does not match "
+            f"the source reference {expected} (package source "
+            f"{actual_profiles[PACKAGE_SOURCE_V2]} vs "
+            f"{expected_profiles[PACKAGE_SOURCE_V2]}). A transient "
+            "install-vs-checkout mismatch is a refusal, not a tolerance.")
+    contract = "serving/runtime_contract.json"
+    if actual_payload.get(contract) != expected_payload.get(contract):
+        raise SystemExit(
+            f"{PRODUCER_SOURCE}: {contract} differs between the source reference and "
+            "the installed payload; source profiles cover code, not data, so the "
+            "runtime contract is compared explicitly")
+    return {
+        "schema": PRODUCER_RECEIPT_SCHEMA,
+        # The interpreter, bound by exact path and by the executable's own bytes.
+        "selection": PRODUCER_PYTHON,
+        "requested_interpreter": selected,
+        "interpreter": sys.executable,
+        "executable_sha256": hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+        "sys_prefix": sys.prefix,
+        # The producer process's observed environment, as observed -- never a
+        # claim about the reader/runtime image the parts are destined for.
+        "python_version": platform.python_version(),
+        "torch_version": torch.__version__,
+        # The source reference and its verified Git proof.
+        "source": PRODUCER_SOURCE,
+        "source_root": str(source_dir),
+        "git_head": head,
+        "descends_from": descends_from,
+        # The bytes: projected expected payload vs actual installed payload.
+        "installed_package": str(installed_pkg),
+        "expected_package_sha256": expected_profiles[PACKAGE_SOURCE_V2],
+        "package_sha256": actual_profiles[PACKAGE_SOURCE_V2],
+        "shipped_files": len(actual_payload),
+        "runtime_contract_sha256": hashlib.sha256(actual_payload[contract]).hexdigest(),
+    }
+
+
+def read_input_scales(path: "Path | None") -> "tuple[dict, str | None]":
+    """The ``--input-scales`` scalars, parsed from ONE snapshot of the bytes.
+
+    The identity seals ``input_scales_sha256`` of exactly these bytes, and
+    the roles consume exactly these scalars: one read, one object.  The
+    previous two-pass shape -- a digest of the file here, a re-open of the
+    path there -- let a file rewritten in between seal a digest the run
+    never consumed.  Same scalar conversion and refusals as the per-key
+    ``safe_open`` read it replaces.
+    """
+    if path is None:
+        return {}, None
+    from safetensors.torch import load
+
+    data = path.read_bytes()
+    scales = {}
+    for key, tensor in load(data).items():
+        if not key.endswith(".input_global_scale"):
+            continue
+        if tensor.numel() != 1:
+            raise SystemExit(f"--input-scales {key} must contain one scalar")
+        scales[key] = float(tensor.float().reshape(-1)[0])
+    return scales, hashlib.sha256(data).hexdigest()
+
+
 class PricedInputsSnapshot:
     """Allocation input expectations from one digest-bound build snapshot.
 
@@ -417,12 +791,12 @@ class PlanSnapshot:
 
     __slots__ = ("path", "sha256", "entries", "schema")
 
-    def __init__(self, path: Path, text: str):
+    def __init__(self, path: Path, raw: bytes):
         self.path = Path(path)
-        self.sha256 = hashlib.sha256(text.encode()).hexdigest()
+        self.sha256 = hashlib.sha256(raw).hexdigest()
         try:
-            entries = json.loads(text)
-        except json.JSONDecodeError as exc:
+            entries = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise SystemExit(f"--plan-json {self.path} is not valid JSON: {exc}") from exc
         if not isinstance(entries, dict):
             raise SystemExit(
@@ -444,7 +818,7 @@ class PlanSnapshot:
 
     @classmethod
     def read(cls, path: Path) -> "PlanSnapshot":
-        return cls(Path(path), Path(path).read_text())
+        return cls(Path(path), Path(path).read_bytes())
 
     def published(self) -> dict:
         """A private copy, for a consumer that keeps or serialises the plan."""
@@ -754,91 +1128,6 @@ def ignored_modules(tensor_name: str, shape, architecture: str | None = None) ->
     names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
                  if (match := pattern.match(probe)))
     return tuple(names)
-
-
-def exporter_code_root() -> Path:
-    """The tree :func:`export_identity` digests for this running exporter.
-
-    A checkout's root (holding ``src/`` and ``experiments/``) when the
-    module resolves from a checkout; the directory holding the ``tessera``
-    package (a checkout's ``src/``, or ``site-packages``) when it resolves
-    from an install -- the same derivation as
-    ``tessera.serving.source_identity._default_root`` (#691 item 4).
-    Anything else is refused with its location, not hashed as whatever
-    two parents up happens to be.
-    """
-    holder = Path(__file__).resolve().parents[1]
-    checkout = holder.parent
-    if holder.name == "src" and (checkout / "experiments").is_dir():
-        return checkout
-    if (holder / "tessera" / "serving").is_dir():
-        return holder
-    raise SystemExit(
-        f"cannot locate the Tessera code root from {__file__}: {holder} "
-        "is neither a checkout src/ with an experiments/ sibling nor a "
-        "directory holding an installed tessera package.")
-
-
-def _installed_commit_id() -> "str | None":
-    """The commit the running Tessera was installed from, if recorded.
-
-    A non-editable pip install from git records ``direct_url.json`` with the
-    commit in its dist-info; an editable install is a checkout, so git
-    answers before this is ever asked.  The search is restricted to the
-    directory holding the imported ``tessera`` package: a global scan would
-    happily return some OTHER environment's install of Tessera, which is
-    the same provenance hole stamped as a value (#691 item 4).
-    """
-    holder = Path(__file__).resolve().parents[1]
-    try:
-        from importlib.metadata import distributions
-    except ImportError:
-        return None
-    for dist in distributions(path=[str(holder)]):
-        try:
-            text = dist.read_text("direct_url.json")
-        except Exception:
-            continue
-        if not text:
-            continue
-        try:
-            info = json.loads(text)
-        except ValueError:
-            continue
-        commit = (info.get("vcs_info") or {}).get("commit_id")
-        if commit:
-            return commit
-    return None
-
-
-def git_hash() -> str:
-    """The commit this build came from -- git, the environment, or the install.
-
-    A build that runs on a synced copy of the tree has no ``.git`` and used to
-    stamp ``unknown``, which is a provenance hole in an artifact whose whole
-    claim is that the surrogate, the KL and the bytes are one rendering.
-    ``TESSERA_GIT`` is how the caller supplies it when git cannot; a
-    non-editable install from git stamps its ``direct_url.json`` commit
-    (#691 item 4).  When none of the three answers, this refuses instead of
-    stamping ``unknown``.
-    """
-    import os
-
-    try:
-        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
-    except Exception:
-        pass
-    caller = os.environ.get("TESSERA_GIT")
-    if caller:
-        return caller
-    commit = _installed_commit_id()
-    if commit:
-        return commit
-    raise SystemExit(
-        "cannot stamp the Tessera commit: no git checkout above the running "
-        "module, no TESSERA_GIT in the environment, and the installed Tessera "
-        "records no commit in its direct_url.json (not a pip install from "
-        "git). Set TESSERA_GIT to the commit this code came from.")
 
 
 def quantizable(src: Path):
@@ -1479,6 +1768,180 @@ def default_intake_threads() -> int:
 DEFAULT_INTAKE_WINDOW_BYTES = 8 << 30
 
 
+def expert_work_units(stack, record):
+    """Bind planned units to their owning stack in original plan order."""
+    return [dict(unit, stack=stack) for unit in record["units"]]
+
+
+def fresh_expert_units(names, plan, expert_units):
+    """One shard's fresh expert units, in the shard loop's commit order.
+
+    The order is the loop's: names in shard order, units in plan order.  The
+    cached intake's task list and the joined-encode planner both take this
+    sequence, so everything downstream sees the order the shard loop commits.
+    A name in ``plan`` is a dense body Linear and never an expert unit; the
+    exclusion is stated because it is the seam the two callers share.
+    """
+    return [(name, unit) for name in names
+            if name not in plan and name in expert_units
+            for unit in expert_units[name]]
+
+
+def split_by_shared_schedule(prepared, shared=None):
+    """Split prepared members into groups whose shared settings agree.
+
+    ``prepared`` is ``[(unit, weight, mapping)]`` in loop order, each mapping
+    exactly what ``ActivationSource.for_unit`` returned.  The batched entry's
+    grammar (``encode_linears_planes``) owns which mapping keys must be
+    shared and refuses a mixed mapping by key; this owner partitions on the
+    mapping's own content -- ``--ldlq-block-budget`` derives each unit's LDLQ
+    block from its own Hessian, so one join key can legitimately hold
+    differing schedules -- so the exporter splits where the run actually
+    differs instead of refusing an otherwise valid multi-unit export.  Groups
+    keep first-seen order, members their loop order.
+    """
+    from tessera.export import SHARED_PER_UNIT_SETTINGS
+
+    shared = SHARED_PER_UNIT_SETTINGS if shared is None else shared
+    groups: dict = {}
+    for index, (_unit, _weight, mapping) in enumerate(prepared):
+        schedule = tuple(sorted((key, mapping[key]) for key in shared if key in mapping))
+        groups.setdefault(schedule, []).append(index)
+    return list(groups.values())
+
+
+def fresh_joined_encode(members, *, stack_plan, activation, device, no_verify,
+                        batch_observed) -> list:
+    """One join key's fresh routed-expert encodes, the exporter's own finish.
+
+    ``members`` is ``[(unit, source tensor)]`` of ONE join key; the return is
+    one ``(exported, blob, payload, own_global, manifest)`` per member, in
+    member order.  The same per-unit calls the fresh branch makes --
+    ``for_unit``, the encode with ``verify``, the manifest off the bytes, the
+    container -- with the encode itself one ``encode_linears_planes`` call
+    per SHARED SCHEDULE (``split_by_shared_schedule``: differing per-unit
+    block schedules are split, not refused; ``--ldlq-block-budget`` derives
+    each unit's block from its own Hessian).  Every unit's blob is that
+    unit's one-unit blob (``tests/test_batched_encode_identity.py``), so this
+    is a machine schedule; each call's width is appended to
+    ``batch_observed``, and the manifest records the histogram.  A probe may
+    drive this owner directly on real selected units -- original names,
+    shapes and Hessians -- and compare every unit against the per-unit path,
+    without publishing a checkpoint.
+
+    ``stack_plan`` is the exporter's plan record for the members' stack;
+    ``activation`` is the run's ``ActivationSource`` or ``None``.
+    """
+    stack_spec = stack_plan[members[0][0]["stack"]]
+    unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
+    unit_recipe = served_recipe(unit_grid, unit_q256, STRUCTURE_ROUTED_MOE)
+    prepared = []
+    for unit, source in members:
+        weight = packed_expert_weight(source, unit).to(device, torch.float32).contiguous()
+        mapping = ({} if activation is None else activation.for_unit(
+            unit["tensor"], weight.shape[1], device,
+            scale_plane=unit_recipe.scale_plane))
+        prepared.append((unit, weight, mapping))
+    by_unit = {}
+    for indices in split_by_shared_schedule(prepared):
+        subset = [prepared[i] for i in indices]
+        batch_observed.append(len(subset))
+        encoded = encode_linears_planes(
+            [weight for _unit, weight, _mapping in subset],
+            grid=unit_grid, q256=unit_q256,
+            names=[unit["tensor"] for unit, _weight, _mapping in subset],
+            per_unit=[mapping for _unit, _weight, mapping in subset],
+            body=unit_recipe.body, verify=not no_verify)
+        for (unit, weight, _mapping), (exported, unit_artifact_, _forests) in zip(subset, encoded):
+            del weight
+            unit_manifest = parse_unit_artifact(exported.blob, device=device).manifest
+            blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
+            payload = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
+            by_unit[unit["tensor"]] = (exported, blob, payload,
+                                       float(unit_artifact_.scale_global), unit_manifest)
+    # Commit in the members' own order, whatever the schedule splits did.
+    return [by_unit[unit["tensor"]] for unit, _weight, _mapping in prepared]
+
+
+def plan_joined_encodes(keys: "list", batch: int) -> "list[list[int]]":
+    """Group one shard's fresh expert encodes into joined calls of ``batch`` units.
+
+    ``keys[i]`` is the ``i``-th unit's join key in the shard loop's order: the
+    units one ``encode_linears_planes`` call may carry together, which is one
+    stack (so one grid, rung and recipe) at one ``[rows, cols]``.  Returns the
+    batches as lists of positions.  Each key's units are taken in loop order,
+    ``batch`` at a time, so a batch's first position is the earliest of its
+    members, and the loop reaches that position before any other member: the
+    batch is encoded when its first unit comes up and every later member
+    finds its bytes waiting.  A batch never reaches back past a unit the loop
+    has already written.
+    """
+    if batch < 1:
+        raise ValueError(f"an encode batch is at least one unit, got {batch}")
+    groups: dict = {}
+    for position, key in enumerate(keys):
+        groups.setdefault(key, []).append(position)
+    batches = [members[i:i + batch] for members in groups.values()
+               for i in range(0, len(members), batch)]
+    return sorted(batches, key=lambda members: members[0])
+
+
+class JoinedExpertEncode:
+    """One shard's fresh routed-expert encodes, ``batch`` same-shape units per call.
+
+    The routed census encodes one expert projection at a time under LDLQ, so
+    every window-Viterbi call is one ``ldl_block`` (32) of columns.
+    ``encode_linears_planes`` joins ``B`` units' calls along the column axis,
+    and every unit's blob is byte-identical to the blob
+    ``encode_linear_planes`` writes for it alone, so joining is a machine
+    schedule and moves no byte.
+
+    A REAL census checkpoint names every expert projection as its own source
+    tensor, so ``expert_units[name]`` holds ONE unit and only grouping ACROSS
+    source names within the shard ever joins anything; the key is the unit's
+    ``(stack, rows, cols)``, and down/up orientations simply flush as
+    different keys.  ``take`` returns ``(exported, blob, payload, own_global,
+    manifest)`` for one unit, encoding the unit's whole batch when its first
+    member comes up.  Members later in the shard are read from ``handle``
+    once and held in ``staged`` until the loop reaches their tensor, which it
+    then takes from here instead of reading it again.
+    """
+
+    def __init__(self, handle, shard_units, batch, encode):
+        self.handle = handle
+        self.encode = encode
+        self.staged: dict = {}
+        self.done: dict = {}
+        keys = [(unit["stack"], int(unit["rows"]), int(unit["cols"]))
+                for _name, unit in shard_units]
+        self.batch_of: dict = {}
+        for positions in plan_joined_encodes(keys, batch):
+            members = [shard_units[i] for i in positions]
+            for _name, unit in members:
+                self.batch_of[unit["tensor"]] = members
+
+    def source(self, name):
+        """The loop's tensor for ``name``: the staged read if a batch took it, else a fresh one."""
+        tensor = self.staged.pop(name, None)
+        return self.handle.get_tensor(name) if tensor is None else tensor
+
+    def take(self, name, unit, tensor):
+        key = unit["tensor"]
+        if key not in self.done:
+            members = []
+            for member_name, member in self.batch_of[key]:
+                if member_name == name:
+                    held = tensor
+                else:
+                    held = self.staged.get(member_name)
+                    if held is None:
+                        held = self.staged[member_name] = self.handle.get_tensor(member_name)
+                members.append((member, held))
+            for (member, _held), result in zip(members, self.encode(members)):
+                self.done[member["tensor"]] = result
+        return self.done.pop(key)
+
+
 class CachedExpertIntake:
     """Cached expert units read, digested, verified and framed on a thread pool,
     committed on the caller's thread in the order the shard loop writes them.
@@ -1706,12 +2169,22 @@ def main():
                     help="bound on the estimated bytes the cached intake holds ahead of the "
                          "shard loop (source slices plus wires), default 8 GiB")
     ap.add_argument("--no-verify", action="store_true")
+    ap.add_argument("--encode-batch", type=int, default=1, metavar="UNITS",
+                    help="fresh routed-expert encodes joined UNITS same-shape units per "
+                         "trellis call (encode_linears_planes); every blob is byte-identical "
+                         "to the one-unit encode, and the effective value is recorded in the "
+                         "manifest and sealed in a part identity's options, so parts batched "
+                         "differently refuse to merge. Default 1: one unit per call.")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
                     help="write only whole layers owned by layer %% COUNT == INDEX; "
                          "non-body tensors belong to index 0. Merge every part before serving.")
     ap.add_argument("--partition-runtime-image",
-                    help="exact repository@sha256 image pinned by the part's dispatch command")
+                    help="exact repository@sha256 image pinned by the part's dispatch command: "
+                         "the READER/runtime the parts are destined to serve on. It is never a "
+                         "claim about the process that WROTE the part -- a selected host "
+                         "producer's own environment is its authenticated receipt "
+                         "(TESSERA_PRODUCER_PYTHON), and it does not execute this image.")
     ap.add_argument("--source-digest-cache", type=Path, default=None,
                     help="directory of stat-bound source shard digests for cached or partition export: a shard "
                          "whose inode, size, mtime_ns and ctime_ns match a recorded full read "
@@ -1792,6 +2265,14 @@ def main():
         ap.error("historical cached producer package and source SHA256 must be paired")
     if args.cached_producer_package is not None and not (args.cached_units or args.cached_expert_units):
         ap.error("historical cached producer requires cached unit intake")
+    if args.encode_batch < 1:
+        ap.error(f"--encode-batch is at least one unit, got {args.encode_batch}")
+    if args.encode_batch > 1 and (args.cached_units or args.cached_expert_units):
+        ap.error("--encode-batch joins fresh expert encodes; cached unit intake encodes nothing")
+    # The selected producer is authenticated BEFORE any source or output
+    # operation: a refusal must cost nothing, and the receipt below seals
+    # into the partition identity.
+    producer_receipt = authenticate_producer_python()
     producer_authority = canonical_capture = None
     if args.producer_authority is not None:
         producer_authority, canonical_capture = load_producer_authority(args.producer_authority)
@@ -1825,8 +2306,18 @@ def main():
     # writes. Resolving once, here -- before any byte is written -- turns a
     # streamed whole-model export into an up-front refusal with the same
     # message. The git, TESSERA_GIT and install paths resolve identically
-    # at start and at end; nothing below re-resolves.
-    tessera_commit = git_hash()
+    # at start and at end; nothing below re-resolves.  A SELECTED producer
+    # stamps its receipt's verified head instead: a wheel built from a local
+    # source archive has neither .git above it nor a direct_url commit, and
+    # the receipt's exact Git payload proof is the stronger authority --
+    # a HEAD or environment assertion alone never substitutes for it.
+    tessera_commit = (producer_receipt["git_head"] if producer_receipt is not None
+                      else git_hash())
+
+    # The --input-scales bytes are read ONCE, here, before anything seals a
+    # digest of them: the identity's input_scales_sha256 and the scalars the
+    # roles consume are one object (read_input_scales).
+    input_scales, input_scales_sha256 = read_input_scales(args.input_scales)
 
     # The activation-aware settings fire when, and only when, a Hessian is
     # here: the encoder cannot invent one, and a weights-only export must stay
@@ -2354,12 +2845,16 @@ def main():
         if priced_inputs is not None:
             options["priced_inputs_sha256"] = priced_inputs.sha256
         options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
+        options["plan_sha256"] = plan_snapshot.sha256 if plan_snapshot is not None else None
         # The authority file's digest also binds the canonical capture it
         # defines: the file is self-contained and ``producer_authority.load``
-        # executes those bytes, keyed by this same digest.
-        for key in ("hessian", "input_scales", "producer_authority"):
+        # executes those bytes, keyed by this same digest.  The input-scales
+        # digest is the snapshot's instead: the same bytes the roles consume,
+        # not a second read of a mutable path.
+        for key in ("hessian", "producer_authority"):
             path = getattr(args, key)
             options[key + "_sha256"] = sha256_file(path) if path else None
+        options["input_scales_sha256"] = input_scales_sha256
         if cache_path is not None:
             options[cache_scope + "_sha256"] = sha256_file(cache_path)
         # The manifest write at the end of the run serializes these; check
@@ -2392,6 +2887,12 @@ def main():
         identity = export_identity(args.src, options, args.partition_runtime_image,
                                    exporter_code_root(), shards=read_shards,
                                    digest_cache=source_digest_cache)
+        if producer_receipt is not None:
+            # The receipt rides INSIDE the identity: the merge's exact
+            # comparison then refuses joins across producers, and joins
+            # across a part written before receipts existed.  No schema
+            # bypass, no compatibility shim, no waiver.
+            identity["producer"] = producer_receipt
         identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
                             "identity": identity, "source_tensors": selected}
@@ -2455,15 +2956,9 @@ def main():
                 cached_units, producers, cached_input_identity,
                 activation, mode=args.cached_hessian_identity)
 
-    input_scales = {}
-    if args.input_scales:
-        with safe_open(str(args.input_scales), framework="pt") as handle:
-            for key in handle.keys():
-                if key.endswith(".input_global_scale"):
-                    tensor = handle.get_tensor(key)
-                    if tensor.numel() != 1:
-                        raise SystemExit(f"--input-scales {key} must contain one scalar")
-                    input_scales[key] = float(tensor.float().reshape(-1)[0])
+    # ``input_scales`` was parsed from its one byte snapshot at the top of
+    # main, before the identity sealed its digest; the checks below consume
+    # those exact scalars.
     if cached_units is not None:
         cached_units.require_served_scales(input_scales)
     if priced_inputs is not None:
@@ -2512,9 +3007,8 @@ def main():
     # exactly when ``config.json`` is written.
     expert_units: dict[str, list[dict]] = {}
     for stack, record in stack_plan.items():
-        for unit in record["units"]:
-            expert_units.setdefault(unit["source_tensor"], []).append(
-                dict(unit, stack=stack))
+        for unit in expert_work_units(stack, record):
+            expert_units.setdefault(unit["source_tensor"], []).append(unit)
     # ``attested_by`` is the routed_moe cells that cover the stack's rung
     # (``contract.cell_covers_rung``: a census rung, or an allowable rung of
     # one of the cell's run tables) -- the gate above read them, and the record says which
@@ -2580,7 +3074,7 @@ def main():
         intake = CachedExpertIntake(
             args.src,
             [(shard, name, unit) for shard, names in sorted(shards.items())
-             for name in names if name in expert_units for unit in expert_units[name]],
+             for name, unit in fresh_expert_units(names, plan, expert_units)],
             intake_unit, threads=threads, window_units=4 * threads,
             window_bytes=args.cached_intake_window_bytes, estimate=intake_estimate)
         print(f"cached expert intake: {len(intake.tasks)} units on {threads} thread(s), "
@@ -2588,15 +3082,44 @@ def main():
               f"Hessian identity {cached_identity.established}", flush=True)
         intake.prime()
 
+    def encode_joined(members):
+        """One join key's encodes through the lifted owner; main supplies the
+        run's plan, activation, device and verify flag, and collects the
+        effective widths the manifest records."""
+        return fresh_joined_encode(
+            members, stack_plan=stack_plan, activation=activation,
+            device=args.device, no_verify=args.no_verify,
+            batch_observed=encode_batch_observed)
+
+    if args.encode_batch > 1:
+        print(f"joined expert encode: {args.encode_batch} units per trellis call, "
+              f"TESSERA_WINDOW_BEST_FORM={os.environ.get('TESSERA_WINDOW_BEST_FORM', '') or 'unset'}",
+              flush=True)
+    # THE EFFECTIVE WIDTHS, as evidence: the planner groups by join key
+    # across source names within each shard, so the observed width of a call
+    # is min(batch, that key's units in the shard).  The manifest records
+    # what actually ran; a width-16 throughput claim cites these, never the
+    # requested knob alone.
+    encode_batch_observed: list[int] = []
     pending_modules = dict(modules)
     for shard, names in sorted(shards.items()):
         shard_payload: dict[str, torch.Tensor] = {}
         twin_payload: dict[str, torch.Tensor] = {}
         with safe_open(str(args.src / shard), framework="pt") as handle:
+            joined = None
+            if args.encode_batch > 1 and intake is None and cached_units is None:
+                joined = JoinedExpertEncode(
+                    handle, fresh_expert_units(names, plan, expert_units),
+                    args.encode_batch, encode_joined)
             for name in names:
                 # The intake reads its own source slices through its shared
                 # handle; the loop does not stage a tensor it never touches.
-                tensor = None if intake is not None and name in expert_units else handle.get_tensor(name)
+                if intake is not None and name in expert_units:
+                    tensor = None
+                elif joined is not None:
+                    tensor = joined.source(name)
+                else:
+                    tensor = handle.get_tensor(name)
                 if name in plan:
                     weights_cache[name] = tensor
                 elif name in expert_units:
@@ -2609,6 +3132,9 @@ def main():
                         if intake is not None:
                             (exported, blob, cache_record, payload, own_global,
                              unit_manifest) = intake.take(shard, name, unit)
+                        elif joined is not None:
+                            (exported, blob, payload, own_global,
+                             unit_manifest) = joined.take(name, unit, tensor)
                         elif cached_units is None:
                             source_weight = packed_expert_weight(tensor, unit)
                             weight = source_weight.to(args.device, torch.float32).contiguous()
@@ -3165,6 +3691,7 @@ def main():
         # It is the SNAPSHOT that drove the encode, not whatever the path
         # holds now -- the file is not reread here (#301).
         "plan": plan_snapshot.published() if plan_snapshot is not None else None,
+        "plan_sha256": plan_snapshot.sha256 if plan_snapshot is not None else None,
         "input_scales_from": str(args.input_scales) if args.input_scales else None,
         "activation_aware": None if activation is None else activation.config_block(),
         # What the SERVING gate decided, in the artifact rather than in a shell
@@ -3264,6 +3791,21 @@ def main():
             # reused from a recorded read changes no stamped digest.
             partition_record["source_digest_receipt"] = source_digest_cache.receipt()
         manifest["export_partition"] = partition_record
+    if producer_receipt is not None:
+        # Beside the partition stamp: a whole artifact written by a selected
+        # producer states the same receipt its parts seal.
+        manifest["producer"] = producer_receipt
+    # The verified execution knob and its effective value, recorded whether
+    # or not a producer was selected; the part identity's options carry it
+    # too, so parts batched differently refuse to merge.  With a batch above
+    # one, the OBSERVED widths are the evidence: a throughput claim cites
+    # these, never the requested knob alone.
+    manifest["encode_batch"] = args.encode_batch
+    if args.encode_batch > 1:
+        widths: dict = {}
+        for width in encode_batch_observed:
+            widths[width] = widths.get(width, 0) + 1
+        manifest["encode_batch_observed"] = dict(sorted(widths.items()))
     write_serving_manifest(args.out / "tessera_serving_manifest.json", manifest)
 
     if twin is not None:

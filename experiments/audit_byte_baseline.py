@@ -518,6 +518,48 @@ def _release_shard(blob: bytes, label: str, cut, q256: int) -> "dict[str, bytes]
 
 
 
+#: The joined fresh encode (``--encode-batch``).  ``encode_linears_planes``
+#: at B>1 with the exporter's ``per_unit`` mappings is a condition neither the
+#: shape matrix (``encode_linear``, one unit) nor the value matrix (also one
+#: unit per case) reaches, so a change that moved only joined-call bytes --
+#: the per-unit mapping split, the shared-schedule application, the batched
+#: verification -- reported "0 changed" here.  Two rungs, both window bodies,
+#: the rungs the routed census actually selects; the exporter's exact call
+#: shape (``per_unit=[{} ...]``, what the fresh branch passes with no
+#: activation) so the corpus reaches what ships.
+def _batch_cases():
+    return [
+        ("batch-e4m3-896-128c-b4", E4M3_GRID, 896),
+        ("batch-bf16-1024-128c-b4", BF16_GRID, 1024),
+    ]
+
+
+def batch_hashes() -> dict:
+    """The digest for each joined call: every member blob, concatenated in order.
+
+    The CLI and the coverage test share this function; the coverage test
+    additionally proves each row is the digest of the blobs ONE
+    ``encode_linears_planes`` call returned, so a row cannot quietly hash a
+    path it did not run.
+    """
+    from tessera.export import encode_linears_planes
+
+    out = {}
+    for label, grid, q256 in _batch_cases():
+        try:
+            torch.manual_seed(zlib.crc32(label.encode()) & 0xFFFF)
+            weights = [torch.randn(64, 128) * 0.02 for _ in range(4)]
+            encoded = encode_linears_planes(
+                weights, grid=grid, q256=q256,
+                names=[f"{label}/{i}" for i in range(4)],
+                per_unit=[{} for _ in weights])
+            out[label] = hashlib.sha256(
+                b"".join(exported.blob for exported, _unit, _forests in encoded)).hexdigest()
+        except Exception as exc:            # a refusal is part of the baseline
+            out[label] = f"REFUSED {type(exc).__name__}: {exc}"
+    return out
+
+
 def resident_hashes() -> dict:
     """Reach the R4 resident relay on real encoded bytes, including a second tile."""
     from tessera.encode import encode_unit
@@ -602,6 +644,7 @@ def main() -> int:
         "layout": layout_hashes(),
         "release": release_hashes(),
         "resident": resident_hashes(),
+        "batch": batch_hashes(),
     }
     if not a.encode_only:
         report["decode"] = decode_hashes()
@@ -620,6 +663,7 @@ def main() -> int:
               f"{len(report['layout'])} layout rows, "
               f"{len(report['release'])} release rows, "
               f"{len(report['resident'])} resident rows, "
+              f"{len(report.get('batch', {}))} batch rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)
