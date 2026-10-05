@@ -188,7 +188,10 @@ def eager_equivalence_gap(config) -> str | None:
     compilation = config.compilation_config
     gaps = []
     drafter = _speculative_key(config)
-    if drafter is not None and drafter[-1] != CUDAGraphMode.NONE:
+    # drafter[4] is the CUDA-graph mode; [-1] is max_model_len (tessera#695).
+    # Comparing [-1] to the enum demanded a receipt of every drafter serve,
+    # eager included, from the commit that appended max_model_len to the key.
+    if drafter is not None and drafter[4] != CUDAGraphMode.NONE:
         if drafter not in _SPECULATIVE_GRAPH_RECEIPTS:
             gaps.append(f"no receipt compares this drafter graph path with eager "
                         f"({_describe_drafter(drafter)}, tessera#695)")
