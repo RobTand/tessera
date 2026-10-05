@@ -154,14 +154,14 @@ def test_exit_zero_alone_is_not_a_physical_handoff(mutation):
     assert window.terminal_cleanup(owned, terminal(owned))["complete"]
 
 
-@pytest.mark.parametrize("fault", ["none", "wrong_scope", "logs", "remove", "copy"])
+@pytest.mark.parametrize("fault", ["none", "wrong_scope", "logs", "remove", "copy", "stubborn"])
 def test_production_local_cleanup_surfaces_errors_without_foreign_deletion(tmp_path, fault):
     import rank_window
     owned = identity()
     adapter = rank_window.LocalArm.__new__(rank_window.LocalArm)
     adapter.identity, adapter.rank = owned, 0
     adapter.config = {}
-    adapter.envelope = window.Envelope(time.time() + 8, cleanup_seconds=1)
+    adapter.envelope = window.Envelope(time.time() + 30, cleanup_seconds=1)
     adapter.work, adapter.rdv = tmp_path / "work", tmp_path / "rdv"
     adapter.work.mkdir(); adapter.rdv.mkdir()
     out = adapter.work / "aE1"
@@ -173,23 +173,30 @@ def test_production_local_cleanup_surfaces_errors_without_foreign_deletion(tmp_p
     cid = "a" * 64
     (adapter.work / "aE1.cid").write_text(cid)
     adapter.active = dict(cid=cid, cidfile=str(adapter.work / "aE1.cid"), out=str(out), name="owned-only")
-    state = dict(present=True, removal_called=False)
+    state = dict(present=True, running=True, removal_called=False, commands=[])
     labels = {"prismabuild.scope": owned["scope_id"], "prismabuild.action": owned["container_owner"],
               "org.prismaquant.graph-window": owned["run_id"], "org.prismaquant.attempt": owned["nonce"]}
     if fault == "wrong_scope": labels["prismabuild.scope"] = "foreign.slice"
     def command(argv, **kwargs):
+        state["commands"].append(list(argv))
         # Actual bounded CPU command exits exercise the production cleanup control flow.
         if argv[0] in ("cp", "sha256sum"):
             if fault == "copy" and argv[0] == "cp": argv = ["cp", str(tmp_path / "absent-source"), argv[-1]]
             return adapter.envelope.run(argv, **kwargs)
         if argv[:2] == ["docker", "inspect"]:
             payload = json.dumps([dict(Id=cid, Config=dict(Labels=labels),
-                      HostConfig=dict(CgroupParent=owned["scope_id"]), State=dict(Pid=999, Running=True))])
+                      HostConfig=dict(CgroupParent=owned["scope_id"]), State=dict(Pid=999, Running=state["running"]))])
         elif argv[:2] == ["docker", "logs"]:
             if fault == "logs":
                 return adapter.envelope.run([sys.executable, "-c", "raise SystemExit(7)"], **kwargs)
             payload = "simulated engine log"
-        elif argv[:3] == ["docker", "rm", "-f"]:
+        elif argv[:2] == ["docker", "kill"]:
+            assert argv[-1] == cid
+            if argv[argv.index("--signal") + 1] == "KILL" or fault != "stubborn":
+                state["running"] = False
+            payload = cid
+        elif argv[:2] == ["docker", "rm"]:
+            assert "-f" not in argv and state["running"] is False
             assert argv[-1] == cid
             state["removal_called"] = True
             if fault == "remove":
@@ -204,7 +211,7 @@ def test_production_local_cleanup_surfaces_errors_without_foreign_deletion(tmp_p
             raise AssertionError(argv)
         return adapter.envelope.run([sys.executable, "-c", "import sys;sys.stdout.write(sys.argv[1])", payload], **kwargs)
     adapter.command = command
-    if fault == "none":
+    if fault in ("none", "stubborn"):
         assert adapter.cleanup(dict(arm="aE1"))["containers_empty"]
     else:
         with pytest.raises(window.Refused):
@@ -214,6 +221,13 @@ def test_production_local_cleanup_surfaces_errors_without_foreign_deletion(tmp_p
     assert state["removal_called"] == (fault != "wrong_scope")
     if fault not in ("remove", "wrong_scope"):
         assert state["present"] is False
+    kills = [command for command in state["commands"] if command[:2] == ["docker", "kill"]]
+    if fault == "wrong_scope":
+        assert not kills and not any(command[:2] == ["docker", "rm"] for command in state["commands"])
+    if fault == "stubborn":
+        assert [command[command.index("--signal") + 1] for command in kills] == ["TERM", "KILL"]
+        assert next(i for i, command in enumerate(state["commands"]) if command[:2] == ["docker", "rm"]) > max(
+            i for i, command in enumerate(state["commands"]) if command[:2] == ["docker", "kill"])
 
 
 def test_source_digest_keeps_pr930_relative_sha256sum_spelling():
