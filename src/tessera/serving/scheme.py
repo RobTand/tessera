@@ -129,6 +129,9 @@ __all__ = [
     "validate_tessera_moe_scheme",
     "parse_tessera_blob_for_scheme",
     "expert_role_declarations",
+    "expert_group_q256",
+    "expert_rungs_mixed",
+    "stack_effective_rungs",
     "parse_tessera_expert_blob",
 ]
 
@@ -1006,6 +1009,56 @@ def _rungs_for_roles(scheme: Mapping, roles, target: str) -> "list[int]":
     return [_as_int(scheme, "q256", target)] * len(roles)
 
 
+def _expert_role_rungs(group: Mapping, experts: int, roles, family: str,
+                       target: str) -> "list[list[int]]":
+    """The rung of every (expert, role) of a routed group, as ``[E][roles]``.
+
+    The group's one ``q256`` field reads three ways.  An int is the whole
+    stack's rung -- every checkpoint through #966.  A flat list is one rung
+    per role, uniform across the expert axis -- the pre-#967 mixed-RUNG
+    spelling, unchanged.  A list of lists is the per-unit spelling (#967): one
+    row per expert in expert order, each a rung per role in the group's row
+    order -- the spelling of a genuinely across-expert mixed stack.  The
+    matrix is a WINDOW-family spelling and nothing else: the A4 route's intake
+    preallocates one uniform TCQ owner per group
+    (``nvfp4_moe_route._RankLocalA4Intake``'s roles), so an across-expert
+    mixed stack has no NVFP4 owner and is refused here by name rather than
+    accepted into a schema no loader can serve.  Lengths must cover every
+    expert and role exactly -- the matrix is read positionally, and a hole is
+    a wrong tensor waiting to happen, not something to pad.
+    """
+    declared = group.get("q256")
+    arity = len(roles)
+    if not isinstance(declared, (list, tuple)):
+        rungs = [_as_int(group, "q256", target)] * arity
+        return [list(rungs) for _ in range(experts)]
+    if declared and all(isinstance(row, (list, tuple)) for row in declared):
+        if len(declared) != experts or any(len(row) != arity for row in declared):
+            raise ValueError(
+                f"tessera target {target!r}: q256 is an expert-major matrix of "
+                f"{[len(row) for row in declared]} rung(s) per expert, the scheme declares "
+                f"{experts} expert(s) x {arity} role(s) {[r[0] for r in roles]}; an "
+                "expert-role matrix is read as [experts][roles] and must cover every "
+                "expert and role exactly")
+        if family not in (TESSERA_FP8, TESSERA_BF16):
+            raise ValueError(
+                f"tessera target {target!r}: an expert-major q256 matrix declares a mixed "
+                f"per-unit stack, and the {family} route has no mixed owner -- the A4 intake "
+                "preallocates one uniform TCQ owner per group, so per-unit rungs are a "
+                "WINDOW-family (TESSERA_FP8/TESSERA_BF16) spelling. Refusing rather than "
+                "accepting a matrix no owner serves.")
+        return [[_positive_int(v, f"q256[{e}][{j}]", target)
+                 for j, v in enumerate(row)] for e, row in enumerate(declared)]
+    if len(declared) != arity:
+        raise ValueError(
+            f"tessera target {target!r}: q256 is a flat list of {len(declared)} rung(s) for a "
+            f"group of {arity} role(s) {[r[0] for r in roles]}; a routed group's q256 is an "
+            f"integer, a per-role list of {arity}, or an expert-major [{experts}][{arity}] "
+            "matrix of one rung per expert and role")
+    rungs = [_positive_int(v, f"q256[{j}]", target) for j, v in enumerate(declared)]
+    return [list(rungs) for _ in range(experts)]
+
+
 def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) -> None:
     """The rate has to be one the decoder reads, and the contract has to say so.
 
@@ -1681,7 +1734,8 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
         + "; ".join(refusals) + "." + notes + " " + still_legal)
 
 
-def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str) -> dict:
+def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str,
+                    experts: "int | None" = None) -> dict:
     """The geometry half of a scheme, for a dense module or one expert group.
 
     A dense module and a routed-MoE expert group are the SAME object at this
@@ -1738,6 +1792,30 @@ def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str
     # what indexes it.  Every rung is put through the same gate the module-level
     # one used to be: a group is legal only when EVERY member's rate is one this
     # build's decoder publishes a read for.
+    if experts is not None:
+        matrix = _expert_role_rungs(group, experts, roles, family, target)
+        for e, row in enumerate(matrix):
+            for (name, _role_rows), rung in zip(roles, row):
+                _refuse_an_unreadable_rung(family, grid, rung,
+                                           f"{target} expert {e} role {name!r}")
+        rows_uniform = all(row == matrix[0] for row in matrix[1:])
+        out = {
+            "family": family, "grid": grid, "body": body, "plane": route["plane"],
+            # The declared shape, normalised: an int when the WHOLE stack is
+            # one rung (as every checkpoint before #967 is), else the FIRST
+            # expert's row as a per-role list.  ``role_q256`` is that row: the
+            # monomorphic one the dense-cut readers and every pre-#967
+            # consumer read.  A genuinely across-expert mixed stack carries
+            # the full matrix beside them, and nothing else moves.
+            "q256": matrix[0][0] if len({r for row in matrix for r in row}) == 1
+            else list(matrix[0]),
+            "role_q256": [int(r) for r in matrix[0]],
+            "rows": rows, "columns": columns,
+            byte_field: wire, "roles": [(str(n), int(r)) for n, r in roles],
+        }
+        if not rows_uniform:
+            out["expert_role_q256"] = [[int(r) for r in row] for row in matrix]
+        return out
     rungs = _rungs_for_roles(group, roles, target)
     for (name, _role_rows), rung in zip(roles, rungs):
         _refuse_an_unreadable_rung(family, grid, rung, f"{target} role {name!r}")
@@ -1845,7 +1923,7 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
         merged = dict(shared)
         merged.update(group)
         declared = _validate_group(merged, family, f"{target} group {name!r}",
-                                   byte_field="wire_stride")
+                                   byte_field="wire_stride", experts=experts)
         if len(declared["roles"]) != MOE_GROUP_ROLES[name]:
             raise ValueError(
                 f"tessera target {target!r} group {name!r}: {len(declared['roles'])} role(s) "
@@ -2061,8 +2139,10 @@ def parse_compact_tessera_expert_blob(blob: bytes, declared_role: Mapping, targe
                                     expect_bytes=None, memo=memo)
 
 
-def expert_role_declarations(declared_group: Mapping) -> "list[dict]":
-    """One single-member declaration per projection, in the group's row order.
+def expert_role_declarations(declared_group: Mapping, *,
+                             expert: int = 0) -> "list[dict]":
+    """One single-member declaration per projection, in the group's row order,
+    resolved for ONE expert.
 
     A routed-MoE checkpoint stores ONE container per expert PROJECTION.  That
     is the granularity of the checkpoint's tensors, of ``RoutedExperts``' shard
@@ -2071,9 +2151,29 @@ def expert_role_declarations(declared_group: Mapping) -> "list[dict]":
     kernel reads, not a container of its own.  So the group's role list indexes
     containers, and each is checked as the single-member container it is --
     same ``_parse_container``, same refusals, one role at a time.
+
+    ``expert`` resolves the rungs for that expert BEFORE any byte is validated
+    and before any TP cut: a mixed per-unit stack (#967) carries its rungs in
+    the group's ``expert_role_q256`` matrix, and the loader asks for expert e's
+    row here so each container is checked against its own unit's declaration.
+    The default (``expert=0``) keeps the legacy one-argument call -- the first
+    expert's row, which is what ``role_q256`` alone ever described -- for
+    uniform stacks and pre-#967 callers.
     """
+    matrix = declared_group.get("expert_role_q256")
+    if matrix is not None:
+        if not 0 <= int(expert) < len(matrix):
+            raise ValueError(
+                f"expert {expert} is outside the stack's {len(matrix)} declared expert(s); "
+                "the declarations resolve one expert at a time, in expert order")
+        row = matrix[int(expert)]
+    else:
+        # No matrix: the group's rungs are expert-invariant, so any expert
+        # index resolves to the same row -- there is no per-expert fact to
+        # bound here, and the caller's expert loop stays the authority.
+        row = declared_group["role_q256"]
     out = []
-    for (name, rows), rung in zip(declared_group["roles"], declared_group["role_q256"]):
+    for (name, rows), rung in zip(declared_group["roles"], row):
         out.append({
             "family": declared_group["family"], "grid": declared_group["grid"],
             "body": declared_group["body"], "plane": declared_group["plane"],
@@ -2082,6 +2182,57 @@ def expert_role_declarations(declared_group: Mapping) -> "list[dict]":
             "q256": int(rung), "wire_stride": declared_group["wire_stride"],
         })
     return out
+
+
+def expert_group_q256(rungs) -> "int | list":
+    """The sidecar spelling for a group's per-expert rung matrix.
+
+    One writer-side answer to the three spellings the group gate reads: the
+    scalar when every (expert, role) carries one rung, the shared row as a
+    per-role list when every expert's row is the same, the ``[experts][roles]``
+    matrix only when the rows genuinely differ.  The exporter emits through
+    this and the loader reads through ``_expert_role_rungs``, so the spelling
+    has one home and cannot drift into a second convention.
+    """
+    rows = [[int(r) for r in row] for row in rungs]
+    if not rows:
+        raise ValueError("a routed group's rung matrix needs at least one expert row")
+    if len({r for row in rows for r in row}) == 1:
+        return rows[0][0]
+    if all(row == rows[0] for row in rows[1:]):
+        return list(rows[0])
+    return rows
+
+
+def expert_rungs_mixed(declared_group: Mapping) -> bool:
+    """Whether a normalised routed group's rungs differ across experts.
+
+    The normalised shape answers directly: the matrix exists exactly when the
+    expert rows differ, so the intake's size preallocation and the publication
+    validator read this one predicate instead of restating the field's rule.
+    """
+    return declared_group.get("expert_role_q256") is not None
+
+
+def stack_effective_rungs(declared: Mapping) -> "list[int]":
+    """Every rung a routed stack's expert projections carry, sorted.
+
+    The guard's question is the EFFECTIVE set, not any one spelling: an
+    expert-major matrix, a per-role list, and group-level differences (w13 at
+    one rung, w2 at another) all name real served schedules, and the fused
+    gate/up launch needs one run table and stride for the whole stack.  One
+    home for the gathering so the loader, the intake and any future gate read
+    the same set.
+    """
+    rungs: set = set()
+    experts = int(declared["experts"])
+    for group in MOE_GROUPS:
+        group_decl = declared["groups"][group]
+        matrix = group_decl.get("expert_role_q256")
+        rows = matrix if matrix is not None else [group_decl["role_q256"]] * experts
+        for row in rows:
+            rungs.update(int(r) for r in row)
+    return sorted(rungs)
 
 
 def parse_tessera_expert_blob(blob: bytes, declared_role: Mapping, target: str,

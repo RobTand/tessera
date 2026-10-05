@@ -441,7 +441,9 @@ def prepare_grouped_window_gemm_from_soa(
 ) -> PreparedGroupedWindowGemm:
     """A prebuilt SoA stack -- what a loader fills incrementally -- validated
     once and wrapped.  Shapes, dtypes and the per-expert offsets must already
-    be the kernel's contract; anything else refuses by name.
+    be the kernel's contract; anything else refuses by name.  ``words_all`` is
+    the uniform ``[E, W]`` rectangle or, for a mixed per-unit stack (#967), the
+    flat int32 stream each expert's ``word_off`` bounds exactly.
 
     ``family="e2m1"`` is the E2M1x2 window body over the LUT16 plane: its
     ``codes_all`` holds tuple code bytes, its ``rows`` are weight rows (two
@@ -462,7 +464,6 @@ def prepare_grouped_window_gemm_from_soa(
             "the scale plane, table and global are the e2m1 family's scale and only its: "
             f"family {family!r} got plane={scale_plane_all is not None}, "
             f"table={scale_lut_all is not None}, global={global_all is not None}")
-    word_width = int(words_all.shape[1])
     for name, t, shape in (("word_off", word_off, (experts,)),
                            ("tile_words", tile_words, (experts,)),
                            ("total_words", total_words, (experts,)),
@@ -470,9 +471,33 @@ def prepare_grouped_window_gemm_from_soa(
                            ("has_init", has_init, (experts,))):
         if tuple(t.shape) != shape:
             raise GrammarError(f"{name} must be [{shape[0]}], got {tuple(t.shape)}")
-    expected_off = torch.arange(experts, device=word_off.device, dtype=word_off.dtype) * word_width
-    if not bool((word_off == expected_off).all()):
-        raise GrammarError("word_off must be the uniform per-expert word stride")
+    if words_all.dim() == 1:
+        # A mixed per-unit stack (#967): one flat int32 word stream and one
+        # flat run table, each expert's slice the exact place its loader
+        # declared.  The kernel indexes words/runs through word_off/run_off
+        # already; what is new here is only accepting non-uniform offsets --
+        # bound to the per-expert totals, so a hole or an overlap refuses by
+        # name instead of reading one expert's words as another's.
+        if int(word_off[0]) != 0:
+            raise GrammarError("word_off must start at expert 0's first word: 0")
+        ends = word_off[:-1].to(torch.int64) + total_words[:-1].to(torch.int64)
+        if not bool((ends == word_off[1:].to(torch.int64)).all()) \
+                or int(word_off[-1]) + int(total_words[-1]) != int(words_all.numel()):
+            raise GrammarError(
+                "word_off must be each expert's exact place in the flat word stream: "
+                "word_off[e + 1] == word_off[e] + total_words[e], ending at the stream's "
+                f"{int(words_all.numel())} word(s)")
+        runs_rows = int(runs_all.reshape(-1, 4).shape[0])
+        if int(run_off[0]) != 0 or int(run_off[-1]) != runs_rows:
+            raise GrammarError(
+                f"run_off must bound the flat run table: 0 to {runs_rows} run(s)")
+        if not bool((run_off[1:] > run_off[:-1]).all()):
+            raise GrammarError("run_off must give every expert a positive, ordered run range")
+    else:
+        word_width = int(words_all.shape[1])
+        expected_off = torch.arange(experts, device=word_off.device, dtype=word_off.dtype) * word_width
+        if not bool((word_off == expected_off).all()):
+            raise GrammarError("word_off must be the uniform per-expert word stride")
     shapes = [("perm_all", perm_all, (experts, cols)), ("init_all", init_all, (experts, cols))]
     if not e2m1:
         shapes.insert(0, ("scale_all", scale_all, (experts, rows)))

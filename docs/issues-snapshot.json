@@ -12773,6 +12773,10 @@
     "state": "CLOSED",
     "title": "The pair stage's repeat control disappears if the repeat arm fails"
    },
+   "967": {
+    "state": "OPEN",
+    "title": "[P1] Allow per-unit (sub-stack) routed rates: export plannable unit below the executed stack"
+   },
    "97": {
     "state": "CLOSED",
     "title": "Land #18's offline pair reporter against pair_grid_audit, or not at all"

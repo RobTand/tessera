@@ -283,7 +283,8 @@ class WindowUnitAxis:
 
     FAMILIES = ("value", "e4m3", "e2m1")
 
-    def __init__(self, experts: int, parts: Sequence[str], *, family: str):
+    def __init__(self, experts: int, parts: Sequence[str], *, family: str,
+                 word_runs: "dict | None" = None):
         if family not in self.FAMILIES:
             raise GrammarError(f"window unit axis families are {self.FAMILIES}, got {family!r}")
         self.experts = int(experts)
@@ -294,19 +295,53 @@ class WindowUnitAxis:
         self._filled: dict = {}
         self._meta: dict = {}
         self._word_layout: dict = {}
+        # Predeclared per-unit (word, run) sizes (#967), when the caller
+        # derives them from the schema: they let a MIXED per-unit stack
+        # allocate its exact flat storage once, at its first put, so no
+        # per-unit weight outlives its callback and nothing is padded to a
+        # common size or retained until finish.  A part whose sizes are all
+        # equal takes the uniform path verbatim.
+        self._sizes: dict = {}
+        self._flat: dict = {}
+        self._offsets: dict = {}
+        for part, entries in (word_runs or {}).items():
+            part = str(part)
+            if part not in self.parts:
+                raise GrammarError(f"word_runs names {part!r}; the axis holds {self.parts}")
+            if len(entries) != self.experts:
+                raise GrammarError(
+                    f"{part!r}: word_runs carries {len(entries)} size(s) for "
+                    f"{self.experts} experts")
+            sizes = []
+            for words, runs in entries:
+                if int(words) <= 0 or int(runs) <= 0:
+                    raise GrammarError(
+                        f"{part!r}: predeclared word/run sizes must be positive, got "
+                        f"({words}, {runs})")
+                sizes.append((int(words), int(runs)))
+            self._sizes[part] = sizes
 
-    def _signature(self, unit) -> tuple:
-        """What one grouped stack needs every expert of a part to share."""
+    def _signature(self, part: str, unit) -> tuple:
+        """What one grouped stack needs every expert of a part to share.
+
+        Without predeclared sizes the per-unit extents (word count, run count,
+        rate table, tile stride) are part of the shared layout, exactly as
+        before #967.  With them, those extents are each expert's own data --
+        checked against its declared size at ``put`` -- and the shared layout
+        is everything the grouped stack indexes uniformly.
+        """
         rep = unit.rep
         if self.family == "e2m1":
             state = (int(unit.codes.numel()), int(unit.scale_plane.numel()),
                      int(unit.arity), int(unit.half))
         else:
             state = (int(unit.table.numel()), int(unit.scale.numel()))
-        return (self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
-                int(rep.words.numel()), int(rep.runs.shape[0]),
-                tuple(int(r) for r in rep.rates), *state,
-                int(rep.tile_words), int(rep.n_tiles), str(getattr(rep, "word_layout", "legacy")))
+        shared = (self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
+                  *state, int(rep.n_tiles), str(getattr(rep, "word_layout", "legacy")))
+        if self._sizes.get(str(part)):
+            return shared
+        return shared + (int(rep.words.numel()), int(rep.runs.shape[0]),
+                         tuple(int(r) for r in rep.rates), int(rep.tile_words))
 
     def _alloc(self, part: str, unit) -> dict:
         e = self.experts
@@ -316,14 +351,38 @@ class WindowUnitAxis:
         rows, cols, L = int(unit.rows), int(unit.cols), int(unit.window_bits)
         device = words.device
         e2m1 = self.family == "e2m1"
-        slot = {
-            "words": torch.empty((e, words.numel()), dtype=torch.int32, device=device),
-            "runs": torch.empty((e, int(runs.shape[0]), 4), dtype=torch.int32, device=device),
-            "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
-                      else torch.empty((e, rows), dtype=torch.float32, device=device)),
-            "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
-            "init": torch.empty((e, cols), dtype=torch.int32, device=device),
-        }
+        sizes = self._sizes.get(part)
+        if sizes and len(set(sizes)) != 1:
+            # Exact flat storage for a mixed part (#967): one word stream and
+            # one run table for the whole part, each expert's slice bounded by
+            # the offsets ``finish`` publishes.  The buffers are the SUM of the
+            # declared per-unit sizes -- nothing padded to a common shape, so
+            # the resident bytes are the units' own priced words and runs,
+            # unit for unit.
+            word_off, run_off = [0], [0]
+            for w, r in sizes:
+                word_off.append(word_off[-1] + w)
+                run_off.append(run_off[-1] + r)
+            self._offsets[part] = (word_off, run_off)
+            self._flat[part] = True
+            slot = {
+                "words": torch.empty(word_off[-1], dtype=torch.int32, device=device),
+                "runs": torch.empty((run_off[-1], 4), dtype=torch.int32, device=device),
+                "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
+                          else torch.empty((e, rows), dtype=torch.float32, device=device)),
+                "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
+                "init": torch.empty((e, cols), dtype=torch.int32, device=device),
+            }
+        else:
+            self._flat[part] = False
+            slot = {
+                "words": torch.empty((e, words.numel()), dtype=torch.int32, device=device),
+                "runs": torch.empty((e, int(runs.shape[0]), 4), dtype=torch.int32, device=device),
+                "scale": (torch.zeros(0, dtype=torch.float32, device=device) if e2m1
+                          else torch.empty((e, rows), dtype=torch.float32, device=device)),
+                "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
+                "init": torch.empty((e, cols), dtype=torch.int32, device=device),
+            }
         empty_u8 = torch.zeros(0, dtype=torch.uint8, device=device)
         if self.family == "value":
             slot["table"] = torch.empty((e, unit.table.numel()), dtype=torch.bfloat16, device=device)
@@ -347,7 +406,7 @@ class WindowUnitAxis:
         slot["total_words"] = torch.empty(e, dtype=torch.int32, device=device)
         slot["has_init"] = torch.empty(e, dtype=torch.int32, device=device)
         self._slots[part] = slot
-        self._layout[part] = self._signature(unit)
+        self._layout[part] = self._signature(part, unit)
         self._filled[part] = set()
         self._meta[part] = (rows, cols, L)
         self._word_layout[part] = str(getattr(rep, "word_layout", "legacy"))
@@ -371,12 +430,35 @@ class WindowUnitAxis:
                 f"got {type(unit).__name__}")
         slot = self._slots.get(part) or self._alloc(part, unit)
         rep = unit.rep
-        if self._signature(unit) != self._layout[part]:
+        if self._signature(part, unit) != self._layout[part]:
+            if self._sizes.get(part):
+                raise GrammarError(
+                    f"{part!r} expert {expert}: packed layout differs from the first expert's; "
+                    "one grouped stack needs one layout per projection")
             raise GrammarError(
-                f"{part!r} expert {expert}: packed layout differs from the first expert's; "
-                "one grouped stack needs one layout per projection")
-        slot["words"][expert] = rep.words
-        slot["runs"][expert] = rep.runs
+                f"{part!r} expert {expert}: the unit's packed layout (word count, run table, "
+                "rates) differs from the first expert's, and this part carries no predeclared "
+                "per-unit word/run sizes (word_runs) to allocate exact flat storage from. A "
+                "mixed per-unit stack declares its sizes (moe_route._mixed_axis_word_runs); "
+                "this axis refuses rather than pad to a common size or retain per-unit "
+                "weights until finish.")
+        sizes = self._sizes.get(part)
+        if sizes:
+            want = sizes[expert]
+            got = (int(rep.words.numel()), int(rep.runs.shape[0]))
+            if got != want:
+                raise GrammarError(
+                    f"{part!r} expert {expert}: the unit packs {got[0]} word(s) in {got[1]} "
+                    f"run(s), its declared size is {want[0]} word(s) in {want[1]} run(s) -- "
+                    "refusing rather than writing a unit off its predeclared place")
+        if self._flat.get(part):
+            word_off, run_off = self._offsets[part]
+            w0, r0 = word_off[expert], run_off[expert]
+            slot["words"][w0:w0 + int(rep.words.numel())] = rep.words.reshape(-1)
+            slot["runs"][r0:r0 + int(rep.runs.shape[0])] = rep.runs
+        else:
+            slot["words"][expert] = rep.words
+            slot["runs"][expert] = rep.runs
         if self.family == "e2m1":
             slot["scale_plane"][expert] = unit.scale_plane.reshape(-1)
             slot["scale_lut"][expert] = unit.scale_lut.reshape(-1).view(torch.uint8)
@@ -415,13 +497,28 @@ class WindowUnitAxis:
             missing = [e for e in range(self.experts) if e not in self._filled[part]]
             if missing:
                 raise GrammarError(f"{part!r} is missing experts {missing} at finish")
-            word_width = slot["words"].shape[1]
-            out[part] = {
-                **slot,
+            meta = {
                 "rows": self._meta[part][0],
                 "cols": self._meta[part][1],
                 "window_bits": self._meta[part][2],
                 "word_layout": self._word_layout.get(part, "legacy"),
+            }
+            if self._flat.get(part):
+                # The mixed part's offsets are its own declared places: int32
+                # word starts (the priced per-unit scalar) and the int64 run
+                # bounds the grouped kernel reads per expert.
+                word_off, run_off = self._offsets[part]
+                out[part] = {
+                    **slot, **meta,
+                    "word_off": torch.tensor(word_off[:-1], dtype=torch.int32,
+                                             device=slot["words"].device),
+                    "run_off": torch.tensor(run_off, dtype=torch.int64,
+                                            device=slot["runs"].device),
+                }
+                continue
+            word_width = slot["words"].shape[1]
+            out[part] = {
+                **slot, **meta,
                 "word_off": (torch.arange(self.experts, dtype=torch.int32, device=slot["words"].device)
                              * word_width),
                 "run_off": torch.cat([
