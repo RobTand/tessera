@@ -1449,7 +1449,7 @@ pipeline's before-device code identity and frozen-software context
 recorded commit and observed software context, and the panel/observation
 validators' observed-vs-frozen runtime — go through
 `tessera.dev_mode.seal_check`, the stdlib twin of `prismaquant.dev_mode`
-(PQ #1147): dev mode is ON unless `PRISMAQUANT_DEV_MODE` is exactly `0`; on a
+(prismaquant#1147): dev mode is ON unless `PRISMAQUANT_DEV_MODE` is exactly `0`; on a
 mismatch it prints one `[DEV-MODE]` line naming both values and the run
 continues with the stored data, and certified `0` raises the site's verbatim
 refusal. The worker loads the stamp policy from the producer checkout by

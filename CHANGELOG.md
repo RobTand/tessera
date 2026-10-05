@@ -8,7 +8,7 @@ worker's before-device code identity and frozen-software comparison, the
 installed CPU preflight's recorded commit and observed software context, and
 the panel/observation validators' observed-vs-frozen runtime now go through
 the new stdlib `tessera.dev_mode.seal_check` (the twin of
-`prismaquant.dev_mode`, PQ #1147): dev mode is ON unless
+`prismaquant.dev_mode`, prismaquant#1147): dev mode is ON unless
 `PRISMAQUANT_DEV_MODE` is exactly `0`, a mismatch prints one `[DEV-MODE]`
 line naming both values and the run continues with the stored data, and
 certified `0` raises each site's verbatim refusal. The GLM MTP draft shard
