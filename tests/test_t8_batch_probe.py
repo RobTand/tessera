@@ -82,17 +82,7 @@ class TestAuthCallContract:
         assert "encode_linear_planes(" in text, (
             "the seq anchor is the exporter's own per-unit finish")
 
-    def test_identity_is_bitwise_against_the_anchor_and_budget_names_the_rest(self):
-        text = PROBE.read_text()
-        assert "same_bytes" in text and "differing_units" in text and "digests" in text, (
-            "identity: per-unit blob digests of the owner batch compared bitwise "
-            "against the exporter's per-unit finish")
-        assert "unmeasured_batches" in text and "schedule" in text, (
-            "the schedule prefix stops by budget and names the exact remainder")
-        assert "encode+frame+verify" in text, (
-            "the timed workload label: encode+frame+verify, full export IO not measured")
-        assert "batch_observed" in text, (
-            "the owner's own per-call width evidence is recorded, never the knob alone")
+
 
     def test_auth_call_takes_no_arguments(self, torch_runtime):
         """Env-selected source, no flags: the core owns the semantics.
@@ -210,18 +200,9 @@ class TestBudgetGuard:
         assert "down" in ext["complete_stack"]["unmeasured"]
         assert "complete_864_unit_stack_estimate_min" not in ext["complete_stack"]
 
-    def test_profiles_and_identity_refusal_precede_the_timed_prefix(self):
-        text = PROBE.read_text()
-        assert text.index('return 4', text.index('if differing:')) < text.index('# Timed:')
-        assert text.index('capture["profiled_batch"]') < text.index('# Timed:')
-        assert text.index('capture["profiled_anchor"]') < text.index('# Timed:')
 
-    def test_both_timers_exclude_the_same_source_reads(self):
-        import inspect
-        import ab_batched_best_form as ab
-        for function in (ab.anchor_units, ab.run_owner_batch):
-            source = inspect.getsource(function)
-            assert source.index("read_tensor(") < source.index("t0 = time.perf_counter()")
+
+
 
 
 @pytest.mark.usefixtures("torch_runtime")
@@ -365,3 +346,170 @@ def test_exhausted_deadline_never_starts_correctness_packet(tmp_path):
                           env=env, capture_output=True, text=True, timeout=30)
     assert done.returncode == 124, done.stdout + done.stderr
     assert not called.exists(), "an exhausted budget was passed as GNU timeout0 and started correctness"
+
+
+@pytest.mark.parametrize("mode", ["skipped_anchor", "tail", "shared_split", "timed_mismatch", "anchor_mismatch", "effective_width_mismatch", "profiles"])
+def test_unanchored_shape_cannot_enter_timed_population(tmp_path, monkeypatch, mode, torch_runtime):
+    sys.path.insert(0, str(CHECKOUT / 'experiments' / 't8_census'))
+    import ab_batched_best_form as ab
+    from tessera import export_serving, export
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'config.json').write_text('{}')
+    stack = 'model.language_model.layers.3.mlp.experts'
+    population = 2 if mode == 'skipped_anchor' else 5 if mode == 'tail' else 8
+    units = [{'stack': stack, 'rows': 2, 'cols': 2, 'projection': 'gate_proj',
+              'tensor': f'{stack}.{i}.gate_proj.weight'} for i in range(population)]
+    (source / 'model.safetensors.index.json').write_text(json.dumps({'weight_map': {u['tensor']: 'source.safetensors' for u in units}}))
+    monkeypatch.setattr(export_serving, 'authenticate_producer_python', lambda: {'qualified': True})
+    monkeypatch.setattr(ab.torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(ab.torch.cuda, 'get_device_name', lambda _: 'CPU control-flow fixture')
+    monkeypatch.setattr(ab, 'load_producer_authority', lambda _: (None, None))
+    monkeypatch.setattr(export.ActivationSource, 'from_capture', lambda *a, **k: None)
+    monkeypatch.setattr(ab, 'quantizable', lambda _: (None, None, None, {}))
+    monkeypatch.setattr(ab, 'expert_stacks', lambda _: {stack: [0, 1]})
+    monkeypatch.setattr(ab, 'plan_expert_stack', lambda *a, **k: {'units': units})
+    monkeypatch.setattr(ab, 'grid_for', lambda _: 'grid')
+    monkeypatch.setattr(ab, 'served_recipe', lambda *a: None)
+    monkeypatch.setattr(ab, 'bind_source', lambda *a: {'shards': [], 'digest_s': 0, 'cache': {},
+        'cached_shards': [], 'hashed_shards': [], 'receipt': {}, 'identity': {'files': {'source.safetensors': 'a'*64}}})
+    clock = [0.0]
+    monkeypatch.setattr(ab.time, 'perf_counter', lambda: clock[0])
+    if mode == 'profiles':
+        monkeypatch.setattr(ab, 'COARSE_PRIOR_S_PER_UNIT', 0.05)
+    events = []
+    anchors = []
+    def anchor(positions, *a, **k):
+        anchors.extend(positions)
+        events.append(('anchor', list(positions)))
+        if mode == 'profiles': clock[0] += 1
+        return {'digests': {units[i]['tensor']: ('b' if mode == 'anchor_mismatch' else 'a')*64 for i in positions}, 'units': len(positions),
+                'wall_s': 1, 's_per_unit': 0.5, 'start_utc': 'fixture', 'end_utc': 'fixture', 'power': {}}
+    monkeypatch.setattr(ab, 'anchor_units', anchor)
+    calls = []
+    def run(positions, *a, **k):
+        calls.append(positions)
+        events.append(('batch', a[-1]))
+        if mode == 'profiles': clock[0] += 1
+        digests = {units[i]['tensor']: 'a'*64 for i in positions}
+        if mode == 'timed_mismatch' and a[-1].endswith('-b000'):
+            digests[units[positions[0]]['tensor']] = 'b'*64
+        widths = ([2, 2] if positions[0] == 0 else [1, 3]) if mode == 'shared_split' else [len(positions)]
+        if mode == 'effective_width_mismatch' and a[-1].endswith('-b000'): widths = [1, 3]
+        return {'positions': positions, 'units': len(positions), 'key': '2x2', 'widths_observed': widths,
+                'digests': digests, 'wall_s': 1, 's_per_unit': 0.5, 'power': {},
+                'start_utc': 'fixture', 'end_utc': 'fixture', 'workload': 'encode+frame+verify'}
+    monkeypatch.setattr(ab, 'run_owner_batch', run)
+    class CountFixture:
+        def __enter__(self): events.append(('count', None)); return self
+        def __exit__(self, *args): return False
+        def record(self): return {'fixture': 'CPU control flow, no device profiling'}
+    def profile_fixture(fn, out, label):
+        events.append(('profile', label))
+        result = fn()
+        if mode == 'profiles': clock[0] += 5
+        return {'fixture': 'CPU control flow, no CUDA profile', 'label': label}
+    monkeypatch.setattr(ab, 'Count', CountFixture)
+    monkeypatch.setattr(ab, 'cuda_profile', profile_fixture)
+    batch, budget = ('2', '35') if mode == 'skipped_anchor' else ('4', '30' if mode == 'profiles' else '1000')
+    monkeypatch.setattr(sys, 'argv', ['probe', str(tmp_path / 'out'), '--src', str(source), '--rungs', 'E4M3:768',
+        '--hessian', 'h', '--producer-authority', 'a', '--batch', batch, '--budget-s', budget, *([] if mode == 'profiles' else ['--no-profile'])])
+    result = ab.main()
+    packet = json.loads((tmp_path / 'out' / 'ab_batched_best_form.json').read_text())
+    row = packet['rungs']['E4M3:768']
+    if mode == 'skipped_anchor':
+        assert not calls, 'skipped warm+anchor cohort still executed a timed batch'
+        assert not row['batches']
+        assert result != 0, 'unqualified population must not be reported as accepted'
+    elif mode in ('timed_mismatch', 'anchor_mismatch', 'effective_width_mismatch'):
+        assert result == 4, 'timed digests were discarded instead of compared'
+        assert not row['batches']
+    else:
+        if mode == 'profiles':
+            assert row['batches'], 'duplicate profiles starved the admitted timed population'
+            first_timed = next(i for i, event in enumerate(events) if event[0] == 'batch' and '-b000' in event[1])
+            assert all(i < first_timed for i, event in enumerate(events) if event[0] == 'profile')
+            assert len(row['captures']) == 1, 'identical shape/effective-width cohorts need one before/after profile'
+        assert set(anchors) == set(range(population)), 'tail/shared schedule members were not independently anchored'
+        assert row['batches'] and all('digests' in b for b in row['batches']), 'timed digests must be retained'
+
+
+
+
+def test_actual_cpu_batch_and_anchor_keep_reads_outside_both_timers(tmp_path, monkeypatch, torch_runtime):
+    import ab_batched_best_form as ab
+    import test_export_serving as fixture
+    from tessera import export as encoder
+    from tessera import export_serving as owner
+    from tessera.structure import STRUCTURE_ROUTED_MOE
+    source = fixture._write(tmp_path, fixture._checkpoint(), fixture._config())
+    tensors = fixture._checkpoint()
+    (source / 'model.safetensors.index.json').write_text(json.dumps({
+        'weight_map': {name: 'model.safetensors' for name in tensors}}))
+    _shards, _dense, _packed, routed = owner.quantizable(source)
+    stack = fixture.STACK
+    grid, rung = owner.grid_for('E4M3'), 896
+    plan = owner.plan_expert_stack(stack, owner.expert_stacks(routed)[stack], grid, rung, config=fixture._config())
+    units = plan['units']
+    keys = [(u['stack'], u['rows'], u['cols']) for u in units]
+    positions = next(p for p in owner.plan_joined_encodes(keys, 2) if len(p) == 2)
+    recipe = owner.served_recipe(grid, rung, STRUCTURE_ROUTED_MOE)
+    clock = [0.0]
+    real_read, real_batch, real_one = ab.read_tensor, ab.fresh_joined_encode, encoder.encode_linear_planes
+    reads = []
+    def read_once(*args):
+        value = real_read(*args)
+        reads.append(args[1]); clock[0] += 100
+        return value
+    def batch_once(*args, **kwargs):
+        value = real_batch(*args, **kwargs)
+        clock[0] += 7
+        return value
+    def one_once(*args, **kwargs):
+        value = real_one(*args, **kwargs)
+        clock[0] += 7 / len(positions)
+        return value
+    class NoDevicePower:
+        def start(self): pass
+        def stop(self, **kwargs): return {'samples': 0, 'fixture': 'CPU, no GPU power'}
+    monkeypatch.setattr(ab, 'read_tensor', read_once)
+    monkeypatch.setattr(ab, 'fresh_joined_encode', batch_once)
+    monkeypatch.setattr(encoder, 'encode_linear_planes', one_once)
+    monkeypatch.setattr(ab, 'Power', NoDevicePower)
+    monkeypatch.setattr(ab.time, 'perf_counter', lambda: clock[0])
+    batch = ab.run_owner_batch(positions, units, {stack: plan}, recipe, None, source, tmp_path, 'cpu-batch', device='cpu')
+    anchor = ab.anchor_units(positions, units, source, grid, rung, recipe, None, tmp_path, 'cpu-anchor', device='cpu')
+    assert batch['digests'] == anchor['digests']
+    assert batch['wall_s'] == anchor['wall_s'] == 7
+    assert len(reads) == 2 * len(positions)
+    assert batch['widths_observed'] == [len(positions)]
+    assert batch['power']['samples'] == anchor['power']['samples'] == 0
+
+
+
+
+def test_probe_actual_plan_uses_the_exporter_worklist(tmp_path, monkeypatch, torch_runtime):
+    import ab_batched_best_form as ab
+    import test_export_serving as fixture
+    from tessera import export, serving_parts
+    source = fixture._write(tmp_path, fixture._checkpoint(), fixture._config())
+    (source / 'model.safetensors.index.json').write_text(json.dumps({'weight_map': {
+        name: 'model.safetensors' for name in fixture._checkpoint()}}))
+    from tessera import export_serving
+    monkeypatch.setattr(export_serving, 'authenticate_producer_python', lambda: {'fixture': 'CPU control-flow only'})
+    monkeypatch.setattr(ab.torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(ab.torch.cuda, 'get_device_name', lambda _: 'CPU control-flow fixture')
+    monkeypatch.setattr(ab, 'load_producer_authority', lambda _: (None, None))
+    monkeypatch.setattr(export.ActivationSource, 'from_capture', lambda *a, **k: None)
+    identity = serving_parts.source_part_identity(source)
+    monkeypatch.setattr(ab, 'bind_source', lambda *a: {'shards': list(identity['files']), 'digest_s': 0,
+        'cache': {}, 'cached_shards': [], 'hashed_shards': list(identity['files']), 'receipt': {}, 'identity': identity})
+    monkeypatch.setattr(ab.time, 'perf_counter', lambda: 0)
+    monkeypatch.setattr(sys, 'argv', ['probe', str(tmp_path/'out'), '--src', str(source), '--layer', '1',
+        '--rungs', 'E4M3:896', '--hessian', 'fixture', '--producer-authority', 'fixture',
+        '--batch', '2', '--budget-s', '1', '--no-profile'])
+    assert ab.main() == 3
+    row = json.loads((tmp_path/'out'/'ab_batched_best_form.json').read_text())['rungs']['E4M3:896']
+    assert row['membership']['units'] == fixture.EXPERTS * 3
+    assert row['schedule']['units'] == fixture.EXPERTS * 3
+    assert not row['batches']

@@ -6417,8 +6417,13 @@ is anchored on its exact original units, including tail and shared-setting
 widths; a skipped identity cohort cannot enter the timed population. Timed
 digests and observed widths are retained and compared again against that
 same-unit qualification before any measurement is accepted. Both in-process
-profiles precede consumption of the remaining action deadline. A partial
-schedule names the remainder and reports only completed qualified work; it
+profiles precede consumption of the remaining action deadline. The probe
+captures each shape/effective-width cohort once, referencing that capture
+from later matching batches, and budgets one observed owner batch after
+the profile packet instead of spending all timing capacity on duplicate profiles.
+The matched owner/anchor helpers retain CUDA as their default while allowing
+real CPU tensor execution for behavioral byte/timer tests; the native driver
+still refuses a missing GPU. A partial schedule names the remainder and reports only completed qualified work; it
 does not publish complete-stack minutes. A completed schedule prices each
 measured shape against the declared whole-stack population, never an
 imbalanced prefix or an unmeasured effective-width population.

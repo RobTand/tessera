@@ -218,7 +218,12 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def anchor_units(positions, units, src, grid, q256, recipe, activation, out: Path, label: str):
+def synchronize_device(device):
+    if torch.device(device).type == "cuda":
+        torch.cuda.synchronize()
+
+
+def anchor_units(positions, units, src, grid, q256, recipe, activation, out: Path, label: str, *, device="cuda"):
     """The exporter's own per-unit finish for these positions: the seq anchor.
 
     Returns the per-unit blob digests and the timing/power facts.  This is the
@@ -232,26 +237,26 @@ def anchor_units(positions, units, src, grid, q256, recipe, activation, out: Pat
     # Match the owner's timing boundary: source reads precede both timers.
     members = [(units[i], read_tensor(src, units[i]["source_tensor"])) for i in positions]
     set_best(False)
-    torch.cuda.synchronize()
+    synchronize_device(device)
     power = Power()
     start = utc()
     power.start()
     t0 = time.perf_counter()
     digests = {}
     for unit, source in members:
-        weight = packed_expert_weight(source, unit).to("cuda", torch.float32).contiguous()
-        extra = activation.for_unit(unit["tensor"], weight.shape[1], "cuda",
-                                    scale_plane=recipe.scale_plane)
+        weight = packed_expert_weight(source, unit).to(device, torch.float32).contiguous()
+        extra = ({} if activation is None else activation.for_unit(
+            unit["tensor"], weight.shape[1], device, scale_plane=recipe.scale_plane))
         exported, _artifact, _forests = encode_linear_planes(
             weight, grid=grid, q256=q256, body=recipe.body,
             name=unit["tensor"], verify=True, **extra)
         extra.clear()
-        parse_unit_artifact(exported.blob, device="cuda")
+        parse_unit_artifact(exported.blob, device=device)
         blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
         torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
         digests[unit["tensor"]] = sha256_bytes(blob)
         del weight, exported
-    torch.cuda.synchronize()
+    synchronize_device(device)
     wall = time.perf_counter() - t0
     pw = power.stop(series_path=out / f"{label}-anchor-power.jsonl")
     return {"digests": digests, "units": len(positions),
@@ -263,7 +268,7 @@ def sha256_bytes(blob: bytes) -> str:
     return hashlib.sha256(bytes(blob)).hexdigest()
 
 
-def run_owner_batch(positions, units, stack_plan, recipe, activation, src, out: Path, label: str):
+def run_owner_batch(positions, units, stack_plan, recipe, activation, src, out: Path, label: str, *, device="cuda"):
     """One scheduled batch through THE owner, timed, with its own power window.
 
     The owner returns one ``(exported, blob, payload, own_global, manifest)``
@@ -274,15 +279,15 @@ def run_owner_batch(positions, units, stack_plan, recipe, activation, src, out: 
     members = [(units[i], read_tensor(src, units[i]["source_tensor"])) for i in positions]
     observed = []
     set_best(True)
-    torch.cuda.synchronize()
+    synchronize_device(device)
     power = Power()
     start = utc()
     power.start()
     t0 = time.perf_counter()
     results = fresh_joined_encode(
         members, stack_plan=stack_plan, activation=activation,
-        device="cuda", no_verify=False, batch_observed=observed)
-    torch.cuda.synchronize()
+        device=device, no_verify=False, batch_observed=observed)
+    synchronize_device(device)
     wall = time.perf_counter() - t0
     pw = power.stop(series_path=out / f"{label}-owner-power.jsonl")
     set_best(False)
@@ -579,13 +584,19 @@ def main() -> int:
         # spend the rest of the action. Use observed warm costs, not a guess.
         if not args.no_profile:
             r["captures"] = {}
+            profile_by_cohort = {}
             for positions in warm_and_anchor:
                 k = keys[positions[0]]
                 width_key = qualification_key(k, positions)
                 measured_width = r["widths"].get(width_key)
                 if measured_width is None:
                     continue
-                projected = (2 * measured_width["owner_batch"]["wall_s"]
+                cohort = (k, tuple(measured_width["owner_batch"]["widths_observed"]))
+                if cohort in profile_by_cohort:
+                    measured_width["profile_capture"] = profile_by_cohort[cohort]
+                    continue
+                # Keep one measured owner batch available after the profile packet.
+                projected = (3 * measured_width["owner_batch"]["wall_s"]
                              + measured_width["anchor_seq"]["wall_s"])
                 if time.perf_counter() - started + projected > args.budget_s:
                     rec["unmeasured"].append({"stage": f"{grid_name}:{q}/profiles/{width_key}",
@@ -606,6 +617,8 @@ def main() -> int:
                     lambda: run_owner_batch(positions, units, stack_plan, recipe, activation,
                                             args.src, args.out, f"{grid_name}-{q}-{width_key}-prof"),
                     args.out, f"owner-{grid_name}-q{q}-{width_key}")
+                profile_by_cohort[cohort] = width_key
+                measured_width["profile_capture"] = width_key
                 save()
 
         # Timed: the owner's schedule, IN ORDER, until the budget says stop.
