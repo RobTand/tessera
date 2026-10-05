@@ -10,6 +10,11 @@
 set -uo pipefail
 OUT=$(realpath "$1"); REF=$2; shift 2
 IMG=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+# Issue #100: every wrapper that starts a container gates its image first,
+# before the first `docker run` (experiments/runtime_image.sh).
+HERE=$(cd "$(dirname "$0")" && pwd)
+source "$HERE/../runtime_image.sh"
+runtime_image_require "$IMG" || exit 2
 NAME=${SASS_LIB:-tessera_routed_fused_mma_e4m3}
 mkdir -p "$OUT/sass"
 for a in "$REF" "$@"; do
