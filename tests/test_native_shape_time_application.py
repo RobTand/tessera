@@ -280,8 +280,9 @@ def test_software_observation_does_not_query_device(panel, monkeypatch):
     expected = panel['runtime']
     monkeypatch.setenv('TESSERA_SERVE_MODE','resident')
     origins = {'package_root': expected['package_root'], 'modules': {}}
-    monkeypatch.setattr(worker, 'runtime_origins', lambda _: origins)
-    monkeypatch.setattr(worker, 'observed_commit', lambda _: expected['tessera_commit'])
+    monkeypatch.setattr(worker, 'runtime_origins', lambda root, facts=None: origins)
+    monkeypatch.setattr(worker, 'observed_commit',
+                        lambda package, strict=True: (expected['tessera_commit'], []))
     monkeypatch.setitem(sys.modules, 'vllm', SimpleNamespace(__version__=expected['vllm']))
     monkeypatch.setattr(torch, '__version__', expected['torch'])
     monkeypatch.setattr(source_identity, 'serving_source_sha256', lambda: expected['serving_source_sha256'])
@@ -741,8 +742,10 @@ def test_dirty_unversioned_candidate_stamps_and_continues(panel, monkeypatch, tm
     identity and no verifier, on the old pin -- default dev stamps the
     provenance facts and continues with the stored identities."""
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    real_observed_commit = worker.observed_commit
     expected, _ = _observe_with_source(panel, monkeypatch,
                                        panel['runtime']['serving_source_sha256'])
+    monkeypatch.setattr(worker, 'observed_commit', real_observed_commit)
     import subprocess
     staged = tmp_path / 'staged-candidate' / 'tessera'
     staged.mkdir(parents=True)
@@ -765,6 +768,7 @@ def test_dirty_unversioned_candidate_stamps_and_continues(panel, monkeypatch, tm
     got, origins, _ = worker.observe_software_runtime(expected, None)
     out = capsys.readouterr().out
     assert 'checkout is dirty' in out and 'not tracked' in out
+    assert got['tessera_commit'] != expected['tessera_commit']  # the real staged HEAD
     assert got['tessera_commit'] != expected['tessera_commit']  # the real staged HEAD
     assert origins['installation']['distribution'] == 'unverified (D32 dev mode)'
 
