@@ -220,6 +220,16 @@ def _current_vllm_config():
         return None
 
 
+def current_forward_is_compiled() -> bool:
+    """True when vLLM's current config compiles the forward (mode not NONE).
+
+    False when vLLM is absent or no config is current, e.g. a method built
+    bare in a test: no compiled forward exists for it.
+    """
+    config = _current_vllm_config()
+    return config is not None and _forward_is_compiled(config)
+
+
 def declare_compile_identity(**facts: str) -> dict | None:
     """``declare_compile_identity_in`` on vLLM's current config.
 

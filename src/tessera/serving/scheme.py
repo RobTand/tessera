@@ -616,7 +616,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         # (``TESSERA_E4M3_DECODE_ONCE=1``), resident only -- the route attaches
         # the decoded copy only to a resident module -- and taken for M at or
         # above ``e4m3_prefill.MIN_M`` in whichever phase M occurs; eager-only
-        # (``apply`` refuses under ``torch.compile``).  No
+        # (the route refuses the flag at load under a compiled forward).  No
         # extension lane: the decode runs the module's own Triton decoder and
         # the GEMM is torch's.  Experimental until a served census earns it a
         # cell (``EXPERIMENTAL_LAUNCHES``).
@@ -819,7 +819,7 @@ EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
 })
 
 #: Launches a compiled (``torch.compile``) forward cannot make: their owner
-#: refuses under compile by name.  A census of a compiled serve therefore does
+#: refuses them at load when vLLM's compilation mode is not NONE.  A census of a compiled serve therefore does
 #: not expect them (``fp8_gemv.census_expected(compiled=True)``).  Since
 #: contract v56: the decode-once dense prefill lane, whose M branch is host
 #: Python (``native_window.PreparedDenseNativeModule.apply``).

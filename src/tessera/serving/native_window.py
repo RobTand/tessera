@@ -395,10 +395,12 @@ class PreparedDenseNativeModule:
         node per role.  No host-side data-dependent work on either.  A module
         holding a decode-once copy serves M >= ``e4m3_prefill.MIN_M`` from it
         (:meth:`launch_pair_for` names which ran).  That branch reads M on the
-        host, so the decode-once lane is EAGER-ONLY: under ``torch.compile`` it
-        would pin the token count or bake one branch for every M, so it refuses
-        by name.  A CUDA-graph capture sees a concrete M and records the branch
-        that ran for it.
+        host, so the decode-once lane is EAGER-ONLY.  The gate is the route's
+        LOAD (``fp8_route`` refuses to attach a copy when vLLM compiles the
+        forward); the raise below is a backstop for a direct caller, and under
+        ``torch.compile`` without ``fullgraph`` it is a graph break Dynamo may
+        run around.  A CUDA-graph capture sees a concrete M and records the
+        branch that ran for it.
         """
         if self.__decoded is not None:
             from .e4m3_prefill import FLAG, MIN_M, prefill_apply

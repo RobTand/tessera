@@ -153,10 +153,11 @@ def test_the_decoded_copy_is_counted_and_attached_once_and_only_where_it_fits():
         other.attach_decoded(wrong)
 
 
-def _route_layer(monkeypatch, flag, mode, seed):
+def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE"):
     """``(method, layer)``: the FP8 route built, loaded and prepared on one
     rank of one, under ``TESSERA_E4M3_DECODE_ONCE=flag``, with a compile
-    identity record so the dispatch fact is observable."""
+    identity record so the dispatch fact is observable, and vLLM's current
+    config at load in compilation mode ``vllm_mode``."""
     from types import SimpleNamespace
 
     import vllm.model_executor.parameter as vllm_parameter
@@ -175,10 +176,12 @@ def _route_layer(monkeypatch, flag, mode, seed):
     class _Layer(torch.nn.Module):
         tp_rank, tp_size = 0, 1
 
-    compile_identity.reset_for_tests()
-    compile_identity.declare_compile_identity_in(SimpleNamespace(
+    config = SimpleNamespace(
         additional_config={},
-        compilation_config=SimpleNamespace(mode=SimpleNamespace(name="NONE"))), serve_mode=mode)
+        compilation_config=SimpleNamespace(mode=SimpleNamespace(name=vllm_mode)))
+    monkeypatch.setattr(compile_identity, "_current_vllm_config", lambda: config)
+    compile_identity.reset_for_tests()
+    compile_identity.declare_compile_identity_in(config, serve_mode=mode)
     method = build_tessera_method(scheme, "test.layer", mode=mode)
     layer = _Layer()
     method.create_weights(layer, input_size_per_partition=512,
@@ -215,6 +218,23 @@ def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, fl
         took = (record["symbol"], record["decoder"]) == (
             DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
         assert took == (attached and m >= e4m3_prefill.MIN_M), (flag, mode, m)
+
+
+@cuda
+@pytest.mark.parametrize("flag", ["", "1"])
+def test_a_compiled_vllm_forward_refuses_the_flag_at_load(monkeypatch, flag):
+    """The eager-only gate is the LOAD: with vLLM's compilation mode not NONE,
+    the flag refuses by name before any copy is made; unset, the module loads
+    as on master."""
+    pytest.importorskip("vllm")
+    from tessera.serving.e4m3_prefill import FLAG
+
+    if flag == "1":
+        with pytest.raises(RuntimeError, match=f"{FLAG}=1 serves an eager-only lane"):
+            _route_layer(monkeypatch, flag, "resident", seed=26, vllm_mode="VLLM_COMPILE")
+        return
+    _method, layer = _route_layer(monkeypatch, flag, "resident", seed=26, vllm_mode="VLLM_COMPILE")
+    assert layer.tessera_native.decoded is None
 
 
 @cuda

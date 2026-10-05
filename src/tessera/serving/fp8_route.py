@@ -39,7 +39,7 @@ from typing import Optional, Sequence
 import torch
 
 from ..alphabet import require_hardware_byte_grid
-from .compile_identity import note_traced_dispatch
+from .compile_identity import current_forward_is_compiled, note_traced_dispatch
 from .lane import MODES
 from . import e4m3_prefill
 from .native_window import prepare_dense_native_module
@@ -428,6 +428,13 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             # decoded copy is one more resident byte per weight, counted by the
             # module's ``named_tensors`` like every other prepared tensor.
             if e4m3_prefill.enabled() and layer.tessera_mode == "resident":
+                # Eager-only, refused HERE: a raise inside a compiled forward is
+                # a graph break Dynamo may run around, so the gate is the load.
+                if current_forward_is_compiled():
+                    raise RuntimeError(
+                        f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
+                        "vLLM's compilation mode is not NONE; serve with compilation mode "
+                        "NONE (--enforce-eager) or unset the flag")
                 prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
