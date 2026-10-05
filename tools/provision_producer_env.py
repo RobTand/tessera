@@ -300,13 +300,13 @@ def main() -> int:
     record = venv_root / ("qualification.json" if args.phase == "qualify" else "acquisition.json")
     if record.exists():
         raise SystemExit(f"refusing to overwrite {record}")
-    record.write_text(json.dumps(rec, indent=1) + "\n")
 
     if args.phase == "qualify":
         # The core sibling owns the authentication; the qualify phase runs it
         # inside THIS interpreter against the SAME validated --source-ref
         # checkout the wheel was built from.
-        env = dict(os.environ, TESSERA_PRODUCER_SOURCE=str(build_root / "src" / "tessera"))
+        env = dict(os.environ, TESSERA_PRODUCER_PYTHON=str(python),
+                   TESSERA_PRODUCER_SOURCE=str(build_root / "src" / "tessera"))
         auth = subprocess.run([str(python), "-I", "-c",
                                "from tessera.export_serving import authenticate_producer_python as a;"
                                " import json; print(json.dumps(a()))"],
@@ -314,7 +314,18 @@ def main() -> int:
         if auth.returncode != 0:
             raise SystemExit(f"authenticate_producer_python refused the new environment:\n"
                              f"{auth.stdout}\n{auth.stderr}")
-        (venv_root / "authentication.json").write_text(auth.stdout.strip().splitlines()[-1] + "\n")
+        receipt = json.loads(auth.stdout.strip().splitlines()[-1])
+        if not isinstance(receipt, dict) or receipt.get("schema") != "tessera.producer_python.v1":
+            raise SystemExit("producer authentication returned no selected-producer receipt")
+        if (receipt.get("git_head") != commit
+                or receipt.get("requested_interpreter") != str(python)
+                or receipt.get("package_sha256") != receipt.get("expected_package_sha256")):
+            raise SystemExit("producer authentication does not bind the requested final source and interpreter")
+        rec["authentication"] = receipt
+        (venv_root / "authentication.json").write_text(json.dumps(receipt, indent=1) + "\n")
+    # A qualification record is a completed authentication, never a intent
+    # document published before a failed or absent selection check.
+    record.write_text(json.dumps(rec, indent=1) + "\n")
 
     shutil.rmtree(work, ignore_errors=True)
     print("QUALIFIED_PRODUCER " + json.dumps(rec["installed"], sort_keys=True))

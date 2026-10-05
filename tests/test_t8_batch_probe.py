@@ -311,6 +311,11 @@ class TestProvisionerQualifyGitroot:
             "the wheel is archived from the --source-ref checkout's exact HEAD")
         assert 'TESSERA_PRODUCER_SOURCE=str(build_root / "src" / "tessera")' in text, (
             "the authentication binds the SAME ref the wheel was built from")
+        assert "TESSERA_PRODUCER_PYTHON=str(python)" in text, (
+            "the newly created interpreter is explicitly selected for its actual authentication")
+        assert "producer authentication returned no selected-producer receipt" in text
+        assert text.index("record.write_text") > text.index("receipt = json.loads(auth.stdout"), (
+            "a qualification record is published only after a non-null authentication")
 
     def test_qualify_checks_genuine_ancestry(self):
         text = self.PROVISIONER.read_text()
