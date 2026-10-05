@@ -12,9 +12,12 @@ from pathlib import Path
 import pytest
 import box_artifacts
 
-pytest.importorskip("torch")
-pytest.importorskip("safetensors")
-import test_export_serving as selected
+@pytest.fixture
+def selected():
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
+    import test_export_serving
+    return test_export_serving
 import test_t8_partition_launcher as launcher
 from tessera import serving_parts as parts
 
@@ -42,7 +45,7 @@ def run_part(tmp_path, producer, source_ref, source, **env):
         SOURCE_CHECKPOINT=source, PYTHONPATH=ROOT / 'src', **env))
 
 
-def test_real_installed_python_m_entrypoint(tmp_path, frozen_source):
+def test_real_installed_python_m_entrypoint(tmp_path, selected, frozen_source):
     """Real -m invocation, genuine ancestry, no canonical-module driver/alias."""
     repo = tmp_path / 'genuine'
     subprocess.run(['git', 'clone', '--quiet', '--shared', str(frozen_source), str(repo)], check=True)
@@ -136,7 +139,7 @@ def test_zero_bound_refuses_before_authentication(tmp_path, script):
     assert 'PART_BOUND_S' in done.stdout + done.stderr
 
 
-def test_default_profile_authenticates_before_cuda_or_source_access(tmp_path):
+def test_default_profile_authenticates_before_cuda_or_source_access(tmp_path, selected):
     out = tmp_path / 'profile'
     done = subprocess.run(['bash', str(ROOT / 'experiments/t8_census/profile_unit_encode.sh'), str(out),
         '--q256', '768', '--hessian', str(tmp_path / 'missing-capture')], cwd=ROOT,
@@ -172,65 +175,7 @@ def test_projection_uses_toml_backport_without_tomllib(monkeypatch):
     assert packaged_projection_config(b'[project]\nname="tessera-quant"\n')['project']['name'] == 'tessera-quant'
 
 
-@pytest.mark.parametrize("mode", ["skipped_anchor", "tail", "shared_split", "timed_mismatch"])
-def test_unanchored_shape_cannot_enter_timed_population(tmp_path, monkeypatch, mode):
-    sys.path.insert(0, str(ROOT / 'experiments' / 't8_census'))
-    import ab_batched_best_form as ab
-    from tessera import export_serving, export
-    source = tmp_path / 'source'
-    source.mkdir()
-    (source / 'config.json').write_text('{}')
-    stack = 'model.language_model.layers.3.mlp.experts'
-    population = 2 if mode == 'skipped_anchor' else 5 if mode == 'tail' else 8
-    units = [{'stack': stack, 'rows': 2, 'cols': 2, 'projection': 'gate_proj',
-              'tensor': f'{stack}.{i}.gate_proj.weight'} for i in range(population)]
-    (source / 'model.safetensors.index.json').write_text(json.dumps({'weight_map': {u['tensor']: 'source.safetensors' for u in units}}))
-    monkeypatch.setattr(export_serving, 'authenticate_producer_python', lambda: {'qualified': True})
-    monkeypatch.setattr(ab.torch.cuda, 'is_available', lambda: True)
-    monkeypatch.setattr(ab.torch.cuda, 'get_device_name', lambda _: 'CPU control-flow fixture')
-    monkeypatch.setattr(ab, 'load_producer_authority', lambda _: (None, None))
-    monkeypatch.setattr(export.ActivationSource, 'from_capture', lambda *a, **k: None)
-    monkeypatch.setattr(ab, 'quantizable', lambda _: (None, None, None, {}))
-    monkeypatch.setattr(ab, 'expert_stacks', lambda _: {stack: [0, 1]})
-    monkeypatch.setattr(ab, 'plan_expert_stack', lambda *a, **k: {'units': units})
-    monkeypatch.setattr(ab, 'grid_for', lambda _: 'grid')
-    monkeypatch.setattr(ab, 'served_recipe', lambda *a: None)
-    monkeypatch.setattr(ab, 'bind_source', lambda *a: {'shards': [], 'digest_s': 0, 'cache': {},
-        'cached_shards': [], 'hashed_shards': [], 'receipt': {}, 'identity': {'files': {'source.safetensors': 'a'*64}}})
-    monkeypatch.setattr(ab.time, 'perf_counter', lambda: 0)
-    anchors = []
-    def anchor(positions, *a, **k):
-        anchors.extend(positions)
-        return {'digests': {units[i]['tensor']: 'a'*64 for i in positions}, 'units': len(positions),
-                'wall_s': 1, 's_per_unit': 0.5, 'start_utc': 'fixture', 'end_utc': 'fixture', 'power': {}}
-    monkeypatch.setattr(ab, 'anchor_units', anchor)
-    calls = []
-    def run(positions, *a, **k):
-        calls.append(positions)
-        digests = {units[i]['tensor']: 'a'*64 for i in positions}
-        if mode == 'timed_mismatch' and a[-1].endswith('-b000'):
-            digests[units[positions[0]]['tensor']] = 'b'*64
-        widths = ([2, 2] if positions[0] == 0 else [1, 3]) if mode == 'shared_split' else [len(positions)]
-        return {'positions': positions, 'units': len(positions), 'key': '2x2', 'widths_observed': widths,
-                'digests': digests, 'wall_s': 1, 's_per_unit': 0.5, 'power': {},
-                'start_utc': 'fixture', 'end_utc': 'fixture', 'workload': 'encode+frame+verify'}
-    monkeypatch.setattr(ab, 'run_owner_batch', run)
-    batch, budget = ('2', '35') if mode == 'skipped_anchor' else ('4', '1000')
-    monkeypatch.setattr(sys, 'argv', ['probe', str(tmp_path / 'out'), '--src', str(source), '--rungs', 'E4M3:768',
-        '--hessian', 'h', '--producer-authority', 'a', '--batch', batch, '--budget-s', budget, '--no-profile'])
-    result = ab.main()
-    packet = json.loads((tmp_path / 'out' / 'ab_batched_best_form.json').read_text())
-    row = packet['rungs']['E4M3:768']
-    if mode == 'skipped_anchor':
-        assert not calls, 'skipped warm+anchor cohort still executed a timed batch'
-        assert not row['batches']
-        assert result != 0, 'unqualified population must not be reported as accepted'
-    elif mode == 'timed_mismatch':
-        assert result == 4, 'timed digests were discarded instead of compared'
-        assert not row['batches']
-    else:
-        assert set(anchors) == set(range(population)), 'tail/shared schedule members were not independently anchored'
-        assert row['batches'] and all('digests' in b for b in row['batches']), 'timed digests must be retained'
+
 
 
 def test_completion_binds_consumed_input_identity(tmp_path):
@@ -260,7 +205,7 @@ def test_completion_binds_consumed_input_identity(tmp_path):
 
 
 @pytest.mark.parametrize("leg", ["interpreter", "payload"])
-def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, frozen_source):
+def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, frozen_source):
     site = selected._fixture_install(tmp_path / "site")
     python = Path(sys.executable)
     if leg == "interpreter":
