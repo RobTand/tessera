@@ -591,13 +591,14 @@ def test_owned_container_grace_under_published_pb_scope(tmp_path):
     adapter.command = adapter.envelope.run
     labels = []
     for key, value in owned_labels(owned).items():
-        labels += ["--label", f"{key}={value}"]
+        if not key.startswith("prismabuild."):  # the supported shim supplies its own ownership labels
+            labels += ["--label", f"{key}={value}"]
 
     cooperative = stubborn = None
     try:
         def launch(name, entrypoint):
             argv = ["docker", "run", "-d", "--network", "none", "--name", f"d30-guard-{nonce[:8]}-{name}",
-                    "--cgroup-parent", owned["scope_id"], *labels, image, "sh", "-c", entrypoint]
+                    *labels, image, "sh", "-c", entrypoint]
             cid = adapter.command(argv, limit=60).stdout.strip()
             assert cid, "the rehearsal container must start with its exact cid"
             return cid
