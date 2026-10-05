@@ -57,6 +57,7 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--artifact", default=None, help="accepted for bench_t8r.sh; unused")
     args = ap.parse_args()
+    import vllm._custom_ops  # noqa: F401 -- registers torch.ops._C's quantiser
     from tessera.serving.native_ops import native_fp8_quant
 
     os.makedirs(args.out, exist_ok=True)

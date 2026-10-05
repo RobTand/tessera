@@ -99,6 +99,7 @@ __all__ = [
     "FUSED_WINDOW_DENSE_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
     "DECODE_ONCE_DENSE_SYMBOL",
+    "EAGER_ONLY_LAUNCHES",
     "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
     "parse_compact_tessera_expert_blob",
@@ -614,7 +615,8 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         # The decode-once prefill lane (tessera#931, contract v56): default-off
         # (``TESSERA_E4M3_DECODE_ONCE=1``), resident only -- the route attaches
         # the decoded copy only to a resident module -- and taken for M at or
-        # above ``e4m3_prefill.MIN_M`` in whichever phase M occurs.  No
+        # above ``e4m3_prefill.MIN_M`` in whichever phase M occurs; eager-only
+        # (``apply`` refuses under ``torch.compile``).  No
         # extension lane: the decode runs the module's own Triton decoder and
         # the GEMM is torch's.  Experimental until a served census earns it a
         # cell (``EXPERIMENTAL_LAUNCHES``).
@@ -813,6 +815,15 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: (tessera#931), default-off.  It leaves when a served census of a T-8
 #: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
+    (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
+})
+
+#: Launches a compiled (``torch.compile``) forward cannot make: their owner
+#: refuses under compile by name.  A census of a compiled serve therefore does
+#: not expect them (``fp8_gemv.census_expected(compiled=True)``).  Since
+#: contract v56: the decode-once dense prefill lane, whose M branch is host
+#: Python (``native_window.PreparedDenseNativeModule.apply``).
+EAGER_ONLY_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
 })
 

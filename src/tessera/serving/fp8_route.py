@@ -429,7 +429,6 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             # module's ``named_tensors`` like every other prepared tensor.
             if e4m3_prefill.enabled() and layer.tessera_mode == "resident":
                 prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
-                note_traced_dispatch(prefix, DECODE_ONCE_DENSE_SYMBOL)
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol
@@ -445,8 +444,13 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             del layer.wire_bytes
             # The dispatch is ONE graph for every M and both residencies, and
             # the op it contains is a property of this module: declare it here
-            # so vLLM's compile-cache key covers it (issue #91's rule).
-            note_traced_dispatch(prefix, prepared.symbol)
+            # so vLLM's compile-cache key covers it (issue #91's rule).  A
+            # module holding a decode-once copy declares a different fact
+            # (window op | decode-once op), so flag-on and flag-off modules
+            # never share a key; that lane is eager-only
+            # (``PreparedDenseNativeModule.apply`` refuses under compile).
+            note_traced_dispatch(prefix, prepared.symbol if prepared.decoded is None
+                                 else f"{prepared.symbol}|{DECODE_ONCE_DENSE_SYMBOL}")
 
         # -- residency declaration (#580) -------------------------------
         def resident_tensors(self, layer):
@@ -483,7 +487,13 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(a_q, a_scale)
-            (symbol, decoder), tile_m = native.launch_pair_for(int(a_q.shape[0])), 0
+            # Only a module holding a decode-once copy (eager-only) has a pair
+            # that depends on M; every other module stamps its one pair without
+            # reading the token count, which ``int()`` would pin under compile
+            # (``telemetry.route_shape``).
+            pair = (native.launch_pair if native.decoded is None
+                    else native.launch_pair_for(int(a_q.shape[0])))
+            (symbol, decoder), tile_m = pair, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",

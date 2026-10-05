@@ -153,24 +153,32 @@ def test_the_decoded_copy_is_counted_and_attached_once_and_only_where_it_fits():
         other.attach_decoded(wrong)
 
 
-@cuda
-@pytest.mark.parametrize("flag,mode,attached", [("1", "resident", True), ("", "resident", False),
-                                                ("0", "resident", False), ("1", "streamed", False)])
-def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached):
-    """The route's load path decides: flag on and a resident module, or no
-    copy at all; ``apply`` stamps the pair that actually ran."""
-    pytest.importorskip("vllm")   # the route's A side is vLLM's native FP8 quantiser
-    from tessera.serving import e4m3_prefill, flags, telemetry
-    from tessera.serving.lane import build_tessera_method
-    from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
+def _route_layer(monkeypatch, flag, mode, seed):
+    """``(method, layer)``: the FP8 route built, loaded and prepared on one
+    rank of one, under ``TESSERA_E4M3_DECODE_ONCE=flag``, with a compile
+    identity record so the dispatch fact is observable."""
+    from types import SimpleNamespace
 
+    import vllm.model_executor.parameter as vllm_parameter
+    from tessera.serving import compile_identity, e4m3_prefill, flags
+    from tessera.serving.lane import build_tessera_method
+
+    # one rank of one: vLLM's parameters read the TP group, which no test
+    # process initialises
+    monkeypatch.setattr(vllm_parameter, "get_tensor_model_parallel_rank", lambda: 0, raising=False)
+    monkeypatch.setattr(vllm_parameter, "get_tensor_model_parallel_world_size", lambda: 1,
+                        raising=False)
     monkeypatch.delitem(flags._LATCHED, e4m3_prefill.FLAG, raising=False)
     monkeypatch.setenv(e4m3_prefill.FLAG, flag)
-    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=23)
+    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=seed)
 
     class _Layer(torch.nn.Module):
         tp_rank, tp_size = 0, 1
 
+    compile_identity.reset_for_tests()
+    compile_identity.declare_compile_identity_in(SimpleNamespace(
+        additional_config={},
+        compilation_config=SimpleNamespace(mode=SimpleNamespace(name="NONE"))), serve_mode=mode)
     method = build_tessera_method(scheme, "test.layer", mode=mode)
     layer = _Layer()
     method.create_weights(layer, input_size_per_partition=512,
@@ -178,14 +186,75 @@ def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, fl
                           output_size=scheme["rows"], params_dtype=torch.bfloat16)
     layer.wire_bytes.data = torch.frombuffer(bytearray(blob), dtype=torch.uint8).cuda()
     method.process_weights_after_loading(layer)
+    return method, layer
+
+
+@cuda
+@pytest.mark.parametrize("flag,mode,attached", [("1", "resident", True), ("", "resident", False),
+                                                ("0", "resident", False), ("1", "streamed", False)])
+def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached):
+    """The route's load path decides: flag on and a resident module, or no
+    copy at all; ``apply`` stamps the pair that actually ran, and the
+    compile-cache dispatch fact tells the two apart (issue #91's rule)."""
+    pytest.importorskip("vllm")   # the route's A side is vLLM's native FP8 quantiser
+    from tessera.serving import compile_identity, e4m3_prefill, telemetry
+    from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
+
+    method, layer = _route_layer(monkeypatch, flag, mode, seed=23)
     native = layer.tessera_native
     assert (native.decoded is not None) == attached
+    fact = compile_identity.traced_dispatch()["test.layer"]
+    assert fact == (f"{native.symbol}|{DECODE_ONCE_DENSE_SYMBOL}" if attached else native.symbol)
+    compile_identity.reset_for_tests()
     for m in (8, e4m3_prefill.MIN_M):
         x = torch.randn(m, 512, device="cuda").bfloat16()
         y = method.apply(layer, x)
-        assert y.shape == (m, scheme["rows"])
+        assert y.shape == (m, sum(r for _, r in ROLES))
         record = telemetry.read_route(layer)
         assert (record["symbol"], record["decoder"]) == native.launch_pair_for(m)
         took = (record["symbol"], record["decoder"]) == (
             DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
         assert took == (attached and m >= e4m3_prefill.MIN_M), (flag, mode, m)
+
+
+@cuda
+@pytest.mark.parametrize("flag", ["", "1"])
+def test_a_dynamic_token_dimension_compiles_without_a_copy_and_refuses_with_one(monkeypatch, flag):
+    """The compiled-serve failure mode, reproduced at the route: vLLM marks
+    the token dimension dynamic, and a forward that reads ``int(M)``
+    specialises it and raises ``ConstraintViolationError``.  With the flag
+    unset the route's ``apply`` compiles once and serves two M; with a
+    decode-once copy attached it refuses by name (the lane is eager-only)."""
+    pytest.importorskip("vllm")
+    from tessera.serving.e4m3_prefill import FLAG
+
+    method, layer = _route_layer(monkeypatch, flag, "resident", seed=25)
+    torch._dynamo.reset()
+    compiled = torch.compile(lambda x: method.apply(layer, x), fullgraph=False)
+    for m in (16, 300):
+        x = torch.randn(m, 512, device="cuda").bfloat16()
+        torch._dynamo.mark_dynamic(x, 0)
+        if flag == "1":
+            with pytest.raises(Exception, match=f"eager-only.*{FLAG}"):
+                compiled(x)
+            continue
+        got = compiled(x)
+        torch.testing.assert_close(got, method.apply(layer, x), rtol=0, atol=0)
+    torch._dynamo.reset()
+
+
+@cuda
+def test_the_decode_once_lane_refuses_a_compiled_forward_and_the_window_lane_does_not(monkeypatch):
+    """Eager-only by name: with a copy attached, ``apply`` under
+    ``torch.compile`` refuses (its M branch would pin or bake the token
+    count); a copy-less module is untouched."""
+    from tessera.serving.e4m3_prefill import FLAG, decode_e4m3
+
+    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=24)
+    module, twin = _module(blob, scheme), _module(blob, scheme)
+    module.attach_decoded(decode_e4m3(module))
+    _x, xq, a = _inputs(8, 512, 8)
+    monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+    with pytest.raises(RuntimeError, match=f"eager-only.*{FLAG}"):
+        module.apply(xq, a)
+    assert twin.apply(xq, a).shape == (8, 416)

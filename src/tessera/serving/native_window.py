@@ -394,12 +394,19 @@ class PreparedDenseNativeModule:
         lane one custom-op node serves the whole module; on the Triton lane one
         node per role.  No host-side data-dependent work on either.  A module
         holding a decode-once copy serves M >= ``e4m3_prefill.MIN_M`` from it
-        (:meth:`launch_pair_for` names which ran); M is a shape, so the choice
-        is fixed per captured graph.
+        (:meth:`launch_pair_for` names which ran).  That branch reads M on the
+        host, so the decode-once lane is EAGER-ONLY: under ``torch.compile`` it
+        would pin the token count or bake one branch for every M, so it refuses
+        by name.  A CUDA-graph capture sees a concrete M and records the branch
+        that ran for it.
         """
         if self.__decoded is not None:
-            from .e4m3_prefill import MIN_M, prefill_apply
+            from .e4m3_prefill import FLAG, MIN_M, prefill_apply
 
+            if torch.compiler.is_compiling():
+                raise RuntimeError(
+                    f"the decode-once E4M3 lane is eager-only ({FLAG}=1); serve with "
+                    "compilation mode NONE or unset the flag")
             if int(x.shape[0]) >= MIN_M:
                 return prefill_apply(self.__decoded, x, a_scale)
         if self.__lane == LANE_FUSED:
@@ -450,7 +457,8 @@ class PreparedDenseNativeModule:
             yield "decoded.scale", self.__decoded.scale
 
     def packed_bytes(self) -> int:
-        """Device bytes the prepared weights occupy: the packed wire half."""
+        """Device bytes the prepared weights occupy: the packed wire half, plus
+        the decode-once copy when one is attached (``named_tensors``)."""
         return sum(tensor.numel() * tensor.element_size()
                    for _, tensor in self.named_tensors())
 
