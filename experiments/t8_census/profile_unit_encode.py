@@ -1,5 +1,17 @@
 """Where one routed census unit's encode time goes (the T8R1 export's own path).
 
+HISTORICAL PER-UNIT PROFILER, NOT THE BATCHED CLAIM'S OWNER: its ``encode_one``
+is the T8R1 per-unit tail kept for unit-level time breakdowns.  The batched
+ABBA claim does not run through it -- ``ab_batched_best_form.py`` drives
+``tessera.export_serving.main()`` (the one fresh batch execution owner) for
+every leg, and nothing here groups, orders or joins units.
+
+Runs inside the scoped producer environment, under the interpreter the
+environment selected: Tessera comes from that interpreter's INSTALLED package,
+authenticated against ``TESSERA_PRODUCER_SOURCE`` by the caller -- never from
+a ``sys.path`` source override.  The units' shards are stamped through the
+source's own stable ``source-digests`` cache before anything is timed.
+
 The T-8 routed census encodes 5.3 s per expert projection at 0.56-0.60 of the
 GB10 power envelope, and a second exporter on the same GPU adds nothing
 (KERNELS-20260930.md, T8R1 first layer quantum).  This times and profiles the
@@ -25,6 +37,7 @@ usage (inside the image; profile_unit_encode.sh runs it there):
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import subprocess
 import sys
@@ -36,7 +49,9 @@ import torch
 from safetensors import safe_open
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "src"))
+# Tessera comes from the selected interpreter's installed package; the source
+# tree is a binding target (TESSERA_PRODUCER_SOURCE), never an import root.
+# Only the experiments sibling is an import root, derived from __file__.
 sys.path.insert(0, str(ROOT / "experiments"))
 
 from tessera.export import (ActivationSource, encode_linear_planes,        # noqa: E402
@@ -49,13 +64,22 @@ PROJECTIONS = ("gate_proj", "up_proj", "down_proj")
 
 
 class Power:
-    """NVML power at ``hz`` on a thread, between start() and stop()."""
+    """NVML power at ``hz`` on a thread, between start() and stop().
+
+    ``stop()`` keeps its summary AND the observed evidence: the device's UUID
+    (so a Netdata ``nvidia_smi.gpu_power_draw`` series joins by device, not by
+    host), the exact sample window in UTC, and the trapezoid integral over
+    this leg's own timestamped samples -- work/J derives that integral, never
+    a mean-times-time fabrication.  ``stop(series_path=...)`` also writes the
+    samples themselves, one JSON object per line.
+    """
 
     def __init__(self, hz: float = 10.0):
         import pynvml
         pynvml.nvmlInit()
         self._nvml = pynvml
         self._h = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
+        self.uuid = pynvml.nvmlDeviceGetUUID(self._h)
         self._dt = 1.0 / hz
         self.samples: list[tuple[float, float]] = []
         self._stop = threading.Event()
@@ -70,16 +94,36 @@ class Power:
         self._t = threading.Thread(target=self._run, daemon=True)
         self._t.start()
 
-    def stop(self) -> dict:
+    def series(self, path: Path):
+        """This leg's timestamped NVML samples, one JSON object per line."""
+        with Path(path).open("w") as handle:
+            for t, w in self.samples:
+                handle.write(json.dumps({"epoch_s": round(t, 3), "w": w}) + "\n")
+
+    def stop(self, series_path: Path | None = None) -> dict:
         self._stop.set()
         self._t.join()
         w = sorted(p for _, p in self.samples)
         if not w:
             return {"samples": 0}
         n = len(w)
-        return {"samples": n, "mean_w": round(sum(w) / n, 2), "p10_w": w[n // 10],
-                "p50_w": w[n // 2], "p90_w": w[int(n * 0.9)], "max_w": w[-1], "envelope_w": 140.0,
-                "mean_envelope_frac": round(sum(w) / n / 140.0, 3)}
+        ts = self.samples
+        # Observed energy: trapezoid over this leg's own timestamped samples.
+        joules = sum((ts[i + 1][0] - ts[i][0]) * (ts[i][1] + ts[i + 1][1]) / 2.0
+                     for i in range(len(ts) - 1))
+        rec = {"samples": n, "mean_w": round(sum(w) / n, 2), "p10_w": w[n // 10],
+               "p50_w": w[n // 2], "p90_w": w[int(n * 0.9)], "max_w": w[-1], "envelope_w": 140.0,
+               "mean_envelope_frac": round(sum(w) / n / 140.0, 3),
+               "device_uuid": self.uuid,
+               "window_utc": [datetime.datetime.fromtimestamp(ts[0][0], datetime.timezone.utc)
+                              .strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+                              datetime.datetime.fromtimestamp(ts[-1][0], datetime.timezone.utc)
+                              .strftime("%Y-%m-%dT%H:%M:%S.%fZ")],
+               "joules": round(joules, 3)}
+        if series_path is not None:
+            self.series(series_path)
+            rec["series"] = str(series_path)
+        return rec
 
 
 def unit_names(src: Path, layer: int, experts: list[int]) -> list[str]:
@@ -91,6 +135,45 @@ def read_tensor(src: Path, name: str) -> torch.Tensor:
     index = json.loads((src / "model.safetensors.index.json").read_text())["weight_map"]
     with safe_open(str(src / index[name]), framework="pt") as h:
         return h.get_tensor(name)
+
+
+#: The existing stable shard-digest cache beside the stubs source: ONE cache,
+#: the one the campaign exports already warmed, never a second one.
+DEFAULT_DIGEST_CACHE = SRC.parent / "source-digests"
+
+
+def shards_for(src: Path, names) -> list[str]:
+    """The sorted shard leaves exactly ``names`` live on -- no whole-source read."""
+    index = json.loads((Path(src) / "model.safetensors.index.json").read_text())["weight_map"]
+    missing = sorted(set(names) - set(index))
+    if missing:
+        raise KeyError(f"source index does not name {len(missing)} requested units, "
+                       f"e.g. {missing[:3]}")
+    return sorted({index[n] for n in names})
+
+
+def bind_source(src: Path, names, cache_dir: Path) -> dict:
+    """Stamp the shards these units read, through the source's one stable cache.
+
+    ``source_part_identity`` over ONLY the shards holding the selected units
+    (a 4.3 GB stub shard, not the 79 GB source); the cache's receipt names how
+    every digest was established (cached/hashed) and ``digest_s`` is the
+    caller's budget evidence.  Provenance is never silently excluded: if a
+    cold cache eats its budget, the caller stops and this binding is the
+    receipt it stops with.
+    """
+    from tessera.serving_parts import source_part_identity
+    from tessera.source_digest_cache import SourceDigestCache
+    shards = shards_for(src, names)
+    started = time.perf_counter()
+    digest_cache = SourceDigestCache(cache_dir, source=src)
+    identity = source_part_identity(src, shards, digest_cache=digest_cache)
+    digest_s = time.perf_counter() - started
+    receipt = digest_cache.receipt()
+    return {"shards": shards, "digest_s": round(digest_s, 3),
+            "cache": str(digest_cache.directory),
+            "cached_shards": receipt["cached_shards"], "hashed_shards": receipt["hashed_shards"],
+            "receipt": receipt, "identity": identity}
 
 
 def encode_one(name, source, grid, q256, recipe, activation, verify=True):
@@ -119,6 +202,12 @@ def main() -> int:
     ap.add_argument("--producer-authority", type=Path, required=True)
     ap.add_argument("--units", type=int, default=4, help="timed units (after one warm unit)")
     ap.add_argument("--first-expert", type=int, default=112)
+    ap.add_argument("--source-digest-cache", type=Path, default=DEFAULT_DIGEST_CACHE,
+                    help="the source's own stable shard-digest cache (default: the "
+                         "source-digests beside --src); never a second cache")
+    ap.add_argument("--bind-max-s", type=float, default=420.0,
+                    help="stop before the timed units when stamping the shards cost more "
+                         "than this; the partial receipt with the binding is the record")
     args = ap.parse_args()
     if not torch.cuda.is_available():
         raise SystemExit("a GPU measurement with no GPU")
@@ -138,6 +227,9 @@ def main() -> int:
     t_read = time.perf_counter()
     sources = {n: read_tensor(args.src, n) for n in names}
     read_s = time.perf_counter() - t_read
+    # Bind exactly the shards these units live on, through the stable cache --
+    # before anything is timed; a cold cache that eats its budget stops here.
+    bound = bind_source(args.src, names, args.source_digest_cache)
     rec = {
         "schema": "tessera.t8_census.profile_unit_encode.v1",
         "tree": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True,
@@ -148,7 +240,19 @@ def main() -> int:
                    "window_bits": recipe.window_bits, "span": recipe.span},
         "hessian": str(args.hessian), "verify": True,
         "source_read_s": round(read_s, 3), "source_read_units": len(names),
+        "source_binding": {k: bound[k] for k in
+                           ("shards", "digest_s", "cache", "cached_shards", "hashed_shards",
+                            "receipt")},
+        "source_identity": bound["identity"],
+        "bind_max_s": args.bind_max_s, "unmeasured": [],
     }
+    if bound["digest_s"] > args.bind_max_s:
+        rec["unmeasured"].append({"stage": "timed/counted/profiled units",
+                                  "reason": "source binding consumed its budget",
+                                  "bind_s": bound["digest_s"], "bind_max_s": args.bind_max_s})
+        (args.out / "profile_unit_encode.json").write_text(json.dumps(rec, indent=1))
+        print(json.dumps({"stopped": "bind budget", "unmeasured": rec["unmeasured"]}, indent=1))
+        return 3
     queue = list(names)
 
     # Warm: compiles, captures and plan caches are paid once.
@@ -172,7 +276,7 @@ def main() -> int:
                       "wire_bytes": int(exported.exact_bytes), "rows": int(exported.rows),
                       "cols": int(exported.columns)})
     rec["timed"] = {"units": times, "mean_s": round(sum(t["s"] for t in times) / len(times), 3),
-                    "power": power.stop()}
+                    "power": power.stop(series_path=args.out / "timed-power.jsonl")}
 
     # Counted: which window-Viterbi path ran, and how often.
     from moe_encode_rate_profile import Counters

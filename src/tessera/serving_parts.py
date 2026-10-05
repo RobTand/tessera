@@ -14,6 +14,7 @@ import re
 import shutil
 import stat
 import struct
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -288,6 +289,91 @@ def source_roster_identity(source: Path) -> dict:
             "tensors": tensors}
 
 
+def exporter_code_root() -> Path:
+    """The tree :func:`export_identity` digests for this running exporter.
+
+    A checkout's root (holding ``src/`` and ``experiments/``) when the
+    module resolves from a checkout; the directory holding the ``tessera``
+    package (a checkout's ``src/``, or ``site-packages``) when it resolves
+    from an install -- the same derivation as
+    ``tessera.serving.source_identity._default_root`` (#691 item 4).
+    Anything else is refused with its location, not hashed as whatever
+    two parents up happens to be.
+    """
+    holder = Path(__file__).resolve().parents[1]
+    checkout = holder.parent
+    if holder.name == "src" and (checkout / "experiments").is_dir():
+        return checkout
+    if (holder / "tessera" / "serving").is_dir():
+        return holder
+    raise SystemExit(
+        f"cannot locate the Tessera code root from {__file__}: {holder} "
+        "is neither a checkout src/ with an experiments/ sibling nor a "
+        "directory holding an installed tessera package.")
+
+
+def _installed_commit_id() -> "str | None":
+    """The commit the running Tessera was installed from, if recorded.
+
+    A non-editable pip install from git records ``direct_url.json`` with the
+    commit in its dist-info; an editable install is a checkout, so git
+    answers before this is ever asked.  The search is restricted to the
+    directory holding the imported ``tessera`` package: a global scan would
+    happily return some OTHER environment's install of Tessera, which is
+    the same provenance hole stamped as a value (#691 item 4).
+    """
+    holder = Path(__file__).resolve().parents[1]
+    try:
+        from importlib.metadata import distributions
+    except ImportError:
+        return None
+    for dist in distributions(path=[str(holder)]):
+        try:
+            text = dist.read_text("direct_url.json")
+        except Exception:
+            continue
+        if not text:
+            continue
+        try:
+            info = json.loads(text)
+        except ValueError:
+            continue
+        commit = (info.get("vcs_info") or {}).get("commit_id")
+        if commit:
+            return commit
+    return None
+
+
+def git_hash() -> str:
+    """The commit this build came from -- git, the environment, or the install.
+
+    A build that runs on a synced copy of the tree has no ``.git`` and used to
+    stamp ``unknown``, which is a provenance hole in an artifact whose whole
+    claim is that the surrogate, the KL and the bytes are one rendering.
+    ``TESSERA_GIT`` is how the caller supplies it when git cannot; a
+    non-editable install from git stamps its ``direct_url.json`` commit
+    (#691 item 4).  When none of the three answers, this refuses instead of
+    stamping ``unknown``.
+    """
+    import os
+
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
+    except Exception:
+        pass
+    caller = os.environ.get("TESSERA_GIT")
+    if caller:
+        return caller
+    commit = _installed_commit_id()
+    if commit:
+        return commit
+    raise SystemExit(
+        "cannot stamp the Tessera commit: no git checkout above the running "
+        "module, no TESSERA_GIT in the environment, and the installed Tessera "
+        "records no commit in its direct_url.json (not a pip install from "
+        "git). Set TESSERA_GIT to the commit this code came from.")
+
+
 def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
                     shards=None, *, digest_cache=None) -> dict:
     """What every serving part of one export must agree on, plus its own input.
@@ -326,8 +412,14 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
         digest.update(b"\0")
     return {"source": source_part_identity(source, shards, digest_cache=digest_cache),
             "code_sha256": digest.hexdigest(),
-            # The dispatch command pins this image. Its observed runtime identity
-            # belongs to the PrismaBuild receipt, not a self-attestation here.
+            # The dispatch command pins this image as the READER/runtime the
+            # parts are destined to serve on. It is never a claim about the
+            # process that WROTE the part: a selected host producer's own
+            # environment is its authenticated receipt
+            # (tessera.export_serving.authenticate_producer_python, sealed in
+            # identity["producer"]), and that producer does not execute this
+            # image. The image's observed runtime identity belongs to the
+            # PrismaBuild receipt, not a self-attestation here.
             "runtime_image": runtime_image, "options": options}
 
 

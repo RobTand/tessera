@@ -6294,6 +6294,100 @@ An explicit positive `--attempt` selects fresh output, container and local
 census paths after a failed stage. Automatic retries retain the same attempt
 and refuse its existing directory; no previous receipt is overwritten.
 
+### 4.4e The selected producer: what its receipt proves, and what it never claims
+
+A partition producer that claims a genuine lineage is **selected**, not
+trusted: it names its interpreter in `TESSERA_PRODUCER_PYTHON` and its source
+in `TESSERA_PRODUCER_SOURCE` (the checkout's `src/tessera`), and
+`tessera.export_serving.authenticate_producer_python()` -- called first in
+the exporter's `main`, before any source or output operation -- refuses every
+non-genuine spelling by exact variable name and returns the receipt the
+artifacts seal.  With no selection the exporter is exactly what it was.
+
+The receipt (`tessera.producer_python.v1`) is a proof, not a claim; each
+field is earned or there is no receipt:
+
+- **The interpreter**, by exact absolute path against `sys.executable` --
+  never by the resolved binary alone, because different environments share
+  one resolved executable -- and by the executable file's own sha256, beside
+  `sys.prefix` and the process's observed Python and torch versions.
+- **The code**, twice over: the source reference must be a clean Git
+  checkout at a 40-hex HEAD that `git merge-base --is-ancestor` proves
+  descends from the genuine ancestor
+  `b770727c50eef822132518bdc4fd6efe84359c9e`, with no modified or untracked
+  file under the package (a dirty clone cannot claim its HEAD commit) -- and
+  the expected payload's bytes are read from the HEAD tree's OBJECTS (one
+  `git archive` pass), the packaging config included, because a status check
+  alone can be concealed from (assume-unchanged, skip-worktree); the
+  payload is that HEAD tree **projected to exactly what a wheel built from
+  the committed packaging config ships**
+  (`tessera.source_profiles.shipped_payload_paths`, derived from
+  `[tool.setuptools.packages.find]` and `[tool.setuptools.package-data]` --
+  `tessera._dev` is repository tooling and no wheel carries it).  The actual
+  payload is the tessera the selected interpreter **imported**, and it must
+  be that interpreter's installed distribution --
+  `importlib.metadata` restricted to the imported holder, `locate_file`
+  demonstrating the payload, and every already-loaded `tessera.*` module --
+  the running exporter included -- originating in that payload, bound by
+  module-relative name, so an installed `__init__` beside a shadowed
+  submodule is a refusal and a PYTHONPATH or experiments-shim shadow is
+  refused even when its bytes are equal.  The two payload digests
+  (`tessera.package_source.v2` framing) must match, the shipped roster must
+  match file for file, and `serving/runtime_contract.json` must match byte
+  for byte besides -- the source profiles cover code, not data.  A transient
+  install-vs-checkout drift is a refusal, not a tolerance.
+- **No environment claim substitutes for any of it**: `TESSERA_GIT` is never
+  read on this path.  A selected producer stamps its receipt's verified
+  `git_head` as the manifest's commit -- a wheel built from a local source
+  archive has neither `.git` above it nor a direct_url commit, and the
+  receipt's exact Git payload proof is the stronger authority.  The
+  unselected exporter keeps `git_hash`'s existing git/`TESSERA_GIT`/install
+  fallbacks unchanged.
+
+The partition stamp carries the receipt **inside** `export_partition.identity`,
+so the merge's existing exact comparison refuses joins across producers,
+across scale bindings, and across a part written before receipts existed --
+no schema bypass, no compatibility shim, no waiver.  `runtime_image` stays
+what it always was: the reader/runtime image the parts are destined to serve
+on, pinned by the dispatch command -- never a claim about the process that
+wrote the part; a selected host producer executes its own venv, and its
+environment is the receipt, not the image.
+
+### 4.4f The joined fresh encode: a machine schedule, sealed anyway
+
+`--encode-batch N` (default 1) hands N same-shape units of one stack to
+`encode_linears_planes`, whose per-unit blobs are byte-identical to the
+one-unit encode.  The grouping owner (`export_serving.plan_joined_encodes`
+over `fresh_expert_units`, executed by `JoinedExpertEncode`) groups by
+`(stack, rows, cols)` across source names within each shard -- a real census
+checkpoint names every expert projection as its own tensor, so per-name
+grouping would join nothing -- takes each key's units in shard order `N` at
+a time, and commits results in the original shard/name/unit order; down and
+up orientations simply flush as different keys.  No scheduler, no cache;
+temporary batch outputs only.
+
+Because the only defence of "moves no byte" is a test that ran, the knob is
+sealed anyway: the effective value is recorded in the manifest
+(`encode_batch`, plus the observed per-call width histogram
+`encode_batch_observed`) and carried in a part identity's options, so parts
+batched differently refuse to merge.  A width-N throughput claim cites the
+observed histogram, never the requested knob alone.  The byte-proof harness
+(`experiments/audit_byte_baseline.py`) carries a `batch` matrix over the
+joined entry at the rungs the routed census selects, so a change that moves
+only joined-call bytes is seen; `tests/test_audit_byte_baseline.py` proves
+each row is the digest of one real joined call.
+
+The bounded original-source probe uses that same fresh prepare/encode/finish
+owner, without publishing a partial census checkpoint. Its sequential anchor
+and joined leg exclude the same source-read interval, require bitwise equality
+before timing claims, and capture both in-process profiles before consuming
+the remaining action deadline. A partial schedule reports completed unit names,
+actual group widths and observed GPU joules, with the unmeasured remainder
+named. Complete-stack minutes are extrapolated from each measured shape's
+cost weighted by the declared whole-stack shape population; an imbalanced
+prefix is not treated as the population, and a missing shape stays unmeasured.
+Neither this packet nor a new producer adopts a native reader or serving pin.
+
 ### 4.5 The census attests the route, not the quality -- and engagement, not agreement
 
 `experiments/ts5_moe_served.sh` requires success from all three arms: the
