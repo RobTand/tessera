@@ -173,7 +173,7 @@ Both live ranks acknowledge failed-cleaned before returning; a dead peer ends
 that wait immediately, and the wait retains five seconds for broker stop.
 Absent physical custody remains explicit. A sampled guard is not continuous:
 an inter-sample drop is not intercepted and clean samples are not immunity.
-intercepted, and clean samples are not immunity. `window_driver.py --prepare`
+`window_driver.py --prepare`
 emits `rdv/memory-policy.json` once and binds its SHA into the submitted
 inputs; each rank writes `rdv/memory-samples-rank<N>.jsonl` and
 `rdv/memory-summary-rank<N>.json` (raw samples with baseline/minimum/counter
