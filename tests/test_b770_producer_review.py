@@ -219,8 +219,18 @@ def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, 
         capture_output=True, text=True, timeout=90)
     text = done.stdout + done.stderr
     assert done.returncode != 0
-    field = "TESSERA_PRODUCER_PYTHON" if leg == "interpreter" else "TESSERA_PRODUCER_SOURCE"
-    assert field in text, f"{leg}: actual process never authenticated: {text}"
+    if leg == "interpreter":
+        assert "TESSERA_PRODUCER_PYTHON" in text, f"{leg}: actual process never authenticated: {text}"
+    else:
+        # The installed package here is this repository's, the source is the frozen
+        # genuine checkout. The roster check runs first and names the interpreter
+        # variable when their file lists differ; the byte digest names the source
+        # variable when the lists agree. Either refuses the installed payload, and
+        # which one fires depends on the two file lists, not on this case. Each is
+        # pinned on its own in test_export_serving.
+        assert "the installed payload" in text and (
+            "projected wheel roster" in text or "TESSERA_PRODUCER_SOURCE" in text), \
+            f"{leg}: actual process never authenticated: {text}"
     assert "a GPU measurement with no GPU" not in text
 
 
