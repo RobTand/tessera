@@ -952,7 +952,21 @@ def _merged_batch_widths(loaded) -> dict | None:
         return None
     widths = {}
     for row in loaded:
-        for width, calls in row[3]["encode_batch_observed"].items():
+        histogram = row[3]["encode_batch_observed"]
+        if type(histogram) is not dict:
+            raise ValueError(
+                f"partition {row[0]}: encode_batch_observed must be an object of width "
+                f"counts, got {type(histogram).__name__}")
+        limit = row[3].get("encode_batch")
+        for width, calls in histogram.items():
+            # A width is a canonical decimal from 1 up to the part's own encode_batch:
+            # "08" would read as 8 and become a second entry for it, and no joined call
+            # is wider than the knob that bounds it.
+            if (type(width) is not str or not re.fullmatch(r"[1-9][0-9]*", width)
+                    or type(limit) is not int or int(width) > limit):
+                raise ValueError(
+                    f"partition {row[0]}: encode_batch_observed[{width!r}] is not a width "
+                    f"from 1 up to the part's encode_batch ({limit!r})")
             # Exactly an integer: a boolean would sum as 0 or 1 and a fraction would
             # stay one, claiming a count the part's own input does not establish.
             if type(calls) is not int or calls < 0:

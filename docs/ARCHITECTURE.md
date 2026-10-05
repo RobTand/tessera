@@ -6630,7 +6630,11 @@ observed-width counts across every part, and omit the whole-run histogram
 when any legacy part supplies no observation. A count that is not exactly a
 non-negative integer (a boolean, a fraction, a string, a negative) refuses the
 merge by name, naming the part and `encode_batch_observed`, rather than being
-summed into a histogram the part's input does not establish. The byte-proof harness
+summed into a histogram the part's input does not establish. So does a histogram
+that is not an object, or a key that is not a canonical decimal width from 1 up
+to that part's own `encode_batch` (`"08"`, `"0"`, a negative, a non-number, or a
+width above the knob), because such a key would read as a width it does not
+name. The byte-proof harness
 (`experiments/audit_byte_baseline.py`) carries a `batch` matrix over the
 joined entry at the rungs the routed census selects, so a change that moves
 only joined-call bytes is seen; `tests/test_audit_byte_baseline.py` proves
