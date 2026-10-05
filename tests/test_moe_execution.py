@@ -84,3 +84,20 @@ def test_carried_config_refuses_numeric_type_aliases(field, value):
     record["config"][field] = value
     with pytest.raises(ValueError, match="research_selected_moe"):
         ResearchSelectedMoeInput.from_record(record)
+
+
+@pytest.mark.parametrize("degree", [1, 2])
+def test_checkpoint_declares_each_supported_tensor_parallel_degree(degree):
+    block = _block()
+    block["expected_tensor_parallel_size"] = degree
+    config = ResearchSelectedMoeConfig.from_checkpoint(block)
+    assert config.expected_tensor_parallel_size == degree
+    assert config.as_checkpoint() == block
+
+
+@pytest.mark.parametrize("degree", [-1, 0, 3, True, 1.0, "1", None])
+def test_checkpoint_refuses_degree_outside_exact_integer_grammar(degree):
+    block = _block()
+    block["expected_tensor_parallel_size"] = degree
+    with pytest.raises(ValueError, match="expected_tensor_parallel_size must be exactly 1 or 2"):
+        ResearchSelectedMoeConfig.from_checkpoint(block)
