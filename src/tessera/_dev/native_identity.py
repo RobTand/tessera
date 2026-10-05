@@ -36,6 +36,9 @@ def native_cache_mount(path) -> tuple[Path, Path, str]:
             separator = fields.index("-")
             if separator < 6 or len(fields) < separator + 4:
                 raise ValueError("incomplete mount fields")
+            mount_id, parent_id = int(fields[0]), int(fields[1])
+            if mount_id <= 0 or parent_id <= 0:
+                raise ValueError("invalid mount identity")
             mountpoint = Path(re.sub(r"\\([0-7]{3})",
                                     lambda match: chr(int(match[1], 8)), fields[4]))
             if not mountpoint.is_absolute():
@@ -44,15 +47,26 @@ def native_cache_mount(path) -> tuple[Path, Path, str]:
         except (ValueError, IndexError) as exc:
             raise RuntimeError(f"cache path {cache}: mount provenance is malformed") from exc
         if parent.is_relative_to(mountpoint):
-            matches.append((mountpoint, filesystem))
+            matches.append((mountpoint, filesystem, mount_id, parent_id))
     if not matches:
         raise RuntimeError(f"cache path {cache}: mount provenance is not recorded")
-    depth = max(len(mountpoint.parts) for mountpoint, _ in matches)
-    deepest = [(mountpoint, filesystem) for mountpoint, filesystem in matches
-               if len(mountpoint.parts) == depth]
-    if len(deepest) != 1:
+    depth = max(len(match[0].parts) for match in matches)
+    deepest = [match for match in matches if len(match[0].parts) == depth]
+    parents = {mount_id: parent_id for _, _, mount_id, parent_id in deepest}
+    covered = {parent_id for mount_id, parent_id in parents.items() if parent_id != mount_id}
+    visible = [match for match in deepest if match[2] not in covered]
+    if len(parents) != len(deepest) or len(visible) != 1:
         raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
-    mountpoint, filesystem = deepest[0]
+    # A stack is one parent chain ending at its visible top, not sibling
+    # mounts or a disconnected cycle. Mount IDs are identities, not order.
+    seen = set()
+    current = visible[0][2]
+    while current in parents and current not in seen:
+        seen.add(current)
+        current = parents[current]
+    if len(seen) != len(parents):
+        raise RuntimeError(f"cache path {cache}: mount provenance is ambiguous")
+    mountpoint, filesystem, _, _ = visible[0]
     return cache, mountpoint, filesystem
 
 
