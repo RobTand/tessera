@@ -16,7 +16,14 @@ the same two halves on both:
 - the PADDED REPLAY.  vLLM's V2 runner (``CudaGraphManager``) runs a batch of n
   tokens in the smallest captured graph of its family that holds it, and some
   kernels pick their reduction by token count, so a batch replayed in a larger
-  graph is another computation.
+  graph is another computation;
+- the FROZEN HOST BRANCH.  A FULL capture builds its attention metadata at
+  ``max_seq_len = max_model_len`` "so the graph is valid at any replay", and a
+  replay re-runs no Python, so a host-side branch on ``max_seq_len`` is frozen
+  at its long-context side.  GLM5-next's indexer takes such a branch at its
+  ``index_topk`` (tessera#702 cause 2).  :func:`branch_capture_bounds` names
+  one capture per side of every such threshold, and :func:`branch_bound` the
+  one a step replays (``glm53_graphs`` installs them).
 
 Pure: no vLLM import at module level.  Enum members are compared by NAME and a
 resolved mode is constructed from the input's own enum class, so the CPU tests
@@ -26,8 +33,9 @@ from __future__ import annotations
 
 from typing import Any
 
-__all__ = ["EAGER_IR_OPS", "graph_mode", "num_draft_tokens", "op_implementation_gap",
-           "padded_families", "padded_token_counts"]
+__all__ = ["EAGER_IR_OPS", "branch_bound", "branch_capture_bounds", "graph_mode",
+           "num_draft_tokens", "op_implementation_gap", "padded_families",
+           "padded_token_counts"]
 
 #: The op implementations compilation mode NONE resolves, which the eager
 #: reference runs: vLLM appends custom op ``"all"`` unless inductor compiles
@@ -138,3 +146,29 @@ def op_implementation_gap(config: Any) -> str | None:
             gaps.append(f"IR op {op} resolves to {order}, not ['vllm_c', 'native']")
     return "; ".join(gaps) or None
 
+
+
+def branch_capture_bounds(thresholds: Any, max_model_len: int) -> tuple[int, ...]:
+    """The ``max_seq_len`` each class of FULL graphs is captured at, ascending.
+
+    A host branch of the form ``max_seq_len <= t`` splits the steps a serve can
+    run at ``t``: every step at or below it takes one side, every step above it
+    the other. One class per side of every threshold below ``max_model_len``,
+    each captured at its own upper end, which is vLLM's own worst-case capture
+    argument applied inside the class rather than across the whole range: a
+    class's steps all take the branch its capture took. The last bound is
+    ``max_model_len`` itself, the bound vLLM captures at. A threshold at or
+    above ``max_model_len`` splits nothing a serve can run.
+    """
+    if max_model_len < 1:
+        raise ValueError(f"max_model_len must be positive; got {max_model_len}")
+    below = sorted({int(t) for t in thresholds if 0 < int(t) < max_model_len})
+    return (*below, int(max_model_len))
+
+
+def branch_bound(bounds: tuple[int, ...], max_seq_len: int) -> int:
+    """The class a step with this ``max_seq_len`` replays: the smallest bound that holds it."""
+    for bound in bounds:
+        if max_seq_len <= bound:
+            return bound
+    raise ValueError(f"max_seq_len {max_seq_len} exceeds every captured bound {list(bounds)}")

@@ -7783,10 +7783,51 @@ What this does not establish:
   unchanged eager TR3 panel.
 - Decode replays FULL graphs captured at `max_seq_len = max_model_len`. On
   image `5be13705` that is eager-equivalent only at `max_model_len <= 2048`
-  (cause 2, tessera#702), and the release serve runs 8448.
-- The MTP drafter under graphs has no receipt (tessera#695).
+  (cause 2, tessera#702), and the release serve runs 8448. Since tessera#702
+  the plugin captures one class of graphs per side of `index_topk` and pins
+  unpadded capture sizes; see §5.1.2a.
 
 Receipt: [the release serve's mode NONE](measurements/2026-10-01-glm-release-serve-mode-none.md).
+
+### 5.1.2a A GLM-5.3 graph serve computes what its eager serve computes
+
+`src/tessera/serving/glm53_graphs.py` (tessera#702). Every cell, census and KL
+receipt was measured eager, so a Tessera GLM-5.3 CUDA-graph serve must run
+eager's arithmetic, or be refused. Three measured causes, three remedies:
+
+| Cause | Where | Remedy |
+|---|---|---|
+| 1. Operators: compile mode resolves `custom_ops ['none']` and `native` norms | frontend, before vLLM resolves defaults | `pin_eager_operators`: fill unset `custom_ops` with `all` and the two norm IR priorities with what `KernelConfig.set_platform_defaults` resolves at mode NONE |
+| 2. The GLM indexer's host branch `max_seq_len <= index_topk`, frozen by a capture at `max_model_len` | worker, graph capture and replay | per-`max_seq_len`-class capture: one set of FULL graphs per side of every `index_topk` (`graph_equivalence.branch_capture_bounds`), each captured at its own upper end; a replay takes the class holding the `max_seq_len` its step's metadata was built with |
+| 3. Padded replay: default capture sizes replay a batch of 5 in the size-8 graph | frontend | `pin_unpadded_capture_sizes`: where the serve named no sizes, capture every decode count `n * (1 + k)` |
+
+Causes 1 and 2 are pinned from the Glm5Next entry of vLLM's
+`MODELS_CONFIG_MAP` (registered by `register()`), which runs before vLLM fills
+either default; a value the serve set itself is never overwritten. The worker
+then judges the resolved config with `eager_gaps` (the one rule: operator gap,
+padded decode counts from `graph_equivalence.padded_families`, breakable
+piecewise graphs) and refuses a serve with any gap, by name, from
+`TesseraConfig.get_quant_method`. Cause 2 installs only on the inspected
+interface (`GRAPH_MODULES`, eight vLLM files digest-pinned to image
+`5be13705`) and only for structures read: PP, DP and context parallelism 1,
+no LoRA, MTP with at most one speculative token, at most 64 decode rows per
+graph and `max_model_len <= 32768` (`persistent_topk`'s sampled and radix
+paths are not split). Anything else refuses. An eager serve, and a graph serve
+at `max_model_len <= index_topk`, need no class split.
+
+**The receipt.** `src/tessera/graph_receipt.py` is the one home of the
+`tessera.graph_equals_eager.v1` receipt, its rule and `verify(receipt,
+serve)`. It sits outside `tessera.serving` so a producer (PrismaQuant's
+ship-card check) can import it without the serving plugin. An arm is equal
+when every choice of both passes of the tessera#508 equality set is
+bit-identical to some eager run of the same batch, and every captured size
+and class replayed. `verify` re-applies the rule and matches the serve's
+image, model config digest, Tessera source digest, compilation config,
+speculative tokens, `max_model_len`, `max_num_seqs` and TP size exactly;
+nothing is extrapolated. Contexts above `index_topk` are a screen only:
+there eager does not reproduce itself.
+
+Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
 ### 5.1.3 GLM-5.3 prefill overrides
 

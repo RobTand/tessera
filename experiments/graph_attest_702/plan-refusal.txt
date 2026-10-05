@@ -1,0 +1,2 @@
+# fail-closed check: explicit padded sizes must be refused at startup by name (no receipt; read the engine log)
+rZ1 EAGER=0 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY","cudagraph_capture_sizes":[1,2,4,8]}
