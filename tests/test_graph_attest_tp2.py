@@ -328,3 +328,12 @@ def test_dry_recipe_declares_one_window_including_owned_cleanup(tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "5400-second whole-window" in done.stdout
     assert "cleanup reserve" in done.stdout
+
+
+@pytest.mark.parametrize("floor,allowed", [("2", True), ("16", False)])
+def test_optional_floor_input_uses_the_current_shared_policy(tmp_path, floor, allowed):
+    done = _dry_run(tmp_path, FLOOR_GIB=floor)
+    if allowed:
+        assert done.returncode == 0, done.stdout + done.stderr
+    else:
+        assert done.returncode == 3 and "FLOOR_GIB=2" in done.stdout

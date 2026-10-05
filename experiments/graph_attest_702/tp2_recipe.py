@@ -8,7 +8,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
-from managed_window import Refused
+from managed_window import MEMORY_POLICY, Refused
 from submit import parse_plan, IMAGE
 from eager_benchmark import MODE as EAGER_MODE
 
@@ -96,8 +96,8 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
     if not (artifact / "config.json").is_file():
         raise Refused(f"ARTIFACT has no config.json: {artifact}")
     for name, expected in {"MAX_NUM_SEQS": "1" if mode == EAGER_MODE else "4", "MAX_MODEL_LEN": "8448",
-                           "KV_BYTES": "2147483648", "FLOOR_GIB": "16",
-                           "EXPECT_PEAK_GIB": "98", "MAX_BATCHED": "2048",
+                           "KV_BYTES": "2147483648", "FLOOR_GIB": f"{MEMORY_POLICY['abort_below_gib']:g}",
+                           "EXPECT_PEAK_GIB": str(MEMORY_POLICY["model_kv_estimate_gib"]), "MAX_BATCHED": "2048",
                            "GPU_UTIL": "0.5", "MOE_BACKEND": "triton",
                            "SERVE_MODE": "resident", "HEAD_IP": "10.100.96.2",
                            "PEER_IP": "10.100.96.1", "IFACE": "enp1s0f0np0",
