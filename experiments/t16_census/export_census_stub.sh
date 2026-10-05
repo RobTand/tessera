@@ -53,7 +53,7 @@ LOG="$R/logs/export-$S-$TS.log"
 
 refuse() { echo "[export_census_stub] refuse: $*" | tee -a "$LOG" >&2; exit 2; }
 
-BOUND=${PART_BOUND_S:-2700}
+BOUND=${PART_BOUND_S-2700}
 case "$BOUND" in
   ''|*[!0-9]*) refuse "PART_BOUND_S=${PART_BOUND_S:-} is not a whole number of seconds";;
 esac

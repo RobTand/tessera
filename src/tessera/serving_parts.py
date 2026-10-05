@@ -946,6 +946,23 @@ def _prove_part_contents(rank, count, path, part, manifest, index, whole, hash_f
 
 
 
+def _merged_batch_widths(loaded) -> dict | None:
+    """The whole run's joined-encode width histogram, or None when any part lacks one."""
+    if not all("encode_batch_observed" in row[3] for row in loaded):
+        return None
+    widths = {}
+    for row in loaded:
+        for width, calls in row[3]["encode_batch_observed"].items():
+            # Exactly an integer: a boolean would sum as 0 or 1 and a fraction would
+            # stay one, claiming a count the part's own input does not establish.
+            if type(calls) is not int or calls < 0:
+                raise ValueError(
+                    f"partition {row[0]}: encode_batch_observed[{width!r}] must be a "
+                    f"non-negative integer count, got {calls!r}")
+            widths[width] = widths.get(width, 0) + calls
+    return dict(sorted(widths.items(), key=lambda item: int(item[0])))
+
+
 def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                         source_digest_cache=None) -> dict:
     """Prove identities, ownership and written tensor coverage before publishing.
@@ -1079,12 +1096,9 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                                       "config_groups": groups, "ignore": sorted(ignore)}
     manifest = copy.deepcopy(loaded[0][3])
     manifest.pop("export_partition")
-    if all("encode_batch_observed" in row[3] for row in loaded):
-        widths = {}
-        for row in loaded:
-            for width, calls in row[3]["encode_batch_observed"].items():
-                widths[width] = widths.get(width, 0) + calls
-        manifest["encode_batch_observed"] = dict(sorted(widths.items(), key=lambda item: int(item[0])))
+    observed = _merged_batch_widths(loaded)
+    if observed is not None:
+        manifest["encode_batch_observed"] = observed
     else:
         # A partial observation is not a histogram of the whole merged run.
         manifest.pop("encode_batch_observed", None)
