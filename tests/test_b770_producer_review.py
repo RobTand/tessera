@@ -139,6 +139,29 @@ def test_zero_bound_refuses_before_authentication(tmp_path, script):
     assert 'PART_BOUND_S' in done.stdout + done.stderr
 
 
+@pytest.mark.parametrize('script', [launcher.T8_LAUNCHER, launcher.T16_LAUNCHER])
+def test_empty_bound_refuses_before_authentication(tmp_path, script):
+    """An explicitly empty PART_BOUND_S is a malformed bound, not an unset one."""
+    done = subprocess.run(['bash', str(script), launcher.STUB, '0', '8'], cwd=ROOT,
+        env=launcher._launch_env(tmp_path, PART_BOUND_S='', TESSERA_PRODUCER_PYTHON='/absent',
+                                TESSERA_PRODUCER_SOURCE='/qualified/src/tessera'),
+        capture_output=True, text=True, timeout=30)
+    assert done.returncode == 2
+    assert 'PART_BOUND_S' in done.stdout + done.stderr
+
+
+def test_empty_bound_refuses_in_the_profile_wrapper_before_any_work(tmp_path):
+    out = tmp_path / 'profile'
+    done = subprocess.run(['bash', str(ROOT / 'experiments/t8_census/profile_unit_encode.sh'), str(out),
+        '--q256', '768', '--hessian', str(tmp_path / 'missing-capture')], cwd=ROOT,
+        env=launcher._launch_env(tmp_path, PART_BOUND_S='', TESSERA_PRODUCER_PYTHON=sys.executable,
+                                TESSERA_PRODUCER_SOURCE='/qualified/src/tessera'),
+        capture_output=True, text=True, timeout=30)
+    assert done.returncode == 2
+    assert 'PART_BOUND_S' in done.stdout + done.stderr
+    assert not out.exists(), 'the refusal must come before the output directory is made'
+
+
 def test_default_profile_authenticates_before_cuda_or_source_access(tmp_path, selected):
     out = tmp_path / 'profile'
     done = subprocess.run(['bash', str(ROOT / 'experiments/t8_census/profile_unit_encode.sh'), str(out),
@@ -204,6 +227,41 @@ def test_completion_binds_consumed_input_identity(tmp_path):
 
 
 
+def _refuses_the_installed_payload(text: str) -> bool:
+    """Whether ``text`` is the exporter refusing an installed payload that differs
+    from its source: the roster refusal or the byte-digest refusal."""
+    roster = "TESSERA_PRODUCER_PYTHON: the installed payload" in text and "projected wheel roster" in text
+    digest = "TESSERA_PRODUCER_SOURCE: the installed payload" in text
+    return roster or digest
+
+
+_PYTHONPATH_REFUSAL = (
+    "TESSERA_PRODUCER_PYTHON: the process imports tessera from /site/tessera/__init__.py. "
+    "A PYTHONPATH override is not the installed payload, whatever its bytes say.")
+
+
+@pytest.mark.parametrize("text, refuses", [
+    pytest.param(
+        "TESSERA_PRODUCER_PYTHON: the installed payload /site/tessera is not the projected wheel "
+        "roster (missing [], extra ['x.py']); the shipped code and declared package-data must match",
+        True, id="roster-refusal"),
+    pytest.param(
+        "TESSERA_PRODUCER_SOURCE: the installed payload /site/tessera does not match the source",
+        True, id="digest-refusal"),
+    pytest.param(
+        _PYTHONPATH_REFUSAL + "\nTESSERA_PRODUCER_SOURCE=/qualified/src/tessera",
+        False, id="pythonpath-refusal-plus-an-unrelated-source-line"),
+    pytest.param(
+        _PYTHONPATH_REFUSAL + "\nthe projected wheel roster is documented elsewhere",
+        False, id="pythonpath-refusal-plus-roster-words"),
+    pytest.param("", False, id="no-output"),
+])
+def test_the_payload_oracle_accepts_only_the_two_payload_refusals(text, refuses):
+    """The oracle must not be satisfied by a different refusal that happens to
+    mention the same words or variable."""
+    assert _refuses_the_installed_payload(text) is refuses
+
+
 @pytest.mark.parametrize("leg", ["interpreter", "payload"])
 def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, frozen_source):
     site = selected._fixture_install(tmp_path / "site")
@@ -228,8 +286,7 @@ def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, 
         # variable when the lists agree. Either refuses the installed payload, and
         # which one fires depends on the two file lists, not on this case. Each is
         # pinned on its own in test_export_serving.
-        assert "the installed payload" in text and (
-            "projected wheel roster" in text or "TESSERA_PRODUCER_SOURCE" in text), \
+        assert _refuses_the_installed_payload(text), \
             f"{leg}: actual process never authenticated: {text}"
     assert "a GPU measurement with no GPU" not in text
 

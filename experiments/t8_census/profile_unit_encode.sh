@@ -19,7 +19,7 @@ AUTH=${PRODUCER_AUTHORITY:-}
 case "$PY" in /*) ;; *) echo "TESSERA_PRODUCER_PYTHON must be absolute" >&2; exit 2;; esac
 [ -x "$PY" ] || { echo "TESSERA_PRODUCER_PYTHON is not executable: $PY" >&2; exit 2; }
 case "$SOURCE" in /*) ;; *) echo "TESSERA_PRODUCER_SOURCE must be absolute" >&2; exit 2;; esac
-BOUND=${PART_BOUND_S:-2700}
+BOUND=${PART_BOUND_S-2700}
 case "$BOUND" in ''|*[!0-9]*) echo "PART_BOUND_S must be an integer in 1..2700" >&2; exit 2;; esac
 [ "$BOUND" -ge 1 ] && [ "$BOUND" -le 2700 ] || {
   echo "PART_BOUND_S must be in 1..2700: $BOUND" >&2; exit 2;
