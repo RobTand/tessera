@@ -26,8 +26,8 @@ def _arm(name="rGR", members=48, replays=1, class_replays=1, cc=None):
     }
 
 
-def _receipt(*arms):
-    return gr.finish({"schema": gr.SCHEMA, "runtime": {"image": IMAGE},
+def _receipt(*arms, fabric="none"):
+    return gr.finish({"schema": gr.SCHEMA, "runtime": {"image": IMAGE, "fabric": fabric},
                       "model": {"config_sha256": "m" * 64}, "tessera": {"src_sha256": "s" * 64},
                       "arms": list(arms) or [_arm()]})
 
@@ -35,7 +35,8 @@ def _receipt(*arms):
 def _serve(**over):
     serve = {"image": IMAGE, "model_config_sha256": "m" * 64, "tessera_src_sha256": "s" * 64,
              "compilation_config": dict(RELEASE_CC), "speculative_tokens": 0,
-             "max_model_len": 8448, "max_num_seqs": 8, "tensor_parallel_size": 1}
+             "max_model_len": 8448, "max_num_seqs": 8, "tensor_parallel_size": 1,
+             "fabric": "none"}
     serve.update(over)
     return serve
 
@@ -105,3 +106,47 @@ def test_a_malformed_receipt_is_refused_with_a_reason_not_an_exception(damage):
     damage(receipt)
     why = gr.verify(receipt, _serve())
     assert isinstance(why, str) and "malformed" in why
+
+
+# ------------------------------------------------------------------ v2: the fabric is scope
+
+
+def _tp2_arm(**over):
+    arm = _arm(**over)
+    arm["tensor_parallel_size"] = 2
+    return arm
+
+
+def test_the_schema_is_v2_and_the_fabric_is_scope():
+    assert gr.SCHEMA == "tessera.graph_equals_eager.v2"
+    assert "fabric" in gr.SCOPE_FIELDS
+
+
+def test_a_socket_receipt_does_not_attest_a_roce_serve():
+    """dec-1005-003356-6ba2: an all-reduce over sockets and one over RoCE are two serves."""
+    receipt = _receipt(_tp2_arm(), fabric="socket")
+    why = gr.verify(receipt, _serve(tensor_parallel_size=2, fabric="roce"))
+    assert why is not None and "fabric" in why
+    assert gr.verify(receipt, _serve(tensor_parallel_size=2, fabric="socket")) is None
+
+
+def test_a_roce_receipt_attests_a_roce_serve():
+    receipt = _receipt(_tp2_arm(), fabric="roce")
+    assert gr.verify(receipt, _serve(tensor_parallel_size=2, fabric="roce")) is None
+
+
+@pytest.mark.parametrize("fabric, tp", [("none", 2), ("socket", 1), ("infiniband", 2), (None, 2)])
+def test_a_fabric_that_does_not_fit_the_serve_is_refused(fabric, tp):
+    """A tensor-parallel serve names socket or roce; a one-rank serve has no fabric ("none")."""
+    receipt = _receipt(_tp2_arm() if tp == 2 else _arm(), fabric=fabric)
+    why = gr.verify(receipt, _serve(tensor_parallel_size=tp, fabric=fabric))
+    assert why is not None and "fabric" in why
+
+
+def test_a_v1_receipt_stays_readable_but_verifies_no_card():
+    receipt = _receipt()
+    receipt["schema"] = "tessera.graph_equals_eager.v1"
+    del receipt["runtime"]["fabric"]
+    assert gr.finish(receipt)["verdict"] == "equal"           # still readable
+    why = gr.verify(receipt, _serve())
+    assert why is not None and "v1" in why and "fabric" in why
