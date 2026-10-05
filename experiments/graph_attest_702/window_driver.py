@@ -197,11 +197,12 @@ def submit(root: Path, reviews: Path):
         if accepted.get("verdict") != "APPROVE" or code_heads != {accepted.get("head_sha")}:
             raise Refused(f"missing exact executing-code {who} review; no real model start")
     if setup["config"].get("window_mode") == recipe.EAGER_MODE:
+        # The corrected-runtime candidate review is an exact-head code review of the
+        # PQ pin commit, not a recorded run identity: it refuses in dev and certified.
         for who in ("parent", "D5"):
             candidate = review.get("runtime", {}).get(who, {})
-            seal_check(f"runtime candidate {who}", {"verdict": "APPROVE", "head_sha": setup["config"]["pq_pin_commit"]},
-                       candidate, where="Window4 runtime provenance",
-                       refusal=Refused(f"missing exact corrected runtime candidate {who} review; no Window4 model start"))
+            if candidate.get("verdict") != "APPROVE" or candidate.get("head_sha") != setup["config"]["pq_pin_commit"]:
+                raise Refused(f"missing exact corrected runtime candidate {who} review; no Window4 model start")
     for predecessor in setup["predecessors"]:
         terminal_cleanup(predecessor["identity"], read_terminal(predecessor["identity"], QUEUE))
     from datetime import datetime, timezone
