@@ -408,12 +408,181 @@ def test_research_loader_rejects_incomplete_duplicate_and_late_loading(original_
         method.apply(layer,torch.empty(0,HIDDEN),torch.empty(0,2),torch.empty(0,2,dtype=torch.int32),None,None)
 
 
-@pytest.mark.parametrize('field', ['tp_size','ep_size','dp_size'])
-def test_research_builder_refuses_multirank_without_borrowing_dense_support(original_wires,stub_runtime,field):
+_MISSING_PARALLEL_FIELD = object()
+# Discover dimensions and flags from the existing constructor seam, rather
+# than maintain a second topology roster. The tests pin exact integers equal
+# to one and literal False, independently of the guard's implementation.
+_PARALLEL_DEFAULTS = vars(_layer().moe_config.moe_parallel_config)
+_SIDE_DEGREES = tuple(field for field in _PARALLEL_DEFAULTS
+                      if field.endswith('_size') and field != 'tp_size')
+_PARALLEL_FLAGS = tuple(field for field, value in _PARALLEL_DEFAULTS.items()
+                       if type(value) is bool)
+
+
+def _parallel_method(scheme, layer, expected_tp):
+    config = moe_route.ResearchSelectedMoeConfig(
+        max_experts_per_chunk=2, expected_tensor_parallel_size=expected_tp)
+    return moe_route.build_tessera_moe_method(
+        scheme, 'm', 'resident', layer, research_selected=config)
+
+
+def _parallel_field(layer, field, value):
+    parallel = layer.moe_config.moe_parallel_config
+    if value is _MISSING_PARALLEL_FIELD:
+        delattr(parallel, field)
+    else:
+        setattr(parallel, field, value)
+
+
+@pytest.mark.parametrize('degree,rank', [(1, 0), (2, 0), (2, 1), (4, 3),
+                                        ('2', '1'), (2.0, 1.0), (True, False)])
+def test_ordinary_builder_reads_live_degree_and_rank(
+        original_wires, stub_runtime, degree, rank):
     layer = _layer()
-    setattr(layer.moe_config.moe_parallel_config,field,2)
-    with pytest.raises(ValueError,match='TP1/EP1/DP1'):
-        _build(original_wires[2],layer)
+    parallel = layer.moe_config.moe_parallel_config
+    parallel.tp_size, parallel.tp_rank = degree, rank
+    method = moe_route.build_tessera_moe_method(
+        original_wires[2], 'm', 'resident', layer)
+    assert (method._tp_size, method._tp_rank) == (int(degree), int(rank))
+    assert method._mode == 'resident'
+
+
+@pytest.mark.parametrize('field', _SIDE_DEGREES + _PARALLEL_FLAGS
+                         + ('defer_moe_finalize', 'skip_final_all_reduce'))
+def test_ordinary_builder_does_not_invoke_research_parallel_refusal(
+        original_wires, stub_runtime, monkeypatch, field):
+    layer = _layer()
+    parallel = layer.moe_config.moe_parallel_config
+    parallel.tp_size, parallel.tp_rank = 2, 1
+    if field in _SIDE_DEGREES:
+        setattr(parallel, field, 2)
+    elif field in _PARALLEL_FLAGS:
+        setattr(parallel, field, True)
+    else:
+        setattr(layer.moe_config, field, True)
+
+    def unexpected_research_context():
+        pytest.fail('ordinary construction must not ask for a research eager context')
+    monkeypatch.setattr(sys.modules['vllm.config'], 'get_current_vllm_config',
+                        unexpected_research_context)
+    method = moe_route.build_tessera_moe_method(
+        original_wires[2], 'm', 'resident', layer)
+    assert (method._tp_size, method._tp_rank) == (2, 1)
+
+
+# One and two are the deliberate declaration grammar, not a measured roster.
+@pytest.mark.parametrize('expected_tp,rank',
+                         [(degree, rank) for degree in (1, 2) for rank in range(degree)])
+def test_research_builder_accepts_every_declared_rank(
+        original_wires, stub_runtime, expected_tp, rank):
+    layer = _layer()
+    parallel = layer.moe_config.moe_parallel_config
+    parallel.tp_size, parallel.tp_rank = expected_tp, rank
+    method = _parallel_method(original_wires[2], layer, expected_tp)
+    assert (method._tp_size, method._tp_rank) == (expected_tp, rank)
+    assert method._mode == 'research_selected'
+
+
+@pytest.mark.parametrize('expected_tp,live_tp', [(1, 2), (2, 1), (2, 3)])
+def test_research_builder_refuses_degree_mismatch(
+        original_wires, stub_runtime, expected_tp, live_tp):
+    layer = _layer()
+    layer.moe_config.moe_parallel_config.tp_size = live_tp
+    with pytest.raises(ValueError, match=f'TP{expected_tp}/EP1/DP1/PCP1/SP1'):
+        _parallel_method(original_wires[2], layer, expected_tp)
+
+
+@pytest.mark.parametrize('expected_tp', [1, 2])
+@pytest.mark.parametrize('alias', ['bool', 'float', 'string', 'none'])
+def test_research_builder_refuses_degree_type_aliases(
+        original_wires, stub_runtime, expected_tp, alias):
+    layer = _layer()
+    value = {'bool': bool(expected_tp), 'float': float(expected_tp),
+             'string': str(expected_tp), 'none': None}[alias]
+    layer.moe_config.moe_parallel_config.tp_size = value
+    with pytest.raises(ValueError, match=f'TP{expected_tp}/EP1/DP1/PCP1/SP1'):
+        _parallel_method(original_wires[2], layer, expected_tp)
+
+
+@pytest.mark.parametrize('field', _SIDE_DEGREES)
+@pytest.mark.parametrize('value', [2, True, 1.0, None,
+                         pytest.param(_MISSING_PARALLEL_FIELD, id='missing')])
+def test_research_builder_requires_explicit_single_rank_side_dimensions(
+        original_wires, stub_runtime, field, value):
+    layer = _layer()
+    _parallel_field(layer, field, value)
+    with pytest.raises(ValueError, match='TP1/EP1/DP1/PCP1/SP1'):
+        _parallel_method(original_wires[2], layer, 1)
+
+
+@pytest.mark.parametrize('field', _PARALLEL_FLAGS)
+@pytest.mark.parametrize('value', [True, 0, None,
+                         pytest.param(_MISSING_PARALLEL_FIELD, id='missing')])
+def test_research_builder_requires_literal_false_parallel_flags(
+        original_wires, stub_runtime, field, value):
+    layer = _layer()
+    _parallel_field(layer, field, value)
+    with pytest.raises(ValueError, match='no EP/EPLB'):
+        _parallel_method(original_wires[2], layer, 1)
+
+
+@pytest.mark.parametrize('expected_tp', [1, 2])
+@pytest.mark.parametrize('boundary', ['below', 'past'])
+def test_research_builder_refuses_rank_outside_declared_degree(
+        original_wires, stub_runtime, expected_tp, boundary):
+    layer = _layer()
+    parallel = layer.moe_config.moe_parallel_config
+    parallel.tp_size = expected_tp
+    parallel.tp_rank = -1 if boundary == 'below' else expected_tp
+    with pytest.raises(ValueError, match='a valid rank'):
+        _parallel_method(original_wires[2], layer, expected_tp)
+
+
+@pytest.mark.parametrize('value', [False, 0.0, '0', None,
+                         pytest.param(_MISSING_PARALLEL_FIELD, id='missing')])
+def test_research_builder_requires_explicit_integer_rank(
+        original_wires, stub_runtime, value):
+    layer = _layer()
+    _parallel_field(layer, 'tp_rank', value)
+    with pytest.raises(ValueError, match='a valid rank'):
+        _parallel_method(original_wires[2], layer, 1)
+
+
+@pytest.mark.parametrize('expected_tp', [1, 2])
+def test_research_builder_refuses_deferred_finalize(
+        original_wires, stub_runtime, expected_tp):
+    layer = _layer()
+    layer.moe_config.moe_parallel_config.tp_size = expected_tp
+    layer.moe_config.defer_moe_finalize = True
+    with pytest.raises(ValueError, match='refuse deferred finalize'):
+        _parallel_method(original_wires[2], layer, expected_tp)
+
+
+def test_research_builder_refuses_skipping_final_reduction_at_two_ranks(
+        original_wires, stub_runtime):
+    layer = _layer()
+    layer.moe_config.moe_parallel_config.tp_size = 2
+    layer.moe_config.skip_final_all_reduce = True
+    with pytest.raises(ValueError, match='requires stock final all-reduce'):
+        _parallel_method(original_wires[2], layer, 2)
+
+
+def test_research_builder_allows_skipping_final_reduction_at_one_rank(
+        original_wires, stub_runtime):
+    layer = _layer()
+    layer.moe_config.skip_final_all_reduce = True
+    assert _parallel_method(original_wires[2], layer, 1)._tp_size == 1
+
+
+@pytest.mark.parametrize('expected_tp', [1, 2])
+@pytest.mark.parametrize('value', [False, None, 0])
+def test_research_builder_allows_falsey_finalize_and_reduction_flags(
+        original_wires, stub_runtime, expected_tp, value):
+    layer = _layer()
+    layer.moe_config.moe_parallel_config.tp_size = expected_tp
+    layer.moe_config.defer_moe_finalize = value
+    layer.moe_config.skip_final_all_reduce = value
+    assert _parallel_method(original_wires[2], layer, expected_tp)._tp_size == expected_tp
 
 
 def test_production_streamed_gate_is_not_an_alias_for_research(original_wires):
