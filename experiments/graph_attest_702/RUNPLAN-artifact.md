@@ -133,9 +133,13 @@ raises the original unchanged refusal text; the 16 GiB floor and guard
 cancellation refuse inside the wait; the model never launches below 114 GiB.
 One terminal wait report per call — threshold, 900-second bound, initial/last
 GiB, wall/monotonic times, every exact sample, and reason
-`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline` — is appended to
-`rdv/headroom-preflight-rank<rank>.jsonl` in the shared rendezvous and
-persists through refusal, cancellation and deadline. The unchanged 104/102 GiB
+`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error` — is appended
+to `rdv/headroom-preflight-rank<rank>.jsonl` and persists through refusal,
+cancellation, deadline or unavailable readings (unknown values stay unknown).
+Before container work, the model-start boundary rechecks the same 114 GiB bar
+after source checks and the peer barrier and records its per-arm synchronous
+sample at `rdv/<arm>-launch-headroom-rank<rank>.json`. A prior ready wait never
+authorizes a below-threshold launch. The unchanged 104/102 GiB
 demand caps and every admission predicate are untouched: this is a bounded
 predicate-satisfaction wait, not a new admission path, and it produces no fit,
 speed or pin evidence and no transfer of the historical frozen producer's

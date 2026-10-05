@@ -10,11 +10,14 @@ absolute window). A ready wait rechecks envelope and bound after the guard; an
 expired bound raises the original unchanged refusal text, and the 16 GiB floor
 still refuses inside the wait. One terminal wait report per call (threshold,
 bound, initial/last GiB, wall/monotonic times, every exact sample, and reason
-`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`) is appended to
-`rdv/headroom-preflight-rank<rank>.jsonl`, persisting through refusal,
-cancellation and deadline. No threshold, floor, cache/KV/shape, artifact,
-runtime, client or container semantic moves; the model never launches below
-114 GiB. The unchanged 104/102 GiB per-arm demand caps and every existing
+`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error`) is appended
+to `rdv/headroom-preflight-rank<rank>.jsonl`, persisting through refusal,
+cancellation and deadline; a failed reading retains unknown values rather
+than inventing availability. The actual model-start boundary rechecks the
+same 114 GiB bar after source checks and the peer barrier, recording its
+per-arm synchronous sample before any container work. No threshold, floor,
+cache/KV/shape, artifact, runtime, client or container semantic moves. The
+unchanged 104/102 GiB per-arm demand caps and every existing
 admission predicate stay exactly as they were: this wait is a bounded
 predicate-satisfaction wait, not a new admission mechanism, and it mints no
 114 GiB admission, no performance or fit evidence, and no transfer of the

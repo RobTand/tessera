@@ -16,6 +16,8 @@ import time
 from managed_window import (WINDOW_SECONDS, Envelope, HOSTS, Refused,
                             Rendezvous, atomic_json, read_json, require_claim)
 import tp2_recipe as recipe
+PREFLIGHT_HEADROOM_GIB = 114
+PREFLIGHT_HEADROOM_WAIT_SECONDS = 900.0
 
 
 def directory_bytes(path: Path) -> int:
@@ -78,11 +80,11 @@ class LocalArm:
         terminal wait report is appended to the shared rendezvous per call, including
         on refusal/cancellation/deadline.
         """
-        threshold_gib, wait_bound_seconds = 114, 900.0
+        threshold_gib, wait_bound_seconds = PREFLIGHT_HEADROOM_GIB, PREFLIGHT_HEADROOM_WAIT_SECONDS
         deadline = time.monotonic() + wait_bound_seconds
         started_unix = time.time()
         samples = []
-        reason, terminal = None, None
+        reason, terminal = "error", None
         try:
             while True:
                 sample = dict(unix=time.time(), monotonic=time.monotonic(),
@@ -129,7 +131,7 @@ class LocalArm:
 
     def preflight(self):
         self.headroom()
-        if available_gib() < 114:
+        if available_gib() < PREFLIGHT_HEADROOM_GIB:
             raise Refused("local MemAvailable below unchanged 114 GiB preflight")
         runtime = Path(self.config["ts"]) / "src"
         env = dict(os.environ, PYTHONPATH=str(runtime), OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
@@ -177,6 +179,13 @@ class LocalArm:
                 raise Refused("owned local server exited before probes completed")
 
     def start(self, arm):
+        # Source checks and the peer barrier may outlive the successful preflight.
+        available = available_gib()
+        atomic_json(self.rdv / f"{arm['arm']}-launch-headroom-rank{self.rank}.json",
+                    dict(unix=time.time(), rank=self.rank, mem_available_gib=available,
+                         threshold_gib=PREFLIGHT_HEADROOM_GIB))
+        if available < PREFLIGHT_HEADROOM_GIB:
+            raise Refused("local MemAvailable below unchanged 114 GiB preflight")
         out = self.work / arm["arm"]
         out.mkdir()
         out.chmod(0o777)

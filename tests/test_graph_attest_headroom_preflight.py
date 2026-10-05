@@ -288,3 +288,43 @@ def test_guard_latency_past_900_reports_headroom_timeout_without_negative_sleep(
     assert report["reason"] == "headroom_timeout"
     assert report["elapsed_seconds"] == pytest.approx(1000.0)
     assert clock.sleeps == [], "no sleep is attempted once the bound has passed"
+
+
+@pytest.mark.parametrize("rank", [0, 1])
+@pytest.mark.parametrize("eager", [False, True], ids=["graph", "eager"])
+def test_launch_rechecks_headroom_after_successful_preflight(tmp_path, monkeypatch, rank, eager):
+    import rank_window
+    clock = FakeClock()
+    adapter = rank_adapter(tmp_path, monkeypatch, rank=rank, read=lambda: 114.25,
+                           clock=clock, eager=eager)
+    stub_boundaries(adapter, monkeypatch)
+    assert adapter.preflight()["image"] == adapter.config["image"]
+    monkeypatch.setattr(rank_window, "available_gib", lambda: 113.9)
+    launches = []
+    def forbidden_container(*args, **kwargs):
+        launches.append(True)
+        raise AssertionError("model launch reached below 114 GiB after a ready preflight")
+    monkeypatch.setattr(rank_window.recipe, "container", forbidden_container)
+    with pytest.raises(window.Refused, match=REFUSAL):
+        adapter.start(dict(arm="launch-check"))
+    assert not launches
+    assert not (adapter.work / "launch-check").exists()
+    sample = json.loads((adapter.rdv / f"launch-check-launch-headroom-rank{rank}.json").read_text())
+    assert sample["mem_available_gib"] == 113.9 and sample["threshold_gib"] == 114
+    assert sample["rank"] == rank
+
+
+def test_headroom_read_error_retains_unknown_values_and_propagates(tmp_path, monkeypatch):
+    clock = FakeClock()
+    failure = OSError("meminfo reading unavailable")
+    def unreadable():
+        raise failure
+    adapter = rank_adapter(tmp_path, monkeypatch, read=unreadable, clock=clock)
+    forbid_commands(adapter)
+    with pytest.raises(OSError) as excinfo:
+        adapter.preflight()
+    assert excinfo.value is failure
+    (report,) = reports(adapter)
+    assert report["reason"] == "error"
+    assert report["samples"] == []
+    assert report["initial_available_gib"] is None and report["last_available_gib"] is None

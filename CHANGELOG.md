@@ -13,9 +13,12 @@ raises the original unchanged refusal text; the 16 GiB physical floor and
 guard cancellation still refuse inside the wait; the model never launches
 below 114 GiB. One terminal wait report per call — threshold, 900-second
 bound, initial/last GiB, wall/monotonic times, every exact sample, and reason
-`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline` — is appended to
-`rdv/headroom-preflight-rank<rank>.jsonl` in the shared rendezvous and
-persists through refusal, cancellation and deadline.
+`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error` — is appended
+to `rdv/headroom-preflight-rank<rank>.jsonl` and persists through refusal,
+cancellation, deadline or unavailable readings (unknown values stay unknown).
+The model-start boundary rechecks the same 114 GiB bar after source checks
+and the peer barrier, recording a per-arm synchronous sample before container
+work; an earlier ready wait never authorizes a below-threshold launch.
 
 Deterministic regressions (`tests/test_graph_attest_headroom_preflight.py`)
 drive the real common preflight path on a shared fake clock: below-to-ready
