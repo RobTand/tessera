@@ -219,8 +219,9 @@ static_assert(A_PREFETCH == 0 || A_PREFETCH >= 2, "distance 1 is the load itself
 // a register value; opus-739-20261004T182357Z, T8R release stacks, every cell
 // bitwise): the two-run routed R1088/R832 launches run at 0.90-0.94 of master
 // for M >= 512 (ceiling 0.87-0.94); the one-run R1024 launch's ceiling is
-// 0.97-0.99 behind ``prefetch_a``, which the ring did not beat (up to +3.5%);
-// and the dense and shared launches have no load wait to hide (ceiling ~1.0)
+// 0.97-0.99 behind ``prefetch_a``, which the ring did not beat (at most
+// +3.1%); and the dense and shared launches have no load wait to hide
+// (ceiling ~1.0)
 // and lost up to 5% to the ring's extra instructions
 // (docs/measurements/2026-10-04-mma8-activation-ring.md).  The ring is
 // WORD_STAGES * bmt * BK bytes after the A tiles (``a_region_bytes``),

@@ -65,9 +65,11 @@ launch still fits three word stages, the largest at 75,984 B.
 - GPU tests in the serving image (`experiments/routed_fused_tests.sh`,
   `--strict-cuda`): `tests/test_routed_fused_window.py`,
   `tests/test_dense_fused_window.py` and `tests/test_routed_mma8_a_ring_config.py`.
-  - At the branch head they ran 717 passed / 0 failed / 0 skipped at flag 0
-    (`8db983b5`) and at flag 1 (`893f8ce5`), with 684 tests allocating on the
-    device.
+  - The receipts' snapshot parent is `e68557031` (snapshot commits `25206930`
+    and `dbfa706b`), a pre-rebase sibling of this head that differs from it
+    only by a kernel comment. They ran 717 passed / 0 failed / 0 skipped at
+    flag 0 (`8db983b5`) and at flag 1 (`893f8ce5`), with 684 tests allocating
+    on the device.
   - At the previous head, with flag values 0/1/2, they ran 719 / 0 / 0 each.
 - Pre-fix failures: at flags 1 and 2 two layout identities failed because
   they had been derived without the ring. They now derive it from
@@ -76,11 +78,17 @@ launch still fits three word stages, the largest at 75,984 B.
     `assert (91600 - 53456) == (((2 * 16384) + 12288) - 768)`.
   - `test_the_superblock_width_is_a_host_choice_of_the_launch` failed with
     `assert (20480 - 10240) == 4096`.
-- SASS (`experiments/t8r_speed/sass_arms.sh`, `89cba694`):
+- SASS (`experiments/t8r_speed/sass_arms.sh`, `89cba694`). This receipt ran on
+  snapshot parent `74d75ddb` (merge-base `f128bf71`), an older head where the
+  flag took 0/1/2 and `ring1` still covered the dense two-run launches:
   - At flag 0 the library matches master instruction for instruction, apart
     from 96 `IADD3`s with commuted operands. It has the same 143 functions and
-    the same register counts.
-  - No instantiation spills at any flag (LOCAL 0, STACK 0).
+    the same register counts. The flag-0 parity transfers to this head: at 0
+    `A_RING` is false under either definition of the flag's scope.
+  - No instantiation spills at any flag (LOCAL 0, STACK 0). There is no SASS
+    or spill measurement of this head at flag 1; the routed instantiations
+    are `ring1`'s code, so the exact-head flag-1 parity and no-spill claims
+    are inference from that receipt, not measurements of this head.
 
 ### Routed layer time over master (gate/up + down + token sum)
 
@@ -170,6 +178,6 @@ Measurement root: `/mnt/shared/tessera-measurements/opus-739-20261004T182357Z/`.
 | A/B (master, noA, ring1, ring2) | `2e099289` | `ab1_summary.json`, `r*/d*` logs, `*-ncu/` |
 | NCU stall table | `c804503b` | `ncu_stalls.json` |
 | SASS identity | `89cba694` | `sass/` |
-| GPU tests, flag 0 / 1, branch head | `8db983b5` / `893f8ce5` | `gputest4-ring*/` |
+| GPU tests, flag 0 / 1, snapshot parent `e68557031` | `8db983b5` / `893f8ce5` | `gputest4-ring*/` |
 | GPU tests, flags 0 / 1 / 2, previous head | `b4c5dab2` / `9b486802` / `fe23d5b2` | `gputest3-ring*/` |
 | Library builds | `e76a0950` `1b403326` `73fb36a9` `31ff899e` `5bdff00c` `fa1c6a8b` `68d935db` | `ext-*/` |
