@@ -10,6 +10,8 @@
 #        TESSERA_PRODUCER_SOURCE=/abs/genuine-checkout/src/tessera \
 #        PRODUCER_AUTHORITY=/abs/authority.py PART_IMAGE=repo@sha256:... \
 #        [CENSUS_ROOT=/abs/root] [PROFILE=1] export_routed_part.sh NAME INDEX COUNT
+# HESSIAN_CAPTURE may name another explicitly bound capture; the default is
+# the original union reference. Its actual bytes are sealed by the exporter.
 #
 #   plan:   experiments/t8_census/plan-NAME.json (from the checkout snapshot)
 #   part:   $R/stubs/parts-NAME/part-INDEX, R = $CENSUS_ROOT (default: the T-8
@@ -93,7 +95,7 @@ PRODUCER_SOURCE=${TESSERA_PRODUCER_SOURCE:-}
 R=${CENSUS_ROOT:-/mnt/shared/tessera-measurements/t8-coverage-20260930}
 SRC=/mnt/shared/tessera-runs/moe/u1-stubs-20260926/source-l8
 U=/mnt/shared/tessera-measurements/glm-canonical-census-20260908/activation-runtime-allocation-20260911/union-a4a8a16-01/cache
-HESSIAN=$U/hessian_capture.references.json
+HESSIAN=${HESSIAN_CAPTURE:-$U/hessian_capture.references.json}
 PLAN=experiments/t8_census/plan-$NAME.json
 PARTS=$R/stubs/parts-$NAME
 OUT=$PARTS/part-$INDEX

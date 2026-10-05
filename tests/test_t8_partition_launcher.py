@@ -47,9 +47,7 @@ IMG = "localhost/prismaquant/spark-vllm-nccl230@sha256:" + "ab" * 32
 BOUND_CAP = 2700
 STUB_SHA = "b770" * 16
 STUB_HEAD = "5" * 40
-HESSIAN = Path("/mnt/shared/tessera-measurements/glm-canonical-census-20260908/"
-               "activation-runtime-allocation-20260911/union-a4a8a16-01/cache/"
-               "hessian_capture.references.json")
+HESSIAN = None
 PLAN = CHECKOUT / "experiments/t8_census/plan-T8R2.json"
 
 #: The receipt the stub producer answers with; source_root comes from the
@@ -109,11 +107,18 @@ STUB_SCRIPT = (
 def sha_file(p):
     return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
+@pytest.fixture(scope="session", autouse=True)
+def local_hessian_capture(tmp_path_factory):
+    global HESSIAN
+    HESSIAN = tmp_path_factory.mktemp("capture") / "hessian_capture.references.json"
+    HESSIAN.write_text('{"schema":"launcher-input-fixture"}\n')
+
+
 
 @pytest.fixture(scope="session")
 def producer_python(tmp_path_factory):
     stub = tmp_path_factory.mktemp("producer") / "stub-producer.py"
-    stub.write_text(STUB_SCRIPT)
+    stub.write_text(f"#!{sys.executable}\n" + STUB_SCRIPT)
     stub.chmod(0o755)
     return stub
 
@@ -144,6 +149,7 @@ def _launch_env(tmp_path, **over):
     (tmp_path / "producer_authority.py").write_text("authority-placeholder\n")
     env["PART_IMAGE"] = IMG
     env["CENSUS_ROOT"] = str(tmp_path / "census")
+    env["HESSIAN_CAPTURE"] = str(HESSIAN)
     env.update({k: str(v) for k, v in over.items()})
     return env
 

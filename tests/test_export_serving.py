@@ -201,17 +201,15 @@ def test_a_dirty_source_reference_refuses_by_variable_name(monkeypatch, tmp_path
 
 
 def test_a_source_reference_outside_the_lineage_refuses(monkeypatch, tmp_path):
-    root, base = _source_reference(tmp_path, ancestor=False)
+    root, _base = _source_reference(tmp_path, ancestor=False)
+    unrelated = _git("commit-tree", "HEAD^{tree}", "-m", "unrelated root", cwd=root).stdout.strip()
     monkeypatch.setenv("TESSERA_PRODUCER_PYTHON", sys.executable)
     monkeypatch.setenv("TESSERA_PRODUCER_SOURCE", str(root / "src" / "tessera"))
     with pytest.raises(SystemExit) as caught:
         export.authenticate_producer_python(expected_package=root / "src" / "tessera",
-                                            descends_from=_OTHER_COMMIT)
+                                            descends_from=unrelated)
     assert "TESSERA_PRODUCER_SOURCE" in str(caught.value)
-    assert f"does not descend from {_OTHER_COMMIT}" in str(caught.value)
-
-
-_OTHER_COMMIT = "b" * 40
+    assert f"does not descend from {unrelated}" in str(caught.value)
 
 
 def test_the_genuine_ancestor_reference_is_a_full_commit_name():
@@ -256,7 +254,7 @@ def test_a_foreign_loaded_submodule_refuses_with_installed_init(tmp_path, monkey
         export._require_loaded_origins(installed_pkg, payload)
     message = str(caught.value)
     assert "TESSERA_PRODUCER_PYTHON" in message
-    assert "tessera.export_serving" in message, "the running exporter is bound by name"
+    assert "loaded module" in message and "mixed origin" in message.lower()
 
 
 def _fixture_ancestor(root):
@@ -271,8 +269,14 @@ def _fixture_ancestor(root):
 def _fixture_install(target: Path) -> Path:
     """A synthetic site-packages: the package plus a dist-info naming it."""
     target.mkdir()
-    shutil.copytree(ROOT / "src" / "tessera", target / "tessera",
-                    ignore=shutil.ignore_patterns("__pycache__"))
+    config = source_profiles.packaged_projection_config(ROOT)
+    tracked = [p.relative_to(ROOT).as_posix() for p in (ROOT / "src" / "tessera").rglob("*")
+               if p.is_file() and "__pycache__" not in p.parts]
+    for name in source_profiles.shipped_payload_paths(config, tracked):
+        original = ROOT / "src" / name
+        destination = target / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(original, destination)
     from tessera import DISTRIBUTION
 
     dist_info = target / f"{DISTRIBUTION.replace('-', '_')}-0.1.dist-info"
@@ -604,8 +608,8 @@ def test_joined_expert_encodes_group_across_names_and_write_the_one_unit_bytes(
     # requested width, every call is at most it, and the histogram accounts
     # for every joined call the two join keys produced (three projections
     # x three experts = nine units: gate/up key of six, down key of three).
-    assert observed[int(batch)] >= 1
-    assert max(observed) == int(batch)
+    assert observed[str(int(batch))] >= 1
+    assert max(map(int, observed)) == int(batch)
     assert sum(observed.values()) == (-(-6 // int(batch)) + -(-3 // int(batch)))
 
 

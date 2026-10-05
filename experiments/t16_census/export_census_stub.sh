@@ -39,7 +39,7 @@
 set -uo pipefail
 S=${1:?NAME}
 AUTH=${PRODUCER_AUTHORITY:?set PRODUCER_AUTHORITY to the producer authority file}
-PRODUCER_SOURCE=${TESSERA_PRODUCER_SOURCE:?set TESSERA_PRODUCER_SOURCE to the qualified immutable genuine source checkout's src/tessera}
+PRODUCER_SOURCE=${TESSERA_PRODUCER_SOURCE:-}
 R=${CENSUS_ROOT:-/mnt/shared/tessera-measurements/t16-coverage-20260930}/stubs
 ROUTED_CACHE=${ROUTED_CACHE:-$R/cache-B-routed}
 SRCR=/mnt/shared/tessera-runs/moe/u1-stubs-20260926
@@ -62,6 +62,7 @@ esac
 PRODUCER_PY=${TESSERA_PRODUCER_PYTHON:-}
 [ -n "$PRODUCER_PY" ] || refuse "TESSERA_PRODUCER_PYTHON is not set: name the producer interpreter that will run the exporter"
 [ -x "$PRODUCER_PY" ] || refuse "TESSERA_PRODUCER_PYTHON=$PRODUCER_PY is not an executable file"
+[ -n "$PRODUCER_SOURCE" ] || refuse "TESSERA_PRODUCER_SOURCE must name the qualified immutable source"
 case "$PRODUCER_SOURCE" in
   /*) ;;
   *) refuse "TESSERA_PRODUCER_SOURCE=$PRODUCER_SOURCE is not an absolute path; a qualified source reference is never derived from the working directory";;

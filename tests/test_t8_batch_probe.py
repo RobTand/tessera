@@ -279,7 +279,7 @@ class TestStagedAction:
         text = STAGE_WRAPPER.read_text()
         assert "BUDGET must be an integer 1..2700" in text
         assert "exit 2" in text
-        assert text.index("BUDGET must be an integer 1..2700") < text.index("pytest"), (
+        assert text.index("BUDGET must be an integer 1..2700") < text.index('/usr/bin/timeout "$(left)"'), (
             "the ceiling is validated before the correctness packet, not after a phase "
             "has already run")
 
