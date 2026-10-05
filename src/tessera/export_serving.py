@@ -1510,7 +1510,7 @@ def require_plannable_unit_layout(layout, q256, target, *, manifest=None):
 
     canonical = bresenham_rate_schedule(root_from_q256(q256), int(layout["cols"]), cap=8)
     for size in (1, 2):
-        if manifest is not None:
+        if manifest is not None and size > 1:
             from tessera.layout import can_shard, shard_granularity
             axis = "row" if layout["group"] == "w13" else "column"
             if not can_shard(manifest, size, axis):
