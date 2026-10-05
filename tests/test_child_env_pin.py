@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import child_env
 
@@ -28,4 +29,4 @@ def test_a_child_resolves_tessera_from_the_checkout_the_helper_names():
     proc = subprocess.run(
         [sys.executable, "-c", "import tessera; print(tessera.__file__)"],
         env=child_env.child_env(), capture_output=True, text=True, check=True)
-    assert proc.stdout.strip().startswith(str(child_env.SRC)), proc.stdout
+    assert Path(proc.stdout.strip()).is_relative_to(child_env.SRC), proc.stdout
