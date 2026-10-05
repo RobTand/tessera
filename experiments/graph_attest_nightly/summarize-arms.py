@@ -6,7 +6,8 @@ GA_DISPATCH_LOG), and its equality-suite outcome against the eager pool with the
 tessera#508 membership criterion (eq-member-508.py): a choice is a member when
 its generated token ids and every top-20 logprob list equal the same choice of
 some eager run of the same batch. Eager runs are judged against the other eager
-serves (never against themselves).
+serves (never against themselves); an arm with no other eager run in its pool
+is named unjudged in the table and carries no membership numbers.
 
   summarize-arms.py RECEIPTS POOL ARM [ARM ...]    POOL: comma list of eager serves
 Writes RECEIPTS/summary-<first POOL name>.json and prints one line per arm.
@@ -67,8 +68,14 @@ def first_difference(a, b):
 
 
 def judge(recs, arm, pool):
-    target = eq.load_arm(recs, arm)
     runs = eq.pool_runs(recs, arm, [p for p in pool if p != arm and f"{p}-r2" != arm])
+    if not runs:
+        # The membership criterion compares an arm with the eager outcomes other
+        # serves produced. An arm with no other eager run in its pool (a lone
+        # eager serve, or one judged only against itself) has no criterion, so
+        # it is named unjudged rather than scored against nothing.
+        return dict(judged=False, why="no other eager run in the pool", pool=[])
+    target = eq.load_arm(recs, arm)
     outcomes = eq.outcome_pools(target, runs)
     total = members = changed = 0
     worst = 0.0
@@ -93,7 +100,7 @@ def judge(recs, arm, pool):
                        if s is not None)
             first_steps.append(step)
             first_contexts.append(len(choice["prompt_token_ids"]) + step)
-    return dict(choices=total, members=members, non_members=total - members,
+    return dict(judged=True, choices=total, members=members, non_members=total - members,
                 changed_a_token=changed, worst_same_prefix_delta=worst,
                 pool=sorted(runs), non_member_choices=misses,
                 first_difference_step_min=min(first_steps, default=None),
@@ -120,6 +127,10 @@ def main():
             table[name] = row
             e = row["equality"]
             d = row["dispatch"] or {}
+            if not e["judged"]:
+                print(f"{name:10s} NOT JUDGED ({e['why']})  captured {d.get('captured')}",
+                      flush=True)
+                continue
             print(f"{name:10s} members {e['members']}/{e['choices']}  changed-token "
                   f"{e['changed_a_token']}  worst {e['worst_same_prefix_delta']:.6g}  "
                   f"first-diff step>={e['first_difference_step_min']} "
