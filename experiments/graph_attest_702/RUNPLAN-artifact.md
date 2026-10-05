@@ -122,6 +122,29 @@ floor**. The floor is sampled every five seconds, not a proof against transient
 undershoot. No cache reduction is approved; four resident requests and all
 capture sizes/cases remain required.
 
+**Bounded headroom wait (issue953, CEO-authorized 2026-10-05).** When the
+synchronous sample sits below 114 GiB, `LocalArm.preflight` waits up to **900
+seconds** for the unchanged predicate to become genuinely true, in graph and
+eager modes alike, before each arm. The wait polls on the existing `run_rank`
+cadence, checks the live guard on every poll and immediately before declaring
+ready, and is capped by the existing window envelope (cleanup reserve and any
+tightened absolute window), so a shortened deadline still refuses. Expiry
+raises the original unchanged refusal text; the 16 GiB floor and guard
+cancellation refuse inside the wait; the model never launches below 114 GiB.
+One terminal wait report per call — threshold, 900-second bound, initial/last
+GiB, wall/monotonic times, every exact sample, and reason
+`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error` — is appended
+to `rdv/headroom-preflight-rank<rank>.jsonl` and persists through refusal,
+cancellation, deadline or unavailable readings (unknown values stay unknown).
+Before container work, the model-start boundary rechecks the same 114 GiB bar
+after source checks and the peer barrier and records its per-arm synchronous
+sample at `rdv/<arm>-launch-headroom-rank<rank>.json`. A prior ready wait never
+authorizes a below-threshold launch. The unchanged 104/102 GiB
+demand caps and every admission predicate are untouched: this is a bounded
+predicate-satisfaction wait, not a new admission path, and it produces no fit,
+speed or pin evidence and no transfer of the historical frozen producer's
+source approval. Deterministic regressions: `tests/test_graph_attest_headroom_preflight.py`.
+
 Runtime disk caps cover the unique local cache (6 GiB), local work including
 cache/logs (6.3 GiB) and shared arm records (0.2 GiB total). The declared 8 GiB
 local allowance also covers checkout/PB-log overhead; shared output/CAS allowance
