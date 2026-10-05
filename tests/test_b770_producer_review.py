@@ -227,6 +227,13 @@ def test_completion_binds_consumed_input_identity(tmp_path):
 
 
 
+def _refuses_the_installed_payload(text: str) -> bool:
+    """Whether ``text`` is the exporter refusing an installed payload that differs
+    from its source: the roster refusal or the byte-digest refusal."""
+    return "the installed payload" in text and (
+        "projected wheel roster" in text or "TESSERA_PRODUCER_SOURCE" in text)
+
+
 @pytest.mark.parametrize("leg", ["interpreter", "payload"])
 def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, frozen_source):
     site = selected._fixture_install(tmp_path / "site")
@@ -251,8 +258,7 @@ def test_default_profile_refuses_wrong_actual_producer(tmp_path, leg, selected, 
         # variable when the lists agree. Either refuses the installed payload, and
         # which one fires depends on the two file lists, not on this case. Each is
         # pinned on its own in test_export_serving.
-        assert "the installed payload" in text and (
-            "projected wheel roster" in text or "TESSERA_PRODUCER_SOURCE" in text), \
+        assert _refuses_the_installed_payload(text), \
             f"{leg}: actual process never authenticated: {text}"
     assert "a GPU measurement with no GPU" not in text
 
