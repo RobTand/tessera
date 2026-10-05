@@ -322,6 +322,8 @@ def test_t8_refuses_real_unqualified_interpreter(tmp_path):
     (no installed distribution behind the import, dirty reference, ancestry) --
     and the refusal must name the selector, never proceed to an export.
     """
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=sys.executable,
         TESSERA_PRODUCER_SOURCE=CHECKOUT / "src" / "tessera"))
