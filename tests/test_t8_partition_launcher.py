@@ -407,7 +407,8 @@ def test_t8_refuses_mutation_behind_restamped_marker(tmp_path, producer_python, 
     before = mark.read_bytes()
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer_python,
-        TESSERA_PRODUCER_SOURCE=qualified_source, INPUT_SCALES=scales))
+        TESSERA_PRODUCER_SOURCE=qualified_source, INPUT_SCALES=scales,
+        PYTHONPATH=CHECKOUT / "src"))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 2, f"expected refusal, got rc={proc.returncode}\n{text}"
     assert "consumed.input_scales_sha256" in text, \
