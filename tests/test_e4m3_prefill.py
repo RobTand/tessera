@@ -228,9 +228,15 @@ def test_a_dynamic_token_dimension_compiles_without_a_copy_and_refuses_with_one(
     pytest.importorskip("vllm")
     from tessera.serving.e4m3_prefill import FLAG
 
+    from tessera.serving import fp8_route
+
     method, layer = _route_layer(monkeypatch, flag, "resident", seed=25)
+    # vLLM compiles the whole forward (fullgraph); the route record is
+    # host-side telemetry the eager tests above check, and the token-count
+    # read this test is about happens before it is called
+    monkeypatch.setattr(fp8_route, "emit_route", lambda *a, **k: None)
     torch._dynamo.reset()
-    compiled = torch.compile(lambda x: method.apply(layer, x), fullgraph=False)
+    compiled = torch.compile(lambda x: method.apply(layer, x), fullgraph=True)
     for m in (16, 300):
         x = torch.randn(m, 512, device="cuda").bfloat16()
         torch._dynamo.mark_dynamic(x, 0)
