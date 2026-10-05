@@ -299,8 +299,9 @@ two-run R1088/R832 routed layers took 0.93-0.94 of master's time at M = 512,
 0.88 and 0.90. Every timed cell was bitwise equal. Those numbers do not carry
 to the current kernel: since #793 (`STAGE_PREV = PREV_STAGED && !TWO`) the
 two-run loop also waits on a global previous-word load, which the measured
-tree had staged. The ring's gain there, and flag 1 on the current kernel, are
-unmeasured. The served T-8 routed layers are all one-run R1024, where the
+tree had staged. The ring's gain there is unmeasured; flag 1 on the current
+kernel has GPU correctness tests (747 passed at each flag value) but no timing.
+The served T-8 routed layers are all one-run R1024, where the
 ceiling behind `prefetch_a` is 0.97-0.99 at M <= 2048, so the flag does not
 move served prefill at the current chunk size. Receipt: [the activation
 ring](measurements/2026-10-04-mma8-activation-ring.md). `store_a` reads the slot back and writes the same
