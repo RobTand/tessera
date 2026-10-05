@@ -32,7 +32,11 @@ class CpuArm:
     def preflight(self):
         if self.scenario == "preflight" and self.owned["rank"] == 1:
             raise window.Refused("simulated MemAvailable 113.5 GiB < unchanged 114")
-        return dict(image="fixture-image", src_sha256="a" * 64, config_sha256="b" * 64)
+        metadata = dict(image="fixture-image", src_sha256="a" * 64, config_sha256="b" * 64)
+        for key in metadata:
+            if self.scenario == f"peer-mismatch-{key}" and self.owned["rank"] == 1:
+                metadata[key] = f"different-rank1-{key}"
+        return metadata
 
     def start(self, arm):
         self.active = arm["arm"]
@@ -159,6 +163,29 @@ def test_real_bounded_protocol_and_failures_keep_partial_evidence(tmp_path, name
         if name in ("copy_failure", "removal_failure"):
             assert any("cleanup_error" in outcome or "command failed" in outcome.get("error", "") for outcome in outcomes)
         assert bool(living) == (name == "removal_failure")
+
+
+@pytest.mark.parametrize("field", ["image", "src_sha256", "config_sha256"])
+@pytest.mark.parametrize("mode", ["graph-control", "window4-eager-2048-4096"])
+@pytest.mark.parametrize("dev_mode", [None, "1", "0"], ids=["default-dev", "explicit-dev", "certified"])
+def test_mismatched_rank_preflight_refuses_before_either_launch(tmp_path, monkeypatch, field, mode, dev_mode):
+    # Both controller subprocesses use the real rendezvous/protocol; only the
+    # local device adapter is simulated. D32 never permits different gang halves.
+    if dev_mode is None:
+        monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    else:
+        monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev_mode)
+    outcomes, living, seconds = scenario(tmp_path, f"peer-mismatch-{field}", mode=mode)
+    assert not living and seconds < 10
+    assert all(outcome["returncode"] == 1 and outcome["invocation_failed"]
+               and outcome["completed_arms"] == [] for outcome in outcomes)
+    assert any(f"rank preflight differs in {field}" in outcome["error"] for outcome in outcomes)
+    rdv = tmp_path / "rdv"
+    assert not list(rdv.glob("*.pid"))  # neither local server started
+    assert not list(rdv.glob("*-started-rank*.json"))
+    assert not list(rdv.glob("*-ready-rank*.json"))
+    assert not list(rdv.glob("*-probes-rank*.json"))
+    assert not list(rdv.glob("*.probes.log"))
 
 
 def test_supported_campaign_rows_own_each_rank_and_aggregate_peaks(tmp_path):

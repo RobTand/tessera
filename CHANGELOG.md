@@ -1,5 +1,86 @@
 # Changelog
 
+## 2026-10-05 — D32 (PR961): managed-window run-identity seals stamp and continue
+
+Rob's standing D32 direction (sealing off until further notice) reaches the
+graph-attest Window4 producers. Dev mode is ON unless `PRISMAQUANT_DEV_MODE`
+is exactly `0`; the run-identity comparisons in
+`experiments/graph_attest_702` go through the existing
+`tessera.dev_mode.seal_check` and, on a mismatch, print one `[DEV-MODE]` line
+and continue with the stored data instead of refusing: `require_producer`
+keeps its signature and returns the stored expected producer digest without
+Git or digest computes in dev, `producer_sha` reports the stored
+`PRODUCER_SHA256` (or `NOT_COMPUTED`) instead of hashing, and the
+`inputs`/`prepare`/`submit`/`preflight`/`run_rank` provenance, source-hash
+and frozen-control drift comparisons stamp rather than refuse. The
+restamped memory-policy value comparison against the running policy is a
+seal: it stamps in dev and refuses certified. The exact-HEAD checkout
+comparison is now a seal too (certified keeps the refusal); still refusing in
+both modes: the exact executing-code parent/D5 review, the `inputs.json`
+`GRAPH_WINDOW_INPUT_SHA256` and memory-policy SHA own-byte integrity, PB
+claims/nonces/action keys/owned
+scope, the OOM floor and disk admission, the manifest resource/safety fields
+and every format gate. Dev mode adds no release gate: no recompute, archive,
+re-seal, re-pin or identity-proof packet is required or performed for
+identity drift, and no format pin or serving default moves. Regressions in
+`tests/test_graph_attest_producer_identity.py` and
+`tests/test_graph_attest_headroom_preflight.py` demand the dev
+stamp-and-continue behavior (failing on the pre-change refusals) and the
+verbatim certified refusals; every pre-existing OOM/headroom/lifecycle/
+own-byte/foreign-safety assertion is retained. `docs/ARCHITECTURE.md` and
+`experiments/graph_attest_702/RUNPLAN-artifact.md` are re-stamped in the
+same commit.
+Corrective review restores the live TP2 rank-agreement check (image, source
+digest and config digest) as a plain refusal in both modes. These compare the
+two executing gang halves, not a run against recorded identity. Real-protocol
+CPU regressions cover each mismatch in default dev, explicit dev and certified
+modes for graph and eager windows, requiring neither server to launch.
+
+## 2026-10-05 — issue959: D30 Window4 107 GiB admission and dual-rank memory abort
+
+Window4 per-host `MemAvailable` admission moves from the historical 114 GiB
+predicate to 107 GiB on both hosts — the retained conservative hybrid model/KV
+estimate 98 plus the explicitly unmeasured graph/host allowance 6 plus reserve
+3 — with the 104 GiB host / 102 GiB GPU-subset caps unchanged. The 98 is
+derived, not measured: the larger of the 94.4/96.1 GiB hybrid estimates plus
+the 1.625 GiB KV uplift from 384 MiB to 2 GiB per rank, rounded conservatively
+up, and those hybrids come from the graph arm's MemAvailable ready drop and the
+eager L512/c4 transient-KV assumption, not from measured 384 MiB peaks. Engine
+RSS and context sizes were never recorded and stay unknown; cgroup charge,
+MemAvailable and GPU-used quantities overlap, so no naive sum of them is a
+measured decomposition. The 900-second bounded headroom wait and the
+model-start recheck are unchanged against the 107 GiB bar. The old 114 GiB
+predicate and its sampled 16 GiB floor are historical only: the b5 run recorded
+under them stays immutable. Historical derivation is documented in
+`/home/rob/fleet/inventory/kernels-window4-headroom-equation-packet-20261005.json`
+(SHA-256 `1a28bff770790a09b0df4573d46acf31e44aa12c6118cf31b9a32a279ffdb4f8`).
+A new 1 Hz whole-box guard fails both exact-owned ranks
+when either host samples strictly below 2 GiB. The local comparison precedes
+shared queue/journal work; exact-owned TERM starts before peer publication and
+the immutable first FAILED marker is published before any termination grace.
+Termination/publication errors remain secondary to the original trigger.
+SIGKILL follows 10 seconds if needed, shortened only by the finite deadline;
+cleanup-only inspect/signal operations retain a fixed five-second rescue budget
+after expiry without renewing model work. The rendezvous itself is not
+terminated, and both ranks record a failed-cleaned acknowledgement so an early
+failed-rank exit cannot cause a native withdrawal that shortens the peer's
+10-second grace. A sampled guard is not continuous immunity.
+The failed-cleaned wait checks whether the peer still owns its claim, exits on
+peer death and reserves five seconds for broker stop; missing custody remains
+explicit and is never reported as physical handoff.
+`window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
+SHA into the submitted inputs; each rank emits
+`rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —
+baseline, minimum, raw samples and counters kept so a future window can measure
+the 6 GiB allowance, not a measured RSS decomposition — and the Envelope
+outcome carries the termination list with container termination evidence.
+Protected sysctl, ARC, cache and service settings are untouched. No
+performance, fit or pin claim is minted, and old
+producer approvals do not transfer: pool review must check both the derivation
+and the guard against the exact new producer head before one fresh native
+gang. The failing-before behavior regression and the admitted CPU physical
+guard smoke are required by the issue and live with its source and test
+slices; this entry records the contract they enforce.
 ## 2026-10-05 — issue964: the serving source pin stamps instead of refusing (D32)
 
 The native shape-time pipeline's run-identity gates no longer refuse a serve

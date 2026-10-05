@@ -13,11 +13,10 @@ import subprocess
 import sys
 import time
 
-from managed_window import (WINDOW_SECONDS, Envelope, HOSTS, Refused,
+from managed_window import (WINDOW_SECONDS, CLEANUP_SECONDS, MEMORY_POLICY, Envelope, HOSTS, Refused,
+                            seal_check, check_memory_policy,
                             Rendezvous, atomic_json, read_json, require_claim)
 import tp2_recipe as recipe
-PREFLIGHT_HEADROOM_GIB = 114
-PREFLIGHT_HEADROOM_WAIT_SECONDS = 900.0
 
 
 def directory_bytes(path: Path) -> int:
@@ -65,6 +64,11 @@ class LocalArm:
         self.active = None
         self.containers = []
         self.last_sample = 0
+        self.last_maintenance_sample = 0
+        self.memory_summary = dict(rank=self.rank, host=identity["host"], samples=0,
+                                   baseline_gib=None, minimum_gib=None)
+        self.server_terminations = {}
+        self.abort = None
         self.image_env = {}
         self.guard = None
 
@@ -72,15 +76,14 @@ class LocalArm:
         return self.envelope.run(argv, **kwargs)
 
     def headroom(self):
-        """CEO-authorized bounded wait for the unchanged 114 GiB preflight predicate.
+        """Wait at most 900 seconds for the D30 107 GiB predicate on this host.
 
-        Waits at most 900 seconds, capped by the existing envelope lifetime, polling on
-        the run_rank cadence with the live guard checked every poll. Never launches a
-        model below threshold; expiry raises the original refusal text unchanged. One
-        terminal wait report is appended to the shared rendezvous per call, including
-        on refusal/cancellation/deadline.
+        The existing envelope, peer cancellation and cleanup reserve still bound
+        every poll. Retain every wait sample and terminal reason, including errors.
+        A ready wait never substitutes for the later synchronous launch recheck.
         """
-        threshold_gib, wait_bound_seconds = PREFLIGHT_HEADROOM_GIB, PREFLIGHT_HEADROOM_WAIT_SECONDS
+        threshold_gib = MEMORY_POLICY["start_gib"]
+        wait_bound_seconds = MEMORY_POLICY["headroom_wait_seconds"]
         deadline = time.monotonic() + wait_bound_seconds
         started_unix = time.time()
         samples = []
@@ -126,66 +129,162 @@ class LocalArm:
         if terminal is not None:
             raise terminal
         if reason != "ready":
-            raise Refused("local MemAvailable below unchanged 114 GiB preflight")
+            raise Refused("local MemAvailable below 107 GiB preflight")
         return samples
 
     def preflight(self):
         self.headroom()
-        if available_gib() < PREFLIGHT_HEADROOM_GIB:
-            raise Refused("local MemAvailable below unchanged 114 GiB preflight")
+        if available_gib() < MEMORY_POLICY["start_gib"]:
+            raise Refused("local MemAvailable below 107 GiB preflight")
         runtime = Path(self.config["ts"]) / "src"
         env = dict(os.environ, PYTHONPATH=str(runtime), OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
                    OPENBLAS_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1", MAX_JOBS="1")
         record = json.loads(self.command([sys.executable, "-m", "tessera.serving.runtime_image",
                                          "resolve", "--image", self.config["image"]], env=env, tick=self.tick).stdout)
-        if record.get("resolved_reference") != self.config["image"]:
-            raise Refused("local image does not resolve to the frozen full image reference")
+        seal_check("image reference", self.config["image"], record.get("resolved_reference"),
+                   where="Window4 local preflight", refusal=Refused("local image does not resolve to the frozen full image reference"))
         from_source = self.command([sys.executable, "-m", "tessera.serving.runtime_image", "container-env"],
                                    env=env, input_text=json.dumps(record), tick=self.tick).stdout
         self.image_env = dict(line.split("=", 1) for line in from_source.splitlines())
         self.image_id = record["local_id"]
         self.assert_empty()
-        # Repeat the frozen small-file/source checks between arms; never restamp them.
-        if recipe.inputs(os.environ, live=True,
-                         runner=lambda argv, **kw: self.command(argv, tick=self.tick, **kw)) != self.config:
-            raise Refused("immutable control/source inputs changed during the window")
+        current = recipe.inputs(os.environ, live=True,
+                   runner=lambda argv, **kw: self.command(argv, tick=self.tick, **kw))
+        recipe.check_control_record(self.config, current, where="Window4 local preflight",
+                                  refusal=Refused("immutable control/source inputs changed during the window"))
         return dict(image=self.config["image"], image_id=record["local_id"],
                     src_sha256=self.config["src_sha256"], config_sha256=self.config["config_sha256"])
 
     def tick(self):
-        if self.guard:
-            self.guard()
-        if time.monotonic() - self.last_sample < 5:
-            return
-        self.last_sample = time.monotonic()
-        mem = available_gib()
+        sample = None
+        try:
+            now = time.monotonic()
+            if now - self.last_sample < MEMORY_POLICY["sample_seconds"]:
+                if self.guard:
+                    self.guard()
+                return
+            self.last_sample = now
+            mem = available_gib()
+            sample = dict(unix=time.time(), monotonic=now, rank=self.rank,
+                          mem_available_gib=mem, arm=(self.active or {}).get("arm"))
+            summary = getattr(self, "memory_summary", dict(rank=self.rank, samples=0,
+                                  baseline_gib=None, minimum_gib=None))
+            if summary["baseline_gib"] is None:
+                summary.update(baseline_gib=mem, baseline_unix=sample["unix"])
+            if summary["minimum_gib"] is None or mem < summary["minimum_gib"]:
+                summary.update(minimum_gib=mem, minimum_unix=sample["unix"])
+            summary.update(samples=summary["samples"] + 1, last_sample=sample,
+                           policy=MEMORY_POLICY, identity=self.identity)
+            self.memory_summary = summary
+            # Local decision precedes EVERY shared-filesystem operation in this tick.
+            if mem < MEMORY_POLICY["abort_below_gib"]:
+                raise Refused("local MemAvailable below 2 GiB physical memory floor")
+            if self.guard:
+                self.guard()
+            self._persist_memory(sample)
+            sample = None  # already durable; do not append it again on a later error
+            if self.config.get("window_mode") == recipe.EAGER_MODE:
+                scope = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"),
+                             mem_available_gib=mem)
+                with (self.work / "memory-scope.jsonl").open("a") as stream:
+                    stream.write(json.dumps(scope, sort_keys=True) + "\n")
+            if now - getattr(self, "last_maintenance_sample", 0) < 5:
+                return
+            self.last_maintenance_sample = now
+            for path, cap in ((self.ext, 6 * (1 << 30)), (self.work, int(6.3 * (1 << 30))),
+                              (self.rdv if self.config.get("window_mode") == recipe.EAGER_MODE else self.rdv / "arms",
+                               (1 << 30) if self.config.get("window_mode") == recipe.EAGER_MODE else int(.2 * (1 << 30)))):
+                if directory_bytes(path) > cap:
+                    raise Refused(f"declared disk/output cap exceeded: {path}")
+            if self.active and self.active.get("cid"):
+                value = self.inspect_owned(self.active["cid"])
+                if value.get("State", {}).get("Running") is not True:
+                    raise Refused("owned local server exited before probes completed")
+        except BaseException as exc:
+            errors = getattr(self, "abort_errors", [])
+            self.abort_errors = errors
+            # Start the local stop before a potentially blocked peer-marker write.
+            # Every diagnostic/termination failure remains secondary to the trigger.
+            for name, operation in (
+                ("owned TERM", lambda: self._term_server(self.active["cid"]) if self.active and self.active.get("cid") else None),
+                ("failure publication", lambda: self.abort(error=f"{type(exc).__name__}: {exc}") if getattr(self, "abort", None) else None),
+                ("memory persistence", lambda: self._persist_memory(sample) if sample is not None else None)):
+                try:
+                    operation()
+                except BaseException as secondary:
+                    errors.append(dict(operation=name, error=f"{type(secondary).__name__}: {secondary}", unix=time.time()))
+            print(json.dumps(dict(event="rank_abort", rank=self.rank,
+                                  error=f"{type(exc).__name__}: {exc}", secondary_errors=errors), sort_keys=True), flush=True)
+            raise
+
+    def _persist_memory(self, sample):
         with (self.work / "memwatch.txt").open("a") as stream:
-            stream.write(f"{time.time()} rank{self.rank} MemAvailable_GiB={mem}\n")
-        if self.config.get("window_mode") == recipe.EAGER_MODE:
-            sample = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"))
-            with (self.work / "memory-scope.jsonl").open("a") as stream:
-                stream.write(json.dumps(sample, sort_keys=True) + "\n")
-        if mem < 16:
-            raise Refused("local 16 GiB physical memory floor breached")
-        for path, cap in ((self.ext, 6 * (1 << 30)), (self.work, int(6.3 * (1 << 30))),
-                          (self.rdv if self.config.get("window_mode") == recipe.EAGER_MODE else self.rdv / "arms",
-                           (1 << 30) if self.config.get("window_mode") == recipe.EAGER_MODE else int(.2 * (1 << 30)))):
-            if directory_bytes(path) > cap:
-                raise Refused(f"declared disk/output cap exceeded: {path}")
-        if self.active and self.active.get("cid"):
-            inspect = self.command(["docker", "inspect", self.active["cid"]], limit=5)
-            value = json.loads(inspect.stdout)[0]
-            if value.get("State", {}).get("Running") is not True:
-                raise Refused("owned local server exited before probes completed")
+            stream.write(f"{sample['unix']} rank{self.rank} MemAvailable_GiB={sample['mem_available_gib']}\n")
+        with (self.rdv / f"memory-samples-rank{self.rank}.jsonl").open("a") as stream:
+            stream.write(json.dumps(sample, sort_keys=True) + "\n")
+        atomic_json(self.rdv / f"memory-summary-rank{self.rank}.json", self.memory_summary)
+
+    def _container_control(self, cid, operation, *, check=True):
+        if self.envelope.end - time.monotonic() <= 5:
+            return self.envelope.run_container_control(cid, operation, check=check)
+        argv = (["docker", "inspect", cid] if operation == "inspect" else
+                ["docker", "kill", "--signal", operation, cid])
+        return self.command(argv, cleanup=True, check=check, limit=5)
+
+    def _term_server(self, cid):
+        """Signal only an inspected exact-attempt container; never names/foreign scope."""
+        stops = getattr(self, "server_terminations", {})
+        self.server_terminations = stops
+        if cid in stops:
+            return stops[cid]
+        value = self.inspect_owned(cid)
+        record = dict(cid=cid, scope_id=self.identity["scope_id"], signals=[],
+                      started_unix=time.time(), state=value["State"])
+        stops[cid] = record
+        if value["State"].get("Running") is True:
+            result = self._container_control(cid, "TERM", check=False)
+            record["signals"].append(dict(signal="SIGTERM", unix=time.time(),
+                                         monotonic=time.monotonic(), returncode=result.returncode,
+                                         output=result.stdout))
+            if result.returncode and self.inspect_owned(cid)["State"].get("Running"):
+                raise Refused("exact owned container SIGTERM failed")
+        atomic_json(self.rdv / f"container-termination-rank{self.rank}.json", stops)
+        return record
+
+    def _stop_server(self, cid):
+        record = self._term_server(cid)
+        term = next((event for event in record["signals"] if event["signal"] == "SIGTERM"), None)
+        stop_at = min((term["monotonic"] if term else time.monotonic()) +
+                      MEMORY_POLICY["term_grace_seconds"], self.envelope.end)
+        while True:
+            # Inspect/control retain a bounded cleanup-only budget after expiry.
+            value = self.inspect_owned(cid)
+            if value["State"].get("Running") is not True:
+                break
+            # An expired work envelope must not suppress this exact-owned KILL.
+            if time.monotonic() >= stop_at:
+                result = self._container_control(cid, "KILL")
+                record["signals"].append(dict(signal="SIGKILL", unix=time.time(),
+                                             monotonic=time.monotonic(), returncode=result.returncode))
+                value = self.inspect_owned(cid)
+                if value["State"].get("Running") is True:
+                    raise Refused("exact owned container remains running after SIGKILL")
+                break
+            left = stop_at - time.monotonic()
+            time.sleep(min(.2, max(0, left)))
+        record.update(state=value["State"], ended_unix=time.time(),
+                      deadline_shortened_grace=stop_at == self.envelope.end)
+        atomic_json(self.rdv / f"container-termination-rank{self.rank}.json", self.server_terminations)
+        return record
 
     def start(self, arm):
         # Source checks and the peer barrier may outlive the successful preflight.
         available = available_gib()
         atomic_json(self.rdv / f"{arm['arm']}-launch-headroom-rank{self.rank}.json",
                     dict(unix=time.time(), rank=self.rank, mem_available_gib=available,
-                         threshold_gib=PREFLIGHT_HEADROOM_GIB))
-        if available < PREFLIGHT_HEADROOM_GIB:
-            raise Refused("local MemAvailable below unchanged 114 GiB preflight")
+                         threshold_gib=MEMORY_POLICY["start_gib"]))
+        if available < MEMORY_POLICY["start_gib"]:
+            raise Refused("local MemAvailable below 107 GiB preflight")
         out = self.work / arm["arm"]
         out.mkdir()
         out.chmod(0o777)
@@ -206,7 +305,7 @@ class LocalArm:
         return dict(cid=cid, scope_id=self.identity["scope_id"], pid=value["State"]["Pid"])
 
     def inspect_owned(self, cid):
-        value = json.loads(self.command(["docker", "inspect", cid], cleanup=True, limit=10).stdout)[0]
+        value = json.loads(self._container_control(cid, "inspect").stdout)[0]
         labels = value.get("Config", {}).get("Labels", {})
         if (value.get("Id") != cid or labels.get("prismabuild.scope") != self.identity["scope_id"]
                 or labels.get("prismabuild.action") != self.identity["container_owner"]
@@ -325,14 +424,14 @@ class LocalArm:
                         if not re.fullmatch("[a-f0-9]{64}", found): raise Refused("ambiguous launch identity")
                         cid = found
                 if cid:
-                    self.inspect_owned(cid)
+                    self._stop_server(cid)
                     logname = f"{arm['arm']}.rank1.engine.log" if self.rank else f"{arm['arm']}.engine.log"
                     try:
                         with (Path(active["out"]) / logname).open("w") as stream:
                             self.command(["docker", "logs", cid], stdout=stream, cleanup=True, limit=15)
                     except Exception as exc:
                         errors.append(f"log capture: {exc}")
-                    self.command(["docker", "rm", "-f", cid], cleanup=True, limit=20)
+                    self.command(["docker", "rm", cid], cleanup=True, limit=20)
             except Exception as exc:
                 errors.append(f"exact container cleanup: {exc}")
             try:
@@ -372,6 +471,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
     """The real finite protocol; CPU scenarios substitute only the LOCAL device adapter."""
     meeting = Rendezvous(rdv, owned, queue, envelope, poll_seconds=poll_seconds)
     adapter.guard = meeting.check
+    adapter.abort = lambda **fields: meeting.publish("failed", **fields)
     adapter.poll_seconds = poll_seconds
     outcome = dict(owned, simulation=not isinstance(adapter, LocalArm), completed_arms=[],
                    ownership_released=False, local_cleanup=[], returncode=1)
@@ -395,6 +495,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             stage = arm["arm"]
             meeting.publish(stage + "-preflight", metadata=metadata)
             peer = meeting.wait(stage + "-preflight", tick=adapter.tick)
+            # Agreement between live gang halves is comparability, not a recorded-run seal.
             for key in ("image", "src_sha256", "config_sha256"):
                 if metadata.get(key) != peer["metadata"].get(key):
                     raise Refused(f"rank preflight differs in {key}")
@@ -430,16 +531,36 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
                 raise
             outcome["local_cleanup"].append(dict(arm=stage, **physical))
             meeting.publish(stage + "-cleaned", **physical)
-            # Cleanup evidence is not admission: allow a terminal peer only after the final arm.
+            # Final cleanup is evidence, not fresh admission. Check exact failed
+            # markers before accepting the peer final-cleaned record, even if it exited.
             if arm != arms[-1]:
                 meeting.wait(stage + "-cleaned", tick=adapter.tick)
+            else:
+                peer_cleaned = rdv / f"{stage}-cleaned-rank{1-owned['rank']}.json"
+                while True:
+                    envelope.remaining()
+                    for rank in (0, 1):
+                        failure = rdv / f"failed-rank{rank}.json"
+                        if failure.exists():
+                            value = meeting.checked(failure, rank)
+                            raise Refused(f"rank {rank} failed: {value.get('error')}")
+                    if peer_cleaned.exists():
+                        meeting.checked(peer_cleaned, 1-owned["rank"])
+                        break
+                    adapter.tick()
+                    time.sleep(min(poll_seconds, envelope.remaining()))
             outcome["completed_arms"].append(stage)
         outcome["returncode"] = 0
     except BaseException as exc:
         outcome["error"] = f"{type(exc).__name__}: {exc}"
         outcome["returncode"] = 124 if isinstance(exc, TimeoutError) else 1
-        meeting.publish("failed", error=outcome["error"])
+        try:
+            meeting.publish("failed", error=outcome["error"])
+        except BaseException as secondary:
+            outcome["failure_publication_error"] = f"{type(secondary).__name__}: {secondary}"
     finally:
+        if outcome["returncode"] != 0:
+            envelope.tighten(time.time() + CLEANUP_SECONDS)
         if current is None and not outcome["local_cleanup"] and "cleanup_error" not in outcome:
             current = dict(arm="unstarted")
         if current is not None:
@@ -449,11 +570,39 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             except BaseException as exc:
                 outcome["cleanup_error"] = f"{type(exc).__name__}: {exc}"
                 outcome["returncode"] = 1
+        # Do not let native gang teardown shorten the peer server's TERM grace:
+        # a failed rank returns only after BOTH payloads acknowledge owned cleanup.
+        if outcome["returncode"] != 0 and meeting.peer is not None:
+            try:
+                meeting.publish("failed-cleaned", local_cleanup=outcome["local_cleanup"],
+                                cleanup_error=outcome.get("cleanup_error"))
+                peer_cleaned = rdv / f"failed-cleaned-rank{1-owned['rank']}.json"
+                while not peer_cleaned.exists():
+                    try:
+                        require_claim(meeting.peer, queue)
+                    except BaseException as peer_ended:
+                        outcome["peer_cleanup_acknowledgement"] = dict(available=False,
+                            reason=f"peer claim ended: {type(peer_ended).__name__}: {peer_ended}")
+                        break
+                    left = envelope.remaining(cleanup=True) - 5  # preserve broker-stop margin
+                    if left <= 0:
+                        raise TimeoutError("peer cleanup acknowledgement deadline; broker-stop margin begins")
+                    time.sleep(min(poll_seconds, left))
+                if peer_cleaned.exists():
+                    meeting.checked(peer_cleaned, 1-owned["rank"])
+                    outcome["peer_cleanup_acknowledgement"] = dict(available=True)
+            except BaseException as exc:
+                outcome["cleanup_error"] = f"failed peer cleanup acknowledgement: {type(exc).__name__}: {exc}"
         outcome["window_end_unix"] = envelope.end_unix
+        outcome["process_terminations"] = getattr(envelope, "terminations", [])
+        outcome["container_terminations"] = getattr(adapter, "server_terminations", {})
+        outcome["memory_summary"] = getattr(adapter, "memory_summary", None)
+        outcome["abort_errors"] = getattr(adapter, "abort_errors", [])
         outcome["ended_unix"] = time.time()
         if outcome["ended_unix"] > envelope.end_unix:
             outcome["cleanup_error"] = "payload cleanup outside whole-window envelope"
             outcome["returncode"] = 1
+        outcome["invocation_failed"] = outcome["returncode"] != 0
         atomic_json(rdv / f"outcome-rank{owned['rank']}.json", outcome)
         print(json.dumps(outcome, sort_keys=True), flush=True)
     return outcome["returncode"]
@@ -474,6 +623,10 @@ def main():
     setup = read_json(args.run)
     if recipe.sha(args.run) != os.environ.get("GRAPH_WINDOW_INPUT_SHA256"):
         raise Refused("window inputs differ from sealed action environment")
+    policy_path = args.run.parent / "memory-policy.json"
+    if recipe.sha(policy_path) != setup["memory_policy_sha256"]:
+        raise Refused("rank memory policy differs from its own recorded digest")
+    check_memory_policy(read_json(policy_path), where="Window4 rank")
     if socket.gethostname() != HOSTS[args.rank]:
         raise Refused("rank claimed on the wrong physical host")
     queue = Path(os.environ["PRISMABUILD_QUEUE_ROOT"])
@@ -486,16 +639,17 @@ def main():
                  window_end_unix=row["claimed_unix"] + WINDOW_SECONDS)
     require_claim(owned, queue)
     envelope = Envelope(owned["window_end_unix"])
-    config = recipe.inputs(os.environ, live=True, runner=envelope.run)
-    if config != setup["config"]:
-        raise Refused("frozen source/control differs from prepared window inputs")
+    current = recipe.inputs(os.environ, live=True, runner=envelope.run)
+    recipe.check_control_record(setup["config"], current, where="Window4 rank",
+                              refusal=Refused("frozen source/control differs from prepared window inputs"))
+    config = setup["config"]  # stored data, never an identity-triggered regeneration
     rdv = args.run.parent
     if args.role_preflight:
         image = json.loads(envelope.run([sys.executable, "-m", "tessera.serving.runtime_image", "resolve",
                                        "--image", config["image"]],
                                       env=dict(os.environ, PYTHONPATH=str(Path(config["ts"]) / "src"))).stdout)
-        if image.get("resolved_reference") != config["image"]:
-            raise Refused("role preflight image differs from frozen image")
+        seal_check("role image identity", config["image"], image.get("resolved_reference"),
+                   where="Window4 role", refusal=Refused("role preflight image differs from frozen image"))
         for arm in setup["arms"]:
             command = recipe.container(config, arm, owned, rdv / "unused-out", rdv / "unused-ext",
                                        rdv / "unused-cid", {})

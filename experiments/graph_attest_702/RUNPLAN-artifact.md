@@ -51,9 +51,12 @@ qualification. Runtime and producer identities are separately bound below.
 inputs and renders the two local serve commands. It launches nothing. A direct
 `arm_tp2.sh ARM` no longer starts containers; the one-arm wrapper is command
 inspection only. `--prepare` creates one fresh invocation root, input digest and
-a supported `pbcampaign.py` manifest. `--submit` checks exact producer parent/D5
-approval, unchanged inputs/manifest, the current census queue condition and fresh
-D1, then keeps the published campaign completion client attached.
+the supported native-gang manifest of full member contracts. `--submit` checks
+exact producer parent/D5 approval, unchanged inputs/manifest, the current census
+queue condition and fresh D1, then submits through published
+`pbgang.py --manifest` and waits through published `pbwait.py --json
+--wait-s6000` on both exact member keys, writing `native-gang.json` and
+`member-completion.json`; there is no private group writer or second dispatcher.
 
 Each action executes `rank_window.py --rank 0|1` on its nominated host. Local
 Docker uses PB's ordinary shim, inherited CPU affinity and memory parent. The
@@ -109,41 +112,76 @@ Combined peaks are 14 CPUs, 208 GiB host DRAM, a 204 GiB GPU **subset** (not ext
 DRAM), and two exclusive physical devices. CPU demand covers target/draft engine
 processes, NCCL progress/helpers and the local controller; rank0 additionally
 has the API and one-at-a-time equality client. These are conservative declared
-ceilings, not measured concurrent-use claims. The 104 GiB cap budgets the derived
-98 GiB model/KV peak plus 6 GiB unmeasured graph/host allowance; the GPU subset
+ceilings, not measured concurrent-use claims. The 104 GiB cap stays an admission
+ceiling over the derived 98 GiB model/KV estimate plus the 6 GiB explicitly
+unmeasured graph/host allowance; the GPU subset
 leaves 2 GiB inside the host cap for host-only work. This does **not** establish
 that graph pools or cold JIT fit; refusal/OOM must retain its exact attempt and
 memory evidence. Do not copy EXL3's 100 GiB budget or reduce demand to force admission.
 
-Both hosts still require **114 GiB MemAvailable** before each arm. The derivation
-is the historical 94.4/96.1 GiB release peaks at 384 MiB KV, plus 1.625 GiB for
-2 GiB KV, rounded conservatively to 98 GiB plus the unchanged **16 GiB physical
-floor**. The floor is sampled every five seconds, not a proof against transient
-undershoot. No cache reduction is approved; four resident requests and all
-capture sizes/cases remain required.
+**Memory admission (issue959 D30 amendment, 2026-10-05).** Both hosts require
+**107 GiB MemAvailable** before each arm: the retained conservative hybrid
+model/KV estimate **98 GiB**, plus the explicitly unmeasured graph/host
+allowance **6 GiB**, plus reserve **3 GiB**. The historical **114 GiB**
+predicate and its sampled **16 GiB floor** are no longer live; they belong only
+to the immutable b5 run recorded under them. Historical derivation is documented
+in `/home/rob/fleet/inventory/kernels-window4-headroom-equation-packet-20261005.json`
+(SHA-256 `1a28bff770790a09b0df4573d46acf31e44aa12c6118cf31b9a32a279ffdb4f8`).
+The 98 is derived, not measured: the larger of the two hybrid
+estimates 94.4/96.1 GiB plus the 1.625 GiB KV uplift from 384 MiB to 2 GiB per
+rank, rounded conservatively up to 98. Those hybrids come from the graph arm's
+MemAvailable ready drop and the eager L512/c4 transient-KV assumption — they
+are **not** measured 384 MiB peaks. Engine RSS and context sizes were never
+recorded and stay unknown; cgroup charge, MemAvailable and GPU-used quantities
+overlap, so no naive sum of them is a measured decomposition. The 104/102 GiB
+caps above are unchanged. No cache reduction is approved; four resident
+requests and all capture sizes/cases remain required.
 
 **Bounded headroom wait (issue953, CEO-authorized 2026-10-05).** When the
-synchronous sample sits below 114 GiB, `LocalArm.preflight` waits up to **900
-seconds** for the unchanged predicate to become genuinely true, in graph and
+synchronous sample sits below 107 GiB, `LocalArm.preflight` waits up to **900
+seconds** for the same 107 GiB predicate to become genuinely true, in graph and
 eager modes alike, before each arm. The wait polls on the existing `run_rank`
 cadence, checks the live guard on every poll and immediately before declaring
 ready, and is capped by the existing window envelope (cleanup reserve and any
 tightened absolute window), so a shortened deadline still refuses. Expiry
-raises the original unchanged refusal text; the 16 GiB floor and guard
-cancellation refuse inside the wait; the model never launches below 114 GiB.
+raises the 107 GiB preflight refusal; guard cancellation refuses inside
+the wait; the model never launches below 107 GiB.
 One terminal wait report per call — threshold, 900-second bound, initial/last
 GiB, wall/monotonic times, every exact sample, and reason
 `ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error` — is appended
 to `rdv/headroom-preflight-rank<rank>.jsonl` and persists through refusal,
 cancellation, deadline or unavailable readings (unknown values stay unknown).
-Before container work, the model-start boundary rechecks the same 114 GiB bar
+Before container work, the model-start boundary rechecks the same 107 GiB bar
 after source checks and the peer barrier and records its per-arm synchronous
 sample at `rdv/<arm>-launch-headroom-rank<rank>.json`. A prior ready wait never
 authorizes a below-threshold launch. The unchanged 104/102 GiB
-demand caps and every admission predicate are untouched: this is a bounded
+demand caps and every other admission predicate are untouched: this is a bounded
 predicate-satisfaction wait, not a new admission path, and it produces no fit,
 speed or pin evidence and no transfer of the historical frozen producer's
 source approval. Deterministic regressions: `tests/test_graph_attest_headroom_preflight.py`.
+
+**Dual-rank memory guard (issue959 D30 amendment).** While the window runs,
+each rank samples whole-box `MemAvailable` at 1 Hz. A sample strictly below
+**2 GiB** on either host fails **both** exact-owned ranks. The local comparison
+precedes shared queue/journal work; exact-owned TERM starts locally before peer
+publication. The first exact-attempt FAILED marker is immutable and precedes
+any termination grace. Secondary signal/publication/journal failures are recorded
+alongside, never substituted for the trigger. SIGKILL follows ten seconds if
+needed; expiry can shorten the grace, but cleanup-only inspect/signal controls
+still get a fixed five-second budget to dispatch KILL, not to renew model work.
+Both live ranks acknowledge failed-cleaned before returning; a dead peer ends
+that wait immediately, and the wait retains five seconds for broker stop.
+Absent physical custody remains explicit. A sampled guard is not continuous:
+an inter-sample drop is not intercepted and clean samples are not immunity.
+`window_driver.py --prepare`
+emits `rdv/memory-policy.json` once and binds its SHA into the submitted
+inputs; each rank writes `rdv/memory-samples-rank<N>.jsonl` and
+`rdv/memory-summary-rank<N>.json` (raw samples with baseline/minimum/counter
+bookkeeping plus the summary). The Envelope outcome carries the termination
+list, and container termination evidence is retained. The samples artifact
+exists so a future window can measure the 6 GiB allowance against observed
+data; it is not a measured RSS decomposition of the 98 GiB estimate. Protected
+sysctl, ARC, cache and service settings are untouched by the guard.
 
 Runtime disk caps cover the unique local cache (6 GiB), local work including
 cache/logs (6.3 GiB) and shared arm records (0.2 GiB total). The declared 8 GiB
@@ -174,17 +212,41 @@ again in code and retains its view; a partial view refuses a new pair.
 The frozen **runtime** may be merged PR942
 `39e3d950226f1c9fec38d4baaaccb59fc267e12b`. Its source/config/hooks/equality-script
 digests bind the measured Tessera and eventual receipt. The **producer** is this
-separately reviewed PR. In both prepare and submit, checkout HEAD must equal the
-full `PRODUCER_COMMIT` and `experiments/graph_attest_702` must be clean. Every
-producer file is read with `git show PRODUCER_COMMIT:path`; those committed bytes
-must equal the executable files and their combined digest must equal
-`PRODUCER_SHA256`. A typed label plus a self-supplied disk digest is not authority.
-PB may materialize a synthetic HEAD, but the rank still checks clean producer
-files against the reviewed Git objects with no PB bypass. A parentless snapshot
-without the reviewed commit fails by the exact missing-object boundary. Parent
-and D5 review JSON must name that verified producer commit. Runtime choice and
-fabric remain explicit. The old dual-launch #942 wrapper is never
+separately reviewed PR. In both prepare and submit the checkout comparison
+against the full `PRODUCER_COMMIT` is itself a D32 seal: default dev mode
+stamps one `[DEV-MODE]` line and continues, certified keeps the verbatim
+refusal, and the exact executing-code parent/D5 review — submit compares
+every executing-code root's HEAD with the reviewed head — refuses in dev
+and certified modes alike. The remaining producer identity comparisons
+(`experiments/graph_attest_702` clean, every producer file equal to its
+`git show PRODUCER_COMMIT:path` object, and the combined digest equal to
+`PRODUCER_SHA256`) are D32 run-identity seals: under default dev mode
+(`PRISMAQUANT_DEV_MODE` not exactly `0`) each mismatch prints one
+`[DEV-MODE]` line and the run continues with the stored data —
+`require_producer` returns the stored expected digest without Git or digest
+computes, and `producer_sha` reports the stored `PRODUCER_SHA256` or
+`NOT_COMPUTED` — while certified `PRISMAQUANT_DEV_MODE=0` keeps the legacy
+refusals verbatim, including the exact missing-object boundary for a
+parentless snapshot. A typed label plus a self-supplied disk digest is still
+not authority, and dev mode adds no release gate: no recompute, archive,
+re-seal, re-pin or identity-proof packet is performed or required for
+identity drift. Parent and D5 review JSON must still name the producer
+commit in both modes. The rank's own-byte seals never stamp: the submitted
+`inputs.json` against its action-environment `GRAPH_WINDOW_INPUT_SHA256`,
+`memory-policy.json` against its recorded SHA, and the policy content
+itself refuse in both modes; only the restamped policy-value comparison
+against the running policy stamps in dev and refuses certified, as do the
+prepared source/control drift comparisons in `prepare`/`submit`/`preflight`/
+`run_rank`. PB claims, nonces, action keys, owned scope, the OOM floor, disk
+admission, the manifest resource/safety fields and every format gate are
+unchanged. Runtime choice and fabric remain explicit. The old dual-launch
+#942 wrapper is never
 run twice or used to launch an unadmitted remote rank.
+
+Before each arm starts, the two live rank preflights must have identical
+`image`, `src_sha256` and `config_sha256`. A mismatch is execution-comparability
+failure in both modes: no local server launch, no probes, both ranks failed.
+It never goes through `seal_check`, regardless of the dev-mode setting.
 
 Every model row is an exclusive **measurement**, host class gb10, priority **10**
 with a Goal reason, fixed legitimate rank-host tags, and 3600-second peer admission
@@ -199,7 +261,7 @@ this is admission evidence, not model readiness or qualification.
 `rank_window.py --role-preflight` is an admitted CPU-only check on each actual
 rank host: frozen runtime/producer/artifact identity, real local image resolution
 and generated shell syntax, with zero containers/model/CUDA work. It does not
-waive the later 114 GiB preflight or 16 GiB floor. `--prepare-role-preflight`
+waive the later 107 GiB preflight. `--prepare-role-preflight`
 prepares these checks with 1 GiB output admission; model submission still repeats
 fresh D1 for its full 8 GiB local/1 GiB shared allowance.
 
@@ -216,13 +278,15 @@ CPU role checks. Submit each CPU row through published PB using `--rank 0|1
 --run ROOT/inputs.json --role-preflight`, demand cpu=1/mem_gb=2, no GPU, timeout
 120 and one native thread. After actual role receipts and exact-head reviews,
 `drive_tp2.sh PLAN --submit ROOT --reviews JSON` submits the supported measurement
-manifest and keeps its published completion client alive. The review JSON's
+manifest through published `pbgang.py --manifest` and keeps the published
+`pbwait.py --json --wait-s6000` client alive on both exact member keys. The review JSON's
 `parent` and `D5` objects each carry `verdict: APPROVE` and the producer
 `head_sha`, with real review provenance. Never resume/rewrite a submitted root.
 
 After terminal physical handoff, run the **frozen runtime's** existing v2
 `receipt.py` through CPU PB, using `ROOT/arms`, `ROOT/receipt-manifest.json`,
-`--eager aE1,aE2 --graph aGR --commit SOURCE_COMMIT`. Keep the not-measured
+`--eager aE1,aE2 --graph aGR --commit SOURCE_COMMIT`; the entire invocation's
+failed markers are checked before receipt-manifest emission. Keep the not-measured
 served BF16 KL and graph-vs-eager speed exclusions. Inspect every full 48-choice
 pass, eager repeatability, both ranks' replay/classes and exact v2 serve tuple;
 receipt building alone qualifies no compiled cell, pin, scientific release or
@@ -323,8 +387,8 @@ run after timing. No profiled response is pooled into throughput.
 
 The conservative104GiB host/102GiB GPU-subset caps per rank are admission
 ceilings, not the old98GiB/c4 fit claim. CPU ceilings remain8/6 including the
-single client on rank1; threads are bounded at1. Both hosts still need114GiB
-MemAvailable at model preflight and retain the sampled16GiB physical floor.
+single client on rank1; threads are bounded at1. Both hosts still need107GiB
+MemAvailable at model preflight.
 The real4096 model must fit this unchanged contract or retain its refusal.
 Five-second per-rank MemAvailable and actual cgroup current/claim-lifetime peak
 host charges accompany requests. CUDA coverage of cgroup charges is unproven;
@@ -348,7 +412,8 @@ No stopped-publisher permission, zero-live price marker, caller queue withdrawal
 payload kill or new scheduling layer is used. The complete already-taken queue
 snapshot authenticates sealed managed-pair ownership: another paired window or
 invalid ownership refuses, while legitimate lower-priority price rows do not.
-One supported `pbcampaign --max-inflight 2` owns the fixed-rank topology pair.
+One supported `pbgang.py --manifest` native gang owns the fixed-rank topology
+pair, waited through `pbwait.py --json --wait-s6000` on both exact member keys.
 Only actual both-claimed and terminal/owned cleanup observations are reported.
 
 Use the existing driver with `WINDOW_MODE`, `PQ_PIN_COMMIT`, `ARTIFACT_MANIFEST`,
