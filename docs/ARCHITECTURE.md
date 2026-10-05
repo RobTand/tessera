@@ -1,5 +1,22 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
+adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
+The default c4/MNBT2048 eager/graph/eager equality population and refusal stay
+unchanged. Window4 binds the public2dbac191/v56 runtime, corrected reviewed PQ2264
+candidate, full authenticated A8S inventory and exact October5 EXL3 client and
+profile bytes. One published two-half exclusive campaign retains ownership,
+deadline, physical floor and cleanup. PACT prices run while the recipe qualifies;
+PrismaBuild priority10 host election fences lower-priority prices when the pair
+is published, without a caller-manual drain or retired D28 supply-cap gate.
+The complete census refuses another managed pair/invalid ownership, not prices.
+Real CPU cgroup sampling/pinned-image parser checks and per-rank profile
+verification precede actual fit/speed evidence. Those require served requests,
+per-rank memory, matching
+profiles and both-Spark Netdata coverage. No default, serving pin, format,
+scientific gate, graph receipt, ship artifact or performance claim is promoted
+by this source change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Re-stamped 2026-10-05 for local disk admission of the container suite cache.
 The shared container owner refuses known network filesystem types before
 building a container command, creating its cache or launching it. The

@@ -27,6 +27,23 @@ def available_gib() -> float:
     return int(next(line.split()[1] for line in lines if line.startswith("MemAvailable:"))) / 1048576
 
 
+def scope_memory(identity):
+    """Read the real owned cgroup's host charge; CUDA accounting is not inferred."""
+    unified = [line.split(":", 2)[2] for line in Path("/proc/self/cgroup").read_text().splitlines()
+               if line.startswith("0::")]
+    if len(unified) != 1:
+        raise Refused("Window4 sampler has no unique cgroup v2 membership")
+    parts = Path(unified[0]).parts[1:]
+    if identity["scope_id"] not in parts:
+        raise Refused("Window4 memory sample is outside its owned aggregate scope")
+    scope = Path("/sys/fs/cgroup").joinpath(*parts[:parts.index(identity["scope_id"]) + 1])
+    return dict(unix=time.time(), rank=identity["rank"], mem_available_gib=available_gib(),
+                scope_id=identity["scope_id"], cgroup_path=str(scope),
+                scope_memory_current_bytes=int((scope / "memory.current").read_text()),
+                scope_memory_peak_bytes=int((scope / "memory.peak").read_text()),
+                note="Host cgroup charge only; CUDA coverage is unproven. Peak is claim-lifetime, current is sampled.")
+
+
 def fabric_from_log(log: str) -> str:
     banners = set(re.findall(r"Using network ([A-Za-z_]+)", log))
     if banners == {"Socket"}: return "socket"
@@ -83,10 +100,15 @@ class LocalArm:
         mem = available_gib()
         with (self.work / "memwatch.txt").open("a") as stream:
             stream.write(f"{time.time()} rank{self.rank} MemAvailable_GiB={mem}\n")
+        if self.config.get("window_mode") == recipe.EAGER_MODE:
+            sample = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"))
+            with (self.work / "memory-scope.jsonl").open("a") as stream:
+                stream.write(json.dumps(sample, sort_keys=True) + "\n")
         if mem < 16:
             raise Refused("local 16 GiB physical memory floor breached")
         for path, cap in ((self.ext, 6 * (1 << 30)), (self.work, int(6.3 * (1 << 30))),
-                          (self.rdv / "arms", int(.2 * (1 << 30)))):
+                          (self.rdv if self.config.get("window_mode") == recipe.EAGER_MODE else self.rdv / "arms",
+                           (1 << 30) if self.config.get("window_mode") == recipe.EAGER_MODE else int(.2 * (1 << 30)))):
             if directory_bytes(path) > cap:
                 raise Refused(f"declared disk/output cap exceeded: {path}")
         if self.active and self.active.get("cid"):
@@ -144,6 +166,9 @@ class LocalArm:
         raise TimeoutError("local serve readiness deadline")
 
     def probes(self, arm, peer_meta):
+        if self.config.get("window_mode") == recipe.EAGER_MODE:
+            from eager_benchmark import probes
+            return probes(self, arm, peer_meta)
         name = arm["arm"]
         out = Path(self.active["out"])
         root = Path(self.config["ts"])
@@ -185,6 +210,17 @@ class LocalArm:
                          stdout=stream, tick=self.tick, limit=12)
         with (out / f"engine-args-{name}.txt").open("a") as stream:
             stream.write("rc=0\n")
+
+    def verify_profiles(self, arm, probe):
+        command = [sys.executable, str(Path(self.config["client_source"]) / "comparison_inputs.py"),
+                   "--manifest", self.config["profile_manifest"], "verify-profile",
+                   "--rank", str(self.rank), "--directory", probe["profile_dir"],
+                   "--events", probe["events"], "--invocation", probe["invocation"]]
+        proof = json.loads(self.command(command, tick=self.tick, limit=self.envelope.remaining()).stdout)
+        if proof["rank"] != self.rank or proof["invocation"] != probe["invocation"]:
+            raise Refused("Window4 profile verifier returned a different rank/invocation")
+        atomic_json(self.rdv / "arms" / arm["arm"] / f"profile-verified-rank{self.rank}.json", proof)
+        return proof
 
     def assert_empty(self):
         # Scope AND owner, never a campaign/name-only drain. Foreign work is untouched.
@@ -243,6 +279,10 @@ class LocalArm:
                 self.command(["cp", "--", str(self.work / "memwatch.txt"),
                               str(dest / f"{arm['arm']}.rank{self.rank}.memwatch.txt")], cleanup=True, limit=10)
                 atomic_json(dest / f"ownership-rank{self.rank}.json", dict(self.identity, container=active))
+                if self.config.get("window_mode") == recipe.EAGER_MODE:
+                    target = dest / f"{arm['arm']}.rank{self.rank}.memory-scope.jsonl"
+                    self.command(["cp", "--", str(self.work / "memory-scope.jsonl"), str(target)], cleanup=True, limit=10)
+                    copied.append(target)
                 copied += [dest / f"{arm['arm']}.rank{self.rank}.memwatch.txt", dest / f"ownership-rank{self.rank}.json"]
                 with (dest / f"{arm['arm']}.rank{self.rank}.SHA256SUMS").open("w") as sums:
                     self.command(["sha256sum", "--", *(str(path) for path in copied)],
@@ -267,6 +307,7 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
     outcome = dict(owned, simulation=not isinstance(adapter, LocalArm), completed_arms=[],
                    ownership_released=False, local_cleanup=[], returncode=1)
     current = None
+    probe_rank = 1 if config.get("window_mode") == recipe.EAGER_MODE else 0
     try:
         meeting.bind_peer(tick=adapter.tick)
         owned["window_end_unix"] = envelope.end_unix
@@ -300,14 +341,18 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             peer_ready = meeting.wait(stage + "-ready", tick=adapter.tick)
             if peer_ready["fabric"] != config["fabric"]:
                 raise Refused("peer observed fabric differs from frozen tuple")
-            if owned["rank"] == 0:
-                adapter.probes(arm, peer_ready)
-                meeting.publish(stage + "-probes", returncode=0)
+            if owned["rank"] == probe_rank:
+                finished = adapter.probes(arm, peer_ready) or {}
+                meeting.publish(stage + "-probes", returncode=0, **finished)
             else:
-                while not (rdv / f"{stage}-probes-rank0.json").exists():
+                while not (rdv / f"{stage}-probes-rank{probe_rank}.json").exists():
                     envelope.remaining(); meeting.check(); adapter.tick(); time.sleep(poll_seconds)
-                finished = meeting.checked(rdv / f"{stage}-probes-rank0.json", 0)
+                finished = meeting.checked(rdv / f"{stage}-probes-rank{probe_rank}.json", probe_rank)
                 if finished["returncode"] != 0: raise Refused("head probe failed")
+            if config.get("window_mode") == recipe.EAGER_MODE and isinstance(adapter, LocalArm):
+                profile = adapter.verify_profiles(arm, finished)
+                meeting.publish(stage + "-verified", profile=profile)
+                meeting.wait(stage + "-verified", tick=adapter.tick)
             current = None
             try:
                 physical = adapter.cleanup(arm)
@@ -386,7 +431,37 @@ def main():
             command = recipe.container(config, arm, owned, rdv / "unused-out", rdv / "unused-ext",
                                        rdv / "unused-cid", {})
             envelope.run(["bash", "-n", "-c", command[-1]])
-        proof = dict(owned, config=config, image=image, native_gpu_work=False, containers_started=0,
+        sampler = None
+        parsers = []
+        if config.get("window_mode") == recipe.EAGER_MODE:
+            sampler = scope_memory(owned)
+            for arm in setup["arms"]:
+                local_config = dict(config, profile_dir=str(Path(config["profile_dir"]) / arm["arm"]))
+                serve = recipe.serve(local_config, arm, args.rank)
+                document = serve[serve.index("--profiler-config") + 1]
+                parser = ["docker", "run", "--rm", "--network", "none",
+                          "--name", f"window4-cpu-parser-{owned['nonce']}-{arm['arm']}",
+                          "-e", "CUDA_VISIBLE_DEVICES=", "-e", "NVIDIA_VISIBLE_DEVICES=void",
+                          "-e", "OMP_NUM_THREADS=1", "-e", "MKL_NUM_THREADS=1",
+                          "-e", "OPENBLAS_NUM_THREADS=1", "--entrypoint", "python3", config["image"], "-c",
+                          "import json,sys; from pydantic import TypeAdapter; "
+                          "from vllm.config import ProfilerConfig; "
+                          "c=TypeAdapter(ProfilerConfig).validate_json(sys.argv[1]); "
+                          "print(json.dumps(dict(profiler=c.profiler,torch_profiler_dir=c.torch_profiler_dir,"
+                          "torch_profiler_with_stack=c.torch_profiler_with_stack,"
+                          "torch_profiler_record_shapes=c.torch_profiler_record_shapes,ignore_frontend=c.ignore_frontend)))",
+                          document]
+                actual = json.loads(envelope.run(parser, limit=30).stdout.strip().splitlines()[-1])
+                expected = json.loads(document)
+                if any(actual.get(key) != value for key, value in expected.items()):
+                    raise Refused("pinned image parsed a different profiler configuration")
+                parsers.append(dict(arm=arm["arm"], actual=actual, command=parser))
+            present = envelope.run(["docker", "ps", "-aq", "--filter", f"label=prismabuild.scope={owned['scope_id']}",
+                                    "--filter", f"label=prismabuild.action={owned['container_owner']}"]).stdout.strip()
+            if present:
+                raise Refused("CPU profiler-parser container remains in the owned scope")
+        proof = dict(owned, config=config, image=image, native_gpu_work=False, model_containers_started=0,
+                     cpu_parser_containers_started=len(parsers), profiler_parsers=parsers, real_cgroup_sample=sampler,
                      requested_pb_timeout_s=120, effective_pb_timeout_s=None,
                      model_window_seconds=WINDOW_SECONDS, peer_wait_seconds=3600,
                      rendered_arms=[a["arm"] for a in setup["arms"]])
