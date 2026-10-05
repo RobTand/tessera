@@ -434,11 +434,15 @@ def census_expected(*, compiled: bool, platform=None):
 
     The route registry owns these pairs. Dense dispatch uses its prepared
     native bundle in both regimes, including compiled forwards; compilation
-    does not add the retired materialised GEMM/GEMV combination. ``compiled``
-    remains an accepted argument for census callers, not an extra launch.
+    does not add the retired materialised GEMM/GEMV combination.  A compiled
+    forward cannot make an eager-only launch (``scheme.EAGER_ONLY_LAUNCHES``:
+    its owner refuses under compile), so ``compiled=True`` drops those.
     """
-    decode = launch_pairs(TESSERA_FP8, regime="decode", include_experimental=True)
-    batch = launch_pairs(TESSERA_FP8, regime="batch", include_experimental=True)
+    from .scheme import EAGER_ONLY_LAUNCHES
+
+    drop = EAGER_ONLY_LAUNCHES if compiled else frozenset()
+    decode = launch_pairs(TESSERA_FP8, regime="decode", include_experimental=True) - drop
+    batch = launch_pairs(TESSERA_FP8, regime="batch", include_experimental=True) - drop
     pairs = {"decode": decode, "batch": batch}
     from .census import platform_expectation
 

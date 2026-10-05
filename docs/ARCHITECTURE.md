@@ -522,6 +522,31 @@ the functional reference; no-grad calls keep the optimized CPU path. No
 recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
 serving, and no new throughput claim is made.
 
+Re-stamped 2026-10-05 for the default-off decode-once E4M3 dense prefill lane
+(contract v56, Refs #931). Under `TESSERA_E4M3_DECODE_ONCE=1`,
+`fp8_route.process_weights_after_loading` decodes each RESIDENT dense module
+once to plain E4M3 bytes (`serving.e4m3_prefill.decode_e4m3`: each role's own
+Triton window decoder run with unit row scales on an FP8 identity, which is
+exact) and attaches the copy to the module
+(`PreparedDenseNativeModule.attach_decoded`). The module then serves
+M >= `e4m3_prefill.MIN_M` (256, the measured crossover) with
+`torch._scaled_mm` row-wise on the unchanged E4M3 epilogue contract, and every
+smaller M on its window lane. The lane is EAGER-ONLY: the M branch is host
+Python, so the route refuses the flag AT LOAD when vLLM's compilation mode is
+not NONE (`compile_identity.current_forward_is_compiled`); a raise in `apply`
+under `torch.compile` is only a backstop, since Dynamo may run around it. A
+copy-holding module declares a distinct compile-cache dispatch fact
+(`<window op>|<decode-once op>`). The route stamps `launch_pair_for(M)` (the
+pair that ran) only for a copy-holding module; every other module stamps its
+one `launch_pair` without reading the token count, as before v56. The copy is one byte per weight plus the fp32 row scale, yielded by
+`named_tensors`, so the residency accounting prices it. The launch
+`(tessera.serving.e4m3_prefill.prefill_apply, native_window_decode_once_e4m3)`
+enters `scheme.ROUTE_LAUNCHES[TESSERA_FP8]` (dense, both regimes, resident
+only, no extension lane) and `EXPERIMENTAL_LAUNCHES` together, so no cell names
+it until a served census of a T-8-projection artifact with the flag on earns
+one. Streamed modules, the flag unset and every other route are unchanged.
+Receipt: `docs/measurements/2026-10-04-e4m3-decode-once-prefill.md`.
+
 Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
 (contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
 subclass for the stock `FLASHINFER_MLA_SPARSE_SM120` enum through the plugin.
