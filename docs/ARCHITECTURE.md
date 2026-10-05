@@ -1,5 +1,22 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for issue984: opt-in
+`WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
+same MNBT4096, through the existing pair-table/row validator from issue980.
+Both ranks receive explicit decode-once, KDA-split and piece-major values;
+OFF disables all three, ON must enable at least one. The existing Window4,
+4096-to8192 and graph pairs, defaults and D30 guards/caps are unchanged.
+The new eager pair hashes decoded UTF-8 output plus length termination for
+all 33 frozen requests per arm (one warmup and ten timed requests at each of
+L512/2048/8192). ON writes an exact full-population comparison and refuses
+any mismatch before its profiles. This is neither token-ID/logit equality
+nor a KL/quality/ship gate. Frozen 2db flag-reader CPU controls establish
+selector reachability, not executed CUDA kernels or served activation;
+actual ON profiles must still demonstrate the selected paths.
+Parent Sol and D5 exact-head review precede any served gang.
+See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
+
 Re-stamped 2026-10-05 for issue980: opt-in `WINDOW_MODE=ship-graph-2048`
 selects `experiments/graph_attest_702/plan-graph-ship.txt`: graph2048_off
 then graph2048_on at the SAME MNBT2048, A8S/socket/TP2/resident/c1 and the
