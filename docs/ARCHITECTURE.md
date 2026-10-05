@@ -6354,6 +6354,8 @@ on, pinned by the dispatch command -- never a claim about the process that
 wrote the part; a selected host producer executes its own venv, and its
 environment is the receipt, not the image.
 
+The staged action also refuses an exhausted remaining deadline before
+starting either correctness or probe work; zero is never passed to GNU timeout.
 Both export wrappers require `PART_BOUND_S` in 1..2700; zero refuses rather
 than disabling GNU timeout. Completion and verified skip call the source-aware
 `serving_parts.validate_serving_part`, reusing assembly's single

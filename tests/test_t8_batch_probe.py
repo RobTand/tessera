@@ -289,7 +289,7 @@ class TestStagedAction:
         text = STAGE_WRAPPER.read_text()
         assert "BUDGET must be an integer 1..2700" in text
         assert "exit 2" in text
-        assert text.index("BUDGET must be an integer 1..2700") < text.index('/usr/bin/timeout "$(left)"'), (
+        assert text.index("BUDGET must be an integer 1..2700") < text.index('/usr/bin/timeout "$CORRECTNESS_BOUND"'), (
             "the ceiling is validated before the correctness packet, not after a phase "
             "has already run")
 
@@ -339,3 +339,29 @@ class TestProvisionerQualifyGitroot:
             "acquire wheels are prototype bindings of the sealed snapshot tree, and the "
             "record says so; final qualification is a NEW prefix built from the frozen "
             "--source-ref commit")
+
+
+def test_exhausted_deadline_never_starts_correctness_packet(tmp_path):
+    import subprocess
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    ticks = tmp_path / "ticks"
+    date = fake_bin / "date"
+    date.write_text(f"#!{sys.executable}\n" +
+        "import pathlib, sys\n" +
+        f"p=pathlib.Path({str(ticks)!r})\n" +
+        "if sys.argv[1:] == ['+%s']:\n" +
+        "    n=int(p.read_text()) if p.exists() else 0\n" +
+        "    p.write_text(str(n+1)); print(100 if n == 0 else 101)\n" +
+        "else: print('2026-10-05T00:00:00Z')\n")
+    date.chmod(0o755)
+    called = tmp_path / "correctness-called"
+    python = fake_bin / "python"
+    python.write_text(f"#!{sys.executable}\nfrom pathlib import Path\nPath({str(called)!r}).write_text('called')\n")
+    python.chmod(0o755)
+    env = dict(os.environ, PATH=str(fake_bin) + os.pathsep + os.environ['PATH'], PYTHON=str(python),
+               TESSERA_PRODUCER_PYTHON=str(python), TESSERA_PRODUCER_SOURCE=str(tmp_path))
+    done = subprocess.run(['bash', str(STAGE_WRAPPER), str(tmp_path/'out'), '1', '--', 'fixture-test', '--'],
+                          env=env, capture_output=True, text=True, timeout=30)
+    assert done.returncode == 124, done.stdout + done.stderr
+    assert not called.exists(), "an exhausted budget was passed as GNU timeout0 and started correctness"

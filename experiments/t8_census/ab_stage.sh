@@ -52,8 +52,13 @@ left() { echo $(( DEADLINE - $(date +%s) )); }
 
 echo "[ab_stage] host=$(hostname) start=$(date -u +%FT%TZ) budget=${BUDGET}s"
 if [ "${#PYTEST_ARGS[@]}" -gt 0 ]; then
-  echo "[ab_stage] correctness packet: pytest -q -x --dist worksteal ${PYTEST_ARGS[*]} (bound $(left)s)"
-  /usr/bin/timeout "$(left)" "$PY" -m pytest -q -x --dist worksteal "${PYTEST_ARGS[@]}"
+  CORRECTNESS_BOUND=$(left)
+  if [ "$CORRECTNESS_BOUND" -le 0 ]; then
+    echo "[ab_stage] deadline exhausted before correctness (left ${CORRECTNESS_BOUND}s)"
+    exit 124
+  fi
+  echo "[ab_stage] correctness packet: pytest -q -x --dist worksteal ${PYTEST_ARGS[*]} (bound ${CORRECTNESS_BOUND}s)"
+  /usr/bin/timeout "$CORRECTNESS_BOUND" "$PY" -m pytest -q -x --dist worksteal "${PYTEST_ARGS[@]}"
   rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "[ab_stage] correctness packet rc=$rc; no timed legs run on an unproven encoder"
