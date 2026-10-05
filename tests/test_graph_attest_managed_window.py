@@ -110,8 +110,22 @@ def test_deadline_kills_real_cpu_subprocess_group_and_retains_output(tmp_path):
                       "print(p.pid,flush=True);time.sleep(30)"], stdout=stream, limit=.2)
     pid = int(output.read_text().strip())
     stat = Path(f"/proc/{pid}/stat")
-    # A reparented zombie is physically dead; it holds no resources or GPU.
-    assert not stat.exists() or stat.read_text().split()[2] == "Z"
+
+    def physically_dead():
+        # A reparented zombie is physically dead; it holds no resources or GPU.
+        try:
+            return stat.read_text().split()[2] == "Z"
+        except (FileNotFoundError, ProcessLookupError):
+            # The entry vanishes mid-read (ESRCH) while the task is reaped.
+            return True
+
+    # SIGKILL to the group is asynchronous: the grandchild can still read as
+    # running for a moment while the kernel tears it down, so death is awaited,
+    # not sampled once (tessera: flaked 3 of 32 under 4-way load on master).
+    until = time.monotonic() + 5
+    while not physically_dead() and time.monotonic() < until:
+        time.sleep(.01)
+    assert physically_dead()
 
 
 def terminal(owned):
