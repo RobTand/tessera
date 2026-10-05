@@ -115,6 +115,7 @@ def tensor_file(path, names):
 
 
 def bundle(tmp_path, producer, source_ref):
+    global HESSIAN
     source = tmp_path / 'checkpoint'
     source.mkdir()
     names = ['model.layers.0.norm.weight', 'model.layers.1.norm.weight', 'lm_head.weight']

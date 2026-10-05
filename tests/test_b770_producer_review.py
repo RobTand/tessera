@@ -164,7 +164,7 @@ def test_provisioner_never_deletes_preexisting_staging():
 
 
 def test_projection_uses_toml_backport_without_tomllib(monkeypatch):
-    from pip._vendor import tomli
+    tomli = pytest.importorskip("tomli", reason="the declared Python3.10 TOMLI backport is not installed in this population")
     from tessera.source_profiles import packaged_projection_config
     monkeypatch.setitem(sys.modules, 'tomli', tomli)
     real_import = builtins.__import__
