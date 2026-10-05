@@ -613,10 +613,19 @@ def _skip_reason(report) -> str:
     return reason[len("Skipped: "):] if reason.startswith("Skipped: ") else reason
 
 
-def pytest_terminal_summary(terminalreporter, exitstatus, config):
+def _surface_results(terminalreporter):
+    """The final measurements shared by the prose and JSON publications."""
     from collections import Counter
 
     present, detail = _cuda_device()
+    reasons = Counter(_skip_reason(report)
+                      for report in terminalreporter.stats.get("skipped", []))
+    return (present, detail, reasons, _cuda_executed(terminalreporter),
+            _box_artifact_skips(reasons))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    present, detail, counts, executed, gated = _surface_results(terminalreporter)
     write = terminalreporter.write_line
 
     skipped = terminalreporter.stats.get("skipped", [])
@@ -631,7 +640,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "tessera surface: this run did not exercise the CUDA-gated "
             "surface. Its pass count is not coverage of it."
         )
-    counts = Counter(_skip_reason(report) for report in skipped)
     if skipped:
         write("tessera surface: skip reasons, verbatim --")
         for reason, count in counts.most_common():
@@ -643,8 +651,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         for line in textwrap.wrap(" ".join(collect_ignore), width=72):
             write(f"    {line}")
 
-    executed = _cuda_executed(terminalreporter)
-    gated = _box_artifact_skips(counts)
     write(f"tessera surface: {executed} test(s) allocated on the device")
     if gated:
         write("tessera surface: skipped for evidence this box does not hold --")
