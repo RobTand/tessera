@@ -158,6 +158,7 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     args = options()
     args.out = str(tmp_path/'out')
     args.outputs_only = False
+    args.direct_vllm_inputs = False
     closed = []
     reader = SimpleNamespace(close=lambda: closed.append(True))
     module = ModuleType('pb_staged_store')
@@ -194,7 +195,7 @@ def real_roster():
 def test_actual_publisher_projection_names_bind_complete_l10_roster():
     cls = reader_class()
     reader = cls.__new__(cls)
-    reader.bind_roles('/unused',real_roster())
+    reader.bind_roles('/unused',real_roster(), module='model.language_model.layers.10.mlp.experts')
     assert len(reader.roles) == 864
     assert 'model.language_model.layers.10.mlp.experts.0.gate_proj.wire' in reader.roles
 
@@ -207,7 +208,7 @@ def test_incomplete_or_foreign_roster_refuses(fault):
     else: roles[-1]['tensor']='foreign.287.down_proj.weight'
     cls=reader_class(); reader=cls.__new__(cls)
     with pytest.raises(ValueError,match='roster'):
-        reader.bind_roles('/unused',roles)
+        reader.bind_roles('/unused',roles, module='model.language_model.layers.10.mlp.experts')
 
 
 

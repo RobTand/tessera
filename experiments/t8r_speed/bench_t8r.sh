@@ -23,6 +23,7 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ ! -v TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=$TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH")
 [[ ! -v TESSERA_ROUTED_FUSED_FP4_A_PREFETCH ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH=$TESSERA_ROUTED_FUSED_FP4_A_PREFETCH")
 [[ ! -v TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH=$TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH")
+[[ ! -v TESSERA_ROUTED_FUSED_PAIRED_K32 ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_PAIRED_K32=$TESSERA_ROUTED_FUSED_PAIRED_K32")
 ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
 for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == --artifact ]]; then j=$((i+1)); ART=${!j}; fi
@@ -77,10 +78,17 @@ fi
 # and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
-  [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol" >&2; exit 2; }
-  if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
-  elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
-  else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
+  if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
+    # Closed paired batch uses held FDs, but always stays inside PB execution.
+    [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo "paired custom-op batch requires an admitted PrismaBuild attempt" >&2; exit 2; }
+    [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }
+    DIRECT_TIMEOUT=240
+  else
+    [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol or the closed paired numeric mode" >&2; exit 2; }
+    if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
+    elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
+    else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
+  fi
   [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
   [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
   [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
