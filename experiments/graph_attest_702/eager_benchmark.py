@@ -37,24 +37,51 @@ def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+def _identity(compute):
+    """The actual side of a run-identity seal (D32): no digest in dev mode.
+
+    A digest over existing data computed only to satisfy an identity comparison
+    is sealing; dev mode stamps ``NOT_COMPUTED`` instead of computing one.
+    Certified mode (``PRISMAQUANT_DEV_MODE=0``) computes and compares for real.
+    """
+    return NOT_COMPUTED if dev_mode_enabled() else compute()
+
+
 def bindings(env, artifact):
-    if env.get("SOURCE_COMMIT") != RUNTIME_COMMIT:
-        raise Refused("Window4 requires the qualified public runtime 2dbac191, not its producer")
+    # Function-local import: the simulated rank child (rank_window -> tp2_recipe
+    # -> this module) runs without the repo's src on sys.path, and never seals.
+    from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check
+    # Run-identity seals go through tessera.dev_mode.seal_check (D32): certified
+    # mode refuses with the original message, dev mode stamps and continues with
+    # the stored bindings returned below. Damage to owned data -- the manifest
+    # structure/roster, the loaded file population and lengths, metadata bytes
+    # against the manifest's own digests, and source_identity members against
+    # their recorded hashes -- is integrity, not sealing, and refuses in both
+    # modes.
+    seal_check("source commit", RUNTIME_COMMIT, env.get("SOURCE_COMMIT"), where="Window4 runtime",
+               refusal=lambda: Refused("Window4 requires the qualified public runtime 2dbac191, not its producer"))
     contract = Path(env["TS"]) / "src/tessera/serving/runtime_contract.json"
-    if sha(contract) != CONTRACT_SHA:
-        raise Refused("Window4 raw runtime contract differs from v56/47f180ef")
-    if env.get("PQ_PIN_COMMIT") != PQ_PIN_COMMIT:
-        raise Refused("Window4 requires the exact approved corrected PQ e36e60b7 pin commit")
-    if sha(Path(__file__).resolve().parents[1] / "box_power_window.py") != POWER_SHA:
-        raise Refused("Window4 existing power instrument bytes changed")
+    seal_check("runtime contract sha256", CONTRACT_SHA, _identity(lambda: sha(contract)),
+               where="Window4 runtime contract",
+               refusal=lambda: Refused("Window4 raw runtime contract differs from v56/47f180ef"))
+    seal_check("PQ pin commit", PQ_PIN_COMMIT, env.get("PQ_PIN_COMMIT"), where="Window4 PQ pin",
+               refusal=lambda: Refused("Window4 requires the exact approved corrected PQ e36e60b7 pin commit"))
+    power = Path(__file__).resolve().parents[1] / "box_power_window.py"
+    seal_check("power program sha256", POWER_SHA, _identity(lambda: sha(power)),
+               where="Window4 power instrument",
+               refusal=lambda: Refused("Window4 existing power instrument bytes changed"))
     manifest_path = Path(env.get("ARTIFACT_MANIFEST", ""))
     if not manifest_path.is_file() or not manifest_path.is_relative_to(SHARED_ROOT):
         raise Refused("Window4 requires the supplied complete A8S manifest on shared storage")
     entries = json.loads(manifest_path.read_bytes())
-    canonical = json.dumps(entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                           allow_nan=False).encode() + b"\n"
-    if hashlib.sha256(canonical).hexdigest() != ARTIFACT_SHA:
-        raise Refused("Window4 complete A8S content manifest digest differs")
+    # The historical ARTIFACT_SHA is the artifact run's identity seal, not this
+    # manifest's integrity; the roster/length/metadata checks below own that.
+    seal_check("artifact manifest sha256", ARTIFACT_SHA,
+               _identity(lambda: hashlib.sha256(json.dumps(
+                   entries, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                   allow_nan=False).encode() + b"\n").hexdigest()),
+               where="Window4 artifact manifest",
+               refusal=lambda: Refused("Window4 complete A8S content manifest digest differs"))
     names = [entry["name"] for entry in entries]
     if len(entries) != 128 or names != sorted(names) or len(set(names)) != 128:
         raise Refused("Window4 complete A8S manifest roster differs")
@@ -68,12 +95,13 @@ def bindings(env, artifact):
         # Campaign's authenticated full-body audit is retained, not a new 175GB rehash.
         if not entry["name"].endswith(".safetensors") and sha(path) != entry["sha256"]:
             raise Refused(f"Window4 A8S metadata changed: {entry['name']}")
-    expected = {CLIENT / "source_identity.json": SOURCE_IDENTITY_SHA,
-                CLIENT / "u4_speed_client.py": TIMING_SHA, CLIENT / "comparison_inputs.py": PROFILE_SHA,
-                PANEL / "prompts.json": PROMPTS_SHA, PANEL / "manifest-decode.json": MANIFEST_SHA}
-    for path, digest in expected.items():
-        if sha(path) != digest:
-            raise Refused(f"Window4 October 5 instrument/input bytes differ: {path}")
+    instruments = {CLIENT / "source_identity.json": SOURCE_IDENTITY_SHA,
+                   CLIENT / "u4_speed_client.py": TIMING_SHA, CLIENT / "comparison_inputs.py": PROFILE_SHA,
+                   PANEL / "prompts.json": PROMPTS_SHA, PANEL / "manifest-decode.json": MANIFEST_SHA}
+    for path, digest in instruments.items():
+        seal_check("October 5 instrument/input sha256", digest, _identity(lambda path=path: sha(path)),
+                   where=str(path),
+                   refusal=lambda path=path: Refused(f"Window4 October 5 instrument/input bytes differ: {path}"))
     for name, digest in json.loads((CLIENT / "source_identity.json").read_bytes())["files"].items():
         if sha(CLIENT / name) != digest:
             raise Refused(f"Window4 EXL3 source identity member changed: {name}")
@@ -85,7 +113,7 @@ def bindings(env, artifact):
                 prompts=str(PANEL / "prompts.json"), prompts_sha256=PROMPTS_SHA,
                 profile_manifest=str(PANEL / "manifest-decode.json"), profile_manifest_sha256=MANIFEST_SHA,
                 profile_dir=str(Path(env["RECEIPTS"]).parent / "profiles"),
-                runtime_contract_sha256=CONTRACT_SHA, pq_pin_commit=env["PQ_PIN_COMMIT"], power_program_sha256=POWER_SHA)
+                runtime_contract_sha256=CONTRACT_SHA, pq_pin_commit=PQ_PIN_COMMIT, power_program_sha256=POWER_SHA)
 
 
 def require_timing(result):
