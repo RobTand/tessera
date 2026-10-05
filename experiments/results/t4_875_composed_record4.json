@@ -1,6 +1,6 @@
 {
   "schema": "tessera.native_build_cohort.v1",
-  "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861",
+  "action_key": "b9e2173f70f1bba64b0142454ababd45ad36bb435fc6be12237f2bff1e674b83",
   "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
   "image": {
     "fix": null,
@@ -21,7 +21,7 @@
     "schema": "tessera.runtime_image/1"
   },
   "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
-  "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+  "source_sha256": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3",
   "selectors": {
     "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
     "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "4",
@@ -32,11 +32,11 @@
       "library": "e2m1",
       "module": "tessera_routed_fused_e2m1_apf4",
       "source_module": "tessera_routed_fused_value",
-      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
-      "bytes": 1889584,
-      "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
-      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
-      "finalization_sha256": "fdf833a508705a5409264517ebad607ddde953f56ceb989b7d9367701d4c3be1",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1_apf4.so",
+      "bytes": 1892040,
+      "sha256": "7111322823e7677795e7e18df11bdff5d0e233f0672383125950f950c1cc2c1a",
+      "finalization_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b4/tessera_routed_fused_e2m1_apf4_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "4e44e45931ea337cf9f16cfc38a69a4d802ef9a257bdbf5f1f7fa787bd28f81c",
       "status": "compile gate (no matching device here)"
     }
   ]

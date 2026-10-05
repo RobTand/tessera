@@ -33,7 +33,7 @@ def _dry_run(tmp_path, arm="aGR", **env):
     (artifact / "config.json").write_text("{}")
     base = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TS": str(ROOT),
             "ARTIFACT": str(artifact), "RECEIPTS": str(tmp_path / "receipts"),
-            "EAGER": "0", "COMPILATION_JSON": RELEASE_CC, "SPEC_JSON": MTP}
+            "EAGER": "0", "COMPILATION_JSON": RELEASE_CC, "SPEC_JSON": MTP, "FABRIC": "socket"}
     base.update(env)
     return subprocess.run(["bash", str(ARM_TP2), "--dry-run", arm], env=base,
                           capture_output=True, text=True, timeout=120)
@@ -211,7 +211,7 @@ def test_arms_that_measured_different_serves_make_no_receipt(tmp_path, model):
 @pytest.mark.parametrize("change, field", [
     (dict(script="d" * 64), "equal_script_sha256"),
     (dict(kernel='{"enable_flashinfer_autotune":true}'), "kernel_config"),
-    (dict(extra=("fabric_requested=roce",)), "fabric_requested"),
+
     (dict(extra=("tessera_env=TESSERA_FUSED_E4M3_MMA=e4m3",)), "tessera_env"),
 ])
 def test_arms_that_ran_another_script_or_setup_make_no_receipt(tmp_path, model, change, field):
@@ -255,3 +255,64 @@ def test_a_tensor_parallel_arm_needs_every_ranks_dispatch_log(tmp_path, files, t
     else:
         with pytest.raises(SystemExit, match="cannot show it replayed"):
             tool.require_every_rank(tmp_path, "aGR", tp)
+
+
+# ------------------------------------------------------------------ v2: the fabric
+
+
+def _tp2_arm_dir(root, name, model, *, requested="roce", observed="IB", drop=()):
+    banner = f"Using network {observed}"
+    return _arm_dir(root, name, model=model, drop=drop, extra=(
+        f"fabric_requested={requested}", f"fabric_observed=rank0:{banner};rank1:{banner}")) \
+        if "serve_args" not in drop else None
+
+
+def _make_tp2(d):
+    f = d / f"engine-args-{d.name}.txt"
+    f.write_text(f.read_text().replace("--tensor-parallel-size 1", "--tensor-parallel-size 2"))
+
+
+def test_a_tp2_arms_fabric_is_what_both_ranks_banners_say(tmp_path, model):
+    tool = _receipt_tool()
+    _make_tp2(_tp2_arm_dir(tmp_path, "e1", model, requested="roce", observed="IB"))
+    _make_tp2(_tp2_arm_dir(tmp_path, "s1", model, requested="socket", observed="Socket"))
+    assert tool.arm_scope(tmp_path / "e1", "e1")["fabric"] == "roce"
+    assert tool.arm_scope(tmp_path / "s1", "s1")["fabric"] == "socket"
+    with pytest.raises(SystemExit, match="fabric"):
+        tool.one_measurement(_scopes(tool, tmp_path, ("e1", "s1")))
+
+
+def test_a_one_rank_arm_has_no_fabric(tmp_path, model):
+    tool = _receipt_tool()
+    _arm_dir(tmp_path, "e1", model=model)
+    assert tool.arm_scope(tmp_path / "e1", "e1")["fabric"] == "none"
+
+
+@pytest.mark.parametrize("requested, observed", [("roce", "Socket"), ("socket", "IB")])
+def test_a_tp2_arm_whose_banners_contradict_its_request_has_no_scope(tmp_path, model, requested,
+                                                                     observed):
+    tool = _receipt_tool()
+    _make_tp2(_tp2_arm_dir(tmp_path, "e1", model, requested=requested, observed=observed))
+    with pytest.raises(SystemExit, match="fabric"):
+        tool.arm_scope(tmp_path / "e1", "e1")
+
+
+def test_a_tp2_arm_without_banners_has_no_scope(tmp_path, model):
+    tool = _receipt_tool()
+    d = _arm_dir(tmp_path, "e1", model=model, extra=("fabric_requested=roce",))
+    _make_tp2(d)
+    with pytest.raises(SystemExit, match="fabric"):
+        tool.arm_scope(d, "e1")
+
+
+def test_the_window_plan_runs_on_sockets():
+    """The window-3 control records FABRIC=socket: the Spark pair serves on sockets (RoCE
+    ibv_reg_mr fails ENOMEM there), and a card attests the serve its slots measured."""
+    plan = (ROOT / "experiments" / "graph_attest_702" / "plan-artifact.txt").read_text()
+    arms = [l for l in plan.splitlines() if l.strip() and not l.startswith("#")]
+    assert arms and all("FABRIC=socket" in l.split() for l in arms)
+
+
+def test_an_arm_names_its_fabric_or_does_not_run(tmp_path):
+    done = _dry_run(tmp_path, FABRIC="")
+    assert done.returncode != 0 and "FABRIC" in (done.stdout + done.stderr)

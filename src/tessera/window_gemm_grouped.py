@@ -224,18 +224,18 @@ class PreparedGroupedWindowGemm:
     """The frozen stack: SoA planes, per-expert headers, geometry."""
 
     words_all: torch.Tensor
-    table_all: torch.Tensor
-    codes_all: torch.Tensor
-    native_all: torch.Tensor
+    table_all: torch.Tensor | None
+    codes_all: torch.Tensor | None
+    native_all: torch.Tensor | None
     scale_all: torch.Tensor
-    runs_all: torch.Tensor
+    runs_all: torch.Tensor | None
     init_all: torch.Tensor
     has_init: torch.Tensor
-    word_off: torch.Tensor
-    tile_words: torch.Tensor
-    total_words: torch.Tensor
-    run_off: torch.Tensor
-    perm_all: torch.Tensor
+    word_off: torch.Tensor | None
+    tile_words: torch.Tensor | None
+    total_words: torch.Tensor | None
+    run_off: torch.Tensor | None
+    perm_all: torch.Tensor | None
     rows: int
     cols: int
     experts: int
@@ -273,6 +273,10 @@ class PreparedGroupedWindowGemm:
                  apply_router_weight_on_input: bool = False,
                  route_input: bool = False,
                  round_routes: bool = False) -> torch.Tensor:
+        if self.perm_all is None:
+            raise GrammarError(
+                "this native projection retired its compact planes; "
+                "only its already-prepared fused owner can execute it")
         if self.family == "e2m1":
             raise GrammarError(
                 "the e2m1 family has no grouped Triton GEMM; its stacks are served by the "

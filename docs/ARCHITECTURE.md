@@ -1,5 +1,7 @@
 # Tessera plan-to-serve architecture
 
+
+
 Re-stamped 2026-10-04 for the serve-comparison intake identity publication
 (#885, with its accepted #872 dependency). The operational seam that a serve
 comparison's inputs bind to an actual exported artifact is published under
@@ -57,6 +59,58 @@ eager-equivalence receipts remain independent. This is a correctness-only
 gate fix: no runtime image, public pin, serving cell, wire, numerical path,
 residency or performance default is promoted.
 
+Re-stamped 2026-10-04 for paired compiled-bank choice identity (#919).
+The paired 0/1 selector is strict and import-frozen, like the independent
+MMA8 B-fragment selector. Environment edits after import cannot retarget a
+cached native module; comparison choices use separate processes and banks.
+The default is still zero and no kernel math, layout, source proof or serving
+adoption is promoted by this source fix.
+
+Re-stamped 2026-10-04 for placement-independent paired box attribution
+(#918). Both routed diagnosis and paired sampling use one stable two-Spark
+endpoint owner; localhost is never relabelled as Sparky on another worker.
+No raw values, requested windows, cadence labels or historical evidence are
+rewritten; energy and work/J still require actual attribution review.
+
+Re-stamped 2026-10-04 for paired custom-op PB execution admission (#917).
+The paired batch and its wrapper require an admitted PrismaBuild context;
+held-original-FD input transport is not a vLLM service exemption. Existing
+source/native/input/certificate, pressure, affinity and owned-CID fences
+remain unchanged; historical direct evidence is not relabelled as PB proof.
+
+Re-stamped 2026-10-04 for the current-base paired-K32 harness/control
+composition (#862 integration-conflict repair). The default-off paired-K32
+experiment's harness and control files return on this composed base, ported
+surgically from the accepted 9604 tuple and adapted to the current PM33
+argument ABI and the #915 SDK/mapped-FD owners. The T8R owner regains its
+explicit closed-world paired numeric mode (pinned A8SE L10 TP2rank0 balanced
+M1/512/2048, retained intermediate and final raw words, token0/experts0..7
+materializing fp64 reference, separate K192 down-boundary and K128 fallback
+synthetic one-CTA controls) and its fixed timing mode that reuses the
+accepted numeric receipt under ABBA flag order with unprofiled CUDA events,
+separate profiles and raw board-power windows. The direct mode it requires
+holds original regular nofollow FDs through the existing input owner, and
+the finite owned-CID container mode (16GiB host memory, no extra swap, two
+CPUs, 240s per arm) stays the only direct admission. Both wrappers pass the
+strict selector `TESSERA_ROUTED_FUSED_PAIRED_K32` through unset versus
+explicitly empty unchanged, so malformed values reach the strict Python
+gate; the compile flag stays default-off. The paired scope is unchanged:
+legacy resident addressing only, routed E4M3 MMA modes0/2, R4 slot8,
+BMT128, K divisible by64 and at least192, input rows at least512, never
+dense or split. Every direct current native caller keeps the 33-argument
+legacy forward with explicit false; piece-major paths read the actual
+`piece_major`. The acting controller keeps strict binding: the historical
+accepted a5… numeric receipt and its 41414 native outputs stay bound to
+their original source/native/readset tuple, timing reuse refuses a changed
+current translation unit or readset by name, and no new source or ELF is
+silently labeled with the old certificate. No new dispatcher, controller,
+cache, math/order/wire/layout/default/census/pin promotion is introduced;
+no GPU, numeric, performance, energy or serving claim is made here, and
+parent verification runs the actual checks. Historical context:
+`measurements/2026-10-02-paired-k32-compile.md` and the #857/#889 stamps
+remain immutable history.
+
+
 Re-stamped 2026-10-04 for strict native mapped-file mount provenance (#915).
 Both qualification owners derive the mapping device from the held FD's
 exact mount ID and require that backing device plus inode on an executable
@@ -76,6 +130,8 @@ before even the zero-token return. The shared-add lever remains default-off;
 native causal controls and its full CUDA/TR3/served gates remain independent.
 
 Re-stamped 2026-10-02 for the shared-add inspected-stock guard. Shared
+
+Re-stamped 2026-10-02 for the empty-RoPE inspected-stock guard. Shared
 `serving.stock_interface` supplies source/signature facts; this lever's source
 pins and expected parameters remain local and unchanged. Unreadable source,
 missing method, signature or import failures decline before rebinding. The
@@ -269,6 +325,32 @@ Current-base CPU owner controls `75e8d128`:43 passed, one explicit retained-bank
 skip, zero uncollected modules/CUDA allocations. The synthetic-readset fixture
 now uses its temporary root, not an undeclared box path. Issue874 remains open.
 
+Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
+The selected fused owner retains immutable projection views of the words,
+scale and initial-state planes plus its composed native tables, run pairs,
+descriptors and counters. The resident route replaces its compact preparation
+owner only after native selection succeeds. Caller-held compact bundles and
+views remain intact; a refused or unavailable native lane keeps the complete
+compact fallback. Retired projection views refuse compact execution and
+recomposition. Wire bytes, arithmetic and native dispatch do not change.
+CPU lifetime controls establish ownership, not GPU allocator savings or
+served throughput; the fullserve admission bounds remain unchanged pending
+matched before/after device and host measurements.
+Runtime routed-owner accounting charges the backing storage of declared
+planes once, including aliased BF16/native lookup views and the launch
+counters. The selected native table's actual dtype determines its charge;
+FP8 byte tables and 16-bit tables are not interchangeable byte estimates.
+An externally held slice still owns its whole allocation, so an owner's
+declaration does not establish process-wide reclamation. Export-time
+preparation estimates and fullserve bounds are unchanged by this runtime
+ownership report.
+
+Re-stamped 2026-10-04 for actual-published SDK inspection in CPU controls
+(#915). Published pbrun/claim-owner checks run in fresh test processes with
+the actual resolved public source first; the suite's consumer-pinned SDK is
+not mutated or reclassified as current tooling. Exact SDK4/source/manifest
+and class-scope refusal predicates remain strict; no claim or GPU launch
+is invoked and no SDK5/runtime adoption is inferred.
 
 Re-stamped 2026-10-02 for SP collective-writer admission (tessera#863,
 §5.1.3). A pass that would activate SP refuses before activation when its
@@ -581,6 +663,44 @@ rate, so no GLM-5.3 launch changes. Few-row, small-K roles take a smaller
 split; for example, 128 x 256 at M = 1 now takes 4 splits where it took 8.
 No route, cell, rung or schema changes. See §3.3 (the dense identity).
 
+Re-stamped 2026-10-04 for the legacy dense host-dispatch ownership contract
+(tessera#913). Shared native validation borrows plane arrays and Tensor
+handles; each legacy role passes one-element views of its live parameters,
+not newly allocated vectors. Split choices, device scheduling, kernel math
+and defaults are unchanged; no latency or energy improvement is claimed.
+
+Re-stamped 2026-10-01 for the dense module launch as an opt-in setting
+(tessera#778, Refs #750). `TESSERA_DENSE_MODULE_LAUNCH` (`routed_fused.
+ENV_DENSE_MODULE`) selects the dense identity's launch shape and K split
+model, read per call:
+- **Unset or `0` (the default).** One launch per role, with
+  `dense_k_split_bandwidth`. This is the model and range from before
+  tessera#778, with the split reduced by `dense_reduce_kernel` and bounded by
+  `dense_split_max` (`K / 64`, tessera#805).
+  It is the per-role path that ran before, on both families.
+- **`1`.** On the E4M3 libraries, one `dense_forward_roles` launch per
+  module, with the split reduced in the kernel. Every dense launch is priced
+  with `dense_k_split_makespan`, whose range ends at `dense_fixup_split_max`.
+
+Any other value is refused by name.
+
+The two settings split K differently at decode (M <= 192 on the GLM-5.3 MLP
+shapes) and so give different bits there. The default holds until #778's
+decode measurement on the served artifact clears the module launch. The named
+merge-gating PB action `1acf652f` was withdrawn with zero attempts because
+it was submitted non-exclusive; it is not a completed timing result. Earlier
+kernel tests and the pre-rebase calibration retain their historical source
+scope, not qualification of the current default-off head.
+
+The `STAGES + 1` chunk floor binds only the in-kernel fixup (its library
+check, and `dense_forward_roles`). The one-role launch keeps its old range.
+The window that range leaves, items of two K chunks or fewer for roles of at
+most 128 rows at small M, is tracked in tessera#805.
+
+`routed_fused.dense_k_split` is the dispatcher every launch asks, so a forced
+split still binds. No route, rung, cell, served byte or contract field
+changes.
+
 Re-stamped 2026-10-01 for the GLM-5.3 release serve's compilation mode
 (tessera#774). The T-8 release serve passes
 `--compilation-config '{"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"}'`
@@ -617,6 +737,28 @@ vocabulary, and a tie. It also binds the head's prefix so the route trace can
 name it. `serving.mtp_draft_lifetime` accepts a prepared Tessera head as the
 target head the fd4a15126 draft shares. The exporter does not write a head
 yet, and no contract field changes, so no shipped artifact changes.
+
+Re-stamped 2026-09-30 for one dense launch per module on the E4M3 libraries
+(tessera#750 WP2). `routed_fused.dense_forward_roles` launches all of a merged
+Linear's roles at once and reduces a K split in the kernel, bitwise the
+two-launch result (`MULTI = DENSE && FP8` in `routed_fused_window.cu`; the value
+family and every routed launch keep their code, and their SASS differs from
+before by at most one commuted `IADD3`). A split the kernel reduces itself
+keeps every item at least `STAGES + 1` K chunks long (`dense_fixup_split_max`), which
+keeps the producers from rewriting the descriptor and row-scale slot of an
+item still in its fixup. The module launch is opt-in
+(`TESSERA_DENSE_MODULE_LAUNCH=1`, the 2026-10-01 stamp below). No route, rung,
+cell, served byte or contract field changes.
+
+Re-stamped 2026-09-30 for the dense K split's makespan model (tessera#750
+WP2), opt-in under `TESSERA_DENSE_MODULE_LAUNCH=1` (the 2026-10-01 stamp
+below). `routed_fused.dense_k_split_makespan` prices the wave count: `S * items`
+equal items on `sms` SMs end when an SM with `ceil(S * items / sms)` of them
+finishes, and each item pays a measured fixed cost
+(`DENSE_ITEM_FIXED_BYTES`). A 4096-row role at decode (32 items) splits three
+ways instead of two, and a 64-item role (`q_b`) splits three ways instead of
+running two waves unsplit. No launch, route, rung or served byte changes;
+the split changes only the fp32 summation order, inside the derived bound.
 
 Re-stamped 2026-09-30 for the fused window kernel's E2M1 family (Refs #750).
 `routed_fused_window.cu` gains a fourth library, `tessera_routed_fused_e2m1`,
@@ -769,6 +911,15 @@ is bitwise master's. On the A8S release artifact's R1024 routed stack, the
 routed launches take 10.4% less time per call at M = 512 on recorded L512
 routing, and 8.5% less at M = 2048 on recorded L8192 chunks. Receipt: [the
 staged stream history](measurements/2026-09-30-staged-stream-history.md).
+Current #793 candidate narrows the five history-staging sites to
+`STAGE_PREV = PREV_STAGED && !TWO`, retaining the allocated history region,
+shared-memory sizing, descriptor ring and both #855 terminal guards. Mixed
+launches use the original register-history path; single-run MMA8 and all
+other families retain their existing arithmetic/schedule. This source remedy
+is not mixed-rate numerical/performance acceptance and changes no pin or
+serving default. The current acceptance owner requires a declared nonempty
+case/rate/source population and rejects missing or duplicate cases; numeric
+qualification never certifies timing. See #793 / PR #794.
 
 Re-stamped 2026-09-30 for the value library's dense launch at rates 9 to 14
 (contract v51, Refs #750 item 4). `routed_fused_window.cu`'s `RATE_MAX` is 14
@@ -4716,14 +4867,58 @@ slot once, at item start. So every split item keeps two K chunks
 is the E2M1 launch's bound on the same protocol (tessera#805). It binds on
 few-row, small-K roles only, and on no GLM-5.3 role on GB10. Two runs are
 bitwise equal in both regimes and a captured
+
+one bf16 rounding. `dense_k_split(m, rows, cols, sms)` is the split every
+launch asks for. It dispatches on `TESSERA_DENSE_MODULE_LAUNCH`, read per call:
+- **Unset or `0` (the default).** `dense_k_split_bandwidth`: the integer
+  minimiser of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 ..
+  min(dense_split_max(K), ceil(sms/items))`, with `dense_split_max = K/64`
+  (tessera#805), which returns 1 as soon as every SM has an item. This is the
+  model from before tessera#778.
+- **`1`.** `dense_k_split_makespan`: the integer minimiser of the launch's
+  makespan, `ceil(S * items / sms) * sms * (item * ceil(nk / S) / nk + c) +
+  2 S M N 4` over `1 .. min(dense_fixup_split_max(K), sms)`.
+  - `item` is the wire bytes of one 128-row block over K, and `c =
+    DENSE_ITEM_FIXED_BYTES` is the measured per-item cost.
+  - tessera#750: the last wave's idle SMs cost a whole wave, so 32 items split
+    three ways, not two.
+
+`dense_fixup_split_max(K) = (K / 32) / (STAGES + 1)` is the range of a split the
+kernel reduces itself, inside every launch's `dense_split_max` bound. Every
+such item keeps at least three K chunks, because
+the producers run at most `STAGES` = 2 chunks ahead and write an item's
+descriptor and row-scale slot (two slots, alternating) when they claim it, so a
+shorter item two back could still be in its fixup. The library refuses a larger
+split there.
+
+The one-role launch, reduced by `dense_reduce_kernel`, takes only the
+`dense_split_max` bound (`K / 64`, tessera#805): two K chunks per item, which
+closes the short-item window the bandwidth model used to reach for roles of at
+most 128 rows at small M.
+
+Prefill shapes, whose items fill whole waves or whose partials outweigh the
+idle tail, run the unsplit kernel under either model. Two runs are bitwise equal in both regimes and a captured
 forward replays (the work counter is zeroed inside the region; the partial is
 a graph-pool allocation). Second, the integration is per Linear: vLLM applies
 the activation between `gate_up_proj` and `down_proj` in code Tessera does not
 own, so an MLP-level fusion would have saved one bf16 round trip (about 1% at
 M = 2048) for a model-forward patch and a changed census module count; instead
-`native_window.PreparedDenseNativeModule` runs each role as one op into its
-column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
-op like `window_gemm_dense`). The lane is decided once per module at weight
+`native_window.PreparedDenseNativeModule` runs the module as one op
+(`tessera::fused_window_dense`, a custom op like `window_gemm_dense`) into one
+`[M, rows]` output, each role in its column slice. By default it launches each
+role, and its reduce when split. The shared host validator borrows each plane
+through `c10::ArrayRef`; the legacy entry passes a view of its live Tensor
+parameter, without creating an owning vector or copying a Tensor handle.
+The module entry borrows the vectors already owned by its pybind call (#913).
+Under `TESSERA_DENSE_MODULE_LAUNCH=1`, one
+launch on the E4M3 libraries takes the module's roles (at most `MAX_ROLES` = 8 per launch,
+`routed_fused.dense_forward_roles`): their 128-row blocks are one item list that
+`dense_k_split(..., blocks=)` prices as a whole, and a K split is reduced in the
+kernel -- the last split of a tile to arrive (a per-tile arrival count) sums the
+S partials in split order and applies the epilogue, bitwise the reduce launch's
+result. The GLM KDA input module is then two launches (the counter fill and
+the kernel) instead of 13. The value library launches each role, and its
+reduce when split, under either setting. The lane is decided once per module at weight
 load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
 column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
 multiple of 4 (`DENSE_ROW_QUANTUM`; a multiple of 128 before the N-tail,
@@ -7841,16 +8036,21 @@ paths are not split). Anything else refuses. An eager serve, and a graph serve
 at `max_model_len <= index_topk`, need no class split.
 
 **The receipt.** `src/tessera/graph_receipt.py` is the one home of the
-`tessera.graph_equals_eager.v1` receipt, its rule and `verify(receipt,
+`tessera.graph_equals_eager.v2` receipt, its rule and `verify(receipt,
 serve)`. It sits outside `tessera.serving` so a producer (PrismaQuant's
 ship-card check) can import it without the serving plugin. An arm is equal
 when every choice of both passes of the tessera#508 equality set is
 bit-identical to some eager run of the same batch, and every captured size
 and class replayed. `verify` re-applies the rule and matches the serve's
 image, model config digest, Tessera source digest, compilation config,
-speculative tokens, `max_model_len`, `max_num_seqs` and TP size exactly;
-nothing is extrapolated. Contexts above `index_topk` are a screen only:
-there eager does not reproduce itself.
+speculative tokens, `max_model_len`, `max_num_seqs`, TP size and fabric
+exactly; nothing is extrapolated. The fabric (v2, CEO decision
+dec-1005-003356-6ba2) is what every rank's NCCL banner reported: `socket` or
+`roce` at TP 2 or more, `none` for a one-rank serve. An all-reduce over
+sockets and one over RoCE are two serves, so a receipt on one attests no card
+on the other. A v1 receipt (no fabric) stays readable, but `verify` refuses it
+for a card. Contexts above `index_topk` are a screen only: there eager does
+not reproduce itself.
 
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
@@ -8043,6 +8243,33 @@ for the first folded call and one for the first kept call.
 
 The flag is off by default. No route, contract or artifact changes.
 
+### 5.1.3 Opt-in: skip the zero-width RoPE query cat (tessera#796)
+
+GLM-5.3 attention has `qk_rope_head_dim == 0`. The stock
+`FlashInferMLASparseSM120Impl.forward_mqa` still joins `(q_nope, q_pe)` with
+`torch.cat`, which copies all of `q_nope`: 11 copies of 67 MB per 2048-token
+prefill chunk at TP 2, about 6.4 ms.
+
+With `TESSERA_GLM53_SKIP_EMPTY_ROPE_CAT=1`, `TesseraConfig.get_quant_method`
+rebinds that method (`serving.glm53_empty_rope`). The rebind passes `q_nope`
+itself when the cat would only copy it: a 2-tuple, a zero-wide second part,
+matching leading shape, dtype and device, and a contiguous, 512-byte-aligned
+`q_nope`. The kernel then reads the same bytes, shape, strides and alignment.
+Every other query reaches the stock code unchanged.
+
+The rebind installs only on a stock source whose sha256 is in the inspected
+set (image `5be13705`); any other source keeps the stock method. Each process
+logs one line: `installed`, `declined` (with the reason) or `off`. It also logs
+whether the first tuple query skipped the cat.
+
+The flag is off by default. No route, contract or artifact changes.
+
+The GPU qualification probe `experiments/t8r_speed/empty_rope_cat_check.py`
+requires the stock `concat_and_cache_mla` producer and successful CUDA
+completion before recording cache provenance. Import, writer and completion
+failures propagate; synthetic cache bytes never replace a failed stock writer
+(tessera#887). CPU failure controls cover this refusal only, not GPU arithmetic
+or the matched served TR3/cat-trace gate required by #796.
 ### 5.2 What the wheel ships besides Python
 
 Two non-Python files are opened at run time, and each is declared in

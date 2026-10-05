@@ -23,8 +23,10 @@
 #   MAX_NUM_SEQS (4), MAX_MODEL_LEN (8448), KV_BYTES (2 GiB/rank), GPU_UTIL (0.5),
 #   MAX_BATCHED (2048), MOE_BACKEND (triton), SERVE_MODE (resident),
 #   TESSERA_ENV ("TESSERA_FUSED_E4M3_MMA=e4m3": the release arm's U4_TESSERA_ENV),
-#   FABRIC (socket | roce; default socket): one per receipt, recorded and checked,
-#             because an eager pool and a graph arm on two fabrics are two all-reduces.
+#   FABRIC    REQUIRED, socket | roce, no default: the fabric the card's serve reduces over
+#             (the Spark pair serves on sockets: RoCE ibv_reg_mr fails ENOMEM there). Receipt
+#             scope since schema v2; checked against both ranks' NCCL banners, and an arm that
+#             came up on another fabric is refused, never mixed into the receipt.
 #   HEAD_IP (10.100.96.2), PEER_IP (10.100.96.1), IFACE (enp1s0f0np0),
 #   MASTER_PORT (29541), API_PORT (8142), FLOOR_GIB (16), EXPECT_PEAK_GIB (98),
 #   LOAD_DEADLINE_S (1800), EXT (box-local cache dir, same path on both boxes),
@@ -52,7 +54,7 @@ MOE_BACKEND=${MOE_BACKEND:-triton}
 SERVE_MODE=${SERVE_MODE:-resident}
 TESSERA_ENV=${TESSERA_ENV-TESSERA_FUSED_E4M3_MMA=e4m3}
 KERNEL_JSON=${KERNEL_JSON:-'{"enable_flashinfer_autotune":false}'}
-FABRIC=${FABRIC:-socket}
+FABRIC=${FABRIC:?FABRIC: socket or roce, the fabric the card serves on (no default)}
 HEAD_IP=${HEAD_IP:-10.100.96.2}
 PEER_IP=${PEER_IP:-10.100.96.1}
 IFACE=${IFACE:-enp1s0f0np0}
