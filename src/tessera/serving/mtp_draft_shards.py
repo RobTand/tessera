@@ -22,7 +22,12 @@ interface this one is keyed to (``mtp_draft_lifetime._INTERFACES``); this
 module adds the sha256 of ``default_loader`` and of the GLM ``model`` module,
 where the spec-layer rule lives. A serve whose sources match none of them
 declines: the draft reads the whole checkpoint as stock, one warning is
-logged, and nothing fails (tessera#749). The narrowing also declines, with a
+logged, and nothing fails (tessera#749). D32: a source-digest mismatch is a
+run-identity seal, not the refusal it was -- default dev mode stamps one
+``[DEV-MODE]`` line per module and the narrowing still installs (the
+whole-checkpoint read is the certified-mode fallback);
+``PRISMAQUANT_DEV_MODE=0`` keeps the verbatim decline. An unreadable source
+and a rebound loader signature still fail closed in both modes. The narrowing also declines, with a
 warning, for a load the inspection did not cover: an EP weight filter, the
 mm-encoder-only filter, a draft that sets its own ``allow_patterns_overrides``
 or ``secondary_weights``, a model path that is not a local folder, no index
@@ -41,6 +46,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import wraps
+import hashlib
 import importlib
 import inspect
 import json
@@ -49,7 +55,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
-from .mtp_draft_lifetime import require_source_digest
+from ..dev_mode import seal_check
 
 _log = logging.getLogger(__name__)
 
@@ -158,8 +164,23 @@ def install(interface_name: str, glm: Any, rename: tuple[str, str] | None) -> No
         return
     try:
         for module, digest in zip(modules, match.digests, strict=True):
-            require_source_digest(module, digest, "the draft shard narrowing requires the "
-                                  "inspected loader interface")
+            # D32: the inspected loader source digest is a run-identity seal
+            # (source-source, not bytes against their own digest). Dev mode
+            # stamps one [DEV-MODE] line per module and the narrowing still
+            # installs -- the whole-checkpoint fallback is the certified-mode
+            # decline. The loader signature checks below still fail closed in
+            # both modes, and an unreadable source refuses in both.
+            path = getattr(module, "__file__", None)
+            try:
+                actual = hashlib.sha256(Path(path).read_bytes()).hexdigest() if path else None
+            except OSError as exc:
+                raise RuntimeError(f"Tessera MTP source identity unreadable: {path}") from exc
+            seal_check("MTP loader source identity", digest, actual,
+                       where="the draft shard narrowing",
+                       refusal=RuntimeError(
+                           f"Tessera MTP unsupported source identity for {module.__name__}: "
+                           f"expected {digest}, got {actual}; the draft shard narrowing "
+                           "requires the inspected loader interface"))
     except RuntimeError as exc:
         _log.warning("Tessera MTP draft reads the whole checkpoint: %s (tessera#777)", exc)
         return

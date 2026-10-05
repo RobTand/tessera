@@ -11,10 +11,15 @@ the new stdlib `tessera.dev_mode.seal_check` (the twin of
 `prismaquant.dev_mode`, PQ #1147): dev mode is ON unless
 `PRISMAQUANT_DEV_MODE` is exactly `0`, a mismatch prints one `[DEV-MODE]`
 line naming both values and the run continues with the stored data, and
-certified `0` raises each site's verbatim refusal. A dev-mode installation
-proof verifies intact installed bytes at the commit the running tree claims
-instead of the pinned one, so the receipt stays honest without re-imposing
-the stamped pin. Still refusing in both modes: the installed
+certified `0` raises each site's verbatim refusal. The GLM MTP draft shard
+narrowing (`mtp_draft_shards.install`) treats its inspected loader source
+digest the same way: default dev mode stamps one `[DEV-MODE]` line per
+module and still installs the narrowing (the 164 GiB whole-checkpoint
+fallback becomes the certified-mode decline); an unreadable source and a
+rebound loader signature still fail closed in both modes. A dev-mode
+installation proof verifies intact installed bytes at the commit the running
+tree claims instead of the pinned one, so the receipt stays honest without
+re-imposing the stamped pin. Still refusing in both modes: the installed
 `runtime_contract.json` bytes against their own pinned digest, preflight
 module byte bindings, every evidence/bound-bytes check, foreign runtime
 origins and import-environment isolation, mid-run stability re-observations,
