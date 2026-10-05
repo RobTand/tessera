@@ -681,14 +681,27 @@ def _observe_with_source(panel, monkeypatch, source_digest):
 
 
 def test_source_pin_difference_stamps_and_continues(panel, monkeypatch, capsys):
-    """The reported old-source-pin refusal: the worker stamps and proceeds."""
+    """The reported old-source-pin refusal: the worker stamps and proceeds.
+
+    Dev mode computes no source digest to satisfy identity -- the record
+    retains the stored source identity -- and the code-identity seal fires
+    on what is actually observed (here, a staged commit) plus the provenance
+    fact, while the frozen-software seal names the drift.
+    """
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
     expected, verifier = _observe_with_source(panel, monkeypatch, 'e' * 64)
+    monkeypatch.setattr(source_identity, 'serving_source_sha256',
+                        lambda: pytest.fail('dev run must not compute the source digest'))
+    staged = 'f' * 40
+    monkeypatch.setattr(worker, 'observed_commit',
+                        lambda package, strict=True:
+                        (staged, ['imported Tessera runtime checkout is dirty']))
     got, origins, raw = worker.observe_software_runtime(expected, verifier)
-    assert got['serving_source_sha256'] == 'e' * 64
-    # One [DEV-MODE] stamp per seal site: the code identity and the frozen
-    # software context each stamp once; the record keeps the actual digest.
-    assert capsys.readouterr().out.count('[DEV-MODE]') == 2
+    assert got['serving_source_sha256'] == expected['serving_source_sha256']
+    assert got['tessera_commit'] == staged
+    out = capsys.readouterr().out
+    assert out.count('[DEV-MODE]') == 3  # provenance fact, code identity, software context
+    assert 'checkout is dirty' in out and 'f' * 40 in out
     assert raw == app.tp.read_bound(panel['evidence']['contract'])
 
 
@@ -733,17 +746,17 @@ def test_dirty_unversioned_candidate_stamps_and_continues(panel, monkeypatch, tm
     import subprocess
     staged = tmp_path / 'staged-candidate' / 'tessera'
     staged.mkdir(parents=True)
+    root = tmp_path / 'staged-candidate'
+    (root / 'README.md').write_text('# staged candidate\n')
+    subprocess.run(['git', '-C', str(root), 'init'], capture_output=True)
+    subprocess.run(['git', '-C', str(root), 'config', 'user.email', 't@t'], capture_output=True)
+    subprocess.run(['git', '-C', str(root), 'config', 'user.name', 't'], capture_output=True)
+    subprocess.run(['git', '-C', str(root), 'add', 'README.md'], capture_output=True)
+    subprocess.run(['git', '-C', str(root), 'commit', '-m', 'staged', '--no-gpg-sign'],
+                   capture_output=True)
+    # The package file itself is never tracked: unversioned candidate.
     (staged / '__init__.py').write_text('# staged candidate\n')
-    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'init'], capture_output=True)
-    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'config', 'user.email', 't@t'],
-                   capture_output=True)
-    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'config', 'user.name', 't'],
-                   capture_output=True)
-    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'add', '__init__.py'],
-                   capture_output=True)
-    subprocess.run(['git', '-C', str(tmp_path / 'staged-candidate'), 'commit', '-m', 'staged',
-                    '--no-gpg-sign'], capture_output=True)
-    (staged / 'dirty_edit.py').write_text('# uncommitted\n')  # dirty AFTER the commit
+    (staged / 'dirty_edit.py').write_text('# uncommitted\n')
     import sys
     # The imported runtime's __file__ lives in the dirty, partially tracked
     # staged tree; the worker must never read tessera.dev_mode from it.
@@ -762,10 +775,10 @@ def test_changed_runtime_contract_stamps_in_dev_mode(panel, monkeypatch, capsys)
     monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
     expected, verifier = _observe_with_source(
         panel, monkeypatch, panel['runtime']['serving_source_sha256'])
-    Path(panel['evidence']['contract']['path']).write_bytes(b'changed contract')
+    expected = {**expected, 'contract_sha256': '0' * 64}  # the old pin's contract
     got, origins, raw = worker.observe_software_runtime(expected, verifier)
-    import hashlib
-    assert got['contract_sha256'] == hashlib.sha256(b'changed contract').hexdigest()
+    assert got['contract_sha256'] == app.tp.file_binding(
+        Path(panel['evidence']['contract']['path']))['sha256']
     out = capsys.readouterr().out
     assert out.count('[DEV-MODE]') == 2  # the code-identity seal and the software seal
 
@@ -774,7 +787,7 @@ def test_certified_zero_keeps_changed_contract_refusal(panel, monkeypatch):
     monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
     expected, verifier = _observe_with_source(
         panel, monkeypatch, panel['runtime']['serving_source_sha256'])
-    Path(panel['evidence']['contract']['path']).write_bytes(b'changed contract')
+    expected = {**expected, 'contract_sha256': '0' * 64}
     with pytest.raises(ValueError, match='runtime source/contract/version differs before device setup'):
         worker.observe_software_runtime(expected, verifier)
 
