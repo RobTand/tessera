@@ -199,3 +199,38 @@ def test_panel_validator_stays_the_local_entry_point_and_the_handoff_is_versione
     assert tp.OBSERVATION_SCHEMA == "tessera.shape_time_observation.v1"
     assert tp.SAMPLE_UNIT == "single_apply"
     assert "not end-to-end serving evidence" in tp.OPERATOR_PROJECTION
+
+
+def test_source_pin_difference_stamps_and_continues_in_dev_mode(panel, monkeypatch, capsys):
+    """D32: the old-source-pin refusal stamps once and the panel validates.
+
+    This is the regression for the reported failure: a panel measured on one
+    Tessera tree against a frozen expected context naming another was refused
+    outright. Default dev mode stamps one [DEV-MODE] line naming both digests
+    and continues with the stored data.
+    """
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    expected = copy.deepcopy(panel["runtime"])
+    expected["serving_source_sha256"] = "0" * 64
+    result = tp.validate_panel(panel, expected_runtime=expected)
+    out = capsys.readouterr().out
+    assert out.count("[DEV-MODE]") == 1
+    assert "0" * 64 in out and "2" * 64 in out
+    assert result["timing"]["median_ms"] == 2.5
+
+
+def test_certified_zero_keeps_the_source_pin_refusal(panel, monkeypatch):
+    """Certified mode keeps the verbatim refusal the site always raised."""
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    expected = copy.deepcopy(panel["runtime"])
+    expected["serving_source_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="observed runtime differs from independent expected context"):
+        tp.validate_panel(panel, expected_runtime=expected)
+
+
+def test_panel_byte_integrity_still_refuses_in_dev_mode(panel, monkeypatch):
+    """Dev mode never weakens integrity: bound bytes that moved still refuse."""
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    Path(panel["evidence"]["samples"]["path"]).write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="file evidence differs"):
+        tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel["runtime"]))

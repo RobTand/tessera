@@ -1442,6 +1442,25 @@ digest is only stamped when evidence is taken, never onto old evidence.
 and checks that it moves on a serving, a lazily imported and a native source
 edit.
 
+Re-stamped 2026-10-05 for dev-mode source-pin stamps (CEO D32). The
+run-identity comparisons that consumed this digest — the native shape-time
+pipeline's before-device code identity and frozen-software context
+(`tools/tessera_shape_time_worker.py`), the installed CPU preflight's
+recorded commit and observed software context, and the panel/observation
+validators' observed-vs-frozen runtime — go through
+`tessera.dev_mode.seal_check`, the stdlib twin of `prismaquant.dev_mode`
+(PQ #1147): dev mode is ON unless `PRISMAQUANT_DEV_MODE` is exactly `0`; on a
+mismatch it prints one `[DEV-MODE]` line naming both values and the run
+continues with the stored data, and certified `0` raises the site's verbatim
+refusal. A dev-mode installation proof verifies intact installed bytes at the
+commit the running tree claims instead of the pinned one, so the receipt stays
+honest without re-imposing the stamped pin. Unchanged in both modes: the
+installed `runtime_contract.json` bytes against their own pinned digest, the
+preflight module byte bindings, every evidence/bound-bytes check, foreign
+runtime origins and import-environment isolation, mid-run stability
+re-observations, and the fail-closed VCS commit resolution that names what
+ran (`observed_commit`).
+
 Re-stamped 2026-09-27 for the producer reuse authority (tessera#599, step 2).
 Tessera no longer reads a client's records by itself. A rooted cached-unit
 bundle (`tessera.cached_units.v2`) binds documents its producer wrote: the

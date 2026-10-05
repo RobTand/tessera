@@ -138,6 +138,11 @@ def observe_software_runtime(expected, record_verifier=None):
  origins=runtime_origins(expected["package_root"])
  import torch,vllm,tessera
  from tessera.serving import backend,contract,source_identity,runtime_image
+ # D32: the run-identity source pin stamps and continues in dev mode. The
+ # stamp helper lives in the INSTALLED runtime (the code under measurement);
+ # an installed pin that predates dev mode keeps the refusing gate verbatim.
+ try:dev=tessera.dev_mode
+ except AttributeError:dev=None
  declaration=runtime_image.declared_reference(expected["image"])
  actual_commit=observed_commit(tessera)
  cache=getattr(source_identity,"_cached_digest",None)
@@ -145,12 +150,27 @@ def observe_software_runtime(expected, record_verifier=None):
  actual_source=source_identity.serving_source_sha256()
  raw_contract=contract.contract_path().read_bytes()
  actual_contract=hashlib.sha256(raw_contract).hexdigest()
- if (declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)!=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"]):raise ValueError("runtime source/contract/version differs before device setup")
+ observed=(declaration["image"],actual_commit,actual_source,torch.__version__,vllm.__version__)
+ declared=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["torch"],expected["vllm"])
+ # The installed contract's bytes against their own pinned digest is
+ # integrity: it refuses in both modes, before anything queries a device.
+ if actual_contract!=expected["contract_sha256"]:raise ValueError("runtime source/contract/version differs before device setup")
+ # D32: the running code identity (image, commit, source digest, toolchain
+ # versions) is a run-identity seal and stamps in dev mode.
+ if dev is not None:
+  dev.seal_check("runtime source/commit/version",declared,observed,
+                 where="native shape worker before device setup",
+                 refusal=ValueError("runtime source/contract/version differs before device setup"))
+ elif observed!=declared:raise ValueError("runtime source/contract/version differs before device setup")
  if record_verifier is None:raise ValueError("missing sealed installation verifier")
  verifier_bytes=record_verifier_bytes(record_verifier)
  verifier_namespace={"__file__":record_verifier["path"],"__name__":"tessera_owned_record_verifier"}
  exec(compile(verifier_bytes,record_verifier["path"],"exec"),verifier_namespace)
- origins["installation"]=verifier_namespace["verify_install"]("tessera",expected["tessera_commit"])
+ # Dev mode verifies the installation at the commit the running tree claims,
+ # so the proof still holds intact installed bytes without re-imposing the
+ # pin the seal just stamped; certified mode keeps the pinned commit.
+ origins["installation"]=verifier_namespace["verify_install"]("tessera",
+   actual_commit if (dev is not None and dev.dev_mode_enabled()) else expected["tessera_commit"])
  if record_verifier_bytes(record_verifier)!=verifier_bytes:raise ValueError("installation verifier changed during execution")
  origins["record_verifier"]=file_binding(record_verifier["path"])
  if origins["record_verifier"]!=record_verifier:raise ValueError("installation verifier source differs")
@@ -161,7 +181,13 @@ def observe_software_runtime(expected, record_verifier=None):
   "execution_mode":"eager","residency":"resident","tp_rank":0,"tp_degree":1,
   "package_root":origins["package_root"],
   "serve_flags":{k:os.environ[k] for k in expected["serve_flags"] if k in os.environ}}
- if canonical(value)!=canonical({k:v for k,v in expected.items() if k!="platform"}):raise ValueError("actually imported software differs from frozen expected context")
+ frozen={k:v for k,v in expected.items() if k!="platform"}
+ if dev is not None:
+  dev.seal_check("actually imported software",frozen,value,
+                 where="native shape worker before device setup",
+                 same=canonical(value)==canonical(frozen),
+                 refusal=ValueError("actually imported software differs from frozen expected context"))
+ elif canonical(value)!=canonical(frozen):raise ValueError("actually imported software differs from frozen expected context")
  # The installed reader owns all loader, source and registry checks. No caller roster.
  if Path(contract.validate_serving_contract.__code__.co_filename).resolve()!=Path(contract.__file__).resolve():raise ValueError("foreign installed contract validator")
  contract.validate_serving_contract(json_bytes(raw_contract))

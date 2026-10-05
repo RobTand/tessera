@@ -19,6 +19,7 @@ from pathlib import Path
 from collections.abc import Mapping
 
 from ..container import parse
+from ..dev_mode import seal_check
 from ..errors import TesseraError
 from ..fused_frame import parse_fused
 from . import census_plan, scheme
@@ -270,8 +271,15 @@ def _preflight_origins(origins, expected):
         suffix="__init__.py" if name=="tessera" else name.removeprefix("tessera.").replace(".","/")+".py"
         if bound!=file_binding(Path(expected["package_root"])/suffix):raise ValueError("preflight module bytes differ")
     installed=origins["installation"]
-    if installed["module"]!="tessera" or installed["expected_commit"]!=expected["tessera_commit"] or installed["installed_commit"]!=expected["tessera_commit"] or installed["origin"]!=str(Path(expected["package_root"])/"__init__.py"):
+    if installed["module"]!="tessera" or installed["origin"]!=str(Path(expected["package_root"])/"__init__.py"):
         raise ValueError("preflight installed RECORD/commit differs")
+    # D32: the recorded-vs-declared commit is a run-identity seal; the module
+    # name, origin path and byte bindings above stay refusing in both modes.
+    seal_check("preflight installed commit",
+               (expected["tessera_commit"], expected["tessera_commit"]),
+               (installed["expected_commit"], installed["installed_commit"]),
+               where="installed CPU contract preflight",
+               refusal=ValueError("preflight installed RECORD/commit differs"))
     _integer(installed["verified_files"], "preflight installed files")
 
 
@@ -292,8 +300,17 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
     expected=runtime_context(expected_runtime)
     if result["schema"]!="tessera.installed_contract_preflight.v1" or result["gpu_executed"] is not False:
         raise ValueError("requires actual installed CPU contract validation")
-    if result["software"]!={k:v for k,v in expected.items() if k!="platform"} or result["contract_sha256"]!=expected["contract_sha256"] or hashlib.sha256(raw_contract).hexdigest()!=expected["contract_sha256"]:
+    # The raw contract's bytes against the pinned digest is integrity and
+    # refuses in both modes; the observed software context is a run-identity
+    # seal (D32) and stamps in dev mode.
+    if hashlib.sha256(raw_contract).hexdigest()!=expected["contract_sha256"]:
         raise ValueError("preflight software/contract differs from independent context")
+    seal_check("preflight software/contract",
+               {"software": {k: v for k, v in expected.items() if k != "platform"},
+                "contract_sha256": expected["contract_sha256"]},
+               {"software": result["software"], "contract_sha256": result["contract_sha256"]},
+               where="installed CPU contract preflight",
+               refusal=ValueError("preflight software/contract differs from independent context"))
     for key,bound in (("job_source",job_source),("worker_source",worker_source),("request_source",request_source)):
         if result[key]!=bound or file_binding(bound["path"])!=bound:raise ValueError("preflight owned source differs: "+key)
     _preflight_origins(result["runtime_origins"],expected)
@@ -318,8 +335,11 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     if panel["schema"] != SCHEMA or panel["status"] != "measured" or canonical(panel["claims"]) != canonical(CLAIMS):
         raise ValueError("panel schema/status/claims differ")
     runtime = runtime_context(panel["runtime"])
-    if runtime != runtime_context(expected_runtime):
-        raise ValueError("observed runtime differs from independent expected context")
+    # D32: observed-vs-frozen runtime code is a run-identity seal; the panel's
+    # own bound bytes stay integrity-checked and refuse in both modes.
+    seal_check("observed runtime", runtime_context(expected_runtime), runtime,
+               where="native shape-time panel",
+               refusal=ValueError("observed runtime differs from independent expected context"))
     evidence = _object(panel["evidence"], EVIDENCE, "evidence")
     raw = {name: read_bound(bound) for name, bound in evidence.items()}
     contract = json_bytes(raw["contract"])
@@ -517,8 +537,12 @@ def observation(panel, *, panel_binding, expected_panel_sha256, request_binding,
     if json_bytes(raw_panel) != panel:
         raise ValueError("parsed panel differs from the bound bytes")
     raw_runtime = read_bound(expected_runtime_binding)
-    if json_bytes(raw_runtime) != expected_runtime:
-        raise ValueError("expected runtime differs from the bound bytes")
+    # Same D32 seal family: the recorded runtime document against the frozen
+    # expected context stamps in dev mode; document-internal byte bindings
+    # (the panel's runtime against its own evidence) stay refusing.
+    seal_check("bound runtime", expected_runtime, json_bytes(raw_runtime),
+               where="native shape-time observation",
+               refusal=ValueError("expected runtime differs from the bound bytes"))
     _object(request_binding, {"path", "bytes", "sha256"}, "request binding")
     read_bound(request_binding)
     _object(replay, {"source_tree_sha256", "source_tree_members", "tool_source_sha256", "tool"},
@@ -530,8 +554,11 @@ def observation(panel, *, panel_binding, expected_panel_sha256, request_binding,
     result = validate_external_panel(panel, expected_runtime=expected_runtime,
                                      runtime_validation=runtime_validation)
     runtime = runtime_context(panel["runtime"])
-    if runtime != runtime_context(expected_runtime):
-        raise ValueError("observed runtime differs from independent expected context")
+    # D32: observed-vs-frozen runtime code is a run-identity seal; the panel's
+    # own bound bytes stay integrity-checked and refuse in both modes.
+    seal_check("observed runtime", runtime_context(expected_runtime), runtime,
+               where="native shape-time panel",
+               refusal=ValueError("observed runtime differs from independent expected context"))
     plan_row = panel["plan"]["rows"][0]
     scope = plan_row["scope"]
     shape = scope["shape"]

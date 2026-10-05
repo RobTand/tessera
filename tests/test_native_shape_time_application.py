@@ -658,3 +658,94 @@ def test_check_writes_no_observation_on_a_refused_bound_request(tmp_path, panel,
         argv += ['--expected-panel-sha256', hashlib.sha256(panel_path.read_bytes()).hexdigest()]
     assert app.main(argv) == 2
     assert not (case.unit / 'refused-observation.json').exists()
+
+
+def _observe_with_source(panel, monkeypatch, source_digest):
+    import sys
+    expected = panel['runtime']
+    monkeypatch.setenv('TESSERA_SERVE_MODE', 'resident')
+    monkeypatch.setattr(worker, 'runtime_origins', lambda _: {'package_root': expected['package_root'], 'modules': {}})
+    monkeypatch.setattr(worker, 'observed_commit', lambda _: expected['tessera_commit'])
+    monkeypatch.setitem(sys.modules, 'vllm', SimpleNamespace(__version__=expected['vllm']))
+    monkeypatch.setattr(torch, '__version__', expected['torch'])
+    monkeypatch.setattr(source_identity, 'serving_source_sha256', lambda: source_digest)
+    monkeypatch.setattr(runtime_image, 'declared_reference', lambda _: {'image': expected['image']})
+    monkeypatch.setattr(contract, 'contract_path', lambda: Path(panel['evidence']['contract']['path']))
+    monkeypatch.setattr(backend, 'platform_of_this_process', lambda *_: pytest.fail('CPU observation queried CUDA'))
+    monkeypatch.setattr(worker, 'record_verifier_bytes', lambda _: b'def verify_install(*args): return {"verified_files": 1}')
+    return expected, app.tp.file_binding(box_artifacts.skip_now('prismabuild_tools', 'pbtest_pins.py'))
+
+
+def test_source_pin_difference_stamps_and_continues(panel, monkeypatch, capsys):
+    """The reported old-source-pin refusal: the worker stamps and proceeds."""
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    expected, verifier = _observe_with_source(panel, monkeypatch, 'e' * 64)
+    got, origins, raw = worker.observe_software_runtime(expected, verifier)
+    assert got['serving_source_sha256'] == 'e' * 64
+    # One [DEV-MODE] stamp per seal site: the code identity and the frozen
+    # software context each stamp once; the record keeps the actual digest.
+    assert capsys.readouterr().out.count('[DEV-MODE]') == 2
+    assert raw == app.tp.read_bound(panel['evidence']['contract'])
+
+
+def test_certified_zero_keeps_before_device_refusal(panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
+    expected, verifier = _observe_with_source(panel, monkeypatch, 'e' * 64)
+    with pytest.raises(ValueError, match='runtime source/contract/version differs before device setup'):
+        worker.observe_software_runtime(expected, verifier)
+
+
+def test_installation_proof_verifies_the_observed_commit_in_dev_mode(panel, monkeypatch):
+    """Dev mode proves the installation at the commit the running tree claims."""
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    expected, verifier = _observe_with_source(panel, monkeypatch, 'e' * 64)
+    staged = 'f' * 40
+    monkeypatch.setattr(worker, 'observed_commit', lambda _: staged)
+    code = (f"def verify_install(module, commit):\n"
+            f"    assert commit == '{staged}', commit\n"
+            f"    return {{'verified_files': 1}}\n")
+    monkeypatch.setattr(worker, 'record_verifier_bytes', lambda _: code.encode())
+    got, origins, _ = worker.observe_software_runtime(expected, verifier)
+    assert origins['installation'] == {'verified_files': 1}
+
+
+def test_changed_runtime_contract_still_refuses_in_dev_mode(panel, monkeypatch):
+    """Contract bytes against their own pinned digest are integrity, not a seal."""
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    expected, verifier = _observe_with_source(panel, monkeypatch, expected['serving_source_sha256'])
+    Path(panel['evidence']['contract']['path']).write_bytes(b'changed contract')
+    with pytest.raises(ValueError, match='runtime source/contract/version differs before device setup'):
+        worker.observe_software_runtime(expected, verifier)
+
+
+def test_preflight_software_difference_stamps_and_continues(tmp_path, panel, monkeypatch, capsys):
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    result, kwargs = preflight_inputs(tmp_path, panel)
+    result['software']['serving_source_sha256'] = '0' * 64
+    app.tp._verify_runtime_preflight(result, **kwargs)
+    assert capsys.readouterr().out.count('[DEV-MODE]') == 1
+
+
+def test_certified_zero_keeps_preflight_software_refusal(tmp_path, panel, monkeypatch):
+    monkeypatch.setenv('PRISMAQUANT_DEV_MODE', '0')
+    result, kwargs = preflight_inputs(tmp_path, panel)
+    result['software']['serving_source_sha256'] = '0' * 64
+    with pytest.raises(ValueError, match='preflight software/contract differs from independent context'):
+        app.tp._verify_runtime_preflight(result, **kwargs)
+
+
+def test_preflight_installation_commit_difference_stamps(tmp_path, panel, monkeypatch, capsys):
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    result, kwargs = preflight_inputs(tmp_path, panel)
+    result['runtime_origins']['installation']['expected_commit'] = 'f' * 40
+    result['runtime_origins']['installation']['installed_commit'] = 'f' * 40
+    app.tp._verify_runtime_preflight(result, **kwargs)
+    assert capsys.readouterr().out.count('[DEV-MODE]') == 1
+
+
+def test_preflight_tampered_raw_contract_still_refuses_in_dev_mode(tmp_path, panel, monkeypatch):
+    monkeypatch.delenv('PRISMAQUANT_DEV_MODE', raising=False)
+    result, kwargs = preflight_inputs(tmp_path, panel)
+    kwargs['raw_contract'] = b'changed owned contract'
+    with pytest.raises(ValueError, match='preflight software/contract differs'):
+        app.tp._verify_runtime_preflight(result, **kwargs)
