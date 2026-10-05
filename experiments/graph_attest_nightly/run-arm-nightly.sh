@@ -100,7 +100,9 @@ done
 sleep 3  # the dispatch counter rewrites its totals at most once a second
 curl -s -m 10 127.0.0.1:$PORT/metrics > "$OUT/$ARM.metrics.txt" 2>/dev/null
 "$HERE/srv-nightly.sh" savelogs "$ARM"
-LOG=/home/rob/tmp/claude-campaign-20260926/tmp/graph-attest/serve/logs/$ARM.log
+# DIR was set above to follow GA_DIR; this grep must read the same file
+# savelogs just wrote, never the hardcoded default of another campaign.
+LOG=$DIR/logs/$ARM.log
 grep -E "compilation_config|cudagraph|CUDA graph|Capturing|Graph capturing|ga702|t695|Tessera MTP|speculative" "$LOG" > "$OUT/$ARM.cg.txt" 2>/dev/null
 touch "$TEN_STOP"; wait $ten
 echo "rc=$rc" >> "$OUT/engine-args-$ARM.txt"
