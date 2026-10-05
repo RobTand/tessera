@@ -250,8 +250,6 @@ def test_worker_shares_are_published_before_workerfinished(tmp_path):
                for worker in ("gw0", "gw1")) == 1
 
 
-
-
 # --- the gate --------------------------------------------------------------
 
 
