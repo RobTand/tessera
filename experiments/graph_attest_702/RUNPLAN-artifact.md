@@ -162,15 +162,17 @@ source approval. Deterministic regressions: `tests/test_graph_attest_headroom_pr
 
 **Dual-rank memory guard (issue959 D30 amendment).** While the window runs,
 each rank samples whole-box `MemAvailable` at 1 Hz. A sample strictly below
-**2 GiB** on either host fails **both** exact-owned ranks. The failing rank
-publishes its exact-attempt FAILED marker before any termination wait, TERMs
-its labeled owned container promptly and TERMs the Envelope-owned active
-subprocess group, sending SIGKILL only after 10 seconds if either is still
-needed — all inside the finite whole-window cleanup deadline and recorded; the
-rendezvous itself is not terminated. Both ranks then record a failed-cleaned
-acknowledgement, so an early failed-rank exit cannot cause a native withdrawal
-that shortens the peer's 10-second grace; the finite cleanup deadline is
-retained. The guard is sampled, not continuous — an inter-sample drop is not
+**2 GiB** on either host fails **both** exact-owned ranks. The local comparison
+precedes shared queue/journal work; exact-owned TERM starts locally before peer
+publication. The first exact-attempt FAILED marker is immutable and precedes
+any termination grace. Secondary signal/publication/journal failures are recorded
+alongside, never substituted for the trigger. SIGKILL follows ten seconds if
+needed; expiry can shorten the grace, but cleanup-only inspect/signal controls
+still get a fixed five-second budget to dispatch KILL, not to renew model work.
+Both live ranks acknowledge failed-cleaned before returning; a dead peer ends
+that wait immediately, and the wait retains five seconds for broker stop.
+Absent physical custody remains explicit. A sampled guard is not continuous:
+an inter-sample drop is not intercepted and clean samples are not immunity.
 intercepted, and clean samples are not immunity. `window_driver.py --prepare`
 emits `rdv/memory-policy.json` once and binds its SHA into the submitted
 inputs; each rank writes `rdv/memory-samples-rank<N>.jsonl` and

@@ -19,14 +19,19 @@ under them stays immutable. Historical derivation is documented in
 `/home/rob/fleet/inventory/kernels-window4-headroom-equation-packet-20261005.json`
 (SHA-256 `1a28bff770790a09b0df4573d46acf31e44aa12c6118cf31b9a32a279ffdb4f8`).
 A new 1 Hz whole-box guard fails both exact-owned ranks
-when either host samples strictly below 2 GiB. The failing rank publishes its
-exact-attempt FAILED marker before any termination wait, TERMs its labeled
-owned container promptly and TERMs the Envelope-owned active subprocess group,
-sending SIGKILL only after 10 seconds if still needed, bounded by the finite
-whole-window cleanup deadline and recorded; the rendezvous itself is not
+when either host samples strictly below 2 GiB. The local comparison precedes
+shared queue/journal work; exact-owned TERM starts before peer publication and
+the immutable first FAILED marker is published before any termination grace.
+Termination/publication errors remain secondary to the original trigger.
+SIGKILL follows 10 seconds if needed, shortened only by the finite deadline;
+cleanup-only inspect/signal operations retain a fixed five-second rescue budget
+after expiry without renewing model work. The rendezvous itself is not
 terminated, and both ranks record a failed-cleaned acknowledgement so an early
 failed-rank exit cannot cause a native withdrawal that shortens the peer's
 10-second grace. A sampled guard is not continuous immunity.
+The failed-cleaned wait checks whether the peer still owns its claim, exits on
+peer death and reserves five seconds for broker stop; missing custody remains
+explicit and is never reported as physical handoff.
 `window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
 SHA into the submitted inputs; each rank emits
 `rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —

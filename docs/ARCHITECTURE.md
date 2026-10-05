@@ -19,14 +19,18 @@ quantities overlap, so no naive sum of them is a measured decomposition. The
 104/102 GiB per-arm caps, the 900-second bounded headroom wait and the
 model-start recheck are unchanged, now against the 107 GiB bar. A new 1 Hz guard
 samples whole-box `MemAvailable` while the window runs: strictly below 2 GiB on
-either host fails both exact-owned ranks. The failing rank publishes its
-exact-attempt FAILED marker before any termination wait, TERMs its labeled
-owned container promptly and TERMs the Envelope-owned active subprocess group,
-sending SIGKILL only after 10 seconds if still needed — bounded by the finite
-whole-window cleanup deadline and recorded; the rendezvous itself is not
+either host fails both exact-owned ranks. The local comparison precedes shared
+queue/journal work; exact-owned TERM starts before peer publication and the
+immutable first FAILED marker precedes any termination grace. Secondary stop
+or persistence errors never replace the original trigger. SIGKILL follows
+10 seconds if needed; a shortened deadline still dispatches exact-owned KILL
+through a bounded five-second cleanup-only control, never renewed model work.
+The rendezvous itself is not
 terminated, and both ranks record a failed-cleaned acknowledgement so an early
 failed-rank exit cannot cause a native withdrawal that shortens the peer's
 10-second grace. A sampled guard is not continuous immunity.
+The acknowledgement loop rechecks the peer claim, exits on peer death and keeps
+a five-second broker-stop margin. Missing physical custody remains explicit.
 `window_driver.py --prepare` emits `rdv/memory-policy.json` once and binds its
 SHA into the submitted inputs; each rank emits
 `rdv/memory-samples-rank<N>.jsonl` and `rdv/memory-summary-rank<N>.json` —

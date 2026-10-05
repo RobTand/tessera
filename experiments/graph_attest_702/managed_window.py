@@ -143,6 +143,28 @@ class Envelope:
         finally:
             self._terminate(process, argv)
 
+    def run_container_control(self, cid, operation, *, check=True):
+        """Five-second cleanup-only control, even after the work envelope expires.
+
+        LocalArm verifies labels/parent before sending a signal. This bounded
+        rescue cannot launch a model or extend its work lifetime.
+        """
+        if not re.fullmatch("[a-f0-9]{64}", cid) or operation not in ("inspect", "TERM", "KILL"):
+            raise Refused("invalid cleanup-only container control")
+        argv = (["docker", "inspect", cid] if operation == "inspect" else
+                ["docker", "kill", "--signal", operation, cid])
+        process = subprocess.Popen(argv, start_new_session=True, text=True,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT)
+        try:
+            out, _ = process.communicate(timeout=5)
+            result = subprocess.CompletedProcess(argv, process.returncode, out)
+            if check and result.returncode:
+                raise Refused(f"owned cleanup control failed ({result.returncode}): {argv!r}: {out}")
+            return result
+        finally:
+            self._terminate(process, argv)
+
     def _terminate(self, process, argv):
         """Stop only the session this Envelope created, including owned descendants."""
         record = dict(pid=process.pid, argv=argv, signals=[], started_unix=time.time())
@@ -186,8 +208,11 @@ class Rendezvous:
         atomic_json(self.path, identity)
 
     def publish(self, stage: str, **fields) -> None:
-        atomic_json(self.root / f"{stage}-rank{self.rank}.json",
-                    {**self.identity, **fields, "stage": stage, "written_unix": time.time()})
+        path = self.root / f"{stage}-rank{self.rank}.json"
+        if stage == "failed" and path.exists():
+            self.checked(path, self.rank)
+            return  # the original trigger and first timestamp are immutable
+        atomic_json(path, {**self.identity, **fields, "stage": stage, "written_unix": time.time()})
 
     def check(self) -> None:
         require_claim(self.identity, self.queue)

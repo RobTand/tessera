@@ -155,20 +155,17 @@ class LocalArm:
                     src_sha256=self.config["src_sha256"], config_sha256=self.config["config_sha256"])
 
     def tick(self):
+        sample = None
         try:
-            if self.guard:
-                self.guard()
             now = time.monotonic()
             if now - self.last_sample < MEMORY_POLICY["sample_seconds"]:
+                if self.guard:
+                    self.guard()
                 return
             self.last_sample = now
             mem = available_gib()
             sample = dict(unix=time.time(), monotonic=now, rank=self.rank,
                           mem_available_gib=mem, arm=(self.active or {}).get("arm"))
-            with (self.work / "memwatch.txt").open("a") as stream:
-                stream.write(f"{sample['unix']} rank{self.rank} MemAvailable_GiB={mem}\n")
-            with (self.rdv / f"memory-samples-rank{self.rank}.jsonl").open("a") as stream:
-                stream.write(json.dumps(sample, sort_keys=True) + "\n")
             summary = getattr(self, "memory_summary", dict(rank=self.rank, samples=0,
                                   baseline_gib=None, minimum_gib=None))
             if summary["baseline_gib"] is None:
@@ -178,15 +175,18 @@ class LocalArm:
             summary.update(samples=summary["samples"] + 1, last_sample=sample,
                            policy=MEMORY_POLICY, identity=self.identity)
             self.memory_summary = summary
-            atomic_json(self.rdv / f"memory-summary-rank{self.rank}.json", summary)
+            # Local decision precedes EVERY shared-filesystem operation in this tick.
             if mem < MEMORY_POLICY["abort_below_gib"]:
                 raise Refused("local MemAvailable below 2 GiB physical memory floor")
+            if self.guard:
+                self.guard()
+            self._persist_memory(sample)
+            sample = None  # already durable; do not append it again on a later error
             if self.config.get("window_mode") == recipe.EAGER_MODE:
-                sample = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"),
-                              mem_available_gib=mem)
+                scope = dict(scope_memory(self.identity), arm=(self.active or {}).get("arm"),
+                             mem_available_gib=mem)
                 with (self.work / "memory-scope.jsonl").open("a") as stream:
-                    stream.write(json.dumps(sample, sort_keys=True) + "\n")
-            # Disk inventory and Docker health retain their existing five-second cadence.
+                    stream.write(json.dumps(scope, sort_keys=True) + "\n")
             if now - getattr(self, "last_maintenance_sample", 0) < 5:
                 return
             self.last_maintenance_sample = now
@@ -200,12 +200,35 @@ class LocalArm:
                 if value.get("State", {}).get("Running") is not True:
                     raise Refused("owned local server exited before probes completed")
         except BaseException as exc:
-            # Publish BEFORE any ten-second termination wait, so the peer aborts too.
-            if getattr(self, "abort", None):
-                self.abort(error=f"{type(exc).__name__}: {exc}")
-            if self.active and self.active.get("cid"):
-                self._term_server(self.active["cid"])
+            errors = getattr(self, "abort_errors", [])
+            self.abort_errors = errors
+            # Start the local stop before a potentially blocked peer-marker write.
+            # Every diagnostic/termination failure remains secondary to the trigger.
+            for name, operation in (
+                ("owned TERM", lambda: self._term_server(self.active["cid"]) if self.active and self.active.get("cid") else None),
+                ("failure publication", lambda: self.abort(error=f"{type(exc).__name__}: {exc}") if getattr(self, "abort", None) else None),
+                ("memory persistence", lambda: self._persist_memory(sample) if sample is not None else None)):
+                try:
+                    operation()
+                except BaseException as secondary:
+                    errors.append(dict(operation=name, error=f"{type(secondary).__name__}: {secondary}", unix=time.time()))
+            print(json.dumps(dict(event="rank_abort", rank=self.rank,
+                                  error=f"{type(exc).__name__}: {exc}", secondary_errors=errors), sort_keys=True), flush=True)
             raise
+
+    def _persist_memory(self, sample):
+        with (self.work / "memwatch.txt").open("a") as stream:
+            stream.write(f"{sample['unix']} rank{self.rank} MemAvailable_GiB={sample['mem_available_gib']}\n")
+        with (self.rdv / f"memory-samples-rank{self.rank}.jsonl").open("a") as stream:
+            stream.write(json.dumps(sample, sort_keys=True) + "\n")
+        atomic_json(self.rdv / f"memory-summary-rank{self.rank}.json", self.memory_summary)
+
+    def _container_control(self, cid, operation, *, check=True):
+        if self.envelope.end - time.monotonic() <= 5:
+            return self.envelope.run_container_control(cid, operation, check=check)
+        argv = (["docker", "inspect", cid] if operation == "inspect" else
+                ["docker", "kill", "--signal", operation, cid])
+        return self.command(argv, cleanup=True, check=check, limit=5)
 
     def _term_server(self, cid):
         """Signal only an inspected exact-attempt container; never names/foreign scope."""
@@ -218,8 +241,7 @@ class LocalArm:
                       started_unix=time.time(), state=value["State"])
         stops[cid] = record
         if value["State"].get("Running") is True:
-            result = self.command(["docker", "kill", "--signal", "TERM", cid],
-                                  cleanup=True, check=False, limit=5)
+            result = self._container_control(cid, "TERM", check=False)
             record["signals"].append(dict(signal="SIGTERM", unix=time.time(),
                                          monotonic=time.monotonic(), returncode=result.returncode,
                                          output=result.stdout))
@@ -234,20 +256,21 @@ class LocalArm:
         stop_at = min((term["monotonic"] if term else time.monotonic()) +
                       MEMORY_POLICY["term_grace_seconds"], self.envelope.end)
         while True:
+            # Inspect/control retain a bounded cleanup-only budget after expiry.
             value = self.inspect_owned(cid)
             if value["State"].get("Running") is not True:
                 break
-            left = stop_at - time.monotonic()
-            if left <= 0:
-                result = self.command(["docker", "kill", "--signal", "KILL", cid],
-                                      cleanup=True, limit=5)
+            # An expired work envelope must not suppress this exact-owned KILL.
+            if time.monotonic() >= stop_at:
+                result = self._container_control(cid, "KILL")
                 record["signals"].append(dict(signal="SIGKILL", unix=time.time(),
                                              monotonic=time.monotonic(), returncode=result.returncode))
                 value = self.inspect_owned(cid)
                 if value["State"].get("Running") is True:
                     raise Refused("exact owned container remains running after SIGKILL")
                 break
-            time.sleep(min(.2, left, self.envelope.remaining(cleanup=True)))
+            left = stop_at - time.monotonic()
+            time.sleep(min(.2, max(0, left)))
         record.update(state=value["State"], ended_unix=time.time(),
                       deadline_shortened_grace=stop_at == self.envelope.end)
         atomic_json(self.rdv / f"container-termination-rank{self.rank}.json", self.server_terminations)
@@ -281,7 +304,7 @@ class LocalArm:
         return dict(cid=cid, scope_id=self.identity["scope_id"], pid=value["State"]["Pid"])
 
     def inspect_owned(self, cid):
-        value = json.loads(self.command(["docker", "inspect", cid], cleanup=True, limit=10).stdout)[0]
+        value = json.loads(self._container_control(cid, "inspect").stdout)[0]
         labels = value.get("Config", {}).get("Labels", {})
         if (value.get("Id") != cid or labels.get("prismabuild.scope") != self.identity["scope_id"]
                 or labels.get("prismabuild.action") != self.identity["container_owner"]
@@ -529,7 +552,10 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
     except BaseException as exc:
         outcome["error"] = f"{type(exc).__name__}: {exc}"
         outcome["returncode"] = 124 if isinstance(exc, TimeoutError) else 1
-        meeting.publish("failed", error=outcome["error"])
+        try:
+            meeting.publish("failed", error=outcome["error"])
+        except BaseException as secondary:
+            outcome["failure_publication_error"] = f"{type(secondary).__name__}: {secondary}"
     finally:
         if outcome["returncode"] != 0:
             envelope.tighten(time.time() + CLEANUP_SECONDS)
@@ -550,14 +576,26 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
                                 cleanup_error=outcome.get("cleanup_error"))
                 peer_cleaned = rdv / f"failed-cleaned-rank{1-owned['rank']}.json"
                 while not peer_cleaned.exists():
-                    time.sleep(min(poll_seconds, envelope.remaining(cleanup=True)))
-                meeting.checked(peer_cleaned, 1-owned["rank"])
+                    try:
+                        require_claim(meeting.peer, queue)
+                    except BaseException as peer_ended:
+                        outcome["peer_cleanup_acknowledgement"] = dict(available=False,
+                            reason=f"peer claim ended: {type(peer_ended).__name__}: {peer_ended}")
+                        break
+                    left = envelope.remaining(cleanup=True) - 5  # preserve broker-stop margin
+                    if left <= 0:
+                        raise TimeoutError("peer cleanup acknowledgement deadline; broker-stop margin begins")
+                    time.sleep(min(poll_seconds, left))
+                if peer_cleaned.exists():
+                    meeting.checked(peer_cleaned, 1-owned["rank"])
+                    outcome["peer_cleanup_acknowledgement"] = dict(available=True)
             except BaseException as exc:
                 outcome["cleanup_error"] = f"failed peer cleanup acknowledgement: {type(exc).__name__}: {exc}"
         outcome["window_end_unix"] = envelope.end_unix
         outcome["process_terminations"] = getattr(envelope, "terminations", [])
         outcome["container_terminations"] = getattr(adapter, "server_terminations", {})
         outcome["memory_summary"] = getattr(adapter, "memory_summary", None)
+        outcome["abort_errors"] = getattr(adapter, "abort_errors", [])
         outcome["ended_unix"] = time.time()
         if outcome["ended_unix"] > envelope.end_unix:
             outcome["cleanup_error"] = "payload cleanup outside whole-window envelope"
