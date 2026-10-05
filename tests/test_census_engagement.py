@@ -337,3 +337,38 @@ def test_the_census_requires_the_lane_the_artifact_declares():
     tool = (Path(__file__).resolve().parents[1] / "tools" / "tessera_route_census.py").read_text()
     assert 'get("requires_lanes")' in tool
     assert "lane_engagement" in tool and "--require-lane" in tool
+
+
+def test_a_module_without_a_decode_once_copy_never_reads_the_token_count(monkeypatch):
+    """Flag off (no decoded copy), the FP8 route stamps the module's one pair
+    and never asks for an M-dependent one: ``launch_pair_for`` reads
+    ``int(M)``, which pins the token count under ``torch.compile`` and stops
+    vLLM's compiled forward from starting (``telemetry.route_shape``).  The
+    stub's ``launch_pair_for`` raises, so a call would fail this test."""
+    from tessera.serving import native_ops, telemetry
+    from tessera.serving.scheme import TESSERA_FP8
+
+    monkeypatch.setattr(native_ops, "native_fp8_quant",
+                        lambda x: (torch.zeros(x.shape[0], 128, dtype=torch.uint8),
+                                   torch.ones(x.shape[0], dtype=torch.float32)),
+                        raising=False)
+    method, layer = _unprepared_dense_method(monkeypatch, TESSERA_FP8, {
+        "family": TESSERA_FP8, "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL",
+        "q256": 1024, "rows": 64, "columns": 128, "wire_bytes": 4096,
+        "roles": [["weight", 64]]})
+
+    class _Native:
+        decoded = None
+        launch_pair = ("tessera::window_gemm_dense", "native_window_gemm")
+
+        def apply(self, a_q, a_scale):
+            return torch.zeros(a_q.shape[0], 64, dtype=torch.bfloat16)
+
+        def launch_pair_for(self, m):
+            raise AssertionError("a copy-less module's pair was asked for by M")
+
+    layer.tessera_native = _Native()
+    y = method.apply(layer, torch.zeros((300, 128), dtype=torch.bfloat16))
+    assert y.shape == (300, 64)
+    record = telemetry.read_route(layer)
+    assert (record["symbol"], record["decoder"]) == _Native.launch_pair

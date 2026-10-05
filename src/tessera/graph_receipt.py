@@ -34,11 +34,21 @@ order and eager does not reproduce itself.  The long-context class is
 therefore recorded as a ``screens`` entry (membership against the eager pool's
 outcomes), never as part of the verdict.
 
-Schema ``tessera.graph_equals_eager.v1`` (JSON object):
+THE FABRIC (v2, CEO decision dec-1005-003356-6ba2).  A tensor-parallel serve
+reduces across the two Sparks over sockets or over RoCE, and the two are two
+all-reduces: an eager pool measured on one does not judge a graph arm, or a
+card, on the other.  The fabric is therefore scope, read from what NCCL
+reported on every rank: ``socket`` or ``roce`` at tensor parallel 2 or more,
+``none`` for a one-rank serve, which reduces across nothing.  A v1 receipt
+(no fabric) stays readable -- :func:`finish` still re-derives it -- but
+:func:`verify` refuses it for a card, whose fabric it cannot attest.
+
+Schema ``tessera.graph_equals_eager.v2`` (JSON object):
 
 - ``schema``, ``verdict`` (``equal`` | ``not_equal``), ``issue``;
-- ``runtime``: ``image`` (by digest), ``vllm``, ``interface`` (the
-  ``glm53_graphs`` inspected interface name) ;
+- ``runtime``: ``image`` (by digest), ``fabric`` (``socket`` | ``roce`` |
+  ``none``), ``vllm``, ``interface`` (the ``glm53_graphs`` inspected
+  interface name);
 - ``tessera``: ``commit``, ``src_sha256``;
 - ``model``: ``path``, ``config_sha256``, ``index_topk``;
 - ``equality_set``: ``name``, ``script_sha256``, ``choices_per_pass``;
@@ -57,11 +67,29 @@ from __future__ import annotations
 import json
 from typing import Any
 
-SCHEMA = "tessera.graph_equals_eager.v1"
+SCHEMA = "tessera.graph_equals_eager.v2"
+#: The schema before the fabric was scope: readable, never a card's attestation.
+SCHEMA_V1 = "tessera.graph_equals_eager.v1"
 
 #: The serve fields an attestation is scoped to; :func:`verify` matches each exactly.
 SCOPE_FIELDS = ("image", "model_config_sha256", "tessera_src_sha256", "compilation_config",
-                "speculative_tokens", "max_model_len", "max_num_seqs", "tensor_parallel_size")
+                "speculative_tokens", "max_model_len", "max_num_seqs", "tensor_parallel_size",
+                "fabric")
+
+#: The fabrics a tensor-parallel serve reduces over; ``none`` is the one-rank serve's.
+FABRICS = ("socket", "roce")
+NO_FABRIC = "none"
+
+
+def fabric_refusal(fabric: Any, tensor_parallel_size: Any) -> str | None:
+    """Why ``fabric`` cannot be this serve's, or None: socket/roce above one rank, none at one."""
+    if tensor_parallel_size == 1:
+        return None if fabric == NO_FABRIC else (
+            f"fabric {fabric!r} at tensor_parallel_size 1, which reduces across nothing ({NO_FABRIC!r})")
+    if fabric not in FABRICS:
+        return (f"fabric {fabric!r} at tensor_parallel_size {tensor_parallel_size}: "
+                f"a tensor-parallel serve names one of {list(FABRICS)}")
+    return None
 
 
 def canonical(value: Any) -> str:
@@ -105,7 +133,8 @@ def attestation(receipt: dict, arm: dict) -> dict:
             "compilation_config": arm["compilation_config"],
             "speculative_tokens": arm["speculative_tokens"],
             "max_model_len": arm["max_model_len"], "max_num_seqs": arm["max_num_seqs"],
-            "tensor_parallel_size": arm["tensor_parallel_size"], "arm": arm["name"]}
+            "tensor_parallel_size": arm["tensor_parallel_size"],
+            "fabric": receipt["runtime"].get("fabric"), "arm": arm["name"]}
 
 
 def finish(receipt: dict) -> dict:
@@ -126,12 +155,18 @@ def verify(receipt: dict, serve: dict) -> str | None:
     is about to publish.  The receipt's own rule is re-applied, so a receipt
     edited to say ``equal`` without equal arms is refused.
     """
+    if isinstance(receipt, dict) and receipt.get("schema") == SCHEMA_V1:
+        return (f"a {SCHEMA_V1} receipt names no fabric, so it cannot attest a card's serve; "
+                f"produce a {SCHEMA} receipt")
     if not isinstance(receipt, dict) or receipt.get("schema") != SCHEMA:
         schema = receipt.get("schema") if isinstance(receipt, dict) else type(receipt).__name__
         return f"schema {schema!r} is not {SCHEMA}"
     missing = [f for f in SCOPE_FIELDS if f not in serve]
     if missing:
         return f"the serve does not name {missing}"
+    why = fabric_refusal(serve["fabric"], serve["tensor_parallel_size"])
+    if why:
+        return f"the serve's {why}"
     try:
         return _verify(receipt, serve)
     except (KeyError, TypeError, ValueError, AttributeError, IndexError) as exc:
@@ -142,6 +177,10 @@ def verify(receipt: dict, serve: dict) -> str | None:
 
 def _verify(receipt: dict, serve: dict) -> str | None:
     rederived = finish(json.loads(json.dumps(receipt)))
+    for entry in rederived["attests"]:
+        why = fabric_refusal(entry["fabric"], entry["tensor_parallel_size"])
+        if why:
+            return f"the receipt's arm {entry['arm']}: {why}"
     if rederived["verdict"] != receipt.get("verdict") or rederived["verdict"] != "equal":
         bad = [a["name"] for a in rederived["arms"] if not a["equal"]]
         return f"verdict is {rederived['verdict']!r} by the rule (arms not equal: {bad})"
@@ -156,5 +195,5 @@ def _verify(receipt: dict, serve: dict) -> str | None:
             f"{differ}")
 
 
-__all__ = ["SCHEMA", "SCOPE_FIELDS", "arm_equal", "attestation", "canonical", "finish",
-           "replayed_everything", "verify"]
+__all__ = ["FABRICS", "NO_FABRIC", "SCHEMA", "SCHEMA_V1", "SCOPE_FIELDS", "arm_equal",
+           "attestation", "canonical", "fabric_refusal", "finish", "replayed_everything", "verify"]
