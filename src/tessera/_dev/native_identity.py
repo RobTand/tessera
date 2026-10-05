@@ -72,7 +72,8 @@ def mapped_file_device(fd: int) -> tuple[int, int]:
     the backing superblock device. FD mount provenance bridges those views
     without dropping the mapped-device or inode check.
     """
-    mounts = [fields for fields in _mountinfo_fields() if fields[0] == _fd_mount_id(fd)]
+    mount_id = _fd_mount_id(fd)
+    mounts = [fields for fields in _mountinfo_fields() if fields[0] == mount_id]
     if len(mounts) != 1 or len(mounts[0]) < 3:
         raise RuntimeError("native file mount identity is not recorded")
     try:
