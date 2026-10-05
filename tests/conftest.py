@@ -613,10 +613,19 @@ def _skip_reason(report) -> str:
     return reason[len("Skipped: "):] if reason.startswith("Skipped: ") else reason
 
 
-def pytest_terminal_summary(terminalreporter, exitstatus, config):
+def _surface_results(terminalreporter):
+    """The final measurements shared by the prose and JSON publications."""
     from collections import Counter
 
     present, detail = _cuda_device()
+    reasons = Counter(_skip_reason(report)
+                      for report in terminalreporter.stats.get("skipped", []))
+    return (present, detail, reasons, _cuda_executed(terminalreporter),
+            _box_artifact_skips(reasons))
+
+
+def pytest_terminal_summary(terminalreporter, exitstatus, config):
+    present, detail, counts, executed, gated = _surface_results(terminalreporter)
     write = terminalreporter.write_line
 
     skipped = terminalreporter.stats.get("skipped", [])
@@ -631,7 +640,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             "tessera surface: this run did not exercise the CUDA-gated "
             "surface. Its pass count is not coverage of it."
         )
-    counts = Counter(_skip_reason(report) for report in skipped)
     if skipped:
         write("tessera surface: skip reasons, verbatim --")
         for reason, count in counts.most_common():
@@ -643,8 +651,6 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         for line in textwrap.wrap(" ".join(collect_ignore), width=72):
             write(f"    {line}")
 
-    executed = _cuda_executed(terminalreporter)
-    gated = _box_artifact_skips(counts)
     write(f"tessera surface: {executed} test(s) allocated on the device")
     if gated:
         write("tessera surface: skipped for evidence this box does not hold --")
@@ -652,7 +658,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
             write(f"    {count:5d}  {reason}")
 
     destination = config.getoption("--surface-json")
-    if destination:
+    if destination and not hasattr(config, "workerinput"):
         _write_surface_json(Path(destination), config, terminalreporter,
                             present, detail, counts, executed, gated)
 
@@ -680,13 +686,15 @@ def _coverage_refusals(executed: int, gated: dict) -> list:
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """This run's final source identity, then legs 2 and 3 of the gate.
+    """Finalize source and worker share before completion, then check coverage.
 
     The identity comes first and is unconditional, in every process: this is a
     plain hook implementation, so it completes before any ``pytest_sessionfinish``
     WRAPPER resumes, and xdist's -- the one that sends ``workerfinished`` --
     is a wrapper (#291).  ``trylast`` orders this against other plain
-    implementations only; it does not weaken that.
+    implementations only; it does not weaken that. The worker share must also
+    be written here: terminal summary runs after xdist reports completion,
+    when the controller is already free to tear this worker down.
 
     The gate's legs can only be evaluated once the run is over, so they are a
     refusal after the fact rather than before it -- the same verdict, one
@@ -697,6 +705,11 @@ def pytest_sessionfinish(session, exitstatus):
 
     _final_source_identity(session.config)
     if hasattr(session.config, "workerinput"):
+        destination = session.config.getoption("--surface-json")
+        reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+        if destination and reporter is not None:
+            _write_surface_json(Path(destination), session.config, reporter,
+                                *_surface_results(reporter))
         return
     if not _strict_cuda(session.config):
         return

@@ -1,6 +1,72 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-05 for worker surface-share publication before completion.
+The ordinary session-finish hook writes the named worker share after finalizing
+its source identity and before xdist reports that the worker finished. The
+controller still publishes the aggregate from terminal summary; schema version
+three, population roles and retention of earlier runs are unchanged.
 
+Re-stamped 2026-10-05 for issue953 (CEO-authorized bounded preflight headroom
+wait, Window4). `LocalArm.preflight` now calls a shared `LocalArm.headroom`
+step before every arm, graph and eager alike: it waits at most 900 seconds for
+`MemAvailable` to reach the unchanged 114 GiB predicate, polling on the
+existing `run_rank` cadence with the live guard checked every poll, capped by
+the existing `Envelope.remaining` lifetime (cleanup reserve and any tightened
+absolute window). A ready wait rechecks envelope and bound after the guard; an
+expired bound raises the original unchanged refusal text, and the 16 GiB floor
+still refuses inside the wait. One terminal wait report per call (threshold,
+bound, initial/last GiB, wall/monotonic times, every exact sample, and reason
+`ready`/`headroom_timeout`/`lifecycle_cancelled`/`deadline`/`error`) is appended
+to `rdv/headroom-preflight-rank<rank>.jsonl`, persisting through refusal,
+cancellation and deadline; a failed reading retains unknown values rather
+than inventing availability. The actual model-start boundary rechecks the
+same 114 GiB bar after source checks and the peer barrier, recording its
+per-arm synchronous sample before any container work. No threshold, floor,
+cache/KV/shape, artifact, runtime, client or container semantic moves. The
+unchanged 104/102 GiB per-arm demand caps and every existing
+admission predicate stay exactly as they were: this wait is a bounded
+predicate-satisfaction wait, not a new admission mechanism, and it mints no
+114 GiB admission, no performance or fit evidence, and no transfer of the
+historical frozen producer's source approval. Deterministic regressions live
+in `tests/test_graph_attest_headroom_preflight.py`; the below-to-ready
+regression fails before the change, which refused below threshold instantly
+with no wait report. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
+Re-stamped 2026-10-05 for issue946: the merged PR943 finite local-rank recipe
+adds only the distinct `window4-eager-2048-4096` A8S/socket/TP2/c1 benchmark mode.
+The default c4/MNBT2048 eager/graph/eager equality population and refusal stay
+unchanged. Window4 binds the public2dbac191/v56 runtime, corrected reviewed PQ2264
+candidate, full authenticated A8S inventory and exact October5 EXL3 client and
+profile bytes. One published two-half exclusive campaign retains ownership,
+deadline, physical floor and cleanup. PACT prices run while the recipe qualifies;
+PrismaBuild priority10 host election fences lower-priority prices when the pair
+is published, without a caller-manual drain or retired D28 supply-cap gate.
+The complete census refuses another managed pair/invalid ownership, not prices.
+Real CPU cgroup sampling/pinned-image parser checks and per-rank profile
+verification precede actual fit/speed evidence. Those require served requests,
+per-rank memory, matching
+profiles and both-Spark Netdata coverage. No default, serving pin, format,
+scientific gate, graph receipt, ship artifact or performance claim is promoted
+by this source change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
+Re-stamped 2026-10-05 for local disk admission of the container suite cache.
+The shared container owner refuses known network filesystem types before
+building a container command, creating its cache or launching it. The
+merge-suite coordinator calls the same rule before submitting either arm.
+The native mount-provenance owner resolves the deepest mount covering the
+cache's nearest existing parent. Same-path mount stacks follow mount and
+parent identities to their visible top, so a network mount above an automount
+is named correctly. An unresolved `autofs` mount refuses as unstable local
+storage; absent, malformed or unresolvable provenance still fails closed.
+CPU tests inject exact mount entries read from the fleet; no native build
+or graphics processor result is newly measured.
+
+
+Re-stamped 2026-10-05 for the bounded CPU controls in tessera#442: the
+ordinary expert constructor reads the live tensor-parallel degree and rank;
+only an explicit research declaration invokes the research parallel refusal.
+The standalone operator harness keeps its independent selected-owner rule.
+No serving behavior, runtime cell, wire, default or qualification changes.
 
 Re-stamped 2026-10-04 for the serve-comparison intake identity publication
 (#885, with its accepted #872 dependency). The operational seam that a serve
@@ -251,6 +317,33 @@ import does not retarget the cached extension. Fresh native build/SASS, changed
 source numerical and matched before/after profile/Netdata/work-per-joule evidence
 are required: source/CPU controls alone make no speed/energy claim. Neither this
 flag nor PM is promoted as a default, serving cell or pin.
+
+The default-off build-scoped `TESSERA_ROUTED_FUSED_MMA8_A_RING` experiment
+(Refs #739) moves the E4M3-MMA chunk loop's activation load off its last
+register move. With the flag at 1, on the routed two-run launches only, each
+A-staging producer `cp.async`es its 16 raw E4M3 bytes two chunks ahead into its
+own slot of a per-word-stage ring, in the commit group of that chunk's words.
+The one-run launches keep `prefetch_a` and the dense and shared launches keep
+the register load: there the measured ceiling left nothing the ring could buy.
+On the T8R release stacks, measured on master `13e41726` (before #927), the
+two-run R1088/R832 routed layers took 0.93-0.94 of master's time at M = 512,
+0.90 at 2048 and 0.93-0.94 at 8192, against a no-load ceiling of 0.92-0.94,
+0.88 and 0.90. Every timed cell was bitwise equal. Those numbers do not carry
+to the current kernel: since #793 (`STAGE_PREV = PREV_STAGED && !TWO`) the
+two-run loop also waits on a global previous-word load, which the measured
+tree had staged. The ring's gain there is unmeasured; flag 1 on the current
+kernel has GPU correctness tests (747 passed at each flag value) but no timing.
+The served T-8 routed layers are all one-run R1024, where the
+ceiling behind `prefetch_a` is 0.97-0.99 at M <= 2048, so the flag does not
+move served prefill at the current chunk size. Receipt: [the activation
+ring](measurements/2026-10-04-mma8-activation-ring.md). `store_a` reads the slot back and writes the same
+fragment-order A tile, so every MMA and output byte is the register path's. The
+ring is WORD_STAGES raw tiles after the A tiles: `a_region_bytes` grows by 6,144
+B at 64 routes and 12,288 B at 128, so `SMEM_FIXED_MMA8` follows the flag. Every
+E4M3-MMA launch still fits three word stages. At 0 the layout is master's and
+the SASS is master's up to commuted `IADD3` operands. The choice is frozen at import like the dual-B flag's, emitted only
+into MMA8 compile flags, and checked against the loaded export. The value and
+`f16` libraries are untouched.
 
 Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
 (#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
@@ -1206,7 +1299,9 @@ reads both facts off the runtime. A drafter under CUDA graphs is no longer
 refused wholesale: `glm53_nope._SPECULATIVE_GRAPH_RECEIPTS` admits a drafter
 graph path by receipt, keyed by method, draft tokens, whether later draft
 steps reuse the first step's sparse indices (`index_share_for_mtp_iteration`),
-compilation mode and CUDA-graph mode. The table is empty, so every drafter
+compilation mode, CUDA-graph mode and the serve's `max_model_len`, whose value
+the captured indexer branch follows (a receipt measured at one
+`max_model_len` does not speak for another). The table is empty, so every drafter
 still serves eager, and the refusal names the configuration and what is
 measured. `eager_equivalence_gap` now checks the drafter's graph families for
 padding: target verification and the drafter's first step, at whole requests
@@ -2787,7 +2882,17 @@ from multiplying its one-CPU share. The per-process limits are recorded in
 each arm's receipt; these environment settings are not an OS-level CPU quota.
 An explicit `--gpu-image` enables the container GPU arm. It requires
 `--gpu-deps-site`, its `--gpu-deps-sha256` seal, and a new owned
-`--gpu-cache-dir` outside the checkout. `tools/_suite_container.py` owns
+`--gpu-cache-dir` on local disk outside the checkout. The shared container
+owner refuses known network filesystem types before command construction,
+cache creation or launch, naming the path, mount point and filesystem type.
+The coordinator calls the same rule before any action is submitted. A
+not-yet-created cache uses its nearest existing parent and the deepest
+containing mount. Same-path stacks resolve their visible top using mount and
+parent identities, not table order or numeric mount-ID order. An `autofs`
+entry alone refuses because its backing filesystem is not stably mounted.
+The shared mount reader in `tessera._dev.native_identity` also owns native
+mapped-device provenance; unresolved cache mount provenance fails closed.
+`tools/_suite_container.py` owns
 the finite runner grammar and Docker argv; `tools/suite_container.py` launches
 it only inside an admitted PB action. GPU `--cpus N` becomes pytest `-n N
 --dist worksteal` with the same aggregate reservation. Use `--gpu-cpus` and
@@ -2902,7 +3007,15 @@ wrapper resume, so the controller read the seed `pytest_sessionstart` had left
 in `workeroutput` and published a worker as agreeing while that worker's own
 share said `unknown` (#291). The measurement no longer depends on
 `--surface-json` either, and the share and the population now carry the same
-record rather than two hashes taken at two instants. An entry identity remains
+record rather than two hashes taken at two instants. With `--surface-json`, the
+same plain session-finish hook also completes the worker share write before
+`workerfinished` can be sent. Writing that file from terminal summary was still
+too late: the controller could observe completion and tear down a worker before
+its share reached disk, even while the aggregate and final identities were
+correct. Terminal summary writes only the controller or serial population now;
+every worker writes exactly once, including workers with no assigned tests.
+The schema, named worker-share paths and `_keep_any_previous` retention rule
+are unchanged. An entry identity remains
 a seed and never establishes agreement: only an entry-BOUND record -- one
 carrying a `measurement_span`, which `suite_source.is_entry_bound` is the one
 home for -- counts, and a worker that supplies only the seed, or no identity at
@@ -4134,10 +4247,12 @@ backend the factory cannot construct refuses by name; the harness never
 falls back to `auto`.  Scope, world equality, family coverage and exit codes
 are unchanged for both shapes.
 
-**One stack needs the explicit selected owner, and two must not have it.** The
-production FP8 expert builder is TP1-only, so an FP8 owner above one rank takes
-the versioned `research_selected_moe` block, which is a request field here and
-must declare this owner's own `expected_tensor_parallel_size`. A family with its
+**The standalone harness selects its owner explicitly.** Its
+`owner_needs_selected` rule requires the versioned `research_selected_moe`
+block for an FP8 owner above one rank; this is a harness restriction, not a
+single-rank limit in the ordinary expert constructor. That constructor reads
+the live `moe_parallel_config.tp_size` and `tp_rank`. The request block must
+declare this owner's own `expected_tensor_parallel_size`. A family with its
 own expert builder keeps it. For `TESSERA_NVFP4` the selected block refuses to
 name a target it does not serve, so attaching one to an A4 owner is a refusal
 rather than a wider admission. `TESSERA_BF16` is priced on its production
@@ -8058,8 +8173,11 @@ STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
 vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
 drafter graph path without a receipt (tessera#695). Drafters are admitted
 under CUDA graphs only through `_SPECULATIVE_GRAPH_RECEIPTS`, keyed by method,
-draft tokens, sparse-index sharing across draft steps, compilation mode and
-CUDA-graph mode; the table is empty, so drafters serve eager. Speculative
+draft tokens, sparse-index sharing across draft steps, compilation mode,
+CUDA-graph mode and the serve's `max_model_len` (a FULL capture builds its
+attention metadata at it, so the indexer branch the captured graphs freeze --
+and with it eager equivalence -- follows it); the table is empty, so drafters
+serve eager. Speculative
 method `dflash` is refused in every mode, eager included: the pinned vLLM
 cannot load it for GLM5-next (no `SupportsEagle3` on either GLM5-next class,
 and no KV cache grouping for sliding-window drafter layers).

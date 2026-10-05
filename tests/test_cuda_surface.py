@@ -135,6 +135,121 @@ def _write_worker_identity_probe(tmp_path):
     return path
 
 
+# The tracer is staged as a separate plugin, never enabled in production. It
+# observes the real xdist send and the repository's writer in the same worker
+# thread, so publication order does not depend on controller scheduling.
+SURFACE_ORDER_PROBE = r'''
+import json
+import os
+import time
+from pathlib import Path
+
+import pytest
+import conftest
+
+TRACE = Path(os.environ["TESSERA_SURFACE_ORDER_TRACE"])
+
+
+def _record(role, event, **fields):
+    record = {"event": event, "time_ns": time.monotonic_ns(), **fields}
+    with (TRACE / (role + ".jsonl")).open("a") as stream:
+        stream.write(json.dumps(record) + "\n")
+
+
+def _share(config, worker):
+    path = Path(config.getoption("--surface-json"))
+    return path.with_name(f"{path.stem}.{worker}{path.suffix}")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_configure(config):
+    if not hasattr(config, "workerinput"):
+        return
+    worker = config.workerinput["workerid"]
+    write = conftest._write_surface_json
+    interactor = next(plugin for plugin in config.pluginmanager.get_plugins()
+                      if type(plugin).__name__ == "WorkerInteractor")
+    send = interactor.sendevent
+
+    def traced_write(*args, **kwargs):
+        _record(worker, "share write start")
+        # Widen the old teardown window, but never change the ordering. The
+        # assertion at send is deterministic even with a delay of zero.
+        time.sleep(float(os.environ["TESSERA_SURFACE_ORDER_DELAY"]))
+        result = write(*args, **kwargs)
+        _record(worker, "share write end")
+        return result
+
+    def traced_send(name, **kwargs):
+        if name == "workerfinished":
+            path = _share(config, worker)
+            _record(worker, "workerfinished sent", share_exists=path.exists(),
+                    share=json.loads(path.read_text()) if path.exists() else None,
+                    identity=kwargs["workeroutput"].get("tessera_source_identity"))
+        return send(name, **kwargs)
+
+    conftest._write_surface_json = traced_write
+    interactor.sendevent = traced_send
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    worker = node.gateway.id
+    _record("controller", "testnodedown", worker=worker,
+            share_exists=_share(node.config, worker).exists())
+'''
+
+
+def test_worker_shares_are_published_before_workerfinished(tmp_path):
+    """Completion means the named share is already readable, even under load."""
+    import json
+    import time
+
+    pytest.importorskip("xdist")
+    trace = tmp_path / "ordering"
+    trace.mkdir()
+    (tmp_path / "surface_order_probe.py").write_text(SURFACE_ORDER_PROBE)
+    probe = tmp_path / "test_surface_order.py"
+    probe.write_text("def test_plain():\n    assert True\n")
+    surface = tmp_path / "surface.json"
+    env = _child_env()
+    result = _run(
+        [str(probe), "-q", "-p", "conftest", "-p", "surface_order_probe",
+         "-n", "2", "--surface-json", str(surface)],
+        CUDA_VISIBLE_DEVICES="",
+        PYTHONPATH=os.pathsep.join([str(tmp_path), env["PYTHONPATH"]]),
+        TESSERA_SURFACE_ORDER_TRACE=str(trace), TESSERA_SURFACE_ORDER_DELAY="0.5",
+    )
+    events = {
+        path.stem: [json.loads(line) for line in path.read_text().splitlines()]
+        for path in trace.glob("*.jsonl")
+    }
+    events.setdefault("controller", []).append(
+        {"event": "controller exit", "time_ns": time.monotonic_ns(),
+         "returncode": result.returncode})
+    print("surface publication ordering: " + json.dumps(events, sort_keys=True))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "1 passed" in result.stdout, result.stdout
+    assert set(events) == {"gw0", "gw1", "controller"}, events
+    for worker in ("gw0", "gw1"):
+        sent = next(event for event in events[worker]
+                    if event["event"] == "workerfinished sent")
+        assert sent["share_exists"], f"{worker} reported finished before publishing its share: {events}"
+        assert [event["event"] for event in events[worker]] == [
+            "share write start", "share write end", "workerfinished sent"], events
+        assert events[worker][0]["time_ns"] < events[worker][1]["time_ns"] < sent["time_ns"], events
+        assert sent["share"]["role"] == "worker-share", sent
+        assert sent["share"]["source_identity"] == sent["identity"], sent
+    down = [event for event in events["controller"] if event["event"] == "testnodedown"]
+    assert {event["worker"] for event in down} == {"gw0", "gw1"}, events
+    assert all(event["share_exists"] for event in down), events
+    population = json.loads(surface.read_text())
+    assert population["role"] == "population", population
+    assert population["counts"]["passed"] == 1, population
+    assert sum(json.loads((tmp_path / f"surface.{worker}.json").read_text())["counts"]["passed"]
+               for worker in ("gw0", "gw1")) == 1
+
+
 # --- the gate --------------------------------------------------------------
 
 

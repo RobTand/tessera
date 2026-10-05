@@ -7,7 +7,14 @@
 # AB_EXPECTED_CASES is required: frozen nonempty case/rate/source manifest.
 # AB_STEPS/AB_MS/AB_ROUTED/AB_DENSE select the declared finite quantum.
 # Each arm's libraries must be prebuilt at <out_root>/ext-<arm> (build_ext.sh);
-# AB_ALLOW_BUILD=1 lets the action compile a missing one.
+# AB_ALLOW_BUILD=1 lets the action compile a missing one.  An arm whose build
+# choice is an environment variable (a default-off kernel flag) lists it as
+# KEY=VALUE lines in <out_root>/env-<arm>, which every step of that arm runs
+# under; build its ext-<arm> under the same variables.
+# AB_MS overrides the routed and dense M list (default 1,2,4,8,512,2048).
+# AB_DIAGNOSTIC: comma-separated arms whose output is wrong by design (a
+# ceiling); they are timed, their hashes recorded, and left out of the bitwise
+# verdict.
 # Steps, each recorded with its rc and the host load and GPU power at start:
 #   r<i>/r<i>b  routed bench per arm (R1024 L10, R1088 L11, R832 L42; M 1..2048;
 #               outputs hashed for the bitwise A/B), forward then reverse
@@ -70,7 +77,11 @@ H=${AB_BENCH:-experiments/t8r_speed/bench_t8r.sh}
 # An arm whose <out_root>/ext-<arm> exists (build_ext.sh, run as its own row off
 # the measurement host) loads its libraries from there instead of compiling
 # them inside this action.
-extenv() { [[ -d "$OUT/ext-$1" ]] && echo "BENCH_EXT_DIR=$OUT/ext-$1"; return 0; }
+extenv() {
+  [[ -d "$OUT/ext-$1" ]] && echo "BENCH_EXT_DIR=$OUT/ext-$1"
+  [[ -f "$OUT/env-$1" ]] && grep -E '^[A-Z_][A-Z0-9_]*=[^ ]*$' "$OUT/env-$1"
+  return 0
+}
 bench() {   # step-name arm family suffix groups [extra env...]
   local name=$1 arm=$2 fam=$3 sfx=$4 groups=$5; shift 5
   local native_args=() native_env=()
@@ -99,9 +110,10 @@ if [[ $STEPS == *" dense "* ]]; then
 for ((i = 0; i < N; i++)); do bench "d$i" "${ARMS[i]}" dense "" "$DENSE"; done
 for ((i = N - 1; i >= 0; i--)); do bench "d${i}b" "${ARMS[i]}" dense b "$DENSE"; done
 fi
-python3 - "$OUT" "${ARMS[@]}" <<'PY'
-import json, pathlib, sys
+AB_DIAGNOSTIC=${AB_DIAGNOSTIC:-} python3 - "$OUT" "${ARMS[@]}" <<'PY'
+import json, os, pathlib, sys
 root, arms = pathlib.Path(sys.argv[1]), sys.argv[2:]
+diagnostic = {a for a in os.environ["AB_DIAGNOSTIC"].split(",") if a}
 sys.path.insert(0, "experiments/t8r_speed")
 from ab_stageprev_accept import load, expected_population, validate_native_record, observed_rates
 expected = load(__import__("os").environ["AB_EXPECTED_CASES"])
@@ -154,8 +166,10 @@ for fam in families:
                     r[f"{a}{p}_us"] = c.get("profile", {}).get("kernel_us_per_call")
                     r[f"{a}{p}_W"] = c.get("power", {}).get("mean_w")
                 sha[f"{a}{p}"] = c.get("out_sha256")
-        r["bitwise"] = None not in sha.values() and len(set(sha.values())) == 1
+        judged = {f"{a}{p}": sha[f"{a}{p}"] for a in arms if a not in diagnostic for p in ("", "b")}
+        r["bitwise"] = None not in judged.values() and len(set(judged.values())) == 1
         r["missing"] = sorted(n for n, v in sha.items() if v is None)
+        r["sha"] = sha
         if expected.get("require_intermediates"):
             signatures = []
             for a in arms:
@@ -194,8 +208,8 @@ for fam in families:
                     b, x = r[f"{ref}{p}_us"], r[f"{a}{p}_us"]
                     r[f"{a}{p}_ratio"] = round(x / b, 4) if b and x else None
         rows.append(r)
-json.dump({"phase":expected["phase"], "ref": ref, "arms": arms, "kernel_sha": shas,
-           "native_code_artifact":natives, "native_build_identity":expected.get("native_files"),
+json.dump({"phase":expected["phase"], "ref": ref, "arms": arms, "diagnostic": sorted(diagnostic),
+           "kernel_sha": shas, "native_code_artifact":natives, "native_build_identity":expected.get("native_files"),
            "rows": rows}, open(root / "ab_summary.json", "w"), indent=1)
 print(json.dumps(shas))
 for r in rows:

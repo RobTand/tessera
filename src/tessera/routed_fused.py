@@ -178,6 +178,16 @@ if _mma8_b_choice not in ("0", "1"):
     raise GrammarError(f"{ENV_MMA8_GATE_UP_B_PREFETCH}={_mma8_b_choice!r}; one of ('0', '1')")
 MMA8_GATE_UP_B_PREFETCH = int(_mma8_b_choice)
 del _mma8_b_choice
+# Build-scoped experiment (tessera#739), frozen like the one above: the E4M3
+# instruction's activation ring (``MMA8_A_RING`` in the kernel).  0 off; 1 the
+# routed two-run launches.  It adds WORD_STAGES raw A tiles to the A region
+# (``a_region_bytes``), so the layout restated here moves with it.
+ENV_MMA8_A_RING = "TESSERA_ROUTED_FUSED_MMA8_A_RING"
+_mma8_a_ring_choice = os.environ.get(ENV_MMA8_A_RING, "0")
+if _mma8_a_ring_choice not in ("0", "1"):
+    raise GrammarError(f"{ENV_MMA8_A_RING}={_mma8_a_ring_choice!r}; one of ('0', '1')")
+MMA8_A_RING = int(_mma8_a_ring_choice)
+del _mma8_a_ring_choice
 #: The one source, as ``ext.NATIVE_EXTENSIONS`` publishes it.
 SOURCE = "csrc/routed_fused_window.cu"
 
@@ -260,7 +270,9 @@ SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
 PREV_REGION_BYTES_MMA8 = WORD_STAGES * 2 * BK * 4
 #: The same fixed part on the E4M3 instruction: 16 KB byte tables, 8-bit A and
 #: B stages, and the staged stream history.  The word stages are the same bytes.
-SMEM_FIXED_MMA8 = {0: 47_312, 1: 47_312, 2: 30_736}
+#: The activation ring (:data:`MMA8_A_RING`) adds its WORD_STAGES 64-route tiles.
+A_RING_BYTES_MMA8 = WORD_STAGES * BM * BK if MMA8_A_RING else 0
+SMEM_FIXED_MMA8 = {k: v + A_RING_BYTES_MMA8 for k, v in {0: 47_312, 1: 47_312, 2: 30_736}.items()}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the
@@ -343,8 +355,11 @@ def library_mma8(library: str) -> bool:
 
 
 def a_region_bytes(bm: int, *, mma8: bool = False) -> int:
-    """The A region (two tiles of ``bm`` rows) of the kernel's layout."""
-    return 2 * int(bm) * BK * (1 if mma8 else 2)
+    """The A region (two tiles of ``bm`` rows, and on the E4M3 instruction the
+    activation ring's WORD_STAGES when :data:`MMA8_A_RING` is on) of the
+    kernel's layout."""
+    tiles = 2 + (WORD_STAGES if mma8 and MMA8_A_RING else 0)
+    return tiles * int(bm) * BK * (1 if mma8 else 2)
 
 
 def launch_smem_bytes(mode: int, slot_words: int, *, mma8: bool = False, bm: int = BM, paired: bool = False) -> int:
@@ -551,6 +566,7 @@ def _cflags(token: str, fp8: bool, mma8: bool = False, fp4: bool = False) -> lis
             f"-DTESSERA_ROUTED_FUSED_FP8={1 if fp8 else 0}",
             f"-DTESSERA_ROUTED_FUSED_MMA8={1 if mma8 else 0}",
             *([f"-D{ENV_MMA8_GATE_UP_B_PREFETCH}={MMA8_GATE_UP_B_PREFETCH}"] if mma8 else []),
+            *([f"-D{ENV_MMA8_A_RING}={MMA8_A_RING}"] if mma8 else []),
             *(["-DTESSERA_ROUTED_FUSED_FP4=1"] if fp4 else []),
             *(["-DTESSERA_ROUTED_FUSED_PAIRED_K32=1"] if _paired_k32_build_enabled(mma8) else []),
             *offload_flags(token, arch_specific=fp4)]
@@ -693,6 +709,10 @@ def _ext(library: str):
             raise GrammarError(
                 f"{module} was built with MMA8_GATE_UP_B_PREFETCH={actual!r}; "
                 f"this process expects {bool(MMA8_GATE_UP_B_PREFETCH)!r}")
+        actual = getattr(lib, "MMA8_A_RING", None)
+        if actual != MMA8_A_RING:
+            raise GrammarError(
+                f"{module} was built with MMA8_A_RING={actual!r}; this process expects {MMA8_A_RING!r}")
     return lib
 
 
