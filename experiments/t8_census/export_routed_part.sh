@@ -112,7 +112,7 @@ case "$PRODUCER_SOURCE" in
   *) refuse "TESSERA_PRODUCER_SOURCE=$PRODUCER_SOURCE is not an absolute path; a qualified source reference is never derived from the working directory";;
 esac
 
-BOUND=${PART_BOUND_S:-2700}
+BOUND=${PART_BOUND_S-2700}
 case "$BOUND" in
   ''|*[!0-9]*) refuse "PART_BOUND_S=${PART_BOUND_S:-} is not a whole number of seconds";;
 esac
