@@ -1442,6 +1442,37 @@ digest is only stamped when evidence is taken, never onto old evidence.
 and checks that it moves on a serving, a lazily imported and a native source
 edit.
 
+Re-stamped 2026-10-05 for dev-mode source-pin stamps (CEO D32). The
+run-identity comparisons that consumed this digest — the native shape-time
+pipeline's before-device code identity and frozen-software context
+(`tools/tessera_shape_time_worker.py`), the installed CPU preflight's
+recorded commit and observed software context, and the panel/observation
+validators' observed-vs-frozen runtime — go through
+`tessera.dev_mode.seal_check`, the stdlib twin of `prismaquant.dev_mode`
+(prismaquant#1147): dev mode is ON unless `PRISMAQUANT_DEV_MODE` is exactly `0`; on a
+mismatch it prints one `[DEV-MODE]` line naming both values and the run
+continues with the stored data, and certified `0` raises the site's verbatim
+refusal. The worker loads the stamp policy from the producer checkout by
+path under a private module name, never from the measured runtime, so a
+legacy installed candidate without the helper still gets default-dev
+semantics. A dev run also demands no clean tree, no Git identity and no
+installation proof: the VCS provenance facts stamp (a tree with no derivable
+identity retains the stored commit), no source digest is computed, the
+installed contract against the frozen expected pin seals like every other
+cross-pin comparison, and the panel seals the installed-record proof and the
+preflight origin pair the same way. Only the
+recorded RUN identity seals: execution semantics -- execution mode,
+residency, TP geometry and requested serve flags, which say which case
+actually executed -- refuse on any mismatch in both modes. The GLM MTP
+draft shard narrowing (`mtp_draft_shards.install`) seals its inspected
+loader source digest the same way: dev mode stamps and still installs the
+narrowing; the whole-checkpoint fallback is the certified-mode decline. Unchanged in both
+modes: the installed `runtime_contract.json` bytes against their own pinned
+digest, the preflight module byte bindings, every evidence/bound-bytes
+check, foreign runtime origins and import-environment isolation, mid-run
+stability re-observations, and the fail-closed VCS commit resolution that
+names what ran (`observed_commit`).
+
 Re-stamped 2026-09-27 for the producer reuse authority (tessera#599, step 2).
 Tessera no longer reads a client's records by itself. A rooted cached-unit
 bundle (`tessera.cached_units.v2`) binds documents its producer wrote: the

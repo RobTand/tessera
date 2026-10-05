@@ -19,6 +19,7 @@ from pathlib import Path
 from collections.abc import Mapping
 
 from ..container import parse
+from ..dev_mode import dev_mode_enabled, seal_check
 from ..errors import TesseraError
 from ..fused_frame import parse_fused
 from . import census_plan, scheme
@@ -37,6 +38,21 @@ SCHEMA = "tessera.shape_time_panel.v1"
 OBSERVATION_SCHEMA = "tessera.shape_time_observation.v1"
 CLAIMS = {"time_claim": "operator_sum_proposal", "certifies_placement": False,
           "served_p95": "not_claimed"}
+#: D32 boundary: which CASE executed is comparability, not run identity. The
+#: execution fields refuse on any mismatch in both modes; only the code and
+#: origin identity fields seal.
+_RUNTIME_EXECUTION_FIELDS = ("execution_mode", "residency", "tp_rank", "tp_degree",
+                             "serve_flags")
+_RUNTIME_IDENTITY_FIELDS = ("image", "tessera_commit", "serving_source_sha256",
+                            "contract_sha256", "torch", "vllm", "package_root")
+
+
+def _runtime_execution(value):
+    return {k: value[k] for k in _RUNTIME_EXECUTION_FIELDS if k in value}
+
+
+def _runtime_identity(value):
+    return {k: value[k] for k in _RUNTIME_IDENTITY_FIELDS if k in value}
 #: ``bench_native_operator.time_apply`` times ONE complete apply per CUDA-event
 #: pair; a consumer may key the row as one operator at batch size 1 for the
 #: panel's own M prompt rows, but this is not end-to-end batch-1 serving
@@ -270,9 +286,28 @@ def _preflight_origins(origins, expected):
         suffix="__init__.py" if name=="tessera" else name.removeprefix("tessera.").replace(".","/")+".py"
         if bound!=file_binding(Path(expected["package_root"])/suffix):raise ValueError("preflight module bytes differ")
     installed=origins["installation"]
-    if installed["module"]!="tessera" or installed["expected_commit"]!=expected["tessera_commit"] or installed["installed_commit"]!=expected["tessera_commit"] or installed["origin"]!=str(Path(expected["package_root"])/"__init__.py"):
+    # D32: the module-name/origin pair and the recorded-vs-declared commit
+    # are provenance seals in dev mode and refuse verbatim in certified mode;
+    # the module byte bindings above and the runtime root stay refusing in
+    # both modes.
+    if dev_mode_enabled():
+        seal_check("preflight installed origin",
+                   {"module": "tessera",
+                    "origin": str(Path(expected["package_root"]) / "__init__.py")},
+                   {"module": installed["module"], "origin": installed["origin"]},
+                   where="installed CPU contract preflight",
+                   refusal=ValueError("preflight installed RECORD/commit differs"))
+        # The verified-files count is part of the installation proof a dev
+        # run does not perform.
+    elif installed["module"]!="tessera" or installed["origin"]!=str(Path(expected["package_root"])/"__init__.py"):
         raise ValueError("preflight installed RECORD/commit differs")
-    _integer(installed["verified_files"], "preflight installed files")
+    seal_check("preflight installed commit",
+               (expected["tessera_commit"], expected["tessera_commit"]),
+               (installed["expected_commit"], installed["installed_commit"]),
+               where="installed CPU contract preflight",
+               refusal=ValueError("preflight installed RECORD/commit differs"))
+    if not dev_mode_enabled():
+        _integer(installed["verified_files"], "preflight installed files")
 
 
 def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_source,
@@ -292,8 +327,21 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
     expected=runtime_context(expected_runtime)
     if result["schema"]!="tessera.installed_contract_preflight.v1" or result["gpu_executed"] is not False:
         raise ValueError("requires actual installed CPU contract validation")
-    if result["software"]!={k:v for k,v in expected.items() if k!="platform"} or result["contract_sha256"]!=expected["contract_sha256"] or hashlib.sha256(raw_contract).hexdigest()!=expected["contract_sha256"]:
+    # The observed software context AND the raw contract bytes against the
+    # frozen expected pin are cross-pin run identity: they seal in dev mode
+    # (D32) and refuse verbatim in certified mode. Execution semantics in
+    # the observed context refuse in both modes.
+    if canonical(_runtime_execution(result["software"])) != canonical(_runtime_execution(expected)):
         raise ValueError("preflight software/contract differs from independent context")
+    seal_check("preflight software/contract",
+               {"software": _runtime_identity(expected),
+                "contract_sha256": expected["contract_sha256"],
+                "raw_contract_sha256": expected["contract_sha256"]},
+               {"software": _runtime_identity(result["software"]),
+                "contract_sha256": result["contract_sha256"],
+                "raw_contract_sha256": hashlib.sha256(raw_contract).hexdigest()},
+               where="installed CPU contract preflight",
+               refusal=ValueError("preflight software/contract differs from independent context"))
     for key,bound in (("job_source",job_source),("worker_source",worker_source),("request_source",request_source)):
         if result[key]!=bound or file_binding(bound["path"])!=bound:raise ValueError("preflight owned source differs: "+key)
     _preflight_origins(result["runtime_origins"],expected)
@@ -303,9 +351,14 @@ def _verify_runtime_preflight(result, *, raw_contract, expected_runtime, job_sou
         raise ValueError("preflight validator owner differs")
     verifier=result["runtime_origins"]["record_verifier"]
     job=json_bytes(read_bound(job_source))
-    if verifier!=job["request"]["record_verifier"] or json_bytes(read_bound(request_source))!=job["request"]:
-        raise ValueError("preflight request/verifier binding differs")
-    read_bound(verifier)
+    if verifier is None:
+        # D32: a dev run may omit the sealed verifier entirely; there is
+        # then nothing to bind and the request binding stays unused.
+        if not dev_mode_enabled():raise ValueError("preflight request/verifier binding differs")
+    else:
+        if verifier!=job["request"]["record_verifier"] or json_bytes(read_bound(request_source))!=job["request"]:
+            raise ValueError("preflight request/verifier binding differs")
+        read_bound(verifier)
     return _RuntimeContractValidation(raw_contract,canonical(result),canonical(phase),_VALIDATION_ISSUER)
 
 
@@ -318,8 +371,15 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     if panel["schema"] != SCHEMA or panel["status"] != "measured" or canonical(panel["claims"]) != canonical(CLAIMS):
         raise ValueError("panel schema/status/claims differ")
     runtime = runtime_context(panel["runtime"])
-    if runtime != runtime_context(expected_runtime):
+    expected_ctx = runtime_context(expected_runtime)
+    # Which case executed is comparability: execution fields refuse in both
+    # modes; the code/origin identity seals in dev mode. The panel's own
+    # bound bytes stay integrity-checked and refuse in both modes.
+    if canonical(_runtime_execution(runtime)) != canonical(_runtime_execution(expected_ctx)):
         raise ValueError("observed runtime differs from independent expected context")
+    seal_check("observed runtime identity", _runtime_identity(expected_ctx),
+               _runtime_identity(runtime), where="native shape-time panel",
+               refusal=ValueError("observed runtime differs from independent expected context"))
     evidence = _object(panel["evidence"], EVIDENCE, "evidence")
     raw = {name: read_bound(bound) for name, bound in evidence.items()}
     contract = json_bytes(raw["contract"])
@@ -366,12 +426,31 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     if origins["package_root"] != runtime["package_root"]:
         raise ValueError("runtime origin root differs")
     installed = _object(origins["installation"], {"module", "distribution", "expected_commit", "installed_commit", "origin", "verified_files"}, "installed RECORD proof")
-    if installed["module"] != "tessera" or installed["expected_commit"] != runtime["tessera_commit"] or installed["installed_commit"] != runtime["tessera_commit"] or installed["origin"] != str(Path(runtime["package_root"]) / "__init__.py") or not isinstance(installed["distribution"], str) or not installed["distribution"]:
-        raise ValueError("installed RECORD proof differs from independent runtime")
-    _integer(installed["verified_files"], "installed verified files")
-    verifier = _object(origins["record_verifier"], {"path", "bytes", "sha256"}, "RECORD verifier source")
-    _integer(verifier["bytes"], "RECORD verifier source bytes");_sha(verifier["sha256"], "RECORD verifier source sha256")
-    if not isinstance(verifier["path"], str) or not Path(verifier["path"]).is_absolute():
+    # D32: the installed-record proof is provenance -- it seals in dev mode
+    # (a dev run writes an unverified installation block) and refuses
+    # verbatim in certified mode.
+    if dev_mode_enabled():
+        seal_check("installed RECORD proof",
+                   {"module": "tessera",
+                    "expected_commit": runtime["tessera_commit"],
+                    "installed_commit": runtime["tessera_commit"],
+                    "origin": str(Path(runtime["package_root"]) / "__init__.py")},
+                   {"module": installed["module"],
+                    "expected_commit": installed["expected_commit"],
+                    "installed_commit": installed["installed_commit"],
+                    "origin": installed["origin"]},
+                   where="external panel runtime origins",
+                   refusal=ValueError("installed RECORD proof differs from independent runtime"))
+    else:
+        if installed["module"] != "tessera" or installed["expected_commit"] != runtime["tessera_commit"] or installed["installed_commit"] != runtime["tessera_commit"] or installed["origin"] != str(Path(runtime["package_root"]) / "__init__.py") or not isinstance(installed["distribution"], str) or not installed["distribution"]:
+            raise ValueError("installed RECORD proof differs from independent runtime")
+        _integer(installed["verified_files"], "installed verified files")
+    if origins["record_verifier"] is not None:
+        verifier = _object(origins["record_verifier"], {"path", "bytes", "sha256"}, "RECORD verifier source")
+        _integer(verifier["bytes"], "RECORD verifier source bytes");_sha(verifier["sha256"], "RECORD verifier source sha256")
+        if not isinstance(verifier["path"], str) or not Path(verifier["path"]).is_absolute():
+            raise ValueError("installation verifier source requires an absolute path")
+    elif not dev_mode_enabled():
         raise ValueError("installation verifier source requires an absolute path")
     _object(origins["modules"], RUNTIME_MODULES, "runtime module origins")
     for name, bound in origins["modules"].items():
@@ -517,6 +596,8 @@ def observation(panel, *, panel_binding, expected_panel_sha256, request_binding,
     if json_bytes(raw_panel) != panel:
         raise ValueError("parsed panel differs from the bound bytes")
     raw_runtime = read_bound(expected_runtime_binding)
+    # Integrity, not a seal: this cross-check refuses a caller whose
+    # expected_runtime argument contradicts the request's own bound bytes.
     if json_bytes(raw_runtime) != expected_runtime:
         raise ValueError("expected runtime differs from the bound bytes")
     _object(request_binding, {"path", "bytes", "sha256"}, "request binding")
@@ -530,8 +611,15 @@ def observation(panel, *, panel_binding, expected_panel_sha256, request_binding,
     result = validate_external_panel(panel, expected_runtime=expected_runtime,
                                      runtime_validation=runtime_validation)
     runtime = runtime_context(panel["runtime"])
-    if runtime != runtime_context(expected_runtime):
+    expected_ctx = runtime_context(expected_runtime)
+    # Which case executed is comparability: execution fields refuse in both
+    # modes; the code/origin identity seals in dev mode. The panel's own
+    # bound bytes stay integrity-checked and refuse in both modes.
+    if canonical(_runtime_execution(runtime)) != canonical(_runtime_execution(expected_ctx)):
         raise ValueError("observed runtime differs from independent expected context")
+    seal_check("observed runtime identity", _runtime_identity(expected_ctx),
+               _runtime_identity(runtime), where="native shape-time panel",
+               refusal=ValueError("observed runtime differs from independent expected context"))
     plan_row = panel["plan"]["rows"][0]
     scope = plan_row["scope"]
     shape = scope["shape"]
