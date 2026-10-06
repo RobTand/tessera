@@ -13,7 +13,7 @@ def fixture():
     rows=[]
     for q in (768,769):
         evidence={"comparison_id":"paired","paired_seed_contract":"same","timing_statistic":"F/R","timer":"graph"}
-        geom={"bits_per_256_weight_tile":{"numerator":q,"denominator":1},"alignment":{},"shared_memory":{"requested_bytes":2,"available_bytes":3,"fits":True},"register_pressure":{"REG":32,"STACK":0,"LOCAL":0,"SHARED":0},"decode_width":{}}
+        geom={"bits_per_256_weight_tile":{"numerator":q,"denominator":1},"alignment":{"lane_bits":[24],"lane_ends_on_word":[False],"half_bytes":[24],"half_copy":["8B tail"],"slot_words":8},"shared_memory":{"requested_bytes":2,"available_bytes":3,"fits":True},"register_pressure":{"REG":32,"STACK":0,"LOCAL":0,"SHARED":0},"decode_width":{"window_bits":14,"value_bits":8,"run_widths":[3],"word_stages":3,"superblock_rows":64,"k_split":1}}
         m={**cell,"measurement_status":"measured","kernel_time_us":10-q%2,"kernel_path":"native","geometry":geom,"evidence":evidence,"pass_times_us":[10,10],"measurement_build_id":"build"}
         quality={"measurement_status":"measured","source_kind":"actual_sampled_expert_weights","device":"cpu","samples":[{"source_sha256":"actual","source_squared_norm":2.0,"relative_sse":.1,"exact_bytes":3}]}
         rows.append({"rung":q,"measurement_status":"measured","supported":True,"anomaly_flags":[],"observations":[],"excluded":False,"dominating_rung":None,"measurements":[m],"quality":quality,"dominance_evidence":[],"lineage":{}})
@@ -116,6 +116,11 @@ class Admission(unittest.TestCase):
             bad=copy.deepcopy(t);bad['rungs'][0]['dominance_evidence'][0]['higher_measurement'][field]=value
             with self.assertRaises(ValueError):validate_table(bad)
 
+
+    def test_empty_measured_geometry_is_missing_not_admitted(self):
+        for field in ("alignment","decode_width"):
+            t=fixture();t["rungs"][0]["measurements"][0]["geometry"][field]={}
+            with self.assertRaises(ValueError):validate_table(t)
 
 
 if __name__=='__main__': unittest.main()

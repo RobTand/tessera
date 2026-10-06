@@ -106,6 +106,17 @@ def validate_table(table):
                 geom = m.get("geometry")
                 _require(isinstance(geom, dict) and all(isinstance(geom.get(k), dict) for k in ("bits_per_256_weight_tile", "alignment", "shared_memory", "register_pressure", "decode_width")), "measured geometry missing")
                 bits = geom["bits_per_256_weight_tile"]
+                decode = geom["decode_width"]
+                rates = decode.get("run_widths")
+                _require(isinstance(rates, list) and rates and all(_integer(v) and v > 0 for v in rates), "decode run widths missing")
+                _require(all(_integer(decode.get(k)) and decode[k] > 0 for k in ("window_bits", "value_bits", "word_stages", "superblock_rows", "k_split")), "decode width fields missing")
+                alignment = geom["alignment"]
+                _require(_integer(alignment.get("slot_words")) and alignment["slot_words"] > 0, "alignment slot missing")
+                for field in ("lane_bits", "lane_ends_on_word", "half_bytes", "half_copy"):
+                    _require(isinstance(alignment.get(field), list) and len(alignment[field]) == len(rates), "alignment fields missing")
+                _require(all(_integer(v) and v > 0 for v in alignment["lane_bits"] + alignment["half_bytes"]), "alignment bit/byte widths")
+                _require(all(isinstance(v, bool) for v in alignment["lane_ends_on_word"]) and all(_text(v) for v in alignment["half_copy"]), "alignment facts")
+
                 _require(_integer(bits.get("numerator")) and bits["numerator"] > 0 and _integer(bits.get("denominator")) and bits["denominator"] > 0, "tile-bit rational")
                 sm = geom["shared_memory"]
                 _require(_integer(sm.get("requested_bytes")) and _integer(sm.get("available_bytes")) and 0 < sm["requested_bytes"] <= sm["available_bytes"] and sm.get("fits") is True, "shared-memory fit")

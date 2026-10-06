@@ -22,12 +22,15 @@ FORMAT="TESSERA_E4M3_K1"
 
 
 def roster():
-    return [{"cell_id":f"{kind}:{name}:M{m}","kernel_kind":kind,"shape_id":name,"M":m} for kind,name,_r,_c,_mode in SHAPES for m in MS]
+    cells=[{"cell_id":f"{kind}:{name}:M{m}","kernel_kind":kind,"shape_id":name,"M":m} for kind,name,_r,_c,_mode in SHAPES for m in MS]
+    cells += [{"cell_id":f"routed:{name}:M{m}:recorded","kernel_kind":"routed","shape_id":name,"M":m,"routing":"recorded"} for name in ("gate_up","down") for m in (2048,4096)]
+    return cells
 
 
 def resources(usage,head,cell):
     want=f"routed_fused_kernel<true, {head.get('mode',2)}, {'true' if head['kind']=='dense' else 'false'}, {'true' if cell.get('k_split',1)>1 else 'false'}, {head['r_lo']}, {'true' if head['n_hi'] else 'false'}, {cell['bm']}, false, false>"
-    matches=[(name,res) for name,res in usage.get("kernels",{}).items() if want in name]
+    observed=[p for p in cell.get("profile",{}).get("top",{}) if "routed_fused_kernel" in p]
+    matches=[(name,res) for name,res in usage.get("kernels",{}).items() if want in name and any(name.startswith(p) for p in observed)]
     return matches[0] if len(matches)==1 else (None,None)
 
 
@@ -47,8 +50,10 @@ def measurement(path,data,head,cell,key,build_id,cols,rows):
     evidence={'geometry_file':str(path),'action_key':meta.get('pb_action'),'host':meta.get('host'),
               'comparison_id':meta.get('pb_action'),'paired_seed_contract':meta.get('paired_seed_contract'),
               'timing_statistic':meta.get('statistic'),'timer':timer,'F':f,'R':r,'profile':cell.get('profile'),
-              'power':cell.get('power'),'loaded_library_sha256':meta.get('library_sha256'),'kernel_source_sha256':meta.get('kernel_sha'),
-              'rows':rows,'columns':cols,'mode':mode,'routing':'balanced' if key['kernel_kind']=='routed' else 'none',
+              "power":cell.get("power"),"loaded_library_sha256":meta.get("library_sha256"),"kernel_source_sha256":meta.get("kernel_sha"),
+              "quantum_window_unix":[meta.get("start_unix"),meta.get("end_unix")],
+              "rows":rows,"columns":cols,"mode":mode,"routing":key.get("routing","balanced") if key["kernel_kind"]=="routed" else "none",
+              "recorded_routing":meta.get("recorded",{}).get(str(key["M"])),
               'input_distribution':meta.get('activation_contract'),'epilogue':'SwiGLU clipped at 10' if mode==0 else ('route-weighted BF16 down' if key['kernel_kind']=='routed' else 'BF16 linear output')}
     if error: evidence['reason']=error
     elif not good: evidence['reason']='missing paired timer, actual compiler resource or launch geometry evidence'
@@ -71,10 +76,11 @@ def main():
     args=ap.parse_args()
     root=Path(args.root)
     completed=[]
-    for path in sorted(root.glob('gpu/*/bench_geometry_all.json')):
+    geometry_paths=sorted(root.glob("gpu/*/bench_geometry_all.json")) + sorted(root.glob("gpu-recorded/*/bench_geometry_routed.json"))
+    for path in geometry_paths:
         try:data=json.loads(path.read_text())
         except (json.JSONDecodeError,OSError):continue
-        if data.get('meta',{}).get('end_unix'): completed.append((path,data))
+        if data.get("meta",{}).get("end_unix"): completed.append((path,data))
     if not completed: raise ValueError('No completed geometry quantum; no observed build to publish')
     meta=completed[0][1]['meta']
     # Identity derives from observed code/architecture/variant, not a refusal seal.
@@ -101,12 +107,14 @@ def main():
         for group in data['groups'].values():
             q=group.get('q256')
             if q not in by_rung or group.get('kind') not in ('routed','dense'):continue
-            kind=group['kind']; name=group.get('shape') if kind=='dense' else ('gate_up' if group['mode']==0 else 'down')
+            kind=group["kind"]; name=group.get("shape") if kind=="dense" else ("gate_up" if group["mode"]==0 else "down")
             spec=next((s for s in SHAPES if s[:2]==(kind,name)),None)
             if not spec:continue
-            for m in MS:
-                key=next(k for k in required if k['kernel_kind']==kind and k['shape_id']==name and k['M']==m)
-                cell=group.get('cells',{}).get(str(m)+(':balanced' if kind=='routed' else ''),{})
+            for key in required:
+                if key["kernel_kind"]!=kind or key["shape_id"]!=name:continue
+                m=key["M"]
+                how=key.get("routing","balanced")
+                cell=group.get("cells",{}).get(str(m)+(":"+how if kind=="routed" else ""),{})
                 if not cell:continue
                 candidate=measurement(path,data,group,cell,key,build_id,spec[3],spec[2])
                 preference=(int(q+1 in qs),int(candidate['measurement_status']=='measured'))
@@ -122,7 +130,7 @@ def main():
             row['measurement_status']='measured';row['supported']=True
         elif any(m['measurement_status']=='failed' for m in row['measurements']) or row['quality'].get('measurement_status')=='failed':
             row['measurement_status']='failed'; row['supported']=None
-        if q in (880,912):row['observations'].append({'kind':'missing_census','issue':689,'url':'https://github.com/RobTand/tessera/issues/689','blocking':False,'exclusion_basis':False})
+        if q in (880,912):row["observations"].append({"kind":"missing_census","issue":689,"url":"https://github.com/RobTand/tessera/issues/689","blocking":False,"exclusion_basis":False,"scope":"historical routed census gap; synthetic geometry does not mint served cells","receipt_links":["https://github.com/RobTand/tessera/issues/689#issuecomment-5927025347"],"historical_dense_census":"experiments/results/glm53_u1_stub_t8d1_tp1_eager_census.json","current_census_requalified":False})
     for q,row in by_rung.items():
         high=by_rung.get(q+1)
         # Keep every logical adjacent comparison, including quantum boundaries,
