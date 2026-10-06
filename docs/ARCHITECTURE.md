@@ -3570,15 +3570,38 @@ matched member). A base given as a string (`os.listdir("docs")`, or `os.walk(DOC
 boundary guard; before this only the `Path` spelling resolved, so a file added under a
 directory listed by string selected no reader. A string need not be a path (a bare
 `walk("mode")` is recognized by its name), so resolving one adds the edge and a module that
-can execute source keeps the unknown-loader flag it had while the string was unnamed. A
+can execute source keeps the unknown-loader flag it had while the string was unnamed. The
+module function `glob.glob`/`glob.iglob` (also `from glob import glob`) carries its base in the
+pattern: the literal directory in front of the first wildcard is placed like any other base,
+and a module that can execute source keeps its unknown-loader flag. A base outside the tree
+(an absolute box path, a pattern that climbs out) stays unnamed and is listed, not kept as an
+unplaced read, because that would select the readers' consumers on every change (#1010). A
+pattern spelled from the tree's own root names a base inside it, so a refusal there (a link out of
+the tree) or a `..` after a wildcard is kept as an unplaced read, as a `Path` read would be, even
+when a glob metacharacter in the checkout's own name stops the literal prefix early. The
+alternatives of one call are judged one by one: an outside alternative that climbs after a
+wildcard is unnamed on its own, and does not discard another alternative of the same call that
+names a base inside the tree, whatever order the bindings come in. A
+RELATIVE pattern or string base (`glob.glob('docs/*.md')`, `os.listdir('docs')`) depends on the
+process directory, which nothing here proves -- a `chdir`, an alias of it, an imported helper or a
+fixture can move it -- so it is kept as an unplaced read and never resolved against the tree's
+root; one anchored with `__file__` (`str(HERE / 'docs' / '*.md')`) does not depend on it and
+resolves. The `Path` spellings keep the root assumption they always had (#1010). A
 glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
 the unbound method, called directly or through an alias
 (`Path.glob(DOCS, ...)`). A pattern that is absolute or
 contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
-keeps the link and its target. A link reached only through a wildcard
-component is not followed: nothing is crawled to find it. Every call named like an enumeration is analysed the same way whatever the file
+keeps the link and its target. A link reached through a wildcard component (`docs/*/x.md`,
+`**`, `rglob`) is found by reading the directory entries below the base without following
+links, the last component included (so `docs/*/` and a link to a file matched by `docs/*/m.md`
+are covered): each link is resolved by the same boundary guard and a target in the tree becomes a
+node alongside the link, even when it no longer exists, as does where a literal component
+after a wildcard leads. A link the guard declines is never approached and keeps the read as an
+unplaced one, since it may lead straight back in (#338), and so does a scan over its budget
+(20000 entries): select more, never less (#1011).
+Every call named like an enumeration is analysed the same way whatever the file
 defines, so a base it names keeps its edge and a refused base its uncertainty;
 only the `unnamed_directory_reads` warning can be withheld, for a bare call to a
 name the file binds exactly once, with an undecorated `def`, in a module that

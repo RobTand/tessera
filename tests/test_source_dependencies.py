@@ -34,6 +34,9 @@ import pytest
 
 from tessera._dev.source_dependencies import _MAX_LINK_DEPTH, file_imports
 
+#: A reader anchored with ``__file__``: its base does not depend on the process directory.
+_HERE = "from pathlib import Path\nHERE = Path(__file__).resolve().parent\n"
+
 
 def _scan(source, root, *, consumer="consumer.py"):
     tree = ast.parse(source)
@@ -592,9 +595,11 @@ def test_glob_checks_links_before_directory_filtering(tmp_path, monkeypatch, rea
     action = '(p / "data.txt").read_text()' if reader else 'runpy.run_path(p / "driver.py")'
     found, unknown, unplaced = _scan_full(
         f'from pathlib import Path\nimport runpy\nfor p in Path(".").glob({pattern!r}):\n    {action}\n', root)
-    # The base is a directory-wide read, so it is held as a node (PB1496);
-    # the refused pattern still adds no member edge.
-    assert found == {root}
+    # The link leaves the tree, so the call is kept as an unplaced read (#338; flags
+    # asserted below), which supersedes the base node it used to return alone: the
+    # last pattern component is now scanned for links and the guard declines this one
+    # without approaching it (#1011 review).
+    assert found == set()
     assert unknown is (not reader)
     assert unplaced is reader
 
@@ -629,9 +634,11 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
               'for next_path in Path("link").glob("*.json"):\n'
               f'    value = ({expression}).read_text()\n')
     found, unknown, unplaced = _scan_full(source, root)
-    expected = {root / "target.json", root / "link", root / "nested" / "child"}
-    if '".."' not in expression:
-        expected.add(root / "nested" / "child" / "chosen.json")
+    # ``chosen.json`` is a link entry the glob's own terminal component matches, so it is
+    # a dependency whatever the read spells (#1011 review); before, only a read through
+    # it was.
+    expected = {root / "target.json", root / "link", root / "nested" / "child",
+                root / "nested" / "child" / "chosen.json"}
     assert found == expected
     assert not unknown and not unplaced
 
@@ -807,17 +814,18 @@ def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
 
 
 @pytest.mark.parametrize("source", [
-    "import os\nx = os.listdir('docs')\n",
-    "import os\nx = list(os.walk('docs'))\n",
-    "import os\nx = list(os.scandir('docs'))\n",
-    "import os\nDOCS = 'docs'\nx = os.listdir(DOCS)\n",
-    "from os import listdir\nx = listdir('docs')\n",
-    "import os\nx = os.listdir('./docs')\n",
-], ids=["listdir", "walk", "scandir", "constant", "from-import", "dot-slash"])
+    "import os\n" + _HERE + "x = os.listdir(str(HERE / 'docs'))\n",
+    "import os\n" + _HERE + "x = list(os.walk(str(HERE / 'docs')))\n",
+    "import os\n" + _HERE + "x = list(os.scandir(str(HERE / 'docs')))\n",
+    "import os\n" + _HERE + "DOCS = str(HERE / 'docs')\nx = os.listdir(DOCS)\n",
+    "from os import listdir\n" + _HERE + "x = listdir(str(HERE / 'docs'))\n",
+    "import os\n" + _HERE + "x = os.listdir(str(HERE / '.' / 'docs'))\n",
+], ids=["listdir", "walk", "scandir", "constant", "from-import", "dot"])
 def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source):
-    # ``os.listdir("docs")`` reads the same directory as ``os.listdir(Path("docs"))``;
-    # only the Path spelling used to be resolved, so a file added under the
-    # directory selected no reader (PB1496).
+    # ``os.listdir(str(HERE / "docs"))`` reads the same directory as ``os.listdir(HERE / "docs")``;
+    # only the Path spelling used to be resolved, so a file added under the directory
+    # selected no reader (#1000).  Anchored with ``__file__``: a relative string depends on
+    # the process directory and is kept as an unplaced read.
     (tmp_path / "docs").mkdir()
     found, unknown, unplaced = _scan_full(source, tmp_path)
     assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
@@ -828,9 +836,9 @@ def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source
     # A custom ``walk`` is recognized by its name alone; its string argument may
     # not be a path at all, so resolving it must ADD an edge and never replace the
     # unknown-loader flag a module that can execute source already had.
-    "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk('mode')\n",
-    "import os\n\n\ndef f():\n    exec('pass')\n    return os.listdir('mode')\n",
-    "from os import walk\n\n\ndef f():\n    exec('pass')\n    return list(walk('mode'))\n",
+    _HERE + "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk(str(HERE / 'mode'))\n",
+    "import os\n" + _HERE + "\n\ndef f():\n    exec('pass')\n    return os.listdir(str(HERE / 'mode'))\n",
+    "from os import walk\n" + _HERE + "\n\ndef f():\n    exec('pass')\n    return list(walk(str(HERE / 'mode')))\n",
 ], ids=["custom-walk", "os-listdir", "from-import-walk"])
 def test_a_string_base_adds_an_edge_without_dropping_the_unknown_loader_flag(tmp_path, source):
     (tmp_path / "mode").mkdir()
@@ -850,6 +858,351 @@ def test_a_string_path_outside_the_tree_is_refused_not_resolved(tmp_path, source
     found, unknown, unplaced = _scan_full(source, tmp_path)
     assert found == set()
     assert unplaced and not unknown
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n",
+    "import glob as g\n" + _HERE + "x = g.glob(str(HERE / 'docs' / '*.md'))\n",
+    "from glob import glob\n" + _HERE + "x = glob(str(HERE / 'docs' / '*.md'))\n",
+    "import glob\n" + _HERE + "x = list(glob.iglob(str(HERE / 'docs' / '*.md')))\n",
+    "from glob import iglob\n" + _HERE + "x = list(iglob(str(HERE / 'docs' / '*.md')))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '**' / '*.md'), recursive=True)\n",
+    "import glob\n" + _HERE + "PATTERN = str(HERE / 'docs' / '*.md')\nx = glob.glob(PATTERN)\n",
+], ids=["module", "aliased-module", "from-import", "iglob", "from-import-iglob", "recursive", "constant"])
+def test_a_module_glob_names_the_directory_in_front_of_its_wildcard(tmp_path, source):
+    # ``glob.glob(str(HERE / "docs" / "*.md"))`` carries its base in the pattern string, not
+    # in a Path receiver; only the Path spelling used to resolve, and ``iglob`` was not
+    # recognised at all, so a file added under ``docs`` selected no reader (#1010).  The
+    # pattern is anchored with ``__file__``: a relative one depends on the process directory
+    # and is kept as an unplaced read instead (see the test above).
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced
+
+
+def test_a_module_glob_places_the_whole_literal_prefix(tmp_path):
+    (tmp_path / "docs" / "sub").mkdir(parents=True)
+    found, _, _ = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / 'sub' / '*.md'))\n", tmp_path)
+    assert found == {tmp_path / "docs" / "sub"}
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\nx = glob.glob('/etc/*.conf')\n",
+    "import glob\nx = glob.glob('/usr/*/../x/*.md')\n",
+], ids=["absolute", "absolute-parent-after-wildcard"])
+def test_a_module_glob_that_leaves_the_tree_stays_unnamed(tmp_path, source):
+    # An ABSOLUTE pattern outside the tree, or one that climbs after a wildcard, is never
+    # stat'ed outside it.  (One spelled from the tree's own root names a base INSIDE it and
+    # is an unplaced read instead: see the tests for a base named inside the tree.)  Unlike
+    # a Path read it is NOT kept as an unplaced read: this
+    # tree's module globs of that kind name box locations (/usr/local/cuda-*,
+    # /mnt/shared/...), and an unplaced read seeds its reader's consumers on every change
+    # (#148).  It stays listed as an unnamed read, exactly as before.
+    (tmp_path / "docs").mkdir()
+    unnamed = []
+    found, unknown, unplaced = file_imports(
+        ast.parse(source), tmp_path / "consumer.py", tmp_path, unnamed=unnamed)
+    assert found == set() and unnamed, (found, unnamed)
+    assert not unplaced and not unknown, (unknown, unplaced)
+
+
+def test_a_pattern_named_inside_the_tree_whose_directory_is_an_outside_bridge_stays_unplaced(
+        tmp_path, monkeypatch):
+    # ``docs`` is a link that leaves the tree: the pattern names a base INSIDE the tree and the
+    # guard declines to follow it, so what it reads cannot be attributed to a file.  Unlike a
+    # box path such as /usr/local/cuda-*, this is a named in-tree base and keeps the #338
+    # uncertainty (#1010 review).
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "docs").symlink_to(outside, target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
+    found, unknown, unplaced = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n", root)
+    assert outside not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_a_checkout_whose_name_has_glob_metacharacters_keeps_an_anchored_read_unplaced(tmp_path):
+    # The literal prefix stops at ``repo[1]``, which would put the base OUTSIDE the tree and make
+    # the read look like an unnamed box path.  The pattern lexically starts with the root, so it
+    # names a base inside it (#1010 review).
+    root = tmp_path / "repo[1]"
+    (root / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n", root)
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_a_pattern_named_inside_the_tree_that_climbs_after_a_wildcard_stays_unplaced(tmp_path):
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs') + '/*/../../x/*.md')\n", tmp_path)
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+_OUTSIDE_CLIMB = "'/usr/*/../x/*.md'"
+_INSIDE_READ = "str(HERE / 'docs' / '*.md')"
+
+
+@pytest.mark.parametrize("order", ["outside-first", "inside-first"])
+def test_an_outside_alternative_does_not_discard_an_in_tree_one(tmp_path, order):
+    # One pattern name with two bindings: a box path that climbs after a wildcard (never stat'ed,
+    # unnamed) and an anchored pattern naming ``docs``.  Whichever binding comes first, the
+    # in-tree alternative is still a read of ``docs`` and keeps its edge (#1010 review).
+    (tmp_path / "docs").mkdir()
+    bindings = [_OUTSIDE_CLIMB, _INSIDE_READ]
+    if order == "inside-first":
+        bindings.reverse()
+    source = ("import glob\n" + _HERE + f"PATTERN = {bindings[0]}\nPATTERN = {bindings[1]}\n"
+              "x = glob.glob(PATTERN)\n")
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced, (unknown, unplaced)
+
+
+@pytest.mark.parametrize("order", ["outside-first", "inside-first"])
+def test_an_outside_climb_beside_an_in_tree_climb_stays_unplaced(tmp_path, order):
+    # Both alternatives climb after a wildcard.  The in-tree one names a base inside the tree and
+    # keeps the #338 uncertainty whatever the outside one does.
+    (tmp_path / "docs").mkdir()
+    inside = "str(HERE / 'docs') + '/*/../../x/*.md'"
+    bindings = [_OUTSIDE_CLIMB, inside]
+    if order == "inside-first":
+        bindings.reverse()
+    source = ("import glob\n" + _HERE + f"PATTERN = {bindings[0]}\nPATTERN = {bindings[1]}\n"
+              "x = glob.glob(PATTERN)\n")
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_an_unnamed_module_glob_still_escalates_in_a_module_that_executes_source(tmp_path):
+    found, unknown, unplaced = _scan_full(
+        "import glob\nexec('pass')\nx = glob.glob('/usr/local/cuda-*')\n", tmp_path)
+    assert found == set() and unknown and not unplaced
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\n\n\ndef f(pattern):\n    return glob.glob(pattern)\n",
+    "import glob\nx = glob.glob('docs/*.md', root_dir='elsewhere')\n",
+], ids=["unnameable-pattern", "root-dir"])
+def test_a_module_glob_with_no_nameable_base_stays_unnamed(tmp_path, source):
+    (tmp_path / "docs").mkdir()
+    unnamed = []
+    found, unknown, unplaced = file_imports(
+        ast.parse(source), tmp_path / "consumer.py", tmp_path, unnamed=unnamed)
+    assert found == set() and unnamed, (found, unnamed)
+
+
+@pytest.mark.parametrize("source", [
+    "import glob, os\nos.chdir('nested')\nx = glob.glob('docs/*.md')\n",
+    "import glob\n\n\ndef test_x(monkeypatch):\n    monkeypatch.chdir('nested')\n    return glob.glob('docs/*.md')\n",
+    "import glob, os\nfrom pathlib import Path\nos.chdir(Path(__file__).resolve().parents[1] / 'nested')\nx = list(glob.iglob('docs/*.md'))\n",
+    "import os\nos.chdir('nested')\nx = os.listdir('docs')\n",
+    "import os\nfrom contextlib import chdir\nwith chdir('nested'):\n    x = os.walk('docs')\n",
+], ids=["os-chdir", "monkeypatch", "path-argument-iglob", "listdir-string", "contextlib-chdir"])
+def test_a_relative_base_is_not_assumed_root_relative_in_a_module_that_changes_directory(
+        tmp_path, source):
+    # The runtime directory is not the tree's root once the module has called chdir, so a
+    # relative pattern or string names a directory nothing here can place.  Naming the
+    # root's ``docs`` would miss ``nested/docs``; keep the read as an unplaced one.
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "nested" / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "docs" not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_an_absolute_pattern_after_a_chdir_is_unaffected(tmp_path):
+    found, unknown, unplaced = _scan_full(
+        "import glob, os\nos.chdir('nested')\nx = glob.glob('/usr/local/cuda-*')\n", tmp_path)
+    assert found == set() and not unplaced and not unknown
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\nx = glob.glob('docs/*.md')\n",
+    "import glob\nx = list(glob.iglob('docs/*.md'))\n",
+    "import os\nx = os.listdir('docs')\n",
+    "from os import chdir as cd\nimport glob\ncd('nested')\nx = glob.glob('docs/*.md')\n",
+    "import os, glob\nmove = os.chdir\nmove('nested')\nx = glob.glob('docs/*.md')\n",
+    "from contextlib import chdir as enter\nimport glob\nwith enter('nested'):\n    x = glob.glob('docs/*.md')\n",
+    "import glob\nfrom support.cwd import enter\nenter()\nx = glob.glob('docs/*.md')\n",
+], ids=["relative-module", "relative-iglob", "relative-string", "from-import-alias",
+        "assigned-alias", "aliased-contextlib", "imported-helper"])
+def test_a_relative_base_is_unplaced_whatever_changes_the_working_directory(tmp_path, source):
+    # Nothing here proves the process directory is the tree's root: a helper, a fixture, an
+    # alias or pytest itself can change it.  A relative pattern or string base is therefore
+    # kept as an unplaced read, never resolved against the root (#1010 review).
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "docs" not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\nfrom pathlib import Path\nHERE = Path(__file__).resolve().parent\nx = glob.glob(str(HERE / 'docs' / '*.md'))\n",
+    "import glob\nfrom pathlib import Path\nHERE = Path(__file__).resolve().parent\nx = list(glob.iglob(str(HERE / 'docs/*.md')))\n",
+    "import os\nfrom pathlib import Path\nHERE = Path(__file__).resolve().parent\nx = os.listdir(str(HERE / 'docs'))\n",
+], ids=["module", "iglob", "string"])
+def test_an_anchored_base_resolves_whatever_the_working_directory(tmp_path, source):
+    # Built from ``__file__``, the base does not depend on the process directory.
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"} and not unknown and not unplaced, (found, unknown, unplaced)
+
+
+def test_a_module_glob_keeps_the_unknown_loader_flag_of_an_executing_module(tmp_path):
+    # A pattern need not name a directory a custom ``glob`` reads; naming it adds the edge
+    # and must never replace the flag (the #1000 lesson).
+    (tmp_path / "docs").mkdir()
+    found, unknown, _ = _scan_full(
+        "import glob\n" + _HERE + "exec('pass')\nx = glob.glob(str(HERE / 'docs' / '*.md'))\n", tmp_path)
+    assert tmp_path / "docs" in found and unknown
+
+
+def _linked_tree(root):
+    """docs/link -> ../data, with a file in data, and docs/plain as an ordinary directory."""
+    (root / "docs" / "plain").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "data" / "member.md").write_text("x\n")
+    (root / "docs" / "link").symlink_to("../data", target_is_directory=True)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n",
+    "from pathlib import Path\nx = list(Path('docs').rglob('*.md'))\n",
+    "from pathlib import Path\nx = list(Path('docs').glob('**/x.md'))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / 'x.md'))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '**' / 'x.md'), recursive=True)\n",
+    "from pathlib import Path\nx = list(Path('docs').glob('*/plain/../x.md'))\n",
+], ids=["glob-star", "rglob", "glob-doublestar", "module-star", "module-doublestar", "parent-after-wildcard"])
+def test_a_link_reached_through_a_wildcard_component_is_followed(tmp_path, monkeypatch, source):
+    # ``docs/link`` points at ``data``; a pattern that wildcards over ``docs`` reads
+    # ``data`` through it, so ``data`` and the link are dependencies (#1011).  The
+    # parent-after-wildcard spelling is refused or followed, never silently dropped.
+    _linked_tree(tmp_path)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    followed = {tmp_path / "data", tmp_path / "docs" / "link"} <= found
+    assert followed or unplaced, (found, unknown, unplaced)
+    assert tmp_path / "docs" in found or unplaced
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = list(Path('docs').glob('*/link/*.md'))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / 'link' / '*.md'))\n",
+], ids=["path", "module"])
+def test_a_link_after_a_wildcard_and_a_literal_component_retains_its_target(tmp_path, monkeypatch, source):
+    # ``docs/plain/link`` -> ``../../data``: the wildcard reaches ``plain`` (an ordinary
+    # directory) and the literal ``link`` is traversed, so ``data`` is read and must be a
+    # dependency, not just traversal state (#1011 review).
+    (tmp_path / "docs" / "plain").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "docs" / "plain" / "link").symlink_to("../../data", target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" in found, (found, unknown, unplaced)
+
+
+def test_a_dangling_link_behind_a_wildcard_still_retains_its_in_tree_target(tmp_path, monkeypatch):
+    # The target directory was deleted: the link is unchanged and now dangling, but the
+    # reader still depends on that path, so deleting the last member must select it.
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/*.md'))\n", tmp_path)
+    assert tmp_path / "data" in found, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = list(Path('docs').glob('*/'))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*') + '/')\n",
+], ids=["path", "module"])
+def test_a_trailing_separator_pattern_still_scans_its_last_component(tmp_path, monkeypatch, source):
+    # PurePath drops the trailing separator and the last component was never scanned, so
+    # ``docs/*/`` found nothing behind ``docs/link`` (#1011 review).  The link is dangling.
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" in found, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*/manifest.md')]\n",
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*/*.md')]\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / 'manifest.md'))\n",
+], ids=["terminal-literal", "terminal-wildcard", "module-literal"])
+def test_a_file_link_matched_by_the_terminal_component_retains_its_target(tmp_path, monkeypatch, source):
+    # ``docs/plain/manifest.md`` -> ``../../data/payload.md``.  Only ``docs/plain`` holds a
+    # link; ``docs`` itself holds none, so the ``*`` scan cannot find it.  The terminal
+    # component matches a link to a FILE; reading it reads ``data/payload.md``.
+    (tmp_path / "docs" / "plain").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "payload.md").write_text("x\n")
+    (tmp_path / "docs" / "plain" / "manifest.md").symlink_to("../../data/payload.md")
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" / "payload.md" in found, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('manifest.md')]\n",
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*.md')]\n",
+], ids=["literal", "wildcard"])
+def test_a_file_link_in_the_base_itself_retains_its_target(tmp_path, monkeypatch, source):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "payload.md").write_text("x\n")
+    (tmp_path / "docs" / "manifest.md").symlink_to("../data/payload.md")
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" / "payload.md" in found, (found, unknown, unplaced)
+
+
+def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatch):
+    (tmp_path / "docs" / "plain").mkdir(parents=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n", tmp_path)
+    assert found == {tmp_path / "docs"} and not unknown and not unplaced
+
+
+@pytest.mark.parametrize("source, link", [
+    ("from pathlib import Path\nx = list(Path('docs').glob('*/*.md'))\n", "docs/out"),
+    ("from pathlib import Path\nx = list(Path('docs').glob('*/link/*.md'))\n", "docs/plain/link"),
+    ("import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / '*.md'))\n", "docs/out"),
+], ids=["wildcard", "literal-after-wildcard", "module"])
+def test_a_link_leaving_the_tree_keeps_the_read_unplaced_and_is_never_approached(
+        tmp_path, monkeypatch, source, link):
+    # An outside bridge may lead straight back into the tree, so the read cannot be
+    # attributed to any file.  The guard declines to look; the answer is the #338
+    # uncertainty (select the reader's consumers), not a silent success (#1011 review).
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    root = tmp_path / "repo"
+    (root / "docs" / "plain").mkdir(parents=True)
+    (root / link).symlink_to(outside, target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
+    found, unknown, unplaced = _scan_full(source, root)
+    assert outside not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_a_scan_over_its_budget_falls_back_to_an_unplaced_read(tmp_path, monkeypatch):
+    # Not provable within the budget: select more, never less.
+    import tessera._dev.source_dependencies as dependencies
+    (tmp_path / "docs").mkdir()
+    for index in range(6):
+        (tmp_path / "docs" / f"d{index}").mkdir()
+    monkeypatch.setattr(dependencies, "_LINK_SCAN_BUDGET", 2)
+    found, unknown, unplaced = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n", tmp_path)
+    assert found == set() and unplaced and not unknown
 
 
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):

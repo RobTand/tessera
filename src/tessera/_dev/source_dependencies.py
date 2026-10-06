@@ -338,7 +338,7 @@ _READ_METHODS = {"read_text", "read_bytes", "open"}
 #: consumes them, but that edge names only the files that exist now, so a
 #: deleted, added or renamed member -- and every change under the recursive
 #: ``**`` spelling, which that resolver leaves unbounded -- selected nothing.
-_ENUMERATIONS = {"glob", "rglob", "iterdir", "listdir", "scandir", "walk"}
+_ENUMERATIONS = {"glob", "iglob", "rglob", "iterdir", "listdir", "scandir", "walk"}
 _KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
 
 
@@ -1019,6 +1019,190 @@ def _glob_receiver(loader, call, scope, root, refused, links):
     return owner, call.args
 
 
+_MODULE_GLOBS = {("symbol", "glob.glob"), ("symbol", "glob.iglob")}
+
+#: Directory entries the link scan may read for one call.  Over it, the read is kept
+#: as an unplaced one: not provable within the budget, so select more, never less.
+_LINK_SCAN_BUDGET = 20000
+
+
+def _wildcard_directory_components(pattern, prefix=(), recursive=False):
+    """The components of *pattern* after its literal prefix, the last one included.
+
+    The last component is scanned like the others: it can match a link to a file, and a
+    trailing separator (``docs/*/``, which ``PurePath`` drops) makes it a directory
+    component.  ``rglob(pattern)`` is ``glob('**/' + pattern)``: the recursion runs over the
+    whole base, so its literal components are not a prefix of the base.
+    """
+    return (["**"] if recursive else []) + list(PurePath(pattern).parts[len(prefix):])
+
+
+def _scan_children(directories, recursive, root, links, found, budget, refused):
+    """Subdirectories of *directories* (all depths when *recursive*), or None over budget.
+
+    Entries are read without following links.  A link entry is resolved by ``_place``,
+    which records it and stops at a target outside the tree, so that target is never
+    approached.  A link the guard declines is appended to *refused*: where it leads is
+    unknown and may be straight back into the tree.  An in-tree target is a
+    dependency (*found*) and a directory joins the result.
+    """
+    seen = set(directories)
+    reached = set(directories) if recursive else set()
+    pending = list(directories)
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        budget[0] -= len(entries)
+        if budget[0] < 0:
+            return None
+        for entry in entries:
+            path = directory / entry.name
+            if entry.is_symlink():
+                placed = _place({path}, root, refused, links)
+                target = next(iter(placed)) if placed else None
+                if target is None:
+                    continue
+                # A dependency even when absent: deleting the last member behind an
+                # unchanged link leaves it dangling and the read still names it.  Only
+                # traversal needs a directory.
+                found.add(target)
+                if not target.is_dir():
+                    continue
+            elif entry.is_dir(follow_symlinks=False):
+                target = path
+            else:
+                continue
+            if target in seen:
+                continue
+            seen.add(target)
+            reached.add(target)
+            if recursive:
+                pending.append(target)
+    return reached
+
+
+def _wildcard_link_dirs(start, components, root, links, refused):
+    """Directories a link reached through a wildcard component points to (#1011).
+
+    *start* is a placed directory.  Each wildcard component is expanded over the
+    directories reached so far and each literal one is placed.  ``None`` when the
+    scan would exceed its budget.
+    """
+    found, frontier, budget = set(), {start}, [_LINK_SCAN_BUDGET]
+    for component in components:
+        if component in ("", "."):
+            continue
+        if any(wildcard in component for wildcard in "*?["):
+            frontier = _scan_children(frontier, component == "**", root, links, found, budget, refused)
+            if frontier is None:
+                return None
+        else:
+            reached = set()
+            for directory in frontier:
+                for target in _place({directory / component}, root, refused, links) or ():
+                    reached.add(target)
+                    # A literal component can itself be a link: where it leads is read, so
+                    # it is a dependency and not only traversal state.  A plain path under
+                    # the base is already covered by the base node.
+                    if target != directory / component:
+                        found.add(target)
+            frontier = reached
+    return found
+
+
+def _with_link_targets(placed, specs, root, refused, links):
+    """*placed* plus the directories links behind wildcard components lead to."""
+    found = set()
+    for start, components in specs:
+        resolved = _place({start}, root, [], links)
+        if not resolved:
+            continue
+        declined = []
+        targets = _wildcard_link_dirs(next(iter(resolved)), components, root, links, declined)
+        if targets is None or declined:
+            # Over budget, or a link the guard declined to follow: not provable, so keep
+            # the read as an unplaced one (#338) without looking where it leads.
+            refused.extend(declined or [start])
+            return None
+        found |= targets
+    return placed | found
+
+
+def _module_glob_bases(call, scope, root, refused, links, from_string):
+    """The directory a module-level ``glob.glob``/``glob.iglob`` call reads, or None.
+
+    Unlike ``Path.glob`` the base is not a receiver: it is the literal directory
+    in front of the pattern's first wildcard, relative to the process (joined to
+    the tree like every other relative spelling), placed by the same boundary
+    guard.  Only a base that lands inside the tree adds an edge.  A base the guard
+    declines -- an absolute path such as ``/usr/local/cuda-*`` or a pattern that
+    climbs out -- stays *unnamed*, as before, and is never kept as an unplaced
+    read: this tree's module globs of that kind name box locations, not
+    repository files, and an unplaced read seeds its reader's consumers on every
+    change, which made ``serving/ext.py`` select the whole population (#148).
+    ``root_dir``, ``dir_fd``, extra positional arguments, a pattern nothing names
+    and a ``..`` after the first wildcard also stay unnamed (#1010), but only for that
+    alternative: another alternative of the same call that names an in-tree base still
+    places it or keeps it as an unplaced read, whatever order they come in.  A
+    pattern spelled from the tree's own root names a base inside it: a refusal or a
+    ``..`` there is kept as an unplaced read (#1010 review).
+
+    A RELATIVE pattern names a directory relative to the process, and nothing here
+    proves where that is: a ``chdir`` in this module, an alias of it, an imported
+    helper, a fixture or pytest itself can move it.  It is kept as an unplaced read
+    and never resolved against the tree's root; a pattern anchored with ``__file__``
+    does not depend on the process directory and resolves (#1010 review).
+    """
+    if len(call.args) != 1 or isinstance(call.args[0], ast.Starred) or any(
+            keyword.arg not in ("recursive", "include_hidden") for keyword in call.keywords):
+        return None
+    patterns = _values(call.args[0], scope, root, refused=refused, links=links)
+    if patterns is None or not all(isinstance(pattern, str) for pattern in patterns):
+        return None
+    bases, specs, names_tree, climbs = set(), [], False, False
+    root_parts = Path(os.path.normpath(str(root))).parts
+    for pattern in patterns:
+        prefix = _literal_prefix(pattern)
+        base = Path(*prefix) if prefix else Path(".")
+        if not PurePath(pattern).is_absolute():
+            refused.append(base)
+            return None
+        # A pattern spelled from the tree's own root names a base INSIDE it, even when
+        # its literal prefix stops early (a checkout name with glob metacharacters).
+        in_tree = PurePath(pattern).parts[:len(root_parts)] == root_parts
+        names_tree = names_tree or in_tree
+        if ".." in PurePath(pattern).parts[len(prefix):]:
+            # This alternative names nothing it can place.  An outside one is unnamed; an
+            # in-tree one is an unplaced read.  Either way the other alternatives are still
+            # read, so keep going and let them place or refuse (#1010 review).
+            if in_tree:
+                refused.append(base)
+                climbs = True
+            continue
+        bases.add(base)
+        components = _wildcard_directory_components(pattern, prefix)
+        if components:
+            specs.append((base, components))
+    if climbs or not bases:
+        return None
+    declined = []
+    placed = _place(bases, root, declined, links)
+    if placed is None and names_tree:
+        # A base named inside the tree that the guard declines (a directory that is a link out
+        # of it) cannot be attributed to a file: the #338 uncertainty.  A base outside the tree,
+        # a box path, stays unnamed.
+        refused.extend(declined)
+        return None
+    if placed is not None and specs:
+        placed = _with_link_targets(placed, specs, root, refused, links)
+    if placed is not None and from_string is not None:
+        from_string.append(True)
+    return placed
+
+
 def _enumeration_bases(loader, call, scope, root, refused, links, from_string=None):
     """The base directories an enumeration call consumes, or ``None``.
 
@@ -1038,6 +1222,11 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
     unknown -- is appended to ``refused`` so the caller keeps the #338
     unplaced-read uncertainty instead of dropping the directory.
     """
+    if loader in ("glob", "iglob"):
+        functions = _values(call.func, scope, root)
+        if functions and functions <= _MODULE_GLOBS:
+            return _module_glob_bases(call, scope, root, refused, links, from_string)
+    specs = []
     if loader == "iterdir":
         bases = _values(call.func.value, scope, root, refused=refused, links=links)
         if bases is not None and (call.args or call.keywords):
@@ -1052,6 +1241,11 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
             # a string path is the same base, placed (or refused) by the same
             # boundary guard.  Only the Path spelling was resolved, so a file
             # added under a directory listed by string selected no reader.
+            if any(isinstance(base, str) and not PurePath(base).is_absolute() for base in bases):
+                # A relative string names a directory relative to the process; nothing here
+                # proves where that is, so it is unplaced and never root-relative.
+                refused.extend(Path(base) for base in bases if isinstance(base, str))
+                return None
             if from_string is not None and any(isinstance(base, str) for base in bases):
                 from_string.append(True)
             bases = {Path(base) if isinstance(base, str) else base for base in bases}
@@ -1078,13 +1272,24 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
         if all(isinstance(base, Path) for base in bases):
             # A literal directory in front of the first wildcard may be a link
             # to another directory.  Placing it keeps the link and the target.
+            recursive = loader == "rglob"
+            for base in bases:
+                for pattern in patterns:
+                    prefix = _literal_prefix(pattern)
+                    start = base if recursive or not prefix else base.joinpath(*prefix)
+                    components = _wildcard_directory_components(pattern, () if recursive else prefix, recursive)
+                    if components:
+                        specs.append((start, components))
             bases = bases | {
                 base.joinpath(*prefix)
                 for base in bases for prefix in (_literal_prefix(pattern) for pattern in patterns)
                 if prefix}
     if bases is None or not all(isinstance(base, Path) for base in bases):
         return None
-    return _place(bases, root, refused, links)
+    placed = _place(bases, root, refused, links)
+    if placed is None or not specs:
+        return placed
+    return _with_link_targets(placed, specs, root, refused, links)
 
 
 def _sole_plain_definitions(tree):

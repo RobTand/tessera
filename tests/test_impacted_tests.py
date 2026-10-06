@@ -16,6 +16,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "impacted_tests.py"
+
+#: A reader under tests/ anchored with ``__file__``: its base does not depend on the process
+#: directory (a relative one is kept as an unplaced read instead).
+_ROOT_ANCHOR = "from pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n"
 _SPEC = importlib.util.spec_from_file_location("impacted_tests", SCRIPT)
 impacted = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(impacted)  # type: ignore[union-attr]
@@ -2269,13 +2273,14 @@ def test_a_probe_alone_still_does_not_select_the_fixture_consumers(tmp_path):
 
 
 @pytest.mark.parametrize("spelling", [
-    "os.listdir('docs')", "list(os.walk('docs'))", "list(os.scandir('docs'))",
+    "os.listdir(str(ROOT / 'docs'))", "list(os.walk(str(ROOT / 'docs')))",
+    "list(os.scandir(str(ROOT / 'docs')))",
 ], ids=["listdir", "walk", "scandir"])
 def test_a_string_path_directory_reader_is_selected_by_a_new_member(tmp_path, spelling):
     """A reader that lists a directory by string path depends on its membership."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "tests/test_lister.py": (
-            f"import os\n\n\ndef test_lists():\n    assert {spelling}\n"),
+            "import os\n" + _ROOT_ANCHOR + f"\n\ndef test_lists():\n    assert {spelling}\n"),
         "docs/a.md": "before\n"})
     (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -2287,13 +2292,13 @@ def test_a_string_path_directory_reader_is_selected_by_a_new_member(tmp_path, sp
 
 
 def test_a_string_argument_does_not_hide_an_unknown_loader_from_its_consumers(tmp_path):
-    """A module that executes source and calls a custom ``walk("mode")`` stays an
+    """A module that executes source and calls a custom ``walk(str(ROOT / "mode"))`` stays an
     unknown loader: resolving the string as a directory adds an edge, it must not
     replace the wildcard, or a change it may load selects its consumer no more."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "support/helper.py": (
-            "def walk(mode):\n    return mode\n\n\ndef run():\n    exec('pass')\n"
-            "    return walk('mode')\n"),
+            _ROOT_ANCHOR + "\n\ndef walk(mode):\n    return mode\n\n\ndef run():\n    exec('pass')\n"
+            "    return walk(str(ROOT / 'mode'))\n"),
         "tests/test_consumer.py": "from support.helper import run\n\n\ndef test_run():\n    assert run\n",
         "mode/seed.txt": "x\n"})
     (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
@@ -2306,19 +2311,20 @@ def test_a_string_argument_does_not_hide_an_unknown_loader_from_its_consumers(tm
 
 
 @pytest.mark.parametrize("probe", [
-    "list(os.walk('tests/test_values.py'))",
-    "os.listdir('tests/test_values.py')",
+    "list(os.walk(str(Path(__file__).resolve().parent / 'test_values.py')))",
+    "os.listdir(str(Path(__file__).resolve().parent / 'test_values.py'))",
 ], ids=["walk-of-string", "listdir-of-string"])
 def test_a_string_path_probe_does_not_mask_an_ordinary_import_of_the_same_file(tmp_path, probe):
     """PB1496 review: resolving a string adds an edge, and in a conftest that edge can be
     a collection probe of a file the conftest ALSO imports.  The ordinary import is the
-    dependency that matters; masking it dropped the fixture's consumers on master's
-    behaviour for the Path spelling and, with string resolution, for the string one too.
-    No tests/__init__.py: the pytest import-root alias resolver reads this layout."""
+    dependency that matters; masking it dropped the fixture's consumers.  The string is
+    anchored with ``__file__`` (a relative one is unplaced, which would select the reader
+    whatever the probe did).  No tests/__init__.py: the pytest import-root alias
+    resolver reads this layout."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "tests/conftest.py": (
-            "import os\nimport pytest\nfrom test_values import VALUE\n\n" + probe + "\n\n\n"
-            "@pytest.fixture\ndef value():\n    return VALUE\n"),
+            "import os\nfrom pathlib import Path\nimport pytest\nfrom test_values import VALUE\n\n"
+            + probe + "\n\n\n@pytest.fixture\ndef value():\n    return VALUE\n"),
         "tests/test_values.py": "VALUE = 1\n",
         "tests/test_consumer.py": "def test_value(value):\n    assert value == 1\n"})
     (repo / "tests/test_values.py").write_text("VALUE = 2\n", encoding="utf-8")
@@ -2332,7 +2338,8 @@ def test_a_string_path_probe_does_not_mask_an_ordinary_import_of_the_same_file(t
 
 def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp_path):
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
-        "tests/test_lister.py": "import os\n\n\ndef test_lists():\n    assert os.listdir('docs')\n",
+        "tests/test_lister.py": ("import os\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert os.listdir(str(ROOT / 'docs'))\n"),
         "docs/a.md": "before\n", "elsewhere/x.md": "other\n"})
     (repo / "elsewhere/y.md").write_text("new\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -2341,6 +2348,267 @@ def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp
     result = _selector(repo, f"{base}...HEAD")
 
     assert "tests/test_lister.py" not in result["tests"], result
+
+
+@pytest.mark.parametrize("reader", [
+    "import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n    assert sorted(glob.glob(str(ROOT / 'docs' / '*.md')))\n",
+    "import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n    assert sorted(glob.iglob(str(ROOT / 'docs' / '*.md')))\n",
+    "from glob import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n    assert sorted(glob(str(ROOT / 'docs' / '*.md')))\n",
+], ids=["module-glob", "module-iglob", "from-import"])
+def test_a_module_glob_reader_is_selected_by_a_new_member(tmp_path, reader):
+    """#1010: a reader listing a directory with the module function depends on its
+    membership, exactly as one using ``Path.glob`` does."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": reader, "docs/a.md": "before\n"})
+    (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_a_module_glob_reader_is_not_selected_by_another_directory(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert glob.glob(str(ROOT / 'docs' / '*.md'))\n"),
+        "docs/a.md": "before\n", "elsewhere/x.md": "other\n"})
+    (repo / "elsewhere/y.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added elsewhere")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" not in result["tests"], result
+
+
+def test_a_glob_reader_is_selected_by_a_new_member_behind_a_wildcard_link(tmp_path):
+    """#1011: ``docs/link`` is a link to ``data``; ``docs/*/x.md`` lists it too."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": (
+            "from pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+            "def test_lists():\n    assert list(DOCS.glob('*/*.md')) is not None\n"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link under the globbed directory")
+    base = _git(repo, "rev-parse", "HEAD")
+    # A basename the reader never names, so the text fallback cannot select it.
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added behind the link")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+_LINK_READER = (
+    "from pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+    "def test_lists():\n    assert list(DOCS.glob({pattern!r})) is not None\n")
+
+
+def test_a_literal_link_after_a_wildcard_selects_the_reader_for_its_target(tmp_path):
+    """The wildcard reaches an ordinary directory, the literal ``link`` leads to ``data``."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": _LINK_READER.format(pattern="*/link/*.md"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "plain" / "link").symlink_to("../../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link behind an ordinary directory")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added behind the link")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_deleting_the_last_member_behind_an_unchanged_link_selects_the_reader(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": _LINK_READER.format(pattern="*/*.md"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link to data")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "rm", "-q", "data/seed.md")
+    _git(repo, "commit", "-qm", "the last member behind the link goes")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_an_outside_bridge_behind_a_wildcard_selects_the_reader_for_any_change(tmp_path):
+    """``docs/link`` points outside the tree; the bridge may lead back to ``data``.
+    The selector will not look, so the reader cannot be tied to a file and is kept
+    for every change (#338): ``data/later.md`` is changed and unmentioned."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": _LINK_READER.format(pattern="*/*.md"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to(outside, target_is_directory=True)
+    (outside / "bridge").symlink_to(repo / "data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link that leaves the tree")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "an unmentioned member of data")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_a_module_glob_after_a_chdir_selects_the_reader_for_the_runtime_directory(tmp_path):
+    """``os.chdir(.../nested)`` then ``glob.glob('docs/*.md')`` lists ``nested/docs``, not
+    the root's ``docs``.  A member added there, under a basename the reader never
+    names, must select it."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_cwd.py": (
+            "import glob\nimport os\nfrom pathlib import Path\n\n\ndef test_lists():\n"
+            "    os.chdir(Path(__file__).resolve().parents[1] / 'nested')\n"
+            "    assert sorted(glob.glob('docs/*.md'))\n"),
+        "nested/docs/a.md": "x\n", "docs/a.md": "x\n"})
+    (repo / "nested" / "docs" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added under the runtime directory")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_cwd.py" in result["tests"], result
+
+
+def test_deleting_the_last_member_behind_a_link_selects_a_directory_only_glob(tmp_path):
+    """``docs/*/`` lists directories, so deleting ``data``'s only file changes its result."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert glob.glob(str(ROOT / 'docs' / '*') + '/') is not None\n"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link to data")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "rm", "-q", "data/seed.md")
+    _git(repo, "commit", "-qm", "data loses its only file")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_editing_the_file_a_terminal_link_points_to_selects_the_reader(tmp_path):
+    """The reader names ``manifest.md``; the changed file is ``payload.md``, a basename it
+    never mentions, so only the link makes it a dependency."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": (
+            "from pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+            "def test_reads():\n    for p in DOCS.glob('*/manifest.md'):\n"
+            "        assert p.read_text() == 'expected'\n"),
+        "docs/plain/a.md": "x\n", "data/payload.md": "expected\n"})
+    (repo / "docs" / "plain" / "manifest.md").symlink_to("../../data/payload.md")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a file link behind a wildcard directory")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "payload.md").write_text("changed\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "the target file changes")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_a_module_glob_after_an_imported_cwd_helper_selects_the_reader(tmp_path):
+    """``support.cwd.enter()`` changes to ``nested``; the test then lists ``docs/*.md``.  The
+    reader's tree contains no chdir and the helper no enumeration, so only treating a
+    relative base as unplaced selects it for ``nested/docs/later.md`` (a basename the
+    reader never names)."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/cwd.py": "import os\nfrom pathlib import Path\n\n\ndef enter():\n    os.chdir(Path(__file__).resolve().parents[1] / 'nested')\n",
+        "tests/test_cwd.py": (
+            "import glob\n\nfrom support.cwd import enter\n\n\ndef test_lists():\n"
+            "    enter()\n    assert sorted(glob.glob('docs/*.md'))\n"),
+        "nested/docs/a.md": "x\n", "docs/a.md": "x\n"})
+    (repo / "nested" / "docs" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added under the runtime directory")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_cwd.py" in result["tests"], result
+
+
+def test_an_anchored_module_glob_is_selected_only_by_its_own_directory(tmp_path):
+    """The precise case: anchored with ``__file__``, so another directory does not select it."""
+    reader = ("import glob\nfrom pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+              "def test_lists():\n    assert glob.glob(str(DOCS / '*.md'))\n")
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": reader, "docs/a.md": "x\n", "elsewhere/x.md": "x\n"})
+    (repo / "elsewhere" / "y.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added elsewhere")
+    elsewhere = _selector(repo, f"{base}...HEAD")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "docs" / "b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added under docs")
+    own = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" not in elsewhere["tests"], elsewhere
+    assert "tests/test_lister.py" in own["tests"], own
+
+
+def test_an_anchored_module_glob_behind_an_outside_bridge_selects_the_reader_for_any_change(tmp_path):
+    """``docs`` leaves the tree and the bridge may lead back to ``data``: a named in-tree base the
+    guard declines keeps the reader for every change (``data/later.md``, a basename it never
+    names)."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert glob.glob(str(ROOT / 'docs' / '*.md')) is not None\n"),
+        "data/seed.md": "x\n"})
+    (outside / "bridge").symlink_to(repo / "data", target_is_directory=True)
+    (repo / "docs").symlink_to(outside, target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "docs leaves the tree")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "an unmentioned member of data")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+@pytest.mark.parametrize("order", ["outside-first", "inside-first"])
+def test_an_outside_alternative_does_not_hide_an_in_tree_module_glob(tmp_path, order):
+    """One pattern name bound to a box path that climbs after a wildcard and to an anchored
+    ``docs`` pattern: the box path is never stat'ed, but the ``docs`` alternative still reads
+    ``docs``, so a new member there selects the reader whichever binding comes first."""
+    bindings = ["'/usr/*/../x/*.md'", "str(ROOT / 'docs' / '*.md')"]
+    if order == "inside-first":
+        bindings.reverse()
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + f"\nPATTERN = {bindings[0]}\n"
+                                 f"PATTERN = {bindings[1]}\n\n"
+                                 "def test_lists():\n    assert glob.glob(PATTERN) is not None\n"),
+        "docs/seed.md": "x\n"})
+    (repo / "docs" / "added.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a new member of docs")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
 
 
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
