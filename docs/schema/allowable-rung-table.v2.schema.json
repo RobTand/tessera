@@ -303,8 +303,7 @@
               "enum": [
                 "fused_window",
                 "compact_window",
-                "native_tcq",
-                "materialized_tcq"
+                "native_tcq"
               ]
             },
             "decoder_owner": {
@@ -315,8 +314,7 @@
               "enum": [
                 "raw_packed_window",
                 "compact_packed_window",
-                "native_tcq_decode_gemm",
-                "materialized_tcq_gemm"
+                "native_tcq_decode_gemm"
               ]
             },
             "word_ring": {

@@ -171,25 +171,52 @@ class GeometryHarvest(unittest.TestCase):
         self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/v0001.json',table)
         self.assertEqual(index['formats']['TESSERA_E4M3_K1'],before)
         with self.assertRaises(ValueError):
-            self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/v0001.json',table)
+            self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/changed.json',table)
 
-    def test_actual_adapter_normalization_does_not_require_fused_symbols(self):
-        from tessera.alphabet import E2M1_GRID,tuple_grid
-        m=fixture_v2('tcq','native_tcq')['rungs'][0]['measurements'][0]
-        a=m['geometry']['alignment']
-        a['plane_shapes']['label_lut']=a['plane_shapes'].pop('labels')
-        a['plane_bytes']['label_lut']=a['plane_bytes'].pop('labels')
-        head={'kind':'dense','shape':'o_proj','q256':896,'body_kind':'TCQ','window_bits':0}
-        cell={'F':{'median_ms':1,'timer':'graph'},'R':{'median_ms':1,'timer':'graph'},
-              'ms':1,'bm':64,'kernel_path':'actual_span2','normalized_geometry':m['geometry']}
-        data={'meta':{'pb_action':'actual','statistic':'paired','library':'native_span2'}}
-        out=self.harvest.measurement('actual.json',data,head,cell,
-            {'cell_id':'dense:o_proj:M1','kernel_kind':'dense','shape_id':'o_proj','M':1},
-            'build',4096,4096,tuple_grid(E2M1_GRID,2))
-        self.assertEqual(out['measurement_status'],'measured')
-        self.assertEqual(out['geometry']['bits_per_256_weight_tile'],cell['normalized_geometry']['bits_per_256_weight_tile'])
-        self.assertEqual(out['geometry']['body_kind'],'tcq')
-        self.assertEqual(out['kernel_path'],'actual_span2')
+    def test_select_identical_published_version_preserves_history(self):
+        index={'schema':'fleet.rung_allowability.index.v1','formats':{'TESSERA_E4M3_K1':{'kernel_builds':{'old':{'current_version':9,'versions':{'9':{'path':'TESSERA_E4M3_K1/old/v0009.json','table_schema':'fleet.rung_allowability.v1','table_status':'complete'}}}}}}}
+        prior=copy.deepcopy(index['formats']['TESSERA_E4M3_K1'])
+        table={'schema':'fleet.rung_allowability.v2','table_status':'partial'}
+        args=(index,'TESSERA_BF16_K1','value',2,'TESSERA_BF16_K1/value/v0002.json',table)
+        self.harvest.merge_index(*args)
+        self.harvest.merge_index(*args)
+        self.assertEqual(index['formats']['TESSERA_E4M3_K1'],prior)
+        with self.assertRaises(ValueError):
+            self.harvest.merge_index(index,'TESSERA_BF16_K1','value',2,'TESSERA_BF16_K1/value/changed.json',table)
+
+
+    def test_activation_uses_staged_candidate_and_keeps_immutable_history(self):
+        import tempfile,hashlib
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);published=root/'tables';published.mkdir()
+            versions={}
+            hashes={}
+            for version in (1,2,3):
+                t=fixture();t['table_version']=version
+                relative=f'TESSERA_E4M3_K1/build/v{version:04d}.json'
+                path=published/relative;path.parent.mkdir(parents=True,exist_ok=True)
+                path.write_text(json.dumps(t));hashes[relative]=hashlib.sha256(path.read_bytes()).hexdigest()
+                versions[str(version)]={'path':relative,'table_schema':t['schema'],'table_status':t['table_status']}
+            current={'schema':'fleet.rung_allowability.index.v1','formats':{'TESSERA_E4M3_K1':{'kernel_builds':{'build':{'current_version':1,'versions':{k:versions[k] for k in ('1','3')}}}}}}
+            candidate=copy.deepcopy(current);candidate['schema']='fleet.rung_allowability.index.v2'
+            candidate['formats']['TESSERA_E4M3_K1']['kernel_builds']['build']={'current_version':2,'versions':{k:versions[k] for k in ('1','2')}}
+            (published/'index.json').write_text(json.dumps(current));(published/'index.v2-candidate.json').write_text(json.dumps(candidate))
+            script=Path(__file__).resolve().parents[1]/'experiments'/'t8r_speed'/'rung_allowability_table.py'
+            command=[sys.executable,str(script),'--activate-index','--publish-root',str(published),
+                     '--root',str(root/'must-not-reharvest'),'--schema',str(root/'unused-schema'),
+                     '--index-schema',str(root/'unused-index-schema'),'--out',str(root/'report'),
+                     '--version','2','--format','TESSERA_E4M3_K1']
+            result=subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr+result.stdout)
+            selected=json.loads((published/'index.json').read_text())['formats']['TESSERA_E4M3_K1']['kernel_builds']['build']
+            self.assertEqual(selected['current_version'],2)
+            self.assertEqual(set(selected['versions']),{'1','2','3'})
+            self.assertEqual(json.loads((published/'index.v1-history.json').read_text()),current)
+            self.assertEqual(subprocess.run(command,capture_output=True,text=True).returncode,0)
+            for relative,digest in hashes.items():self.assertEqual(hashlib.sha256((published/relative).read_bytes()).hexdigest(),digest)
+
+
 
 
 
@@ -211,15 +238,61 @@ def fixture_v2(body='window',decoder='fused_window'):
         g['decode_width']={'window_bits':0,'word_stages':None,'value_bits':4,'arity':2,
             'run_widths':[7],'memory':6,'span':2,'history_lookup_bits':7,'label_lut_entries':128,
             'block_m':64,'block_n':64,'block_k':128,'mma_k':64,'scale_group':16}
-        g['alignment']={'kind':'tcq_planes','owner':'tessera.compact_prep.prepare_span2_compact',
-            'plane_shapes':{'codes':[256],'labels':[128]},'plane_bytes':{'codes':256,'labels':512},
-            'slot_words':None}
+        # Recorded native o_proj census from cff24a0e7d05; not a synthetic two-plane proxy.
+        g['alignment']={"rate":7,"arity":2,"span":2,"plane_shapes":{"select":[528392],"label":[1048576],"point":[6291456],"nibbles":[524288],"lut_bytes":[16],"label_lut":[128],"code_nibbles":[256]},"plane_bytes":{"select":528392,"label":1048576,"point":6291456,"nibbles":524288,"lut_bytes":16,"label_lut":512,"code_nibbles":256},"kind":"tcq_planes","owner":"tessera.compact_prep.prepare_span2_compact","slot_words":None,"plane_element_bytes":{"select":1,"label":1,"point":1,"nibbles":1,"lut_bytes":1,"label_lut":4,"code_nibbles":1}}
+        g['shared_memory']={'kind':'used','requested_bytes':12800,'available_bytes':101376,'fits':True}
         g['register_pressure']={'compiler':'triton_compiled_kernel','REG':196,'SPILLS':0,
-            'STACK':None,'LOCAL':None,'SHARED':2,'compiler_symbol':'_a4_span2_gemm_kernel'}
+            'STACK':None,'LOCAL':None,'SHARED':12800,'compiler_symbol':'_a4_span2_gemm_kernel'}
+    for row in t['rungs']:
+        cfg={'body':body,'span':2 if body=='tcq' else 1,'plane':'lut16' if body=='tcq' else 'channel',
+             'window_bits':0 if body=='tcq' else 14,'seed':0,'sigma':None,'channel_sigma':None if body=='tcq' else 1.0}
+        row['measurements'][0]['geometry']['recipe']=copy.deepcopy(cfg)
+        row['quality']['scope']={'format':t['format'],'grid':'E2M1x2' if body=='tcq' else 'E4M3',
+            'arity':2 if body=='tcq' else 1,'rung':row['rung'],'recipe':cfg,'kernel_kinds':['dense','routed'],
+            'owner':'tessera.export.encode_linear'}
+
     return t
 
 
 class BodyAwareGrammar(unittest.TestCase):
+    def test_quality_scope_missing_or_wrong_family_refuses(self):
+        for change in ('missing','family','grid','arity','recipe'):
+            t=fixture_v2('tcq','native_tcq');s=t['rungs'][0]['quality']['scope']
+            if change=='missing':t['rungs'][0]['quality'].pop('scope')
+            elif change=='family':s['format']='TESSERA_BF16_K1'
+            elif change=='grid':s['grid']='BF16'
+            elif change=='arity':s['arity']=1
+            else:s['recipe']['body']='window'
+            with self.assertRaises(ValueError):validate_table(t)
+
+
+    def test_native_plane_census_missing_real_input_refuses(self):
+        for name in ('select','label','point','nibbles','lut_bytes','label_lut','code_nibbles'):
+            t=fixture_v2('tcq','native_tcq');a=t['rungs'][0]['measurements'][0]['geometry']['alignment']
+            for field in ('plane_shapes','plane_bytes','plane_element_bytes'):a[field].pop(name)
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_native_plane_byte_count_matches_actual_tensor_width(self):
+        t=fixture_v2('tcq','native_tcq')
+        t['rungs'][0]['measurements'][0]['geometry']['alignment']['plane_bytes']['label_lut']+=1
+        with self.assertRaises(ValueError):validate_table(t)
+
+
+    def test_actual_zero_width_point_has_zero_bytes_not_a_placeholder(self):
+        t=fixture_v2('tcq','native_tcq');row=t['rungs'][0];row['rung']=128
+        t['scope'].update(rung_min=128,rung_max=128)
+        cell=row['measurements'][0];key=t['scope']['required_cells'][0]
+        cell.update(cell_id='routed:gate_up:M1',kernel_kind='routed',shape_id='gate_up')
+        key.update(cell_id='routed:gate_up:M1',kernel_kind='routed',shape_id='gate_up')
+        g=cell['geometry'];g['decode_width']['run_widths']=[1]
+        g['alignment']['plane_shapes']['point']=[0];g['alignment']['plane_bytes']['point']=0
+        g['alignment']['plane_shapes']['code_nibbles']=[4];g['alignment']['plane_bytes']['code_nibbles']=4
+        row['quality']['scope'].update(rung=128,kernel_kinds=['routed'])
+        validate_table(t)
+        g['alignment']['plane_bytes']['point']=1
+        with self.assertRaises(ValueError):validate_table(t)
+
+
     def test_valid_native_tcq_and_explicit_v1_history(self):
         t=fixture_v2('tcq','native_tcq')
         self.assertIs(validate_table(t),t)

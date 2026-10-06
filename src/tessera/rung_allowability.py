@@ -79,9 +79,9 @@ def _geometry_v2(geom):
     """Explicit grammar variants; no absent WINDOW facts become positive numbers."""
     body,kind=geom.get('body_kind'),geom.get('decoder_kind')
     owners={'fused_window':('tessera.routed_fused',),'compact_window':('tessera.window_gemm','tessera.window_gemm_grouped'),
-            'native_tcq':('tessera.kernel_a4',),'materialized_tcq':('tessera.unit_artifact.read_unit_artifact',)}
+            'native_tcq':('tessera.kernel_a4',)}
     scopes={'fused_window':'raw_packed_window','compact_window':'compact_packed_window',
-            'native_tcq':'native_tcq_decode_gemm','materialized_tcq':'materialized_tcq_gemm'}
+            'native_tcq':'native_tcq_decode_gemm'}
     _require(body in ('window','tcq') and kind in owners,'unknown body/decoder')
     _require((body=='window')==(kind in ('fused_window','compact_window')),'body/decoder disagreement')
     _require(geom.get('decoder_owner') in owners[kind] and geom.get('execution_scope')==scopes[kind],'decoder owner/execution scope')
@@ -112,15 +112,17 @@ def _geometry_v2(geom):
             _require(decode['arity']==2 and decode['value_bits']==4 and len(rates)==1,'native span-two E2M1 tuple/rate')
             _require(all(_integer(decode.get(k)) and decode[k]>0 for k in ('block_m','block_n','block_k','mma_k','scale_group')) and decode['mma_k']==64 and decode['scale_group']==16 and decode['block_k']%decode['mma_k']==0,'native TCQ launch geometry')
             _require(alignment.get('kind')=='tcq_planes' and alignment.get('owner')=='tessera.compact_prep.prepare_span2_compact','TCQ plane owner')
-            shapes,byte_counts=alignment.get('plane_shapes'),alignment.get('plane_bytes')
-            _require(isinstance(shapes,dict) and shapes and isinstance(byte_counts,dict) and set(shapes)==set(byte_counts),'TCQ plane census')
+            shapes,byte_counts,widths=(alignment.get(k) for k in ('plane_shapes','plane_bytes','plane_element_bytes'))
+            # Actual native ABI: A4Unit.from_prepared/_unit_dtype address byte
+            # planes; label_lut is int32. These are element bits, not dummy sizes.
+            element_bits={'select':8,'label':8,'point':8,'nibbles':8,'lut_bytes':8,'label_lut':32,'code_nibbles':8}
+            _require(all(isinstance(v,dict) and set(v)==set(element_bits) for v in (shapes,byte_counts,widths)),'native TCQ mandatory plane census')
             for name,shape in shapes.items():
-                _require(_text(name) and isinstance(shape,list) and shape and all(_integer(v) and v>=0 for v in shape),'TCQ plane shape')
-                _require(_integer(byte_counts[name]) and byte_counts[name]>=0 and ((math.prod(shape)==0)==(byte_counts[name]==0)),'TCQ plane bytes')
-        else:
-            _require(alignment.get('kind')=='materialized_weights' and alignment.get('owner')==geom.get('decoder_owner') and alignment.get('dtype')=='bfloat16' and alignment.get('element_bytes')==2,'materialized TCQ weight facts')
-            shape=alignment.get('shape')
-            _require(isinstance(shape,list) and len(shape)==2 and all(_integer(v) and v>0 for v in shape) and alignment.get('bytes')==2*math.prod(shape),'materialized TCQ bytes')
+                _require(isinstance(shape,list) and shape and all(_integer(v) and v>=0 for v in shape),'TCQ plane shape')
+                _require(_integer(widths[name]) and widths[name]*8==element_bits[name],'TCQ actual element width')
+                _require(_integer(byte_counts[name]) and byte_counts[name]>=0 and math.prod(shape)*widths[name]==byte_counts[name],'TCQ exact shape/element byte count')
+            _require(math.prod(shapes['lut_bytes'])==16 and math.prod(shapes['label_lut'])==decode['label_lut_entries'] and math.prod(shapes['code_nibbles'])==4*(1<<(rates[0]-1)),'native TCQ lookup plane shapes')
+            _require(math.prod(shapes['point'])>0 or rates[0]==1,'empty POINT requires zero-width rate-one fields')
     requested,available=sm.get('requested_bytes'),sm.get('available_bytes')
     _require(_integer(available) and available>0 and _integer(requested) and requested<=available and sm.get('fits') is True,'shared-memory fit/facts')
     _require((sm.get('kind')=='used' and requested>0) or (sm.get('kind')=='none' and requested==0),'explicit shared-memory presence')
@@ -132,6 +134,25 @@ def _geometry_v2(geom):
         _require(reg.get('compiler')=='cuda_cuobjdump' and all(_integer(reg.get(k)) and reg[k]>=0 for k in ('STACK','LOCAL','SHARED')),'actual CUDA compiler resources')
     bits=geom['bits_per_256_weight_tile']
     _require(_integer(bits.get('numerator')) and bits['numerator']>0 and _integer(bits.get('denominator')) and bits['denominator']>0,'tile-bit rational')
+
+
+
+def _quality_scope_v2(quality,measurements,format_name,rung):
+    scope=quality.get('scope')
+    _require(isinstance(scope,dict) and scope.get('owner')=='tessera.export.encode_linear','quality producer scope missing')
+    match=re.fullmatch(r'TESSERA_([A-Z0-9]+)_K(\d+)',format_name)
+    _require(match is not None,'quality family format')
+    base,arity=match[1],int(match[2])
+    expected_grid=base if arity==1 else base+'x'+str(arity)
+    _require(scope.get('format')==format_name and scope.get('grid')==expected_grid and _integer(scope.get('arity')) and scope['arity']==arity and scope.get('rung')==rung,'quality format/grid/arity/rung scope')
+    recipe=scope.get('recipe')
+    _require(isinstance(recipe,dict) and set(recipe)=={'body','span','plane','window_bits','seed','sigma','channel_sigma'},'quality encoder recipe scope')
+    kinds=scope.get('kernel_kinds')
+    _require(isinstance(kinds,list) and kinds and set(kinds)<= {'dense','routed'},'quality structure scope')
+    for m in measurements:
+        g=m['geometry']
+        _require(m['kernel_kind'] in kinds and g.get('recipe')==recipe and recipe.get('body')==g.get('body_kind'),'quality/measurement recipe or structure mismatch')
+        _require(g['decode_width'].get('arity',1)==arity,'quality/measurement arity mismatch')
 
 
 
@@ -215,6 +236,8 @@ def validate_table(table):
         if row["measurement_status"] == "measured":
             _require(row["supported"] is True and seen == set(keys) and all(m["measurement_status"] == "measured" for m in measurements), "measured row incomplete")
             quality = row["quality"]
+            if table['schema']=='fleet.rung_allowability.v2':
+                _quality_scope_v2(quality,measurements,table['format'],q)
             _require(quality.get("measurement_status") == "measured" and quality.get("source_kind") == "actual_sampled_expert_weights" and quality.get("device") == "cpu" and quality.get("samples"), "CPU quality incomplete")
             for sample in quality["samples"]:
                 _require(_number(sample.get("relative_sse")) and _number(sample.get("source_squared_norm")) and sample["source_squared_norm"] > 0 and _integer(sample.get("exact_bytes")) and sample["exact_bytes"] > 0 and _text(sample.get("source_sha256")), "quality sample evidence")
@@ -370,9 +393,9 @@ _geometry_schema.update(type='object',required=['bits_per_256_weight_tile','alig
 _geometry_schema['required']+=['body_kind','decoder_kind','decoder_owner','execution_scope','word_ring']
 _geometry_schema['properties'].update({
     'body_kind':{'enum':['window','tcq']},
-    'decoder_kind':{'enum':['fused_window','compact_window','native_tcq','materialized_tcq']},
+    'decoder_kind':{'enum':['fused_window','compact_window','native_tcq']},
     'decoder_owner':{'type':'string','minLength':1},
-    'execution_scope':{'enum':['raw_packed_window','compact_packed_window','native_tcq_decode_gemm','materialized_tcq_gemm']},
+    'execution_scope':{'enum':['raw_packed_window','compact_packed_window','native_tcq_decode_gemm']},
     'word_ring':{'type':'object','required':['kind','owner'],'properties':{'kind':{'enum':['staged','none']},'owner':{'type':'string','minLength':1}}},
 })
 _geometry_schema['allOf']=[{'if':{'properties':{'body_kind':{'const':'window'}}},'then':{'properties':{'decode_width':{'required':['window_bits'],'properties':{'window_bits':{'type':'integer','minimum':1}}}}}},

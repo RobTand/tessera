@@ -31,7 +31,9 @@ facts. Compact WINDOW and TCQ record an explicitly absent WINDOW word ring,
 not positive placeholders. Native TCQ records real plane shapes/bytes,
 memory/span/arity, history lookup and native block/scale geometry; Triton
 register/spill/shared counts do not become fabricated ELF stack/local bytes.
-Materialized TCQ has a distinct scope and decoded-weight byte contract.
+Native TCQ requires the exact seven owner planes with element-size/shape byte
+identity. Version-two quality is bound to the actual encoder format, grid,
+arity, rung, structure and recipe; missing scope remains unmeasured.
 Unknown bodies/owners or missing facts refuse. Quality, anomaly, paired-mean,
 coverage and adjacent-higher witness rules are unchanged. Current index
 selection advances only after the consumer explicitly supports v2; earlier

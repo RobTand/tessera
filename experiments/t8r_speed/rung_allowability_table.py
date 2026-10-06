@@ -69,6 +69,16 @@ def body_geometry(head,cell,geometry,meta,grid):
         a.update(kind='tcq_planes',owner='tessera.compact_prep.prepare_span2_compact')
         d['history_lookup_bits']=d['memory']+1
         d['label_lut_entries']=a['plane_shapes']['label_lut'][-1]
+        # Element widths are observed bytes/numel; zero POINT keeps its actual
+        # byte-plane dtype from A4Unit.from_prepared, never a positive plane size.
+        a['plane_element_bytes']={}
+        for name,shape in a['plane_shapes'].items():
+            count=__import__('math').prod(shape)
+            if count:a['plane_element_bytes'][name]=a['plane_bytes'][name]//count
+            elif name=='point':
+                import torch
+                a['plane_element_bytes'][name]=torch.empty(0,dtype=torch.uint8).element_size()
+            else:a['plane_element_bytes'][name]=None
     else:
         resources=cell.get('compiler_resources',{})
         observed=cell.get('profile',{}).get('top',{})
@@ -151,11 +161,54 @@ def merge_index(index, format_name, build_id, version, relative, table):
     index['schema']='fleet.rung_allowability.index.v2'
     builds=index['formats'].setdefault(format_name, {'kernel_builds':{}})['kernel_builds']
     entry=builds.setdefault(build_id, {'current_version':version, 'versions':{}})
-    if str(version) in entry['versions']:
-        raise ValueError('table version already published; choose a new immutable version')
-    entry['versions'][str(version)]={'path':relative,'table_schema':table['schema'],'table_status':table['table_status']}
+    record={'path':relative,'table_schema':table['schema'],'table_status':table['table_status']}
+    if str(version) in entry['versions'] and entry['versions'][str(version)]!=record:
+        raise ValueError('conflicting immutable table version')
+    entry['versions'][str(version)]=record
     entry['current_version']=version
     return validate_index(index)
+
+
+def activate_published_index(publication):
+    """Select the staged immutable versions; never rerun their harvest."""
+    import copy,fcntl,os
+    publication=Path(publication)
+    with (publication/'.publication.lock').open('a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        selected=publication/'index.json';candidate_path=publication/'index.v2-candidate.json'
+        current=json.loads(selected.read_text())
+        candidate=json.loads(candidate_path.read_text())
+        validate_index(current);validate_index(candidate)
+        merged=copy.deepcopy(current);merged['schema']='fleet.rung_allowability.index.v2'
+        for format_name,format_entry in candidate['formats'].items():
+            builds=merged['formats'].setdefault(format_name,{'kernel_builds':{}})['kernel_builds']
+            for build_id,entry in format_entry['kernel_builds'].items():
+                dest=builds.setdefault(build_id,{'current_version':entry['current_version'],'versions':{}})
+                for version,record in entry['versions'].items():
+                    if version in dest['versions'] and dest['versions'][version]!=record:
+                        raise ValueError('conflicting immutable index history')
+                    dest['versions'][version]=record
+                version=str(entry['current_version']);record=entry['versions'][version]
+                table=json.loads((publication/record['path']).read_text())
+                validate_table(table)
+                if (table['schema']!=record['table_schema'] or table['table_status']!=record['table_status']
+                        or table['format']!=format_name or table['kernel_build']['id']!=build_id
+                        or table['table_version']!=entry['current_version']):
+                    raise ValueError('selected table/index bytes disagree')
+                dest['current_version']=entry['current_version']
+        validate_index(merged)
+        if current['schema']=='fleet.rung_allowability.index.v1':
+            history=publication/'index.v1-history.json'
+            if history.exists() and json.loads(history.read_text())!=current:
+                raise ValueError('immutable original index history differs')
+            if not history.exists():
+                with history.open('x') as stream:json.dump(current,stream,indent=2,allow_nan=False)
+        temporary=selected.with_suffix('.tmp')
+        with temporary.open('w') as stream:
+            json.dump(merged,stream,indent=2,allow_nan=False);stream.flush();os.fsync(stream.fileno())
+        temporary.replace(selected)
+        return {'status':'staged_candidate_selected','schema':merged['schema'],'formats':list(merged['formats'])}
+
 
 
 
@@ -172,7 +225,13 @@ def main():
     ap.add_argument('--activate-index',action='store_true',help='advance current selection after the consumer supports this explicit schema')
     ap.add_argument('--catalog',help='family owner catalog with exact recipes and concrete path refusals')
     ap.add_argument('--reader-findings',help='explicit source-specific correctness findings; existing anomaly holds remain canonical')
+    ap.add_argument('--quality-root',help='actual producer-scoped quality outputs, without retagging unscoped history')
     args=ap.parse_args()
+    if args.activate_index:
+        if not args.publish_root:raise ValueError('index activation needs publication root')
+        report=activate_published_index(args.publish_root)
+        print(json.dumps(report),flush=True)
+        return
     root=Path(args.root)
     format_name=args.format
     findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
@@ -208,11 +267,14 @@ def main():
     for facts in catalog.get('rungs',[]):
         by_rung[facts['q256']]['observations'].append({'kind':'producer_recipe_and_reader_scope','facts':facts,'blocking':False,'exclusion_basis':False})
     quality={'rungs':{}}
-    quality_paths=([root/'quality.json'] if (root/'quality.json').exists() else [])+sorted(root.glob('quality/*.json'))
+    quality_root=Path(args.quality_root) if args.quality_root else root/'quality'
+    quality_paths=([quality_root] if quality_root.is_file() else sorted(quality_root.glob('*.json')))
+    if not args.quality_root and (root/'quality.json').exists():quality_paths.insert(0,root/'quality.json')
     for quality_path in quality_paths:
         document=json.loads(quality_path.read_text())
-        if document.get('format',format_name)!=format_name:continue
+        if document.get('format')!=format_name:continue
         for rung,value in document.get('rungs',{}).items():
+            if not isinstance(value.get('scope'),dict):continue
             if rung in quality['rungs'] and quality['rungs'][rung]!=value:raise ValueError(f'conflicting quality evidence for rung {rung}')
             quality['rungs'][rung]=value
     # Prefer the quantum where the rung and its next neighbor share one F/R run.
@@ -309,13 +371,9 @@ def main():
         with (publication/'.publication.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
             selected_path=publication/'index.json'
-            current_path=selected_path if args.activate_index else publication/'index.v2-candidate.json'
+            current_path=publication/'index.v2-candidate.json'
             source_path=current_path if current_path.exists() else selected_path
             current=json.loads(source_path.read_text()) if source_path.exists() else {'schema':'fleet.rung_allowability.index.v2','formats':{}}
-            if args.activate_index and current.get('schema')=='fleet.rung_allowability.index.v1':
-                history=publication/'index.v1-history.json'
-                if not history.exists():
-                    with history.open('x') as stream:json.dump(current,stream,indent=2,allow_nan=False)
             merge_index(current,format_name,build_id,args.version,relative,table)
             destination=publication/relative
             destination.parent.mkdir(parents=True,exist_ok=True)
