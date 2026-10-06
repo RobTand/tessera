@@ -171,9 +171,11 @@ def main():
     ap.add_argument('--publish-root',help='publish immutable table and atomically advance merged index')
     ap.add_argument('--activate-index',action='store_true',help='advance current selection after the consumer supports this explicit schema')
     ap.add_argument('--catalog',help='family owner catalog with exact recipes and concrete path refusals')
+    ap.add_argument('--reader-findings',help='explicit source-specific correctness findings; existing anomaly holds remain canonical')
     args=ap.parse_args()
     root=Path(args.root)
     format_name=args.format
+    findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
     match=re.fullmatch(r'TESSERA_([A-Z0-9]+)_K(\d+)',format_name)
     if not match:raise ValueError('expected family format name, without a rung suffix')
     base,arity=match[1],int(match[2])
@@ -242,6 +244,12 @@ def main():
         row['measurements']=[candidates[(q,k['cell_id'])][1] for k in required if (q,k['cell_id']) in candidates]
         row['quality']=quality.get('rungs',{}).get(str(q),{'measurement_status':'pending'})
         row['anomaly_flags']=row['quality'].get('anomaly_flags',[])
+        for finding in findings:
+            if finding['format']==format_name and finding['kernel_sha']==meta['kernel_sha']:
+                flags=sorted(set(row['anomaly_flags'])|{finding['anomaly_flag']})
+                row['anomaly_flags']=flags
+                row['quality']['anomaly_flags']=flags
+                row['observations'].append({'kind':'reader_correctness_finding','blocking':True,'exclusion_basis':False,'finding':finding})
         row['lineage']={'quality_files':[str(p) for p in quality_paths],'geometry_files':sorted({m['evidence']['geometry_file'] for m in row['measurements']})}
         if len(row['measurements'])==len(required) and all(m['measurement_status']=='measured' for m in row['measurements']) and row['quality'].get('measurement_status')=='measured':
             row['measurement_status']='measured';row['supported']=True
