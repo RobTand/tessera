@@ -348,22 +348,25 @@ def compare(baseline: bytes, rows: Sequence[Mapping[str, Any]], *, requested_ms=
                 per_m[key] = verdict
                 continue
             row = matching[0]
+            raw_shape = row.get("rank_local_shape")
+            checked_shape = (None if raw_shape is None
+                             else _checked_rank_local_shape(
+                                 raw_shape,
+                                 where=f"{documented['selector']} M={m} row"))
             verdict["identity"]["row"] = {
                 "module": row["module"], "family": row["family"], "grid": row["grid"],
                 "q256": list(row["q256"]), "structure": row["structure"],
-                "rank_local_shape": ([list(pair) for pair in row["rank_local_shape"]]
-                                     if row["rank_local_shape"] is not None else None),
+                "rank_local_shape": ([list(pair) for pair in checked_shape]
+                                     if checked_shape is not None else None),
                 "scope_id": row["scope_id"], "panel_row_index": row["panel_row_index"]}
-            row_shape = row.get("rank_local_shape")
-            if row_shape is None:
+            if checked_shape is None:
                 verdict.update({"verdict": "geometry_missing",
                                 "reason": "row carries no rank-local geometry; unknown "
                                           "geometry is not agreement and the documented "
                                           "reference is never borrowed"})
                 per_m[key] = verdict
                 continue
-            row_shape = _checked_rank_local_shape(
-                row_shape, where=f"{documented['selector']} M={m} row")
+            row_shape = checked_shape
             if row_shape != tuple(tuple(pair) for pair in documented["rank_local_shape"]):
                 verdict.update({"verdict": "identity_mismatch",
                                 "reason": f"row rank-local shape "

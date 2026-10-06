@@ -337,6 +337,27 @@ def test_compare_refuses_malformed_geometry_on_raw_claims_by_name():
     for bad in (((2048,),), "2048x4096", ((2048, 4096), (4096, None))):
         with pytest.raises(ValueError, match="rank-local shape"):
             pb.compare(_synthetic_table(), [dict(good, rank_local_shape=bad)])
+def test_compare_names_omitted_geometry_without_indexing_it():
+    """An omitted rank-local key is unknown geometry, not a KeyError."""
+    from tessera.serving import panel_baseline as pb
+    good = _t8_row(pb)
+    omitted = dict(good)
+    del omitted["rank_local_shape"]
+    receipt = pb.compare(_synthetic_table(), [omitted])
+    verdict = receipt["groups"]["experts.T8"]["512"]
+    assert verdict["verdict"] == "geometry_missing"
+    assert verdict["identity"]["row"]["rank_local_shape"] is None
+    assert verdict.get("new") is None and "recorded" not in verdict
+
+
+def test_compare_names_scalar_geometry_before_serializing_it():
+    """Scalar shapes/pairs refuse by name; raw claims are validated first."""
+    from tessera.serving import panel_baseline as pb
+    good = _t8_row(pb)
+    for bad in (((2048, 4096), 512),   # not a pair: list(512) is a TypeError
+                512):                   # not a sequence of pairs at all
+        with pytest.raises(ValueError, match="rank-local shape"):
+            pb.compare(_synthetic_table(), [dict(good, rank_local_shape=bad)])
 
 
 def test_verify_table_binds_the_very_bytes_it_proved_over_a_pipe(tmp_path):
