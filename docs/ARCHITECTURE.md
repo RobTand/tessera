@@ -3479,7 +3479,10 @@ PB1496, where it had selected nothing for a deleted, renamed or recursively
 matched member). A base given as a string (`os.listdir("docs")`, or `os.walk(DOCS)` with
 `DOCS = "docs"`) is the same base as `Path("docs")`, placed or refused by the same
 boundary guard; before this only the `Path` spelling resolved, so a file added under a
-directory listed by string selected no reader. A glob called through a name resolves its receiver when the
+directory listed by string selected no reader. A string need not be a path (a bare
+`walk("mode")` is recognized by its name), so resolving one adds the edge and a module that
+can execute source keeps the unknown-loader flag it had while the string was unnamed. A
+glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
 the unbound method, called directly or through an alias
 (`Path.glob(DOCS, ...)`). A pattern that is absolute or

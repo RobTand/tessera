@@ -1019,7 +1019,7 @@ def _glob_receiver(loader, call, scope, root, refused, links):
     return owner, call.args
 
 
-def _enumeration_bases(loader, call, scope, root, refused, links):
+def _enumeration_bases(loader, call, scope, root, refused, links, from_string=None):
     """The base directories an enumeration call consumes, or ``None``.
 
     A directory-wide read consumes the directory's *membership*: what can
@@ -1052,6 +1052,8 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
             # a string path is the same base, placed (or refused) by the same
             # boundary guard.  Only the Path spelling was resolved, so a file
             # added under a directory listed by string selected no reader.
+            if from_string is not None and any(isinstance(base, str) for base in bases):
+                from_string.append(True)
             bases = {Path(base) if isinstance(base, str) else base for base in bases}
     else:  # glob and rglob: the receiver names the tree, the argument the pattern.
         receiver = _glob_receiver(loader, call, scope, root, refused, links)
@@ -1186,10 +1188,10 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
             continue
         loader = next(iter(loaders))
         if loader in _ENUMERATIONS:
-            refused, links = [], set()
+            refused, links, from_string = [], set(), []
             try:
                 targets = _enumeration_bases(
-                    loader, call, scope, root, refused, links)
+                    loader, call, scope, root, refused, links, from_string)
             except (OSError, ValueError, TypeError, RecursionError):
                 targets = None
             if targets is None:
@@ -1215,6 +1217,12 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
             else:
                 found.update(targets)
                 found.update(links)
+                if from_string:
+                    # A bare ``walk("mode")`` is recognized by its name alone, and
+                    # a string need not be a path.  Naming it adds the edge; it
+                    # must not replace the unknown-loader flag a module that can
+                    # execute source had while the string was "unnamed".
+                    unknown = unknown or wildcard(True)
             continue
         # Refusals by the boundary guard anywhere inside this call's
         # expressions, so the ``values is None`` below can tell "no target
