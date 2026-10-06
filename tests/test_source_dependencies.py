@@ -890,11 +890,13 @@ def test_a_module_glob_places_the_whole_literal_prefix(tmp_path):
 
 @pytest.mark.parametrize("source", [
     "import glob\nx = glob.glob('/etc/*.conf')\n",
-    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs') + '/*/../../outside/*.md')\n",
-], ids=["absolute", "parent-after-wildcard"])
+    "import glob\nx = glob.glob('/usr/*/../x/*.md')\n",
+], ids=["absolute", "absolute-parent-after-wildcard"])
 def test_a_module_glob_that_leaves_the_tree_stays_unnamed(tmp_path, source):
-    # An ABSOLUTE pattern that leaves the tree, or climbs out after a wildcard, is never
-    # stat'ed outside it.  Unlike a Path read it is NOT kept as an unplaced read: this
+    # An ABSOLUTE pattern outside the tree, or one that climbs after a wildcard, is never
+    # stat'ed outside it.  (One spelled from the tree's own root names a base INSIDE it and
+    # is an unplaced read instead: see the tests for a base named inside the tree.)  Unlike
+    # a Path read it is NOT kept as an unplaced read: this
     # tree's module globs of that kind name box locations (/usr/local/cuda-*,
     # /mnt/shared/...), and an unplaced read seeds its reader's consumers on every change
     # (#148).  It stays listed as an unnamed read, exactly as before.

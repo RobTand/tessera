@@ -1144,7 +1144,9 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     repository files, and an unplaced read seeds its reader's consumers on every
     change, which made ``serving/ext.py`` select the whole population (#148).
     ``root_dir``, ``dir_fd``, extra positional arguments, a pattern nothing names
-    and a ``..`` after the first wildcard also stay unnamed (#1010).
+    and a ``..`` after the first wildcard also stay unnamed (#1010), EXCEPT that a
+    pattern spelled from the tree's own root names a base inside it: a refusal or a
+    ``..`` there is kept as an unplaced read (#1010 review).
 
     A RELATIVE pattern names a directory relative to the process, and nothing here
     proves where that is: a ``chdir`` in this module, an alias of it, an imported
@@ -1158,20 +1160,34 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     patterns = _values(call.args[0], scope, root, refused=refused, links=links)
     if patterns is None or not all(isinstance(pattern, str) for pattern in patterns):
         return None
-    bases, specs = set(), []
+    bases, specs, names_tree = set(), [], False
+    root_parts = Path(os.path.normpath(str(root))).parts
     for pattern in patterns:
         prefix = _literal_prefix(pattern)
         base = Path(*prefix) if prefix else Path(".")
         if not PurePath(pattern).is_absolute():
             refused.append(base)
             return None
+        # A pattern spelled from the tree's own root names a base INSIDE it, even when
+        # its literal prefix stops early (a checkout name with glob metacharacters).
+        in_tree = PurePath(pattern).parts[:len(root_parts)] == root_parts
+        names_tree = names_tree or in_tree
         if ".." in PurePath(pattern).parts[len(prefix):]:
+            if in_tree:
+                refused.append(base)
             return None
         bases.add(base)
         components = _wildcard_directory_components(pattern, prefix)
         if components:
             specs.append((base, components))
-    placed = _place(bases, root, [], links)
+    declined = []
+    placed = _place(bases, root, declined, links)
+    if placed is None and names_tree:
+        # A base named inside the tree that the guard declines (a directory that is a link out
+        # of it) cannot be attributed to a file: the #338 uncertainty.  A base outside the tree,
+        # a box path, stays unnamed.
+        refused.extend(declined)
+        return None
     if placed is not None and specs:
         placed = _with_link_targets(placed, specs, root, refused, links)
     if placed is not None and from_string is not None:

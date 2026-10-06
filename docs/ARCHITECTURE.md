@@ -3576,6 +3576,9 @@ pattern: the literal directory in front of the first wildcard is placed like any
 and a module that can execute source keeps its unknown-loader flag. A base outside the tree
 (an absolute box path, a pattern that climbs out) stays unnamed and is listed, not kept as an
 unplaced read, because that would select the readers' consumers on every change (#1010). A
+pattern spelled from the tree's own root names a base inside it, so a refusal there (a link out of
+the tree) or a `..` after a wildcard is kept as an unplaced read, as a `Path` read would be, even
+when a glob metacharacter in the checkout's own name stops the literal prefix early. A
 RELATIVE pattern or string base (`glob.glob('docs/*.md')`, `os.listdir('docs')`) depends on the
 process directory, which nothing here proves -- a `chdir`, an alias of it, an imported helper or a
 fixture can move it -- so it is kept as an unplaced read and never resolved against the tree's
