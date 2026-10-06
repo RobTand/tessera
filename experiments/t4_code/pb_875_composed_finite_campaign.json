@@ -17,6 +17,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -55,6 +56,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -93,6 +95,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -131,6 +134,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -169,6 +173,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -207,6 +212,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -245,6 +251,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -283,6 +290,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -321,6 +329,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -359,6 +368,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -397,6 +407,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -435,6 +446,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -473,6 +485,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -511,6 +524,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
@@ -549,6 +563,7 @@
     "env": {
       "ORACLE_IMAGE": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
       "PB_CLIENT_ROOT": "/mnt/shared/prismabuild-fleet/repo",
+      "TEST_RUNNER_SP": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/runtime-repair-20261006/runner-sp",
       "OMP_NUM_THREADS": "1",
       "MKL_NUM_THREADS": "1",
       "OPENBLAS_NUM_THREADS": "1",
