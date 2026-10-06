@@ -278,3 +278,56 @@ cache-bandwidth roofline, limiting-resource conclusion, packed-wire equality,
 G2 unit timing, production optimization or issue closure is claimed here.
 Do not optimize production code from this partial packet.
 
+### Later completion events on 2026-10-06
+
+The five previously pending timing and host-profile actions subsequently
+executed with return code zero, without resubmission or an admission bypass.
+All four geometry cases now have reference-identical states and squared
+errors for both forms and both rates.
+
+| Rung | Rows | Front median seconds | Incumbent best median seconds |
+|---|---:|---:|---:|
+| 1088 | 2048 | 0.06914 | 0.02289 |
+| 1088 | 4096 | 0.16390 | 0.04677 |
+| 1152 | 2048 | 0.06942 | 0.02405 |
+| 1152 | 4096 | 0.13084 | 0.04856 |
+
+All 24 timing blocks have bracketed full power coverage. Across the eight
+form/configuration reductions, the maximum mean-seconds rounding difference
+is 0.000004680 and the maximum work-per-joule difference is 0.048344.
+
+The Torch action
+`a7fc61ae6ef7ab2e274839d15739e73537e8a6ca620ccb59a9213c6b99bc9b5b`
+produced 82,825 trace events, retained as the 553,371-byte compressed blob
+`605dae0b0197fbfc94275aa3906b5974d274f7006bfcf469f22c8f1a30d4defd`.
+Its aggregate device times include 246.1048 milliseconds over 32,768 front
+step launches and 84.5407 milliseconds over 8,190 best-form step launches.
+These are profiled aggregate device times, not unprofiled wall latency.
+
+The Python sampling action
+`0b79337e87335b97de41650d776b5ac14bf8a69094758921e06152d1995e2ea6`
+produced 2,376 samples with zero sampling errors using py-spy 0.4.2 at
+100 samples per second. Blob
+`e87f6315fdfe0953821b54ee13803de446d5ac4eea928cf08f5a3e4458915502`
+contains the actual sampled stacks: 1,092 leaf samples in graph replay and
+526 in CUDA synchronization. Sampling includes startup and correctness work;
+it does not by itself quantify CPU compute overhead or identify a roofline.
+Both profile blobs' bytes were checked against their recorded digests.
+
+CPU action
+`3a09f81f09161753983dd83d6b720a5fd856b863c21552ba08a8e7916d074049`
+returned zero and retained both-Spark Netdata responses for every remaining
+completed timing and host-profile window. Native power cadence remains ten
+seconds. In particular, the nine-second Torch window cannot establish a
+fresh per-kernel power reading; returned one-second buckets do not fix that.
+
+The two Nsight Compute actions still lack observed completion evidence:
+`925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889`
+(incumbent) and
+`5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab`
+(front control). Their published completion client is retained. The last
+admission diagnostic recorded actual host-idle/transition safety holds;
+no new seal or permission requirement was introduced. Cache counters,
+achieved resident bandwidth and a limiting-resource conclusion remain
+unmeasured, so the full issue 652 acceptance is still open.
+
