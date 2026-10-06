@@ -143,9 +143,8 @@ sites × 15 shapes, including the sequence-parallel shards and ragged 2049,
 with realistic and adversarial inputs. Corrected integer-view gates cover
 the same population; no historical receipt is relabeled as a corrected result.
 
-**Historical timing** (PB `286a7d3b`, sparky, exclusive GPU; not remeasured for
-the corrected source), ms per site:
-`timing-c52a7602/mhc_fused_probe.json`), ms per site:
+**Historical timing** (PB `286a7d3b`, sparky, exclusive GPU,
+`timing-c52a7602/mhc_fused_probe.json`), ms per site; not remeasured for the corrected source:
 
 | Site, tokens@batch (split) | Stock | Fused (historical source) | Floor at 273 GB/s |
 |---|---|---|---|
