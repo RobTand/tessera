@@ -1,30 +1,33 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-06 for the issue931 correctness investigation: the separate
-opt-in `WINDOW_MODE=investigate-eager-determinism-2048` uses the existing
-managed rank lifecycle at A8S/socket/TP2/resident/c1 and maximum batched
-tokens 4096. It first restarts both rank servers for two all-OFF blocks.
-Each block uses only the frozen L2048 prompt population: one warmup and ten
-timed requests, 128 completion tokens, temperature zero, ignore end-of-sequence,
-unchanged speculative decoding with one draft token and draft parallelism two.
-The versioned control client sends request seeds 0 through 10; both rank
-server command lines request initialization seed zero. Effective internal
-random state is not exposed by the streaming API and is not claimed observed.
-Full decoded completion text, length termination, usage, prompt hashes and
-trial identities are retained and compared, including the warmup.
-An OFF/OFF difference is classified as serving nondeterminism and refuses
-every lever launch. Only matching OFF blocks permit the three fresh single
-lever blocks: dense/shared decode-once, KDA split, then piece-major, leaving
-the other two flags OFF. This is not a routed per-chunk decode-once claim.
-The native manifest uses normal priority zero; actual D42 Stage One priority
-handoff precedes publication. The driver dry run imports the real client,
-parses its arguments, checks prompt shapes and reads bounded samples from
-every actual artifact input. Existing D30 guards, admission caps, executing
-code reviews, byte integrity and paired-rank comparability remain unchanged.
-There are no correctness-only profiles, energy or speed claims. The existing
-33-output OFF/ON ship comparison and its at-least-one-ON requirement remain
-unchanged; no adoption, quality, shipping or serving-pin admission is granted.
-See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
+directive. Two explicit opt-in scopes extend the existing managed rank
+lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
+both-rank all-OFF blocks; `WINDOW_MODE=investigate-eager-piece-major-2048`
+then runs a fresh matched OFF comparator and piece-major alone. Each native
+gang is priority -10 and bounded to 1800 seconds total, including the existing
+180-second cleanup reserve. Peer admission is bounded to 120 seconds within
+that same lifetime. No D42 or campaign release wait precedes publication.
+The resident A8S/socket/TP2/eager/L2048/c1, maximum batched tokens 4096 and
+one speculative draft token contract is unchanged. Every block retains all
+eleven responses (one warmup and ten timed), 128 completions, initialization
+seed zero and explicit request seeds zero through ten. Decode-once and KDA
+split stay OFF throughout the piece-major phase.
+An OFF/OFF mismatch is retained as serving nondeterminism, not a blanket
+prohibition on lever measurement. Actual matched OFF request durations and
+observed selfvariation are recorded before ON; these finite observations
+are not a confidence interval or numerical quality-equivalence proof. The
+unchanged streamed client has no requested numerical quality observation:
+decoded text, termination and usage cannot supply a logits-based tolerance.
+Piece-major OFF and ON use the existing separate profile instrument and
+both-Spark Netdata power collection; missing profiles, power or effective
+path evidence cannot establish a performance/default-on claim.
+The 107 GiB start gate, 900-second headroom wait, 104 GiB host/102 GiB GPU
+subset caps, strict one-Hertz below-two-GiB guard, exact owned cleanup, byte
+integrity and paired-rank comparability remain unchanged. The same entry
+point must pass a fresh CPU PrismaBuild preflight after source/argument
+changes. The existing full 33-output ship gate, quality gates, defaults and
+serving pin do not change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
 Re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index

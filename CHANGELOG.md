@@ -1,16 +1,17 @@
 # Changelog
 
-## 2026-10-06 — issue931: seeded L2048 determinism investigation
+## 2026-10-06 — issue 1002: bounded seeded control and piece-major phases
 
-Add a dedicated correctness-only OFF/OFF restart control to the existing
-managed TP2 rank lifecycle. The versioned client retains eleven full streamed
-responses per arm, with explicit request and server initialization seeds.
-Only complete OFF/OFF equality permits each of the three levers individually;
-a self-mismatch reports serving nondeterminism and starts no lever server.
-The reduced population does not replace the existing 33-output ship gate.
-The manifest uses normal priority zero and waits for the actual D42 Stage One
-priority handoff before publication. CPU input preflight and regressions are
-not served determinism, performance, quality, adoption or shipping evidence.
+Replace the five-arm 90-minute diagnostic with two explicit native gang
+phases: two fresh OFF blocks first, then matched OFF and piece-major alone.
+Each phase is priority -10, at most 1800 seconds including cleanup, with no
+campaign release wait. All eleven seeded L2048 outputs remain mandatory.
+Serving nondeterminism is recorded without suppressing later measurement;
+actual OFF timing selfvariation is preregistered, not an invented quality
+tolerance. Piece-major collects the existing profile and power evidence.
+Original memory/isolation guards and the strict 33-output ship gate remain.
+Default-off, quality, adoption, ship and pin decisions are unchanged.
+Fresh same-entry CPU preflight and exact-head review precede changed GPU work.
 
 ## 2026-10-06 — issue 995: exact-field native span-two reads
 

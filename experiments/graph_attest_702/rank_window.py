@@ -483,15 +483,15 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
         atomic_json(meeting.path, owned)
         if isinstance(adapter, LocalArm):
             event = dict(event="both_halves_claimed", identities=[owned, meeting.peer],
-                         requested_pb_timeout_s=5400, effective_pb_timeout_s=None, peer_wait_seconds=3600,
+                         requested_pb_timeout_s=config.get("window_seconds", WINDOW_SECONDS), effective_pb_timeout_s=None,
+                         peer_wait_seconds=config.get("peer_wait_seconds", 3600),
                          runtime_commit=config["source_commit"], producer_commit=config["producer_commit"])
             atomic_json(rdv / f"both-claimed-rank{owned['rank']}.json", event)
             print(json.dumps(event, sort_keys=True), flush=True)
         for arm in arms:
-            if config.get("window_mode") == recipe.DETERMINISM_MODE:
-                from eager_determinism import NAMES, require_deterministic_off
-                if arm["arm"] in NAMES[2:]:
-                    require_deterministic_off(rdv)  # before either local rank starts a lever server
+            if config.get("window_mode") == recipe.PIECE_MAJOR_MODE and arm["arm"] == "control_piece_major":
+                from eager_determinism import require_piece_major_control
+                require_piece_major_control(rdv, config)  # both ranks before either ON server starts
             current = arm
             meeting.check()
             envelope.remaining()
@@ -641,7 +641,8 @@ def main():
     owned = dict(rank=args.rank, action_key=key, nonce=nonce, scope_id=scope, host=HOSTS[args.rank],
                  container_owner=os.environ["PRISMABUILD_CONTAINER_OWNER"], claimed_unix=row["claimed_unix"],
                  run_id=setup["run_id"], input_sha256=recipe.sha(args.run),
-                 window_end_unix=row["claimed_unix"] + WINDOW_SECONDS)
+                 window_end_unix=row["claimed_unix"] + setup["window_seconds"],
+                 peer_wait_seconds=setup["peer_wait_seconds"])
     require_claim(owned, queue)
     envelope = Envelope(owned["window_end_unix"])
     current = recipe.inputs(os.environ, live=True, runner=envelope.run)
@@ -691,7 +692,7 @@ def main():
         proof = dict(owned, config=config, image=image, native_gpu_work=False, model_containers_started=0,
                      cpu_parser_containers_started=len(parsers), profiler_parsers=parsers, real_cgroup_sample=sampler,
                      requested_pb_timeout_s=120, effective_pb_timeout_s=None,
-                     model_window_seconds=WINDOW_SECONDS, peer_wait_seconds=3600,
+                     model_window_seconds=setup["window_seconds"], peer_wait_seconds=setup["peer_wait_seconds"],
                      rendered_arms=[a["arm"] for a in setup["arms"]])
         atomic_json(rdv / f"cpu-role-preflight-rank{args.rank}.json", proof)
         print(json.dumps(proof, sort_keys=True), flush=True)

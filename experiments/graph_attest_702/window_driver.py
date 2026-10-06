@@ -29,12 +29,12 @@ def dry_arm(name: str, env: dict):
     if (Path(config["receipts"]) / name).exists():
         raise Refused("an arm's receipts are never merged into an existing arm")
     print(f"arm {name} (dry run): local PB rank action on each host; start nothing")
-    print(f"  5400-second whole-window including rendezvous/all named arms/owned cleanup; {CLEANUP_SECONDS}s cleanup reserve")
+    print(f"  {config.get('window_seconds', WINDOW_SECONDS)}-second whole-window including rendezvous/all named arms/owned cleanup; {CLEANUP_SECONDS}s cleanup reserve")
     print(f"  both hosts: MemAvailable >= {MEMORY_POLICY['start_gib']} GiB; 1 Hz strict <2 GiB dual-rank abort; native threads=1")
     for rank in (0, 1):
         print(f"  serve rank{rank}: {shlex.join(recipe.serve(config, arm, rank))}")
-    if config.get("window_mode") == recipe.DETERMINISM_MODE:
-        print("  correctness only: L2048, one warmup plus ten timed requests, request seeds 0..10, server seed 0; fresh rank servers per arm")
+    if config.get("window_mode") in recipe.PHASE_MODES:
+        print("  all eleven L2048 seeded outputs; fresh servers per block; matched OFF and separate profiles/power for piece-major only")
     else:
         print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
               "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
@@ -48,16 +48,16 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
                            demand=dict(cpu=8 if rank == 0 else 6, mem_gb=MEMORY_POLICY["host_cap_gib"], gpu=1),
                            gpu_memory_gb=MEMORY_POLICY["gpu_subset_cap_gib"], exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
-                           priority=0 if config.get("window_mode") == recipe.DETERMINISM_MODE else 10, priority_reason=(("Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
+                           priority=-10 if config.get("window_mode") in recipe.PHASE_MODES else 10, priority_reason=(("Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
                                                         "Goal: exact reviewed A8S eager pair ") + config["window_mode"]
                                                         if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
                                                         "Goal: full nominated A8 graph control after exact-head review; one paired window at a time"),
-                           container_images=[config["image"]], timeout_s=WINDOW_SECONDS,
+                           container_images=[config["image"]], timeout_s=config.get("window_seconds", WINDOW_SECONDS),
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
                                                           "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
-                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT") if key in env},
+                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST") if key in env},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
-                                "GRAPH_PEER_WAIT_SECONDS": "3600",
+                                "GRAPH_PEER_WAIT_SECONDS": str(config.get("peer_wait_seconds", 3600)),
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                                                         "NUMEXPR_NUM_THREADS", "MAX_JOBS")},
                                 "PYTHONDONTWRITEBYTECODE": "1"}))
@@ -129,11 +129,11 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
             directory.chmod(0o777)
     atomic_json(root / "memory-policy.json", MEMORY_POLICY)
     setup = dict(schema=("tessera.ship_graph_window.v1" if mode == recipe.GRAPH_SHIP_MODE else
-                         "tessera.eager_determinism_window.v1" if mode == recipe.DETERMINISM_MODE else
+                         "tessera.eager_determinism_window.v1" if mode in recipe.PHASE_MODES else
                          "tessera.eager_lever_window.v1" if mode == recipe.EAGER_LEVER_MODE else
                          "tessera.window4_eager_window.v1" if mode in recipe.BENCHMARK_PAIRS else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
-                 config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
-                 requested_pb_timeout_s=WINDOW_SECONDS, effective_pb_timeout_s=None, peer_wait_seconds=3600,
+                 config=config, arms=arms, window_seconds=config.get("window_seconds", WINDOW_SECONDS), cleanup_seconds=CLEANUP_SECONDS,
+                 requested_pb_timeout_s=config.get("window_seconds", WINDOW_SECONDS), effective_pb_timeout_s=None, peer_wait_seconds=config.get("peer_wait_seconds", 3600),
                  predecessors=predecessors, diskcheck=disks,
                  census_action_keys=census_keys,
                  memory_policy_sha256=recipe.sha(root / "memory-policy.json"),
@@ -172,7 +172,7 @@ def submit(root: Path, reviews: Path):
                RECEIPTS=setup["config"]["receipts"], FABRIC=setup["config"]["fabric"],
                SOURCE_COMMIT=setup["config"]["source_commit"], SOURCE_SHA256=setup["config"]["src_sha256"],
                PRODUCER_COMMIT=setup["config"]["producer_commit"], PRODUCER_SHA256=setup["config"]["producer_sha256"])
-    for key, field in (("WINDOW_MODE", "window_mode"), ("ARTIFACT_MANIFEST", "artifact_manifest"), ("PQ_PIN_COMMIT", "pq_pin_commit")):
+    for key, field in (("WINDOW_MODE", "window_mode"), ("ARTIFACT_MANIFEST", "artifact_manifest"), ("PQ_PIN_COMMIT", "pq_pin_commit"), ("CONTROL_ROOT", "control_root"), ("PROFILE_MANIFEST", "profile_manifest")):
         if field in setup["config"]:
             env[key] = setup["config"][field]
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
@@ -245,10 +245,12 @@ def submit(root: Path, reviews: Path):
                 or any(not isinstance(key, str) or len(key) != 64 for key in gang["members"])):
             raise Refused("native gang driver returned an incomplete two-member identity")
         atomic_json(root / "native-gang.json", gang)
+        wait_argv = [sys.executable, str(PB / "pbwait.py"), "--json", "--wait-s", "6000", *gang["members"]]
+        atomic_json(root / "completion-client.json", dict(group=gang, driver_pid=os.getpid(),
+                    published_client=str(PB / "pbwait.py"), argv=wait_argv, ownership="Both members and exact physical collector"))
+        print(json.dumps(dict(event="native_gang_published", **gang)), flush=True)
         with (root / "member-completion.json").open("w") as completed:
-            done = subprocess.run([sys.executable, str(PB / "pbwait.py"), "--json",
-                                   "--wait-s", "6000", *gang["members"]],
-                                  stdout=completed, stderr=log)
+            done = subprocess.run(wait_argv, stdout=completed, stderr=log)
     physical = collect(root, QUEUE)
     if not physical["ownership_released"]:
         raise Refused(f"physical handoff unproven; preserve ownership and logs: {physical['error']}")
@@ -276,7 +278,7 @@ def main():
     args = ap.parse_args()
     if args.dry_run:
         if args.preflight_output:
-            if os.environ.get("WINDOW_MODE") != recipe.DETERMINISM_MODE:
+            if os.environ.get("WINDOW_MODE") not in recipe.PHASE_MODES:
                 raise Refused("input preflight output requires the explicit seeded investigation scope")
             from eager_determinism import input_preflight
             config = recipe.inputs(dict(os.environ), live=False)

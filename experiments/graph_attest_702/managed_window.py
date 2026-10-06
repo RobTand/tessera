@@ -255,13 +255,14 @@ class Rendezvous:
 
     def bind_peer(self, *, tick=None) -> None:
         path = self.root / f"rank{1 - self.rank}.json"
-        peer_end = time.monotonic() + (self.identity["claimed_unix"] + PEER_WAIT_SECONDS - time.time())
+        peer_wait = self.identity.get("peer_wait_seconds", PEER_WAIT_SECONDS)
+        peer_end = time.monotonic() + (self.identity["claimed_unix"] + peer_wait - time.time())
         if time.monotonic() >= peer_end:
-            raise TimeoutError("3600-second peer admission deadline expired")
+            raise TimeoutError(f"{peer_wait}-second peer admission deadline expired")
         while not path.exists():
             self.envelope.remaining()
             if time.monotonic() >= peer_end:
-                raise TimeoutError("3600-second peer admission deadline expired")
+                raise TimeoutError(f"{peer_wait}-second peer admission deadline expired")
             require_claim(self.identity, self.queue)
             if tick:
                 tick()
@@ -273,7 +274,7 @@ class Rendezvous:
             raise Refused("peer belongs to a different host/run/input tuple")
         require_claim(value, self.queue)
         self.peer = value
-        self.envelope.tighten(value["claimed_unix"] + WINDOW_SECONDS)
+        self.envelope.tighten(value["window_end_unix"])
         self.check()
 
     def wait(self, stage: str, *, tick=None) -> dict:
