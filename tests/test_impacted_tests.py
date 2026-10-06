@@ -2182,9 +2182,30 @@ _UNNAMED_DIRECTORY_READ_MODULES = 117
 _UNNAMED_DIRECTORY_READ_SITES = 178
 
 
+def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
+    return (modules, sites) > (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES)
+
+
+@pytest.mark.parametrize("modules, sites, exceeds", [
+    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES, False),
+    (_UNNAMED_DIRECTORY_READ_MODULES - 1, _UNNAMED_DIRECTORY_READ_SITES, False),
+    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES - 1, False),
+    (_UNNAMED_DIRECTORY_READ_MODULES + 1, _UNNAMED_DIRECTORY_READ_SITES, True),
+    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
+    # Fewer modules with more sites is still a gained read; a tuple comparison
+    # orders on the module count first and lets it through.
+    (_UNNAMED_DIRECTORY_READ_MODULES - 1, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
+    (1, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
+    (_UNNAMED_DIRECTORY_READ_MODULES + 1, 1, True),
+])
+def test_the_unnamed_directory_read_ceiling_bounds_modules_and_sites_independently(
+        modules, sites, exceeds):
+    assert _exceeds_unnamed_directory_read_ceiling(modules, sites) is exceeds
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())
-    assert (len(listed), sites) <= (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES), (
+    assert not _exceeds_unnamed_directory_read_ceiling(len(listed), sites), (
         "a directory read whose base cannot be named was added; name its base, "
-        "or raise the ceiling here with the reason", sorted(listed))
+        "or raise the ceiling here with the reason", len(listed), sites, sorted(listed))
