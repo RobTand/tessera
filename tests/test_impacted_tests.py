@@ -2565,6 +2565,30 @@ def test_an_anchored_module_glob_is_selected_only_by_its_own_directory(tmp_path)
     assert "tests/test_lister.py" in own["tests"], own
 
 
+def test_an_anchored_module_glob_behind_an_outside_bridge_selects_the_reader_for_any_change(tmp_path):
+    """``docs`` leaves the tree and the bridge may lead back to ``data``: a named in-tree base the
+    guard declines keeps the reader for every change (``data/later.md``, a basename it never
+    names)."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert glob.glob(str(ROOT / 'docs' / '*.md')) is not None\n"),
+        "data/seed.md": "x\n"})
+    (outside / "bridge").symlink_to(repo / "data", target_is_directory=True)
+    (repo / "docs").symlink_to(outside, target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "docs leaves the tree")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "an unmentioned member of data")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

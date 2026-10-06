@@ -906,6 +906,42 @@ def test_a_module_glob_that_leaves_the_tree_stays_unnamed(tmp_path, source):
     assert not unplaced and not unknown, (unknown, unplaced)
 
 
+def test_a_pattern_named_inside_the_tree_whose_directory_is_an_outside_bridge_stays_unplaced(
+        tmp_path, monkeypatch):
+    # ``docs`` is a link that leaves the tree: the pattern names a base INSIDE the tree and the
+    # guard declines to follow it, so what it reads cannot be attributed to a file.  Unlike a
+    # box path such as /usr/local/cuda-*, this is a named in-tree base and keeps the #338
+    # uncertainty (#1010 review).
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "docs").symlink_to(outside, target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
+    found, unknown, unplaced = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n", root)
+    assert outside not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_a_checkout_whose_name_has_glob_metacharacters_keeps_an_anchored_read_unplaced(tmp_path):
+    # The literal prefix stops at ``repo[1]``, which would put the base OUTSIDE the tree and make
+    # the read look like an unnamed box path.  The pattern lexically starts with the root, so it
+    # names a base inside it (#1010 review).
+    root = tmp_path / "repo[1]"
+    (root / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n", root)
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_a_pattern_named_inside_the_tree_that_climbs_after_a_wildcard_stays_unplaced(tmp_path):
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs') + '/*/../../x/*.md')\n", tmp_path)
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
 def test_an_unnamed_module_glob_still_escalates_in_a_module_that_executes_source(tmp_path):
     found, unknown, unplaced = _scan_full(
         "import glob\nexec('pass')\nx = glob.glob('/usr/local/cuda-*')\n", tmp_path)
