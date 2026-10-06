@@ -268,3 +268,72 @@ def test_the_reviewer_cli_compares_a_validated_panel_bytes_pinned(tmp_path):
     for selector in FOUR_GROUPS:
         assert all(v["verdict"] == "no_panel_row"
                    for v in receipt["groups"][selector].values())
+
+
+# --- corrective regression set (2026-10-06 review at
+# d894dae67cb93b8d5eddbae5d1da720a95611c0b): geometry agreement, one owned
+# buffer, and input grammar at the comparator boundary.  These run without
+# Torch and without the preserved tables: the baseline is a synthetic table
+# whose recorded statistics follow the bench rule exactly.
+
+
+def _synthetic_table(groups=FOUR_GROUPS, samples=(1.0, 2.0, 3.0, 4.0)):
+    """A valid recorded-rule table: every cell carries the bench's own stats."""
+    from tessera.serving import panel_baseline as pb
+    cell = {"samples_ms": list(samples)}
+    cell.update(pb.bench_summarize(samples))
+    results = []
+    for selector in groups:
+        documented = next(g for g in pb.BASELINE_GROUPS if g["selector"] == selector)
+        results.append({
+            "group": selector,
+            "module": documented["module"],
+            "kind": documented["kind"],
+            "info": {"scheme_family": documented["family"],
+                     "grid": documented["grid"],
+                     "q256": {"w13": documented["q256"][0],
+                              "w2": documented["q256"][1]}},
+            "timings": {str(m): dict(cell) for m in pb.REQUESTED_MS},
+        })
+    return json.dumps({"results": results}).encode()
+
+
+def _t8_row(pb, **overrides):
+    documented = next(g for g in pb.BASELINE_GROUPS if g["selector"] == "experts.T8")
+    kwargs = dict(structure="routed_moe", module=documented["module"],
+                  family="TESSERA_FP8", grid="E4M3", q256=(1024, 1024),
+                  rank_local_shape=((2048, 4096), (4096, 1024)),
+                  m=512, median_ms=2.5, samples_n=30)
+    kwargs.update(overrides)
+    return pb.row_view(**kwargs)
+
+
+def test_geometry_unknown_is_nonpassing_and_never_borrows_the_reference():
+    """A row without its own rank-local geometry is not agreement with it."""
+    from tessera.serving import panel_baseline as pb
+    row = _t8_row(pb, rank_local_shape=None)
+    receipt = pb.compare(_synthetic_table(), [row])
+    verdict = receipt["groups"]["experts.T8"]["512"]
+    assert verdict["verdict"] == "geometry_missing"
+    assert verdict["identity"]["row"]["rank_local_shape"] is None
+    assert verdict.get("new") is None and "recorded" not in verdict
+
+
+def test_geometry_malformed_refuses_at_the_row_boundary_with_a_name():
+    from tessera.serving import panel_baseline as pb
+    for bad in (((2048, 4096), 512),                    # not a pair
+                ((2048, 4096), (4096, 512.5)),          # not integers
+                ((2048, 4096), (4096, "1024")),         # not integers
+                (),                                     # nothing to agree with
+                ((0, 4096), (4096, 1024))):             # nonpositive dimension
+            with pytest.raises(ValueError, match="rank-local shape"):
+                _t8_row(pb, rank_local_shape=bad)
+
+
+def test_compare_refuses_malformed_geometry_on_raw_claims_by_name():
+    """compare owns the boundary too: dict claims cannot smuggle geometry in."""
+    from tessera.serving import panel_baseline as pb
+    good = _t8_row(pb)
+    for bad in (((2048,),), "2048x4096", ((2048, 4096), (4096, None))):
+        with pytest.raises(ValueError, match="rank-local shape"):
+            pb.compare(_synthetic_table(), [dict(good, rank_local_shape=bad)])

@@ -161,11 +161,39 @@ def row_view(*, structure: str, module: str, family: str, grid: str, q256: tuple
     if not q256 or any(type(q) is not int or q < 1 for q in q256):
         raise ValueError("row q256 must be a nonempty tuple of positive rung integers")
     if rank_local_shape is not None:
-        rank_local_shape = tuple(tuple(int(x) for x in pair) for pair in rank_local_shape)
+        rank_local_shape = _checked_rank_local_shape(rank_local_shape, where="row view")
     return {"structure": structure, "module": str(module), "family": str(family),
             "grid": str(grid), "q256": q256, "rank_local_shape": rank_local_shape,
             "m": m, "median_ms": float(median_ms), "samples_n": samples_n,
             "scope_id": scope_id, "panel_row_index": panel_row_index}
+
+
+def _checked_rank_local_shape(shape: Any, *, where: str) -> tuple:
+    """Rank-local geometry is agreement material, so it must be complete and
+    well-formed to count: a nonempty sequence of ``(rows, columns)`` pairs of
+    positive integers, refused by name otherwise.  ``None`` means unknown and
+    is decided by the caller (``compare`` never treats it as agreement); a
+    malformed value never reaches a comparison."""
+    if isinstance(shape, (str, bytes)) or not isinstance(shape, (tuple, list)):
+        raise ValueError(f"{where}: rank-local shape {shape!r} must be a sequence of "
+                         "(rows, columns) integer pairs")
+    pairs = []
+    for pair in shape:
+        if (isinstance(pair, (str, bytes)) or not isinstance(pair, (tuple, list))
+                or len(pair) != 2):
+            raise ValueError(f"{where}: rank-local shape {shape!r} must be a sequence "
+                             "of (rows, columns) integer pairs")
+        rows, columns = pair
+        if (isinstance(rows, bool) or isinstance(columns, bool)
+                or not isinstance(rows, int) or not isinstance(columns, int)
+                or rows < 1 or columns < 1):
+            raise ValueError(f"{where}: rank-local shape {shape!r} requires positive "
+                             "integer (rows, columns) pairs")
+        pairs.append((rows, columns))
+    if not pairs:
+        raise ValueError(f"{where}: rank-local shape must carry at least one "
+                         "(rows, columns) pair")
+    return tuple(pairs)
 
 
 def _identity(row_or_group: Mapping[str, Any], fields=("structure", "module", "family",
@@ -250,9 +278,11 @@ def compare(baseline: bytes, rows: Sequence[Mapping[str, Any]], *, requested_ms=
     median lies inside the recorded [p25, p75]; ``gap`` outside with the
     numbers; ``no_panel_row`` when no row carries that identity;
     ``identity_mismatch`` when a row matched the module/family/grid/rate key
-    but disagreed on the documented rank-local shape; ``insufficient_samples``
-    when the row carries fewer than three samples.  Duplicated rows for one
-    (group, M) refuse.
+    but disagreed on the documented rank-local shape; ``geometry_missing``
+    when the row carries no rank-local geometry of its own -- unknown
+    geometry is not agreement, the reference is never borrowed, and no new
+    median is compared; ``insufficient_samples`` when the row carries fewer
+    than three samples.  Duplicated rows for one (group, M) refuse.
     """
     where = "baseline"
     proof = verify_recorded_statistics(baseline, where=where)
@@ -315,11 +345,20 @@ def compare(baseline: bytes, rows: Sequence[Mapping[str, Any]], *, requested_ms=
                 "rank_local_shape": ([list(pair) for pair in row["rank_local_shape"]]
                                      if row["rank_local_shape"] is not None else None),
                 "scope_id": row["scope_id"], "panel_row_index": row["panel_row_index"]}
-            if (row["rank_local_shape"] is not None
-                    and tuple(row["rank_local_shape"]) != tuple(documented["rank_local_shape"])):
+            row_shape = row.get("rank_local_shape")
+            if row_shape is None:
+                verdict.update({"verdict": "geometry_missing",
+                                "reason": "row carries no rank-local geometry; unknown "
+                                          "geometry is not agreement and the documented "
+                                          "reference is never borrowed"})
+                per_m[key] = verdict
+                continue
+            row_shape = _checked_rank_local_shape(
+                row_shape, where=f"{documented['selector']} M={m} row")
+            if row_shape != tuple(tuple(pair) for pair in documented["rank_local_shape"]):
                 verdict.update({"verdict": "identity_mismatch",
                                 "reason": f"row rank-local shape "
-                                          f"{[list(p) for p in row['rank_local_shape']]} "
+                                          f"{[list(p) for p in row_shape]} "
                                           "differs from the documented #685 reference "
                                           f"{[list(p) for p in documented['rank_local_shape']]}"})
                 per_m[key] = verdict

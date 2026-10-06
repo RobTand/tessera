@@ -218,8 +218,11 @@ prerequisite. What still refuses are its own comparability grounds, which
 are correctness checks and never stamps: byte integrity (a table or panel
 must match its own pinned digest), table grammar (every timing cell must
 carry its `samples_ms` array, refused by name before summarizing),
-comparison-key and rank-local geometry agreement, and the panel validator's
-execution-scope refusals. A passing comparison promotes nothing: it says
+comparison-key and rank-local geometry agreement -- agreement is never
+presumed: a row without its own complete rank-local geometry is a
+nonpassing geometry verdict, never a borrow of the reference shape -- and
+the panel validator's execution-scope refusals. A passing comparison
+promotes nothing: it says
 the new rows sit inside the band the preserved bench recorded, not that
 anything is measured, admitted, priced or pinned, and the #688 native
 acceptance (routed projection, the 304-row measured panel, four-group
