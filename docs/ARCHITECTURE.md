@@ -21,6 +21,17 @@ On this tree a docs-only diff selected 79 tests before and about 355 now.
 Selector infrastructure only: no wire, recipe table, serving lane, plugin
 contract, numerical path, residency or performance default moves.
 
+Re-stamped 2026-10-06 for PB1496 (glob): the impacted-test selector treats
+`Path.glob`, including its `**` spelling, as a directory-wide read like
+`rglob`, so an added, deleted or renamed member of a globbed directory selects
+the tests that read it. Before, a deleted member of a glob that reads its
+matches, an added, deleted or renamed member of a names-only glob, and every
+change under the recursive spelling gave verdict `none`. Review of the same
+change added the aliased spellings and the patterns that leave the receiver
+(`../data/*.md`, a link to another directory). Selector
+infrastructure only: no wire, recipe table, serving lane, plugin contract,
+numerical path, residency or performance default moves.
+
 Re-stamped 2026-10-05 for issue984: opt-in
 `WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
 same MNBT4096, through the existing pair-table/row validator from issue980.
@@ -3410,13 +3421,23 @@ repository-relative path. A conservative text fallback also selects tests that
 name a changed non-Python file when a helper hides the read from the resolver.
 This includes Markdown and other documentation suffixes: a named test input is
 not inert merely because it is prose (#358). Directory-wide reads are edges to
-the base directory itself: `Path.rglob`/`iterdir`, `os.listdir`/`scandir`/
-`walk` consume the directory's *membership*, not one named file, so the graph
-holds the resolved base under its repository path and the selector seeds every
-changed path's ancestor directories against it -- a changed, added or deleted
-member selects the reader, pattern-agnostically, because matching the pattern
-would trade a sound over-selection for an under-selection any new file can
-trigger (#923). An out-of-tree or otherwise refused base keeps the #338
+the base directory itself: `Path.glob`/`rglob`/`iterdir`, `os.listdir`/
+`scandir`/`walk` consume the directory's *membership*, not one named file, so
+the graph holds the resolved base under its repository path and the selector
+seeds every changed path's ancestor directories against it -- a changed, added
+or deleted member selects the reader, pattern-agnostically, because matching
+the pattern would trade a sound over-selection for an under-selection any new
+file can trigger (#923; `Path.glob`, including its `**` spelling, joined in
+PB1496, where it had selected nothing for a deleted, renamed or recursively
+matched member). A glob called through a name resolves its receiver when the
+name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
+the unbound method, called directly or through an alias
+(`Path.glob(DOCS, ...)`). A pattern that is absolute or
+contains `..` can read another directory and is refused, and a literal
+directory in front of the first wildcard is placed as well, so a link there
+keeps the link and its target. A link reached only through a wildcard
+component is not followed: nothing is crawled to find it. An out-of-tree or
+otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
 and follows the named/unnamed rule -- and where nothing executes it states no
 dependency, so the receipt lists it under `unnamed_directory_reads` instead of
