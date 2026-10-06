@@ -1,6 +1,15 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-06 for PB1496: the impacted-test selector treats
+Re-stamped 2026-10-06 for PB1496: the impacted-test selector no longer treats a
+`.md`, `.txt` or `.rst` change as proof that an unknown loader did not read it.
+A module that executes source and opens a path the resolver cannot name may read
+any file, so its consumers are selected for a prose-only diff, and a conftest
+that reaches one forces the full population, as a non-inert suffix already did.
+On this tree a docs-only diff selected 79 tests before and about 355 now.
+Selector infrastructure only: no wire, recipe table, serving lane, plugin
+contract, numerical path, residency or performance default moves.
+
+Re-stamped 2026-10-06 for PB1496 (glob): the impacted-test selector treats
 `Path.glob`, including its `**` spelling, as a directory-wide read like
 `rglob`, so an added, deleted or renamed member of a globbed directory selects
 the tests that read it. Before, a deleted member of a glob that reads its
@@ -3453,7 +3462,7 @@ rule with one home, and the three entry points -- a bare loader argument, an
 explicit `.resolve()`, and a glob base -- all call it. A target that
 resolved outside the tree used to be dropped in silence; it is now that same
 refusal, which is the conservative direction. An unresolved recognized loader conservatively seeds its
-importing module and downstream tests for every non-inert change; an unresolved
+importing module and downstream tests for every change, whatever its suffix; an unresolved
 loader reaching a conftest forces the full population. An unresolved *read* is
 an unknown module only for a module that can parse or execute Python source
 (`_SOURCE_BUILTINS`/`_SOURCE_ATTRIBUTES`/`_SOURCE_QUALIFIED`, matched by
