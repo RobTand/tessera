@@ -14,6 +14,7 @@ import json
 import pathlib
 import shlex
 import subprocess
+import sys
 
 import pytest
 
@@ -31,7 +32,7 @@ def _dry_run(tmp_path, arm="aGR", **env):
     artifact = tmp_path / "artifact"
     artifact.mkdir(exist_ok=True)
     (artifact / "config.json").write_text("{}")
-    base = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TS": str(ROOT),
+    base = {"PATH": "/usr/bin:/bin", "RUNTIME_IMAGE_PY": sys.executable, "HOME": str(tmp_path), "TS": str(ROOT),
             "ARTIFACT": str(artifact), "RECEIPTS": str(tmp_path / "receipts"),
             "EAGER": "0", "COMPILATION_JSON": RELEASE_CC, "SPEC_JSON": MTP, "FABRIC": "socket"}
     base.update(env)
@@ -128,7 +129,7 @@ def test_the_committed_artifact_plan_dry_runs_end_to_end(tmp_path):
     artifact = tmp_path / "artifact"
     artifact.mkdir()
     (artifact / "config.json").write_text("{}")
-    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "TS": str(ROOT), "ARTIFACT": str(artifact),
+    env = {"PATH": "/usr/bin:/bin", "RUNTIME_IMAGE_PY": sys.executable, "HOME": str(tmp_path), "TS": str(ROOT), "ARTIFACT": str(artifact),
            "RECEIPTS": str(tmp_path / "receipts"), "FABRIC": "socket"}
     here = ROOT / "experiments" / "graph_attest_702"
     done = subprocess.run(["bash", str(here / "drive_tp2.sh"), str(here / "plan-artifact.txt"), "--dry-run"],
