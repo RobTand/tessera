@@ -2343,6 +2343,38 @@ def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp
     assert "tests/test_lister.py" not in result["tests"], result
 
 
+@pytest.mark.parametrize("reader", [
+    "import glob\n\n\ndef test_lists():\n    assert sorted(glob.glob('docs/*.md'))\n",
+    "import glob\n\n\ndef test_lists():\n    assert sorted(glob.iglob('docs/*.md'))\n",
+    "from glob import glob\n\n\ndef test_lists():\n    assert sorted(glob('docs/*.md'))\n",
+], ids=["module-glob", "module-iglob", "from-import"])
+def test_a_module_glob_reader_is_selected_by_a_new_member(tmp_path, reader):
+    """#1010: a reader listing a directory with the module function depends on its
+    membership, exactly as one using ``Path.glob`` does."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": reader, "docs/a.md": "before\n"})
+    (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_a_module_glob_reader_is_not_selected_by_another_directory(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": "import glob\n\n\ndef test_lists():\n    assert glob.glob('docs/*.md')\n",
+        "docs/a.md": "before\n", "elsewhere/x.md": "other\n"})
+    (repo / "elsewhere/y.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added elsewhere")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" not in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

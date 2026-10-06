@@ -852,6 +852,68 @@ def test_a_string_path_outside_the_tree_is_refused_not_resolved(tmp_path, source
     assert unplaced and not unknown
 
 
+@pytest.mark.parametrize("source", [
+    "import glob\nx = glob.glob('docs/*.md')\n",
+    "import glob as g\nx = g.glob('docs/*.md')\n",
+    "from glob import glob\nx = glob('docs/*.md')\n",
+    "import glob\nx = list(glob.iglob('docs/*.md'))\n",
+    "from glob import iglob\nx = list(iglob('docs/*.md'))\n",
+    "import glob\nx = glob.glob('docs/**/*.md', recursive=True)\n",
+    "import glob\nPATTERN = 'docs/*.md'\nx = glob.glob(PATTERN)\n",
+    "import glob\nx = glob.glob('./docs/*.md')\n",
+], ids=["module", "aliased-module", "from-import", "iglob", "from-import-iglob", "recursive",
+        "constant", "dot-slash"])
+def test_a_module_glob_names_the_directory_in_front_of_its_wildcard(tmp_path, source):
+    # ``glob.glob("docs/*.md")`` carries its base in the pattern string, not in a
+    # Path receiver; only the Path spelling used to resolve, and ``iglob`` was not
+    # recognised at all, so a file added under ``docs`` selected no reader (#1010).
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced
+
+
+def test_a_module_glob_places_the_whole_literal_prefix(tmp_path):
+    (tmp_path / "docs" / "sub").mkdir(parents=True)
+    found, _, _ = _scan_full("import glob\nx = glob.glob('docs/sub/*.md')\n", tmp_path)
+    assert found == {tmp_path / "docs" / "sub"}
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\nx = glob.glob('/etc/*.conf')\n",
+    "import glob\nx = glob.glob('../outside/*.md')\n",
+    "import glob\nx = glob.glob('docs/*/../../outside/*.md')\n",
+], ids=["absolute", "escaping", "parent-after-wildcard"])
+def test_a_module_glob_that_leaves_the_tree_is_refused_not_resolved(tmp_path, source):
+    # The same boundary guard as the Path spelling: refused, kept as an unplaced
+    # read, never stat'ed outside the tree.
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "docs" not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\n\n\ndef f(pattern):\n    return glob.glob(pattern)\n",
+    "import glob\nx = glob.glob('docs/*.md', root_dir='elsewhere')\n",
+], ids=["unnameable-pattern", "root-dir"])
+def test_a_module_glob_with_no_nameable_base_stays_unnamed(tmp_path, source):
+    (tmp_path / "docs").mkdir()
+    unnamed = []
+    found, unknown, unplaced = file_imports(
+        ast.parse(source), tmp_path / "consumer.py", tmp_path, unnamed=unnamed)
+    assert found == set() and unnamed, (found, unnamed)
+
+
+def test_a_module_glob_keeps_the_unknown_loader_flag_of_an_executing_module(tmp_path):
+    # A pattern need not name a directory a custom ``glob`` reads; naming it adds
+    # the edge and must never replace the flag (the #1000 lesson).
+    (tmp_path / "docs").mkdir()
+    found, unknown, _ = _scan_full(
+        "import glob\nexec('pass')\nx = glob.glob('docs/*.md')\n", tmp_path)
+    assert tmp_path / "docs" in found and unknown
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)
