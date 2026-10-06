@@ -826,13 +826,27 @@ def _file_consumer_scan(tree, path):
     scanner.visit(tree)
     aliases = {name: {name} for name in _KINDS}
     assignments = []
+    imported, star = set(), False
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
+                star = star or alias.name == "*"
                 if alias.name in _KINDS:
                     aliases.setdefault(alias.asname or alias.name, set()).add(alias.name)
+                    imported.add(alias.asname or alias.name)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             assignments.append(node)
+    if not star:
+        # Every kind name starts as its own alias, so a bare ``walk(...)`` is
+        # recognized without an import: that is how a builtin such as ``open``
+        # is seen.  An enumeration name the file defines itself and never
+        # imports is that function, not ``os.walk`` (PB1496).  A star import,
+        # an import of the name, or a later ``walk = os.walk`` keeps or
+        # restores the alias.
+        for node in ast.walk(tree):
+            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    and node.name in _ENUMERATIONS and node.name not in imported):
+                aliases[node.name] = set()
 
     def kind(expression):
         if isinstance(expression, ast.Attribute) and expression.attr in _KINDS:

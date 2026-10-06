@@ -2175,11 +2175,12 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # read sites in them.  Most take the directory as a parameter or are test
 # scaffolding, and some are the standard library's glob.glob(pattern), whose
 # base sits in the pattern string; the count is a ceiling, not a verdict on any
-# of them (it was 46 and 58 before Path.glob became an enumeration).  A new one
+# of them (it was 46 and 58 before Path.glob became an enumeration, and 117 and 178
+# before a function the file defines stopped being read as os.walk).  A new one
 # should name its base; if it cannot, raise these numbers in the same commit
 # and say why (PB1496).
-_UNNAMED_DIRECTORY_READ_MODULES = 117
-_UNNAMED_DIRECTORY_READ_SITES = 178
+_UNNAMED_DIRECTORY_READ_MODULES = 115
+_UNNAMED_DIRECTORY_READ_SITES = 168
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:

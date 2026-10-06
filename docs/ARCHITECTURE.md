@@ -53,7 +53,7 @@ treating it as an unplaced read selected 424 of 424 test files for any change).
 The result now lists each such read under `unnamed_directory_reads` and the
 text receipt prints it, so a reader of this shape is seen instead of silently
 unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
-when this was added (117 modules, 178 sites, most taking the directory as a
+when this was added (115 modules, 168 sites, most taking the directory as a
 parameter or calling the standard library's `glob.glob(pattern)`) and fails if
 it rises. Selector infrastructure only: no wire, recipe
 table, serving lane, plugin contract, numerical path, residency or performance
@@ -3483,7 +3483,9 @@ the unbound method, called directly or through an alias
 contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
 keeps the link and its target. A link reached only through a wildcard
-component is not followed: nothing is crawled to find it. An out-of-tree or
+component is not followed: nothing is crawled to find it. A bare name the file defines itself with `def` or `class` and never imports (a
+recursive `walk` helper) is that function, not `os.walk`; a star import, an
+import of the name or a later `walk = os.walk` keeps it an enumeration. An out-of-tree or
 otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
 and follows the named/unnamed rule -- and where nothing executes it states no
