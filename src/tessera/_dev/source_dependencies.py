@@ -1079,6 +1079,49 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
     return _place(bases, root, refused, links)
 
 
+def _sole_plain_definitions(tree):
+    """Names the file binds exactly once, in any scope, with an undecorated ``def``.
+
+    This is a fallback, not a resolver (PB1496), and it only decides whether the
+    unnamed-read warning is printed: no call is ever dropped from analysis.  A
+    bare ``walk(...)`` is the file's own function only when nothing else in the
+    file can bind the name:
+    one ``def`` and no parameter, assignment, import, ``global``, loop or
+    ``with`` target, ``except`` name, pattern capture, type parameter, decorator
+    or class.  A star import anywhere voids the proof for every name, since it
+    can rebind any of them.  Anything this cannot prove keeps its warning.
+    """
+    if any(isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
+           for node in ast.walk(tree)):
+        return set()
+    count, plain = defaultdict(int), set()
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names = [node.name]
+            if not node.decorator_list:
+                plain.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            names = [node.name]
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names = [node.id]
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        elif isinstance(node, ast.alias):
+            names = [node.asname or node.name.split(".")[0]]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = list(node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            names = [node.name] if node.name else []
+        elif isinstance(node, ast.MatchMapping):
+            names = [node.rest] if node.rest else []
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            names = [node.name]
+        for name in names:
+            count[name] += 1
+    return {name for name in plain if count[name] == 1}
+
+
 def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
     """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
 
@@ -1109,6 +1152,7 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
         return executes or not reading
 
     found, unknown, unplaced = set(), False, False
+    own_definitions = _sole_plain_definitions(tree)
 
     def refuse(reading):
         """Record a target this resolver named and then declined to place.
@@ -1150,11 +1194,16 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
                 if refused:
                     refuse(True)
                 else:
-                    if unnamed is not None and not wildcard(True):
+                    if (unnamed is not None and not wildcard(True)
+                            and not (isinstance(call.func, ast.Name)
+                                     and call.func.id in own_definitions)):
                         # A directory read of a base nothing names, in a module
                         # that executes nothing, states no dependency (#148).
                         # It is the one case the selector can neither select
-                        # nor escalate, so it is listed (PB1496).
+                        # nor escalate, so it is listed (PB1496).  Only this
+                        # warning is ever withheld, for a call to the file's own
+                        # sole plain def: the call itself is processed exactly
+                        # as for any other, so a base it names keeps its edge.
                         unnamed.append(call.lineno)
                     unknown = unknown or wildcard(True)
             else:

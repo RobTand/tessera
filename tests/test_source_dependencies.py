@@ -695,6 +695,117 @@ def test_a_glob_prefix_that_is_a_link_keeps_the_link_and_its_target(tmp_path):
     assert not unknown and not unplaced
 
 
+def _unnamed_directory_reads(source, root):
+    unnamed = []
+    file_imports(ast.parse(source), root / "consumer.py", root, unnamed=unnamed)
+    return unnamed
+
+
+@pytest.mark.parametrize("source", [
+    "def f(x):\n    def walk(a):\n        return a\n    return walk(x)\n",
+    "def walk(a):\n    return a\n\n\ndef f(x):\n    return walk(x)\n",
+    "def glob(a):\n    return a\n\n\ndef f(x):\n    return glob(x)\n",
+], ids=["nested-def", "module-def", "glob"])
+def test_a_function_the_file_defines_is_not_a_directory_read(tmp_path, source):
+    # A bare ``walk(...)`` is os.walk only if something names it so.  A name the
+    # file defines itself and never imports is that function, not an enumeration
+    # (PB1496: the codebook's recursive ``walk`` was listed as an unnamed read).
+    assert _unnamed_directory_reads(source, tmp_path) == []
+
+
+@pytest.mark.parametrize("source", [
+    "from os import walk\n\n\ndef f(x):\n    return list(walk(x))\n",
+    "import os\n\n\ndef f(x):\n    return list(os.walk(x))\n",
+    "from os import walk as step\n\n\ndef f(x):\n    return list(step(x))\n",
+    "import os\nwalk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n",
+    # A star import may bring os.walk in; a same-named def elsewhere cannot rule it out.
+    "from os import *\n\n\ndef g():\n    def walk(a):\n        return a\n\n\ndef f(x):\n    return list(walk(x))\n",
+    # An import of the real name keeps the alias even if the file also defines one.
+    "from os import walk\n\n\ndef g():\n    def walk(a):\n        return a\n\n\ndef f(x):\n    return list(walk(x))\n",
+], ids=["from-os", "os-attribute", "renamed-import", "assigned-alias", "star-import", "import-and-def"])
+def test_a_real_directory_walk_is_still_listed(tmp_path, source):
+    assert _unnamed_directory_reads(source, tmp_path), source
+
+
+def _unnamed_and_unknown(source, root):
+    unnamed = []
+    _, unknown, _ = file_imports(ast.parse(source), root / "consumer.py", root, unnamed=unnamed)
+    return unnamed, unknown
+
+
+# The name that is called must resolve, lexically, to a plain def or class: an
+# unrelated definition elsewhere in the file proves nothing about this call.
+_SHADOWED_WALK = {
+    "method-elsewhere-and-parameter-default": (
+        "import os\n\n\nclass T:\n    def walk(self):\n        return 1\n\n\n"
+        "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
+    "decorator-returns-os-walk": (
+        "import os\n\n\ndef replace(fn):\n    return os.walk\n\n\n@replace\n"
+        "def walk(a):\n    return a\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "parameter-shadows-module-def": (
+        "def walk(a):\n    return a\n\n\ndef f(x, walk):\n    return walk(x)\n"),
+    "def-in-one-branch-assignment-in-the-other": (
+        "import os\n\nif os.environ:\n    def walk(a):\n        return a\nelse:\n"
+        "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "import-with-def-fallback": (
+        "try:\n    from os import walk\nexcept ImportError:\n    def walk(a):\n        return a\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "global-rebinding": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\ndef g():\n    global walk\n"
+        "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "loop-variable": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\ndef f(x):\n"
+        "    for walk in (os.walk,):\n        return list(walk(x))\n"),
+    "star-import-after-def": (
+        "def walk(a):\n    return a\n\n\nfrom os import *\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "conditional-class-binding": (
+        "import os\n\nif os.environ:\n    class walk:\n        pass\nelse:\n    walk = os.walk\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "metaclass-binds-os-walk": (
+        "import os\n\n\nclass Meta(type):\n    def __new__(mcs, name, bases, namespace):\n"
+        "        return os.walk\n\n\nclass walk(metaclass=Meta):\n    pass\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "class-body-comprehension": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\nclass A:\n    walk = os.walk\n"
+        "    results = [walk(x) for x in range(3)]\n"),
+    "def-in-another-function": (
+        "import os\n\n\ndef g():\n    def walk(a):\n        return a\n    return walk\n\n\n"
+        "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
+}
+
+
+@pytest.mark.parametrize("source", list(_SHADOWED_WALK.values()), ids=list(_SHADOWED_WALK))
+def test_a_defined_name_does_not_hide_a_call_that_resolves_elsewhere(tmp_path, source):
+    unnamed, _ = _unnamed_and_unknown(source, tmp_path)
+    assert unnamed, source
+
+
+@pytest.mark.parametrize("source", list(_SHADOWED_WALK.values()), ids=list(_SHADOWED_WALK))
+def test_a_module_that_executes_source_keeps_its_unknown_loader_flag(tmp_path, source):
+    # The misread would also have dropped the unknown-loader flag of a module
+    # that can run what it reads, which is the escalation a real walk gets.
+    unnamed, unknown = _unnamed_and_unknown(source + '\n\nexec("pass")\n', tmp_path)
+    assert unknown, source
+
+
+def test_a_local_wrapper_around_walk_keeps_the_directory_it_names(tmp_path):
+    # ``walk(Path("docs"))`` reads docs through the wrapper: the call site names the
+    # directory, so the resolved dependency must survive the exemption.  Only the
+    # warning that a base is unnamed may be suppressed, never the call (PB1496).
+    (tmp_path / "docs").mkdir()
+    source = ("import os\nfrom pathlib import Path\n\n\ndef walk(root):\n    return os.walk(root)\n\n\n"
+              "def f():\n    return list(walk(Path('docs')))\n")
+    found, unknown, unplaced = file_imports(ast.parse(source), tmp_path / "consumer.py", tmp_path)
+    assert tmp_path / "docs" in found, (found, unknown, unplaced)
+
+
+def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
+    source = ("def f(items):\n    def walk(level):\n        if level == 0:\n"
+              "            return [level]\n        return walk(level - 1) + walk(level - 1)\n"
+              "    return walk(items)\n")
+    assert _unnamed_directory_reads(source, tmp_path) == []
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)

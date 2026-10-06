@@ -2175,11 +2175,12 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # read sites in them.  Most take the directory as a parameter or are test
 # scaffolding, and some are the standard library's glob.glob(pattern), whose
 # base sits in the pattern string; the count is a ceiling, not a verdict on any
-# of them (it was 46 and 58 before Path.glob became an enumeration).  A new one
+# of them (it was 46 and 58 before Path.glob became an enumeration, and 117 and 178
+# before a function the file defines stopped being read as os.walk).  A new one
 # should name its base; if it cannot, raise these numbers in the same commit
 # and say why (PB1496).
-_UNNAMED_DIRECTORY_READ_MODULES = 117
-_UNNAMED_DIRECTORY_READ_SITES = 178
+_UNNAMED_DIRECTORY_READ_MODULES = 115
+_UNNAMED_DIRECTORY_READ_SITES = 168
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
@@ -2201,6 +2202,22 @@ def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
 def test_the_unnamed_directory_read_ceiling_bounds_modules_and_sites_independently(
         modules, sites, exceeds):
     assert _exceeds_unnamed_directory_read_ceiling(modules, sites) is exceeds
+
+
+def test_a_local_wrapper_around_walk_still_selects_its_reader(tmp_path):
+    """A wrapper named like an enumeration is the reader of the directory it is called with."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_wrapper.py": (
+            "import os\nfrom pathlib import Path\n\n\ndef walk(root):\n    return os.walk(root)\n\n\n"
+            "def test_reads():\n    assert list(walk(Path('docs')))\n"),
+        "docs/a.md": "before\n"})
+    (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_wrapper.py" in result["tests"], result
 
 
 def test_this_repository_does_not_gain_an_unnamed_directory_read():

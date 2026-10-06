@@ -53,7 +53,7 @@ treating it as an unplaced read selected 424 of 424 test files for any change).
 The result now lists each such read under `unnamed_directory_reads` and the
 text receipt prints it, so a reader of this shape is seen instead of silently
 unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
-when this was added (117 modules, 178 sites, most taking the directory as a
+when this was added (115 modules, 168 sites, most taking the directory as a
 parameter or calling the standard library's `glob.glob(pattern)`) and fails if
 it rises. Selector infrastructure only: no wire, recipe
 table, serving lane, plugin contract, numerical path, residency or performance
@@ -3483,7 +3483,13 @@ the unbound method, called directly or through an alias
 contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
 keeps the link and its target. A link reached only through a wildcard
-component is not followed: nothing is crawled to find it. An out-of-tree or
+component is not followed: nothing is crawled to find it. Every call named like an enumeration is analysed the same way whatever the file
+defines, so a base it names keeps its edge and a refused base its uncertainty;
+only the `unnamed_directory_reads` warning can be withheld, for a bare call to a
+name the file binds exactly once, with an undecorated `def`, in a module that
+executes nothing and has no star import. Anything else keeps the warning. The
+selector's rule is soundness: over-selection is the accepted cost and a missed
+test is the only defect. An out-of-tree or
 otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
 and follows the named/unnamed rule -- and where nothing executes it states no
