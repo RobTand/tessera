@@ -7,8 +7,9 @@ treating it as an unplaced read selected 424 of 424 test files for any change).
 The result now lists each such read under `unnamed_directory_reads` and the
 text receipt prints it, so a reader of this shape is seen instead of silently
 unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
-when this was added (46 modules, 58 sites, most taking the directory as a
-parameter) and fails if it rises. Selector infrastructure only: no wire, recipe
+when this was added (117 modules, 178 sites, most taking the directory as a
+parameter or calling the standard library's `glob.glob(pattern)`) and fails if
+it rises. Selector infrastructure only: no wire, recipe
 table, serving lane, plugin contract, numerical path, residency or performance
 default moves.
 

@@ -2173,11 +2173,13 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # What the real tree held when this guard was added: modules with a directory
 # read whose base nothing names, in a module that executes nothing, and the
 # read sites in them.  Most take the directory as a parameter or are test
-# scaffolding; the count is a ceiling, not a verdict on any of them.  A new one
+# scaffolding, and some are the standard library's glob.glob(pattern), whose
+# base sits in the pattern string; the count is a ceiling, not a verdict on any
+# of them (it was 46 and 58 before Path.glob became an enumeration).  A new one
 # should name its base; if it cannot, raise these numbers in the same commit
 # and say why (PB1496).
-_UNNAMED_DIRECTORY_READ_MODULES = 46
-_UNNAMED_DIRECTORY_READ_SITES = 58
+_UNNAMED_DIRECTORY_READ_MODULES = 117
+_UNNAMED_DIRECTORY_READ_SITES = 178
 
 
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
