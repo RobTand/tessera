@@ -2396,6 +2396,45 @@ def test_a_glob_reader_is_selected_by_a_new_member_behind_a_wildcard_link(tmp_pa
     assert "tests/test_lister.py" in result["tests"], result
 
 
+_LINK_READER = (
+    "from pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+    "def test_lists():\n    assert list(DOCS.glob({pattern!r})) is not None\n")
+
+
+def test_a_literal_link_after_a_wildcard_selects_the_reader_for_its_target(tmp_path):
+    """The wildcard reaches an ordinary directory, the literal ``link`` leads to ``data``."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": _LINK_READER.format(pattern="*/link/*.md"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "plain" / "link").symlink_to("../../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link behind an ordinary directory")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added behind the link")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_deleting_the_last_member_behind_an_unchanged_link_selects_the_reader(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": _LINK_READER.format(pattern="*/*.md"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link to data")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "rm", "-q", "data/seed.md")
+    _git(repo, "commit", "-qm", "the last member behind the link goes")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

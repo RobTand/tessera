@@ -953,6 +953,33 @@ def test_a_link_reached_through_a_wildcard_component_is_followed(tmp_path, monke
     assert tmp_path / "docs" in found or unplaced
 
 
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = list(Path('docs').glob('*/link/*.md'))\n",
+    "import glob\nx = glob.glob('docs/*/link/*.md')\n",
+], ids=["path", "module"])
+def test_a_link_after_a_wildcard_and_a_literal_component_retains_its_target(tmp_path, monkeypatch, source):
+    # ``docs/plain/link`` -> ``../../data``: the wildcard reaches ``plain`` (an ordinary
+    # directory) and the literal ``link`` is traversed, so ``data`` is read and must be a
+    # dependency, not just traversal state (#1011 review).
+    (tmp_path / "docs" / "plain").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "docs" / "plain" / "link").symlink_to("../../data", target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" in found, (found, unknown, unplaced)
+
+
+def test_a_dangling_link_behind_a_wildcard_still_retains_its_in_tree_target(tmp_path, monkeypatch):
+    # The target directory was deleted: the link is unchanged and now dangling, but the
+    # reader still depends on that path, so deleting the last member must select it.
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/*.md'))\n", tmp_path)
+    assert tmp_path / "data" in found, (found, unknown, unplaced)
+
+
 def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatch):
     (tmp_path / "docs" / "plain").mkdir(parents=True)
     _guard_resolve_to_root(monkeypatch, tmp_path)
