@@ -100,6 +100,9 @@ __all__ = [
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED",
+    "DECODER_NATIVE_ROUTED_WINDOW_CLASSES",
+    "DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA",
+    "DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -215,12 +218,19 @@ DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 #: ``torch._scaled_mm`` row-wise at large M.  Same function of the wire, a
 #: different launch and accumulation order, so its own string.
 DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
+# Actual execution identities only; no serving contract row is qualified here.
+DECODER_NATIVE_ROUTED_WINDOW_CLASSES = "native_routed_window_classes"
+DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA = "native_routed_window_classes_e4m3mma"
+DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED = "native_routed_window_classes_folded"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_WINDOW_GEMM_FOLDED,
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+                      DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
+                      DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA,
+                      DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
                       DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
