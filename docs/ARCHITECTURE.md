@@ -883,11 +883,13 @@ reconstructed verbatim and proven against every recorded cell of a
 preserved table before anything compares, never the panel's interpolated
 `timing_summary` quartiles. Rows compare only on a matched
 (structure, module, family, grid, rate) key with agreeing rank-local
-geometry; duplicate comparison rows, a median outside the band, a row
-whose own rank-local geometry is missing or malformed (never borrowed
-from the reference), and a baseline cell whose timing is not an object
-carrying a numeric `samples_ms` array are named refusals (CLI exit 2),
-never silent passes or tracebacks. The reviewer CLI binds, pins and
+geometry validated before anything is serialized: a row with no geometry of
+its own is a nonpassing `geometry_missing` verdict in the JSON receipt (the
+CLI still exits 0), never a borrow from the reference. Duplicate comparison
+rows, malformed rank-local geometry, a median outside the band, and a
+baseline cell whose timing is not an object carrying a numeric `samples_ms`
+array are named refusals (CLI exit 2), never silent passes or tracebacks.
+The reviewer CLI binds, pins and
 proves one owned read per file. The consumer rides the
 landed D32 runtime split: historical runtime-identity drift in a validated
 panel stamps and continues in development mode, while byte integrity
