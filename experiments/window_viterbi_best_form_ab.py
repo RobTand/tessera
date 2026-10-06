@@ -379,8 +379,8 @@ def _g2_config(cfg, args, dev):
     stream per rate the way ``encode_units`` does -- under the graph rules
     production ships (auto), so the cache behavior measured is the cache
     behavior sealed.  Identity is asserted before any clock, per rate:
-    joined states as bytes against the reference, and the arm spelling's
-    fused ``sse`` against the reference's float.
+    logical joined states against the reference, and the arm spelling's
+    scalar ``sse`` against the reference. Packed-wire equality is separate.
     """
     from tessera.encode import _run_group
     name, q_rung, L, arity, rows, block_cols, r4, r5 = cfg
@@ -437,8 +437,8 @@ def _g2_config(cfg, args, dev):
         # The NCU driver: one captured group per arm and nothing else.  NCU
         # replays and serialises every launch it counts, so the profiled run
         # must be the minimum that still launches the sealed geometry: the
-        # identity above has already proven the bytes, and each arm runs its
-        # group once here, warm, at the production tile and graph rules.
+        # states and squared errors already matched the reference; each arm
+        # runs its group once here, warm, at the production tile and graph rules.
         for arm, width_cap, tile in G2_ARMS:               # capture, uncounted
             group(arm, width_cap, tile)
             torch.cuda.synchronize()
