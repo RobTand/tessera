@@ -165,3 +165,16 @@ def test_actual_finalized_production_bank_metadata_fails_closed(arm, fault):
     else:
         with pytest.raises(ValueError):
             qualified.validate_bank_record(record, finalization, arm, source_module="tessera_routed_fused_value")
+
+
+@pytest.mark.parametrize("arm", [0, 4])
+def test_native_cpu_map_checks_runner_before_mapping(monkeypatch, arm):
+    import sys
+    from experiments.t4_code import prefetch_qualification as qualified
+
+    monkeypatch.setitem(sys.modules, "pytest", None)
+    def unexpected_mapping(*args, **kwargs):
+        raise AssertionError("missing runner must fail before native mapping")
+    monkeypatch.setattr(qualified, "leased_banks", unexpected_mapping)
+    with pytest.raises(ModuleNotFoundError, match="pytest"):
+        qualified.consume(SimpleNamespace(arm=arm, cpu_map=True))

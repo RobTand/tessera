@@ -648,6 +648,13 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
   consumer execution additionally requires all48 GPU cases (42 FP4 cases and
   six terminal patterns); skipped or changed populations fail qualification.
+  The qualification container does not ship pytest. Its wrapper uses the existing
+  routed-fused test-runner convention: `TEST_RUNNER_SP` supplies only pytest,
+  `_pytest`, pluggy, iniconfig, packaging and `py.py`, copied under the action
+  output and appended to `PYTHONPATH`. Torch, Triton and vLLM remain the image
+  versions. Native-arm CPU mapping checks the pytest import before mapping the
+  retained banks; portable x86 dry runs and the actual arm64 container smoke
+  are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
 * Before GPU qualification, root must authorize the resource/readset. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
