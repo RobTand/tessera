@@ -1047,6 +1047,12 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
         if not call.args:
             return None
         bases = _values(call.args[0], scope, root, refused=refused, links=links)
+        if bases is not None:
+            # ``os.listdir("docs")`` reads the directory ``Path("docs")`` names:
+            # a string path is the same base, placed (or refused) by the same
+            # boundary guard.  Only the Path spelling was resolved, so a file
+            # added under a directory listed by string selected no reader.
+            bases = {Path(base) if isinstance(base, str) else base for base in bases}
     else:  # glob and rglob: the receiver names the tree, the argument the pattern.
         receiver = _glob_receiver(loader, call, scope, root, refused, links)
         if receiver is None:
