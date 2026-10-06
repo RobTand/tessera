@@ -2,8 +2,29 @@
 # An admitted D41 native-span2 measurement; PB owns placement and exclusivity.
 set -euo pipefail
 OUT=$(realpath -m "$1"); shift
-IMAGE=${ORACLE_IMAGE:?actual immutable measurement image}
 PB_CLIENT_ROOT=${PB_CLIENT_ROOT:?published PrismaBuild SDK}
+mkdir -p "$OUT/home/torch_extensions" "$OUT/tmp" "$OUT/triton"
+if [[ " $* " == *" --cpu-preflight "* ]]; then
+    CPU_PY=${D38_PYTHON:-/home/rob/venvs/pb-cpu/bin/python}
+    "$CPU_PY" - "$OUT" <<'PY'
+import json, os, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+paths = [root, root / "home", root / "home/torch_extensions", root / "tmp", root / "triton"]
+for path in paths:
+    probe = path / ".d38-write-probe"
+    probe.write_bytes(b"D38 actual wrapper output/cache write")
+    if probe.read_bytes() != b"D38 actual wrapper output/cache write":
+        raise ValueError("output/cache write readback failed")
+    probe.unlink()
+(root / "cpu-wrapper-contract.json").write_text(json.dumps({"uid": os.getuid(), "gid": os.getgid(), "paths_created_and_written": list(map(str, paths)), "GPU_exercised": False}))
+PY
+    export HOME="$OUT/home" TMPDIR="$OUT/tmp" TRITON_CACHE_DIR="$OUT/triton"
+    export TORCH_EXTENSIONS_DIR="$OUT/home/torch_extensions"
+    export PYTHONPATH="$PWD/src:$PWD/experiments/t8r_speed:$PB_CLIENT_ROOT/src"
+    exec "$CPU_PY" experiments/t4_code/bench_geometry_e2m1.py --out "$OUT" "$@"
+fi
+IMAGE=${ORACLE_IMAGE:?actual immutable measurement image}
 source experiments/runtime_image.sh
 runtime_image_require "$IMAGE"
 IMAGE_ENV=()
