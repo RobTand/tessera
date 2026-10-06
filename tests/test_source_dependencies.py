@@ -748,6 +748,15 @@ _SHADOWED_WALK = {
     "def-in-one-branch-assignment-in-the-other": (
         "import os\n\nif os.environ:\n    def walk(a):\n        return a\nelse:\n"
         "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "import-with-def-fallback": (
+        "try:\n    from os import walk\nexcept ImportError:\n    def walk(a):\n        return a\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "global-rebinding": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\ndef g():\n    global walk\n"
+        "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "loop-variable": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\ndef f(x):\n"
+        "    for walk in (os.walk,):\n        return list(walk(x))\n"),
     "def-in-another-function": (
         "import os\n\n\ndef g():\n    def walk(a):\n        return a\n    return walk\n\n\n"
         "def f(x, walk=os.walk):\n    return list(walk(x))\n"),

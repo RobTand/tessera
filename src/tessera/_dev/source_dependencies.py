@@ -363,6 +363,24 @@ class _Scanner(ast.NodeVisitor):
         self.calls = []
         self.references = []
         self.functions = defaultdict(list)
+        self.plain_defs = defaultdict(int)
+
+    def resolves_to_own_definition(self, func, scope):
+        """True when a bare name provably calls a plain ``def``/``class`` of this file.
+
+        Binding is lexical: the name must resolve, through the scope chain, to
+        a scope in which every binding is an undecorated ``def`` or ``class``.
+        A parameter, assignment, import, ``global``, decorated definition or a
+        second binding of the name in that scope leaves it unproven, and so does
+        a definition elsewhere in the file (PB1496).
+        """
+        if not isinstance(func, ast.Name):
+            return False
+        here = scope
+        while here is not None and func.id not in here.bindings:
+            here = here.parent
+        return (here is not None
+                and len(here.bindings[func.id]) == self.plain_defs[(id(here), func.id)])
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
@@ -497,6 +515,8 @@ class _Scanner(ast.NodeVisitor):
             prior.bindings[node.name].append(
                 ("symbol", f"{self.module}.{node.name}")
                 if self.module is not None and prior.parent is None else None)
+            if not node.decorator_list:
+                self.plain_defs[(id(prior), node.name)] += 1
         parent = prior.parent if prior.class_body and not class_body else prior
         self.scope = _Scope(parent, class_body=class_body)
         if hasattr(node, "args"):
@@ -826,27 +846,13 @@ def _file_consumer_scan(tree, path):
     scanner.visit(tree)
     aliases = {name: {name} for name in _KINDS}
     assignments = []
-    imported, star = set(), False
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                star = star or alias.name == "*"
                 if alias.name in _KINDS:
                     aliases.setdefault(alias.asname or alias.name, set()).add(alias.name)
-                    imported.add(alias.asname or alias.name)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
             assignments.append(node)
-    if not star:
-        # Every kind name starts as its own alias, so a bare ``walk(...)`` is
-        # recognized without an import: that is how a builtin such as ``open``
-        # is seen.  An enumeration name the file defines itself and never
-        # imports is that function, not ``os.walk`` (PB1496).  A star import,
-        # an import of the name, or a later ``walk = os.walk`` keeps or
-        # restores the alias.
-        for node in ast.walk(tree):
-            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-                    and node.name in _ENUMERATIONS and node.name not in imported):
-                aliases[node.name] = set()
 
     def kind(expression):
         if isinstance(expression, ast.Attribute) and expression.attr in _KINDS:
@@ -1143,6 +1149,8 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
     for call, scope in scanner.calls:
         loaders = kind(call.func)
         if not loaders:
+            continue
+        if loaders <= _ENUMERATIONS and scanner.resolves_to_own_definition(call.func, scope):
             continue
         reading = loaders <= _READ_METHODS | _ENUMERATIONS
         if len(loaders) != 1:

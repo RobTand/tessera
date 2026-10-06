@@ -3483,9 +3483,11 @@ the unbound method, called directly or through an alias
 contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
 keeps the link and its target. A link reached only through a wildcard
-component is not followed: nothing is crawled to find it. A bare name the file defines itself with `def` or `class` and never imports (a
-recursive `walk` helper) is that function, not `os.walk`; a star import, an
-import of the name or a later `walk = os.walk` keeps it an enumeration. An out-of-tree or
+component is not followed: nothing is crawled to find it. A bare call whose name resolves, lexically, to a plain undecorated `def` or
+`class` of the file (a recursive `walk` helper) is that function, not `os.walk`.
+The proof is at the call: a parameter, assignment, import, `global`, decorator,
+loop variable or a second binding of the name in the scope that resolves it,
+or a definition only elsewhere in the file, leaves it an enumeration. An out-of-tree or
 otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
 and follows the named/unnamed rule -- and where nothing executes it states no
