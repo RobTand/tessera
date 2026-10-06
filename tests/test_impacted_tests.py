@@ -2220,6 +2220,37 @@ def test_a_local_wrapper_around_walk_still_selects_its_reader(tmp_path):
     assert "tests/test_wrapper.py" in result["tests"], result
 
 
+@pytest.mark.parametrize("spelling", [
+    "os.listdir('docs')", "list(os.walk('docs'))", "list(os.scandir('docs'))",
+], ids=["listdir", "walk", "scandir"])
+def test_a_string_path_directory_reader_is_selected_by_a_new_member(tmp_path, spelling):
+    """A reader that lists a directory by string path depends on its membership."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": (
+            f"import os\n\n\ndef test_lists():\n    assert {spelling}\n"),
+        "docs/a.md": "before\n"})
+    (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp_path):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": "import os\n\n\ndef test_lists():\n    assert os.listdir('docs')\n",
+        "docs/a.md": "before\n", "elsewhere/x.md": "other\n"})
+    (repo / "elsewhere/y.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added elsewhere")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" not in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())
