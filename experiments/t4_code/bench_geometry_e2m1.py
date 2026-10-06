@@ -31,8 +31,9 @@ import torch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "t8r_speed"))
 from bench_geometry import pick_recorded, time_call
+from bench_rates import sha
 from bench_t8r import (PowerSampler, balanced_routing, kernel_profile,
-                       recorded_routing, sha)
+                       recorded_routing)
 from tessera.alphabet import SERIALISABLE_GRIDS, grid_for_name
 from tessera.calculator import terminal_rate
 from tessera.export import encode_linear, served_recipe, wire_recipe
@@ -392,6 +393,7 @@ def main():
     ap.add_argument("--samples", default="")
     ap.add_argument("--config", default="")
     ap.add_argument("--model", default="")
+    ap.add_argument("--data-manifest", default="", help="PB staged whole-file readset")
     ap.add_argument("--prepare-inputs", action="store_true")
     ap.add_argument("--cpu-preflight", action="store_true")
     ap.add_argument("--quality", action="store_true")
@@ -404,6 +406,26 @@ def main():
     if args.prepare_inputs:
         prepare_inputs(args.model, args.out)
         return 0
+    if args.data_manifest and not args.cpu_preflight and not args.quality:
+        # Consume the supported PB lease reader before any CUDA work.
+        # Original shared inputs are never reopened by the GPU path.
+        from pb_staged_store import StagedInputs
+        inputs = StagedInputs(args.data_manifest)
+        local_root = Path(args.out) / "staged-inputs"
+        try:
+            for path, offset in inputs.entries:
+                if offset != 0:
+                    raise ValueError("E2M1 adapter reads whole-file metadata inputs")
+                local = local_root / path.lstrip("/")
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(inputs.read(path))
+            dump(Path(args.out) / "staged-reads.json", inputs.reads)
+        finally:
+            inputs.close()
+        for field in ("samples", "config", "routing"):
+            path = getattr(args, field)
+            if path:
+                setattr(args, field, str(local_root / path.lstrip("/")))
     grid = grid_for_name(args.grid)
     if grid not in family_grids():
         raise ValueError("not a serializable E2M1 family")
