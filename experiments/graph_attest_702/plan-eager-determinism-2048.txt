@@ -1,9 +1,6 @@
-# investigate-eager-determinism-2048: correctness only, not the 33-output ship gate.
+# investigate-eager-control-2048: two fresh both-rank OFF blocks only.
 # L2048/c1, one warmup plus ten timed requests; server seed 0, request seeds 0..10.
-# Every arm restarts BOTH rank servers. No lever server starts unless OFF/OFF matches.
-# Normal priority 0; publish only after the actual D42 Stage One priority handoff.
+# Record any serving nondeterminism; this is not the strict 33-output ship gate.
+# Priority -10; total 1800 seconds including cleanup; no campaign handoff wait.
 control_off_first FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=0
 control_off_restart FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=0
-control_decode_once FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=1 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=0
-control_kda_split FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=on TESSERA_ROUTED_PIECE_MAJOR=0
-control_piece_major FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=1

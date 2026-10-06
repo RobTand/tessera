@@ -1,4 +1,4 @@
-"""Run all three control arms in one admitted LOCAL rank action; never launch a peer."""
+"""Run the explicit bounded plan in one admitted LOCAL action; never launch a peer."""
 from __future__ import annotations
 
 import argparse
@@ -15,7 +15,7 @@ import time
 
 from managed_window import (WINDOW_SECONDS, CLEANUP_SECONDS, MEMORY_POLICY, Envelope, HOSTS, Refused,
                             seal_check, check_memory_policy,
-                            Rendezvous, atomic_json, read_json, require_claim)
+                            Rendezvous, atomic_json, prismabuild_import_root, read_json, require_claim)
 import tp2_recipe as recipe
 
 
@@ -71,9 +71,64 @@ class LocalArm:
         self.abort = None
         self.image_env = {}
         self.guard = None
+        self.staged_inputs = None
+        self.staged_fds = []
+        self.staged_file_mounts = []
 
     def command(self, argv, **kwargs):
         return self.envelope.run(argv, **kwargs)
+
+    def pin_inputs(self):
+        """Use the existing public reader lease; never reread a bulk origin file."""
+        if self.config.get("window_mode") not in recipe.PHASE_MODES or self.staged_inputs is not None:
+            return
+        import importlib.util
+        sdk_root = prismabuild_import_root()
+        if sdk_root:
+            sys.path.insert(0, sdk_root)
+        module_path = Path(__file__).resolve().parents[1] / "t8r_speed/pb_staged_store.py"
+        spec = importlib.util.spec_from_file_location("resident_window_staged_inputs", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.staged_inputs = module.StagedInputs(self.config["data_manifest"])
+        declared = json.loads(Path(self.config["artifact_manifest"]).read_bytes())
+        artifact = Path(self.config["artifact"])
+        expected = {(str(artifact / row["name"]), 0): dict(path=str(artifact / row["name"]),
+                    offset=0, bytes=row["bytes"]) for row in declared}
+        ranges = {key: {field: row[field] for field in ("path", "offset", "bytes")}
+                  for key, row in self.staged_inputs.entries.items()}
+        if ranges != expected:
+            raise Refused("declared staged input ranges differ from the complete actual artifact population")
+        seal_check("artifact staged digest provenance",
+                   {str(artifact / row["name"]): row["sha256"] for row in declared},
+                   {path: row["sha256"] for (path, _), row in self.staged_inputs.entries.items()},
+                   where="Window4 staged inputs",
+                   refusal=Refused("recorded artifact staged digest provenance differs"))
+        evidence = []
+        for path, offset in expected:
+            fd, entry, serving = self.staged_inputs.pinned_file(path)
+            self.staged_fds.append(fd)
+            source = f"/proc/{os.getpid()}/fd/{fd}"
+            self.staged_file_mounts.append((source, path))
+            evidence.append(dict(entry, descriptor_source=source, serving_tier=serving))
+        atomic_json(self.rdv / f"staged-inputs-rank{self.rank}.json", dict(
+            source="Public PrismaBuild reader lease and held complete-file descriptors",
+            origin_fallback=False, files=evidence, lease_held_until_owned_physical_cleanup=True))
+
+    def release_inputs(self):
+        if self.staged_inputs is None:
+            return None
+        physical = self.assert_empty()  # no release while an owned reader/container remains
+        for fd in self.staged_fds:
+            os.close(fd)
+        self.staged_fds.clear()
+        self.staged_inputs.close()
+        proof = dict(released=True, **physical)
+        atomic_json(self.rdv / f"staged-input-release-rank{self.rank}.json", proof)
+        return proof
+
+
+
 
     def headroom(self):
         """Wait at most 900 seconds for the D30 107 GiB predicate on this host.
@@ -148,6 +203,7 @@ class LocalArm:
         self.image_env = dict(line.split("=", 1) for line in from_source.splitlines())
         self.image_id = record["local_id"]
         self.assert_empty()
+        self.pin_inputs()
         current = recipe.inputs(os.environ, live=True,
                    runner=lambda argv, **kw: self.command(argv, tick=self.tick, **kw))
         recipe.check_control_record(self.config, current, where="Window4 local preflight",
@@ -289,7 +345,8 @@ class LocalArm:
         out.mkdir()
         out.chmod(0o777)
         cidfile = self.work / (arm["arm"] + ".cid")
-        argv = recipe.container(self.config, arm, self.identity, out, self.ext, cidfile, self.image_env)
+        launch_config = dict(self.config, staged_file_mounts=self.staged_file_mounts)
+        argv = recipe.container(launch_config, arm, self.identity, out, self.ext, cidfile, self.image_env)
         self.active = dict(arm=arm["arm"], out=str(out), cidfile=str(cidfile),
                            name=argv[argv.index("--name") + 1], launch_argv=argv)
         atomic_json(self.work / (arm["arm"] + ".launch.json"), self.active)
@@ -483,15 +540,15 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
         atomic_json(meeting.path, owned)
         if isinstance(adapter, LocalArm):
             event = dict(event="both_halves_claimed", identities=[owned, meeting.peer],
-                         requested_pb_timeout_s=5400, effective_pb_timeout_s=None, peer_wait_seconds=3600,
+                         requested_pb_timeout_s=config.get("window_seconds", WINDOW_SECONDS), effective_pb_timeout_s=None,
+                         peer_wait_seconds=config.get("peer_wait_seconds", 3600),
                          runtime_commit=config["source_commit"], producer_commit=config["producer_commit"])
             atomic_json(rdv / f"both-claimed-rank{owned['rank']}.json", event)
             print(json.dumps(event, sort_keys=True), flush=True)
         for arm in arms:
-            if config.get("window_mode") == recipe.DETERMINISM_MODE:
-                from eager_determinism import NAMES, require_deterministic_off
-                if arm["arm"] in NAMES[2:]:
-                    require_deterministic_off(rdv)  # before either local rank starts a lever server
+            if config.get("window_mode") == recipe.PIECE_MAJOR_MODE and arm["arm"] == "control_piece_major":
+                from eager_determinism import require_piece_major_control
+                require_piece_major_control(rdv, config)  # both ranks before either ON server starts
             current = arm
             meeting.check()
             envelope.remaining()
@@ -598,6 +655,12 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
                     outcome["peer_cleanup_acknowledgement"] = dict(available=True)
             except BaseException as exc:
                 outcome["cleanup_error"] = f"failed peer cleanup acknowledgement: {type(exc).__name__}: {exc}"
+        if isinstance(adapter, LocalArm):
+            try:
+                outcome["staged_input_release"] = adapter.release_inputs()
+            except BaseException as exc:
+                outcome["staged_input_release_error"] = f"{type(exc).__name__}: {exc}"
+                outcome["returncode"] = 1
         outcome["window_end_unix"] = envelope.end_unix
         outcome["process_terminations"] = getattr(envelope, "terminations", [])
         outcome["container_terminations"] = getattr(adapter, "server_terminations", {})
@@ -641,7 +704,8 @@ def main():
     owned = dict(rank=args.rank, action_key=key, nonce=nonce, scope_id=scope, host=HOSTS[args.rank],
                  container_owner=os.environ["PRISMABUILD_CONTAINER_OWNER"], claimed_unix=row["claimed_unix"],
                  run_id=setup["run_id"], input_sha256=recipe.sha(args.run),
-                 window_end_unix=row["claimed_unix"] + WINDOW_SECONDS)
+                 window_end_unix=row["claimed_unix"] + setup["window_seconds"],
+                 peer_wait_seconds=setup["peer_wait_seconds"])
     require_claim(owned, queue)
     envelope = Envelope(owned["window_end_unix"])
     current = recipe.inputs(os.environ, live=True, runner=envelope.run)
@@ -691,7 +755,7 @@ def main():
         proof = dict(owned, config=config, image=image, native_gpu_work=False, model_containers_started=0,
                      cpu_parser_containers_started=len(parsers), profiler_parsers=parsers, real_cgroup_sample=sampler,
                      requested_pb_timeout_s=120, effective_pb_timeout_s=None,
-                     model_window_seconds=WINDOW_SECONDS, peer_wait_seconds=3600,
+                     model_window_seconds=setup["window_seconds"], peer_wait_seconds=setup["peer_wait_seconds"],
                      rendered_arms=[a["arm"] for a in setup["arms"]])
         atomic_json(rdv / f"cpu-role-preflight-rank{args.rank}.json", proof)
         print(json.dumps(proof, sort_keys=True), flush=True)

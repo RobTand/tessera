@@ -89,3 +89,23 @@ def test_final_public_covers_can_resolve_a_lagging_composed_map(tmp_path):
     second.close()
 
 
+def test_complete_file_descriptor_uses_pin_and_stays_open_until_consumer_closes(tmp_path, monkeypatch):
+    reader, staged, opened, sdk = fixture(tmp_path, offset=0)
+    monkeypatch.setattr('builtins.open', forbidden_origin)
+    fd, entry, serving = reader.pinned_file('/forbidden-origin/wire')
+    assert os.read(fd, entry['bytes']) == b'owned-wire'
+    assert serving['range_ref'] == client.residency_map_key('/forbidden-origin/wire', 0)
+    assert not reader.closed
+    os.close(fd)
+    reader.close()
+
+
+def test_complete_file_descriptor_refuses_partial_length_and_closes_fd(tmp_path):
+    reader, staged, opened, sdk = fixture(tmp_path, b'owned', offset=0)
+    with pytest.raises(ValueError, match='byte length'):
+        reader.pinned_file('/forbidden-origin/wire')
+    with pytest.raises(OSError):
+        os.fstat(opened[0])
+    reader.close()
+
+
