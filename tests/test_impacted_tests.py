@@ -350,6 +350,11 @@ _GLOB_READERS = {
                    '        assert path.read_text()\n'),
     "recursive": ('def test_reads():\n    for path in DOCS.glob("**/*.md"):\n'
                   '        assert path.read_text()\n'),
+    # The receiver is still named: bound to the directory, or the explicit self
+    # of the unbound method.
+    "bound-alias": 'scan = DOCS.glob\n\n\ndef test_lists():\n    assert sorted(scan("*.md"))\n',
+    "unbound-alias": ('original = Path.glob\n\n\ndef test_lists():\n'
+                      '    assert sorted(original(DOCS, "*.md"))\n'),
 }
 
 
@@ -395,6 +400,8 @@ def _change_docs(repo: Path, change: str) -> None:
     ("reads-each", "delete"),
     ("recursive", "modify"), ("recursive", "add"), ("recursive", "add-nested"),
     ("recursive", "delete"), ("recursive", "delete-nested"), ("recursive", "rename"),
+    ("bound-alias", "add"), ("bound-alias", "delete"),
+    ("unbound-alias", "add"), ("unbound-alias", "delete"),
 ])
 def test_a_membership_change_selects_a_glob_reader(tmp_path, spelling, change):
     """PB1496: ``Path.glob`` consumes a directory's membership like ``rglob`` does.
@@ -424,6 +431,42 @@ def test_a_glob_reader_is_not_selected_by_an_unrelated_directory(tmp_path, spell
     result = _selector(repo, f"{base}...HEAD")
 
     assert "tests/test_glob_reader.py" not in result["tests"], result
+
+
+@pytest.mark.parametrize("pattern, linked", [
+    ("../data/*.md", False),
+    ("link/*.md", True),
+], ids=["parent-component", "directory-symlink"])
+def test_a_glob_pattern_that_leaves_its_receiver_selects_the_reader(tmp_path, pattern, linked):
+    """A pattern with separators can read another directory's membership.
+
+    ``docs`` is the receiver, but ``../data/*.md`` and ``link/*.md`` (``link``
+    pointing at ``data``) list ``data``: a member added there must still select
+    the reader, though the receiver directory never changed (PB1496 review).
+    """
+    repo, _ = _repo(tmp_path)
+    (repo / "docs").mkdir()
+    (repo / "data").mkdir()
+    (repo / "docs" / "keep.md").write_text("# keep\n", encoding="utf-8")
+    (repo / "data" / "first.md").write_text("# first\n", encoding="utf-8")
+    if linked:
+        (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    (repo / "tests").mkdir()
+    (repo / "tests" / "test_pattern_reader.py").write_text(
+        "from pathlib import Path\n\n"
+        'DOCS = Path(__file__).resolve().parents[1] / "docs"\n\n\n'
+        f'def test_lists():\n    assert sorted(DOCS.glob({pattern!r}))\n',
+        encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a reader whose pattern leaves its receiver")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "extra.md").write_text("# new\n", encoding="utf-8")
+    _git(repo, "add", "data/extra.md")
+    _git(repo, "commit", "-qm", "a member of the other directory")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_pattern_reader.py" in result["tests"], result
 
 
 def test_a_named_base_with_an_unknown_pattern_keeps_its_dependency(tmp_path):
