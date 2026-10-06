@@ -451,6 +451,14 @@ def main():
         text["n_routed_experts"], text["num_experts_per_tok"]) != (4096, 1024, 288, 8):
         raise ValueError("actual GLM config does not match the representative TP2 shapes")
     if args.cpu_preflight:
+        if args.data_manifest:
+            from prismabuild.client import read_data_manifest
+            manifest, _encoding = read_data_manifest(args.data_manifest)
+            for entry in manifest["entries"]:
+                with open(entry["path"], "rb") as stream:
+                    stream.seek(entry["offset"])
+                    if not stream.read(min(16, entry["bytes"])):
+                        raise ValueError("declared input has no readable bytes")
         tiny = []
         for q in args.qs:
             recipe = served_recipe(grid, q, STRUCTURE_ROUTED_MOE)
