@@ -1144,7 +1144,9 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     repository files, and an unplaced read seeds its reader's consumers on every
     change, which made ``serving/ext.py`` select the whole population (#148).
     ``root_dir``, ``dir_fd``, extra positional arguments, a pattern nothing names
-    and a ``..`` after the first wildcard also stay unnamed (#1010), EXCEPT that a
+    and a ``..`` after the first wildcard also stay unnamed (#1010), but only for that
+    alternative: another alternative of the same call that names an in-tree base still
+    places it or keeps it as an unplaced read, whatever order they come in.  A
     pattern spelled from the tree's own root names a base inside it: a refusal or a
     ``..`` there is kept as an unplaced read (#1010 review).
 
@@ -1160,7 +1162,7 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     patterns = _values(call.args[0], scope, root, refused=refused, links=links)
     if patterns is None or not all(isinstance(pattern, str) for pattern in patterns):
         return None
-    bases, specs, names_tree = set(), [], False
+    bases, specs, names_tree, climbs = set(), [], False, False
     root_parts = Path(os.path.normpath(str(root))).parts
     for pattern in patterns:
         prefix = _literal_prefix(pattern)
@@ -1173,13 +1175,19 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
         in_tree = PurePath(pattern).parts[:len(root_parts)] == root_parts
         names_tree = names_tree or in_tree
         if ".." in PurePath(pattern).parts[len(prefix):]:
+            # This alternative names nothing it can place.  An outside one is unnamed; an
+            # in-tree one is an unplaced read.  Either way the other alternatives are still
+            # read, so keep going and let them place or refuse (#1010 review).
             if in_tree:
                 refused.append(base)
-            return None
+                climbs = True
+            continue
         bases.add(base)
         components = _wildcard_directory_components(pattern, prefix)
         if components:
             specs.append((base, components))
+    if climbs or not bases:
+        return None
     declined = []
     placed = _place(bases, root, declined, links)
     if placed is None and names_tree:
