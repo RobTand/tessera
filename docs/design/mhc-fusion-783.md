@@ -71,7 +71,7 @@ rows (one or two m16 MMA tiles):
 2. **GEMM** re-reads the new residual through a 4-stage cp.async ring
    that every thread fills, in the split's K order. L2 residency of both the
    residual and fn is a design assumption, not a measured cache-locality result.
-   order is stream-major while post produces all four streams per h, so the
+   The order is stream-major while post produces all four streams per h, so the
    tile must be buffered. Every (m-tile, n-tile) chain of the tile runs at
    once, up to two per warp; each chain is DeepGEMM's arithmetic. Partials go
    to a `[S, T, 24]` workspace.

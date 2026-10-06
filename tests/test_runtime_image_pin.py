@@ -164,6 +164,13 @@ def test_historical_default_pin_difference_stamps_and_keeps_actual_bytes(monkeyp
     output = capsys.readouterr()
     assert not output.out and "[DEV-MODE]" in output.err
 
+
+def test_resolve_keeps_its_receipt_return_contract_in_certified_mode(monkeypatch):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    other = "vllm/vllm-openai@sha256:" + "0" * 64
+    record = resolve("vllm/vllm-openai:latest", inspector=_inspector(repo_digests=[other]))
+    assert record["refused"] and record["reason"] == "image_pin_mismatch"
+
 def test_an_absent_image_is_the_same_refusal_with_the_same_fix():
     with pytest.raises(RuntimeImageError) as exc:
         require_pinned("vllm/vllm-openai:latest",
