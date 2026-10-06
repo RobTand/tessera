@@ -11,7 +11,9 @@ code bytes inside the native FP4 mainloop and uses the existing activation
 quantizer and LUT scale arithmetic. Diagnostic stock-byte rendering is never
 a compute fallback. CPU preparation is compared against `materialize_stock`;
 `--correctness` runs bounded GPU code/scale-byte and dense/grouped arithmetic
-oracles before geometry. The quality helper takes `--quality-structure` and
+oracles before geometry. Incoming TCQ history advances with the local pair
+index; canonical serialized row cuts are checked against stock code/scale
+bytes on CPU and in the GPU diagnostic. The quality helper takes `--quality-structure` and
 records each actual served recipe and encoder byte count independently.
 This reader admits exactly the served twelve-bit WINDOW scope, not wider
 research windows. The D41 image wrapper resolves actual Docker facts and

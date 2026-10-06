@@ -466,6 +466,16 @@ def run_correctness(args, grid, samples):
                 codes, scales = decode_wire_codes(unit)
                 if not torch.equal(codes.cpu(), stock["weight_packed"]) or not torch.equal(scales.cpu(), stock["weight_scale"].view(torch.uint8)):
                     raise ValueError(f"GPU packed code or scale bytes differ: {q} {structure} {role}")
+                from tessera.slicing import slice_unit
+                from tessera.unit_artifact import build_unit_artifact
+                shard = slice_unit(parsed, rows=(32, 64))
+                _, _, shard_blob = build_unit_artifact(shard, "history", parsed.forests, q * grid.arity, parsed.code)
+                shard_unit = prepare_a4_wire_compact(parse_compact_wire(shard_blob, device="cuda"))
+                shard_parsed = parse_unit_artifact(shard_blob, device="cpu")
+                shard_stock = materialize_stock(shard_parsed.unit, shard_parsed.forests, shard_parsed.code)
+                shard_codes, shard_scales = decode_wire_codes(shard_unit)
+                if not torch.equal(shard_codes.cpu(), shard_stock["weight_packed"]) or not torch.equal(shard_scales.cpu(), shard_stock["weight_scale"].view(torch.uint8)):
+                    raise ValueError(f"GPU incoming history bytes differ: {q} {structure} {role}")
                 units.append(unit)
                 weights.append(stock_dequant(stock).cuda())
             dense = PreparedA4Wire([units[0]], gs)
@@ -600,6 +610,19 @@ def main():
                         "preparation_owner": "tessera.compact_prep.prepare_a4_wire_compact",
                         "inputs": {name: {"shape": list(t.shape), "dtype": str(t.dtype),
                             "bytes": t.numel() * t.element_size()} for name, t in unit.named_tensors()}}
+                    if args.correctness:
+                        from tessera.slicing import slice_unit
+                        from tessera.unit_artifact import build_unit_artifact
+                        shard = slice_unit(parsed, rows=(16, 32))
+                        _, _, shard_blob = build_unit_artifact(shard, "history", parsed.forests, q * grid.arity, parsed.code)
+                        shard_unit = prepare_a4_wire_compact(parse_compact_wire(shard_blob, device="cpu"), device="cpu")
+                        shard_parsed = parse_unit_artifact(shard_blob, device="cpu")
+                        shard_stock = materialize_stock(shard_parsed.unit, shard_parsed.forests, shard_parsed.code)
+                        shard_codes, shard_scales = decode_wire_codes(shard_unit)
+                        if not torch.equal(shard_codes, shard_stock["weight_packed"]) or not torch.equal(shard_scales, shard_stock["weight_scale"].view(torch.uint8)):
+                            raise ValueError("CPU incoming history bytes differ from actual stock bytes")
+                        row["incoming_history"] = {"rows": shard_unit.rows, "cols": shard_unit.cols,
+                            "nonzero_start": bool(shard_unit.initial.any()), "codes_and_scales": "byte identical to stock"}
                 tiny.append(row)
         recorded = pick_recorded(args.routing, args.ms_values) if args.routing else {}
         if args.routing:

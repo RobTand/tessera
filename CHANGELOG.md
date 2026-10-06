@@ -11,7 +11,9 @@ The wrapper uses the existing development-mode stamp for image identity drift,
 while image absence and representation/byte bounds still refuse. Wider research
 WINDOW widths are not this reader's scope. Original forwarding and wording-only
 adapter assertions are replaced with actual code/scale-byte controls, including
-mixed boundaries, zero-width points and out-of-scope windows. No stored bytes,
+mixed boundaries, zero-width points, out-of-scope windows and canonical row-cut
+history. Incoming TCQ register indexing advances with the local pair and stays
+bounded before shifting. No stored bytes,
 serving defaults, recipes, pins, canonical table or admission gate change.
 
 ## 2026-10-06 — issue931: seeded L2048 determinism investigation

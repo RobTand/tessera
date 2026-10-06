@@ -83,7 +83,7 @@ def decode_wire_codes(unit):
         for i in range(unit.memory + 1):
             previous = p - unit.memory + i
             bit = _cpu_field(unit.body, start + previous * per, torch.ones_like(previous + start))
-            initial_bit = (unit.initial[None, :] >> i) & 1
+            initial_bit = (unit.initial[None, :] >> (p + i).clamp(max=max(unit.memory - 1, 0))) & 1
             bit = torch.where(previous >= 0, bit, initial_bit)
             window = (window << 1) | bit
         ell = unit.labels[window].long()
@@ -127,7 +127,7 @@ if _TL is not None:
             for i in _TL.static_range(MEMORY + 1):
                 previous = p - MEMORY + i
                 bit = _field(body, start + previous * per, 1, size, live & (previous >= 0))
-                bit = _TL.where(previous >= 0, bit, (init >> i) & 1)
+                bit = _TL.where(previous >= 0, bit, (init >> _TL.minimum(p + i, MEMORY)) & 1)
                 window = (window << 1) | bit
             ell = _TL.load(labels + window, mask=live, other=0)
             stored = _field(body, start + p * per + rate, 2, size, live)
