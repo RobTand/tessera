@@ -3410,7 +3410,8 @@ file can trigger (#923; `Path.glob`, including its `**` spelling, joined in
 PB1496, where it had selected nothing for a deleted, renamed or recursively
 matched member). A glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
-the unbound method (`Path.glob(DOCS, ...)`). A pattern that is absolute or
+the unbound method, called directly or through an alias
+(`Path.glob(DOCS, ...)`). A pattern that is absolute or
 contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
 keeps the link and its target. A link reached only through a wildcard

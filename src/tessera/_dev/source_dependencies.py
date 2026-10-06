@@ -993,23 +993,25 @@ def _literal_prefix(pattern):
 def _glob_receiver(loader, call, scope, root, refused, links):
     """``(bases, pattern arguments)`` of a ``glob``/``rglob`` call, or None.
 
-    A method call names its receiver.  A call through a name resolves only
-    when the name has one binding that is lexically the method: bound to a
-    directory (``scan = DOCS.glob``), whose receiver is that directory, or the
-    unbound ``Path.glob``, whose receiver is the first argument.  Anything else
-    names nothing, which the caller treats as an unnameable base.
+    The method is named directly (``DOCS.glob(...)``, ``Path.glob(DOCS, ...)``)
+    or through a name, which resolves only when it has one binding that is
+    lexically the method.  Whichever way it is spelled, the owner is either a
+    directory, which is the receiver, or the class ``Path``, whose receiver is
+    the first argument.  Anything else names nothing, which the caller treats as
+    an unnameable base.
     """
     if isinstance(call.func, ast.Attribute):
-        return _values(call.func.value, scope, root, refused=refused, links=links), call.args
-    here = scope
-    while here and call.func.id not in here.bindings:
-        here = here.parent
-    if here is None or len(here.bindings[call.func.id]) != 1:
-        return None
-    expression = here.bindings[call.func.id][0]
-    if not (isinstance(expression, ast.Attribute) and expression.attr == loader):
-        return None
-    owner = _values(expression.value, here, root, refused=refused, links=links)
+        owner = _values(call.func.value, scope, root, refused=refused, links=links)
+    else:
+        here = scope
+        while here and call.func.id not in here.bindings:
+            here = here.parent
+        if here is None or len(here.bindings[call.func.id]) != 1:
+            return None
+        expression = here.bindings[call.func.id][0]
+        if not (isinstance(expression, ast.Attribute) and expression.attr == loader):
+            return None
+        owner = _values(expression.value, here, root, refused=refused, links=links)
     if owner == {("symbol", "pathlib.Path")}:
         if not call.args:
             return None
