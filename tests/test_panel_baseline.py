@@ -359,7 +359,7 @@ def test_verify_table_binds_the_very_bytes_it_proved_over_a_pipe(tmp_path):
     receipt = json.loads(out)
     assert receipt["baseline"]["sha256"] == hashlib.sha256(table).hexdigest()
     assert receipt["baseline"]["bytes"] == len(table)
-    assert receipt["bench_rule"]["cells_checked"] >= len(FOUR_GROUPS)
+    assert receipt["proof"]["cells_checked"] >= len(FOUR_GROUPS)
 
 
 def test_verify_table_replacement_and_pin_stay_hard_across_runs(tmp_path):
