@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for issue989: `tessera.rung_allowability` is the
+pure-standard-library, non-serving owner of measured-rung table and index
+semantics. `validate_index(index)` and `validate_table(table)` return the
+input or raise `ValueError`; `admit_rung(table, *, format, kernel_build_id,
+rung, scope=None)` returns `allow`, `wait`, `hold`, `excluded`, `unsupported`
+or `failed` with a reason. Missing measurements wait. A measured rung requires
+all declared kind/shape/M cells, actual compiler/geometry evidence and a
+completed CPU screen of sampled expert weights. Exclusion requires supported
+adjacent-higher dominance at every paired cell; quality anomalies hold
+independently. The versioned fleet table does not mint runtime cells or replace
+export/serving gates, and this change moves no serving pin or kernel default.
+
 Re-stamped 2026-10-05 for issue984: opt-in
 `WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
 same MNBT4096, through the existing pair-table/row validator from issue980.
