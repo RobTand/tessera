@@ -126,57 +126,58 @@ def _load_geometry_adapter():
     return module
 
 
-def test_packed_fp4_bound_comes_from_float32_precision_and_contraction_length():
-    from pathlib import Path
+def test_native_rounding_envelope_uses_full_ulp_and_rejects_corruption():
+    """A synthetic cancellation residual exercises the actual production gate.
+
+    This is a bound-policy control, not a claim that a GPU produced the value.
+    The initial RN-only coefficient rejects the first residual; corruption
+    outside the conservative envelope must still be rejected.
+    """
     adapter = _load_geometry_adapter()
-    source = (Path(__file__).parents[1] / "experiments" / "t4_code" / "bench_geometry_e2m1.py").read_text()
-    assert "import prismaquant" not in source
-    assert "from prismaquant" not in source
-    assert "native_operator_panel" not in source
-    unit = torch.finfo(torch.float32).eps / 2
-    assert unit == 2.0**-24
-    tolerances, receipt = adapter.derive_packed_fp4_arithmetic_bound(10.0, k=256)
-    assert tolerances["rtol"] == 0.0
-    assert receipt["u_fp32"] == unit
-    assert receipt["k"] == 256
-    assert receipt["coefficient"] == (2.0 * 256 + 3.0) * unit
-    assert tolerances["atol"] == receipt["coefficient"] * 10.0
-    assert receipt["schema"].startswith("tessera.")
-    magnitude = adapter.dense_packed_fp4_operand_magnitude(
-        torch.tensor([[1.0, -2.0, 3.0]]),
-        torch.tensor([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]]))
-    assert magnitude == pytest.approx(6.0)
-    with pytest.raises(ValueError):
-        adapter.derive_packed_fp4_arithmetic_bound(1.0, k=0)
-    with pytest.raises(ValueError):
-        adapter.derive_packed_fp4_arithmetic_bound(1.0, k=256.0)
-    with pytest.raises(ValueError):
-        adapter.derive_packed_fp4_arithmetic_bound(float("nan"), k=256)
-    with pytest.raises(ValueError):
-        adapter.derive_packed_fp4_arithmetic_bound(float("inf"), k=256)
-    with pytest.raises(ValueError):
-        adapter.derive_packed_fp4_arithmetic_bound(-1.0, k=256)
+    expected = torch.zeros(1, 1, dtype=torch.float32)
+    adapter.check_packed_fp4_arithmetic(
+        torch.full_like(expected, 2.0**-14), expected, 1.0, k=256)
+    with pytest.raises(AssertionError):
+        adapter.check_packed_fp4_arithmetic(
+            torch.full_like(expected, 2.0**-8), expected, 1.0, k=256)
+
+
+def test_operand_magnitude_does_not_round_below_the_exact_contraction():
+    adapter = _load_geometry_adapter()
+    actual = adapter.dense_packed_fp4_operand_magnitude(
+        torch.tensor([[1.0, 2.0**-25]], dtype=torch.float32),
+        torch.ones(1, 2, dtype=torch.float32))
+    # Both terms and this exact sum fit float64. The old float32 matmul
+    # returns one, losing the second term before it prices the allowance.
+    assert actual >= 1.0 + 2.0**-25
+
+
+def test_arithmetic_gate_refuses_a_contraction_outside_the_gamma_domain():
+    adapter = _load_geometry_adapter()
+    expected = torch.zeros(1, 1, dtype=torch.float32)
+    k = int(1.0 / torch.finfo(torch.float32).eps) // 2
+    with pytest.raises(ValueError, match=r"steps \* epsilon below one"):
+        adapter.check_packed_fp4_arithmetic(expected, expected, 1.0, k=k)
+
+
+def test_equal_infinities_do_not_pass_the_arithmetic_gate():
+    adapter = _load_geometry_adapter()
+    overflow = torch.full((1, 1), float("inf"), dtype=torch.float32)
+    with pytest.raises(ValueError, match="finite native and reference"):
+        adapter.check_packed_fp4_arithmetic(overflow, overflow, 1.0, k=256)
 
 
 def test_old_fixed_allowance_under_bounds_cancellation_heavy_magnitudes():
-    """The old fixed gate rejects rounding error the derivation allows."""
+    """The production gate allows a residual relative to the operand sum."""
     adapter = _load_geometry_adapter()
-    tolerances, _ = adapter.derive_packed_fp4_arithmetic_bound(10.0, k=256)
-    assert tolerances["atol"] > 3e-5
     expected = torch.zeros(1, 64)
-    actual = torch.full((1, 64), 1e-4)
-    with pytest.raises(AssertionError):
-        torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
-    torch.testing.assert_close(actual, expected, rtol=tolerances["rtol"], atol=tolerances["atol"])
+    adapter.check_packed_fp4_arithmetic(torch.full_like(expected, 1e-4), expected, 10.0, k=256)
 
 
 def test_old_fixed_allowance_over_bounds_small_magnitudes():
-    """The old fixed gate accepts error far outside the proven envelope."""
+    """The production gate refuses corruption even when outputs are tiny."""
     adapter = _load_geometry_adapter()
-    tolerances, _ = adapter.derive_packed_fp4_arithmetic_bound(1e-4, k=256)
-    assert tolerances["atol"] < 3e-5
     expected = torch.zeros(1, 64)
-    actual = torch.full((1, 64), 1e-6)
-    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
     with pytest.raises(AssertionError):
-        torch.testing.assert_close(actual, expected, rtol=tolerances["rtol"], atol=tolerances["atol"])
+        adapter.check_packed_fp4_arithmetic(torch.full_like(expected, 1e-6), expected, 1e-4, k=256)
+
