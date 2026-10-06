@@ -30,6 +30,17 @@ Serving does not import this reader. No encoded bytes, serving recipe, format
 menu, pin, default or admission gate changes. Existing uniform reader
 measurements and immutable allowability tables remain unchanged.
 
+Issue #1007 replaces the packed-reader diagnostic's fixed tolerance with an
+absolute operand-sum envelope. Float64 reduction and outward inflation price
+an upper operand magnitude. Finite gamma bounds retain higher-order terms and
+refuse their invalid contraction domain. The numerical receipt is v2: both
+paths use a full-ULP float32 model, with two ULPs per normalization division,
+and no independent BF16 term. PTX leaves E2M1 MMA rounding, accumulation order
+and subnormal handling unspecified; this model is not a portable native
+guarantee or qualification. Before/after CPU controls and the actual bounded
+GPU oracle remain required before any arithmetic or D41 row promotion.
+Byte-exact code/scale checks remain independent and unchanged.
+
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
 lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
