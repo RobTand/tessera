@@ -193,6 +193,16 @@ def _run_cli(args, cwd):
                           capture_output=True, text=True, cwd=cwd)
 
 
+def test_the_reviewer_cli_names_missing_samples_without_a_traceback(tmp_path):
+    baseline = tmp_path / "missing-samples.json"
+    baseline.write_text(json.dumps({"results": [{"group": "broken",
+                                                "timings": {"1": {"n": 3}}}]}))
+    proc = _run_cli(["verify-table", "--baseline", str(baseline)], tmp_path)
+    assert proc.returncode == 2, proc.stderr
+    assert "REFUSED" in proc.stderr and "samples_ms" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
 def test_the_reviewer_cli_proves_the_recorded_rule_over_the_after_table(tmp_path):
     path = _present(AFTER)
     proc = _run_cli(["verify-table", "--baseline", str(path),

@@ -132,7 +132,10 @@ def verify_recorded_statistics(raw: bytes, *, where: str = "baseline") -> dict[s
             raise ValueError(f"{where}: group without timings: {group!r}")
         groups.add(str(group.get("group")))
         for m, cell in sorted(group["timings"].items()):
-            rebuilt = bench_summarize(cell.get("samples_ms"))
+            if not isinstance(cell.get("samples_ms"), list):
+                raise ValueError(
+                    f"{where}: {group.get('group')} M={m} samples_ms must be an array")
+            rebuilt = bench_summarize(cell["samples_ms"])
             for key in ("median_ms", "p25_ms", "p75_ms", "iqr_ms", "min_ms", "n"):
                 if rebuilt[key] != cell.get(key):
                     raise ValueError(
