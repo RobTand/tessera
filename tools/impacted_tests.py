@@ -17,7 +17,7 @@ everything relevant; where it did not, the honest answer is ``full``.
 Besides ordinary imports, explicit
 file loaders and source reads contribute edges from resolved paths, not module
 labels. A path it cannot resolve conservatively selects the reading module's
-reverse-reachable tests for any non-inert change, and an unresolved *loader*
+reverse-reachable tests for any change, whatever its suffix, and an unresolved *loader*
 reaching a conftest forces full -- a conftest that can run code it cannot name
 makes every test below it unpredictable. A file that will not parse or read is
 the same uncertainty from the other end: it states no dependency, which is not
@@ -34,7 +34,7 @@ But "not a module edge" is not "no edge". A read whose target the resolver
 *named* and then refused to place -- an absolute spelling outside the tree,
 which a local alias directory can carry straight back into it -- keeps a data
 dependency it cannot attribute to a file, so its reader is seeded for every
-non-inert change instead. Dropping that was under-selection with no
+change instead, whatever its suffix (#355). Dropping that was under-selection with no
 diagnostic at all: the changed JSON moved the reader's bytes and the verdict
 was a confident ``none`` (#338). It is deliberately weaker than the module
 wildcard -- it selects the reader's consumers and never forces the full run --
@@ -123,9 +123,10 @@ OPAQUE = (
 # walking them selects tests that are not the ones about to run.
 SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
              "muse-out", "worktrees", "__pycache__"}
-# Extensions that never force a full run.  They can still select readers --
-# through the graph (a named read, or a directory-wide enumeration), the text
-# fallback, or a reader this resolver refused to place.
+# Extensions with no Python meaning of their own.  A change to one needs no test
+# unless something reads it: through the graph (a named read, or a
+# directory-wide enumeration), the text fallback, a reader this resolver refused
+# to place, or an unknown loader, which may open any file whatever its suffix.
 INERT = {".md", ".txt", ".rst"}
 
 # Explicit manual-only interfaces, not a guess at pytest collection. Keep
@@ -766,8 +767,10 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     # all.  They seed identically -- their consumers are selected, and a
     # conftest among them forces the population -- and are reported apart,
     # because "repair this file" is the only action one of them admits.
-    non_inert = any(Path(f).suffix not in INERT for f in changed)
-    uncertain = importers.get(WILDCARD, set()) if non_inert else set()
+    # An unknown loader opens a path nothing here can name, so a prose suffix
+    # does not prove it unread: only an empty diff proves there is no changed
+    # input, as for the refused reads below (#355, PB1496).
+    uncertain = importers.get(WILDCARD, set()) if changed else set()
     unresolved = {name for name in uncertain
                   if str(by_name[name].relative_to(root)) not in unreadable}
     # A third kind: a module that reads a file it named and the resolver

@@ -569,7 +569,13 @@ def test_unknown_loader_selects_its_static_downstream_test(tmp_path, changed_pat
     (repo / "seed.txt").write_text("notes only\n", encoding="utf-8")
     _git(repo, "add", "seed.txt")
     _git(repo, "commit", "-qm", "inert change")
-    assert _selector(repo, f"{inert_base}...HEAD")["verdict"] == "none"
+    # A prose suffix does not prove the unknown loader left the file unread
+    # (PB1496): this used to be verdict ``none``.  The control that an inert
+    # change with no unknown loader stays ``none`` is
+    # test_no_test_reason_names_why_the_path_selected_nothing.
+    inert = _selector(repo, f"{inert_base}...HEAD")
+    assert inert["verdict"] == "narrowed"
+    assert "tests/test_consumer.py" in inert["tests"]
 
 
 @pytest.mark.parametrize("indirect", [False, True], ids=["direct", "through-helper"])
