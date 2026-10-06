@@ -214,38 +214,32 @@ def test_seeded_client_sends_seed_and_retains_entire_http_stream():
 
 @pytest.mark.parametrize("changed", [False, True], ids=["matching-off", "mismatched-off"])
 def test_real_rank_lifecycle_restarts_off_and_gates_both_lever_starts(tmp_path, changed):
-    import multiprocessing
+    import os
+    import signal
+    import subprocess
     import time
     import managed_window as window
-    import rank_window
-    from test_graph_attest_window_scenarios import CpuArm, alive, make_identity, write_claim
+    from test_graph_attest_window_scenarios import alive, make_identity, write_claim
     root, queue = tmp_path / "run", tmp_path / "queue"
     root.mkdir()
     arms = recipe.plan(control_plan(tmp_path), mode=MODE)
     start = time.time()
     identities = [make_identity(rank, start, start + 20) for rank in (0, 1)]
 
-    class ControlArm(CpuArm):
-        def probes(self, arm, peer):
-            store_population(root, arm["arm"], change=changed and arm["arm"] == NAMES[1])
-            return dict(correctness_only=True)
-
-    def child(owned):
-        envelope = window.Envelope(owned["window_end_unix"])
-        adapter = ControlArm(root, owned, envelope, "success")
-        rank_window.run_rank(dict(window_mode=MODE, fabric="socket"), owned, queue, root, arms,
-                             adapter, envelope, poll_seconds=.01)
 
     children = []
     try:
         for identity in identities:
             write_claim(queue, identity)
-            process = multiprocessing.get_context("fork").Process(target=child, args=(identity,))
-            process.start()
-            children.append(process)
-        for process in children:
-            process.join(timeout=25)
-            assert not process.is_alive()
+            window.atomic_json(tmp_path / f"identity{identity['rank']}.json", identity)
+            log = (tmp_path / f"controller{identity['rank']}.log").open("w")
+            process = subprocess.Popen([sys.executable, str(Path(__file__)), "--control-rank",
+                                        str(tmp_path), str(identity["rank"]), str(int(changed))],
+                                       stdout=log, stderr=subprocess.STDOUT)
+            children.append((process, log))
+        for process, log in children:
+            process.wait(timeout=25)
+            log.close()
         outcomes = [window.read_json(root / f"outcome-rank{rank}.json") for rank in (0, 1)]
         pids = [int(path.read_text()) for path in root.glob("*.pid")]
         assert not [pid for pid in pids if alive(pid)]
@@ -259,7 +253,32 @@ def test_real_rank_lifecycle_restarts_off_and_gates_both_lever_starts(tmp_path, 
         for rank in (0, 1):
             assert (root / f"{NAMES[0]}.rank{rank}.pid").read_text() != (root / f"{NAMES[1]}.rank{rank}.pid").read_text()
     finally:
-        for process in children:
-            if process.is_alive():
+        for process, log in children:
+            if process.poll() is None:
                 process.kill()
-                process.join()
+                process.wait()
+            log.close()
+        for path in root.glob("*.pid"):
+            pid = int(path.read_text())
+            if alive(pid):
+                os.killpg(pid, signal.SIGKILL)
+
+
+if __name__ == "__main__":
+    import managed_window as window
+    import rank_window
+    from test_graph_attest_window_scenarios import CpuArm
+    parent, rank, changed = Path(sys.argv[2]), int(sys.argv[3]), bool(int(sys.argv[4]))
+    root, queue = parent / "run", parent / "queue"
+    owned = window.read_json(parent / f"identity{rank}.json")
+    envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=1)
+
+    class ControlArm(CpuArm):
+        def probes(self, arm, peer):
+            store_population(root, arm["arm"], change=changed and arm["arm"] == NAMES[1])
+            return dict(correctness_only=True)
+
+    adapter = ControlArm(root, owned, envelope, "success")
+    arms = [dict(arm=name) for name in NAMES]
+    raise SystemExit(rank_window.run_rank(dict(window_mode=MODE, fabric="socket"), owned, queue, root, arms,
+                                         adapter, envelope, poll_seconds=.01))
