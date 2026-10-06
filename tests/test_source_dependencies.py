@@ -806,6 +806,52 @@ def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
     assert _unnamed_directory_reads(source, tmp_path) == []
 
 
+@pytest.mark.parametrize("source", [
+    "import os\nx = os.listdir('docs')\n",
+    "import os\nx = list(os.walk('docs'))\n",
+    "import os\nx = list(os.scandir('docs'))\n",
+    "import os\nDOCS = 'docs'\nx = os.listdir(DOCS)\n",
+    "from os import listdir\nx = listdir('docs')\n",
+    "import os\nx = os.listdir('./docs')\n",
+], ids=["listdir", "walk", "scandir", "constant", "from-import", "dot-slash"])
+def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source):
+    # ``os.listdir("docs")`` reads the same directory as ``os.listdir(Path("docs"))``;
+    # only the Path spelling used to be resolved, so a file added under the
+    # directory selected no reader (PB1496).
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("source", [
+    # A custom ``walk`` is recognized by its name alone; its string argument may
+    # not be a path at all, so resolving it must ADD an edge and never replace the
+    # unknown-loader flag a module that can execute source already had.
+    "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk('mode')\n",
+    "import os\n\n\ndef f():\n    exec('pass')\n    return os.listdir('mode')\n",
+    "from os import walk\n\n\ndef f():\n    exec('pass')\n    return list(walk('mode'))\n",
+], ids=["custom-walk", "os-listdir", "from-import-walk"])
+def test_a_string_base_adds_an_edge_without_dropping_the_unknown_loader_flag(tmp_path, source):
+    (tmp_path / "mode").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "mode" in found, (found, unknown, unplaced)
+    assert unknown, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "import os\nx = os.listdir('/etc')\n",
+    "import os\nx = os.listdir('../outside')\n",
+], ids=["absolute", "escaping"])
+def test_a_string_path_outside_the_tree_is_refused_not_resolved(tmp_path, source):
+    # The boundary guard is the same one the Path spelling meets: refused, kept
+    # as an unplaced read, and never stat'ed outside the tree.
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == set()
+    assert unplaced and not unknown
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)
