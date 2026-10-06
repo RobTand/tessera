@@ -401,6 +401,7 @@ interface, shape, launch and safety checks remain active. Required identity
 fused asynchronous copy rounds full-FP32 projection operands to TF32 before
 the matrix instruction, matching stock tensor-map conversion. Native controls
 also compare projection and squared-sum workspaces and TF32 halfway inputs. Earlier
+sixty-case receipts used value equality and did not establish signed-zero
 identity. Calls stock runs at split > 1 stay stock. The retained site
 microbenchmarks imply estimated sums of 2.5881 and 3.1111 ms per rank over
 44 attention and 45 feed-forward sites; these are not measured served chunk
