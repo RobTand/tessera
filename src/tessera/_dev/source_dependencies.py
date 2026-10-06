@@ -39,7 +39,7 @@ from __future__ import annotations
 import ast
 import os.path
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PurePath
 
 #: The node an unknown *module* dependency edges to: this reader can run
 #: Python it cannot name, so it may import anything in the tree.
@@ -980,6 +980,43 @@ def source_execution_modules(trees, modules, targets, *, scanners=None,
     }
 
 
+def _literal_prefix(pattern):
+    """The directory names in front of a pattern's first wildcard component."""
+    prefix = []
+    for part in PurePath(pattern).parts[:-1]:
+        if any(wildcard in part for wildcard in "*?["):
+            break
+        prefix.append(part)
+    return prefix
+
+
+def _glob_receiver(loader, call, scope, root, refused, links):
+    """``(bases, pattern arguments)`` of a ``glob``/``rglob`` call, or None.
+
+    A method call names its receiver.  A call through a name resolves only
+    when the name has one binding that is lexically the method: bound to a
+    directory (``scan = DOCS.glob``), whose receiver is that directory, or the
+    unbound ``Path.glob``, whose receiver is the first argument.  Anything else
+    names nothing, which the caller treats as an unnameable base.
+    """
+    if isinstance(call.func, ast.Attribute):
+        return _values(call.func.value, scope, root, refused=refused, links=links), call.args
+    here = scope
+    while here and call.func.id not in here.bindings:
+        here = here.parent
+    if here is None or len(here.bindings[call.func.id]) != 1:
+        return None
+    expression = here.bindings[call.func.id][0]
+    if not (isinstance(expression, ast.Attribute) and expression.attr == loader):
+        return None
+    owner = _values(expression.value, here, root, refused=refused, links=links)
+    if owner == {("symbol", "pathlib.Path")}:
+        if not call.args:
+            return None
+        return _values(call.args[0], scope, root, refused=refused, links=links), call.args[1:]
+    return owner, call.args
+
+
 def _enumeration_bases(loader, call, scope, root, refused, links):
     """The base directories an enumeration call consumes, or ``None``.
 
@@ -1009,19 +1046,32 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
             return None
         bases = _values(call.args[0], scope, root, refused=refused, links=links)
     else:  # glob and rglob: the receiver names the tree, the argument the pattern.
-        if not isinstance(call.func, ast.Attribute):
-            return None  # ``method = Path.glob; method(path, ...)`` has no receiver to resolve.
-        bases = _values(call.func.value, scope, root, refused=refused, links=links)
+        receiver = _glob_receiver(loader, call, scope, root, refused, links)
+        if receiver is None:
+            return None
+        bases, arguments = receiver
         if bases is None:
             return None
-        if len(call.args) != 1 or call.keywords:
+        if len(arguments) != 1 or call.keywords:
             refused.extend(base for base in bases if isinstance(base, Path))
             return None
-        patterns = _values(call.args[0], scope, root, refused=refused, links=links)
+        patterns = _values(arguments[0], scope, root, refused=refused, links=links)
         if patterns is None or not all(
                 isinstance(pattern, str) for pattern in patterns):
             refused.extend(base for base in bases if isinstance(base, Path))
             return None
+        if any(PurePath(pattern).is_absolute() or ".." in PurePath(pattern).parts
+               for pattern in patterns):
+            # A pattern can leave the receiver; nothing here proves where.
+            refused.extend(base for base in bases if isinstance(base, Path))
+            return None
+        if all(isinstance(base, Path) for base in bases):
+            # A literal directory in front of the first wildcard may be a link
+            # to another directory.  Placing it keeps the link and the target.
+            bases = bases | {
+                base.joinpath(*prefix)
+                for base in bases for prefix in (_literal_prefix(pattern) for pattern in patterns)
+                if prefix}
     if bases is None or not all(isinstance(base, Path) for base in bases):
         return None
     return _place(bases, root, refused, links)

@@ -637,17 +637,57 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
 
 
 @pytest.mark.parametrize("method", ["glob", "rglob"])
-def test_an_unbound_glob_method_call_names_no_base(tmp_path, method):
-    # ``original = Path.glob`` then ``original(path, pattern)`` is how tests
-    # wrap the method.  The call has no receiver to resolve, so it names
-    # nothing: the scan must come back, not raise (PB1496).
+@pytest.mark.parametrize("form", ["unbound", "bound"])
+def test_an_aliased_glob_method_keeps_its_named_base(tmp_path, method, form):
+    # ``original = Path.glob; original(path, pattern)`` and
+    # ``scan = DOCS.glob; scan(pattern)`` still name their directory (PB1496).
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    if form == "unbound":
+        source = ('from pathlib import Path\n'
+                  f'original = Path.{method}\n'
+                  'original(Path("docs"), "*.json")\n')
+    else:
+        source = ('from pathlib import Path\n'
+                  f'scan = Path("docs").{method}\n'
+                  'scan("*.json")\n')
+    found, unknown, unplaced = _scan_full(source, root)
+    assert found == {root / "docs"}
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("method", ["glob", "rglob"])
+def test_an_aliased_glob_method_with_no_nameable_receiver_names_no_base(tmp_path, method):
     root = tmp_path / "repo"
     root.mkdir()
     found, unknown, unplaced = _scan_full(
         'from pathlib import Path\n'
         f'original = Path.{method}\n'
-        'original(Path("."), "*.json")\n', root)
+        'original(somewhere, "*.json")\n', root)
     assert found == set()
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("pattern", ["../data/*.json", "/abs/*.json"])
+def test_a_glob_pattern_that_can_leave_its_receiver_is_refused(tmp_path, pattern):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'Path("docs").glob({pattern!r})\n', root)
+    assert found == set()
+    assert unplaced or unknown
+
+
+def test_a_glob_prefix_that_is_a_link_keeps_the_link_and_its_target(tmp_path):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'Path("docs").glob("link/*.json")\n', root)
+    assert {root / "docs", root / "data", root / "docs" / "link"} <= found
     assert not unknown and not unplaced
 
 
