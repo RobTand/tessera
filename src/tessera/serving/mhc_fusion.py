@@ -60,7 +60,7 @@ MODULE_PREFIX = "tessera_mhc_fused_"
 SOURCE = "mhc_fused.cu"
 #: TileLang compiles the stock post/pre with ``-O3`` and no fast math (pass config
 #: ``tl.enable_fast_math`` defaults off); the stock SASS has IEEE division and full
-#: ``expf``.  Matching that is part of the identity, so no ``-use_fast_math`` here.
+#: ``expf``. Matching that is part of the arithmetic contract; no fast math here.
 FLAGS = ("-O3", "-std=c++17", "--threads", "1", "-gencode=arch=compute_121a,code=sm_121a")
 
 #: The vLLM modules the rebind reads or replaces, in digest order.

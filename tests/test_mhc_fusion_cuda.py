@@ -65,16 +65,38 @@ def _inputs(tokens, seed):
 
 
 @pytest.mark.parametrize("tokens,full_batch", [(33, 33), (1024, 2048), (2048, 2048), (2049, 2049)])
-def test_fused_equals_stock_bitwise(stack, tokens, full_batch):
+@pytest.mark.parametrize("projection_values", ["float32", "tf32_halfway"])
+def test_fused_equals_stock_bitwise(stack, tokens, full_batch, projection_values, monkeypatch):
     x, res, post, comb, fn, scale, base, norm = _inputs(tokens, tokens + full_batch)
+    if projection_values == "tf32_halfway":
+        # Exercise both retained-mantissa parities and signs at TF32 ties.
+        fn.view(torch.int32).bitwise_and_(~0x1fff).bitwise_or_(0x1000)
+    compare = runpy.run_path(str(Path(__file__).resolve().parents[1] /
+                                "experiments/mhc/mhc_probe.py"))["compare"]
+    workspaces = {}
+    empty = torch.empty
+
+    def retain_workspace(*args, **kwargs):
+        tensor = empty(*args, **kwargs)
+        if tensor.dtype == torch.float32 and tensor.ndim == 3 and tensor.shape[-1] == 24:
+            workspaces["projection"] = tensor
+        elif tensor.dtype == torch.float32 and tensor.ndim == 2 and tensor.shape[-1] == tokens:
+            workspaces["squared_sum"] = tensor
+        return tensor
+
     with _Forced(stack.tk, full_batch):
         ref = stack.stock(x, res, post, comb, fn, scale, base, RMS_EPS, HC_EPS, HC_EPS, POST_MULT,
                           SINKHORN, 1, 1, norm_weight=norm, norm_eps=RMS_EPS)
-        got = stack.mf.fused_post_pre(stack.lib, stack.tk, x, res, post, comb, fn, scale, base, RMS_EPS,
-                                      HC_EPS, HC_EPS, POST_MULT, SINKHORN, norm, RMS_EPS)
-    compare = runpy.run_path(str(Path(__file__).resolve().parents[1] /
-                                "experiments/mhc/mhc_probe.py"))["compare"]
-    for name, a, b in zip(("residual", "post_mix", "comb_mix", "layer_input"), got, ref):
-        assert a.shape == b.shape, name
-        result = compare(a, b)
-        assert result["equal"], f"{name}: {result['bits_differing']} bit patterns differ"
+        with monkeypatch.context() as patch:
+            patch.setattr(torch, "empty", retain_workspace)
+            got = stack.mf.fused_post_pre(stack.lib, stack.tk, x, res, post, comb, fn, scale, base, RMS_EPS,
+                                          HC_EPS, HC_EPS, POST_MULT, SINKHORN, norm, RMS_EPS)
+        from vllm.model_executor.kernels.mhc.tilelang import _hc_prenorm_gemm_outputs
+        projection, squared_sum = _hc_prenorm_gemm_outputs(
+            ref[0].view(tokens, -1), fn, hidden_size=4096, hc_mult=4)
+    checks = {name: compare(a, b) for name, a, b in
+              zip(("residual", "post_mix", "comb_mix", "layer_input"), got, ref)}
+    checks["projection"] = compare(workspaces["projection"], projection)
+    checks["squared_sum"] = compare(workspaces["squared_sum"], squared_sum)
+    failures = {name: result for name, result in checks.items() if not result["equal"]}
+    assert not failures, repr(failures)

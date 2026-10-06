@@ -15,8 +15,8 @@
 //        one, x from its own pointer); the other contraction differs in
 //        about 1.6e-5 of outputs.
 //  gemm  per split s: K blocks of 64 in order, eight m16n8k8 TF32 MMAs per
-//        block on the fp32 bits of the bf16 residual and the raw fp32 fn
-//        bits, fragments laid out as DeepGEMM's; sqrsum per lane over
+//        block on the fp32 bits of the bf16 residual and TF32-rounded fn
+//        values, fragments laid out as DeepGEMM's; sqrsum per lane over
 //        columns t and t+4, then xor-2, xor-1 lane sums.
 //  pre   the TileLang kernel's mixes, Sinkhorn and RMSNorm arithmetic and
 //        reduction trees, per token (split partials summed in split order).
@@ -92,6 +92,16 @@ __device__ __forceinline__ uint64_t policy_evict_last() {
 __device__ __forceinline__ void st_evict_last(void* ptr, uint4 v, uint64_t policy) {
   asm volatile("st.global.L2::cache_hint.v4.b32 [%0], {%1, %2, %3, %4}, %5;"
                :: "l"(ptr), "r"(v.x), "r"(v.y), "r"(v.z), "r"(v.w), "l"(policy) : "memory");
+}
+
+// Stock loads fn through a TFLOAT32 tensor map. Our cp.async copy retains
+// FP32, so reproduce that conversion before supplying B to the TF32 MMA.
+// Already-representable checkpoint values are unchanged; arbitrary FP32
+// weights must not silently lose their low mantissa bits by truncation.
+__device__ __forceinline__ uint32_t tf32_bits(float value) {
+  uint32_t bits;
+  asm("cvt.rna.tf32.f32 %0, %1;" : "=r"(bits) : "f"(value));
+  return bits;
 }
 
 __device__ __forceinline__ void tf32_mma(float (&d)[4], const uint32_t (&a)[4], const uint32_t (&b)[2]) {
@@ -273,7 +283,7 @@ __device__ void gemm_phase(const Params& p, GemmSmem& sm, int t0, int tm) {
           sq1[j] += fa1 * fa1 + fa3 * fa3;
         }
         uint32_t a[4] = {__float_as_uint(fa0), __float_as_uint(fa1), __float_as_uint(fa2), __float_as_uint(fa3)};
-        uint32_t b[2] = {__float_as_uint(sm.b[st][nb][k0]), __float_as_uint(sm.b[st][nb][k0 + 4])};
+        uint32_t b[2] = {tf32_bits(sm.b[st][nb][k0]), tf32_bits(sm.b[st][nb][k0 + 4])};
         tf32_mma(acc[j], a, b);
       }
     }
