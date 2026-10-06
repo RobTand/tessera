@@ -695,6 +695,39 @@ def test_a_glob_prefix_that_is_a_link_keeps_the_link_and_its_target(tmp_path):
     assert not unknown and not unplaced
 
 
+def _unnamed_directory_reads(source, root):
+    unnamed = []
+    file_imports(ast.parse(source), root / "consumer.py", root, unnamed=unnamed)
+    return unnamed
+
+
+@pytest.mark.parametrize("source", [
+    "def f(x):\n    def walk(a):\n        return a\n    return walk(x)\n",
+    "def walk(a):\n    return a\n\n\ndef f(x):\n    return walk(x)\n",
+    "class walk:\n    pass\n\n\ndef f(x):\n    return walk(x)\n",
+    "def glob(a):\n    return a\n\n\ndef f(x):\n    return glob(x)\n",
+], ids=["nested-def", "module-def", "class", "glob"])
+def test_a_function_the_file_defines_is_not_a_directory_read(tmp_path, source):
+    # A bare ``walk(...)`` is os.walk only if something names it so.  A name the
+    # file defines itself and never imports is that function, not an enumeration
+    # (PB1496: the codebook's recursive ``walk`` was listed as an unnamed read).
+    assert _unnamed_directory_reads(source, tmp_path) == []
+
+
+@pytest.mark.parametrize("source", [
+    "from os import walk\n\n\ndef f(x):\n    return list(walk(x))\n",
+    "import os\n\n\ndef f(x):\n    return list(os.walk(x))\n",
+    "from os import walk as step\n\n\ndef f(x):\n    return list(step(x))\n",
+    "import os\nwalk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n",
+    # A star import may bring os.walk in; a same-named def elsewhere cannot rule it out.
+    "from os import *\n\n\ndef g():\n    def walk(a):\n        return a\n\n\ndef f(x):\n    return list(walk(x))\n",
+    # An import of the real name keeps the alias even if the file also defines one.
+    "from os import walk\n\n\ndef g():\n    def walk(a):\n        return a\n\n\ndef f(x):\n    return list(walk(x))\n",
+], ids=["from-os", "os-attribute", "renamed-import", "assigned-alias", "star-import", "import-and-def"])
+def test_a_real_directory_walk_is_still_listed(tmp_path, source):
+    assert _unnamed_directory_reads(source, tmp_path), source
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)
