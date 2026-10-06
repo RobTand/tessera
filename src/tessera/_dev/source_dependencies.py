@@ -363,24 +363,6 @@ class _Scanner(ast.NodeVisitor):
         self.calls = []
         self.references = []
         self.functions = defaultdict(list)
-        self.plain_defs = defaultdict(int)
-
-    def resolves_to_own_definition(self, func, scope):
-        """True when a bare name provably calls a plain ``def``/``class`` of this file.
-
-        Binding is lexical: the name must resolve, through the scope chain, to
-        a scope in which every binding is an undecorated ``def`` or ``class``.
-        A parameter, assignment, import, ``global``, decorated definition or a
-        second binding of the name in that scope leaves it unproven, and so does
-        a definition elsewhere in the file (PB1496).
-        """
-        if not isinstance(func, ast.Name):
-            return False
-        here = scope
-        while here is not None and func.id not in here.bindings:
-            here = here.parent
-        return (here is not None
-                and len(here.bindings[func.id]) == self.plain_defs[(id(here), func.id)])
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
@@ -515,8 +497,6 @@ class _Scanner(ast.NodeVisitor):
             prior.bindings[node.name].append(
                 ("symbol", f"{self.module}.{node.name}")
                 if self.module is not None and prior.parent is None else None)
-            if not node.decorator_list:
-                self.plain_defs[(id(prior), node.name)] += 1
         parent = prior.parent if prior.class_body and not class_body else prior
         self.scope = _Scope(parent, class_body=class_body)
         if hasattr(node, "args"):
@@ -1099,6 +1079,48 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
     return _place(bases, root, refused, links)
 
 
+def _sole_plain_definitions(tree):
+    """Names the file binds exactly once, in any scope, with an undecorated ``def``.
+
+    This is a fallback, not a resolver (PB1496).  A bare ``walk(...)`` is the
+    file's own function only when nothing else in the file can bind the name:
+    one ``def`` and no parameter, assignment, import, ``global``, loop or
+    ``with`` target, ``except`` name, pattern capture, type parameter, decorator
+    or class.  A star import anywhere voids the proof for every name, since it
+    can rebind any of them.  Anything this cannot prove is left a candidate:
+    over-recognizing a call only selects more, missing one selects too little.
+    """
+    if any(isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
+           for node in ast.walk(tree)):
+        return set()
+    count, plain = defaultdict(int), set()
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names = [node.name]
+            if not node.decorator_list:
+                plain.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            names = [node.name]
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names = [node.id]
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        elif isinstance(node, ast.alias):
+            names = [node.asname or node.name.split(".")[0]]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = list(node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            names = [node.name] if node.name else []
+        elif isinstance(node, ast.MatchMapping):
+            names = [node.rest] if node.rest else []
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            names = [node.name]
+        for name in names:
+            count[name] += 1
+    return {name for name in plain if count[name] == 1}
+
+
 def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
     """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
 
@@ -1129,6 +1151,7 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
         return executes or not reading
 
     found, unknown, unplaced = set(), False, False
+    own_definitions = _sole_plain_definitions(tree)
 
     def refuse(reading):
         """Record a target this resolver named and then declined to place.
@@ -1150,7 +1173,10 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
         loaders = kind(call.func)
         if not loaders:
             continue
-        if loaders <= _ENUMERATIONS and scanner.resolves_to_own_definition(call.func, scope):
+        if (loaders <= _ENUMERATIONS and not executes and isinstance(call.func, ast.Name)
+                and call.func.id in own_definitions):
+            # A module that can execute source never drops a call: it keeps the
+            # unknown-loader flag whatever the file defines.
             continue
         reading = loaders <= _READ_METHODS | _ENUMERATIONS
         if len(loaders) != 1:
