@@ -297,3 +297,21 @@ def test_d32_manifest_filename_is_not_mixed_into_cap_refusals(tmp_path, monkeypa
         with pytest.raises(managed_window.Refused, match="prepared PB"):
             driver.submit(root, reviews)
 
+
+
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("label", ["data_manifest", "control_root", "profile_manifest"])
+def test_d32_input_filename_labels_do_not_replace_actual_scope_checks(monkeypatch, capsys, dev, label):
+    recorded = dict(control_protocol=dict(server_seed=0, lens=[2048]), fabric="socket", **{label:"recorded-alias"})
+    current = dict(recorded, **{label:"current-alias"})
+    monkeypatch.setenv(DEV_MODE_ENV, dev)
+    if dev == "0":
+        with pytest.raises(managed_window.Refused):
+            recipe.check_control_record(recorded, current, where="test", refusal=managed_window.Refused("identity"))
+    else:
+        recipe.check_control_record(recorded, current, where="test", refusal=managed_window.Refused("identity"))
+        assert "[DEV-MODE]" in capsys.readouterr().out
+    current["control_protocol"] = dict(server_seed=99, lens=[2048])
+    with pytest.raises(managed_window.Refused, match="scope/geometry/comparability"):
+        recipe.check_control_record(recorded, current, where="test", refusal=managed_window.Refused("identity"))
+
