@@ -133,6 +133,34 @@ def test_native_rounding_envelope_uses_full_ulp_and_rejects_corruption():
             torch.full_like(expected, 2.0**-8), expected, 1.0, k=256)
 
 
+
+def test_diagnostic_pass_does_not_certify_unspecified_native_arithmetic():
+    adapter = _load_geometry_adapter()
+    output = torch.zeros(1, 1, dtype=torch.float32)
+    receipt = adapter.check_packed_fp4_arithmetic(output, output, 1.0, k=256)
+    assert receipt["status"] == "conditional_diagnostic_only"
+    assert receipt["native_arithmetic_qualified"] is False
+
+
+def test_arithmetic_gate_compares_the_actual_float32_values_without_rounding_the_difference():
+    adapter = _load_geometry_adapter()
+    # Float32 subtraction loses 2^-25. Put the allowance halfway between
+    # that rounded difference (one) and the actual difference (one + 2^-25).
+    _, unit_receipt = adapter.derive_packed_fp4_arithmetic_bound(1.0, k=256)
+    magnitude = (1.0 + 2.0**-26) / unit_receipt["coefficient"]
+    with pytest.raises(AssertionError):
+        adapter.check_packed_fp4_arithmetic(
+            torch.ones(1, 1, dtype=torch.float32),
+            torch.full((1, 1), -2.0**-25, dtype=torch.float32), magnitude, k=256)
+
+
+def test_arithmetic_gate_refuses_outputs_outside_the_float32_contract():
+    adapter = _load_geometry_adapter()
+    output = torch.zeros(1, 1, dtype=torch.bfloat16)
+    with pytest.raises(ValueError, match="float32 native and reference"):
+        adapter.check_packed_fp4_arithmetic(output, output, 1.0, k=256)
+
+
 def test_operand_magnitude_does_not_round_below_the_exact_contraction():
     adapter = _load_geometry_adapter()
     actual = adapter.dense_packed_fp4_operand_magnitude(

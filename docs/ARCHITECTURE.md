@@ -33,12 +33,22 @@ measurements and immutable allowability tables remain unchanged.
 Issue #1007 replaces the packed-reader diagnostic's fixed tolerance with an
 absolute operand-sum envelope. Float64 reduction and outward inflation price
 an upper operand magnitude. Finite gamma bounds retain higher-order terms and
-refuse their invalid contraction domain. The numerical receipt is v2: both
-paths use a full-ULP float32 model, with two ULPs per normalization division,
-and no independent BF16 term. PTX leaves E2M1 MMA rounding, accumulation order
-and subnormal handling unspecified; this model is not a portable native
-guarantee or qualification. Before/after CPU controls and the actual bounded
-GPU oracle remain required before any arithmetic or D41 row promotion.
+refuse their invalid contraction domain. The numerical receipt is v3: the
+full-ULP float32 model is explicitly conditional, with two ULPs per
+normalization division and no independent BF16 term. Those divisions are
+reference activation/896 and native weight_global/896; a normal divisor
+does not establish normal finite quotients or intermediate arithmetic.
+PTX leaves E2M1 MMA rounding, accumulation order and subnormal handling
+unspecified: at least single precision does not establish faithful rounding
+or the reduction-depth bound needed by gamma. That native error contract is
+unavailable. Neither finite outputs nor a bounded GPU diagnostic supplies it.
+Successful comparison receipts say conditional diagnostic only and never
+native arithmetic qualified; the top-level GPU receipt says diagnostic
+passed, not qualified. Per-comparison dense/grouped errors, magnitudes and
+allowances remain paired. Float32 outputs are compared in float64 so rounding
+the discrepancy cannot admit a just-outside-bound value. Before/after CPU
+controls and the actual bounded GPU diagnostic remain necessary evidence,
+not sufficient proof for arithmetic or D41 row promotion.
 Byte-exact code/scale checks remain independent and unchanged.
 
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic

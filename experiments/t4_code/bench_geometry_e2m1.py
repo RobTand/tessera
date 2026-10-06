@@ -486,30 +486,38 @@ def dense_packed_fp4_operand_magnitude(rendered_x, weight):
 
 
 def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
-    """Finite full-ULP envelope for normal, finite packed FP4 arithmetic.
+    """Conditional diagnostic envelope, NOT a native arithmetic guarantee.
 
     PTX specifies at least single-precision accumulation for E2M1 MMA, but
-    leaves order, rounding and subnormal handling unspecified. In particular,
-    it does NOT establish round-to-nearest. Use epsilon, not epsilon/2, for
-    the faithful float32 rounding model on both paths, without fixing order.
-    This model still requires the native oracle; it is not a PTX promise about
-    arbitrary rounding or subnormals and is never a qualification receipt.
+    leaves order, rounding and subnormal handling unspecified. At least
+    single precision does not imply faithful rounding: PTX supplies no local
+    error bound from which gamma can be derived. Passing this diagnostic,
+    even on a GPU, cannot establish that missing native contract.
 
     Let e be float32 epsilon and gamma(n) = n*e/(1-n*e). Count up to 2*K
-    multiplication/addition roundings per contraction (exact narrow products
-    make that conservative). Allow two full-ULP units for each normalization
-    division and one for the native epilogue multiplication. CUDA's normal-
-    range approximate division permits two ULPs; /896 is in that range.
+    multiplication/addition roundings per contraction, CONDITIONAL on such
+    an implementation. The scaled narrow product has at most twelve
+    significant bits and fits float32 exactly; this does not specify how
+    dot_scaled accumulates it. Allow two full-ULP units for each normalization
+    division and one for the native epilogue multiplication. The divisions
+    are reference activation/896 and native weight_global/896, NOT an
+    additional quantizer error. CUDA's __fdividef table permits two ULPs for
+    this divisor, but applying a relative 2*e term also needs a normal finite
+    exact quotient. The divisor alone does not establish that condition.
     The reference's rendered activation magnitude can be low by 2*e, hence::
 
         |native - reference| <= [gamma(2*K+3) + gamma(2*K+2)] * M / (1-2*e)
 
     M is an upper bound on the actual float32 reference sum of absolute
-    products. Stock weight formation is exact: narrow factors and a power-
-    of-two weight global fit float32. Both paths share the BF16 quantizer,
-    accumulate and return float32, so no BF16/output-cast term is introduced.
-    All positive scalar operations round outward. The gamma domain is checked
-    rather than silently treating a first-order approximation as a bound.
+    products. Stock weight formation is exact when the narrow factors and
+    power-of-two weight global fit float32 without underflow or overflow.
+    Both paths share the BF16 quantizer and return float32: no independent
+    BF16/output-cast term applies. Nonzero reference products, intermediate
+    sums, normalization quotients and epilogue results must be normal and
+    finite, or obey the same relative-error inequalities. Finite outputs
+    alone cannot prove that domain; underflow, flushing and overflow are not
+    covered. Scalar operations round outward; the finite gamma domain is
+    checked rather than discarding higher-order terms.
     """
     if type(k) is not int or k < 1:
         raise ValueError("the derived packed FP4 bound needs the contraction length as a positive integer")
@@ -529,11 +537,14 @@ def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
     if not math.isfinite(atol):
         raise ValueError("the derived packed FP4 bound is not finite")
     return ({"atol": atol, "rtol": 0.0}, {
-        "schema": "tessera.packed_fp4_arithmetic_bound.v2",
+        "schema": "tessera.packed_fp4_arithmetic_bound.v3",
+        "status": "conditional_diagnostic_only",
+        "native_arithmetic_qualified": False,
+        "missing_native_contract": "a local error and reduction-depth bound for scaled E2M1 MMA, including subnormal handling; PTX does not specify these",
         "bound": "[gamma(2*K+3) + gamma(2*K+2)] * max output sum_k |ax||w| / (1-2*epsilon_fp32)",
         "epsilon_fp32": epsilon,
-        "native_rounding": "full-ULP faithful float32 model; PTX rounding/order unspecified",
-        "normalization_rounding": "two ULPs per normal-range division",
+        "native_rounding": "ASSUMPTION: faithful float32 rounding, at most 2*K multiplication/addition roundings per output path; not guaranteed by PTX",
+        "normalization_rounding": "ASSUMPTION: at most two ULPs for each normal finite reference activation/896 and native weight_global/896 quotient",
         "native_steps": native_steps,
         "reference_steps": reference_steps,
         "native_gamma": native_gamma,
@@ -543,21 +554,29 @@ def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
         "operand_magnitude_upper": magnitude,
         "atol": atol,
         "rtol_is_zero_because": "the bound scales with the operand magnitude sum, not with the expected output",
-        "scope": "normal finite packed_fp4_gemm_output_only; no overflow or subnormal qualification",
+        "scope": "conditional normal finite intermediate arithmetic; intermediate domain not established by finite outputs; no overflow or subnormal qualification",
         "bf16_terms": "none: one shared BF16 quantizer; float32 reference, accumulation and output",
     })
 
 
 def check_packed_fp4_arithmetic(actual, expected, operand_magnitude, *, k):
-    """Apply the arithmetic gate; equal infinities are not a correct GEMM."""
+    """Reject diagnostic discrepancies without certifying the native model."""
+    if actual.dtype != torch.float32 or expected.dtype != torch.float32:
+        raise ValueError("the packed FP4 arithmetic gate needs float32 native and reference outputs")
+    if actual.dim() != 2 or actual.shape != expected.shape or actual.numel() == 0:
+        raise ValueError("the packed FP4 arithmetic gate needs equal nonempty two-dimensional output shapes")
     if not torch.isfinite(actual).all() or not torch.isfinite(expected).all():
         raise ValueError("the packed FP4 arithmetic gate needs finite native and reference outputs")
     tolerances, receipt = derive_packed_fp4_arithmetic_bound(operand_magnitude, k=k)
-    torch.testing.assert_close(actual, expected, **tolerances)
+    # Float32 subtraction/threshold casting can admit an error just beyond
+    # the outward-rounded allowance. Compare the actual float32 values in
+    # float64 instead; significant near-boundary subtraction is exact there.
+    torch.testing.assert_close(actual.double(), expected.double(), **tolerances)
     return receipt
 
+
 def run_correctness(args, grid, samples):
-    """Real packed-byte and native arithmetic oracles, bounded to 64 by 256."""
+    """Byte oracles and conditional arithmetic diagnostics, 64 by 256."""
     from tessera.compact_prep import parse_compact_wire, prepare_a4_wire_compact
     from tessera.kernel_a4_wire import PreparedA4Wire, decode_wire_codes
     from tessera.kernel_a4 import a4_quantize_activation
@@ -567,7 +586,8 @@ def run_correctness(args, grid, samples):
         raise ValueError("correctness needs the explicit packed E2M1 pair reader")
     torch.backends.cuda.matmul.allow_tf32 = False
     gs = torch.tensor(896.0, dtype=torch.float32, device="cuda")
-    result = {"schema": "tessera.a4_packed_correctness.v1", "status": "running", "rows": []}
+    result = {"schema": "tessera.a4_packed_correctness.v2", "status": "running",
+              "native_arithmetic_qualified": False, "rows": []}
     structures = (STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE) if args.part == "all" else ((STRUCTURE_ROUTED_MOE,) if args.part == "routed" else (STRUCTURE_DENSE,))
     for q in args.qs:
         for structure in structures:
@@ -599,6 +619,7 @@ def run_correctness(args, grid, samples):
             errors = []
             magnitudes = []
             gate_atols = []
+            comparisons = []
             bound_template = None
             for m in (1, 16, 33, 65):
                 generator = torch.Generator(device="cuda").manual_seed(3100 + m)
@@ -614,9 +635,11 @@ def run_correctness(args, grid, samples):
                 expected = rendered_x @ weights[0].T
                 actual = dense(x, out_dtype=torch.float32)
                 bound_template = check_packed_fp4_arithmetic(actual, expected, magnitude, k=k)
-                errors.append(float((actual - expected).abs().max()))
+                errors.append(float((actual.double() - expected.double()).abs().max()))
                 magnitudes.append(float(magnitude))
                 gate_atols.append(bound_template["atol"])
+                comparisons.append({"kind": "dense", "M": m, "max_abs_error": errors[-1],
+                    "operand_magnitude_upper": magnitude, "atol": gate_atols[-1]})
                 if m >= 4:
                     offsets = torch.tensor([0, 3, 3, 5], dtype=torch.int32, device="cuda")
                     tokens = torch.tensor([2, 0, 2, 1, 3], dtype=torch.int32, device="cuda")
@@ -628,13 +651,16 @@ def run_correctness(args, grid, samples):
                     expected = torch.cat((rendered_x[tokens[:3].long()] @ weights[0].T,
                                           rendered_x[tokens[3:].long()] @ weights[1].T))
                     bound_template = check_packed_fp4_arithmetic(actual, expected, grouped_magnitude, k=k)
-                    errors.append(float((actual - expected).abs().max()))
+                    errors.append(float((actual.double() - expected.double()).abs().max()))
                     magnitudes.append(float(grouped_magnitude))
                     gate_atols.append(bound_template["atol"])
+                    comparisons.append({"kind": "grouped", "M": m, "routes": 5, "max_abs_error": errors[-1],
+                        "operand_magnitude_upper": grouped_magnitude, "atol": gate_atols[-1]})
             row = {"q256": q, "structure": structure, "recipe": recipe.to_config(),
                 "codes_and_scales": "byte identical to materialize_stock", "native_max_abs_error": max(errors),
                 "derived_max_atol": max(gate_atols), "derived_atol_per_gate": gate_atols,
                 "operand_magnitude_upper_per_gate": magnitudes,
+                "arithmetic_comparisons": comparisons, "native_arithmetic_qualified": False,
                 "arithmetic_bound": {name: value for name, value in bound_template.items()
                     if name not in ("atol", "operand_magnitude_upper")},
                 "M": [1, 16, 33, 65], "grouped": "three experts, one empty, distinct last expert, duplicate and reordered tokens",
@@ -643,7 +669,7 @@ def run_correctness(args, grid, samples):
             result["rows"].append(row)
             dump(Path(args.out) / "correctness.json", result)
             print(json.dumps(row), flush=True)
-    result["status"] = "passed"
+    result["status"] = "diagnostic_passed"
     dump(Path(args.out) / "correctness.json", result)
 
 
@@ -752,6 +778,7 @@ def main():
                             samples["gate"][:1].float(), stock_dequant(reference))
                         _, row["arithmetic_bound_cpu_preparation"] = derive_packed_fp4_arithmetic_bound(
                             magnitude, k=int(wire.metadata.columns))
+                        row["arithmetic_bound_cpu_preparation"]["operand_source"] = "unquantized CPU sample; helper preparation only, not the GPU FP4 contraction"
                         from tessera.slicing import slice_unit
                         from tessera.unit_artifact import build_unit_artifact
                         shard = slice_unit(parsed, rows=(16, 32))
