@@ -515,13 +515,12 @@ def test_no_campaign_overrides_the_runtime_pin_with_a_floating_image():
 
 
 def test_the_shell_helper_refuses_and_prints_json_a_program_can_read(tmp_path, monkeypatch):
-    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     """``experiments/runtime_image.sh`` is what the wrappers source.
 
-    Driven with a fake ``docker`` on PATH so no daemon is touched: the point
-    under test is the wrapper's own control flow -- does a mismatch stop it --
-    not whether this box happens to hold the right image today.
+    A fake docker exercises the wrapper's certified-mode control flow, not
+    which image this box holds. Development-mode stamps are tested above.
     """
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     fake = tmp_path / "bin"
     fake.mkdir()
     (fake / "docker").write_text(
