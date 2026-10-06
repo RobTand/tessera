@@ -54,6 +54,7 @@ def measurement(path,data,head,cell,key,build_id,cols,rows):
               "quantum_window_unix":[meta.get("start_unix"),meta.get("end_unix")],
               "rows":rows,"columns":cols,"mode":mode,"routing":key.get("routing","balanced") if key["kernel_kind"]=="routed" else "none",
               "recorded_routing":meta.get("recorded",{}).get(str(key["M"])),
+              "routing_weights":"uniform 1/top_k (1/8); recorded IDs only" if key["kernel_kind"]=="routed" else "none",
               'input_distribution':meta.get('activation_contract'),'epilogue':'SwiGLU clipped at 10' if mode==0 else ('route-weighted BF16 down' if key['kernel_kind']=='routed' else 'BF16 linear output')}
     if error: evidence['reason']=error
     elif not good: evidence['reason']='missing paired timer, actual compiler resource or launch geometry evidence'
@@ -147,7 +148,7 @@ def main():
             row['observations'].append({'kind':'adjacent_higher_comparison','higher_rung':q+1,'paired_cells_completed':len(paired_cells),'required_cells':len(required),'all_cell_at_least_as_fast':len(paired_cells)==len(required) and all(e['higher_time_us']<=e['lower_time_us'] for e in paired_cells),'evidence':paired_cells})
         if row['measurement_status']!='measured' or not high or high['measurement_status']!='measured' or high['supported'] is not True or high['anomaly_flags']:continue
         if len(paired_cells)==len(required) and all(e['higher_time_us']<=e['lower_time_us'] for e in paired_cells):
-            row.update(excluded=True,dominating_rung=q+1,dominance_evidence=paired_cells)
+            row["observations"].append({"kind":"proposed_adjacent_higher_exclusion","higher_rung":q+1,"status":"pending parent and independent review","blocking":False,"applied":False,"evidence":paired_cells})
 
     baseline=by_rung[1024]
     for q,row in by_rung.items():
@@ -158,8 +159,14 @@ def main():
                 if base and m['measurement_status']=='measured':ratios.append({'cell_id':m['cell_id'],'ratio_to_1024':m['kernel_time_us']/base['kernel_time_us'],'receipt':m['evidence']['action_key'],'baseline_receipt':base['evidence']['action_key'],'paired':m['evidence']['comparison_id']==base['evidence']['comparison_id']})
             row['observations'].append({'kind':'beyond_1024_slow_lane','issue':690,'url':'https://github.com/RobTand/tessera/issues/690','blocking':False,'exclusion_basis':False,'ratios':ratios,'missing_baseline':not bool(ratios)})
     rows=list(by_rung.values())
-    table={'schema':'fleet.rung_allowability.v1','table_version':args.version,'table_status':'complete' if all(r['measurement_status']!='pending' for r in rows) else 'partial','format':FORMAT,'kernel_build':build,'generated_at':datetime.now(timezone.utc).isoformat(),
-           'scope':{'rung_min':768,'rung_max':1152,'grid_step_q256':1,'grid_owner':'prismaquant.tessera_formats.realisable_rungs(step_q256=1), lines 1145-1159','required_cells':required,'shapes':[{'shape_id':n,'kernel_kind':k,'rows':r,'columns':c,'mode':mode} for k,n,r,c,mode in SHAPES],'timing_statistic':meta['statistic'],'shape_owner':'bench_rates TP2 shapes; actual GLM config hidden4096, routed inter2048/2, experts288, topk8'},'rungs':rows,'evidence':{'summary':dict(Counter(r['measurement_status'] for r in rows)),'completed_quanta':len(completed),'quality_scope':'fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL','exclusion_review_status':'pending independent review; no defaults promoted'}}
+    table={"schema":"fleet.rung_allowability.v1","table_version":args.version,"table_status":"complete" if all(r["measurement_status"]!="pending" for r in rows) else "partial","format":FORMAT,"kernel_build":build,"generated_at":datetime.now(timezone.utc).isoformat(),
+           "scope":{"rung_min":768,"rung_max":1152,"grid_step_q256":1,"grid_owner":"prismaquant.tessera_formats.realisable_rungs(step_q256=1), lines 1145-1159","required_cells":required,"shapes":[{"shape_id":n,"kernel_kind":k,"rows":r,"columns":c,"mode":mode} for k,n,r,c,mode in SHAPES],"timing_statistic":meta["statistic"],"shape_owner":"bench_rates TP2 shapes; actual GLM config hidden4096, routed inter2048/2, experts288, topk8"},"rungs":rows,"evidence":{"summary":dict(Counter(r["measurement_status"] for r in rows)),"completed_quanta":len(completed),"quality_scope":"fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL","exclusion_review_status":"pending independent review; no defaults promoted"}}
+    table["scope"]["kernel_execution_scope"]="raw rank-local fused packed-window calls at TP2 representative dimensions; synthetic packed wires; not dense/shared resident decode-once at load and not routed per-chunk decode-once"
+    table["evidence"]["quality_summary_file"]=str(root/"quality-summary.json")
+    table["evidence"]["exclusion_review_status"]="Candidate proofs are non-blocking proposals only; no exclusions applied before parent and independent review."
+    table["evidence"]["compiler_resource_lookup_lineage"]={"corrected_harness_commit":"e47dcf245ef74f909e8f893cc7bc20254a244120","resource_source":"Actual cuobjdump entries matched to actual torch.profiler kernel prefixes; not legacy group usage lookup","actual_measured_sources":"Original retained source snapshots, not remeasured at corrected head","kernel_or_decode_changed":False,"balanced_rerun":False}
+    table["evidence"]["source_cohort_scope"]="Source/variant/architecture/activation/image/compiler cohort; exact loaded binary SHA-256 retained in every cell. Different snapshot or binary identities are lineage, not a new seal."
+    table["evidence"]["power_series_scope"]="Per-cell NVML samples plus both-Spark Netdata power series; utilization percentages are not used to diagnose saturation."
     validate_table(table)
     import jsonschema
     jsonschema.Draft202012Validator(json.loads(Path(args.schema).read_text()), format_checker=jsonschema.FormatChecker()).validate(table)

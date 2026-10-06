@@ -15,6 +15,10 @@ recorded routing at M=2048/4096 in its full 20-cell scope. Immutable earlier
 Tables and schemas are mirrored at `/mnt/shared/fleet-ceo/rung-allowability/`
 with safe index-root-relative version paths. The table does not mint runtime
 cells or replace export/serving gates; no serving pin or kernel default moves.
+A changed decode path or build leaves its affected rows pending until those
+cells are remeasured before the next allocation. Untouched rows may inherit
+explicit measurement lineage; this is evidence coverage, not a new identity
+seal, freeze, re-seal ceremony or permission to reuse changed-path timings.
 
 Re-stamped 2026-10-05 for issue984: opt-in
 `WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
