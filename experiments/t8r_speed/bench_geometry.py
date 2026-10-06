@@ -115,10 +115,10 @@ def resource_usage(lib):
     return {"so": so, "kernels": out}
 
 
-def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True):
-    """The instantiation ``routed_fused_kernel<FP8, MODE, DENSE, SPLIT=false, RL, TWO, BMT>``'s row."""
-    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, false, {r_lo}, " \
-           f"{'true' if two else 'false'}, {bm}>"
+def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True, *, split=False):
+    """Actual original-order, unpaired instantiation, including its K-split specialization."""
+    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, {'true' if split else 'false'}, {r_lo}, " \
+           f"{'true' if two else 'false'}, {bm}, false, false>"
     for k, v in usage.get("kernels", {}).items():
         if want in k:
             return v
@@ -535,7 +535,7 @@ class Sweep:
                                 cell["power"] = self.power.sample_during(call, a.power_s)
                             if kind in ("routed", "dense"):
                                 u = kernel_usage(usage, head.get("mode", 2), kind == "dense", head["r_lo"],
-                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8)
+                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8, split=meta.get("k_split", 1) > 1)
                                 rec["usage"][str(meta.get("bm", 64))] = u
                         else:
                             f, r = cell.get("F", {}).get("median_ms"), cell["R"]["median_ms"]
