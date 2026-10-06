@@ -27,15 +27,18 @@ def _checkout_import_graph():
     original = impacted.import_graph
     graph = None
     guards = {}
+    unnamed = {}
 
-    def read(root, *, guarded_edges=None):
+    def read(root, *, guarded_edges=None, unnamed_reads=None):
         nonlocal graph
         if root != ROOT:
-            return original(root, guarded_edges=guarded_edges)
+            return original(root, guarded_edges=guarded_edges, unnamed_reads=unnamed_reads)
         if graph is None:
-            graph = original(root, guarded_edges=guards)
+            graph = original(root, guarded_edges=guards, unnamed_reads=unnamed)
         if guarded_edges is not None:
             guarded_edges.update(deepcopy(guards))
+        if unnamed_reads is not None:
+            unnamed_reads.update(deepcopy(unnamed))
         return deepcopy(graph)
 
     return read
@@ -2006,7 +2009,9 @@ def test_a_directory_read_of_an_unnameable_base_is_listed_not_selected(tmp_path)
     _git(repo, "commit", "-qm", "docs changed")
 
     result = _selector(repo, f"{base}...HEAD")
-    assert result["unnamed_directory_reads"] == {"tests/test_r.py": [8]}, result
+    line = textwrap.dedent(_UNNAMED_BASE_READER).splitlines().index(
+        '    assert sorted(DIR.rglob("*.md"))') + 1
+    assert result["unnamed_directory_reads"] == {"tests/test_r.py": [line]}, result
     assert "tests/test_r.py" not in result["tests"], result
 
     completed = subprocess.run(

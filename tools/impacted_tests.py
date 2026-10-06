@@ -208,6 +208,7 @@ def _imports(
     tree: ast.Module | None = None,
     executes_source: bool | None = None,
     statement_requests: dict | None = None,
+    unnamed_reads: dict[str, list[int]] | None = None,
 ) -> tuple[set[str], set[str], set[str]]:
     """What this file depends on, split by how the dependency was established.
 
@@ -240,8 +241,11 @@ def _imports(
         return {WILDCARD}, set(), set()
     found = set(module_import_requests(tree, own, is_package=path.name == "__init__.py")
                 if statement_requests is None else statement_requests)
+    unnamed: list[int] = []
     paths, unknown, unplaced = file_imports(
-        tree, path, root, executes_source=executes_source)
+        tree, path, root, executes_source=executes_source, unnamed=unnamed)
+    if unnamed and unnamed_reads is not None:
+        unnamed_reads[str(path.relative_to(root))] = unnamed
     loaded, data = set(), set()
     for target in paths:
         held = nodes.get(target) if nodes is not None else None
@@ -282,7 +286,7 @@ def _is_collection_probe(importer: Path, target: Path | None) -> bool:
 
 def import_graph(
     root: Path,
-    *, guarded_edges=None,
+    *, guarded_edges=None, unnamed_reads=None,
 ) -> tuple[dict[str, Path], dict[str, set[str]],
            set[tuple[str, str]], dict[str, str]]:
     """The graph, the collection-probe reverse edges, and what would not read.
@@ -472,7 +476,7 @@ def import_graph(
             statements, loaded, data = _imports(
                 path, module_of[node], root, unreadable, nodes,
                 tree=trees[path], executes_source=path in executing,
-                statement_requests=requests)
+                statement_requests=requests, unnamed_reads=unnamed_reads)
             add_statements(requests, node)
             if path in guarded:
                 names, imported, guard, _ = guarded[path]
@@ -730,7 +734,9 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
     forced += [f for f in changed if PBRUN_CLOSURE_CANDIDATE.fullmatch(Path(f).name)]
 
     guarded_edges = {}
-    by_name, importers, probes, unreadable = import_graph(root, guarded_edges=guarded_edges)
+    unnamed_reads: dict[str, list[int]] = {}
+    by_name, importers, probes, unreadable = import_graph(
+        root, guarded_edges=guarded_edges, unnamed_reads=unnamed_reads)
     name_of = {str(p.relative_to(root)): n for n, p in by_name.items()}
 
     # Seed from the path, not from a lookup in the checked-out tree.  The
@@ -893,6 +899,11 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
         # A property of the tree, not of this change: report it whether or not
         # this change reaches it, because it is a defect to repair either way.
         "unreadable_sources": {path: unreadable[path] for path in sorted(unreadable)},
+        # Also a property of the tree: a directory read whose base nothing
+        # names, in a module that executes nothing, selects no test and forces
+        # no run -- the documented limit (#148).  Listed so a reader of that
+        # shape is seen, not silently unselected (PB1496).
+        "unnamed_directory_reads": {path: unnamed_reads[path] for path in sorted(unnamed_reads)},
         "reason": _selection_reason(
             changed,
             missing=missing,
@@ -964,6 +975,11 @@ def main() -> int:
                   "(dependency kept, target unnamed):")
             for path in result["unplaced_data_reads"]:
                 print(f"  {path}")
+        if result["unnamed_directory_reads"]:
+            print("reads a directory whose base cannot be named "
+                  "(selects no test; documented limit):")
+            for path, lines in result["unnamed_directory_reads"].items():
+                print(f"  {path}: line {', '.join(map(str, lines))}")
         if result["excluded_tests"]:
             print(f"excluded pytest targets ({len(result['excluded_tests'])}):")
             for excluded in result["excluded_tests"]:

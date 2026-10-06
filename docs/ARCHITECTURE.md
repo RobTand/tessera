@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for PB1496 (unnameable base): the impacted-test selector's
+documented limit is unchanged -- a directory read whose base nothing names, in a
+module that executes nothing, states no dependency and selects no test (#148;
+treating it as an unplaced read selected 424 of 424 test files for any change).
+The result now lists each such read under `unnamed_directory_reads` and the
+text receipt prints it, so a reader of this shape is seen instead of silently
+unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
+when this was added (46 modules, 58 sites, most taking the directory as a
+parameter) and fails if it rises. Selector infrastructure only: no wire, recipe
+table, serving lane, plugin contract, numerical path, residency or performance
+default moves.
+
 Re-stamped 2026-10-06 for PB1496: the impacted-test selector no longer treats a
 `.md`, `.txt` or `.rst` change as proof that an unknown loader did not read it.
 A module that executes source and opens a path the resolver cannot name may read
@@ -3406,7 +3418,9 @@ member selects the reader, pattern-agnostically, because matching the pattern
 would trade a sound over-selection for an under-selection any new file can
 trigger (#923). An out-of-tree or otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
-and follows the named/unnamed rule; a conftest's enumeration is collection
+and follows the named/unnamed rule -- and where nothing executes it states no
+dependency, so the receipt lists it under `unnamed_directory_reads` instead of
+leaving it silent (PB1496); a conftest's enumeration is collection
 machinery and joins the probe exclusion, because pytest imports the conftest
 for every test in its scope whatever changed, and a per-change edge from an
 ancestor listing would close the cycle that holds every verdict at full
