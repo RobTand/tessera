@@ -21,14 +21,16 @@ an exact-SP shard keeps the full batch's split here exactly as on stock.
 **Install.**  ``TESSERA_GLM53_MHC_FUSED``: unset or ``0`` (default, stock) or
 ``1``.  The packaged contract must publish the override
 (``stock_kernel_overrides``, kind ``model_method``) under that flag, naming
-this loader and library, or the install refuses.  On a
-Glm5Next serve whose touched vLLM modules are the inspected ones,
+this loader and library, or the install refuses. On a Glm5Next serve with a
+compatible method and dispatch interface,
 :func:`install_mhc_fusion` rebinds ``Glm5NextDecoderLayer.hc_fused_post_pre``
 to a wrapper that takes the fused kernel when :func:`decline_reason` is ``None``
 and calls the stock method otherwise.  A shape the stock op sends to its
 small-batch fused kernel (``mhc_fused_post_pre_split_config`` not ``None``),
 any other dtype, layout or constant, or a missing DeepGEMM declines to stock
-for that call.  It never changes which split a call runs at.
+for that call. It never changes which split a call runs at. Historical
+source and predicted build-path identities stamp in development mode under
+D32; actual interface, shape, launch and safety checks remain active.
 """
 from __future__ import annotations
 

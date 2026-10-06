@@ -68,15 +68,16 @@ rows (one or two m16 MMA tiles):
 
 1. **post** streams x and the old residual (`ld.global.cs`) and writes the new
    residual with an L2 `evict_last` policy.
-2. **GEMM** re-reads the new residual from L2 through a 4-stage cp.async ring
-   that every thread fills (fn comes from L2 too), in the split's K order. The
+2. **GEMM** re-reads the new residual through a 4-stage cp.async ring
+   that every thread fills, in the split's K order. L2 residency of both the
+   residual and fn is a design assumption, not a measured cache-locality result.
    order is stream-major while post produces all four streams per h, so the
    tile must be buffered. Every (m-tile, n-tile) chain of the tile runs at
    once, up to two per warp; each chain is DeepGEMM's arithmetic. Partials go
    to a `[S, T, 24]` workspace.
 3. **pre** runs one warp per token for the mixes and Sinkhorn, then 64-thread
-   groups compute the layer input, reading the new residual from L2 once
-   more.
+   groups compute the layer input, reading the new residual once more,
+   with L2 locality assumed.
 
 Grid: one CTA per SM, which is what the 218 registers admit. Tile height:
 32 rows exactly when that, and not 16, fits the site in one wave; else 16.
@@ -109,12 +110,14 @@ All on GB10, image `5be13705`, served checkpoint layer-1 `hc_attn`/`hc_ffn`.
 Times are medians of graph replay over L2-defeating input copies, with stock
 and fused arms interleaved round by round.
 
-**Bitwise**: PASSED, 60/60 cases × tile heights 16/32/48/64, plus graph
-replay and determinism (PB `fa23b165`, sparky,
+**Historical numerical equality**: 60/60 cases × tile heights 16/32/48/64,
+plus graph replay and determinism (PB `fa23b165`, sparky,
 `/mnt/shared/tessera-measurements/mhc-fusion-783/bitwise-c52a7602/mhc_fused_probe.json`;
-also `e50d9a9f` and `5f108ffe`). The cases: attn and ffn × 15 shapes,
-including the SP shards 1024@2048 and 4096@8192, and ragged 2049 ×
-realistic/adversarial. The kernel source is unchanged since.
+also `e50d9a9f` and `5f108ffe`). Those floating-point comparisons did not
+establish signed-zero bit identity. The cases cover attention and feed-forward
+sites × 15 shapes, including the sequence-parallel shards and ragged 2049,
+with realistic and adversarial inputs. Corrected integer-view gates cover
+the same population; no historical receipt is relabeled as a corrected result.
 
 **Timing** (PB `286a7d3b`, sparky, exclusive GPU,
 `timing-c52a7602/mhc_fused_probe.json`), ms per site:
@@ -128,12 +131,12 @@ realistic/adversarial. The kernel source is unchanged since.
 | attn 8192 (1) | 5.540 | 4.557 (tile 16) | 2.463 |
 | attn 512 (6) | 0.222 | 0.343 → declines to stock | 0.154 |
 
-**At the served shape**, 44 attn and 45 ffn fused sites per chunk:
-44 × 0.022 + 45 × 0.036 ≈ **2.6 ms per 2048-token chunk per rank**
-(3.0 ms in the confirmation run at the final head, PB `5f7e12ed`; tables in
-`docs/measurements/2026-10-04-mhc-fused-783.md`), about 0.2%
-of the 1157 ms chunk. The fused site is about 1.9× the floor; stock is about
-2.0×.
+**Estimated site sums at the served shape**: 44 attention and 45 feed-forward
+sites give 2.5880707264 milliseconds from PB `286a7d3b` and 3.1110723972
+milliseconds from PB `5f7e12ed`, using the raw site medians
+(`docs/measurements/2026-10-04-mhc-fused-783.md`). Neither is a measured served
+chunk reduction. The fused site is about 1.9× the theoretical floor; stock
+is about 2.0×. Actual fused external-memory traffic was not measured.
 
 **Not measured:** served end to end, TR3/KL, both-Spark power, and work per
 joule. These belong to the kernels lead.
