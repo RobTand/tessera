@@ -3576,8 +3576,11 @@ pattern: the literal directory in front of the first wildcard is placed like any
 and a module that can execute source keeps its unknown-loader flag. A base outside the tree
 (an absolute box path, a pattern that climbs out) stays unnamed and is listed, not kept as an
 unplaced read, because that would select the readers' consumers on every change (#1010). A
-relative pattern or string base in a module that calls `chdir` is not assumed relative to the
-tree's root and is kept as an unplaced read. A
+RELATIVE pattern or string base (`glob.glob('docs/*.md')`, `os.listdir('docs')`) depends on the
+process directory, which nothing here proves -- a `chdir`, an alias of it, an imported helper or a
+fixture can move it -- so it is kept as an unplaced read and never resolved against the tree's
+root; one anchored with `__file__` (`str(HERE / 'docs' / '*.md')`) does not depend on it and
+resolves. The `Path` spellings keep the root assumption they always had (#1010). A
 glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
 the unbound method, called directly or through an alias

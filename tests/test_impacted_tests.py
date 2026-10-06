@@ -16,6 +16,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "tools" / "impacted_tests.py"
+
+#: A reader under tests/ anchored with ``__file__``: its base does not depend on the process
+#: directory (a relative one is kept as an unplaced read instead).
+_ROOT_ANCHOR = "from pathlib import Path\n\nROOT = Path(__file__).resolve().parents[1]\n"
 _SPEC = importlib.util.spec_from_file_location("impacted_tests", SCRIPT)
 impacted = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(impacted)  # type: ignore[union-attr]
@@ -2269,13 +2273,14 @@ def test_a_probe_alone_still_does_not_select_the_fixture_consumers(tmp_path):
 
 
 @pytest.mark.parametrize("spelling", [
-    "os.listdir('docs')", "list(os.walk('docs'))", "list(os.scandir('docs'))",
+    "os.listdir(str(ROOT / 'docs'))", "list(os.walk(str(ROOT / 'docs')))",
+    "list(os.scandir(str(ROOT / 'docs')))",
 ], ids=["listdir", "walk", "scandir"])
 def test_a_string_path_directory_reader_is_selected_by_a_new_member(tmp_path, spelling):
     """A reader that lists a directory by string path depends on its membership."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "tests/test_lister.py": (
-            f"import os\n\n\ndef test_lists():\n    assert {spelling}\n"),
+            "import os\n" + _ROOT_ANCHOR + f"\n\ndef test_lists():\n    assert {spelling}\n"),
         "docs/a.md": "before\n"})
     (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -2287,13 +2292,13 @@ def test_a_string_path_directory_reader_is_selected_by_a_new_member(tmp_path, sp
 
 
 def test_a_string_argument_does_not_hide_an_unknown_loader_from_its_consumers(tmp_path):
-    """A module that executes source and calls a custom ``walk("mode")`` stays an
+    """A module that executes source and calls a custom ``walk(str(ROOT / "mode"))`` stays an
     unknown loader: resolving the string as a directory adds an edge, it must not
     replace the wildcard, or a change it may load selects its consumer no more."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "support/helper.py": (
-            "def walk(mode):\n    return mode\n\n\ndef run():\n    exec('pass')\n"
-            "    return walk('mode')\n"),
+            _ROOT_ANCHOR + "\n\ndef walk(mode):\n    return mode\n\n\ndef run():\n    exec('pass')\n"
+            "    return walk(str(ROOT / 'mode'))\n"),
         "tests/test_consumer.py": "from support.helper import run\n\n\ndef test_run():\n    assert run\n",
         "mode/seed.txt": "x\n"})
     (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
@@ -2306,19 +2311,20 @@ def test_a_string_argument_does_not_hide_an_unknown_loader_from_its_consumers(tm
 
 
 @pytest.mark.parametrize("probe", [
-    "list(os.walk('tests/test_values.py'))",
-    "os.listdir('tests/test_values.py')",
+    "list(os.walk(str(Path(__file__).resolve().parent / 'test_values.py')))",
+    "os.listdir(str(Path(__file__).resolve().parent / 'test_values.py'))",
 ], ids=["walk-of-string", "listdir-of-string"])
 def test_a_string_path_probe_does_not_mask_an_ordinary_import_of_the_same_file(tmp_path, probe):
     """PB1496 review: resolving a string adds an edge, and in a conftest that edge can be
     a collection probe of a file the conftest ALSO imports.  The ordinary import is the
-    dependency that matters; masking it dropped the fixture's consumers on master's
-    behaviour for the Path spelling and, with string resolution, for the string one too.
-    No tests/__init__.py: the pytest import-root alias resolver reads this layout."""
+    dependency that matters; masking it dropped the fixture's consumers.  The string is
+    anchored with ``__file__`` (a relative one is unplaced, which would select the reader
+    whatever the probe did).  No tests/__init__.py: the pytest import-root alias
+    resolver reads this layout."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "tests/conftest.py": (
-            "import os\nimport pytest\nfrom test_values import VALUE\n\n" + probe + "\n\n\n"
-            "@pytest.fixture\ndef value():\n    return VALUE\n"),
+            "import os\nfrom pathlib import Path\nimport pytest\nfrom test_values import VALUE\n\n"
+            + probe + "\n\n\n@pytest.fixture\ndef value():\n    return VALUE\n"),
         "tests/test_values.py": "VALUE = 1\n",
         "tests/test_consumer.py": "def test_value(value):\n    assert value == 1\n"})
     (repo / "tests/test_values.py").write_text("VALUE = 2\n", encoding="utf-8")
@@ -2332,7 +2338,8 @@ def test_a_string_path_probe_does_not_mask_an_ordinary_import_of_the_same_file(t
 
 def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp_path):
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
-        "tests/test_lister.py": "import os\n\n\ndef test_lists():\n    assert os.listdir('docs')\n",
+        "tests/test_lister.py": ("import os\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert os.listdir(str(ROOT / 'docs'))\n"),
         "docs/a.md": "before\n", "elsewhere/x.md": "other\n"})
     (repo / "elsewhere/y.md").write_text("new\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -2344,9 +2351,9 @@ def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp
 
 
 @pytest.mark.parametrize("reader", [
-    "import glob\n\n\ndef test_lists():\n    assert sorted(glob.glob('docs/*.md'))\n",
-    "import glob\n\n\ndef test_lists():\n    assert sorted(glob.iglob('docs/*.md'))\n",
-    "from glob import glob\n\n\ndef test_lists():\n    assert sorted(glob('docs/*.md'))\n",
+    "import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n    assert sorted(glob.glob(str(ROOT / 'docs' / '*.md')))\n",
+    "import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n    assert sorted(glob.iglob(str(ROOT / 'docs' / '*.md')))\n",
+    "from glob import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n    assert sorted(glob(str(ROOT / 'docs' / '*.md')))\n",
 ], ids=["module-glob", "module-iglob", "from-import"])
 def test_a_module_glob_reader_is_selected_by_a_new_member(tmp_path, reader):
     """#1010: a reader listing a directory with the module function depends on its
@@ -2364,7 +2371,8 @@ def test_a_module_glob_reader_is_selected_by_a_new_member(tmp_path, reader):
 
 def test_a_module_glob_reader_is_not_selected_by_another_directory(tmp_path):
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
-        "tests/test_lister.py": "import glob\n\n\ndef test_lists():\n    assert glob.glob('docs/*.md')\n",
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert glob.glob(str(ROOT / 'docs' / '*.md'))\n"),
         "docs/a.md": "before\n", "elsewhere/x.md": "other\n"})
     (repo / "elsewhere/y.md").write_text("new\n", encoding="utf-8")
     _git(repo, "add", ".")
@@ -2480,7 +2488,8 @@ def test_a_module_glob_after_a_chdir_selects_the_reader_for_the_runtime_director
 def test_deleting_the_last_member_behind_a_link_selects_a_directory_only_glob(tmp_path):
     """``docs/*/`` lists directories, so deleting ``data``'s only file changes its result."""
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
-        "tests/test_lister.py": "import glob\n\n\ndef test_lists():\n    assert glob.glob('docs/*/') is not None\n",
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + "\n\ndef test_lists():\n"
+                                 "    assert glob.glob(str(ROOT / 'docs' / '*') + '/') is not None\n"),
         "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
     (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
     _git(repo, "add", ".")

@@ -34,6 +34,9 @@ import pytest
 
 from tessera._dev.source_dependencies import _MAX_LINK_DEPTH, file_imports
 
+#: A reader anchored with ``__file__``: its base does not depend on the process directory.
+_HERE = "from pathlib import Path\nHERE = Path(__file__).resolve().parent\n"
+
 
 def _scan(source, root, *, consumer="consumer.py"):
     tree = ast.parse(source)
@@ -811,17 +814,18 @@ def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
 
 
 @pytest.mark.parametrize("source", [
-    "import os\nx = os.listdir('docs')\n",
-    "import os\nx = list(os.walk('docs'))\n",
-    "import os\nx = list(os.scandir('docs'))\n",
-    "import os\nDOCS = 'docs'\nx = os.listdir(DOCS)\n",
-    "from os import listdir\nx = listdir('docs')\n",
-    "import os\nx = os.listdir('./docs')\n",
-], ids=["listdir", "walk", "scandir", "constant", "from-import", "dot-slash"])
+    "import os\n" + _HERE + "x = os.listdir(str(HERE / 'docs'))\n",
+    "import os\n" + _HERE + "x = list(os.walk(str(HERE / 'docs')))\n",
+    "import os\n" + _HERE + "x = list(os.scandir(str(HERE / 'docs')))\n",
+    "import os\n" + _HERE + "DOCS = str(HERE / 'docs')\nx = os.listdir(DOCS)\n",
+    "from os import listdir\n" + _HERE + "x = listdir(str(HERE / 'docs'))\n",
+    "import os\n" + _HERE + "x = os.listdir(str(HERE / '.' / 'docs'))\n",
+], ids=["listdir", "walk", "scandir", "constant", "from-import", "dot"])
 def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source):
-    # ``os.listdir("docs")`` reads the same directory as ``os.listdir(Path("docs"))``;
-    # only the Path spelling used to be resolved, so a file added under the
-    # directory selected no reader (PB1496).
+    # ``os.listdir(str(HERE / "docs"))`` reads the same directory as ``os.listdir(HERE / "docs")``;
+    # only the Path spelling used to be resolved, so a file added under the directory
+    # selected no reader (#1000).  Anchored with ``__file__``: a relative string depends on
+    # the process directory and is kept as an unplaced read.
     (tmp_path / "docs").mkdir()
     found, unknown, unplaced = _scan_full(source, tmp_path)
     assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
@@ -832,9 +836,9 @@ def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source
     # A custom ``walk`` is recognized by its name alone; its string argument may
     # not be a path at all, so resolving it must ADD an edge and never replace the
     # unknown-loader flag a module that can execute source already had.
-    "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk('mode')\n",
-    "import os\n\n\ndef f():\n    exec('pass')\n    return os.listdir('mode')\n",
-    "from os import walk\n\n\ndef f():\n    exec('pass')\n    return list(walk('mode'))\n",
+    _HERE + "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk(str(HERE / 'mode'))\n",
+    "import os\n" + _HERE + "\n\ndef f():\n    exec('pass')\n    return os.listdir(str(HERE / 'mode'))\n",
+    "from os import walk\n" + _HERE + "\n\ndef f():\n    exec('pass')\n    return list(walk(str(HERE / 'mode')))\n",
 ], ids=["custom-walk", "os-listdir", "from-import-walk"])
 def test_a_string_base_adds_an_edge_without_dropping_the_unknown_loader_flag(tmp_path, source):
     (tmp_path / "mode").mkdir()
@@ -857,20 +861,20 @@ def test_a_string_path_outside_the_tree_is_refused_not_resolved(tmp_path, source
 
 
 @pytest.mark.parametrize("source", [
-    "import glob\nx = glob.glob('docs/*.md')\n",
-    "import glob as g\nx = g.glob('docs/*.md')\n",
-    "from glob import glob\nx = glob('docs/*.md')\n",
-    "import glob\nx = list(glob.iglob('docs/*.md'))\n",
-    "from glob import iglob\nx = list(iglob('docs/*.md'))\n",
-    "import glob\nx = glob.glob('docs/**/*.md', recursive=True)\n",
-    "import glob\nPATTERN = 'docs/*.md'\nx = glob.glob(PATTERN)\n",
-    "import glob\nx = glob.glob('./docs/*.md')\n",
-], ids=["module", "aliased-module", "from-import", "iglob", "from-import-iglob", "recursive",
-        "constant", "dot-slash"])
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n",
+    "import glob as g\n" + _HERE + "x = g.glob(str(HERE / 'docs' / '*.md'))\n",
+    "from glob import glob\n" + _HERE + "x = glob(str(HERE / 'docs' / '*.md'))\n",
+    "import glob\n" + _HERE + "x = list(glob.iglob(str(HERE / 'docs' / '*.md')))\n",
+    "from glob import iglob\n" + _HERE + "x = list(iglob(str(HERE / 'docs' / '*.md')))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '**' / '*.md'), recursive=True)\n",
+    "import glob\n" + _HERE + "PATTERN = str(HERE / 'docs' / '*.md')\nx = glob.glob(PATTERN)\n",
+], ids=["module", "aliased-module", "from-import", "iglob", "from-import-iglob", "recursive", "constant"])
 def test_a_module_glob_names_the_directory_in_front_of_its_wildcard(tmp_path, source):
-    # ``glob.glob("docs/*.md")`` carries its base in the pattern string, not in a
-    # Path receiver; only the Path spelling used to resolve, and ``iglob`` was not
-    # recognised at all, so a file added under ``docs`` selected no reader (#1010).
+    # ``glob.glob(str(HERE / "docs" / "*.md"))`` carries its base in the pattern string, not
+    # in a Path receiver; only the Path spelling used to resolve, and ``iglob`` was not
+    # recognised at all, so a file added under ``docs`` selected no reader (#1010).  The
+    # pattern is anchored with ``__file__``: a relative one depends on the process directory
+    # and is kept as an unplaced read instead (see the test above).
     (tmp_path / "docs").mkdir()
     found, unknown, unplaced = _scan_full(source, tmp_path)
     assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
@@ -879,21 +883,21 @@ def test_a_module_glob_names_the_directory_in_front_of_its_wildcard(tmp_path, so
 
 def test_a_module_glob_places_the_whole_literal_prefix(tmp_path):
     (tmp_path / "docs" / "sub").mkdir(parents=True)
-    found, _, _ = _scan_full("import glob\nx = glob.glob('docs/sub/*.md')\n", tmp_path)
+    found, _, _ = _scan_full(
+        "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / 'sub' / '*.md'))\n", tmp_path)
     assert found == {tmp_path / "docs" / "sub"}
 
 
 @pytest.mark.parametrize("source", [
     "import glob\nx = glob.glob('/etc/*.conf')\n",
-    "import glob\nx = glob.glob('../outside/*.md')\n",
-    "import glob\nx = glob.glob('docs/*/../../outside/*.md')\n",
-], ids=["absolute", "escaping", "parent-after-wildcard"])
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs') + '/*/../../outside/*.md')\n",
+], ids=["absolute", "parent-after-wildcard"])
 def test_a_module_glob_that_leaves_the_tree_stays_unnamed(tmp_path, source):
-    # The same boundary guard as the Path spelling, never stat'ed outside the tree.
-    # Unlike a Path read it is NOT kept as an unplaced read: this tree's module globs
-    # of that kind name box locations (/usr/local/cuda-*, /mnt/shared/...), and an
-    # unplaced read seeds its reader's consumers on every change (#148).  It stays
-    # listed as an unnamed read, exactly as before.
+    # An ABSOLUTE pattern that leaves the tree, or climbs out after a wildcard, is never
+    # stat'ed outside it.  Unlike a Path read it is NOT kept as an unplaced read: this
+    # tree's module globs of that kind name box locations (/usr/local/cuda-*,
+    # /mnt/shared/...), and an unplaced read seeds its reader's consumers on every change
+    # (#148).  It stays listed as an unnamed read, exactly as before.
     (tmp_path / "docs").mkdir()
     unnamed = []
     found, unknown, unplaced = file_imports(
@@ -978,11 +982,11 @@ def test_an_anchored_base_resolves_whatever_the_working_directory(tmp_path, sour
 
 
 def test_a_module_glob_keeps_the_unknown_loader_flag_of_an_executing_module(tmp_path):
-    # A pattern need not name a directory a custom ``glob`` reads; naming it adds
-    # the edge and must never replace the flag (the #1000 lesson).
+    # A pattern need not name a directory a custom ``glob`` reads; naming it adds the edge
+    # and must never replace the flag (the #1000 lesson).
     (tmp_path / "docs").mkdir()
     found, unknown, _ = _scan_full(
-        "import glob\nexec('pass')\nx = glob.glob('docs/*.md')\n", tmp_path)
+        "import glob\n" + _HERE + "exec('pass')\nx = glob.glob(str(HERE / 'docs' / '*.md'))\n", tmp_path)
     assert tmp_path / "docs" in found and unknown
 
 
@@ -998,8 +1002,8 @@ def _linked_tree(root):
     "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n",
     "from pathlib import Path\nx = list(Path('docs').rglob('*.md'))\n",
     "from pathlib import Path\nx = list(Path('docs').glob('**/x.md'))\n",
-    "import glob\nx = glob.glob('docs/*/x.md')\n",
-    "import glob\nx = glob.glob('docs/**/x.md', recursive=True)\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / 'x.md'))\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '**' / 'x.md'), recursive=True)\n",
     "from pathlib import Path\nx = list(Path('docs').glob('*/plain/../x.md'))\n",
 ], ids=["glob-star", "rglob", "glob-doublestar", "module-star", "module-doublestar", "parent-after-wildcard"])
 def test_a_link_reached_through_a_wildcard_component_is_followed(tmp_path, monkeypatch, source):
@@ -1016,7 +1020,7 @@ def test_a_link_reached_through_a_wildcard_component_is_followed(tmp_path, monke
 
 @pytest.mark.parametrize("source", [
     "from pathlib import Path\nx = list(Path('docs').glob('*/link/*.md'))\n",
-    "import glob\nx = glob.glob('docs/*/link/*.md')\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / 'link' / '*.md'))\n",
 ], ids=["path", "module"])
 def test_a_link_after_a_wildcard_and_a_literal_component_retains_its_target(tmp_path, monkeypatch, source):
     # ``docs/plain/link`` -> ``../../data``: the wildcard reaches ``plain`` (an ordinary
@@ -1043,7 +1047,7 @@ def test_a_dangling_link_behind_a_wildcard_still_retains_its_in_tree_target(tmp_
 
 @pytest.mark.parametrize("source", [
     "from pathlib import Path\nx = list(Path('docs').glob('*/'))\n",
-    "import glob\nx = glob.glob('docs/*/')\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*') + '/')\n",
 ], ids=["path", "module"])
 def test_a_trailing_separator_pattern_still_scans_its_last_component(tmp_path, monkeypatch, source):
     # PurePath drops the trailing separator and the last component was never scanned, so
@@ -1058,7 +1062,7 @@ def test_a_trailing_separator_pattern_still_scans_its_last_component(tmp_path, m
 @pytest.mark.parametrize("source", [
     "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*/manifest.md')]\n",
     "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*/*.md')]\n",
-    "import glob\nx = glob.glob('docs/*/manifest.md')\n",
+    "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / 'manifest.md'))\n",
 ], ids=["terminal-literal", "terminal-wildcard", "module-literal"])
 def test_a_file_link_matched_by_the_terminal_component_retains_its_target(tmp_path, monkeypatch, source):
     # ``docs/plain/manifest.md`` -> ``../../data/payload.md``.  Only ``docs/plain`` holds a
@@ -1098,7 +1102,7 @@ def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatc
 @pytest.mark.parametrize("source, link", [
     ("from pathlib import Path\nx = list(Path('docs').glob('*/*.md'))\n", "docs/out"),
     ("from pathlib import Path\nx = list(Path('docs').glob('*/link/*.md'))\n", "docs/plain/link"),
-    ("import glob\nx = glob.glob('docs/*/*.md')\n", "docs/out"),
+    ("import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*' / '*.md'))\n", "docs/out"),
 ], ids=["wildcard", "literal-after-wildcard", "module"])
 def test_a_link_leaving_the_tree_keeps_the_read_unplaced_and_is_never_approached(
         tmp_path, monkeypatch, source, link):
