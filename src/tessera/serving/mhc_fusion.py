@@ -140,13 +140,13 @@ class MhcFusedLibrary:
 
             build_directory = _get_build_directory("tessera_mhc_fused", verbose=False)
         Path(build_directory).mkdir(parents=True, exist_ok=True)
-        self.library_path = Path(build_directory) / f"{self.name}.so"
+        predicted_path = Path(build_directory) / f"{self.name}.so"
         built = load(name=self.name, sources=[str(source)], build_directory=build_directory,
                      extra_cuda_cflags=list(FLAGS), extra_cflags=["-O3"],
                      is_python_module=False, verbose=False)
-        seal_check("predicted mHC library path", self.library_path.resolve(), Path(built).resolve(),
+        seal_check("predicted mHC library path", predicted_path.resolve(), Path(built).resolve(),
                    where=__name__,
-                   refusal=lambda: RuntimeError(f"JIT returned {built}, not the declared {self.library_path}"))
+                   refusal=lambda: RuntimeError(f"JIT returned {built}, not the declared {predicted_path}"))
         self.library_path = Path(built)
         self.path = str(self.library_path)
         lib = ctypes.CDLL(self.path)
