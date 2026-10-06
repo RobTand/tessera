@@ -202,6 +202,7 @@ class CompilerCapture:
     """Retain metadata from the very Triton launch used, not a guessed kernel."""
     def __init__(self, module, out):
         self.observed = {}
+        self.binaries = {}
         self.originals = []
         self.out = Path(out)
         for symbol in ("_a4_span2_gemm_kernel", "_a4_span2_grouped_kernel"):
@@ -223,14 +224,17 @@ class CompilerCapture:
         folder = self.out / "compiler"
         folder.mkdir(exist_ok=True)
         artifacts = {}
-        for language in ("ptx", "ttgir"):
+        for language in ("ptx", "ttgir", "cubin"):
             body = compiled.asm.get(language)
             if body:
-                digest = hashlib.sha256(body.encode()).hexdigest()
+                raw = body.encode() if isinstance(body, str) else bytes(body)
+                digest = hashlib.sha256(raw).hexdigest()
                 filename = folder / f"{digest}.{language}"
                 if not filename.exists():
-                    filename.write_text(body)
+                    filename.write_bytes(raw)
                 artifacts[language] = {"path": str(filename), "sha256": digest}
+                if language == "cubin":
+                    self.binaries[digest] = {"path": str(filename), "symbol": md.name}
         available = torch.cuda.get_device_properties("cuda").shared_memory_per_block_optin
         return {"bits_per_256_weight_tile": rational(exact_bits(grid, q, rows, cols, recipe) * 256 / (rows * cols)),
             "alignment": {"rate": unit.rate, "arity": unit.arity, "span": 2,
@@ -330,7 +334,8 @@ def run_gpu(args, grid):
     meta = {"format": f"TESSERA_E2M1_K{grid.arity}", "family": "e2m1", "arity": grid.arity,
             "rung_min": lo, "rung_max": hi, "grid_owner": GRID_OWNER, "grid_step_q256": 1,
             "architecture": f"sm_{props.major}{props.minor}", "library": "native_span2",
-            "kernel_sha": source_sha, "library_sha256": source_sha, "tessera_head": os.environ.get("TESSERA_HEAD"),
+            "kernel_sha": source_sha, "library_sha256": None, "tessera_head": os.environ.get("TESSERA_HEAD"),
+            "library_kind": "actual Triton compiled CUDA binary set, not an ELF extension",
             "activation_contract": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer",
             "image": os.environ.get("ORACLE_IMAGE"), "torch": torch.__version__, "host": os.environ.get("HOST_NAME"),
             "pb_action": os.environ.get("PB_ACTION_KEY", os.environ.get("PRISMABUILD_ACTION_KEY")),
@@ -343,6 +348,9 @@ def run_gpu(args, grid):
     groups = {}
     path = Path(args.out) / f"bench_geometry_{args.part}.json"
     def save():
+        meta["compiled_binaries"] = capture.binaries
+        meta["library_sha256"] = (hashlib.sha256(json.dumps(sorted(capture.binaries)).encode()).hexdigest()
+                                   if capture.binaries else None)
         dump(path, {"meta": meta, "groups": groups})
     try:
         specs = [(q, shape) for q in args.qs for shape in SHAPES if args.part == "all" or shape[0] == args.part]
