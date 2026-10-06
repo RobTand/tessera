@@ -1,5 +1,34 @@
 # Changelog
 
+## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
+
+Add the #688 acceptance consumer for the third acceptance line: the four
+routed rows must reproduce the #685 after-run medians within their IQR.
+`tessera.serving.panel_baseline` (schema
+`tessera.shape_time_baseline_comparison.v1`, reviewer CLI
+`tools/tessera_panel_baseline.py`) reconstructs the preserved bench's
+nearest-sample quartile rule verbatim and proves it against every recorded
+cell of a preserved table before comparing anything: the recorded band is
+the band the historical bench wrote, never a rebuilt or interpolated one.
+Rows compare only on a matched (structure, module, family, grid, rate) key
+with agreeing rank-local geometry, and agreement is never presumed: a row
+with no geometry of its own is a nonpassing `geometry_missing` verdict in
+the JSON receipt (the CLI still exits 0), never a borrow of the reference
+shape. A median outside the recorded band is likewise a `gap` verdict
+carrying both numbers (CLI 0), not a reproduction and not a refusal.
+Malformed geometry, duplicate comparison rows, a timing cell
+that is not a JSON object, and a cell without a numeric `samples_ms`
+array are named `ValueError` refusals (CLI exit 2), not silent passes or
+tracebacks; the reviewer CLI binds, pins and proves one owned read per
+file. Dense panel rows project from a validated
+`tessera.shape_time_panel.v1` receipt;
+routed rows refuse projection by name until the panel schema grows one.
+Historical runtime-identity drift stamps and continues under the landed
+development-mode split; byte integrity, execution scope, grammar and
+comparison-key checks stay refusals. The verdict is about the comparison
+only: it is not a measurement, an admission, a price or a pin, and the
+full #688 native acceptance stays open.
+
 ## 2026-10-06 — issue 1005: actual T4 geometry reader coverage
 
 Add a default-off measurement reader for actual mixed-rate span-two TCQ and
