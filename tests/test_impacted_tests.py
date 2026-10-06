@@ -2220,6 +2220,54 @@ def test_a_local_wrapper_around_walk_still_selects_its_reader(tmp_path):
     assert "tests/test_wrapper.py" in result["tests"], result
 
 
+_FIXTURE_CONFTEST = (
+    "import os\nfrom pathlib import Path\nimport pytest\n{imports}\n\n{probe}\n\n\n"
+    "@pytest.fixture\ndef value():\n    return {value}\n")
+
+
+def _fixture_repo(tmp_path, *, imports, probe, value):
+    # No tests/__init__.py: pytest's import-root alias resolver reads this layout.
+    return _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/conftest.py": _FIXTURE_CONFTEST.format(imports=imports, probe=probe, value=value),
+        "tests/test_values.py": "VALUE = 1\n",
+        "tests/test_consumer.py": "def test_value(value):\n    assert value == 1\n"})
+
+
+@pytest.mark.parametrize("probe", [
+    "pass",
+    "Path('tests/test_values.py').read_text()",
+    "list(os.walk(Path('tests/test_values.py')))",
+], ids=["no-probe", "path-read", "walk-of-path"])
+def test_an_ordinary_import_is_not_masked_by_a_probe_of_the_same_file(tmp_path, probe):
+    """PB1496 review: a conftest that imports ``test_values`` AND reaches the file by
+    path has one dependency that matters, the import.  The probe exclusion is keyed
+    by the (target, importer) pair, so it also removed the ordinary import's edge and
+    the fixture's consumer was never selected when the helper changed."""
+    repo, base = _fixture_repo(tmp_path, imports="from test_values import VALUE",
+                               probe=probe, value="VALUE")
+    (repo / "tests/test_values.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "the helper the fixture imports changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_consumer.py" in result["tests"], result
+
+
+def test_a_probe_alone_still_does_not_select_the_fixture_consumers(tmp_path):
+    """The exclusion stays for what it is for: a conftest that only reaches a test file
+    by path is collection machinery, not a dependency of the tests it serves."""
+    repo, base = _fixture_repo(tmp_path, imports="",
+                               probe="Path('tests/test_values.py').read_text()", value="1")
+    (repo / "tests/test_values.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a test file the conftest only probes changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_consumer.py" not in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())
