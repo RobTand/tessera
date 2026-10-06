@@ -280,6 +280,7 @@ def main():
                 raise Refused("input preflight output requires the explicit seeded investigation scope")
             from eager_determinism import input_preflight
             config = recipe.inputs(dict(os.environ), live=False)
+            args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
             atomic_json(args.preflight_output, input_preflight(config))
         for arm, env in recipe.parse_plan(args.plan):
             print(f"== arm {arm}")
