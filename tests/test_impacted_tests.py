@@ -2458,6 +2458,25 @@ def test_an_outside_bridge_behind_a_wildcard_selects_the_reader_for_any_change(t
     assert "tests/test_lister.py" in result["tests"], result
 
 
+def test_a_module_glob_after_a_chdir_selects_the_reader_for_the_runtime_directory(tmp_path):
+    """``os.chdir(.../nested)`` then ``glob.glob('docs/*.md')`` lists ``nested/docs``, not
+    the root's ``docs``.  A member added there, under a basename the reader never
+    names, must select it."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_cwd.py": (
+            "import glob\nimport os\nfrom pathlib import Path\n\n\ndef test_lists():\n"
+            "    os.chdir(Path(__file__).resolve().parents[1] / 'nested')\n"
+            "    assert sorted(glob.glob('docs/*.md'))\n"),
+        "nested/docs/a.md": "x\n", "docs/a.md": "x\n"})
+    (repo / "nested" / "docs" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added under the runtime directory")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_cwd.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

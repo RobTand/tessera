@@ -916,6 +916,31 @@ def test_a_module_glob_with_no_nameable_base_stays_unnamed(tmp_path, source):
     assert found == set() and unnamed, (found, unnamed)
 
 
+@pytest.mark.parametrize("source", [
+    "import glob, os\nos.chdir('nested')\nx = glob.glob('docs/*.md')\n",
+    "import glob\n\n\ndef test_x(monkeypatch):\n    monkeypatch.chdir('nested')\n    return glob.glob('docs/*.md')\n",
+    "import glob, os\nfrom pathlib import Path\nos.chdir(Path(__file__).resolve().parents[1] / 'nested')\nx = list(glob.iglob('docs/*.md'))\n",
+    "import os\nos.chdir('nested')\nx = os.listdir('docs')\n",
+    "import os\nfrom contextlib import chdir\nwith chdir('nested'):\n    x = os.walk('docs')\n",
+], ids=["os-chdir", "monkeypatch", "path-argument-iglob", "listdir-string", "contextlib-chdir"])
+def test_a_relative_base_is_not_assumed_root_relative_in_a_module_that_changes_directory(
+        tmp_path, source):
+    # The runtime directory is not the tree's root once the module has called chdir, so a
+    # relative pattern or string names a directory nothing here can place.  Naming the
+    # root's ``docs`` would miss ``nested/docs``; keep the read as an unplaced one.
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "nested" / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "docs" not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+def test_an_absolute_pattern_after_a_chdir_is_unaffected(tmp_path):
+    found, unknown, unplaced = _scan_full(
+        "import glob, os\nos.chdir('nested')\nx = glob.glob('/usr/local/cuda-*')\n", tmp_path)
+    assert found == set() and not unplaced and not unknown
+
+
 def test_a_module_glob_keeps_the_unknown_loader_flag_of_an_executing_module(tmp_path):
     # A pattern need not name a directory a custom ``glob`` reads; naming it adds
     # the edge and must never replace the flag (the #1000 lesson).
