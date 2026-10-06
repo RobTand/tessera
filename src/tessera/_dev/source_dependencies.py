@@ -1021,6 +1021,98 @@ def _glob_receiver(loader, call, scope, root, refused, links):
 
 _MODULE_GLOBS = {("symbol", "glob.glob"), ("symbol", "glob.iglob")}
 
+#: Directory entries the link scan may read for one call.  Over it, the read is kept
+#: as an unplaced one: not provable within the budget, so select more, never less.
+_LINK_SCAN_BUDGET = 20000
+
+
+def _wildcard_directory_components(pattern, prefix=(), recursive=False):
+    """The directory components of *pattern* at and after its first wildcard.
+
+    ``rglob(pattern)`` is ``glob('**/' + pattern)``: the recursion runs over the whole
+    base, so its literal components are not a prefix of the base.
+    """
+    parts = PurePath(pattern).parts[len(prefix):]
+    components = list(parts[:-1]) + ([parts[-1]] if parts and parts[-1] == "**" else [])
+    return (["**"] if recursive else []) + components
+
+
+def _scan_children(directories, recursive, root, links, found, budget):
+    """Subdirectories of *directories* (all depths when *recursive*), or None over budget.
+
+    Entries are read without following links.  A link entry is resolved by ``_place``,
+    which records it and stops at a target outside the tree, so that target is never
+    approached; an in-tree directory it reaches is a dependency (*found*) and joins
+    the result.
+    """
+    seen = set(directories)
+    reached = set(directories) if recursive else set()
+    pending = list(directories)
+    while pending:
+        directory = pending.pop()
+        try:
+            entries = list(os.scandir(directory))
+        except OSError:
+            continue
+        budget[0] -= len(entries)
+        if budget[0] < 0:
+            return None
+        for entry in entries:
+            path = directory / entry.name
+            if entry.is_symlink():
+                placed = _place({path}, root, [], links)
+                target = next(iter(placed)) if placed else None
+                if target is None or not target.is_dir():
+                    continue
+                found.add(target)
+            elif entry.is_dir(follow_symlinks=False):
+                target = path
+            else:
+                continue
+            if target in seen:
+                continue
+            seen.add(target)
+            reached.add(target)
+            if recursive:
+                pending.append(target)
+    return reached
+
+
+def _wildcard_link_dirs(start, components, root, links):
+    """Directories a link reached through a wildcard component points to (#1011).
+
+    *start* is a placed directory.  Each wildcard component is expanded over the
+    directories reached so far and each literal one is placed.  ``None`` when the
+    scan would exceed its budget.
+    """
+    found, frontier, budget = set(), {start}, [_LINK_SCAN_BUDGET]
+    for component in components:
+        if component in ("", "."):
+            continue
+        if any(wildcard in component for wildcard in "*?["):
+            frontier = _scan_children(frontier, component == "**", root, links, found, budget)
+            if frontier is None:
+                return None
+        else:
+            frontier = {target for directory in frontier
+                        for target in (_place({directory / component}, root, [], links) or ())}
+    return found
+
+
+def _with_link_targets(placed, specs, root, refused, links):
+    """*placed* plus the directories links behind wildcard components lead to."""
+    found = set()
+    for start, components in specs:
+        resolved = _place({start}, root, [], links)
+        if not resolved:
+            continue
+        targets = _wildcard_link_dirs(next(iter(resolved)), components, root, links)
+        if targets is None:
+            refused.append(start)
+            return None
+        found |= targets
+    return placed | found
+
 
 def _module_glob_bases(call, scope, root, refused, links, from_string):
     """The directory a module-level ``glob.glob``/``glob.iglob`` call reads, or None.
@@ -1043,14 +1135,19 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     patterns = _values(call.args[0], scope, root, refused=refused, links=links)
     if patterns is None or not all(isinstance(pattern, str) for pattern in patterns):
         return None
-    bases = set()
+    bases, specs = set(), []
     for pattern in patterns:
         prefix = _literal_prefix(pattern)
         base = Path(*prefix) if prefix else Path(".")
         if ".." in PurePath(pattern).parts[len(prefix):]:
             return None
         bases.add(base)
+        components = _wildcard_directory_components(pattern, prefix)
+        if components:
+            specs.append((base, components))
     placed = _place(bases, root, [], links)
+    if placed is not None and specs:
+        placed = _with_link_targets(placed, specs, root, refused, links)
     if placed is not None and from_string is not None:
         from_string.append(True)
     return placed
@@ -1079,6 +1176,7 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
         functions = _values(call.func, scope, root)
         if functions and functions <= _MODULE_GLOBS:
             return _module_glob_bases(call, scope, root, refused, links, from_string)
+    specs = []
     if loader == "iterdir":
         bases = _values(call.func.value, scope, root, refused=refused, links=links)
         if bases is not None and (call.args or call.keywords):
@@ -1119,13 +1217,24 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
         if all(isinstance(base, Path) for base in bases):
             # A literal directory in front of the first wildcard may be a link
             # to another directory.  Placing it keeps the link and the target.
+            recursive = loader == "rglob"
+            for base in bases:
+                for pattern in patterns:
+                    prefix = _literal_prefix(pattern)
+                    start = base if recursive or not prefix else base.joinpath(*prefix)
+                    components = _wildcard_directory_components(pattern, () if recursive else prefix, recursive)
+                    if components:
+                        specs.append((start, components))
             bases = bases | {
                 base.joinpath(*prefix)
                 for base in bases for prefix in (_literal_prefix(pattern) for pattern in patterns)
                 if prefix}
     if bases is None or not all(isinstance(base, Path) for base in bases):
         return None
-    return _place(bases, root, refused, links)
+    placed = _place(bases, root, refused, links)
+    if placed is None or not specs:
+        return placed
+    return _with_link_targets(placed, specs, root, refused, links)
 
 
 def _sole_plain_definitions(tree):
