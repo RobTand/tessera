@@ -113,3 +113,70 @@ def test_actual_serialized_profiles_require_equal_current_expert_label_tables(mo
     with pytest.raises(GrammarError, match="current TCQ label tables"):
         PreparedA4Wire(units, torch.tensor(896.0, dtype=torch.float32))
 
+
+
+def _load_geometry_adapter():
+    """Import the measurement adapter file without adding packages."""
+    import importlib.util
+    from pathlib import Path
+    path = Path(__file__).parents[1] / "experiments" / "t4_code" / "bench_geometry_e2m1.py"
+    spec = importlib.util.spec_from_file_location("bench_geometry_e2m1_bound", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_packed_fp4_bound_comes_from_float32_precision_and_contraction_length():
+    from pathlib import Path
+    adapter = _load_geometry_adapter()
+    source = (Path(__file__).parents[1] / "experiments" / "t4_code" / "bench_geometry_e2m1.py").read_text()
+    assert "import prismaquant" not in source
+    assert "from prismaquant" not in source
+    assert "native_operator_panel" not in source
+    unit = torch.finfo(torch.float32).eps / 2
+    assert unit == 2.0**-24
+    tolerances, receipt = adapter.derive_packed_fp4_arithmetic_bound(10.0, k=256)
+    assert tolerances["rtol"] == 0.0
+    assert receipt["u_fp32"] == unit
+    assert receipt["k"] == 256
+    assert receipt["coefficient"] == (2.0 * 256 + 3.0) * unit
+    assert tolerances["atol"] == receipt["coefficient"] * 10.0
+    assert receipt["schema"].startswith("tessera.")
+    magnitude = adapter.dense_packed_fp4_operand_magnitude(
+        torch.tensor([[1.0, -2.0, 3.0]]),
+        torch.tensor([[1.0, 1.0, 1.0], [0.5, 0.5, 0.5]]))
+    assert magnitude == pytest.approx(6.0)
+    with pytest.raises(ValueError):
+        adapter.derive_packed_fp4_arithmetic_bound(1.0, k=0)
+    with pytest.raises(ValueError):
+        adapter.derive_packed_fp4_arithmetic_bound(1.0, k=256.0)
+    with pytest.raises(ValueError):
+        adapter.derive_packed_fp4_arithmetic_bound(float("nan"), k=256)
+    with pytest.raises(ValueError):
+        adapter.derive_packed_fp4_arithmetic_bound(float("inf"), k=256)
+    with pytest.raises(ValueError):
+        adapter.derive_packed_fp4_arithmetic_bound(-1.0, k=256)
+
+
+def test_old_fixed_allowance_under_bounds_cancellation_heavy_magnitudes():
+    """The old fixed gate rejects rounding error the derivation allows."""
+    adapter = _load_geometry_adapter()
+    tolerances, _ = adapter.derive_packed_fp4_arithmetic_bound(10.0, k=256)
+    assert tolerances["atol"] > 3e-5
+    expected = torch.zeros(1, 64)
+    actual = torch.full((1, 64), 1e-4)
+    with pytest.raises(AssertionError):
+        torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
+    torch.testing.assert_close(actual, expected, rtol=tolerances["rtol"], atol=tolerances["atol"])
+
+
+def test_old_fixed_allowance_over_bounds_small_magnitudes():
+    """The old fixed gate accepts error far outside the proven envelope."""
+    adapter = _load_geometry_adapter()
+    tolerances, _ = adapter.derive_packed_fp4_arithmetic_bound(1e-4, k=256)
+    assert tolerances["atol"] < 3e-5
+    expected = torch.zeros(1, 64)
+    actual = torch.full((1, 64), 1e-6)
+    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
+    with pytest.raises(AssertionError):
+        torch.testing.assert_close(actual, expected, rtol=tolerances["rtol"], atol=tolerances["atol"])

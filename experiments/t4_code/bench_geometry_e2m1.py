@@ -23,6 +23,7 @@ import argparse
 from fractions import Fraction
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import statistics
@@ -440,6 +441,81 @@ def run_gpu(args, grid):
         capture.close()
 
 
+def dense_packed_fp4_operand_magnitude(rendered_x, weight):
+    """Largest absolute contraction sum for one dense packed FP4 gate.
+
+    For rendered activations [M, K] and weights [N, K], the per-output error
+    bound scales with max over outputs of sum over k of |ax| |w|. This helper
+    evaluates that quantity as (abs(ax) @ abs(w).T).max() so no caller
+    hardcodes a magnitude. Grouped gates call it once per expert segment and
+    keep the maximum.
+    """
+    if rendered_x.dim() != 2 or weight.dim() != 2:
+        raise ValueError("operand magnitude needs two-dimensional activation and weight tiles")
+    if rendered_x.shape[1] != weight.shape[1]:
+        raise ValueError("activation and weight contraction lengths differ")
+    if rendered_x.shape[0] < 1 or weight.shape[0] < 1 or rendered_x.shape[1] < 1:
+        raise ValueError("operand magnitude needs at least one row and one contraction step")
+    return float((rendered_x.abs() @ weight.abs().T).max())
+
+
+def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
+    """Arithmetic tolerance for the packed FP4 scaled matrix multiply.
+
+    Both sides start from the same quantized codes and block scales: the
+    native kernel decodes them inside the block-scaled FP4 multiply-accumulate
+    while the stock reference forms the same products in float32 from
+    byte-identical codes and scales, so the two differ only in float32
+    rounding on the way to the same real dot products. Per output element,
+    with S the exact scaled sum, R the exact global ratio, M the operand
+    magnitude sum, K the contraction length, and u the float32 unit roundoff::
+
+        |native - reference| <= (2*K + 3) * u * M.
+
+    One u forms the reference activation (division by the input global; the
+    narrow products before it are exact), one forms the native global ratio,
+    one rounds the native epilogue multiply, and K*u bounds each side's
+    float32 accumulation (products and adds, first order; terms of order u
+    squared are dropped). Weight formation is exact: every factor carries at
+    most eleven significant bits and the weight global is a power of two, so
+    the products are exact in float32 in any order.
+
+    No bfloat16 term appears. Both sides consume the same bfloat16 inputs
+    through the same quantizer, accumulate in float32, and return float32, so
+    there is no differing bfloat16 operand rounding and no final bfloat16
+    rounding to bound.
+
+    rtol is zero: the bound scales with the operand magnitude sum, not with
+    the size of the expected output, so cancelled outputs keep the full
+    allowance and tiny outputs keep a tiny one. Standalone: this function
+    reads only the calling file's torch import.
+    """
+    if type(k) is not int or k < 1:
+        raise ValueError("the derived packed FP4 bound needs the contraction length as a positive integer")
+    try:
+        magnitude = float(operand_magnitude)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("the derived packed FP4 bound needs a real operand magnitude") from exc
+    if not math.isfinite(magnitude) or magnitude < 0:
+        raise ValueError("the derived packed FP4 bound needs a finite non-negative operand magnitude")
+    u_fp32 = torch.finfo(torch.float32).eps / 2
+    coefficient = (2.0 * k + 3.0) * u_fp32
+    atol = coefficient * magnitude
+    if not math.isfinite(atol) or atol < 0:
+        raise ValueError("the derived packed FP4 bound is not finite")
+    return ({"atol": atol, "rtol": 0.0}, {
+        "schema": "tessera.packed_fp4_arithmetic_bound.v1",
+        "bound": "(2*K + 3)*u_fp32 * max output sum_k |ax||w|",
+        "u_fp32": u_fp32,
+        "k": int(k),
+        "coefficient": coefficient,
+        "operand_magnitude": magnitude,
+        "rtol_is_zero_because": "the bound scales with the operand magnitude sum, not with the expected output",
+        "scope": "packed_fp4_gemm_output_only",
+        "bf16_terms": "none: both sides share one quantizer over the same bfloat16 inputs, accumulate in float32, and return float32",
+    })
+
+
 def run_correctness(args, grid, samples):
     """Real packed-byte and native arithmetic oracles, bounded to 64 by 256."""
     from tessera.compact_prep import parse_compact_wire, prepare_a4_wire_compact
@@ -481,26 +557,47 @@ def run_correctness(args, grid, samples):
             dense = PreparedA4Wire([units[0]], gs)
             grouped = PreparedA4Wire([units[0], units[0], units[1]], gs)
             errors = []
+            magnitudes = []
+            gate_atols = []
+            bound_template = None
             for m in (1, 16, 33, 65):
                 generator = torch.Generator(device="cuda").manual_seed(3100 + m)
                 x = torch.randn(m, 256, generator=generator, device="cuda").to(torch.bfloat16)
                 a, scale = a4_quantize_activation(x, gs)
                 nib = torch.stack((a & 15, a >> 4), dim=-1).reshape(m, 256)
                 rendered_x = _nvfp4_values(nib) * scale.float().repeat_interleave(16, dim=1) / gs
+                k = int(x.shape[1])
+                if k != int(weights[0].shape[1]) or k != int(rendered_x.shape[1]):
+                    raise ValueError(f"the gate contraction lengths differ: {k}")
+                magnitude = dense_packed_fp4_operand_magnitude(rendered_x, weights[0])
+                tolerances, receipt = derive_packed_fp4_arithmetic_bound(magnitude, k=k)
+                bound_template = receipt
                 expected = rendered_x @ weights[0].T
                 actual = dense(x, out_dtype=torch.float32)
-                torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
+                torch.testing.assert_close(actual, expected, rtol=tolerances["rtol"], atol=tolerances["atol"])
                 errors.append(float((actual - expected).abs().max()))
+                magnitudes.append(float(magnitude))
+                gate_atols.append(float(tolerances["atol"]))
                 if m >= 4:
                     offsets = torch.tensor([0, 3, 3, 5], dtype=torch.int32, device="cuda")
                     tokens = torch.tensor([2, 0, 2, 1, 3], dtype=torch.int32, device="cuda")
+                    grouped_magnitude = max(
+                        dense_packed_fp4_operand_magnitude(rendered_x[tokens[:3].long()], weights[0]),
+                        dense_packed_fp4_operand_magnitude(rendered_x[tokens[3:].long()], weights[1]))
+                    grouped_tolerances, grouped_receipt = derive_packed_fp4_arithmetic_bound(grouped_magnitude, k=k)
+                    bound_template = grouped_receipt
                     actual = grouped(x, expert_offsets=offsets, route_ids=tokens, num_routes=5, out_dtype=torch.float32)
                     expected = torch.cat((rendered_x[tokens[:3].long()] @ weights[0].T,
                                           rendered_x[tokens[3:].long()] @ weights[1].T))
-                    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
+                    torch.testing.assert_close(actual, expected, rtol=grouped_tolerances["rtol"], atol=grouped_tolerances["atol"])
                     errors.append(float((actual - expected).abs().max()))
+                    magnitudes.append(float(grouped_magnitude))
+                    gate_atols.append(float(grouped_tolerances["atol"]))
             row = {"q256": q, "structure": structure, "recipe": recipe.to_config(),
                 "codes_and_scales": "byte identical to materialize_stock", "native_max_abs_error": max(errors),
+                "derived_max_atol": max(gate_atols), "derived_atol_per_gate": gate_atols,
+                "operand_magnitude_per_gate": magnitudes,
+                "arithmetic_bound": {name: bound_template[name] for name in ("schema", "bound", "u_fp32", "k", "coefficient", "rtol_is_zero_because", "scope", "bf16_terms")},
                 "M": [1, 16, 33, 65], "grouped": "three experts, one empty, distinct last expert, duplicate and reordered tokens",
                 "inputs": {name: {"shape": list(t.shape), "dtype": str(t.dtype),
                     "bytes": t.numel() * t.element_size()} for name, t in units[0].named_tensors()}}
