@@ -337,3 +337,50 @@ def test_compare_refuses_malformed_geometry_on_raw_claims_by_name():
     for bad in (((2048,),), "2048x4096", ((2048, 4096), (4096, None))):
         with pytest.raises(ValueError, match="rank-local shape"):
             pb.compare(_synthetic_table(), [dict(good, rank_local_shape=bad)])
+
+
+def test_verify_table_binds_the_very_bytes_it_proved_over_a_pipe(tmp_path):
+    """Interleaved-writer regression: the published binding describes the
+    bytes the proof actually verified.  A FIFO's second read returns empty
+    bytes, so a tool that binds by re-reading publishes a digest of
+    nothing; one owned buffer publishes the table's own digest."""
+    from tessera.serving import panel_baseline as pb
+    table = _synthetic_table()
+    fifo = tmp_path / "baseline.json"
+    os.mkfifo(fifo)
+    proc = subprocess.Popen([sys.executable, str(TOOL), "verify-table",
+                             "--baseline", str(fifo)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True)
+    with open(fifo, "wb") as handle:
+        handle.write(table)
+    out, err = proc.communicate(timeout=120)
+    assert proc.returncode == 0, err
+    receipt = json.loads(out)
+    assert receipt["baseline"]["sha256"] == hashlib.sha256(table).hexdigest()
+    assert receipt["baseline"]["bytes"] == len(table)
+    assert receipt["bench_rule"]["cells_checked"] >= len(FOUR_GROUPS)
+
+
+def test_verify_table_replacement_and_pin_stay_hard_across_runs(tmp_path):
+    """A real replacement between runs: the pin refuses the old digest, and
+    each receipt's binding and proof describe that run's actual bytes."""
+    path = tmp_path / "baseline.json"
+    first = _synthetic_table()
+    path.write_bytes(first)
+    proc = _run_cli(["verify-table", "--baseline", str(path)], tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["baseline"]["sha256"] == hashlib.sha256(first).hexdigest()
+    second = _synthetic_table(samples=(5.0, 6.0, 7.0, 8.0))
+    replacement = tmp_path / "next.json"
+    replacement.write_bytes(second)
+    os.replace(replacement, path)
+    proc = _run_cli(["verify-table", "--baseline", str(path),
+                     "--sha256", hashlib.sha256(first).hexdigest()], tmp_path)
+    assert proc.returncode == 2
+    assert "REFUSED" in proc.stderr and "pinned digest differs" in proc.stderr
+    proc = _run_cli(["verify-table", "--baseline", str(path)], tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    receipt = json.loads(proc.stdout)
+    assert receipt["baseline"]["sha256"] == hashlib.sha256(second).hexdigest()
+    assert receipt["baseline"]["bytes"] == len(second)

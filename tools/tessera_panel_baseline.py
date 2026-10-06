@@ -30,8 +30,11 @@ sys.path.insert(0, str(ROOT / "src"))
 from tessera.serving import panel_baseline as pb, timing_panel as tp  # noqa: E402
 
 
-def _bound(path: Path, *, sha256=None):
-    binding = tp.file_binding(path)
+def _bound_buffer(raw: bytes, path: Path, *, sha256=None):
+    """The binding of THE buffer in hand -- bytes, digest and pin check all
+    derived from one owned read, never from a second look at the path."""
+    binding = {"path": str(path.resolve()), "bytes": len(raw),
+               "sha256": hashlib.sha256(raw).hexdigest()}
     if sha256 is not None:
         tp._sha(sha256, "sha256")
         if sha256 != binding["sha256"]:
@@ -56,7 +59,7 @@ def main(argv=None):
     try:
         if args.action == "verify-table":
             raw = args.baseline.read_bytes()
-            binding = _bound(args.baseline, sha256=args.sha256)
+            binding = _bound_buffer(raw, args.baseline, sha256=args.sha256)
             proof = pb.verify_recorded_statistics(raw, where=str(args.baseline))
             result = {"schema": pb.SCHEMA, "mode": "verify_rule",
                       "baseline": binding, "proof": proof,
@@ -64,7 +67,7 @@ def main(argv=None):
                                      "proven_reproduction": True}}
         else:
             raw = args.baseline.read_bytes()
-            _bound(args.baseline, sha256=args.sha256)
+            _bound_buffer(raw, args.baseline, sha256=args.sha256)
             panel_raw = args.panel.read_bytes()
             if args.panel_sha256 is not None:
                 tp._sha(args.panel_sha256, "panel sha256")
