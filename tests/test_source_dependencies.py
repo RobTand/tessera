@@ -925,6 +925,66 @@ def test_a_module_glob_keeps_the_unknown_loader_flag_of_an_executing_module(tmp_
     assert tmp_path / "docs" in found and unknown
 
 
+def _linked_tree(root):
+    """docs/link -> ../data, with a file in data, and docs/plain as an ordinary directory."""
+    (root / "docs" / "plain").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "data" / "member.md").write_text("x\n")
+    (root / "docs" / "link").symlink_to("../data", target_is_directory=True)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n",
+    "from pathlib import Path\nx = list(Path('docs').rglob('*.md'))\n",
+    "from pathlib import Path\nx = list(Path('docs').glob('**/x.md'))\n",
+    "import glob\nx = glob.glob('docs/*/x.md')\n",
+    "import glob\nx = glob.glob('docs/**/x.md', recursive=True)\n",
+    "from pathlib import Path\nx = list(Path('docs').glob('*/plain/../x.md'))\n",
+], ids=["glob-star", "rglob", "glob-doublestar", "module-star", "module-doublestar", "parent-after-wildcard"])
+def test_a_link_reached_through_a_wildcard_component_is_followed(tmp_path, monkeypatch, source):
+    # ``docs/link`` points at ``data``; a pattern that wildcards over ``docs`` reads
+    # ``data`` through it, so ``data`` and the link are dependencies (#1011).  The
+    # parent-after-wildcard spelling is refused or followed, never silently dropped.
+    _linked_tree(tmp_path)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    followed = {tmp_path / "data", tmp_path / "docs" / "link"} <= found
+    assert followed or unplaced, (found, unknown, unplaced)
+    assert tmp_path / "docs" in found or unplaced
+
+
+def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatch):
+    (tmp_path / "docs" / "plain").mkdir(parents=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n", tmp_path)
+    assert found == {tmp_path / "docs"} and not unknown and not unplaced
+
+
+def test_a_link_out_of_the_tree_is_kept_but_never_approached(tmp_path, monkeypatch):
+    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside.mkdir()
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "docs" / "out").symlink_to(outside, target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
+    found, _, _ = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n", root)
+    assert outside not in found and root / "docs" / "out" in found
+
+
+def test_a_scan_over_its_budget_falls_back_to_an_unplaced_read(tmp_path, monkeypatch):
+    # Not provable within the budget: select more, never less.
+    import tessera._dev.source_dependencies as dependencies
+    (tmp_path / "docs").mkdir()
+    for index in range(6):
+        (tmp_path / "docs" / f"d{index}").mkdir()
+    monkeypatch.setattr(dependencies, "_LINK_SCAN_BUDGET", 2)
+    found, unknown, unplaced = _scan_full(
+        "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n", tmp_path)
+    assert found == set() and unplaced and not unknown
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)
