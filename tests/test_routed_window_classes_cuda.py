@@ -197,3 +197,13 @@ def test_uniform_identity_matches_old_pure_and_input_weight_shared(family, monke
         actual = adapter(x, ids, rw, swiglu_limit=2.0, shared=shared,
                          apply_router_weight_on_input=input_weight)
         assert torch.equal(actual, expected)
+        torch.cuda.synchronize()
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            captured = adapter(x, ids, rw, swiglu_limit=2.0, shared=shared,
+                               apply_router_weight_on_input=input_weight)
+        for _ in range(2):
+            captured.fill_(float("nan"))
+            graph.replay()
+            torch.cuda.synchronize()
+            assert torch.equal(captured, expected)

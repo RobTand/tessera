@@ -41,7 +41,6 @@ layer's; this adapter returns the routed-expert result ``[T, rows]`` bf16.
 from __future__ import annotations
 
 import dataclasses
-import logging
 import math
 from typing import Sequence
 
@@ -56,7 +55,6 @@ __all__ = ["NativeWindowMoE", "prepare_native_window_moe", "PackedWindowUnits",
 
 #: The activations this adapter reproduces exactly.  Everything else refuses.
 SUPPORTED_ACTIVATIONS = ("silu",)
-_log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
