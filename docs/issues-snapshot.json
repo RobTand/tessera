@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-06T12:06:51Z",
+ "generated": "2026-10-06T19:13:48Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5912,7 +5912,7 @@
     "title": "Integration batch 42: #2264 D13 pin, #2317 tools spaced-JSON routes and #2326 journal stamps (one bundle)"
    },
    "2328": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] D41: require measured kernel-bound rung allowability for production allocation"
    },
    "2329": {
@@ -5928,7 +5928,7 @@
     "title": "[P1] Reuse shared qname grammars in comparison and budget CLIs"
    },
    "2331": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] D41: require current producer-admitted measured rungs in allocation"
    },
    "2332": {
@@ -5968,7 +5968,7 @@
     "title": "[P2] Preserve serving conditions in production Tessera route admission"
    },
    "2340": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] D41: delegate v1/v2 body-aware table intake to canonical producer"
    },
    "2341": {
@@ -6004,7 +6004,7 @@
     "title": "Integration batch 48: #2345 forward-split bind-seal reuse and #2347 zero read-count refusal (one bundle, no #2341)"
    },
    "2349": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Consolidate digest test nodes while preserving every asserted outcome"
    },
    "235": {
@@ -6012,16 +6012,40 @@
     "title": "Bind Tessera export inputs and preserve runtime admission evidence"
    },
    "2350": {
-    "state": "OPEN",
-    "title": "Integration batch 49: D41 v1/v2 body-aware rung allowability (#2331 + #2340 at f4cc875e), stacked on batch 48"
+    "state": "CLOSED",
+    "title": "Integration batch 49: D41 v1/v2 body-aware rung allowability (#2331 + #2340 at ac7c082f), on main"
    },
    "2351": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Integration batch 51: consolidate digest test nodes, preserving all 618 outcomes (#2349), on main"
    },
    "2352": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] RTN FP8 helper returns NaN for finite FP16 zero and tiny rows"
+   },
+   "2353": {
+    "state": "OPEN",
+    "title": "[P2] D41 tests need the canonical rung-allowability producer: composed suites on the pinned interpreter fail without it"
+   },
+   "2354": {
+    "state": "CLOSED",
+    "title": "Fix FP16 NaN in the RTN FP8 helper via an FP32 intermediate roundtrip"
+   },
+   "2355": {
+    "state": "OPEN",
+    "title": "[P1] Consolidate the allocator partition and admitted-cost byte SHA consumers"
+   },
+   "2356": {
+    "state": "OPEN",
+    "title": "Integration batch 55: #2341 produced-output queue binding and #2236 io-engine seal (one bundle)"
+   },
+   "2357": {
+    "state": "OPEN",
+    "title": "Reuse digests.bytes_sha256hex for the two allocator raw byte digests"
+   },
+   "2358": {
+    "state": "OPEN",
+    "title": "Integration batch 57: allocator raw byte digests reuse bytes_sha256hex (#2357), stacked on batch 55"
    },
    "236": {
     "state": "CLOSED",
@@ -9438,7 +9462,7 @@
     "title": "[P2+] Bound eager control and piece-major decision phases to native 30-minute gangs"
    },
    "1003": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound seeded eager control and piece-major-only native phases"
    },
    "1004": {
@@ -9450,12 +9474,48 @@
     "title": "[P1] Qualify actual mixed rate and dense T4 geometry coverage"
    },
    "1006": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add actual mixed TCQ and dense twelve-bit T4 geometry readers"
+   },
+   "1007": {
+    "state": "OPEN",
+    "title": "[P1] Derive the packed T4 GPU arithmetic correctness bound before qualification"
+   },
+   "1008": {
+    "state": "OPEN",
+    "title": "Derive packed T4 FP4 arithmetic bound from float32 precision"
+   },
+   "1009": {
+    "state": "OPEN",
+    "title": "[P2] Legal 16-column acquisition cannot use the fixed 32-column Hessian-aware LDL block"
    },
    "101": {
     "state": "CLOSED",
     "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
+   },
+   "1010": {
+    "state": "OPEN",
+    "title": "[P2] Impacted-test selector: module glob.glob(pattern) resolves no directory and glob.iglob is not recognised"
+   },
+   "1011": {
+    "state": "OPEN",
+    "title": "[P3] Impacted-test selector does not follow a link reached only through a wildcard directory component"
+   },
+   "1012": {
+    "state": "OPEN",
+    "title": "Add the #685 baseline comparison consumer for #688 timing panels"
+   },
+   "1013": {
+    "state": "OPEN",
+    "title": "[P2] Resolve module glob.glob/iglob bases and follow links through wildcard components (#1010, #1011)"
+   },
+   "1014": {
+    "state": "OPEN",
+    "title": "[P3] Triage the listed unnameable-base directory reads and lower the pinned ceiling"
+   },
+   "1015": {
+    "state": "OPEN",
+    "title": "[P2] Isolate vLLM stub state in the compile-identity co-run population"
    },
    "102": {
     "state": "CLOSED",
