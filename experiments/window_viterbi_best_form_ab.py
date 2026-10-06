@@ -446,9 +446,12 @@ def _g2_config(cfg, args, dev):
             note="one warm group per arm follows; profile with -k filters "
                  "on the step kernel names",
             arms=[arm for arm, _, _ in G2_ARMS])
+        # Use ncu --profile-from-start off so identity and capture are not sampled.
+        torch.cuda.profiler.start()
         for arm, width_cap, tile in G2_ARMS:
             group(arm, width_cap, tile)
             torch.cuda.synchronize()
+        torch.cuda.profiler.stop()
         return rec
 
     if args.mode == "pbprofile":
