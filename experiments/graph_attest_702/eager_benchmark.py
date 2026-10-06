@@ -14,7 +14,7 @@ import time
 import uuid
 
 from managed_window import Refused, atomic_json
-from eager_determinism import MODE as DETERMINISM_MODE, NAMES as CONTROL_NAMES
+from eager_determinism import MODE as DETERMINISM_MODE, PIECE_MAJOR_MODE, PHASE_MODES, MODES
 SHARED_ROOT = Path("/mnt/shared")
 PQ_PIN_COMMIT = "e36e60b77b3d2ab0c5265272515958a0cb67d32b"
 
@@ -29,7 +29,7 @@ PAIRS = {MODE: [("eager2048", "2048"), ("eager4096", "4096")],
          SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")],
          GRAPH_SHIP_MODE: [("graph2048_off", "2048"), ("graph2048_on", "2048")],
          EAGER_LEVER_MODE: [("eager4096_off", "4096"), ("eager4096_on", "4096")],
-         DETERMINISM_MODE: [(name, "4096") for name in CONTROL_NAMES]}
+         **{mode: [(name, "4096") for name in names] for mode, names in MODES.items()}}
 
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
 CONTRACT_SHA = "47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78"
@@ -46,8 +46,8 @@ MODEL = "glm53-artifact"
 BASE = "http://10.100.96.2:8142"
 
 def pair_refusal(mode):
-    if mode == DETERMINISM_MODE:
-        return "Seeded L2048 investigation requires two OFF restarts followed by decode-once, KDA split and piece-major singly"
+    if mode in PHASE_MODES:
+        return "Seeded L2048 phase requires exactly its two fresh all-OFF control or OFF/piece-major blocks"
     if mode == MODE:
         return "Window4 is exactly eager2048/2048 then eager4096/4096"
     if mode == SHIP_MODE:
@@ -206,7 +206,7 @@ def compare_output_hashes(reference, candidate):
 
 
 def probes(adapter, arm, peer):
-    if adapter.config.get("window_mode") == DETERMINISM_MODE:
+    if adapter.config.get("window_mode") in PHASE_MODES:
         from eager_determinism import probes as control_probes
         return control_probes(adapter, arm, peer)
     config, name = adapter.config, arm["arm"]
@@ -250,6 +250,13 @@ def probes(adapter, arm, peer):
             if not comparison["passed"]:
                 raise Refused("Ship eager lever OFF/ON decoded output/finish hashes differ")
     atomic_json(out / "invocation.json", binding)
+    return profile_and_power(adapter, arm, out, binding)
+
+
+def profile_and_power(adapter, arm, out, binding):
+    config, name = adapter.config, arm["arm"]
+    profile_dir = Path(config["profile_dir"]) / name
+    invocation = binding["invocation"]
     # Execute the frozen instrument's own declared order, not a second roster.
     import importlib.util
     spec = importlib.util.spec_from_file_location("window4_profile_instrument", CLIENT / "comparison_inputs.py")
@@ -274,7 +281,8 @@ def probes(adapter, arm, peer):
                 "--window", window, "--points", str(before - after), "--out", str(out / (host + "-power.json"))]
         with (out / "client.log").open("a") as stream:
             adapter.command(argv, stdout=stream, tick=adapter.tick, limit=adapter.envelope.remaining())
-    binding.update(timing_sha256=sha(out / "timing.json"), events_sha256=sha(out / "events.jsonl"),
-                   energy_scope="Entire timing episode including three excluded warmups; profile windows excluded. Raw Netdata coverage governs any work/J claim.")
+    raw_name = "control.json" if config.get("window_mode") in PHASE_MODES else "timing.json"
+    binding.update(timing_sha256=sha(out / raw_name), events_sha256=sha(out / "events.jsonl"),
+                   energy_scope="Entire timing episode including excluded warmups; profile windows excluded. Raw Netdata coverage governs any work/J claim.")
     atomic_json(out / "invocation.json", binding)
     return dict(invocation=invocation, events=str(out / "events.jsonl"), profile_dir=str(profile_dir))

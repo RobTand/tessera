@@ -10,7 +10,7 @@ import subprocess
 
 from managed_window import MEMORY_POLICY, NOT_COMPUTED, Refused, dev_mode_enabled, seal_check
 from submit import parse_plan, IMAGE
-from eager_benchmark import DETERMINISM_MODE, EAGER_LEVER_MODE, GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
+from eager_benchmark import DETERMINISM_MODE, PIECE_MAJOR_MODE, PHASE_MODES, EAGER_LEVER_MODE, GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
 
 CONTROL = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 CONFIG_SHA = "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898"
@@ -42,7 +42,8 @@ PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "windo
                   "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
                   "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt", "plan-graph-ship.txt",
                   "plan-eager-levers-4096.txt", "eager_determinism.py", "seeded_control_client.py",
-                  "plan-eager-determinism-2048.txt")
+                  "plan-eager-determinism-2048.txt", "plan-eager-piece-major-2048.txt",
+                  "../t8r_speed/pb_staged_store.py", "observer/usercustomize.py")
 
 
 def producer_sha() -> str:
@@ -84,7 +85,7 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
                refusal=Refused("producer experiments/graph_attest_702 is not clean"))
     lines = []
     for name in PRODUCER_FILES:
-        relative = "experiments/graph_attest_702/" + name
+        relative = os.path.normpath("experiments/graph_attest_702/" + name)
         blob = git("show", commit + ":" + relative, binary=True)
         seal_check("producer file", name, "current", where="Window4 producer",
                    same=(root / relative).read_bytes() == blob,
@@ -99,7 +100,8 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
 def check_control_record(recorded, current, *, where, refusal):
     """Scope/geometry/comparability must still match exactly; only the recorded
     run identity (commits, digests, stamps) is a D32 seal that dev mode stamps."""
-    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts"}
+    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts",
+                "data_manifest", "control_root", "profile_manifest"}
     identity.update(key for key in set(recorded) | set(current) if key.endswith("sha256"))
     comparable = (set(recorded) | set(current)) - identity
     if {key: recorded.get(key) for key in comparable} != {key: current.get(key) for key in comparable}:
@@ -179,9 +181,22 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
         else:
             result["window_mode"] = mode
             result["profile_dir"] = str(Path(env["RECEIPTS"]).parent / "profiles")
-        if mode == DETERMINISM_MODE:
-            from eager_determinism import PROTOCOL
-            result.update(control_protocol=PROTOCOL, artifact_manifest=env.get("ARTIFACT_MANIFEST", ""))
+        if mode in PHASE_MODES:
+            from eager_determinism import PROTOCOL, PHASE_SECONDS, PHASE_PEER_WAIT_SECONDS, control_baseline
+            result.update(control_protocol=PROTOCOL, artifact_manifest=env.get("ARTIFACT_MANIFEST", ""),
+                          window_seconds=PHASE_SECONDS, peer_wait_seconds=PHASE_PEER_WAIT_SECONDS)
+            result["data_manifest"] = env.get("DATA_MANIFEST", "")
+            if not result["data_manifest"]:
+                raise Refused("bounded resident phases require the actual DATA_MANIFEST for PB staging")
+            if mode == PIECE_MAJOR_MODE:
+                result["control_root"] = env.get("CONTROL_ROOT", "")
+                if not result["control_root"]:
+                    raise Refused("piece-major phase requires the actual completed OFF/OFF CONTROL_ROOT")
+                if live:
+                    control_baseline(Path(result["control_root"]))
+                result["profile_manifest"] = env.get("PROFILE_MANIFEST", "")
+                if not result["profile_manifest"]:
+                    raise Refused("piece-major phase requires the same-instrument L2048 PROFILE_MANIFEST")
     return result
 
 
@@ -204,7 +219,7 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
         raise Refused(pair_refusal(mode))
     arm = arm_settings(name, env)
     graph_ship = mode == GRAPH_SHIP_MODE
-    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, DETERMINISM_MODE)
+    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, *PHASE_MODES)
     label = "Ship graph" if graph_ship else "Ship eager lever"
     fields = {"EAGER", "SPEC_JSON", "FABRIC", "MAX_BATCHED"}
     if graph_ship:
@@ -221,10 +236,10 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
             if levers[key] not in choices:
                 raise Refused(f"{label} plan requires explicit {key}={'/'.join(choices)}")
         enabled = [levers[key] == choices[1] for key, choices in LEVER_VALUES.items()]
-        if mode == DETERMINISM_MODE:
+        if mode in PHASE_MODES:
             from eager_determinism import FLAGS, NAMES, VALUES
             if levers != dict(zip(FLAGS, VALUES[NAMES.index(name)])):
-                raise Refused("Seeded investigation fixes two OFF restarts then exactly one named lever per arm")
+                raise Refused("Seeded phase fixes all-OFF controls or piece-major alone; no other lever")
         elif any(enabled) != (name == BENCHMARK_PAIRS[mode][1][0]):
             raise Refused(f"{label} pair requires all levers off in the first arm and at least one on in the second")
         arm["lever_env"] = levers
@@ -266,9 +281,9 @@ def serve(config: dict, arm: dict, rank: int, *, master_port=29541, api_port=814
              "--no-enable-prefix-caching", "--gpu-memory-utilization", "0.5", "--kv-cache-memory-bytes",
              "2147483648", "--trust-remote-code", "--max-logprobs", "20", "--served-model-name", "glm53-artifact"]
     argv += ["--enforce-eager"] if arm["eager"] == "1" else ["--compilation-config", arm["compilation"]]
-    if config.get("window_mode") == DETERMINISM_MODE:
+    if config.get("window_mode") in PHASE_MODES:
         argv += ["--seed", str(config["control_protocol"]["server_seed"])]
-    elif benchmark_window:
+    if benchmark_window and config.get("window_mode") != DETERMINISM_MODE:
         argv += ["--profiler-config", json.dumps(dict(profiler="torch",
                  torch_profiler_dir=config["profile_dir"], torch_profiler_with_stack=False,
                  torch_profiler_record_shapes=True, ignore_frontend=True), separators=(",", ":"))]
@@ -292,6 +307,8 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                            (ext, "/ext"), (Path("/mnt/shared"), "/mnt/shared:ro"),
                            (out, "/out"), (root / "experiments/glm53_508_graph_qual/digest", "/digest:ro")]:
         argv += ["-v", f"{source}:{target}"]
+    for source, target in config.get("staged_file_mounts", []):
+        argv += ["-v", f"{source}:{target}:ro"]
     env = dict(NCCL_SOCKET_IFNAME="enp1s0f0np0", GLOO_SOCKET_IFNAME="enp1s0f0np0",
                NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0", NCCL_IB_DISABLE="1" if config["fabric"] == "socket" else "0",
                NCCL_CUMEM_ENABLE="0", NCCL_CUMEM_HOST_ENABLE="0", NCCL_DMABUF_ENABLE="0",
@@ -303,8 +320,12 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1",
                MAX_JOBS="1", VLLM_HOST_IP=("10.100.96.2", "10.100.96.1")[rank],
                T695_GC_BEFORE_DRAFTER="1", TESSERA_FUSED_E4M3_MMA="e4m3", **image_env)
-    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, DETERMINISM_MODE):
+    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, *PHASE_MODES):
         env.update(arm["lever_env"])
+        if config.get("window_mode") in PHASE_MODES:
+            env["TESSERA_ROUTE_TRACE"] = f"/out/{name}.rank{rank}.route-trace.json"
+            env["PYTHONPATH"] = "/ga702-observer:/digest"
+            argv += ["-v", f"{Path(__file__).parent / 'observer'}:/ga702-observer:ro"]
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
     local_config = config

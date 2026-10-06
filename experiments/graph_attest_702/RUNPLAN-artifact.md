@@ -547,13 +547,15 @@ ran5 tests:4 new named-mode controls failed,1 legacy refusal passed;0 skips,
 torch2.11.0+cpu/noCUDA. Passing controls and actual model evidence are separate
 records, not asserted by this source/documentation change.
 
-## Seeded L2048 OFF/OFF investigation (2026-10-06, Refs #931, #803, #739)
+## Bounded seeded L2048 control and piece-major phases (2026-10-06, #1002)
 
-This is a separate investigation scope, not a relaxed ship comparison:
-`WINDOW_MODE=investigate-eager-determinism-2048` selects
-`plan-eager-determinism-2048.txt`. The original `ship-eager-levers-4096`
-continues to require OFF then at least one lever ON and all 33 responses.
-The earlier failed combined pair remains failed and is not repeated here.
+These are separate diagnostic scopes, not a relaxed ship comparison.
+`WINDOW_MODE=investigate-eager-control-2048` selects the two-block
+`plan-eager-determinism-2048.txt`. The next scope,
+`WINDOW_MODE=investigate-eager-piece-major-2048`, selects
+`plan-eager-piece-major-2048.txt` with an explicit completed `CONTROL_ROOT`.
+The original ship eager lever scope still requires OFF then at least one
+lever ON and all 33 responses. The earlier failed combined pair stays failed.
 
 The dedicated `seeded_control_client.py` preserves the October 5 prompt order,
 stream options, temperature zero, 128 completions and ignored end-of-sequence.
@@ -569,23 +571,26 @@ retained. Token IDs and log probabilities are retained if the API already
 returns them; unreturned token IDs, logits and effective internal seeds are
 not inferred. This is not a teacher-forced quality measurement.
 
-`control_off_first` and `control_off_restart` each start fresh containers on
-both ranks, with all three levers OFF. Both ranks acknowledge owned cleanup
-before the next arm. OFF/OFF output mismatch writes its comparison, reports
-SERVING NONDETERMINISM, and stops without any lever launch. Before either rank
-starts a lever server, the owner revalidates the full raw OFF populations and
-their normalized records rather than trusting a success label. Only complete
-equality permits `control_decode_once`, `control_kda_split`, and
-`control_piece_major`. Each enables only its named flag and restarts both
-servers. Single-lever differences are retained without skipping later singles.
-Matching singles do not explain a combined interaction or authorize adoption.
-Dense/shared decode-once is the existing at-load path, not routed per-chunk
-decoding. No shader, kernel, wire, encoder, defaults or runtime pin changes.
+`control_off_first` and `control_off_restart` start fresh containers on
+both ranks, all three levers OFF, and finish only after exact owned cleanup.
+Any OFF/OFF difference is recorded as serving nondeterminism. It does not
+stop subsequent lever measurement behind an equality requirement. The next
+gang contains only `control_pm_off` then `control_piece_major`, with
+decode-once and KDA split disabled. Both ranks validate the actual matched
+OFF populations and preregistered observed timing selfvariation before ON.
+Observed paired OFF ranges are finite descriptive evidence, not statistical
+confidence or numerical quality equivalence. The client requests no logits
+or log probabilities, so text/finish/usage cannot derive a quality band.
+If OFF differs, actual matched numerical observations and additional controls
+are needed in further bounded quanta before a quality/default decision.
 
-The normal-priority-zero native gang is not published until the parent has
-the actual D42 Stage One claim/terminal/owned-release handoff or an explicit
-superseding CEO release. There is no old clock fallback. Preserve the existing
-two-rank topology, maximum batched tokens 4096, maximum sequence count one,
+Each actual gang uses the published native driver at priority -10, with a
+total 1800-second claim-relative budget including the existing 180-second
+cleanup reserve and a 120-second peer admission cap. No arm, rank admission
+or cleanup restarts that budget. CEO 09:50 release removes the obsolete D42
+or campaign handoff wait; ordinary native fencing handles interleaving.
+No other lever precedes the piece-major phase; default remains OFF.
+Preserve the two-rank topology, maximum batched tokens 4096, maximum sequence count one,
 maximum length 8448, resident serving, socket fabric, speculative token one,
 draft parallelism two, fp8_ds_mla KV with two GiB per rank, CPU caps 8/6, host
 cap 104 GiB and GPU subset 102 GiB. The 107 GiB start gate, bounded 900-second
@@ -600,6 +605,31 @@ eleven L2048 token-ID prompts and reads at most 64 bytes of every artifact
 file, plus the real model configuration and runtime contract. No full model
 copy or body rehash is performed. This proves CPU argument/input readiness
 only. Parent and independent exact-head code review precede changed GPU work.
-This correctness investigation has no profiling or energy instrument and makes
-no improvement, quality, ship-gate, adoption or serving-pin claim.
+The piece-major phase uses a `PROFILE_MANIFEST` declaring L2048 prefill and
+decode cells through the existing comparison instrument and verifier. Both
+arms retain all eleven seeded output records before separate profile requests
+and collect both-Spark Netdata power over the timing interval. Actual profiles,
+effective paths/counters, peaks, full-population comparison and work per joule
+are required for any performance/default-on recommendation. The ordinary
+ship/quality gates and the serving pin do not change. No historical isolated
+kernel gain is represented as a served receipt.
+
+Both diagnostic native rows require `DATA_MANIFEST`, declaring every complete
+original artifact file through existing PB stage, RAM-auto and shared-residency
+options. PB stages the ranges before native GPU admission. The local rank uses
+the existing `StagedInputs`/public reader lease, opens authenticated complete
+file descriptors and mounts those read-only over the same artifact paths inside
+its owned container. It does not copy a new cache or fall back to bulk origin
+reads. Refs and descriptors remain held across both fresh-server blocks and are
+released only after exact owned physical cleanup. A failed staged-reader
+release is retained as an unproven handoff, not rewritten as success.
+Both modes use the existing eager route-trace histogram. Counter identities
+and profile labels must be reported at their actual scope; flag values alone
+do not prove the piece-major reader executed.
+The bounded observer extends the existing graph histogram/import patcher and
+serving predicate. It records the actual native-forward argument at index 20
+of the unchanged 33-argument interface, plus library/mode/token/block-row
+values, after the native call returns. This counts submitted native forwards,
+not SM utilization or completion-time work; full outputs and profiles still
+govern successful served evidence. No runtime/kernel arithmetic changes.
 
