@@ -1009,6 +1009,8 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
             return None
         bases = _values(call.args[0], scope, root, refused=refused, links=links)
     else:  # glob and rglob: the receiver names the tree, the argument the pattern.
+        if not isinstance(call.func, ast.Attribute):
+            return None  # ``method = Path.glob; method(path, ...)`` has no receiver to resolve.
         bases = _values(call.func.value, scope, root, refused=refused, links=links)
         if bases is None:
             return None
