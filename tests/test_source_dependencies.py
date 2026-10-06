@@ -631,6 +631,21 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
     assert not unknown and not unplaced
 
 
+@pytest.mark.parametrize("method", ["glob", "rglob"])
+def test_an_unbound_glob_method_call_names_no_base(tmp_path, method):
+    # ``original = Path.glob`` then ``original(path, pattern)`` is how tests
+    # wrap the method.  The call has no receiver to resolve, so it names
+    # nothing: the scan must come back, not raise (PB1496).
+    root = tmp_path / "repo"
+    root.mkdir()
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'original = Path.{method}\n'
+        'original(Path("."), "*.json")\n', root)
+    assert found == set()
+    assert not unknown and not unplaced
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)
