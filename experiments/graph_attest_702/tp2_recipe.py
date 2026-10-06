@@ -42,7 +42,8 @@ PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "windo
                   "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
                   "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt", "plan-graph-ship.txt",
                   "plan-eager-levers-4096.txt", "eager_determinism.py", "seeded_control_client.py",
-                  "plan-eager-determinism-2048.txt", "plan-eager-piece-major-2048.txt")
+                  "plan-eager-determinism-2048.txt", "plan-eager-piece-major-2048.txt",
+                  "../t8r_speed/pb_staged_store.py", "observer/usercustomize.py")
 
 
 def producer_sha() -> str:
@@ -183,6 +184,9 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
             from eager_determinism import PROTOCOL, PHASE_SECONDS, PHASE_PEER_WAIT_SECONDS, control_baseline
             result.update(control_protocol=PROTOCOL, artifact_manifest=env.get("ARTIFACT_MANIFEST", ""),
                           window_seconds=PHASE_SECONDS, peer_wait_seconds=PHASE_PEER_WAIT_SECONDS)
+            result["data_manifest"] = env.get("DATA_MANIFEST", "")
+            if not result["data_manifest"]:
+                raise Refused("bounded resident phases require the actual DATA_MANIFEST for PB staging")
             if mode == PIECE_MAJOR_MODE:
                 result["control_root"] = env.get("CONTROL_ROOT", "")
                 if not result["control_root"]:
@@ -302,6 +306,8 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                            (ext, "/ext"), (Path("/mnt/shared"), "/mnt/shared:ro"),
                            (out, "/out"), (root / "experiments/glm53_508_graph_qual/digest", "/digest:ro")]:
         argv += ["-v", f"{source}:{target}"]
+    for source, target in config.get("staged_file_mounts", []):
+        argv += ["-v", f"{source}:{target}:ro"]
     env = dict(NCCL_SOCKET_IFNAME="enp1s0f0np0", GLOO_SOCKET_IFNAME="enp1s0f0np0",
                NCCL_IB_HCA="rocep1s0f0,roceP2p1s0f0", NCCL_IB_DISABLE="1" if config["fabric"] == "socket" else "0",
                NCCL_CUMEM_ENABLE="0", NCCL_CUMEM_HOST_ENABLE="0", NCCL_DMABUF_ENABLE="0",
@@ -315,6 +321,10 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                T695_GC_BEFORE_DRAFTER="1", TESSERA_FUSED_E4M3_MMA="e4m3", **image_env)
     if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, *PHASE_MODES):
         env.update(arm["lever_env"])
+        if config.get("window_mode") in PHASE_MODES:
+            env["TESSERA_ROUTE_TRACE"] = f"/out/{name}.rank{rank}.route-trace.json"
+            env["PYTHONPATH"] = "/ga702-observer:/digest"
+            argv += ["-v", f"{Path(__file__).parent / 'observer'}:/ga702-observer:ro"]
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
     local_config = config

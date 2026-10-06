@@ -1,4 +1,4 @@
-"""Run all three control arms in one admitted LOCAL rank action; never launch a peer."""
+"""Run the explicit bounded plan in one admitted LOCAL action; never launch a peer."""
 from __future__ import annotations
 
 import argparse
@@ -71,9 +71,55 @@ class LocalArm:
         self.abort = None
         self.image_env = {}
         self.guard = None
+        self.staged_inputs = None
+        self.staged_fds = []
+        self.staged_file_mounts = []
 
     def command(self, argv, **kwargs):
         return self.envelope.run(argv, **kwargs)
+
+    def pin_inputs(self):
+        """Use the existing public reader lease; never reread a bulk origin file."""
+        if self.config.get("window_mode") not in recipe.PHASE_MODES or self.staged_inputs is not None:
+            return
+        import importlib.util
+        sys.path.insert(0, "/mnt/shared/prismabuild-fleet/repo/src")
+        module_path = Path(__file__).resolve().parents[1] / "t8r_speed/pb_staged_store.py"
+        spec = importlib.util.spec_from_file_location("resident_window_staged_inputs", module_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.staged_inputs = module.StagedInputs(self.config["data_manifest"])
+        declared = json.loads(Path(self.config["artifact_manifest"]).read_bytes())
+        artifact = Path(self.config["artifact"])
+        expected = {(str(artifact / row["name"]), 0): dict(path=str(artifact / row["name"]),
+                    offset=0, bytes=row["bytes"], sha256=row["sha256"]) for row in declared}
+        if self.staged_inputs.entries != expected:
+            raise Refused("declared staged input ranges differ from the complete actual artifact population")
+        evidence = []
+        for path, offset in expected:
+            fd, entry, serving = self.staged_inputs.pinned_file(path)
+            self.staged_fds.append(fd)
+            source = f"/proc/{os.getpid()}/fd/{fd}"
+            self.staged_file_mounts.append((source, path))
+            evidence.append(dict(entry, descriptor_source=source, serving_tier=serving))
+        atomic_json(self.rdv / f"staged-inputs-rank{self.rank}.json", dict(
+            source="Public PrismaBuild reader lease and held complete-file descriptors",
+            origin_fallback=False, files=evidence, lease_held_until_owned_physical_cleanup=True))
+
+    def release_inputs(self):
+        if self.staged_inputs is None:
+            return None
+        physical = self.assert_empty()  # no release while an owned reader/container remains
+        for fd in self.staged_fds:
+            os.close(fd)
+        self.staged_fds.clear()
+        self.staged_inputs.close()
+        proof = dict(released=True, **physical)
+        atomic_json(self.rdv / f"staged-input-release-rank{self.rank}.json", proof)
+        return proof
+
+
+
 
     def headroom(self):
         """Wait at most 900 seconds for the D30 107 GiB predicate on this host.
@@ -148,6 +194,7 @@ class LocalArm:
         self.image_env = dict(line.split("=", 1) for line in from_source.splitlines())
         self.image_id = record["local_id"]
         self.assert_empty()
+        self.pin_inputs()
         current = recipe.inputs(os.environ, live=True,
                    runner=lambda argv, **kw: self.command(argv, tick=self.tick, **kw))
         recipe.check_control_record(self.config, current, where="Window4 local preflight",
@@ -289,7 +336,8 @@ class LocalArm:
         out.mkdir()
         out.chmod(0o777)
         cidfile = self.work / (arm["arm"] + ".cid")
-        argv = recipe.container(self.config, arm, self.identity, out, self.ext, cidfile, self.image_env)
+        launch_config = dict(self.config, staged_file_mounts=self.staged_file_mounts)
+        argv = recipe.container(launch_config, arm, self.identity, out, self.ext, cidfile, self.image_env)
         self.active = dict(arm=arm["arm"], out=str(out), cidfile=str(cidfile),
                            name=argv[argv.index("--name") + 1], launch_argv=argv)
         atomic_json(self.work / (arm["arm"] + ".launch.json"), self.active)
@@ -598,6 +646,12 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
                     outcome["peer_cleanup_acknowledgement"] = dict(available=True)
             except BaseException as exc:
                 outcome["cleanup_error"] = f"failed peer cleanup acknowledgement: {type(exc).__name__}: {exc}"
+        if isinstance(adapter, LocalArm):
+            try:
+                outcome["staged_input_release"] = adapter.release_inputs()
+            except BaseException as exc:
+                outcome["staged_input_release_error"] = f"{type(exc).__name__}: {exc}"
+                outcome["returncode"] = 1
         outcome["window_end_unix"] = envelope.end_unix
         outcome["process_terminations"] = getattr(envelope, "terminations", [])
         outcome["container_terminations"] = getattr(adapter, "server_terminations", {})

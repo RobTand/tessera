@@ -10,6 +10,10 @@ Serving nondeterminism is recorded without suppressing later measurement;
 actual OFF timing selfvariation is preregistered, not an invented quality
 tolerance. Piece-major collects the existing profile and power evidence.
 Original memory/isolation guards and the strict 33-output ship gate remain.
+Both diagnostic blocks use the existing eager route counters. Native members
+declare complete staged inputs; the existing reader lease holds full-file
+descriptors through model lifetime with no bulk origin fallback, then releases
+only after exact owned physical cleanup.
 Default-off, quality, adoption, ship and pin decisions are unchanged.
 Fresh same-entry CPU preflight and exact-head review precede changed GPU work.
 

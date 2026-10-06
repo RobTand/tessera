@@ -22,6 +22,18 @@ decoded text, termination and usage cannot supply a logits-based tolerance.
 Piece-major OFF and ON use the existing separate profile instrument and
 both-Spark Netdata power collection; missing profiles, power or effective
 path evidence cannot establish a performance/default-on claim.
+Native member rows declare their complete actual input manifest and the
+existing stage/RAM-auto/shared-residency options. The local rank reuses
+`StagedInputs` and the public reader lease to hold complete-file descriptors;
+Docker mounts those descriptors read-only over the original artifact paths.
+There is no bulk origin fallback or new cache. Reader refs are released only
+after exact owned containers and GPU descendants are physically empty. Both
+diagnostic scopes enable the existing eager route-trace counters.
+The existing graph observer is extended only in these diagnostic scopes to
+count the actual `routed_fused_forward` word-layout boolean, library, mode,
+token count and block-row value. It reuses the existing histogram, serving
+predicate and writer; runtime source, kernel arithmetic and ship defaults
+are not changed.
 The 107 GiB start gate, 900-second headroom wait, 104 GiB host/102 GiB GPU
 subset caps, strict one-Hertz below-two-GiB guard, exact owned cleanup, byte
 integrity and paired-rank comparability remain unchanged. The same entry

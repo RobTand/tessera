@@ -232,6 +232,13 @@ def input_preflight(config):
     names = [entry["name"] for entry in manifest]
     if len(names) != 128 or len(set(names)) != 128 or names != sorted(names):
         raise Refused("seeded control artifact manifest roster differs")
+    sys.path.insert(0, "/mnt/shared/prismabuild-fleet/repo/src")
+    from prismabuild import client as sdk
+    data_manifest, _ = sdk.read_data_manifest(config["data_manifest"])
+    expected_entries = [dict(path=str(artifact / row["name"]), offset=0,
+                             bytes=row["bytes"], sha256=row["sha256"]) for row in manifest]
+    if data_manifest["entries"] != expected_entries:
+        raise Refused("PB declared staged inputs differ from the complete actual artifact ranges")
     reads = []
     for entry in manifest:
         path = artifact / entry["name"]
@@ -255,5 +262,6 @@ def input_preflight(config):
         if profile != expected or profile_prompts.read_bytes() != prompts_path.read_bytes():
             raise Refused("piece-major profile cells or actual prompt bytes differ from the L2048 matched scope")
     return dict(protocol=PROTOCOL, requests_per_arm=len(prompts), input_reads=reads, profile_cells=profile,
+                staged_entry_count=data_manifest["entry_count"], staged_total_bytes=data_manifest["total_bytes"],
                 model_type=model_config.get("model_type"), runtime_contract_schema=contract.get("schema"),
                 scope="CPU arguments/imports/input shapes and bounded real reads only; no GPU or served parity")

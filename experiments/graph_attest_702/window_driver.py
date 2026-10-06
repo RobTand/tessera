@@ -43,6 +43,9 @@ def dry_arm(name: str, env: dict):
 def rows(root: Path, config: dict, env: dict) -> list[dict]:
     result = []
     for rank in (0, 1):
+        staged = (dict(data_manifest=config["data_manifest"], residency="stage",
+                       residency_ram="auto", residency_share="auto")
+                  if config.get("window_mode") in recipe.PHASE_MODES else {})
         result.append(dict(argv=[RANK_PYTHON, "experiments/graph_attest_702/rank_window.py",
                                 "--rank", str(rank), "--run", str(root / "inputs.json")],
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
@@ -55,12 +58,12 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            container_images=[config["image"]], timeout_s=config.get("window_seconds", WINDOW_SECONDS),
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
                                                           "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
-                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST") if key in env},
+                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST") if key in env},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
                                 "GRAPH_PEER_WAIT_SECONDS": str(config.get("peer_wait_seconds", 3600)),
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
                                                         "NUMEXPR_NUM_THREADS", "MAX_JOBS")},
-                                "PYTHONDONTWRITEBYTECODE": "1"}))
+                                "PYTHONDONTWRITEBYTECODE": "1"}, **staged))
     return result
 
 
@@ -153,8 +156,8 @@ def collect(root: Path, queue: Path) -> dict:
                 raise Refused("a simulated CPU outcome cannot release a live model window")
             terminal = read_terminal(owned, queue)
             proof = terminal_cleanup(owned, terminal)
-            if owned.get("cleanup_error") or not owned.get("local_cleanup"):
-                raise Refused("rank local cleanup is missing or failed; retain ownership")
+            if owned.get("cleanup_error") or owned.get("staged_input_release_error") or not owned.get("local_cleanup"):
+                raise Refused("rank physical or staged-reader cleanup is missing or failed; retain ownership")
             if any(record.get("containers_empty") is not True or record.get("gpu_descendants_empty") is not True
                    for record in owned["local_cleanup"]):
                 raise Refused("owned container/GPU descendants not proven empty")
@@ -172,7 +175,7 @@ def submit(root: Path, reviews: Path):
                RECEIPTS=setup["config"]["receipts"], FABRIC=setup["config"]["fabric"],
                SOURCE_COMMIT=setup["config"]["source_commit"], SOURCE_SHA256=setup["config"]["src_sha256"],
                PRODUCER_COMMIT=setup["config"]["producer_commit"], PRODUCER_SHA256=setup["config"]["producer_sha256"])
-    for key, field in (("WINDOW_MODE", "window_mode"), ("ARTIFACT_MANIFEST", "artifact_manifest"), ("PQ_PIN_COMMIT", "pq_pin_commit"), ("CONTROL_ROOT", "control_root"), ("PROFILE_MANIFEST", "profile_manifest")):
+    for key, field in (("WINDOW_MODE", "window_mode"), ("ARTIFACT_MANIFEST", "artifact_manifest"), ("PQ_PIN_COMMIT", "pq_pin_commit"), ("CONTROL_ROOT", "control_root"), ("PROFILE_MANIFEST", "profile_manifest"), ("DATA_MANIFEST", "data_manifest")):
         if field in setup["config"]:
             env[key] = setup["config"][field]
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
@@ -183,7 +186,7 @@ def submit(root: Path, reviews: Path):
     stored_rows = json.loads((root / "manifest.json").read_text())
     expected_rows = rows(root, setup["config"], env)
     safety_keys = ("tags", "demand", "gpu_memory_gb", "exclusive", "measurement", "host_class",
-                   "max_attempts", "priority", "timeout_s")
+                   "max_attempts", "priority", "timeout_s", "data_manifest", "residency", "residency_ram", "residency_share")
     if (
             [{key: row.get(key) for key in safety_keys} for row in stored_rows] !=
             [{key: row.get(key) for key in safety_keys} for row in expected_rows]):

@@ -614,3 +614,22 @@ are required for any performance/default-on recommendation. The ordinary
 ship/quality gates and the serving pin do not change. No historical isolated
 kernel gain is represented as a served receipt.
 
+Both diagnostic native rows require `DATA_MANIFEST`, declaring every complete
+original artifact file through existing PB stage, RAM-auto and shared-residency
+options. PB stages the ranges before native GPU admission. The local rank uses
+the existing `StagedInputs`/public reader lease, opens authenticated complete
+file descriptors and mounts those read-only over the same artifact paths inside
+its owned container. It does not copy a new cache or fall back to bulk origin
+reads. Refs and descriptors remain held across both fresh-server blocks and are
+released only after exact owned physical cleanup. A failed staged-reader
+release is retained as an unproven handoff, not rewritten as success.
+Both modes use the existing eager route-trace histogram. Counter identities
+and profile labels must be reported at their actual scope; flag values alone
+do not prove the piece-major reader executed.
+The bounded observer extends the existing graph histogram/import patcher and
+serving predicate. It records the actual native-forward argument at index 20
+of the unchanged 33-argument interface, plus library/mode/token/block-row
+values, after the native call returns. This counts submitted native forwards,
+not SM utilization or completion-time work; full outputs and profiles still
+govern successful served evidence. No runtime/kernel arithmetic changes.
+
