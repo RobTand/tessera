@@ -945,6 +945,38 @@ def test_an_absolute_pattern_after_a_chdir_is_unaffected(tmp_path):
     assert found == set() and not unplaced and not unknown
 
 
+@pytest.mark.parametrize("source", [
+    "import glob\nx = glob.glob('docs/*.md')\n",
+    "import glob\nx = list(glob.iglob('docs/*.md'))\n",
+    "import os\nx = os.listdir('docs')\n",
+    "from os import chdir as cd\nimport glob\ncd('nested')\nx = glob.glob('docs/*.md')\n",
+    "import os, glob\nmove = os.chdir\nmove('nested')\nx = glob.glob('docs/*.md')\n",
+    "from contextlib import chdir as enter\nimport glob\nwith enter('nested'):\n    x = glob.glob('docs/*.md')\n",
+    "import glob\nfrom support.cwd import enter\nenter()\nx = glob.glob('docs/*.md')\n",
+], ids=["relative-module", "relative-iglob", "relative-string", "from-import-alias",
+        "assigned-alias", "aliased-contextlib", "imported-helper"])
+def test_a_relative_base_is_unplaced_whatever_changes_the_working_directory(tmp_path, source):
+    # Nothing here proves the process directory is the tree's root: a helper, a fixture, an
+    # alias or pytest itself can change it.  A relative pattern or string base is therefore
+    # kept as an unplaced read, never resolved against the root (#1010 review).
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "docs" not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "import glob\nfrom pathlib import Path\nHERE = Path(__file__).resolve().parent\nx = glob.glob(str(HERE / 'docs' / '*.md'))\n",
+    "import glob\nfrom pathlib import Path\nHERE = Path(__file__).resolve().parent\nx = list(glob.iglob(str(HERE / 'docs/*.md')))\n",
+    "import os\nfrom pathlib import Path\nHERE = Path(__file__).resolve().parent\nx = os.listdir(str(HERE / 'docs'))\n",
+], ids=["module", "iglob", "string"])
+def test_an_anchored_base_resolves_whatever_the_working_directory(tmp_path, source):
+    # Built from ``__file__``, the base does not depend on the process directory.
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"} and not unknown and not unplaced, (found, unknown, unplaced)
+
+
 def test_a_module_glob_keeps_the_unknown_loader_flag_of_an_executing_module(tmp_path):
     # A pattern need not name a directory a custom ``glob`` reads; naming it adds
     # the edge and must never replace the flag (the #1000 lesson).

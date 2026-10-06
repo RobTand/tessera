@@ -2516,6 +2516,46 @@ def test_editing_the_file_a_terminal_link_points_to_selects_the_reader(tmp_path)
     assert "tests/test_lister.py" in result["tests"], result
 
 
+def test_a_module_glob_after_an_imported_cwd_helper_selects_the_reader(tmp_path):
+    """``support.cwd.enter()`` changes to ``nested``; the test then lists ``docs/*.md``.  The
+    reader's tree contains no chdir and the helper no enumeration, so only treating a
+    relative base as unplaced selects it for ``nested/docs/later.md`` (a basename the
+    reader never names)."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/cwd.py": "import os\nfrom pathlib import Path\n\n\ndef enter():\n    os.chdir(Path(__file__).resolve().parents[1] / 'nested')\n",
+        "tests/test_cwd.py": (
+            "import glob\n\nfrom support.cwd import enter\n\n\ndef test_lists():\n"
+            "    enter()\n    assert sorted(glob.glob('docs/*.md'))\n"),
+        "nested/docs/a.md": "x\n", "docs/a.md": "x\n"})
+    (repo / "nested" / "docs" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added under the runtime directory")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_cwd.py" in result["tests"], result
+
+
+def test_an_anchored_module_glob_is_selected_only_by_its_own_directory(tmp_path):
+    """The precise case: anchored with ``__file__``, so another directory does not select it."""
+    reader = ("import glob\nfrom pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+              "def test_lists():\n    assert glob.glob(str(DOCS / '*.md'))\n")
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": reader, "docs/a.md": "x\n", "elsewhere/x.md": "x\n"})
+    (repo / "elsewhere" / "y.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added elsewhere")
+    elsewhere = _selector(repo, f"{base}...HEAD")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "docs" / "b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added under docs")
+    own = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" not in elsewhere["tests"], elsewhere
+    assert "tests/test_lister.py" in own["tests"], own
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())
