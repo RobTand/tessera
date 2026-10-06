@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-06 — issue 1005: actual T4 geometry reader coverage
+
+Add a default-off measurement reader for actual mixed-rate span-two TCQ and
+dense twelve-bit WINDOW E2M1 pairs. Preparation reuses existing packed BODY,
+forest and WINDOW plane owners. Native FP4 compute decodes inside the mainloop;
+the stock-byte renderer is diagnostic only. CPU quality explicitly selects
+the served structure and records each recipe and exact encoder bytes.
+The wrapper uses the existing development-mode stamp for image identity drift,
+while image absence and representation/byte bounds still refuse. Wider research
+WINDOW widths are not this reader's scope. Original forwarding and wording-only
+adapter assertions are replaced with actual code/scale-byte controls, including
+mixed boundaries, zero-width points, out-of-scope windows and canonical row-cut
+history. Incoming TCQ register indexing advances with the local pair and stays
+bounded before shifting. Grouped preparation shares a TCQ label lookup only
+when the actual current table shape, dtype and bytes agree across experts,
+independently of generator names or profile identities. No stored bytes,
+serving defaults, recipes, pins, canonical table or admission gate change.
+Remove the obsolete wrapper-text identity assertion and refresh offline issue
+references; actual image-identity mode and byte-boundary controls remain.
+
 ## 2026-10-06 — issue 1002: bounded seeded control and piece-major phases
 
 Replace the five-arm 90-minute diagnostic with two explicit native gang

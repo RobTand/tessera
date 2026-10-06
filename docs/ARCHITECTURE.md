@@ -1,5 +1,35 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
+`--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
+WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
+keeps TCQ BODY bytes packed and uses the existing forest label/code owners;
+WINDOW preparation uses `lane_planes.pack_window_planes`, including its
+incoming history, column alignment and trailing slack. The separate
+`kernel_a4_wire` decoder reads actual rate and bit-start tables, reconstructs
+code bytes inside the native FP4 mainloop and uses the existing activation
+quantizer and LUT scale arithmetic. Diagnostic stock-byte rendering is never
+a compute fallback. CPU preparation is compared against `materialize_stock`;
+`--correctness` runs bounded GPU code/scale-byte and dense/grouped arithmetic
+oracles before geometry. Incoming TCQ history advances with the local pair
+index; canonical serialized row cuts are checked against stock code/scale
+bytes on CPU and in the GPU diagnostic. Before a grouped TCQ launch shares its
+first label lookup, preparation compares every other actual current table
+by shape, dtype and bytes. Unequal tables refuse in both development and
+certified modes; generator names and profile identity are not the criterion.
+The quality helper takes `--quality-structure` and
+records each actual served recipe and encoder byte count independently.
+This reader admits exactly the served twelve-bit WINDOW scope, not wider
+research windows. The D41 image wrapper resolves actual Docker facts and
+routes digest/pin identity drift through `tessera.dev_mode.seal_check`: default
+development mode stamps and continues; explicit certified mode retains the
+identity refusal. Unavailable images, invalid shapes/rates and packed-byte
+bounds remain refusals in both modes. The actual resolved image declaration
+is carried into the measurement container; this does not alter serving policy.
+Serving does not import this reader. No encoded bytes, serving recipe, format
+menu, pin, default or admission gate changes. Existing uniform reader
+measurements and immutable allowability tables remain unchanged.
+
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
 lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
