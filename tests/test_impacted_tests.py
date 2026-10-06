@@ -2183,7 +2183,7 @@ _UNNAMED_DIRECTORY_READ_SITES = 178
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
-    return (modules, sites) > (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES)
+    return modules > _UNNAMED_DIRECTORY_READ_MODULES or sites > _UNNAMED_DIRECTORY_READ_SITES
 
 
 @pytest.mark.parametrize("modules, sites, exceeds", [
