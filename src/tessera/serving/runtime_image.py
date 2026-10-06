@@ -52,7 +52,7 @@ import subprocess
 import sys
 from typing import Any, Callable, Mapping
 
-from tessera.dev_mode import seal_check
+from tessera.dev_mode import dev_mode_enabled, seal_check
 __all__ = [
     "CENSUS_DECLARATION_ENV",
     "DECLARATION_SCHEMA",
@@ -267,11 +267,10 @@ def resolve(requested: str, *,
     if pinned not in repo_digests:
         record.update(refused=True, reason="image_pin_mismatch",
                       fix=f"docker pull {pinned}")
-        with redirect_stdout(sys.stderr):  # The CLI stdout stays a single JSON record.
-            seal_check("default serving image pin", pinned, repo_digests,
-                       where=__name__, refusal=lambda: RuntimeImageError(_message(record), record),
-                       same=False)
-        record.update(refused=False, gated=False, dev_uncertified=True)
+        if dev_mode_enabled():
+            with redirect_stdout(sys.stderr):  # The CLI stdout stays one JSON record.
+                seal_check("default serving image pin", pinned, repo_digests, where=__name__, same=False)
+            record.update(refused=False, gated=False, dev_uncertified=True)
         return record
     record["reason"] = "pinned"
     return record
