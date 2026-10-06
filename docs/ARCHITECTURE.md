@@ -40,6 +40,12 @@ coverage and adjacent-higher witness rules are unchanged. Current index
 selection advances only after the consumer explicitly supports v2; earlier
 schemas, tables and T8 versions are never rewritten. This metadata correction
 requires no GPU timing rerun and grants no serving/default/pin promotion.
+Reattesting existing quality scores reads the supplied stored bytes. Their
+recorded output pathname is run identity: the existing D32 `seal_check` stamps
+and continues in dev mode, preserving the original refusal in certified mode.
+Executed producer/grid/rung/recipe and exact encoder-byte checks remain
+numerical validity refusals in both modes; no archive or score recomputation
+is triggered by relocating stored data.
 
 Re-stamped 2026-10-06 for issues #989 and #750: the D41 geometry harness
 also parses the scalar BF16 producer axis at true q256 step one (256–4096).

@@ -12,6 +12,7 @@ from safetensors import safe_open
 from tessera.control import grid_for_name, unit_wire_bits
 from tessera.export import encode_linear
 from tessera.unit_artifact import read_unit_artifact
+from tessera.dev_mode import seal_check
 
 
 def quality_scope(grid,q,recipe):
@@ -26,7 +27,7 @@ def quality_scope(grid,q,recipe):
 
 
 def bind_existing_quality(path,action_key,out):
-    """Recover scope from immutable executed arguments and exact owner prices."""
+    """Recover scope from executed arguments and stored scores; paths stamp in dev."""
     from tessera.export import wire_recipe
     request=Path('/mnt/shared/prismabuild-fleet/cas/requests')/action_key[:2]/(action_key+'.json')
     sealed=json.loads(request.read_text())
@@ -38,8 +39,12 @@ def bind_existing_quality(path,action_key,out):
     grid=grid_for_name(command[command.index('--grid')+1])
     original=Path(command[command.index('--out')+1])
     if is_t4:original=original/'quality.json'
-    if original.resolve()!=Path(path).resolve():raise ValueError('quality output differs from executed arguments')
-    document=json.loads(original.read_text())
+    current = Path(path)
+    seal_check("quality output pathname", str(original.resolve()), str(current.resolve()),
+               where="D41 quality scope",
+               refusal=ValueError('quality output differs from executed arguments'))
+    raw = current.read_bytes()
+    document = json.loads(raw)
     qs={int(s.removeprefix('q')) for s in command[command.index('--cases')+1].split(',')}
     if set(map(int,document['rungs']))!=qs:raise ValueError('quality rung census differs from execution')
     for qtext,row in document['rungs'].items():
@@ -62,7 +67,7 @@ def bind_existing_quality(path,action_key,out):
     document['format']=f"TESSERA_{grid.name.split('x',1)[0]}_K{grid.arity}"
     document['grid']=grid.name;document['arity']=grid.arity
     document['scope_provenance']={'action_key':action_key,'snapshot':sealed['params']['checkout_snapshot']['commit'],
-        'original_file_sha256':hashlib.sha256(original.read_bytes()).hexdigest(),'binding':'executed explicit grid arguments plus exact encode_linear/unit_wire_bits identity'}
+        'original_file_sha256':hashlib.sha256(raw).hexdigest(),'binding':'executed explicit grid arguments plus exact encode_linear/unit_wire_bits identity'}
     target=Path(out);target.parent.mkdir(parents=True,exist_ok=True)
     with target.open('x') as stream:json.dump(document,stream,indent=1,allow_nan=False)
 
