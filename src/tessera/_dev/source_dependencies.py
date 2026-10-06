@@ -1037,13 +1037,14 @@ def _wildcard_directory_components(pattern, prefix=(), recursive=False):
     return (["**"] if recursive else []) + components
 
 
-def _scan_children(directories, recursive, root, links, found, budget):
+def _scan_children(directories, recursive, root, links, found, budget, refused):
     """Subdirectories of *directories* (all depths when *recursive*), or None over budget.
 
     Entries are read without following links.  A link entry is resolved by ``_place``,
     which records it and stops at a target outside the tree, so that target is never
-    approached; an in-tree directory it reaches is a dependency (*found*) and joins
-    the result.
+    approached.  A link the guard declines is appended to *refused*: where it leads is
+    unknown and may be straight back into the tree.  An in-tree target is a
+    dependency (*found*) and a directory joins the result.
     """
     seen = set(directories)
     reached = set(directories) if recursive else set()
@@ -1060,7 +1061,7 @@ def _scan_children(directories, recursive, root, links, found, budget):
         for entry in entries:
             path = directory / entry.name
             if entry.is_symlink():
-                placed = _place({path}, root, [], links)
+                placed = _place({path}, root, refused, links)
                 target = next(iter(placed)) if placed else None
                 if target is None:
                     continue
@@ -1083,7 +1084,7 @@ def _scan_children(directories, recursive, root, links, found, budget):
     return reached
 
 
-def _wildcard_link_dirs(start, components, root, links):
+def _wildcard_link_dirs(start, components, root, links, refused):
     """Directories a link reached through a wildcard component points to (#1011).
 
     *start* is a placed directory.  Each wildcard component is expanded over the
@@ -1095,12 +1096,12 @@ def _wildcard_link_dirs(start, components, root, links):
         if component in ("", "."):
             continue
         if any(wildcard in component for wildcard in "*?["):
-            frontier = _scan_children(frontier, component == "**", root, links, found, budget)
+            frontier = _scan_children(frontier, component == "**", root, links, found, budget, refused)
             if frontier is None:
                 return None
         else:
             frontier = {target for directory in frontier
-                        for target in (_place({directory / component}, root, [], links) or ())}
+                        for target in (_place({directory / component}, root, refused, links) or ())}
             # A literal component after a wildcard can itself be a link: where it leads
             # is read, so it is a dependency and not only traversal state.
             found |= frontier
@@ -1114,9 +1115,12 @@ def _with_link_targets(placed, specs, root, refused, links):
         resolved = _place({start}, root, [], links)
         if not resolved:
             continue
-        targets = _wildcard_link_dirs(next(iter(resolved)), components, root, links)
-        if targets is None:
-            refused.append(start)
+        declined = []
+        targets = _wildcard_link_dirs(next(iter(resolved)), components, root, links, declined)
+        if targets is None or declined:
+            # Over budget, or a link the guard declined to follow: not provable, so keep
+            # the read as an unplaced one (#338) without looking where it leads.
+            refused.extend(declined or [start])
             return None
         found |= targets
     return placed | found
