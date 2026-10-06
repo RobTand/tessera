@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import ast
 import fnmatch
+import re
 import textwrap
 from pathlib import Path
 
@@ -918,3 +919,52 @@ def test_mapped_file_device_refuses_missing_or_ambiguous_mount_provenance(monkey
     monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
     with pytest.raises(RuntimeError, match="mount"):
         mapped_file_device(17)
+
+
+def test_mapped_file_device_reads_the_fd_mount_id_once(monkeypatch):
+    """The descriptor's identity is one read, not one per mountinfo line (#949)."""
+    from tessera._dev.native_identity import mapped_file_device
+    metadata = {"/proc/self/fdinfo/17": "pos:\t0\nmnt_id:\t42\n",
+                "/proc/self/mountinfo": "9 1 8:2 / /a rw - ext4 /dev/a rw\n"
+                                        "10 1 8:3 / /b rw - ext4 /dev/b rw\n"
+                                        "42 1 0:30 / / rw - btrfs /dev/root rw\n"}
+    reads = []
+
+    def read_text(path):
+        reads.append(str(path))
+        return metadata[str(path)]
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    assert mapped_file_device(17) == (0, 30)
+    assert reads.count("/proc/self/fdinfo/17") == 1, reads
+
+
+def test_mapped_file_device_names_an_incomplete_fd_identity_with_no_mounts(monkeypatch):
+    """An unreadable descriptor identity is refused as such, whatever the table holds."""
+    from tessera._dev.native_identity import mapped_file_device
+    metadata = {"/proc/self/fdinfo/17": "pos:\t0\n", "/proc/self/mountinfo": ""}
+    monkeypatch.setattr(Path, "read_text", lambda path: metadata[str(path)])
+    with pytest.raises(RuntimeError, match="native file mount identity is incomplete"):
+        mapped_file_device(17)
+
+
+def test_legacy_dense_dispatch_borrows_planes_without_owning_vectors():
+    """#913: the default per-role entry must not allocate role containers.
+
+    This source-contract control is not native timing or compilation evidence;
+    the existing CUDA dense identity controls still qualify changed binaries.
+    """
+    source = Path(ext.native_source_path("tessera_routed_fused_value")).read_text()
+    signature = re.search(r"\bvoid dense_launch\s*\((.*?)\)\s*\{", source, re.S)
+    assert signature is not None
+    parameters = signature.group(1)
+    assert "std::vector" not in parameters, "native dense_launch must borrow plane arrays"
+    planes = re.findall(r"c10::ArrayRef<torch::Tensor>\s+(\w+)", parameters)
+    assert planes, "native dense_launch must borrow plane arrays, not own vectors"
+    assert not re.search(r"\btorch::Tensor\s+\w+", parameters), "helper Tensor handles must be borrowed"
+    legacy = re.search(r"\bvoid dense_forward\s*\([^)]*\)\s*\{(.*?)^\}", source, re.S | re.M)
+    assert legacy is not None
+    body = legacy.group(1)
+    assert "std::vector" not in body
+    views = re.findall(r"c10::ArrayRef<torch::Tensor>\(&\w+,\s*1\)", body)
+    assert len(views) == len(planes), "every legacy plane must borrow its live Tensor parameter"

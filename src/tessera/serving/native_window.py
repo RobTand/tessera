@@ -51,9 +51,13 @@ rates 1..8 in the packer's column order since v45 -- rate 4 alone at v43/v44
 -- window 14, rows a multiple of 4, the last 128-row block partial on an
 N-tail) is served by that kernel's dense case instead:
 the functional custom op ``tessera::fused_window_dense`` launches
-``routed_fused_kernel<FP8, 2, DENSE>`` once per role into the role's column
-slice of one ``[M, rows]`` output (no concatenation), splitting K at decode
-shapes so every SM has an item, and stamps ``native_fused_window_dense`` /
+``routed_fused_kernel<FP8, 2, DENSE>`` into each role's column slice of one
+``[M, rows]`` output (no concatenation), splitting K at decode shapes so
+every SM has an item -- once per role with a reduce launch after a split by
+default, and under ``TESSERA_DENSE_MODULE_LAUNCH=1`` on the E4M3 libraries
+once per module, every role and the split's reduction in one launch
+(tessera#750 WP2; ``routed_fused.ENV_DENSE_MODULE``) -- and stamps
+``native_fused_window_dense`` /
 ``native_fused_window_dense_folded``.  The lane is decided ONCE at
 preparation for the whole module -- a module stamps one decoder -- and the
 Triton op above stays the dispatch for every module the predicate refuses,
@@ -221,18 +225,26 @@ def _fused_window_dense(
     out = torch.empty((m, total), dtype=torch.bfloat16, device=x.device)
     if m == 0:
         return out
+    roles = [rf.FusedDenseWindowRole(
+        family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
+        init=inits[i], has_init=has_inits[i], wscale=wscales[i],
+        runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
+        for i, rows in enumerate(role_rows)]
+    if family == "e4m3" and rf.dense_module_launch_enabled():
+        # The E4M3 libraries take the module's roles in one launch and reduce
+        # a K split in-kernel (tessera#750 WP2): one fill and one kernel.
+        # Opt-in until tessera#778's decode measurement: read per call, so a
+        # captured forward keeps the launch it was captured with.
+        rf.dense_forward_roles(roles, x, a_scale, out)
+        return out
     # One in-stream fill zeroes every role's slot, so the launches add none
     # (``zeroed=True``): at small M this op's host time, not its kernels, sets
     # the eager forward's time.
     counter = torch.zeros(len(role_rows), dtype=torch.int32, device=x.device)
     offset = 0
-    for i, rows in enumerate(role_rows):
-        role = rf.FusedDenseWindowRole(
-            family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
-            init=inits[i], has_init=has_inits[i], wscale=wscales[i],
-            runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
-        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1], zeroed=True)
-        offset += int(rows)
+    for i, role in enumerate(roles):
+        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, role.rows), counter[i:i + 1], zeroed=True)
+        offset += role.rows
     return out
 
 
@@ -252,7 +264,7 @@ class PreparedDenseNativeModule:
     """
 
     __slots__ = ("__roles", "__rows", "__columns", "__device", "__family",
-                 "__arithmetic", "__lane", "__fused", "__lane_reason")
+                 "__arithmetic", "__lane", "__fused", "__lane_reason", "__decoded")
 
     def __init__(self, roles, *, rows: int, columns: int, device: torch.device,
                  family: str, lane: str = LANE_TRITON, fused_roles=None,
@@ -289,6 +301,7 @@ class PreparedDenseNativeModule:
         self.__lane = lane
         self.__fused = fused
         self.__lane_reason = lane_reason
+        self.__decoded = None
 
     @property
     def rows(self): return self.__rows
@@ -317,10 +330,47 @@ class PreparedDenseNativeModule:
         return DENSE_LANES[self.__lane][1][self.__arithmetic]
     @property
     def launch_pair(self):
-        """The ``(symbol, decoder)`` this module's ``apply`` stamps."""
+        """The ``(symbol, decoder)`` of this module's window lane (every M
+        without a decoded copy; M below ``e4m3_prefill.MIN_M`` with one)."""
         return (self.symbol, self.decoder)
+
+    @property
+    def decoded(self):
+        """The decode-once E4M3 copy (``e4m3_prefill.DecodedE4M3``), or ``None``."""
+        return self.__decoded
+
+    def attach_decoded(self, decoded) -> None:
+        """Hold ``decoded`` (made from THIS module) and serve large M from it.
+
+        Once per module, E4M3 family only, shape-checked against the module;
+        the route decides whether to attach (``e4m3_prefill.enabled`` and the
+        resident mode)."""
+        if self.__family != "e4m3":
+            raise ValueError(f"a decode-once copy serves the E4M3 family, not {self.__family!r}")
+        if self.__decoded is not None:
+            raise ValueError("this module already holds a decode-once copy")
+        if tuple(decoded.weight.shape) != (self.__rows, self.__columns) \
+                or tuple(decoded.scale.shape) != (self.__rows,):
+            raise ValueError(
+                f"decode-once copy {tuple(decoded.weight.shape)}/{tuple(decoded.scale.shape)} "
+                f"does not fit a [{self.__rows}, {self.__columns}] module")
+        self.__decoded = decoded
+
+    def launch_pair_for(self, m: int):
+        """The ``(symbol, decoder)`` ``apply`` runs for an ``m``-row input."""
+        from .e4m3_prefill import MIN_M
+        from .scheme import DECODE_ONCE_DENSE_SYMBOL
+        from .telemetry import DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3
+
+        if self.__decoded is not None and int(m) >= MIN_M:
+            return (DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+        return self.launch_pair
     @property
     def role_names(self): return tuple(role.name for role in self.__roles)
+    @property
+    def role_bundles(self):
+        """Each role's frozen ``PreparedWindowGemm``, in row order (read-only)."""
+        return tuple(role.bundle for role in self.__roles)
 
     def layout_facts(self):
         """Each role's lightweight layout facts, in row order.
@@ -354,8 +404,25 @@ class PreparedDenseNativeModule:
         per-token scale for the e4m3 family (the route quantizes before this
         call, so the contract's quantizer is the one that ran).  On the fused
         lane one custom-op node serves the whole module; on the Triton lane one
-        node per role.  No host-side data-dependent work on either.
+        node per role.  No host-side data-dependent work on either.  A module
+        holding a decode-once copy serves M >= ``e4m3_prefill.MIN_M`` from it
+        (:meth:`launch_pair_for` names which ran).  That branch reads M on the
+        host, so the decode-once lane is EAGER-ONLY.  The gate is the route's
+        LOAD (``fp8_route`` refuses to attach a copy when vLLM compiles the
+        forward); the raise below is a backstop for a direct caller, and under
+        ``torch.compile`` without ``fullgraph`` it is a graph break Dynamo may
+        run around.  A CUDA-graph capture sees a concrete M and records the
+        branch that ran for it.
         """
+        if self.__decoded is not None:
+            from .e4m3_prefill import FLAG, MIN_M, prefill_apply
+
+            if torch.compiler.is_compiling():
+                raise RuntimeError(
+                    f"the decode-once E4M3 lane is eager-only ({FLAG}=1); serve with "
+                    "compilation mode NONE or unset the flag")
+            if int(x.shape[0]) >= MIN_M:
+                return prefill_apply(self.__decoded, x, a_scale)
         if self.__lane == LANE_FUSED:
             fused = self.__fused
             return _fused_window_dense(
@@ -397,9 +464,15 @@ class PreparedDenseNativeModule:
         for index, fused in enumerate(self.__fused):
             for name, tensor in fused.named_tables():
                 yield f"roles.{index}.{name}", tensor
+        # The decode-once copy, when the route attached one: one E4M3 byte per
+        # weight and the fp32 row scale it is served with (tessera#931).
+        if self.__decoded is not None:
+            yield "decoded.weight", self.__decoded.weight
+            yield "decoded.scale", self.__decoded.scale
 
     def packed_bytes(self) -> int:
-        """Device bytes the prepared weights occupy: the packed wire half."""
+        """Device bytes the prepared weights occupy: the packed wire half, plus
+        the decode-once copy when one is attached (``named_tensors``)."""
         return sum(tensor.numel() * tensor.element_size()
                    for _, tensor in self.named_tensors())
 

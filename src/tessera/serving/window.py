@@ -273,6 +273,45 @@ class PreparedWindowBatch:
         return chunks[0] if len(chunks) == 1 else torch.cat(chunks, 0)
 
 
+class PreparedWindowCollection:
+    """Eager research decode of heterogeneous packed windows, without copies.
+
+    Each window remains the sole owner of its packed planes. Only the
+    requested decoded output is allocated; no padded stack or persistent
+    decoded weight pool is created. This reference path has no Triton or
+    performance qualification and is never selected by production intake.
+    """
+
+    def __init__(self, windows):
+        self.__windows = tuple(windows)
+        first = self.__windows[0]
+        self.steps, self.cols = first.steps, first.cols
+        self.window_bits, self.device = first.window_bits, first.device
+        self.experts = len(self.__windows)
+        self.__dtype = first._axis_parts()[2].dtype
+
+    def tensors(self):
+        return tuple(t for window in self.__windows for t in window.tensors())
+
+    def resident_bytes(self):
+        from .residency import resident_storage_bytes
+        return resident_storage_bytes((str(i), t) for i, t in enumerate(self.tensors()))
+
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        require_expert_ids(expert_ids, self.device)
+        if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:
+            raise ValueError("max_experts_per_chunk must be a positive integer")
+        if backend != "torch":
+            raise ValueError("heterogeneous research windows require the torch reference decoder")
+        ids = expert_ids.tolist()
+        if any(i < 0 or i >= self.experts for i in ids):
+            raise ValueError("selected expert ID is outside the heterogeneous window axis")
+        out = torch.empty((len(ids), self.steps, self.cols),
+                          dtype=self.__dtype, device=self.device)
+        for index, expert in enumerate(ids):
+            out[index].copy_(self.__windows[expert].decode())
+        return out
+
 class PreparedWindowAxis:
     """A packed expert axis filled one prepared window at a time (tessera#501).
 
@@ -292,9 +331,9 @@ class PreparedWindowAxis:
     """
 
     __slots__ = ("__experts", "__key", "__geometry", "__planes", "__table", "__shared",
-                 "__inverse", "__filled", "__state")
+                 "__inverse", "__filled", "__state", "__windows")
 
-    def __init__(self, experts: int):
+    def __init__(self, experts: int, *, heterogeneous: bool = False):
         if type(experts) is not int or experts < 0:
             raise ValueError("an expert axis needs a non-negative integer expert count")
         self.__experts = experts
@@ -302,19 +341,29 @@ class PreparedWindowAxis:
         self.__shared = self.__inverse = None
         self.__filled = [False] * experts
         self.__state = "open"
+        self.__windows = [None] * experts if heterogeneous else None
 
     def __require_open(self):
         if self.__state != "open":
             raise RuntimeError(f"this expert axis is {self.__state}; nothing more is placed on it")
 
     def put(self, expert: int, window: PreparedWindow) -> None:
-        """Copy ``window`` into slot ``expert``; the axis keeps no reference to it."""
+        """Place packed data: copy uniform slots, transfer single ownership for research."""
         self.__require_open()
         if type(expert) is not int or not 0 <= expert < self.__experts:
             raise ValueError(f"expert {expert!r} is not on this {self.__experts}-expert axis")
         if self.__filled[expert]:
             raise ValueError(f"expert {expert} is already placed on this axis")
         key, groups, table, inverse = window._axis_parts()
+        if self.__windows is not None:
+            shared = key[:6]  # geometry, device and table shape/dtype, not rate layout
+            if self.__key is None:
+                self.__key = shared
+            elif shared != self.__key:
+                raise ValueError("heterogeneous windows must share geometry and table dtype")
+            self.__windows[expert] = window
+            self.__filled[expert] = True
+            return
         if self.__key is None:
             experts = self.__experts
             self.__planes = [torch.empty((experts,) + tuple(g.plane.shape), dtype=g.plane.dtype,
@@ -348,13 +397,15 @@ class PreparedWindowAxis:
         """Device bytes this axis has allocated: every slot, placed or not."""
         if self.__key is None or self.__state == "finished":
             return 0
+        if self.__windows is not None:
+            return sum(w.resident_bytes() for w in self.__windows if w is not None)
         tensors = [*self.__planes, self.__table,
                    *(t for _rate, *kept in self.__shared for t in kept)]
         if self.__inverse is not None:
             tensors.append(self.__inverse)
         return sum(t.numel() * t.element_size() for t in tensors)
 
-    def finish(self) -> PreparedWindowBatch:
+    def finish(self) -> PreparedWindowBatch | PreparedWindowCollection:
         self.__require_open()
         if self.__key is None:
             raise ValueError("stacking needs at least one prepared window")
@@ -362,6 +413,11 @@ class PreparedWindowAxis:
             raise ValueError(
                 f"{self.__filled.count(False)} of {self.__experts} experts were never placed on "
                 f"this axis, the first is expert {self.__filled.index(False)}")
+        if self.__windows is not None:
+            batch = PreparedWindowCollection(self.__windows)
+            self.__windows = None
+            self.__state = "finished"
+            return batch
         steps, cols, window_bits, device = self.__geometry
         groups = [_RateGroup(rate, plane, gather, shift, which)
                   for (rate, gather, shift, which), plane in zip(self.__shared, self.__planes)]
@@ -398,9 +454,11 @@ class PreparedModuleAxis:
     at ``finish``; only the joined row scale is.
     """
 
-    __slots__ = ("__experts", "__batch_type", "__label", "__joined", "__parts", "__state")
+    __slots__ = ("__experts", "__batch_type", "__label", "__joined", "__parts", "__state",
+                 "__heterogeneous")
 
-    def __init__(self, experts: int, batch_type, label: str, parts: Optional[int] = None):
+    def __init__(self, experts: int, batch_type, label: str, parts: Optional[int] = None,
+                 *, heterogeneous: bool = False):
         if type(experts) is not int or experts < 0:
             raise ValueError("an expert axis needs a non-negative integer expert count")
         if parts is not None and (type(parts) is not int or parts <= 0):
@@ -409,6 +467,7 @@ class PreparedModuleAxis:
         self.__joined = parts is not None
         self.__parts = [None] * (1 if parts is None else parts)
         self.__state = "open"
+        self.__heterogeneous = bool(heterogeneous)
 
     def __require_open(self):
         if self.__state != "open":
@@ -424,7 +483,8 @@ class PreparedModuleAxis:
         layout, windows, scale = module._axis_slot()
         slot = self.__parts[part]
         if slot is None:
-            slot = _ModulePart(layout, [PreparedWindowAxis(self.__experts) for _ in windows],
+            slot = _ModulePart(layout, [PreparedWindowAxis(self.__experts,
+                               heterogeneous=self.__heterogeneous) for _ in windows],
                                torch.empty((self.__experts,) + tuple(scale.shape),
                                            dtype=scale.dtype, device=scale.device),
                                self.__experts)

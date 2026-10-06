@@ -1,6 +1,6 @@
 {
   "schema": "tessera.native_build_cohort.v1",
-  "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd",
+  "action_key": "917cc5a474d39d0b97db9fbeb65939dba68dac62c11ad5ff08db340ec5bbf0f7",
   "scope": "CPU native compile gate; not CUDA numeric, performance or serving qualification",
   "image": {
     "fix": null,
@@ -21,7 +21,7 @@
     "schema": "tessera.runtime_image/1"
   },
   "source_path": "/work/src/tessera/serving/csrc/routed_fused_window.cu",
-  "source_sha256": "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40",
+  "source_sha256": "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3",
   "selectors": {
     "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH": "0",
     "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH": "0",
@@ -32,11 +32,11 @@
       "library": "e2m1",
       "module": "tessera_routed_fused_e2m1",
       "source_module": "tessera_routed_fused_value",
-      "path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
-      "bytes": 1889544,
-      "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
-      "finalization_path": "/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
-      "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
+      "path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/tessera_routed_fused_e2m1.so",
+      "bytes": 1892000,
+      "sha256": "1302ad713309ef54a62a6a4ff9edeed7d61306803ce820df9c704f3ca279afbf",
+      "finalization_path": "/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec/ext-fp4-b0/tessera_routed_fused_e2m1_sm_121_tessera_guarded_v1/native-finalization.json",
+      "finalization_sha256": "5a243e4241e8f5f11b9a395381bb64c57d50626d3c5f0dcafae03a54ccb3a7b6",
       "status": "compile gate (no matching device here)"
     }
   ]

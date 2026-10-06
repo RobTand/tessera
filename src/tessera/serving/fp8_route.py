@@ -39,15 +39,17 @@ from typing import Optional, Sequence
 import torch
 
 from ..alphabet import require_hardware_byte_grid
-from .compile_identity import note_traced_dispatch
+from .compile_identity import declared_forward_is_compiled, note_traced_dispatch
 from .lane import MODES
+from . import e4m3_prefill
 from .native_window import prepare_dense_native_module
 from .residency import layer_resident_tensors
-from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
+from .scheme import (DECODE_ONCE_DENSE_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
                      parse_compact_blob_for_scheme, validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported
 from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
                         DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA, DECODER_NATIVE_WINDOW_GEMM,
+                        DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,
                         DECODER_TORCH_WINDOW, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
                      require_expert_ids)
@@ -99,7 +101,14 @@ DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 #: served censuses on both E4M3 cell images earned it the dense cells.
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)
 DENSE_FUSED_MMA_E4M3_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH, DENSE_FUSED_MMA_E4M3_LAUNCH)
+#: ``DENSE_DECODE_ONCE_LAUNCH`` (contract v56, tessera#931, default-off) is the
+#: decode-once prefill lane: under ``TESSERA_E4M3_DECODE_ONCE=1`` a resident
+#: module holds its weights decoded once to E4M3 and serves M at or above
+#: ``e4m3_prefill.MIN_M`` with ``torch._scaled_mm``; ``apply`` stamps
+#: ``launch_pair_for(M)``, the pair that ran.
+DENSE_DECODE_ONCE_LAUNCH = (DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
+DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH, DENSE_FUSED_MMA_E4M3_LAUNCH,
+                  DENSE_DECODE_ONCE_LAUNCH)
 
 
 class _Fp8Role:
@@ -184,9 +193,11 @@ class PreparedTesseraFp8Module:
                 tuple(r.window for r in self.__roles), self.__scale)
 
     @classmethod
-    def axis(cls, experts: int, parts: Optional[int] = None) -> PreparedModuleAxis:
+    def axis(cls, experts: int, parts: Optional[int] = None, *,
+             heterogeneous: bool = False) -> PreparedModuleAxis:
         """An empty expert axis these modules are placed on as they are prepared."""
-        return PreparedModuleAxis(experts, PreparedTesseraFp8Batch, "FP8", parts)
+        return PreparedModuleAxis(experts, PreparedTesseraFp8Batch, "FP8", parts,
+                                  heterogeneous=heterogeneous)
 
     @classmethod
     def stack(cls, modules: Sequence[PreparedTesseraFp8Module]) -> PreparedTesseraFp8Batch:
@@ -414,6 +425,19 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 raise RuntimeError(
                     f"{prefix}: the prepared Tessera FP8 module runs {prepared.launch_pair!r}, "
                     f"the route publishes {DENSE_LAUNCHES!r}")
+            # Decode-once (tessera#931): default-off, resident modules only --
+            # a streamed module's weights do not stay on the device, and the
+            # decoded copy is one more resident byte per weight, counted by the
+            # module's ``named_tensors`` like every other prepared tensor.
+            if e4m3_prefill.enabled() and layer.tessera_mode == "resident":
+                # Eager-only, refused HERE: a raise inside a compiled forward is
+                # a graph break Dynamo may run around, so the gate is the load.
+                if declared_forward_is_compiled():
+                    raise RuntimeError(
+                        f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
+                        "vLLM's compilation mode is not NONE; serve with compilation mode "
+                        "NONE (--enforce-eager) or unset the flag")
+                prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol
@@ -429,8 +453,13 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             del layer.wire_bytes
             # The dispatch is ONE graph for every M and both residencies, and
             # the op it contains is a property of this module: declare it here
-            # so vLLM's compile-cache key covers it (issue #91's rule).
-            note_traced_dispatch(prefix, prepared.symbol)
+            # so vLLM's compile-cache key covers it (issue #91's rule).  A
+            # module holding a decode-once copy declares a different fact
+            # (window op | decode-once op), so flag-on and flag-off modules
+            # never share a key; that lane is eager-only
+            # (``PreparedDenseNativeModule.apply`` refuses under compile).
+            note_traced_dispatch(prefix, prepared.symbol if prepared.decoded is None
+                                 else f"{prepared.symbol}|{DECODE_ONCE_DENSE_SYMBOL}")
 
         # -- residency declaration (#580) -------------------------------
         def resident_tensors(self, layer):
@@ -467,7 +496,13 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(a_q, a_scale)
-            (symbol, decoder), tile_m = native.launch_pair, 0
+            # Only a module holding a decode-once copy (eager-only) has a pair
+            # that depends on M; every other module stamps its one pair without
+            # reading the token count, which ``int()`` would pin under compile
+            # (``telemetry.route_shape``).
+            pair = (native.launch_pair if native.decoded is None
+                    else native.launch_pair_for(int(a_q.shape[0])))
+            (symbol, decoder), tile_m = pair, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",

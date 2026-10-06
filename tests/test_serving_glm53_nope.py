@@ -15,13 +15,15 @@ from vllm.config.compilation import CompilationMode, CUDAGraphMode
 DEFAULT_SIZES = [1, 2, 4, 8, 16]
 CONTIGUOUS = list(range(1, 9))
 EAGER_IR = ["vllm_c", "native"]
+DEFAULT_MAX_MODEL_LEN = 4096
 
 
 def config(*, mode=CompilationMode.NONE, graph=CUDAGraphMode.NONE, attention_splits=False,
            enforce_eager=True, sizes=CONTIGUOUS, max_num_seqs=8, custom_ops=("all",),
-           ir=EAGER_IR, speculative=None):
+           ir=EAGER_IR, speculative=None, max_model_len=4096):
     return SimpleNamespace(
-        model_config=SimpleNamespace(enforce_eager=enforce_eager, hf_text_config=SimpleNamespace(
+        model_config=SimpleNamespace(enforce_eager=enforce_eager, max_model_len=max_model_len,
+                                     hf_text_config=SimpleNamespace(
             model_type="glm5_next_text", kv_lora_rank=512, qk_nope_head_dim=256,
             qk_rope_head_dim=0, index_topk=2048, index_kpool=4)),
         parallel_config=SimpleNamespace(decode_context_parallel_size=1,
@@ -221,7 +223,8 @@ def test_speculative_graphs_are_refused_without_a_receipt(runner):
         for k in (1, 2, 3):
             reason = _config_reason(config(graph=graph, enforce_eager=False, speculative=drafter(k=k)))
             assert f"refuses speculative method 'mtp' at {k} draft tokens" in reason
-            assert f"compilation mode NONE, CUDA-graph mode {resolved}: no receipt" in reason
+            assert (f"compilation mode NONE, CUDA-graph mode {resolved}, max_model_len "
+                    f"{DEFAULT_MAX_MODEL_LEN}: no receipt") in reason
             assert ("sparse indices shared across draft steps" in reason) == (k > 1)
             assert "measured: none; tessera#695" in reason
         reason = _config_reason(config(graph=graph, enforce_eager=False, speculative=drafter(
@@ -235,7 +238,8 @@ def test_speculative_graphs_are_refused_without_a_receipt(runner):
 
 
 def test_a_receipt_admits_exactly_its_drafter_graph_path(runner, monkeypatch):
-    key = ("mtp", 2, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY)
+    key = ("mtp", 2, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY,
+           DEFAULT_MAX_MODEL_LEN)
     monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: None})
     fdo = dict(graph=CUDAGraphMode.FULL_DECODE_ONLY, enforce_eager=False)
     assert _config_reason(config(**fdo, speculative=drafter())) is None
@@ -243,16 +247,32 @@ def test_a_receipt_admits_exactly_its_drafter_graph_path(runner, monkeypatch):
     assert _config_reason(config(graph=CUDAGraphMode.FULL, enforce_eager=False,
                                  speculative=drafter())) is None
     measured = ("measured: speculative method 'mtp' at 2 draft tokens, sparse indices shared "
-                "across draft steps, compilation mode NONE, CUDA-graph mode FULL_DECODE_ONLY")
+                "across draft steps, compilation mode NONE, CUDA-graph mode FULL_DECODE_ONLY, "
+                f"max_model_len {DEFAULT_MAX_MODEL_LEN}")
     for other in (drafter(k=1), drafter(k=3), drafter(share=False), drafter("eagle")):
         reason = _config_reason(config(**fdo, speculative=other))
         assert "no receipt measures this drafter graph path" in reason and measured in reason
     for graph in (CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL_AND_PIECEWISE):
         reason = _config_reason(config(graph=graph, enforce_eager=False, speculative=drafter()))
-        assert f"CUDA-graph mode {graph.name}: no receipt" in reason
+        assert f"CUDA-graph mode {graph.name}, max_model_len {DEFAULT_MAX_MODEL_LEN}: no receipt" in reason
     compiled = config(mode=CompilationMode.VLLM_COMPILE, **fdo, speculative=drafter())
-    assert "compilation mode VLLM_COMPILE, CUDA-graph mode FULL_DECODE_ONLY: no receipt" in (
-        _config_reason(compiled))
+    assert ("compilation mode VLLM_COMPILE, CUDA-graph mode FULL_DECODE_ONLY, "
+            f"max_model_len {DEFAULT_MAX_MODEL_LEN}: no receipt") in _config_reason(compiled)
+
+
+def test_a_receipt_does_not_speak_for_another_max_model_len(runner, monkeypatch):
+    """The captured indexer branch follows max_model_len (tessera#695/#702), so the
+    receipt is scoped to it: measured at 2048 it admits 2048 and refuses 4096,
+    and its None verdict cannot claim a 4096 serve runs eager's arithmetic."""
+    at_2048 = ("mtp", 1, None, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY, 2048)
+    monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {at_2048: None})
+    fdo = dict(graph=CUDAGraphMode.FULL_DECODE_ONLY, enforce_eager=False)
+    assert _config_reason(config(**fdo, max_model_len=2048, speculative=drafter(k=1))) is None
+    reason = _config_reason(config(**fdo, speculative=drafter(k=1)))
+    assert ("no receipt measures this drafter graph path" in reason
+            and "max_model_len 2048" in reason and "max_model_len 4096" in reason)
+    gap = glm53_nope.eager_equivalence_gap(config(**fdo, speculative=drafter(k=1)))
+    assert "no receipt compares this drafter graph path with eager" in gap
 
 
 @pytest.mark.parametrize("graph,sizes,max_num_seqs,padded", [
@@ -322,11 +342,13 @@ def test_a_drafter_is_claimed_equal_only_to_an_eager_serve_of_the_same(runner, m
     fdo = dict(graph=CUDAGraphMode.FULL_DECODE_ONLY, enforce_eager=False, max_num_seqs=4)
     contiguous = config(**fdo, sizes=range(1, 13), speculative=drafter())
     assert "no receipt compares this drafter graph path with eager" in gap(contiguous)
-    key = ("mtp", 2, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY)
+    key = ("mtp", 2, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY,
+           DEFAULT_MAX_MODEL_LEN)
     monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: None})
     assert gap(contiguous) is None
     assert gap(config(**fdo, sizes=SPEC_DEFAULT_SIZES[2], speculative=drafter())) is None
-    three = ("mtp", 3, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY)
+    three = ("mtp", 3, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY,
+             DEFAULT_MAX_MODEL_LEN)
     monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: None, three: None})
     padded = gap(config(**fdo, sizes=SPEC_DEFAULT_SIZES[3], speculative=drafter(k=3)))
     assert ("[3, 12] (target verification and draft prefill: [12]; draft decode: [3]) in larger"

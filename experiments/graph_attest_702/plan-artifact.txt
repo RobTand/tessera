@@ -1,0 +1,7 @@
+# tessera#702 artifact-scope receipt (prismaquant#1586): the release serve at TP 2 across both Sparks,
+# max_num_seqs 4, max_model_len 8448, release flags, MTP k=1. Run with drive_tp2.sh inside a granted
+# two-Spark window; export TS, ARTIFACT, RECEIPTS first. FABRIC=socket on every arm: the release
+# serve's fabric, and receipt scope since schema v2 (dec-1005-003356-6ba2). Interleaved: eager, graph, eager.
+aE1 FABRIC=socket EAGER=1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}
+aGR FABRIC=socket EAGER=0 COMPILATION_JSON={"mode":"NONE","cudagraph_mode":"FULL_DECODE_ONLY"} SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}
+aE2 FABRIC=socket EAGER=1 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}

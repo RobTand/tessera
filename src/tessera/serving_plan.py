@@ -8,14 +8,19 @@ this repository parsing the producer's own records (#599).  The schema:
 * a JSON OBJECT mapping tensor or stack names to entries;
 * per TENSOR: ``"PASSTHROUGH"`` or ``"BF16"`` (the negative spellings -- copy
   the source tensor, quantise nothing), or an object ``{"grid", "q256"}``;
-* per ``<moe>.experts`` STACK: an object ``{"grid", "q256", "source_layout"}``
-  giving every expert of the stack one rung and naming the source tensor
-  layout the packed conventions decode.
+* per ``<moe>.experts`` STACK: ``{"grid", "q256", "source_layout"}``
+  with optional ``unit_q256`` overrides keyed by canonical projected unit
+  name (without ``.weight``). The executed module remains the stack; the
+  priced/plannable unit is one expert projection.
 
 ``grid`` is one of the four grid names (``E2M1``, ``E2M1x2``, ``E4M3``,
 ``BF16``); ``q256`` is an integer rung; ``source_layout`` is OPTIONAL, one of
 the three closed conventions when present, and meaningful only on a stack
-entry.  One field name -- ``producer_annotations`` -- is the PRODUCER
+entry. ``unit_q256`` is an optional stack mapping of canonical projected
+names to positive integer rungs. Mixed schedules are research-only on the
+WINDOW E4M3/BF16 routes until a lane qualification packet admits them;
+the exporter refuses mixed NVFP4 schedules before writing bytes.
+One field name -- ``producer_annotations`` -- is the PRODUCER
 ANNOTATION: a JSON object the exporter copies through to the published plan
 verbatim and never reads (#691 item 6).  It carries whatever sidecar the
 producer's own accounting already knows, under the producer's own names, so
@@ -53,9 +58,16 @@ PRODUCER_ANNOTATIONS = "producer_annotations"
 STACK_SUFFIX = ".experts"
 
 _PASSTHROUGH = ("PASSTHROUGH", "BF16")
-_OWNED_FIELDS = ("grid", "q256", "source_layout")
+_OWNED_FIELDS = ("grid", "q256", "source_layout", "unit_q256")
 _SOURCE_LAYOUTS = ("unpacked_per_expert", "out_first_chunked", "in_first_interleaved")
 
+ROUTED_UNIT_ASSIGNMENT = {
+    "schema": "tessera.routed-unit-assignment.v1",
+    "plannable_unit": "expert_projection",
+    "plan_field": "unit_q256",
+    "q256_spelling": "int_or_per_role_or_expert_role_matrix",
+    "production_admission": "requires_lane_qualification",
+}
 
 def validate_serving_plan(entries) -> None:
     """Refuse a plan outside ``tessera.serving_plan.v1``, naming the entry.
@@ -126,6 +138,18 @@ def validate_serving_plan(entries) -> None:
                 raise ValueError(
                     f"has an invalid entry {name!r}: source_layout "
                     f"{layout!r} is not one of {_SOURCE_LAYOUTS}")
+        unit_rates = spec.get("unit_q256")
+        if "unit_q256" in spec:
+            if not isinstance(name, str) or not name.endswith(STACK_SUFFIX):
+                raise ValueError(f"{name!r}: unit_q256 is a routed stack field")
+            if not isinstance(unit_rates, dict):
+                raise ValueError(f"{name!r}: unit_q256 must be an object")
+            for unit, rung in unit_rates.items():
+                if (not isinstance(unit, str) or not unit.startswith(name + ".")
+                        or unit.endswith(".weight") or type(rung) is not int or rung <= 0):
+                    raise ValueError(
+                        f"{name!r}: unit_q256[{unit!r}] must name a canonical projected "
+                        f"unit with a positive integer rung, got {rung!r}")
 
 
 def family_for(grid) -> str:

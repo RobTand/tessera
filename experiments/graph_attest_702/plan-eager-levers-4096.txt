@@ -1,0 +1,5 @@
+# ship-eager-levers-4096: exact A8S/socket/TP2/resident/c1 OFF/ON at the SAME MNBT4096.
+# Frozen October5 L512/2048/8192 timing/profile population, unchanged D30 guards/caps.
+# All levers explicit; a reviewed single-lever plan may leave the other two OFF.
+eager4096_off FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=0 TESSERA_GLM53_KDA_CONV_SPLIT=off TESSERA_ROUTED_PIECE_MAJOR=0
+eager4096_on FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"} TESSERA_E4M3_DECODE_ONCE=1 TESSERA_GLM53_KDA_CONV_SPLIT=on TESSERA_ROUTED_PIECE_MAJOR=1

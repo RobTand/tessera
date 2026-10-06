@@ -39,9 +39,9 @@ def canonical_wire():
     return blob, declaration
 
 
-@pytest.fixture
-def panel(tmp_path, canonical_wire):
-    blob, declaration = canonical_wire
+def build_dense_fixture_panel(tmp_path, blob, declaration):
+    """The CPU fixture panel body; the ``panel`` fixture delegates here so
+    sibling tests can build the same receipt without calling a fixture."""
     doc = copy.deepcopy(contract.load_serving_contract())
     family = contract.PAYLOAD_FAMILY_BY_ROUTE[scheme.TESSERA_FP8]
     cell = next(c for c in doc["lane_eligibility"]["cells"] if c["platform"] == "sm_121"
@@ -95,6 +95,12 @@ def panel(tmp_path, canonical_wire):
                                     "scheme": declaration, "timing": tp.timing_summary(samples), "cell_id": cell["id"]}],
             "evidence": evidence,
             "energy": {"status": "hold", "reason": "cross_host_clock_alignment_unqualified", "reference_w": 140}}
+
+
+@pytest.fixture
+def panel(tmp_path, canonical_wire):
+    return build_dense_fixture_panel(tmp_path, blob=canonical_wire[0],
+                                     declaration=canonical_wire[1])
 
 
 def rewrite(panel, key, fn):
@@ -176,7 +182,7 @@ def test_positive_receipt_refuses_false_evidence(panel, fault):
 
 
 
-def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel):
+def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel, monkeypatch):
     def change(doc):
         cell=next(c for c in doc["lane_eligibility"]["cells"] if c["id"]==panel["rows"][0]["cell_id"])
         cell["runtime"].pop("tessera_commit");cell["runtime"].pop("serving_source_sha256")
@@ -187,7 +193,29 @@ def test_legacy_cell_uses_independently_bound_runtime_and_record_proof(panel):
     panel["rows"][0]["scope_id"]=panel["plan"]["rows"][0]["id"]
     assert tp.validate_panel(panel,expected_runtime=copy.deepcopy(panel["runtime"]))["cell_id"]==panel["rows"][0]["cell_id"]
     rewrite(panel,"runtime_origins",lambda v:v["installation"].update(installed_commit="9"*40))
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE","0")
     with pytest.raises(ValueError,match="RECORD"):tp.validate_panel(panel,expected_runtime=panel["runtime"])
+
+
+def test_legacy_cell_record_proof_stamps_in_dev_mode(panel, monkeypatch, capsys):
+    """D32: the installed-record proof is a seal on the external panel path;
+    default dev stamps the mismatch and the legacy cell still validates."""
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+
+    def change(doc):
+        cell = next(c for c in doc["lane_eligibility"]["cells"] if c["id"] == panel["rows"][0]["cell_id"])
+        cell["runtime"].pop("tessera_commit");cell["runtime"].pop("serving_source_sha256")
+    rewrite(panel, "contract", change)
+    panel["runtime"]["contract_sha256"] = panel["evidence"]["contract"]["sha256"]
+    rewrite(panel, "runtime", lambda v: v.update(panel["runtime"]))
+    panel["plan"] = census_plan.build_census_plan([panel["plan"]["rows"][0]["scope"]], raw_contract=tp.read_bound(panel["evidence"]["contract"]))
+    panel["rows"][0]["scope_id"] = panel["plan"]["rows"][0]["id"]
+    assert tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel["runtime"]))["cell_id"] == panel["rows"][0]["cell_id"]
+    rewrite(panel, "runtime_origins", lambda v: v["installation"].update(installed_commit="9" * 40))
+    result = tp.validate_panel(panel, expected_runtime=panel["runtime"])
+    out = capsys.readouterr().out
+    assert out.count("[DEV-MODE]") == 1 and "installed RECORD proof" in out
+    assert result["cell_id"] == panel["rows"][0]["cell_id"]
 
 
 def test_panel_validator_stays_the_local_entry_point_and_the_handoff_is_versioned(panel):
@@ -199,3 +227,47 @@ def test_panel_validator_stays_the_local_entry_point_and_the_handoff_is_versione
     assert tp.OBSERVATION_SCHEMA == "tessera.shape_time_observation.v1"
     assert tp.SAMPLE_UNIT == "single_apply"
     assert "not end-to-end serving evidence" in tp.OPERATOR_PROJECTION
+
+
+def test_source_pin_difference_stamps_and_continues_in_dev_mode(panel, monkeypatch, capsys):
+    """D32: the old-source-pin refusal stamps once and the panel validates.
+
+    This is the regression for the reported failure: a panel measured on one
+    Tessera tree against a frozen expected context naming another was refused
+    outright. Default dev mode stamps one [DEV-MODE] line naming both digests
+    and continues with the stored data.
+    """
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    expected = copy.deepcopy(panel["runtime"])
+    expected["serving_source_sha256"] = "0" * 64
+    result = tp.validate_panel(panel, expected_runtime=expected)
+    out = capsys.readouterr().out
+    assert out.count("[DEV-MODE]") == 1
+    assert "0" * 64 in out and "2" * 64 in out
+    assert result["timing"]["median_ms"] == 2.5
+
+
+def test_certified_zero_keeps_the_source_pin_refusal(panel, monkeypatch):
+    """Certified mode keeps the verbatim refusal the site always raised."""
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    expected = copy.deepcopy(panel["runtime"])
+    expected["serving_source_sha256"] = "0" * 64
+    with pytest.raises(ValueError, match="observed runtime differs from independent expected context"):
+        tp.validate_panel(panel, expected_runtime=expected)
+
+
+def test_panel_byte_integrity_still_refuses_in_dev_mode(panel, monkeypatch):
+    """Dev mode never weakens integrity: bound bytes that moved still refuse."""
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    Path(panel["evidence"]["samples"]["path"]).write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="file evidence differs"):
+        tp.validate_panel(panel, expected_runtime=copy.deepcopy(panel["runtime"]))
+
+
+def test_execution_semantics_refuse_in_dev_mode(panel, monkeypatch):
+    """D32 boundary: a different execution case refuses even in default dev."""
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    expected = copy.deepcopy(panel["runtime"])
+    expected["serve_flags"] = {"TESSERA_SERVE_MODE": "streamed"}  # valid, but the wrong case
+    with pytest.raises(ValueError, match="observed runtime differs from independent expected context"):
+        tp.validate_panel(panel, expected_runtime=expected)

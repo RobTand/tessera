@@ -9,6 +9,22 @@
 # under <out_dir> (HOME/TMPDIR/Triton and torch-extension caches included).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
+BENCH_PY=${BENCH_PY:-bench_t8r.py}
+DOCKER_IDENTITY=(--user "$(id -u):$(id -g)")
+mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
+# D38 exercises the same source entry and output-directory owner before CUDA.
+if [[ "$BENCH_PY" == bench_geometry.py && " $* " == *" --cpu-preflight "* ]]; then
+  printf 'D38 Docker user mapping: %s; output owner: %s\n' "${DOCKER_IDENTITY[*]}" "$(stat -c %u:%g "$OUT/home")"
+  for directory in "$OUT" "$OUT/home" "$OUT/home/torch_extensions" "$OUT/tmp" "$OUT/triton"; do
+    mkdir -p "$directory"
+    probe=$(mktemp "$directory/d38-user.XXXXXX")
+    printf 'D38-user-%s' "$(id -u)" > "$probe"
+    [[ "$(cat "$probe")" == "D38-user-$(id -u)" ]]
+    rm -- "$probe"
+  done
+  PYTHONPATH="$CHECKOUT/src:${PYTHONPATH:-}" exec "${BENCH_CPU_PYTHON:-/home/rob/venvs/pb-cpu/bin/python}" \
+    "$CHECKOUT/experiments/t8r_speed/$BENCH_PY" --out "$OUT" "$@"
+fi
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
@@ -23,12 +39,17 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ ! -v TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH=$TESSERA_ROUTED_FUSED_VALUE_A_PREFETCH")
 [[ ! -v TESSERA_ROUTED_FUSED_FP4_A_PREFETCH ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_FP4_A_PREFETCH=$TESSERA_ROUTED_FUSED_FP4_A_PREFETCH")
 [[ ! -v TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH=$TESSERA_ROUTED_FUSED_MMA8_GATE_UP_B_PREFETCH")
+[[ ! -v TESSERA_ROUTED_FUSED_PAIRED_K32 ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_PAIRED_K32=$TESSERA_ROUTED_FUSED_PAIRED_K32")
+[[ ! -v TESSERA_ROUTED_FUSED_MMA8_A_RING ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_MMA8_A_RING=$TESSERA_ROUTED_FUSED_MMA8_A_RING")
 ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
 for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == --artifact ]]; then j=$((i+1)); ART=${!j}; fi
 done
-[[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
-mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
+ART_MOUNT=()
+if [[ "$BENCH_PY" != bench_geometry.py ]]; then
+  [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
+  ART_MOUNT=(-v "$ART":"$ART":ro)
+fi
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
 HEAD=${TESSERA_HEAD:-$(git -C "$CHECKOUT" rev-parse HEAD 2>/dev/null || echo unknown)}
 STATE=${TESSERA_STATE:-$(git -C "$CHECKOUT" status --short 2>/dev/null | tr '\n' ';' || echo unknown)}
@@ -77,10 +98,17 @@ fi
 # and separately reviewed finite timing/repeatability resource windows.
 if [[ "${BENCH_DIRECT_VLLM:-0}" == 1 ]]; then
   [[ -z "${BENCH_STRICT_STAGED:-}" ]] || { echo "held-original-FD mode cannot also use staged input transport" >&2; exit 2; }
-  [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol" >&2; exit 2; }
-  if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
-  elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
-  else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
+  if [[ " $* " == *" --paired-k32-numerics "* && " $* " == *" --direct-vllm-inputs "* ]]; then
+    # Closed paired batch uses held FDs, but always stays inside PB execution.
+    [[ -n "${PRISMABUILD_ACTION_KEY:-}" ]] || { echo "paired custom-op batch requires an admitted PrismaBuild attempt" >&2; exit 2; }
+    [[ " $* " != *" --comparison-protocol "* ]] || { echo "paired numeric mode excludes a PM comparison protocol" >&2; exit 2; }
+    DIRECT_TIMEOUT=240
+  else
+    [[ " $* " == *" --comparison-protocol "* ]] || { echo "direct transport requires a closed PM protocol or the closed paired numeric mode" >&2; exit 2; }
+    if [[ " $* " == *" --comparison-phase numeric "* ]]; then DIRECT_TIMEOUT=240
+    elif [[ " $* " == *" --comparison-phase timing "* || " $* " == *" --comparison-phase repeatability "* ]]; then DIRECT_TIMEOUT=600
+    else echo "held-original-FD transport requires closed numeric, timing or repeatability phase" >&2; exit 2; fi
+  fi
   [[ "${BENCH_OWNER_TOKEN:-}" =~ ^[0-9a-f]{32}$ ]] || { echo "missing owned-container token" >&2; exit 2; }
   [[ -d "${PB_CLIENT_ROOT:-}/src/prismabuild" ]] || { echo "missing published manifest reader" >&2; exit 2; }
   [[ ! -e "$OUT/owned.cid" && ! -e "$OUT/owner-token.txt" ]] || { echo "owned container evidence already exists" >&2; exit 2; }
@@ -158,8 +186,8 @@ EXT_BEFORE=$(ext_libs)
 echo "ext_dir=$EXT_DIR prebuilt=[$(echo "$EXT_BEFORE" | tr '\n' ';')]"
 rc=0
 "${RUN_PREFIX[@]}" docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" "${DIRECT_OPTS[@]}" \
-  --user "$(id -u):$(id -g)" \
-  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" -v "$ART":"$ART":ro -v "$OUT":"$OUT" \
+  "${DOCKER_IDENTITY[@]}" \
+  -v "$CHECKOUT":/work:ro "${SRC_MOUNT[@]}" "${ART_MOUNT[@]}" -v "$OUT":"$OUT" \
   -e KERNEL_SHA="$KERNEL_SHA" \
   -e HOME="$OUT/home" -e TMPDIR="$OUT/tmp" -e TRITON_CACHE_DIR="$OUT/triton" \
   -e TORCH_EXTENSIONS_DIR="$CONTAINER_EXT" \

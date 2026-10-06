@@ -18,19 +18,19 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments/t8r_speed"), str(ROOT / "tests")]
 
-SOURCE_SHA = "bcdd43f61005bb03822ccc04c36d1fddc96a22da7ae98486692fa7e47372bb40"
-NATIVE_ROOT = Path("/mnt/shared/tessera-measurements/combined-native-874-875-739-20261003/cpu-builds-bcdd43f6")
+SOURCE_SHA = "ebdfa49e0f8d3389d0e0be59821546668a08a81bea104d47f1650e34e63465d3"
+NATIVE_ROOT = Path("/mnt/shared/tessera-measurements/t4-875-composed-qual-20261004/cpu-builds-a3a599ec")
 BANKS = {
-    0: {"module": "tessera_routed_fused_e2m1", "bytes": 1889544,
-        "sha256": "42630354985b18b78bbf75c5977094f5785dd9963fe9927426e865c4f7212bff",
-        "record_bytes": 2439, "record_sha256": "02ab5a7e607895052f4d3683e50eaca40516a1c5a0ccb36fe442a6e7c560b4bc",
-        "finalization_bytes": 2364, "finalization_sha256": "83e7b665b05b882b30365ed3f6fa58d0319d80a0086ee1256689e82a5a280c04",
-        "action_key": "b70ff504727fef3381ec18db3dffed35260ed7ef5709ab7dbe22feaddff681bd"},
-    4: {"module": "tessera_routed_fused_e2m1_apf4", "bytes": 1889584,
-        "sha256": "05c2ab4049b1426869906aa8e46c4ec6f826ac6bc602bf4de4540becdba6d508",
-        "record_bytes": 2459, "record_sha256": "752929fc6444343242cf32c2cb53ed074893cef6c2ca5db4ef1c5b20572c5156",
-        "finalization_bytes": 2404, "finalization_sha256": "fdf833a508705a5409264517ebad607ddde953f56ceb989b7d9367701d4c3be1",
-        "action_key": "b45dfd00b6edd4a6529c8562c62d16edf2d988801ebf7f473f65ddf63012f861"},
+    0: {"module": "tessera_routed_fused_e2m1", "bytes": 1892000,
+        "sha256": "1302ad713309ef54a62a6a4ff9edeed7d61306803ce820df9c704f3ca279afbf",
+        "record_bytes": 2425, "record_sha256": "8545d98c733ff884933fe50018190023632f13c8ee77e655f839c39e862ad0b4",
+        "finalization_bytes": 2329, "finalization_sha256": "5a243e4241e8f5f11b9a395381bb64c57d50626d3c5f0dcafae03a54ccb3a7b6",
+        "action_key": "917cc5a474d39d0b97db9fbeb65939dba68dac62c11ad5ff08db340ec5bbf0f7"},
+    4: {"module": "tessera_routed_fused_e2m1_apf4", "bytes": 1892040,
+        "sha256": "7111322823e7677795e7e18df11bdff5d0e233f0672383125950f950c1cc2c1a",
+        "record_bytes": 2445, "record_sha256": "1685d289ff59fae431cee4f1061977ce4182f194c1d91797a7981c99123ceef9",
+        "finalization_bytes": 2369, "finalization_sha256": "4e44e45931ea337cf9f16cfc38a69a4d802ef9a257bdbf5f1f7fa787bd28f81c",
+        "action_key": "b9e2173f70f1bba64b0142454ababd45ad36bb435fc6be12237f2bff1e674b83"},
 }
 for _arm, _bank in BANKS.items():
     _bank["root"] = NATIVE_ROOT / f"ext-fp4-b{_arm}"

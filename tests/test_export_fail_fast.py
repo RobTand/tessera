@@ -15,6 +15,7 @@ import torch
 from safetensors.torch import save_file
 
 from tessera import export_serving
+from tessera import serving_parts
 
 FAKE_COMMIT = "failfast-fake-commit"
 
@@ -29,7 +30,9 @@ def _tiny_source(path):
 def _blind_commit(monkeypatch):
     monkeypatch.delenv("TESSERA_GIT", raising=False)
     monkeypatch.setattr(subprocess, "check_output", _no_git)
-    monkeypatch.setattr(export_serving, "_installed_commit_id", lambda: None)
+    # ``git_hash`` moved to the identity owner (tessera.serving_parts) and
+    # resolves its install fallback there; the blind stays on that owner.
+    monkeypatch.setattr(serving_parts, "_installed_commit_id", lambda: None)
 
 
 def _no_git(*args, **kwargs):

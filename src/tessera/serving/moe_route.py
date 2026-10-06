@@ -113,7 +113,9 @@ from .residency import named_resident_tensors
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_BF16, TESSERA_FP8, launch_pairs, route_launches,
                      moe_census_symbol_base as census_symbol_base,
-                     expert_role_declarations, parse_tessera_expert_blob,
+                     expert_rungs_mixed, expert_role_declarations,
+                     stack_effective_rungs,
+                     parse_tessera_expert_blob,
                      WINDOW_MOE_COMPACT_SYMBOL,
                      validate_tessera_moe_scheme)
 from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
@@ -354,8 +356,8 @@ class PreparedTesseraPackedBf16MoeExperts:
 
 def _parsed_experts(blobs, declared_group, target, device):
     """One parsing/role-validation seam for resident and research owners."""
-    role_declarations = expert_role_declarations(declared_group)
     for expert, expert_blobs in enumerate(blobs):
+        role_declarations = expert_role_declarations(declared_group, expert=expert)
         if len(expert_blobs) != len(role_declarations):
             raise ValueError(
                 f"{target} expert {expert}: {len(expert_blobs)} container(s) for "
@@ -454,7 +456,8 @@ def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, 
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
         plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
-        axis = PreparedTesseraFp8Module.axis(len(blobs[group]))
+        axis = PreparedTesseraFp8Module.axis(len(blobs[group]),
+                                           heterogeneous=expert_rungs_mixed(declaration))
         for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
                                                        f"{target} {group}", device)):
             axis.put(expert, prepare_tessera_fp8_module(shard_parsed_roles(roles, plan),
@@ -487,7 +490,8 @@ def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
         plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
-        axis = PreparedTesseraBf16Module.axis(len(blobs[group]))
+        axis = PreparedTesseraBf16Module.axis(len(blobs[group]),
+                                            heterogeneous=expert_rungs_mixed(declaration))
         for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
                                                        f"{target} {group}", device)):
             axis.put(expert, prepare_tessera_bf16_module(shard_parsed_roles(roles, plan),
@@ -544,6 +548,110 @@ def _compact_expert_units(blob, declared_role, plan, target, *, device, family,
         **_role_cut(plan, name))
 
 
+def refuse_unresearched_mixed_rungs(declared, target: str, *,
+                                    research_selected=None) -> None:
+    """Refuse a PRODUCTION load of a non-uniform rung schedule, at the route's
+    one entry -- before any lane branch, intake or allocation can exist.
+
+    Divergent expert schedules or unequal gate/up strides cannot take the
+    v45 fused lane and reach the compact-adapter cliff. A cross-group-only
+    difference (uniform gate/up, another uniform down rung) may satisfy the
+    existing per-projection fused predicate; eligibility is not a receipt.
+    Neither case has a served per-unit qualification packet here, so the
+    default builder refuses every non-uniform assignment until that packet
+    admits it. Explicit ``ResearchSelectedMoeConfig`` construction retains
+    the existing fused predicate and compact fallback, without claiming new
+    qualification. Uniform artifacts, encoder defaults, cells and pins are
+    unchanged; the guard also covers compressed per-role and group-only
+    differences, not merely the presence of an expert rate matrix.
+    """
+    if research_selected is not None:
+        return
+    rungs = stack_effective_rungs(declared)
+    if len(rungs) > 1:
+        raise ValueError(
+            f"tessera target {target!r}: the stack declares rungs {sorted(rungs)} across its "
+            "expert projections without served per-unit qualification. Divergent expert "
+            "schedules or gate/up strides reach the compact-adapter cliff; other shapes "
+            "may satisfy the existing fused predicate, but eligibility is not a receipt. "
+            "Per-unit rates are research-only until a served GPU packet qualifies them: load through the "
+            "explicit research route (moe_route.ResearchSelectedMoeConfig, "
+            "research_selected).")
+
+
+def _mixed_axis_word_runs(declared, plans):
+    """Exact flat word/run sizes per (group, part, expert) for a mixed stack.
+
+    The sizes are the wire's own arithmetic, read off the DECLARED rungs and
+    this rank's shard plan -- and ``WindowUnitAxis.put`` re-validates every
+    unit's words and runs against them, so a declared size is a binding check,
+    never a tolerated guess.  Per unit: the grammar's canonical schedule over
+    the unit's SOURCE columns (``grammar.bresenham_rate_schedule`` of the
+    per-code root, capped at the routed window lane's own rate bound), cut to
+    the rank's column range where the plan cuts one.  A slice aligned to whole
+    quota superblocks is exact for every legal placement -- the manifest
+    enforces exactly ``grammar.superblock_quota_ok`` on the wire -- and any
+    other slice carries the writer's canonical placement, which the put-time
+    check makes binding; the exporter independently refuses a non-aligned
+    importance placement whose sizes would differ, before the shard write.
+    ``w13`` is row-cut only and keeps the whole schedule; rows pad to the
+    512-row tile, so words = ``n_tiles * 16 * sum(local rates)`` and runs are
+    one per distinct local rate.
+
+    Returns ``{group: {part: [(words, runs) per expert]}}``, or ``None`` when
+    no group is mixed -- a uniform stack predeclares nothing and keeps the
+    legacy rectangular allocation.
+    """
+    if not any(expert_rungs_mixed(declared["groups"][g]) for g in MOE_GROUPS):
+        return None
+    from fractions import Fraction
+
+    from ..alphabet import grid_for_name
+    from ..compact_prep import WINDOW_GEMM_RATE_MAX
+    from ..grammar import bresenham_rate_schedule
+    from ..kernel_window_gemv import TILE_ROWS
+    from .sharding import AXIS_COLUMNS, AXIS_ROWS
+
+    sizes = {}
+    for group in MOE_GROUPS:
+        group_decl = declared["groups"][group]
+        matrix = group_decl.get("expert_role_q256")
+        if matrix is None:
+            continue
+        arity = int(grid_for_name(group_decl["grid"]).arity)
+        columns = int(group_decl["columns"])
+        plan = plans[group]
+        out = {}
+        for index, (name, role_rows) in enumerate(group_decl["roles"]):
+            name = str(name)
+            if plan.axis is None:
+                rows_local, c0, c1 = int(role_rows), 0, columns
+            elif plan.axis == AXIS_ROWS:
+                shard = plan.role(name)
+                rows_local, c0, c1 = shard.hi - shard.lo, 0, columns
+            else:
+                if plan.axis != AXIS_COLUMNS:
+                    raise ValueError(
+                        f"the {group} plan cuts axis {plan.axis!r}; a routed group cuts rows "
+                        "(w13) or columns (w2) only")
+                shard = plan.role(name)
+                rows_local, c0, c1 = int(role_rows), shard.lo, shard.hi
+            if rows_local % arity:
+                raise ValueError(
+                    f"{group} role {name!r}: this rank's {rows_local} row(s) do not divide "
+                    f"into whole {arity}-row codes; the cut is not one the wire can start from")
+            n_tiles = -(-(rows_local // arity) // TILE_ROWS)
+            per_expert = []
+            for e, row in enumerate(matrix):
+                root = Fraction(int(row[index]) * arity, 256)
+                local = bresenham_rate_schedule(root, columns,
+                                                cap=WINDOW_GEMM_RATE_MAX)[c0:c1]
+                per_expert.append((n_tiles * 16 * sum(local), len(set(local))))
+            out[name] = per_expert
+        sizes[group] = out
+    return sizes
+
+
 class _RankLocalPackedIntake:
     """TP2 loader ownership: one validated original becomes one local packed role.
 
@@ -571,6 +679,22 @@ class _RankLocalPackedIntake:
         self._has_loaded = False
         self._scratch = {}  # one BODY transfer buffer per owning routed stack
         self.axis = {}
+        # Per-unit mixed schedules (#967): which groups differ across experts.
+        # A mixed group loads through predeclared exact sizes and runs wholly
+        # legacy; the piece-major knob is a uniform-schedule spelling and
+        # refuses up front rather than tagging projections apart.  The refusal
+        # reads the EFFECTIVE rung set, not the matrix's presence: a stack
+        # that compresses to a per-role list (every expert's up one rung while
+        # gate/down sit at another) differs across projections the same way,
+        # so the knob refuses for it too.
+        self._mixed = {g: expert_rungs_mixed(declared['groups'][g]) for g in MOE_GROUPS}
+        self._non_uniform = len(stack_effective_rungs(declared)) > 1
+        if self._non_uniform and _piece_major_requested():
+            raise ValueError(
+                f"{target}: the piece-major resident layout knob ({ENV_PIECE_MAJOR}) re-lays "
+                "one-run rate-4 bodies only. A non-uniform per-unit schedule would place "
+                "some projections piece-major and others legacy, and no reader re-tags a "
+                "placed slot. Unset the knob: a non-uniform stack runs wholly legacy.")
         if self.compact:
             if len(self.roles['w13']) != 2:
                 raise ValueError(
@@ -583,10 +707,16 @@ class _RankLocalPackedIntake:
             # Freeze the reader choice for this resident owner. A later env
             # change cannot cause two callbacks to place different layouts.
             self._piece_major = _piece_major_admissible(window_family)
+            # A mixed group declares each unit's exact flat word/run place, so
+            # the axis allocates the whole part once at its first put and no
+            # per-unit weight is retained or padded (#967).  Uniform groups
+            # predeclare nothing: the legacy allocation stands.
+            word_runs = _mixed_axis_word_runs(declared, self.plans)
             self.axis = {g: WindowUnitAxis(
                 int(declared['experts']),
                 tuple(str(role['roles'][0][0]) for role in self.roles[g]),
-                family=window_family) for g in MOE_GROUPS}
+                family=window_family,
+                word_runs=None if word_runs is None else word_runs.get(g)) for g in MOE_GROUPS}
             self.axes = {g: None for g in MOE_GROUPS}
         else:
             from .bf16_route import PreparedTesseraBf16Module
@@ -594,7 +724,8 @@ class _RankLocalPackedIntake:
 
             module_type = (PreparedTesseraFp8Module if self.family == TESSERA_FP8
                            else PreparedTesseraBf16Module)
-            self.axes = {g: module_type.axis(int(declared['experts']), parts=len(self.roles[g]))
+            self.axes = {g: module_type.axis(int(declared['experts']), parts=len(self.roles[g]),
+                         heterogeneous=expert_rungs_mixed(declared['groups'][g]))
                          for g in MOE_GROUPS}
 
     def placed_projections(self) -> int:
@@ -628,7 +759,9 @@ class _RankLocalPackedIntake:
                     "A CPU load is not a supported production device for this lane")
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
             name, unit = _compact_expert_units(
-                blob, self.roles[group][index], self.plans[group], target,
+                blob, expert_role_declarations(self.declared['groups'][group],
+                                               expert=expert)[index],
+                self.plans[group], target,
                 device=device, family=family, scratch=self._scratch)
             # The resident word order is decided HERE, once, before the single
             # stack write: an opt-in piece-major re-lay of an eligible
@@ -648,7 +781,10 @@ class _RankLocalPackedIntake:
             self.axis[group].put(name, expert, unit)
             self._has_loaded = True
             return
-        parsed = parse_tessera_expert_blob(blob, self.roles[group][index], target, device=self.device)
+        parsed = parse_tessera_expert_blob(
+            blob, expert_role_declarations(self.declared['groups'][group],
+                                           expert=expert)[index],
+            target, device=self.device)
         local = shard_parsed_roles(parsed, self.plans[group])
         from .bf16_route import prepare_tessera_bf16_module
         from .fp8_route import prepare_tessera_fp8_module
@@ -835,6 +971,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     if research_selected is not None and not isinstance(research_selected, ResearchSelectedMoeConfig):
         raise ValueError("research_selected requires an explicit ResearchSelectedMoeConfig")
     declared = validate_tessera_moe_scheme(scheme, prefix)
+    # THE MIXED-SCHEDULE GUARD (#967), before any lane branch or intake can
+    # exist: a production load of a stack whose rungs differ per expert
+    # refuses here instead of silently landing on the compact Triton adapter.
+    refuse_unresearched_mixed_rungs(declared, prefix, research_selected=research_selected)
     family = declared["family"]
     _bind_module_prefix(layer, prefix)
     from .scheme import refuse_a_family_with_no_expert_route
@@ -1198,6 +1338,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
                 self._native = prepared.adapter()
+                self._packed = prepared.native_owner()
                 if research_selected is not None:
                     self._research_phase = 'ready'
                 # The adapter names its own launch: the compact Triton pair

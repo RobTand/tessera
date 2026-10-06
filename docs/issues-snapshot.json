@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-04T19:31:12Z",
+ "generated": "2026-10-06T18:21:59Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -581,7 +581,7 @@
    },
    "1128": {
     "state": "OPEN",
-    "title": "[P3] Stage A chain: move the remaining entry I/O off the compute thread (read-ahead, write-behind, one spool poll per write, off-thread unlinks)"
+    "title": "[P3] Stage A chain: move the remaining entry I/O off the compute thread (read-ahead, write-behind, off-thread unlinks)"
    },
    "1129": {
     "state": "CLOSED",
@@ -1708,7 +1708,7 @@
     "title": "[P2] Tessera export preflight reads no priced wire bytes"
    },
    "1382": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] file_hash_workers defaults to 1 in the joint prepare but 4 in prepare_cache; a plan without it loads renders serially"
    },
    "1383": {
@@ -4232,7 +4232,7 @@
     "title": "Tessera cost-table identity guard ignores the required Hessian identity triple"
    },
    "1950": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] No qualified GB10 host interpreter at the current PrismaBuild pin dc4803da (SDK4): pbtest cannot place GB10 shards"
    },
    "1951": {
@@ -4872,7 +4872,7 @@
     "title": "[P3] PQ test speed: remove the redundant 4x31 s delayed-startup sleeps in test_tessera_plan_input_binding"
    },
    "2094": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Shape-time prices must authenticate independent panel and reload evidence (#1583 follow-up)"
    },
    "2095": {
@@ -4956,8 +4956,8 @@
     "title": "Prepare a genuine checkpoint-export component for PB #905 pacing A/B"
    },
    "2112": {
-    "state": "OPEN",
-    "title": "Bind shape-time prices to reviewed PB checker completions"
+    "state": "CLOSED",
+    "title": "Fix authenticated shape-price reload and current allocator replay intake"
    },
    "2113": {
     "state": "CLOSED",
@@ -5092,7 +5092,7 @@
     "title": "Prepare nonactivating Tessera v11 run-table reader compatibility"
    },
    "2143": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Guard original quantum source authority before profile discovery"
    },
    "2144": {
@@ -5177,7 +5177,7 @@
    },
    "2162": {
     "state": "OPEN",
-    "title": "Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
+    "title": "[P2+] Provide real STATX_DIOALIGN-capable local scratch for Stage B fleet qualification"
    },
    "2163": {
     "state": "CLOSED",
@@ -5396,12 +5396,12 @@
     "title": "[P2+] Qualify candidate container tickets with real creator-scope membership"
    },
    "2211": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Attest PB SDK3/Tessera b40 interpreter across the three-box fleet"
    },
    "2212": {
-    "state": "OPEN",
-    "title": "Attest PB SDK3/Tessera b40 interpreters on all three fleet hosts"
+    "state": "CLOSED",
+    "title": "Attest the canonical SDK4 (dc4803) GB10 host interpreter across fleet tags; retain SDK3 receipts as history"
    },
    "2213": {
     "state": "CLOSED",
@@ -5423,37 +5423,365 @@
     "state": "CLOSED",
     "title": "Integrate approved fixture-cost and corrected image-bootstrap heads"
    },
+   "2218": {
+    "state": "CLOSED",
+    "title": "[P2] test_packed_joint_checkpoint_resume flaked on producer_source_sha256 under xdist (package-tree hash vs concurrent writers?)"
+   },
+   "2219": {
+    "state": "CLOSED",
+    "title": "[P1] Cache filenames are not injective in the qualified name: two Linears can share one rendered-weight file and nothing refuses"
+   },
    "222": {
     "state": "CLOSED",
     "title": "Routed export silently re-encodes from source when an allocation carries no projection at all"
+   },
+   "2220": {
+    "state": "CLOSED",
+    "title": "One file_hash_workers derivation for the joint prepare; name the moved source file on a producer-source mismatch"
+   },
+   "2221": {
+    "state": "CLOSED",
+    "title": "Integrate approved SDK4 interpreter attestation and the Rate pools docstring correction"
+   },
+   "2222": {
+    "state": "CLOSED",
+    "title": "[P2] _attest_placement counts retired SDK3 interpreter entries as attested"
+   },
+   "2223": {
+    "state": "CLOSED",
+    "title": "Refuse non-injective production cache filename sets at open (#2219)"
+   },
+   "2224": {
+    "state": "CLOSED",
+    "title": "Route remaining header decoders and name grammars to their owners (#1303)"
+   },
+   "2225": {
+    "state": "CLOSED",
+    "title": "test: deduplicate repeated in-process test work; two stale consumer fixtures move from 32 rows to the shared fixture's OUTPUT_FEATURES=8"
+   },
+   "2226": {
+    "state": "CLOSED",
+    "title": "Isolate the checker-config fixture from the packaged tree; name the writer when producer_source_sha256 refuses"
+   },
+   "2227": {
+    "state": "CLOSED",
+    "title": "Route raw hashlib hexdigest sites to the digest owners; full remaining-site census (PQ #1301)"
+   },
+   "2228": {
+    "state": "CLOSED",
+    "title": "[P2] Untagged suite fan-out fails on Sparks: tests pin a dl380g10-only producer interpreter (pq2131-producer-b770727c)"
+   },
+   "2229": {
+    "state": "CLOSED",
+    "title": "[P1] Census caller omits --source-digest-cache, so every census still hashes the whole checkpoint (tessera#790)"
    },
    "223": {
     "state": "CLOSED",
     "title": "Write the export leg's inputs after the resume identity, not before (#211)"
    },
+   "2230": {
+    "state": "CLOSED",
+    "title": "[P1] Add default-off joint AURA sequence attribution with source-bound controls"
+   },
+   "2231": {
+    "state": "CLOSED",
+    "title": "[P2] Remaining write paths still name rendered shards with the non-injective qname mangling (MTP append, campaign encode, wire shards)"
+   },
+   "2232": {
+    "state": "CLOSED",
+    "title": "Integrate approved cache filename injectivity (#2219) and checker-config isolation (#2218)"
+   },
+   "2233": {
+    "state": "CLOSED",
+    "title": "[P2] Deduplicate repeated CPU fixture executions and align row-startup consumers"
+   },
+   "2234": {
+    "state": "CLOSED",
+    "title": "[P1] Qualify the PQ1301 byte/text digest routing slice without breaking standalone authentication"
+   },
+   "2235": {
+    "state": "CLOSED",
+    "title": "[P1] Complete remaining header and qname owner slice with real consumer proof"
+   },
+   "2236": {
+    "state": "OPEN",
+    "title": "fix: the io engine seals on interpreters without CPython build-time fcntl/os names (1896)"
+   },
+   "2237": {
+    "state": "OPEN",
+    "title": "[P1] Count and stamp real-vs-synthetic multimodal calibration composition"
+   },
+   "2238": {
+    "state": "OPEN",
+    "title": "Refuse a joint plan without its campaign chain, by name (#1293)"
+   },
+   "2239": {
+    "state": "CLOSED",
+    "title": "Pass the producer's --source-digest-cache from the census caller (#2229)"
+   },
    "224": {
     "state": "CLOSED",
     "title": "Resolve a format name once, in the registry; make the production-cache fill gate total (#218)"
+   },
+   "2240": {
+    "state": "CLOSED",
+    "title": "Integrate accepted test dedup (#2233) and checker-config isolation (#2218)"
+   },
+   "2241": {
+    "state": "CLOSED",
+    "title": "[P1] The io engine cannot import or open sealed buffers on interpreters without build-time fcntl/os seal names"
+   },
+   "2242": {
+    "state": "CLOSED",
+    "title": "Integrate approved PR2220: one render-file worker default (#1382) and per-file producer source diagnostic"
+   },
+   "2243": {
+    "state": "CLOSED",
+    "title": "[P2] Census caller writes its request file before refusing an output inside the checkpoint; caller key rides inside the producer block"
+   },
+   "2244": {
+    "state": "OPEN",
+    "title": "[P1] Synthetic-only calibration composition stamps the requested count and unlabeled row provenance"
+   },
+   "2245": {
+    "state": "CLOSED",
+    "title": "Fast track: census caller passes the producer's --source-digest-cache (#2229)"
+   },
+   "2246": {
+    "state": "CLOSED",
+    "title": "Integrate approved default-off joint AURA sequence attribution (#1962)"
+   },
+   "2247": {
+    "state": "CLOSED",
+    "title": "Fix projected-preparation residency and effective allocator state (#2039)"
+   },
+   "2248": {
+    "state": "CLOSED",
+    "title": "Integrate approved remaining safetensors header and name grammar owners (#2235)"
+   },
+   "2249": {
+    "state": "CLOSED",
+    "title": "[P2] Refuse an expert-projection output inside the checkpoint before any write; describe the caller key inside the carried producer block"
    },
    "225": {
     "state": "CLOSED",
     "title": "Read the capture-context roster from Tessera, widen the dead-override census, stop a test leaking its orphan (#216, #217, #219)"
    },
+   "2250": {
+    "state": "CLOSED",
+    "title": "Refuse colliding cache-filename sets at the MTP append and group joint aura names by resolved root (#2231)"
+   },
+   "2251": {
+    "state": "CLOSED",
+    "title": "Integrate approved expert-projection output refusal before any write (#2243)"
+   },
+   "2252": {
+    "state": "CLOSED",
+    "title": "Integrate approved byte/text digest routing slice (#2234; epic #1301 stays open)"
+   },
+   "2253": {
+    "state": "OPEN",
+    "title": "fix: bind acquisition deferred domains to authenticated checkpoint menus (Closes #2195)"
+   },
+   "2254": {
+    "state": "CLOSED",
+    "title": "[P2] tools/bench_fence_rehash.py patches jce.hashlib, which no longer exists after the digest routing (AttributeError)"
+   },
+   "2255": {
+    "state": "CLOSED",
+    "title": "Integrate approved cache filename injectivity, corrected rule (#2219)"
+   },
+   "2256": {
+    "state": "CLOSED",
+    "title": "fix: refuse campaign, wire and source snapshot filename collisions"
+   },
+   "2257": {
+    "state": "CLOSED",
+    "title": "Test: stop PRISMAQUANT_PROD_ACT_SCALES leaking between tests; pin the dense sidecar oracle policy"
+   },
+   "2258": {
+    "state": "CLOSED",
+    "title": "[P2] run_adjoint_capture and joint_cost_quantum leave PRISMAQUANT_PROD_ACT_SCALES set after they return"
+   },
+   "2259": {
+    "state": "CLOSED",
+    "title": "[P1] Route package JSON identity recipes through existing named profiles"
+   },
    "226": {
     "state": "CLOSED",
     "title": "Tessera campaign and export lane: ask the contract, not the format name (#221)"
+   },
+   "2260": {
+    "state": "CLOSED",
+    "title": "[P1] Keep required domain imports and malformed-header consumer regressions visible"
+   },
+   "2261": {
+    "state": "CLOSED",
+    "title": "Integrate approved write-side cache filename injectivity (#2231)"
+   },
+   "2262": {
+    "state": "CLOSED",
+    "title": "[P1] Qualify the D13 public Tessera master pin for the T8 ship window"
+   },
+   "2263": {
+    "state": "CLOSED",
+    "title": "test: keep required imports and malformed-header refusals visible (pq#2260)"
+   },
+   "2264": {
+    "state": "CLOSED",
+    "title": "[P1] Stage exact public Tessera master D13 pin"
+   },
+   "2265": {
+    "state": "CLOSED",
+    "title": "[P1] test_pilot_verified_result_1293 gateway test fails depending on which files share its worker (prismabuild.core loaded from site-packages)"
+   },
+   "2266": {
+    "state": "CLOSED",
+    "title": "Integrate approved write-side collision refusals for campaign, wire and snapshots (#2231)"
+   },
+   "2267": {
+    "state": "CLOSED",
+    "title": "Test: pin the pilot gateway test to its authenticated PrismaBuild source (#2265)"
+   },
+   "2268": {
+    "state": "CLOSED",
+    "title": "Integrate accepted consumer refusal fixtures (#2260) and the pilot gateway test pin (#2265)"
+   },
+   "2269": {
+    "state": "CLOSED",
+    "title": "[P1] Route bounded JSON consumers through existing exact profiles"
    },
    "227": {
     "state": "CLOSED",
     "title": "[P1] Bind Tessera cached scores and validation to the resolved activation-scale policy"
    },
+   "2270": {
+    "state": "CLOSED",
+    "title": "[P3] Close #2231 residual MTP and campaign wire checks"
+   },
+   "2271": {
+    "state": "OPEN",
+    "title": "[P2+] Qualify sparse T8 price catalog backport against the retained producer"
+   },
+   "2272": {
+    "state": "CLOSED",
+    "title": "Integrate approved projected-preparation reservation pricing and credit reaping (#2039)"
+   },
+   "2273": {
+    "state": "CLOSED",
+    "title": "[P3] Pin campaign wire registration end to end, check seed filenames before linking, document roster scope (#2231 follow-up)"
+   },
+   "2274": {
+    "state": "OPEN",
+    "title": "[P2] Measure practical admission of the full-pass projected CUDA reservation"
+   },
+   "2275": {
+    "state": "CLOSED",
+    "title": "[P1] Keep PrismaBuild test imports out of collection"
+   },
+   "2276": {
+    "state": "CLOSED",
+    "title": "[P1] test_dsv4_real_topology_passes_the_gate_end_to_end fails when transformers' native deepseek_v4 was imported first in the same worker"
+   },
+   "2277": {
+    "state": "OPEN",
+    "title": "[P2+] Qualify sparse T8 catalog bridge for the retained producer (#2271)"
+   },
+   "2278": {
+    "state": "CLOSED",
+    "title": "Isolate the real DeepSeek V4 model-walk export gate in its own process (#2276)"
+   },
+   "2279": {
+    "state": "OPEN",
+    "title": "Residual import-order exposure in DSv4/PrismaBuild tests after #2276 (nested rotary, stageb one-pass spill)"
+   },
    "228": {
     "state": "CLOSED",
     "title": "Tessera export: name which path produced the routed-expert bytes (#222) and stop bundling when no expert is selected (#229)"
    },
+   "2280": {
+    "state": "CLOSED",
+    "title": "Integration batch 28: #2270 residual MTP/campaign wire checks + #2269 bounded JSON profile routing"
+   },
+   "2281": {
+    "state": "OPEN",
+    "title": "[P0] Joint T-8 depth-sensitivity prices regress all-rates allocation"
+   },
+   "2282": {
+    "state": "CLOSED",
+    "title": "[P1] Repair mixed-rate paired uncertainty and reject single-expert-dominated rate trades"
+   },
+   "2283": {
+    "state": "CLOSED",
+    "title": "[P1] Reprice deciding T-8 routed layers on 2048-token probes for PACT"
+   },
+   "2284": {
+    "state": "CLOSED",
+    "title": "[P1] Gate the GLM census family-menu fixture cut on a 30-second critical-shard win"
+   },
+   "2285": {
+    "state": "CLOSED",
+    "title": "Fix mixed-rate paired UCB and expert-dominated rate trades"
+   },
+   "2286": {
+    "state": "OPEN",
+    "title": "[P1] Bound paired-trade report memory before real MoE allocation"
+   },
+   "2287": {
+    "state": "OPEN",
+    "title": "[P2] Qualify mixed-rate enumeration limits at real fused-group shapes"
+   },
+   "2288": {
+    "state": "OPEN",
+    "title": "[P1] Evaluate expert dominance on the whole layer before pruning menus"
+   },
+   "2289": {
+    "state": "OPEN",
+    "title": "[P1] Bind paired joint prices to the resolved format identity"
+   },
    "229": {
     "state": "CLOSED",
     "title": "[P1] Skip expert-wire bundling when the allocation keeps all experts in BF16"
+   },
+   "2290": {
+    "state": "OPEN",
+    "title": "[P2] Cover paired-trade refusal in measured-runtime allocation acceptance"
+   },
+   "2291": {
+    "state": "OPEN",
+    "title": "Paired-trade reports store per-probe arrays for every unit and option: unbounded report/memory on routed MoE (#2285 follow-up)"
+   },
+   "2292": {
+    "state": "OPEN",
+    "title": "Paired rate-trade menu: a real fused group may exceed the enumerated-combination cap (#2285 follow-up)"
+   },
+   "2293": {
+    "state": "OPEN",
+    "title": "Paired rate-trade menu-time dominance is judged per packed group, not whole layer: may drop acceptable options (#2285 follow-up)"
+   },
+   "2294": {
+    "state": "OPEN",
+    "title": "Paired UCB: joint rows stored under a format alias are refused because the check uses the requested name, not the resolved one (#2285 follow-up)"
+   },
+   "2295": {
+    "state": "OPEN",
+    "title": "Test gap: measured-runtime acceptance path has no test where a paired trade is refused (#2285 follow-up)"
+   },
+   "2296": {
+    "state": "CLOSED",
+    "title": "Integration batch 30: #2285 paired UCB and expert-dominated rate trades"
+   },
+   "2297": {
+    "state": "CLOSED",
+    "title": "Restore joint environment ownership and repair processor test tools"
+   },
+   "2298": {
+    "state": "CLOSED",
+    "title": "Keep retired interpreter receipts out of placement admission"
+   },
+   "2299": {
+    "state": "CLOSED",
+    "title": "[P3] Harden the #2265 guard tests: catch importlib and decorator imports at collection, fail closed on unmapped helpers"
    },
    "23": {
     "state": "CLOSED",
@@ -5463,25 +5791,253 @@
     "state": "CLOSED",
     "title": "Bind cached activation-aware costs to the resolved activation-scale policy (#227)"
    },
+   "2300": {
+    "state": "CLOSED",
+    "title": "Integration batch 31: #2275 keep PrismaBuild test imports out of collection (stacked on batch 30)"
+   },
+   "2301": {
+    "state": "OPEN",
+    "title": "[P1] Remove unused G3 routed-source reads and consume PB phased residency"
+   },
+   "2302": {
+    "state": "CLOSED",
+    "title": "[P1] Honor default dev-mode seal stamps across cache and paired-trade paths"
+   },
+   "2303": {
+    "state": "CLOSED",
+    "title": "Integration batch 32: #2298 retired SDK3 placement receipts (stacked on batch 31)"
+   },
+   "2304": {
+    "state": "OPEN",
+    "title": "test_an_unrecognised_deferral_reason_is_surfaced_not_waited_on times out under host load (30 s BoundaryStagingTimeout)"
+   },
+   "2305": {
+    "state": "CLOSED",
+    "title": "Integration batch 33: #2297 joint env ownership and processor test tools"
+   },
+   "2306": {
+    "state": "CLOSED",
+    "title": "Integration batch 34: #2298 retired SDK3 placement receipts (D32)"
+   },
+   "2307": {
+    "state": "CLOSED",
+    "title": "fix: honor D32 stamp-and-continue in cache and paired consumers"
+   },
+   "2308": {
+    "state": "CLOSED",
+    "title": "[P2] Scope verified-capture open refusal patch before pytest temp cleanup"
+   },
+   "2309": {
+    "state": "CLOSED",
+    "title": "[P3] Pin seed wire adoption and dynamic collection import guards"
+   },
    "231": {
     "state": "CLOSED",
     "title": "[P1] Keep priced Hessian and scale inputs bound across the exporter handoff"
+   },
+   "2310": {
+    "state": "CLOSED",
+    "title": "[P3] Check the seed wire filename before reading the source in materialization finalize() (#2273 follow-up)"
+   },
+   "2311": {
+    "state": "CLOSED",
+    "title": "Integration batch 35: #2309 seed wire adoption and import scanner guards (stacked on batch 33)"
+   },
+   "2312": {
+    "state": "CLOSED",
+    "title": "Integration batch 36: #2307 D32 stamp-and-continue in cache and paired consumers (stacked on batch 35)"
+   },
+   "2313": {
+    "state": "CLOSED",
+    "title": "Reprice deciding T-8 routed layers on real 128x2048 Fisher execution basis (#2283)"
+   },
+   "2314": {
+    "state": "CLOSED",
+    "title": "Seed wire filename refusal in finalize() runs after the source wire read; no test for a misnamed wire there (#2309 follow-up)"
+   },
+   "2315": {
+    "state": "OPEN",
+    "title": "[P1] CaptureObserver telemetry-completeness refusal discards a completed measurement (D32 violation)"
+   },
+   "2316": {
+    "state": "CLOSED",
+    "title": "Check the seed wire filename before reading the source in finalize() (#2310)"
+   },
+   "2317": {
+    "state": "CLOSED",
+    "title": "Route the reviewed tools spaced-JSON bundle through DIRECT_ASCII_SPACED_LAX (Refs #1301)"
+   },
+   "2318": {
+    "state": "CLOSED",
+    "title": "Integration batch 41: #2317 tools spaced-JSON routes through DIRECT_ASCII_SPACED_LAX (stacked on batch 38)"
+   },
+   "2319": {
+    "state": "CLOSED",
+    "title": "[P1] Allocator cannot spend the byte budget at unit granularity: consume per-unit routed rates once Tessera#967 lands"
    },
    "232": {
     "state": "CLOSED",
     "title": "[P1] Scoped census replay accepts missing or contradictory runtime-image declarations"
    },
+   "2320": {
+    "state": "CLOSED",
+    "title": "[P1] Correct behavioral equivalence and standalone validation for the spaced-JSON tools bundle"
+   },
+   "2321": {
+    "state": "CLOSED",
+    "title": "Integration batch 38: #2264 stage the exact public Tessera master D13 pin (stacked on batch 40)"
+   },
+   "2322": {
+    "state": "CLOSED",
+    "title": "Integration batch 39: #2313 reprice deciding T-8 routed layers on the real 128x2048 Fisher basis (stacked on batch 38)"
+   },
+   "2323": {
+    "state": "CLOSED",
+    "title": "[P1] Allocate research routed rates at priced-unit granularity"
+   },
+   "2324": {
+    "state": "CLOSED",
+    "title": "Integration batch 40: #2313 reprice deciding T-8 routed layers on the real 128x2048 Fisher basis"
+   },
+   "2325": {
+    "state": "CLOSED",
+    "title": "[P2] Add default-off CPU input/readset preflight to joint_adjoint_capture (D38)"
+   },
+   "2326": {
+    "state": "CLOSED",
+    "title": "fix: resume declared producer-only journal provenance (Closes #687)"
+   },
+   "2327": {
+    "state": "CLOSED",
+    "title": "Integration batch 42: #2264 D13 pin, #2317 tools spaced-JSON routes and #2326 journal stamps (one bundle)"
+   },
+   "2328": {
+    "state": "CLOSED",
+    "title": "[P1] D41: require measured kernel-bound rung allowability for production allocation"
+   },
+   "2329": {
+    "state": "OPEN",
+    "title": "[P1] Research feasibility of equal-byte per-block Tessera allocation"
+   },
    "233": {
     "state": "CLOSED",
     "title": "[P1] Validate the producer\u2019s v9 smoke-record grammar before deriving admission"
+   },
+   "2330": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse shared qname grammars in comparison and budget CLIs"
+   },
+   "2331": {
+    "state": "CLOSED",
+    "title": "[P1] D41: require current producer-admitted measured rungs in allocation"
+   },
+   "2332": {
+    "state": "CLOSED",
+    "title": "[P2] Add default-off CPU adjoint input/readset preflight"
+   },
+   "2333": {
+    "state": "CLOSED",
+    "title": "Cut the comparison and retained-budget CLIs over to the owned qname grammars (#2330)"
+   },
+   "2334": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the shared forward-KL primitive in final-vocabulary scoring"
+   },
+   "2335": {
+    "state": "CLOSED",
+    "title": "Integration batch 43: #2332 default-off CPU adjoint input/readset preflight"
+   },
+   "2336": {
+    "state": "CLOSED",
+    "title": "Reuse the shared forward-KL owner in final-vocabulary scoring"
+   },
+   "2337": {
+    "state": "CLOSED",
+    "title": "Integration batch 44: #2323 allocate research routed rates at priced-unit granularity (stacked on batch 45)"
+   },
+   "2338": {
+    "state": "CLOSED",
+    "title": "Integration batch 45: #2332 CPU adjoint preflight and #2336 final-vocabulary KL owner reuse (one bundle)"
+   },
+   "2339": {
+    "state": "OPEN",
+    "title": "[P2+] Bind Stage A produced-output launch context without input residency"
    },
    "234": {
     "state": "CLOSED",
     "title": "[P2] Preserve serving conditions in production Tessera route admission"
    },
+   "2340": {
+    "state": "CLOSED",
+    "title": "[P1] D41: delegate v1/v2 body-aware table intake to canonical producer"
+   },
+   "2341": {
+    "state": "OPEN",
+    "title": "[P2+] Bind produced-output queue without input residency"
+   },
+   "2342": {
+    "state": "CLOSED",
+    "title": "[P1] Apply declared bind-seal classification to forward-split relaunches"
+   },
+   "2343": {
+    "state": "OPEN",
+    "title": "Support explicit selected calibration capture and disjoint research moments"
+   },
+   "2344": {
+    "state": "CLOSED",
+    "title": "[P1] Refuse zero-sized reads in the shared file digest owner"
+   },
+   "2345": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse declared bind seals for forward-split relaunches"
+   },
+   "2346": {
+    "state": "CLOSED",
+    "title": "Integration batch 47: #2341 produced-output queue binding and #2345 forward-split bind-seal reuse (one bundle)"
+   },
+   "2347": {
+    "state": "CLOSED",
+    "title": "fix: refuse zero read counts in file_sha256hex (#2344)"
+   },
+   "2348": {
+    "state": "CLOSED",
+    "title": "Integration batch 48: #2345 forward-split bind-seal reuse and #2347 zero read-count refusal (one bundle, no #2341)"
+   },
+   "2349": {
+    "state": "CLOSED",
+    "title": "[P2] Consolidate digest test nodes while preserving every asserted outcome"
+   },
    "235": {
     "state": "CLOSED",
     "title": "Bind Tessera export inputs and preserve runtime admission evidence"
+   },
+   "2350": {
+    "state": "CLOSED",
+    "title": "Integration batch 49: D41 v1/v2 body-aware rung allowability (#2331 + #2340 at ac7c082f), on main"
+   },
+   "2351": {
+    "state": "CLOSED",
+    "title": "Integration batch 51: consolidate digest test nodes, preserving all 618 outcomes (#2349), on main"
+   },
+   "2352": {
+    "state": "OPEN",
+    "title": "[P1] RTN FP8 helper returns NaN for finite FP16 zero and tiny rows"
+   },
+   "2353": {
+    "state": "OPEN",
+    "title": "[P2] D41 tests need the canonical rung-allowability producer: composed suites on the pinned interpreter fail without it"
+   },
+   "2354": {
+    "state": "OPEN",
+    "title": "Fix FP16 NaN in the RTN FP8 helper via an FP32 intermediate roundtrip"
+   },
+   "2355": {
+    "state": "OPEN",
+    "title": "[P1] Consolidate the allocator partition and admitted-cost byte SHA consumers"
+   },
+   "2356": {
+    "state": "OPEN",
+    "title": "Integration batch 55: #2341 produced-output queue binding and #2236 io-engine seal (one bundle)"
    },
    "236": {
     "state": "CLOSED",
@@ -7484,7 +8040,7 @@
     "title": "Accept the reuse fields the receipt writer's own code emits"
    },
    "687": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] A reader-only producer change costs the whole qualification journal; consider a second closed source transition (P2, decision)"
    },
    "688": {
@@ -8885,9 +9441,57 @@
     "state": "CLOSED",
     "title": "The \"pinned\" vLLM is a floating tag, and the two boxes hold different images under it"
    },
+   "1000": {
+    "state": "CLOSED",
+    "title": "[P2] Resolve a string path as the directory an enumeration reads"
+   },
+   "1001": {
+    "state": "CLOSED",
+    "title": "[P1] An ordinary import is not masked by a probe of the same file"
+   },
+   "1002": {
+    "state": "OPEN",
+    "title": "[P2+] Bound eager control and piece-major decision phases to native 30-minute gangs"
+   },
+   "1003": {
+    "state": "CLOSED",
+    "title": "Bound seeded eager control and piece-major-only native phases"
+   },
+   "1004": {
+    "state": "CLOSED",
+    "title": "[P2+] D41 staged v2 activation selects an invalid legacy native TCQ table"
+   },
+   "1005": {
+    "state": "OPEN",
+    "title": "[P1] Qualify actual mixed rate and dense T4 geometry coverage"
+   },
+   "1006": {
+    "state": "CLOSED",
+    "title": "Add actual mixed TCQ and dense twelve-bit T4 geometry readers"
+   },
+   "1007": {
+    "state": "OPEN",
+    "title": "[P1] Derive the packed T4 GPU arithmetic correctness bound before qualification"
+   },
+   "1008": {
+    "state": "OPEN",
+    "title": "Derive packed T4 FP4 arithmetic bound from float32 precision"
+   },
+   "1009": {
+    "state": "OPEN",
+    "title": "[P2] Legal 16-column acquisition cannot use the fixed 32-column Hessian-aware LDL block"
+   },
    "101": {
     "state": "CLOSED",
     "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
+   },
+   "1010": {
+    "state": "OPEN",
+    "title": "[P2] Impacted-test selector: module glob.glob(pattern) resolves no directory and glob.iglob is not recognised"
+   },
+   "1011": {
+    "state": "OPEN",
+    "title": "[P3] Impacted-test selector does not follow a link reached only through a wildcard directory component"
    },
    "102": {
     "state": "CLOSED",
@@ -11886,7 +12490,7 @@
     "title": "[P2] GLM-5.3 MTP draft load re-reads the whole 163 GiB checkpoint (418 s) for 5.5 GiB of its own tensors"
    },
    "778": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Dense E4M3: one launch per module, K split reduced in-kernel (#750 WP2)"
    },
    "779": {
@@ -11902,7 +12506,7 @@
     "title": "The GLM MTP draft reads only the shards its own layers live in (#777)"
    },
    "781": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Serve R_IN_ONLY routed units: activation-side block Hadamard on the A16 lane (design; gated on the in-domain-H gate result)"
    },
    "782": {
@@ -11970,7 +12574,7 @@
     "title": "[P2] GLM-5.3 sparse MLA: skip the zero-width RoPE query cat (bitwise, about 6.4 ms per prefill chunk)"
    },
    "797": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "GLM-5.3 sparse MLA: opt-in skip of the zero-width RoPE query cat (#796; merge after served TR3 gate)"
    },
    "798": {
@@ -12210,7 +12814,7 @@
     "title": "Refit-objective comparisons on the LUT plane are confounded by the landing, which reorders the arms"
    },
    "850": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Dense-GEMM sweep's A/B decision reads an upper order statistic, not the median (child of #806)"
    },
    "851": {
@@ -12239,14 +12843,14 @@
    },
    "857": {
     "state": "OPEN",
-    "title": "Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
+    "title": "[P2] Compile and qualify opt-in paired-K32 routed E4M3 MMA prefill schedule"
    },
    "858": {
     "state": "CLOSED",
     "title": "[P2] Add an uninstalled SP mHC tile pipeline with explicit token ownership and retirement"
    },
    "859": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Original token_sum binding accepts output outside the routed CUDA device"
    },
    "86": {
@@ -12262,7 +12866,7 @@
     "title": "Drain the reused terminal barrier in persistent kernels"
    },
    "862": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Experiment: pair routed R4 E4M3 MMA K32 prefill handoffs"
    },
    "863": {
@@ -12291,14 +12895,14 @@
    },
    "869": {
     "state": "OPEN",
-    "title": "Retire compact-only routed metadata after successful native selection"
+    "title": "[P2] Retire compact-only routed metadata after successful native selection"
    },
    "87": {
     "state": "CLOSED",
     "title": "initial_channel_scale lands its reach bound with round-to-nearest, so 16% of the rows it raised clip anyway"
    },
    "870": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Retire compact routed metadata after native selection"
    },
    "871": {
@@ -12334,7 +12938,7 @@
     "title": "Qualify retained original token_sum safety without kernel duplication (#859)"
    },
    "879": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "routed: terminal-safe mixed history continuation and explicit numeric acceptance (#793)"
    },
    "88": {
@@ -12362,7 +12966,7 @@
     "title": "[P2] Retain and retire tile-overlap allocations after partial enqueue failure"
    },
    "885": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] U4 comparison input freeze must bind actual export audit, not stale A8SE identity"
    },
    "886": {
@@ -12378,7 +12982,7 @@
     "title": "fix: refuse failed stock cache production in empty-RoPE qualification"
    },
    "889": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired-K32 timing summary accepts medians unrelated to raw events"
    },
    "89": {
@@ -12466,7 +13070,7 @@
     "title": "T8: bind changed-source dual-B numeric protocol"
    },
    "908": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Make 793 controller fixture controls portable in the mandatory pure gate"
    },
    "909": {
@@ -12498,7 +13102,7 @@
     "title": "[P1] merge_suite x86 arm runs the suite without the declared test environment: child processes get no PYTHONPATH=src and an undeclared PQ-worktree read fails the gate"
    },
    "915": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Preserve explicit SDK dependencies and strict native mapping controls in the CPU merge batch"
    },
    "916": {
@@ -12506,15 +13110,15 @@
     "title": "merge_suite declares the suite's import env; the pinned accountant rides the sealed artifact-root declaration"
    },
    "917": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired custom-op numeric launcher must require admitted PB execution"
    },
    "918": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Paired telemetry must attribute each Spark independently of PB placement"
    },
    "919": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Freeze paired compile choice before a cached native bank can be reused"
    },
    "92": {
@@ -12530,48 +13134,344 @@
     "title": "[P1] Refuse known unsafe stock V2 runner in eager NoPE admission"
    },
    "922": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872)"
    },
    "923": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Impacted-test selector silently omits consumers of directory-wide non-Python inputs"
    },
    "924": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Select directory-wide non-Python inputs in the impacted-test selector"
    },
    "925": {
     "state": "OPEN",
     "title": "[P1] GLM-5.3 prefill: fuse SP-aware mHC pre/post (#783)"
    },
+   "926": {
+    "state": "CLOSED",
+    "title": "Bind the serve-comparison intake to the actual audited export identity (#885, with #872) - integrator refresh of #922"
+   },
+   "927": {
+    "state": "CLOSED",
+    "title": "Compose accepted default-off kernel/harness sources: #862 #870 #797 #879 #778 (D4 correctness)"
+   },
+   "928": {
+    "state": "CLOSED",
+    "title": "[P1] Dense-GEMM sweep: decide A/B on the median, gate on the served reference (#850)"
+   },
+   "929": {
+    "state": "CLOSED",
+    "title": "[P1] t4(875): prepare current-source a3a599ec bank packet (build prep + sealed identities, populations unchanged)"
+   },
    "93": {
     "state": "CLOSED",
     "title": "A dropped arm is invisible: the pair stage's byte-match audit counts survivors, not the grid"
+   },
+   "930": {
+    "state": "CLOSED",
+    "title": "[P0] Attest CUDA graph mode for GLM-5.3: per-branch indexer capture and eager operator priority (#702, refs prismaquant#1586)"
+   },
+   "931": {
+    "state": "OPEN",
+    "title": "[P1] T-8 dense lane is 1.7-2.4x slower than BF16 at prefill M=2048 on GLM-5.3 projection shapes"
+   },
+   "932": {
+    "state": "OPEN",
+    "title": "[P1] GLM-5.3 prefill: BF16 projection GEMM attribution and lever screen (no kernel change)"
+   },
+   "933": {
+    "state": "CLOSED",
+    "title": "[P2] pb-cpu interpreter differs by box: Tessera CPU tests fail on sparky (no triton/compressed_tensors) but pass on dl380g10"
+   },
+   "934": {
+    "state": "CLOSED",
+    "title": "[P2+] T16 synthetic harness repinned to the actual current-source bank (Refs #874)"
+   },
+   "935": {
+    "state": "CLOSED",
+    "title": "[P1] T-8 dense prefill: decode once to E4M3 and serve large M with a scaled FP8 GEMM (#931, default-off draft)"
+   },
+   "936": {
+    "state": "CLOSED",
+    "title": "[P2] Routed MoE prefill: decomposition and lever table (Goal 2)"
+   },
+   "937": {
+    "state": "CLOSED",
+    "title": "[P3] A GPU-arm --gpu-cache-dir on NFS fails the JIT-baton and native-identity tests"
+   },
+   "938": {
+    "state": "OPEN",
+    "title": "[P2] No single sealed image runs the whole strict-CUDA suite: the mla lane needs the 5be13705 nightly, the NoPE graph gates pin c2e75e03"
+   },
+   "939": {
+    "state": "CLOSED",
+    "title": "[P3] Two strict-CUDA-arm failures are tests assuming the runner environment, not defects: stageprev's child python and the t4 CPU-mode native proof"
    },
    "94": {
     "state": "CLOSED",
     "title": "viterbi_window_fused has #13's per-call defect, and the WINDOW body is the default E4M3 wire"
    },
+   "940": {
+    "state": "CLOSED",
+    "title": "[P1] Fused routed lane: pipeline the one-chunk-ahead loads (#739)"
+   },
+   "941": {
+    "state": "CLOSED",
+    "title": "[P0] Contain the graph-control TP2 ranks in finite PrismaBuild actions"
+   },
+   "942": {
+    "state": "CLOSED",
+    "title": "[P0] graph_receipt v2: fabric (socket|roce) is receipt scope (#702, refs prismaquant#1586)"
+   },
+   "943": {
+    "state": "CLOSED",
+    "title": "[P0] Contain the TP2 graph control in finite local measurement ranks"
+   },
+   "944": {
+    "state": "OPEN",
+    "title": "[P2+] Census export wrappers ignore requested producer interpreter before Oct 6 artifact milestone"
+   },
+   "945": {
+    "state": "OPEN",
+    "title": "[P2] Run the cross-device output refusal of both token_sum bindings on a two-GPU host (#859 follow-up)"
+   },
+   "946": {
+    "state": "CLOSED",
+    "title": "[P0] Bind the eager A8S Window4 MNBT comparison to a finite reviewed rank recipe"
+   },
+   "947": {
+    "state": "CLOSED",
+    "title": "Bundle: refuse network-filesystem suite caches (#937), two strict-CUDA test fixes (#939), tensor-parallel docs and CPU controls (#442)"
+   },
+   "948": {
+    "state": "CLOSED",
+    "title": "GLM53 NoPE: scope the speculative graph receipt to the serve's max_model_len (#695)"
+   },
+   "949": {
+    "state": "CLOSED",
+    "title": "[P3] native_cache_mount judges a hidden submount by its own entry, not the mount that covers it"
+   },
    "95": {
     "state": "CLOSED",
     "title": "choose_ldl_block floors LUT/S6B at 16 on a constraint the production LDLQ path does not have"
+   },
+   "950": {
+    "state": "CLOSED",
+    "title": "Restore genuine producer selection and bounded partition export probe"
+   },
+   "951": {
+    "state": "CLOSED",
+    "title": "Add the separately bound finite eager Window4 MNBT comparison"
+   },
+   "952": {
+    "state": "CLOSED",
+    "title": "test: await the grandchild's death in the deadline test instead of sampling once (flaked 3 of 32 on master)"
+   },
+   "953": {
+    "state": "CLOSED",
+    "title": "[P1] Wait boundedly for unchanged TP2 headroom before model launch"
+   },
+   "954": {
+    "state": "CLOSED",
+    "title": "[P1] Wait boundedly for unchanged TP2 headroom"
+   },
+   "955": {
+    "state": "CLOSED",
+    "title": "[P2+] T16 synthetic harness resealed on the post-940 translation unit (Refs #874)"
+   },
+   "956": {
+    "state": "CLOSED",
+    "title": "[P1] Publish every worker surface share before xdist reports completion (Refs #291)"
+   },
+   "957": {
+    "state": "CLOSED",
+    "title": "Docs: reflow the activation-ring paragraph and name the open paired-K32 smem mirror gap (Refs #739)"
+   },
+   "958": {
+    "state": "CLOSED",
+    "title": "[P3] Judge native_cache_mount by the descriptor's mount id, not mount depth (Closes #949)"
+   },
+   "959": {
+    "state": "CLOSED",
+    "title": "[P1] Apply D30 Window4 107 GiB admission and dual-rank memory abort"
    },
    "96": {
     "state": "CLOSED",
     "title": "The pair stage's repeat control disappears if the repeat arm fails"
    },
+   "960": {
+    "state": "CLOSED",
+    "title": "Read the descriptor mount id once in mapped_file_device (Refs #949)"
+   },
+   "961": {
+    "state": "CLOSED",
+    "title": "[P1] Apply D30 Window4 admission and dual-rank memory abort"
+   },
+   "962": {
+    "state": "CLOSED",
+    "title": "Tests: pin a spawned child to the checkout's src, not the installed wheel"
+   },
+   "963": {
+    "state": "CLOSED",
+    "title": "Tests: make the child-env end-to-end path check exact (follow-up to #962)"
+   },
+   "964": {
+    "state": "CLOSED",
+    "title": "[P1] The shape-time source pin refuses a staged candidate instead of stamping: convert the run-identity gates to dev-mode seal_check (D32)"
+   },
+   "965": {
+    "state": "CLOSED",
+    "title": "Stamp the serving source pin instead of refusing it (D32)"
+   },
+   "966": {
+    "state": "CLOSED",
+    "title": "Tests: stop the b770 default-profile payload case depending on the repo file list"
+   },
+   "967": {
+    "state": "CLOSED",
+    "title": "[P1] Allow per-unit (sub-stack) routed rates: export plannable unit below the executed stack"
+   },
+   "968": {
+    "state": "CLOSED",
+    "title": "[P1] Admit the explicit MNBT8192 ship-window selector without changing D30 guards"
+   },
+   "969": {
+    "state": "CLOSED",
+    "title": "Admit the explicit MNBT8192 ship-window pair"
+   },
    "97": {
     "state": "CLOSED",
     "title": "Land #18's offline pair reporter against pair_grid_audit, or not at all"
+   },
+   "970": {
+    "state": "CLOSED",
+    "title": "[P1] Packaging guard: catch literal subprocess launches of excluded modules, and run on Python 3.10 (tomllib fallback)"
+   },
+   "971": {
+    "state": "CLOSED",
+    "title": "[P1] b770 producer wrapper tests: match the real payload refusal, and refuse an explicitly empty PART_BOUND_S"
+   },
+   "972": {
+    "state": "CLOSED",
+    "title": "[P2] Merged batch histograms: validate observed counts and pin the legacy-omission behaviour"
+   },
+   "973": {
+    "state": "CLOSED",
+    "title": "[P2] Measurement page still says verify accepts the v1 graph receipts; v2 verify refuses them for a card"
+   },
+   "974": {
+    "state": "CLOSED",
+    "title": "[P1] Express research routed rates per expert projection without changing unit wires"
+   },
+   "975": {
+    "state": "CLOSED",
+    "title": "[P1] Packaging guard: report literal -m launches of excluded modules and run on Python 3.10 (Closes #970)"
+   },
+   "976": {
+    "state": "CLOSED",
+    "title": "[P1] b770 wrapper tests: match the real payload refusal and refuse an empty PART_BOUND_S (Closes #971)"
+   },
+   "977": {
+    "state": "CLOSED",
+    "title": "[P2] Merged batch histograms: refuse a non-integer observed count and pin the legacy omission (Closes #972)"
+   },
+   "978": {
+    "state": "CLOSED",
+    "title": "[P2] Clarify that v2 verify refuses the v1 graph receipts for a card (Closes #973)"
+   },
+   "979": {
+    "state": "CLOSED",
+    "title": "Merged batch histograms: validate the shape and width keys (follow-up to #977, Refs #972)"
    },
    "98": {
     "state": "CLOSED",
     "title": "A tracked empty file \"63\" sits at the repo root"
    },
+   "980": {
+    "state": "CLOSED",
+    "title": "[P1] Add the reviewed graph ship timing/profile selector to the D30 harness"
+   },
+   "981": {
+    "state": "CLOSED",
+    "title": "[P1] Profile trace receipts pair a pre-read stat with complete-byte hash"
+   },
+   "982": {
+    "state": "OPEN",
+    "title": "Routed lane fixed cost on GB10: attribution, piece-major A/B, item-ahead (negative)"
+   },
+   "983": {
+    "state": "CLOSED",
+    "title": "[P1] Add the explicit D30 graph ship lever OFF/ON selector"
+   },
+   "984": {
+    "state": "CLOSED",
+    "title": "[P1] Add explicit eager lever OFF/ON pairs and complete served output hashes"
+   },
+   "985": {
+    "state": "CLOSED",
+    "title": "[P1] Add explicit eager MNBT4096 lever pairs and complete output hashes"
+   },
+   "986": {
+    "state": "CLOSED",
+    "title": "fix: bind served eager profiles to the single-buffer issue 981 client"
+   },
+   "987": {
+    "state": "CLOSED",
+    "title": "[P1] Retain declared compile mode for decode-once load refusal"
+   },
+   "988": {
+    "state": "CLOSED",
+    "title": "[P1] Treat Path.glob as a directory-wide read in the impacted-test selector (PB1496)"
+   },
+   "989": {
+    "state": "CLOSED",
+    "title": "[P1] Publish measured T8 rung allowability and shared admission API"
+   },
    "99": {
     "state": "CLOSED",
     "title": "GLM attention is built with quant_config=None, so wires the exporter writes there are never executed and the weight they replaced is gone"
+   },
+   "990": {
+    "state": "CLOSED",
+    "title": "[P1] Stop an inert suffix from suppressing the unknown-loader escalation (PB1496)"
+   },
+   "991": {
+    "state": "CLOSED",
+    "title": "Publish canonical measured rung admission and D41 geometry producer"
+   },
+   "992": {
+    "state": "CLOSED",
+    "title": "[P1] List a directory read whose base cannot be named, and guard the count (PB1496)"
+   },
+   "993": {
+    "state": "CLOSED",
+    "title": "Add seeded L2048 OFF/OFF restart control"
+   },
+   "994": {
+    "state": "OPEN",
+    "title": "Measure actual E2M1 recipes for D41 rung allowability"
+   },
+   "995": {
+    "state": "CLOSED",
+    "title": "[P2+] Native E2M1 middle-rate POINT read crosses its exact plane boundary and blocks D41 prefill measurement"
+   },
+   "996": {
+    "state": "CLOSED",
+    "title": "Extend D41 to BF16 geometry and body-aware measured-rung metadata"
+   },
+   "997": {
+    "state": "CLOSED",
+    "title": "Bound native span-two field reads at exact byte boundaries"
+   },
+   "998": {
+    "state": "CLOSED",
+    "title": "[P3] Narrow the issue 995 changelog claim to what the boundary regression checks"
+   },
+   "999": {
+    "state": "CLOSED",
+    "title": "[P3] Do not read a function the file defines as a directory enumeration"
    }
   }
  }

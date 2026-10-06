@@ -518,6 +518,111 @@ def _release_shard(blob: bytes, label: str, cut, q256: int) -> "dict[str, bytes]
 
 
 
+#: The joined fresh encode (``--encode-batch``).  ``encode_linears_planes``
+#: at B>1 with the exporter's ``per_unit`` mappings is a condition neither the
+#: shape matrix (``encode_linear``, one unit) nor the value matrix (also one
+#: unit per case) reaches, so a change that moved only joined-call bytes --
+#: the per-unit mapping split, the shared-schedule application, the batched
+#: verification -- reported "0 changed" here.  Two rungs, both window bodies,
+#: the rungs the routed census actually selects; the exporter's exact call
+#: shape (``per_unit=[{} ...]``, what the fresh branch passes with no
+#: activation) so the corpus reaches what ships.
+def _batch_cases():
+    return [
+        ("batch-e4m3-896-128c-b4", E4M3_GRID, 896),
+        ("batch-bf16-1024-128c-b4", BF16_GRID, 1024),
+    ]
+
+
+def batch_hashes() -> dict:
+    """The digest for each joined call: every member blob, concatenated in order.
+
+    The CLI and the coverage test share this function; the coverage test
+    additionally proves each row is the digest of the blobs ONE
+    ``encode_linears_planes`` call returned, so a row cannot quietly hash a
+    path it did not run.
+    """
+    from tessera.export import encode_linears_planes
+
+    out = {}
+    for label, grid, q256 in _batch_cases():
+        try:
+            torch.manual_seed(zlib.crc32(label.encode()) & 0xFFFF)
+            weights = [torch.randn(64, 128) * 0.02 for _ in range(4)]
+            encoded = encode_linears_planes(
+                weights, grid=grid, q256=q256,
+                names=[f"{label}/{i}" for i in range(4)],
+                per_unit=[{} for _ in weights])
+            out[label] = hashlib.sha256(
+                b"".join(exported.blob for exported, _unit, _forests in encoded)).hexdigest()
+        except Exception as exc:            # a refusal is part of the baseline
+            out[label] = f"REFUSED {type(exc).__name__}: {exc}"
+    return out
+
+
+def substack_hashes() -> dict:
+    """Pin per-unit rung selection through the exporter and the shared reader.
+
+    Each projection container is unchanged from encoding its unit alone at
+    the same rung. The new condition is the expert-major rate declaration,
+    not a new body/plane: priced == framed == read is checked per unit.
+    """
+    from tessera.export import encode_linear_planes
+    from tessera.export_serving import (project_expert_plan, expert_work_units,
+                                       expert_group_q256)
+    from tessera.fused import pack_fused
+    from tessera.serving.scheme import (validate_tessera_moe_scheme,
+        expert_role_declarations, parse_tessera_expert_blob)
+    from tessera.unit_artifact import read_unit_artifact
+
+    stack = "model.layers.2.mlp.experts"
+    shapes = {f"{stack}.{e}.{p}.weight": (32, 32) for e in range(2)
+              for p in ("gate_proj", "up_proj", "down_proj")}
+    config = {"num_experts": 2, "hidden_size": 32, "moe_intermediate_size": 32}
+    picked = stack + ".0.up_proj"
+    out = {}
+    for grid in (E4M3_GRID, BF16_GRID):
+        choice = {"grid": grid.name, "q256": 1024, "unit_q256": {picked: 1088}}
+        record = project_expert_plan(shapes, config, {stack: choice})["stacks"][stack]
+        work = expert_work_units(stack, record)
+        encoded = []
+        for i, unit in enumerate(work):
+            weight = torch.randn(32, 32, generator=torch.Generator().manual_seed(i))
+            rung = unit.get("q256", record["q256"])
+            exported, _unit, _forest = encode_linear_planes(weight, grid=grid, q256=rung)
+            encoded.append((unit, exported, pack_fused([
+                (unit["projection"], exported.rows, exported.blob)])))
+        recipe = wire_recipe(grid, 1024)
+        groups = {g: {"rows": record["groups"][g]["rows"],
+                      "columns": record["groups"][g]["columns"],
+                      "roles": record["groups"][g]["roles"],
+                      "q256": expert_group_q256(record, g),
+                      "wire_stride": max(len(blob) for unit, _, blob in encoded
+                                         if unit["group"] == g)} for g in ("w13", "w2")}
+        scheme = {
+            "family": record["family"], "grid": grid.name, "body": recipe.body.name,
+            "plane": recipe.scale_plane.name, "structure": "routed_moe",
+            "source_layout": record["source_layout"], "experts": 2, "groups": groups}
+        declared = validate_tessera_moe_scheme(scheme, stack)
+        out[f"substack-{grid.name}-1024-1088/sidecar"] = hashlib.sha256(
+            json.dumps(scheme, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        for unit, exported, blob in encoded:
+            group = declared["groups"][unit["group"]]
+            roles = expert_role_declarations(group, expert=unit["expert"])
+            role = next(r for r in roles if r["roles"][0][0] == unit["projection"])
+            parsed = parse_tessera_expert_blob(blob, role, unit["tensor"], device="cpu")
+            expected = read_unit_artifact(exported.blob)
+            from tessera.unit_artifact import reconstruct_unit
+            parsed_unit = parsed[0][1]
+            actual = reconstruct_unit(parsed_unit.unit, parsed_unit.forests, parsed_unit.code)
+            if not torch.equal(actual, expected):
+                raise AssertionError(f"{unit['tensor']}: mixed declaration changed decoded bits")
+            label = f"substack-{grid.name}-1024-1088/{unit['expert']}/{unit['projection']}"
+            out[label + "/bytes"] = hashlib.sha256(blob).hexdigest()
+            out[label + "/decode"] = hashlib.sha256(
+                actual.to(torch.float32).contiguous().numpy().tobytes()).hexdigest()
+    return out
+
 def resident_hashes() -> dict:
     """Reach the R4 resident relay on real encoded bytes, including a second tile."""
     from tessera.encode import encode_unit
@@ -602,6 +707,8 @@ def main() -> int:
         "layout": layout_hashes(),
         "release": release_hashes(),
         "resident": resident_hashes(),
+        "batch": batch_hashes(),
+        "substack": substack_hashes(),
     }
     if not a.encode_only:
         report["decode"] = decode_hashes()
@@ -620,6 +727,8 @@ def main() -> int:
               f"{len(report['layout'])} layout rows, "
               f"{len(report['release'])} release rows, "
               f"{len(report['resident'])} resident rows, "
+              f"{len(report.get('batch', {}))} batch rows, "
+              f"{len(report['substack'])} sub-stack rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)

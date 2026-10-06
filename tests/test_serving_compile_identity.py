@@ -24,7 +24,7 @@ import pytest
 import tessera.serving
 from tessera.serving.compile_identity import (
     DISPATCH_FACT, TESSERA_KEY, declare_compile_identity, declare_compile_identity_in,
-    note_traced_dispatch, reset_for_tests, traced_dispatch)
+    declared_forward_is_compiled, note_traced_dispatch, reset_for_tests, traced_dispatch)
 
 
 @pytest.fixture(autouse=True)
@@ -89,6 +89,25 @@ def test_a_foreign_tessera_key_is_refused():
     cfg = _config(extra={TESSERA_KEY: "theirs"})
     with pytest.raises(RuntimeError, match="owns that key"):
         declare_compile_identity_in(cfg, serve_mode="resident")
+
+
+@pytest.mark.parametrize("mode,expected", [("VLLM_COMPILE", True), ("NONE", False)])
+def test_declared_compile_mode_is_a_snapshot_and_reset_forgets_it(mode, expected):
+    assert declared_forward_is_compiled() is False
+    config = _config(mode=mode)
+    declare_compile_identity_in(config, serve_mode="resident")
+    config.compilation_config.mode.name = "NONE" if expected else "VLLM_COMPILE"
+    assert declared_forward_is_compiled() is expected
+    reset_for_tests()
+    assert declared_forward_is_compiled() is False
+
+
+def test_an_eager_unextendable_config_replaces_the_saved_compile_mode():
+    declare_compile_identity_in(_config(), serve_mode="resident")
+    assert declared_forward_is_compiled() is True
+    assert declare_compile_identity_in(_config(mode="NONE", extra=object()),
+                                       serve_mode="resident") is None
+    assert declared_forward_is_compiled() is False
 
 
 def test_no_current_config_declares_nothing():

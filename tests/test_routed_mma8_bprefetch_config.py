@@ -55,7 +55,10 @@ def native_metadata(module, b_prefetch):
         ROUTED_RATE_MAX=module.RATE_MAX, RATE_MAX=module.DENSE_RATE_MAX["e4m3"],
         SLOT_WORDS_MAX=module.slot_words_for_rate(module.DENSE_RATE_MAX["e4m3"]),
         BDESC_INTS=module.BDESC_INTS, WINDOW_BITS=module.WINDOW_BITS,
-        FAMILY_FP8=True, FAMILY_MMA8=True, WORD_STAGES=module.WORD_STAGES,
+        FAMILY_FP8=True, FAMILY_MMA8=True,
+        PAIRED_K32_BUILD=module._paired_k32_build_enabled(True),
+        STAGES=module.STAGES, MAX_ROLES=module.MAX_ROLES,
+        WORD_STAGES=module.WORD_STAGES,
         WORD_STAGES_MIN=module.WORD_STAGES_MIN,
         SMEM_FIXED_GATE_UP=module.SMEM_FIXED_MMA8[0],
         SMEM_FIXED_DOWN=module.SMEM_FIXED_MMA8[2], BM_WIDE=module.BM_WIDE,
@@ -63,7 +66,7 @@ def native_metadata(module, b_prefetch):
         HAS_WIDE_GATE_UP=module.has_width("e4m3mma", 0, module.BM_WIDE),
         HAS_WIDE_DOWN=module.has_width("e4m3mma", 2, module.BM_WIDE),
         GATE_UP_RATE_MAX=max(module.routed_lane_rates("e4m3mma")),
-        MMA8_GATE_UP_B_PREFETCH=b_prefetch)
+        MMA8_GATE_UP_B_PREFETCH=b_prefetch, MMA8_A_RING=module.MMA8_A_RING)
 
 
 @pytest.mark.parametrize("want,have", [(0, 1), (1, 0)])
