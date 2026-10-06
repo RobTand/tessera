@@ -2257,6 +2257,31 @@ def test_a_string_argument_does_not_hide_an_unknown_loader_from_its_consumers(tm
     assert "tests/test_consumer.py" in result["tests"], result
 
 
+@pytest.mark.parametrize("probe", [
+    "list(os.walk('tests/test_values.py'))",
+    "os.listdir('tests/test_values.py')",
+], ids=["walk-of-string", "listdir-of-string"])
+def test_a_string_path_probe_does_not_mask_an_ordinary_import_of_the_same_file(tmp_path, probe):
+    """PB1496 review: resolving a string adds an edge, and in a conftest that edge can be
+    a collection probe of a file the conftest ALSO imports.  The ordinary import is the
+    dependency that matters; masking it dropped the fixture's consumers on master's
+    behaviour for the Path spelling and, with string resolution, for the string one too.
+    No tests/__init__.py: the pytest import-root alias resolver reads this layout."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/conftest.py": (
+            "import os\nimport pytest\nfrom test_values import VALUE\n\n" + probe + "\n\n\n"
+            "@pytest.fixture\ndef value():\n    return VALUE\n"),
+        "tests/test_values.py": "VALUE = 1\n",
+        "tests/test_consumer.py": "def test_value(value):\n    assert value == 1\n"})
+    (repo / "tests/test_values.py").write_text("VALUE = 2\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "the helper the fixture imports changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_consumer.py" in result["tests"], result
+
+
 def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp_path):
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "tests/test_lister.py": "import os\n\n\ndef test_lists():\n    assert os.listdir('docs')\n",
