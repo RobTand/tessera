@@ -143,8 +143,8 @@ def part_bitwise(args, model_dir, lib, tk):
                     by_tile = {tm: fused(*ins, tile=tm) for tm in TILES}
                 rec = {"which": which, "tokens": tokens, "full_batch": full, "variant": variant,
                        "split_stock": f_stock.seen, "split_fused": f_fused.seen,
-                       "deterministic": all(torch.equal(a, b) for a, b in zip(got, again)),
-                       "tiles_equal": {tm: all(torch.equal(a, b) for a, b in zip(o, ref)) for tm, o in by_tile.items()}}
+                       "deterministic": all(mp.compare(a, b)["equal"] for a, b in zip(got, again)),
+                       "tiles_equal": {tm: all(mp.compare(a, b)["equal"] for a, b in zip(o, ref)) for tm, o in by_tile.items()}}
                 for name, a, b in zip(OUTPUTS, got, ref):
                     rec[name] = mp.compare(a, b)
                     rec[name]["shape_equal"] = tuple(a.shape) == tuple(b.shape)
@@ -158,7 +158,7 @@ def part_bitwise(args, model_dir, lib, tk):
                             captured = fused(*static)
                     graph.replay()
                     torch.cuda.synchronize()
-                    rec["graph_replay_equal"] = all(torch.equal(a, b) for a, b in zip(captured, ref))
+                    rec["graph_replay_equal"] = all(mp.compare(a, b)["equal"] for a, b in zip(captured, ref))
                 rec["bitwise"] = (all(rec[n]["equal"] and rec[n]["shape_equal"] for n in OUTPUTS)
                                   and rec["deterministic"] and all(rec["tiles_equal"].values())
                                   and rec.get("graph_replay_equal", True)
@@ -167,7 +167,7 @@ def part_bitwise(args, model_dir, lib, tk):
                 if not rec["bitwise"]:
                     out["failures"].append({k: rec[k] for k in ("which", "tokens", "full_batch", "variant")})
                 log("bitwise", which, tokens, full, variant, "split", f_stock.seen, f_fused.seen, rec["bitwise"],
-                    " ".join(f"{n}:{rec[n]['elements_differing']}" for n in OUTPUTS))
+                    " ".join(f"{n}:{rec[n]['bits_differing']} bits" for n in OUTPUTS))
     out["passed"] = not out["failures"] and bool(out["cases"])
     return out
 
@@ -230,9 +230,30 @@ def main() -> int:
     ap.add_argument("--grids", type=int, nargs="+", default=[24, 32, 48])
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--reps", type=int, default=10)
+    ap.add_argument("--cpu-dry-run", action="store_true",
+                    help="read both layer inputs and check shapes and the bitwise gate without CUDA")
     args = ap.parse_args()
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if args.cpu_dry_run:
+        for which in ("attn", "ffn"):
+            prefix = f"model.language_model.layers.1.hc_{which}_"
+            norm = ("model.language_model.layers.1.input_layernorm.weight" if which == "attn"
+                    else "model.language_model.layers.1.post_attention_layernorm.weight")
+            shapes = {prefix + "fn": (mf.NMIX, mf.HC_MULT * mf.HIDDEN),
+                      prefix + "scale": (3,), prefix + "base": (mf.NMIX,), norm: (mf.HIDDEN,)}
+            tensors = mp.load_tensors(Path(args.model), list(shapes))
+            for name, tensor in tensors.items():
+                if tuple(tensor.shape) != shapes[name] or not torch.isfinite(tensor).all():
+                    raise ValueError(f"invalid dry-run mHC input {name}: {tuple(tensor.shape)}")
+        for dtype in (torch.float32, torch.bfloat16):
+            if mp.compare(torch.tensor([0.0], dtype=dtype),
+                          torch.tensor([-0.0], dtype=dtype))["equal"]:
+                raise RuntimeError("signed-zero negative control was accepted")
+        (out_dir / "mhc_fused_probe_cpu.json").write_text(
+            json.dumps({"cpu_dry_run": True, "inputs_read": 8, "cuda": False,
+                        "signed_zero_rejected": True, "parts": args.parts}) + "\n")
+        return 0
     import vllm
     import vllm.model_executor.kernels.mhc.tilelang_kernels as tk
 

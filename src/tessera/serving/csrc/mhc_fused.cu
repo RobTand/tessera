@@ -21,9 +21,10 @@
 //  pre   the TileLang kernel's mixes, Sinkhorn and RMSNorm arithmetic and
 //        reduction trees, per token (split partials summed in split order).
 //
-// The tile's new residual is written once and read back from L2 twice (by
-// the GEMM, whose K order is stream-major, and by the pre), so DRAM moves
-// the floor: read x and the residual, write the residual and the layer input.
+// The tile's new residual is written once, then read by the GEMM (whose K
+// order is stream-major) and pre. The design assumes those rereads hit L2.
+// Read x and the old residual, write the new residual and layer input: an
+// 80 KiB/token theoretical external-memory floor, not measured DRAM traffic.
 #include <cuda_bf16.h>
 #include <math_constants.h>
 #ifndef __CUDACC_RTC__  // NVRTC (device-only compile checks) has neither header.

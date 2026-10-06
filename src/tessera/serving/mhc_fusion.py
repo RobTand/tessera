@@ -3,10 +3,11 @@
 Stock vLLM runs each mHC site of a prefill chunk as three passes over the
 residual stream (``mhc_post_tilelang_kernel``, DeepGEMM's
 ``sm120_tf32_hc_prenorm_gemm_impl`` at the split ``compute_num_split`` picks,
-``mhc_pre_big_fuse_with_norm_tilelang_kernel``): 144 KiB of DRAM traffic per
-token per site against an 80 KiB floor.  ``csrc/mhc_fused.cu`` runs all three
-per token tile in one kernel: the new residual is written once and read back
-from L2 by the GEMM and the pre, so DRAM moves the floor.
+``mhc_pre_big_fuse_with_norm_tilelang_kernel``): 144 KiB per token per site
+in the stock byte model, against an 80 KiB theoretical external-memory floor.
+``csrc/mhc_fused.cu`` runs all three per token tile in one kernel. The design
+assumes the GEMM and pre rereads hit L2; their cache locality and actual DRAM
+traffic have not been measured.
 
 **Identity.**  Every output -- residual, post mix, comb mix, layer input -- is
 required to be bitwise equal to the stock sequence at the same split.  The
@@ -40,7 +41,9 @@ import subprocess
 import threading
 from typing import Any, Callable
 
-from .stock_interface import InspectedInterface, import_modules, match_modules
+from tessera.dev_mode import NOT_COMPUTED, dev_mode_enabled, seal_check
+from .stock_interface import (InspectedInterface, import_modules, match_modules,
+                              signature_parameters, stock_attribute)
 
 _log = logging.getLogger(__name__)
 
@@ -139,10 +142,12 @@ class MhcFusedLibrary:
         built = load(name=self.name, sources=[str(source)], build_directory=build_directory,
                      extra_cuda_cflags=list(FLAGS), extra_cflags=["-O3"],
                      is_python_module=False, verbose=False)
-        if Path(built).resolve() != self.library_path.resolve():
-            raise RuntimeError(f"JIT returned {built}, not the declared {self.library_path}")
+        seal_check("predicted mHC library path", self.library_path.resolve(), Path(built).resolve(),
+                   where=__name__,
+                   refusal=lambda: RuntimeError(f"JIT returned {built}, not the declared {self.library_path}"))
+        self.library_path = Path(built)
         self.path = str(self.library_path)
-        lib = ctypes.CDLL(str(self.library_path))
+        lib = ctypes.CDLL(self.path)
         self._launch = lib.tessera_mhc_fused_post_pre
         self._launch.argtypes = [ctypes.POINTER(_Params), ctypes.c_int, ctypes.c_void_p]
         self._launch.restype = ctypes.c_int
@@ -329,9 +334,31 @@ def install_mhc_fusion(config: Any) -> bool:
         if modules is None:
             reasons = [why]
         else:
-            interface, why = match_modules(modules, MODULES, _interfaces())
-            if interface is None:
-                reasons = [why]
+            if dev_mode_enabled():
+                seal_check("recorded stock mHC source", tuple(i.digests for i in _interfaces()),
+                           NOT_COMPUTED, where=__name__)
+                interface_name = "development mode; source identity not checked"
+            else:
+                interface, why = match_modules(modules, MODULES, _interfaces())
+                if interface is None:
+                    reasons = [why]
+                else:
+                    interface_name = interface.name
+            if not reasons:
+                model, layers, _tilelang, kernels, deep_gemm = modules
+                cls = stock_attribute(model, "Glm5NextDecoderLayer")
+                op = stock_attribute(layers, "MHCFusedPostPreOp")
+                method = stock_attribute(cls, "hc_fused_post_pre")
+                if not getattr(method, "_tessera_mhc_fused", False) and signature_parameters(
+                        cls, "hc_fused_post_pre") != (
+                        "self", "x", "residual", "post", "comb",
+                        "hc_fn", "hc_scale", "hc_base", "norm_weight", "norm_eps"):
+                    reasons = ["stock mHC method signature differs"]
+                elif not callable(stock_attribute(op, "forward_cuda")) or any(
+                        not callable(stock_attribute(owner, name)) for owner, name in (
+                            (kernels, "compute_num_split"), (kernels, "mhc_fused_post_pre_split_config"),
+                            (deep_gemm, "is_deep_gemm_supported"))):
+                    reasons = ["stock mHC dispatch interface unavailable"]
     if reasons:
         _log.warning("tessera.mhc_fusion: declined, stock mHC: %s", "; ".join(reasons))
         _DECIDED[id(config)] = False
@@ -342,6 +369,6 @@ def install_mhc_fusion(config: Any) -> bool:
         cls.hc_fused_post_pre = make_hc_fused_post_pre(cls.hc_fused_post_pre, layers.MHCFusedPostPreOp,
                                                        library, kernels, deep_gemm)
     _log.warning("tessera.mhc_fusion: installed (interface %s): split-k mHC sites run one fused "
-                 "post/GEMM/pre kernel, bitwise to stock at the stock split", interface.name)
+                 "post/GEMM/pre kernel, bitwise to stock at the stock split", interface_name)
     _DECIDED[id(config)] = True
     return True

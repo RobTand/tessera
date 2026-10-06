@@ -7,6 +7,8 @@ decide whether that kernel is ever called.
 from __future__ import annotations
 
 import re
+import runpy
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +17,17 @@ import torch
 from tessera.serving import contract, ext, flags
 from tessera.serving import glm53_prefill as gp
 from tessera.serving import mhc_fusion as mf
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.bfloat16])
+def test_probe_bitwise_gate_rejects_signed_zero(dtype):
+    probe = runpy.run_path(str(Path(__file__).resolve().parents[1] /
+                               "experiments/mhc/mhc_probe.py"))
+    positive = torch.tensor([0.0, 1.0], dtype=dtype)
+    negative = torch.tensor([-0.0, 1.0], dtype=dtype)
+    assert torch.equal(positive, negative)  # The old value gate accepts this mutation.
+    assert not probe["compare"](positive, negative)["equal"]
+    assert probe["bits_compare"](positive, negative)["bits_differing"] == 1
 
 
 @pytest.fixture(autouse=True)
@@ -186,3 +199,89 @@ def test_a_layer_whose_op_is_not_on_forward_cuda_stays_stock(monkeypatch):
     fn, calls = _wrapper(monkeypatch, decline=None)
     assert fn(_layer(on_cuda=False), "x", "res", "post", "comb", "hc_fn", "scale", "base") == "stock"
     assert [c[0] for c in calls] == ["stock"]
+
+
+def _install_modules(monkeypatch, *, incompatible=False):
+    class Layer:
+        def hc_fused_post_pre(self, x, residual, post, comb, hc_fn, hc_scale, hc_base,
+                              norm_weight=None, norm_eps=0.0):
+            return "stock"
+    if incompatible:
+        Layer.hc_fused_post_pre = lambda self, x: "stock"
+    kernels, dg = _deps(None)
+    modules = (SimpleNamespace(Glm5NextDecoderLayer=Layer),
+               SimpleNamespace(MHCFusedPostPreOp=_Op), SimpleNamespace(), kernels, dg)
+    monkeypatch.setattr(mf, "import_modules", lambda names: (modules, ""))
+    monkeypatch.setattr(mf, "_DECIDED", {})
+    monkeypatch.setenv(mf.FLAG, "1")
+    config = SimpleNamespace(model_config=SimpleNamespace(
+        hf_config=SimpleNamespace(architectures=["Glm5NextForCausalLM"])))
+    monkeypatch.setattr(gp, "is_glm5next", lambda c: True)
+    return config, Layer, modules
+
+
+def test_recorded_source_identity_stamps_without_hashing_in_dev_mode(monkeypatch, capsys):
+    config, layer, _ = _install_modules(monkeypatch)
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    def no_hash(*args):
+        raise AssertionError("development mode must not compute historical source digests")
+    monkeypatch.setattr(mf, "match_modules", no_hash)
+    assert mf.install_mhc_fusion(config)
+    assert layer.hc_fused_post_pre._tessera_mhc_fused
+    assert "[DEV-MODE]" in capsys.readouterr().out
+
+
+def test_recorded_source_identity_still_declines_in_certified_mode(monkeypatch):
+    config, layer, _ = _install_modules(monkeypatch)
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    monkeypatch.setattr(mf, "match_modules", lambda *args: (None, "recorded source differs"))
+    assert not mf.install_mhc_fusion(config)
+    assert not getattr(layer.hc_fused_post_pre, "_tessera_mhc_fused", False)
+
+
+def test_actual_method_interface_still_declines_in_dev_mode(monkeypatch):
+    config, layer, _ = _install_modules(monkeypatch, incompatible=True)
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    assert not mf.install_mhc_fusion(config)
+    assert not getattr(layer.hc_fused_post_pre, "_tessera_mhc_fused", False)
+
+
+def test_actual_missing_dispatch_still_declines_in_dev_mode(monkeypatch):
+    config, layer, modules = _install_modules(monkeypatch)
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    modules[3].compute_num_split = None
+    assert not mf.install_mhc_fusion(config)
+    assert not getattr(layer.hc_fused_post_pre, "_tessera_mhc_fused", False)
+
+
+@pytest.mark.parametrize("certified", [False, True])
+def test_compiler_path_identity_uses_returned_library_or_refuses(monkeypatch, tmp_path, capsys, certified):
+    import torch.utils.cpp_extension as cpp
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0" if certified else "1")
+    source = tmp_path / "kernel.cu"
+    source.write_text("// source for the injected compiler result\n")
+    returned = tmp_path / "compiler-selected.so"
+    monkeypatch.setattr(mf, "source_path", lambda: source)
+    monkeypatch.setattr(ext, "_nvcc_for_build", lambda: "/nvcc")
+    monkeypatch.setattr(ext, "toolchain_report", lambda torch: {"complete": True})
+    monkeypatch.setattr(mf.subprocess, "check_output", lambda *a, **k: "nvcc test version")
+    monkeypatch.setattr(cpp, "load", lambda **kwargs: str(returned))
+    opened = []
+    launch = SimpleNamespace()
+    monkeypatch.setattr(mf.ctypes, "CDLL", lambda path: opened.append(path) or
+                        SimpleNamespace(tessera_mhc_fused_post_pre=launch))
+    if certified:
+        with pytest.raises(RuntimeError, match="JIT returned"):
+            mf.MhcFusedLibrary(str(tmp_path))
+        assert not opened
+    else:
+        lib = mf.MhcFusedLibrary(str(tmp_path))
+        assert lib.path == str(returned) and opened == [str(returned)]
+        assert "[DEV-MODE]" in capsys.readouterr().out
+
+
+def test_actual_launch_failure_remains_a_refusal():
+    lib = mf.MhcFusedLibrary.__new__(mf.MhcFusedLibrary)
+    lib._launch = lambda *args: 9
+    with pytest.raises(RuntimeError, match="cudaError 9"):
+        lib.launch(mf._Params(), 1, 0)

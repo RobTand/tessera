@@ -1,10 +1,10 @@
 # Fused mHC post/pre for GLM-5.3 prefill (#783)
 
-Status 2026-10-04: default-off; **bitwise to stock** on GB10 (GPU probe,
-60/60 cases at every tile height); **2.6-3.0 ms per 2048-token chunk per
-rank faster** at the served SP shape in two matched microbenchmarks, not yet
-served.
-Receipts are under "Measured".
+Status 2026-10-06: default-off. The integer-view bitwise gate supersedes
+the earlier 60-case value-equality evidence, which ignored signed zero.
+Two matched site microbenchmarks imply estimated site sums of 2.5881 and
+3.1111 milliseconds per rank over 89 sites, not measured served chunk savings.
+Receipts are under "Measured"; issue #783's served performance packet remains separate.
 
 ## What it costs today
 
@@ -30,12 +30,14 @@ which `SplitForcer` forces for exactness.
 
 ## Floor
 
-Per token per site, DRAM must read x (8 KiB) and the old residual (32 KiB),
-and write the new residual (32 KiB) and the layer input (8 KiB): **80 KiB**,
-plus 80 B of mixes. At 273 GB/s that is 0.307 ms per 1024-token site, or
-27.3 ms per chunk per rank over 89 sites. The stock passes move 144 KiB per
-token: 72 for post, 32 for the GEMM and 40 for pre. Kernels already run at
-0.74-0.87 of peak (#783 timed row `86920f49`), so bytes are the lever.
+The theoretical external-memory floor per token per site reads x (8 KiB)
+and the old residual (32 KiB), and writes the new residual (32 KiB) and layer
+input (8 KiB): **80 KiB**, plus 80 B of mixes. This assumes the GEMM and pre
+rereads stay in L2; neither that locality nor actual fused DRAM traffic was
+measured. At 273 GB/s the theoretical floor is 0.307 ms per 1024-token site,
+or 27.3 ms over 89 sites. The stock byte model is 144 KiB per token: 72 for
+post, 32 for the GEMM and 40 for pre. The retained stock fractions were
+0.74-0.87 of peak (#783 timed row `86920f49`).
 
 ## Why not the issue's option 2
 

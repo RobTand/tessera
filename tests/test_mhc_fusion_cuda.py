@@ -8,6 +8,8 @@ here; the served checkpoint's own layers, adversarial rows and the timing are
 from __future__ import annotations
 
 import importlib.util
+import runpy
+from pathlib import Path
 
 import pytest
 import torch
@@ -70,6 +72,9 @@ def test_fused_equals_stock_bitwise(stack, tokens, full_batch):
                           SINKHORN, 1, 1, norm_weight=norm, norm_eps=RMS_EPS)
         got = stack.mf.fused_post_pre(stack.lib, stack.tk, x, res, post, comb, fn, scale, base, RMS_EPS,
                                       HC_EPS, HC_EPS, POST_MULT, SINKHORN, norm, RMS_EPS)
+    compare = runpy.run_path(str(Path(__file__).resolve().parents[1] /
+                                "experiments/mhc/mhc_probe.py"))["compare"]
     for name, a, b in zip(("residual", "post_mix", "comb_mix", "layer_input"), got, ref):
         assert a.shape == b.shape, name
-        assert torch.equal(a, b), f"{name}: {int((a != b).sum())} elements differ"
+        result = compare(a, b)
+        assert result["equal"], f"{name}: {result['bits_differing']} bit patterns differ"

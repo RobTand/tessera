@@ -382,24 +382,27 @@ the functional reference; no-grad calls keep the optimized CPU path. No
 recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
 serving, and no new throughput claim is made.
 
-Re-stamped 2026-10-04 for the default-off fused mHC override (contract v56,
+Re-stamped 2026-10-06 for the default-off fused mHC override (contract v56,
 Refs #783). `TESSERA_GLM53_MHC_FUSED=1` rebinds
 `Glm5NextDecoderLayer.hc_fused_post_pre` (new `stock_kernel_overrides` kind
 `model_method`) so that a split-k mHC site runs the stock post kernel,
 DeepGEMM's TF32 pre-norm GEMM and the TileLang pre kernel as one kernel
 (`csrc/mhc_fused.cu`) that reproduces their arithmetic, at the split
 `compute_num_split` answers at call time (exact SP's forced split included).
-DRAM traffic per token per site falls from 144 KiB to the 80 KiB floor. The
-small-batch fused stock path, an uninspected vLLM, and a layer whose op is
-not on `forward_cuda` stay stock. Required identity `bitwise_vs_stock`; the GPU
-bitwise gate is `experiments/mhc/mhc_fused_probe.py` (60/60 cases at every
-tile height, PB `fa23b165`, recorded as the entry's `evidence`) and
-`tests/test_mhc_fusion_cuda.py`. Calls stock runs at split > 1 stay stock.
-At the served SP shard (1024 tokens at split 1) it measured 0.583/0.579 ms per
-site against stock 0.605/0.615 (attn/ffn, PB `286a7d3b`), 2.6-3.0 ms per
-chunk per rank over two matched runs
-(`docs/measurements/2026-10-04-mhc-fused-783.md`); a microbenchmark, not a
-served result.
+The stock byte model is 144 KiB per token per site; 80 KiB is the theoretical
+external-memory floor if the GEMM and pre rereads hit L2. Cache locality and
+actual DRAM traffic have not been measured. The stock small-batch path, an
+incompatible method or dispatch interface, and a layer whose op is not on
+`forward_cuda` stay stock. Recorded source and predicted library-path
+differences stamp and continue in development mode under D32; actual
+interface, shape, launch and safety checks remain active. Required identity
+`bitwise_vs_stock` uses integer-view comparisons in
+`experiments/mhc/mhc_fused_probe.py` and `tests/test_mhc_fusion_cuda.py`. Earlier
+60-case receipts used value equality and did not establish signed-zero
+identity. Calls stock runs at split > 1 stay stock. The retained site
+microbenchmarks imply estimated sums of 2.5881 and 3.1111 ms per rank over
+44 attention and 45 feed-forward sites; these are not measured served chunk
+savings (`docs/measurements/2026-10-04-mhc-fused-783.md`).
 No production pin, route cell, default, artifact or ship gate moves. Design:
 `docs/design/mhc-fusion-783.md`.
 
