@@ -728,6 +728,53 @@ def test_a_real_directory_walk_is_still_listed(tmp_path, source):
     assert _unnamed_directory_reads(source, tmp_path), source
 
 
+def _unnamed_and_unknown(source, root):
+    unnamed = []
+    _, unknown, _ = file_imports(ast.parse(source), root / "consumer.py", root, unnamed=unnamed)
+    return unnamed, unknown
+
+
+# The name that is called must resolve, lexically, to a plain def or class: an
+# unrelated definition elsewhere in the file proves nothing about this call.
+_SHADOWED_WALK = {
+    "method-elsewhere-and-parameter-default": (
+        "import os\n\n\nclass T:\n    def walk(self):\n        return 1\n\n\n"
+        "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
+    "decorator-returns-os-walk": (
+        "import os\n\n\ndef replace(fn):\n    return os.walk\n\n\n@replace\n"
+        "def walk(a):\n    return a\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "parameter-shadows-module-def": (
+        "def walk(a):\n    return a\n\n\ndef f(x, walk):\n    return walk(x)\n"),
+    "def-in-one-branch-assignment-in-the-other": (
+        "import os\n\nif os.environ:\n    def walk(a):\n        return a\nelse:\n"
+        "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "def-in-another-function": (
+        "import os\n\n\ndef g():\n    def walk(a):\n        return a\n    return walk\n\n\n"
+        "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
+}
+
+
+@pytest.mark.parametrize("source", list(_SHADOWED_WALK.values()), ids=list(_SHADOWED_WALK))
+def test_a_defined_name_does_not_hide_a_call_that_resolves_elsewhere(tmp_path, source):
+    unnamed, _ = _unnamed_and_unknown(source, tmp_path)
+    assert unnamed, source
+
+
+@pytest.mark.parametrize("source", list(_SHADOWED_WALK.values()), ids=list(_SHADOWED_WALK))
+def test_a_module_that_executes_source_keeps_its_unknown_loader_flag(tmp_path, source):
+    # The misread would also have dropped the unknown-loader flag of a module
+    # that can run what it reads, which is the escalation a real walk gets.
+    unnamed, unknown = _unnamed_and_unknown(source + '\n\nexec("pass")\n', tmp_path)
+    assert unknown, source
+
+
+def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
+    source = ("def f(items):\n    def walk(level):\n        if level == 0:\n"
+              "            return [level]\n        return walk(level - 1) + walk(level - 1)\n"
+              "    return walk(items)\n")
+    assert _unnamed_directory_reads(source, tmp_path) == []
+
+
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
     root = tmp_path / "repo"
     (root / "empty").mkdir(parents=True)
