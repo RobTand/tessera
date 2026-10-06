@@ -23,6 +23,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -152,6 +153,7 @@ def test_wrong_baseline_bytes_refuse_against_a_pinned_digest():
 
 def test_panel_rows_project_from_a_validated_dense_panel(tmp_path):
     """The dense CPU fixture panel of tests/test_native_timing_panel.py, reused."""
+    pytest.importorskip("torch")
     import test_native_timing_panel as base
     import torch
     from tessera.alphabet import E4M3_GRID
@@ -233,6 +235,7 @@ def test_the_reviewer_cli_refuses_a_wrong_baseline_pin(tmp_path):
 
 def test_the_reviewer_cli_compares_a_validated_panel_bytes_pinned(tmp_path):
     """compare mode end to end: validate, project, pin the panel bytes, judge."""
+    pytest.importorskip("torch")
     import test_native_timing_panel as base
     import torch
     from tessera.alphabet import E4M3_GRID
