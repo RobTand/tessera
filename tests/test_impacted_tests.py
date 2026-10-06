@@ -2204,6 +2204,22 @@ def test_the_unnamed_directory_read_ceiling_bounds_modules_and_sites_independent
     assert _exceeds_unnamed_directory_read_ceiling(modules, sites) is exceeds
 
 
+def test_a_local_wrapper_around_walk_still_selects_its_reader(tmp_path):
+    """A wrapper named like an enumeration is the reader of the directory it is called with."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_wrapper.py": (
+            "import os\nfrom pathlib import Path\n\n\ndef walk(root):\n    return os.walk(root)\n\n\n"
+            "def test_reads():\n    assert list(walk(Path('docs')))\n"),
+        "docs/a.md": "before\n"})
+    (repo / "docs/b.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a member added")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_wrapper.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

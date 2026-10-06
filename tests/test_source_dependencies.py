@@ -788,6 +788,17 @@ def test_a_module_that_executes_source_keeps_its_unknown_loader_flag(tmp_path, s
     assert unknown, source
 
 
+def test_a_local_wrapper_around_walk_keeps_the_directory_it_names(tmp_path):
+    # ``walk(Path("docs"))`` reads docs through the wrapper: the call site names the
+    # directory, so the resolved dependency must survive the exemption.  Only the
+    # warning that a base is unnamed may be suppressed, never the call (PB1496).
+    (tmp_path / "docs").mkdir()
+    source = ("import os\nfrom pathlib import Path\n\n\ndef walk(root):\n    return os.walk(root)\n\n\n"
+              "def f():\n    return list(walk(Path('docs')))\n")
+    found, unknown, unplaced = file_imports(ast.parse(source), tmp_path / "consumer.py", tmp_path)
+    assert tmp_path / "docs" in found, (found, unknown, unplaced)
+
+
 def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
     source = ("def f(items):\n    def walk(level):\n        if level == 0:\n"
               "            return [level]\n        return walk(level - 1) + walk(level - 1)\n"
