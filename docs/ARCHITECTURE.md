@@ -3476,7 +3476,10 @@ or deleted member selects the reader, pattern-agnostically, because matching
 the pattern would trade a sound over-selection for an under-selection any new
 file can trigger (#923; `Path.glob`, including its `**` spelling, joined in
 PB1496, where it had selected nothing for a deleted, renamed or recursively
-matched member). A glob called through a name resolves its receiver when the
+matched member). A base given as a string (`os.listdir("docs")`, or `os.walk(DOCS)` with
+`DOCS = "docs"`) is the same base as `Path("docs")`, placed or refused by the same
+boundary guard; before this only the `Path` spelling resolved, so a file added under a
+directory listed by string selected no reader. A glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
 the unbound method, called directly or through an alias
 (`Path.glob(DOCS, ...)`). A pattern that is absolute or
