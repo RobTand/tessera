@@ -85,7 +85,7 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
                refusal=Refused("producer experiments/graph_attest_702 is not clean"))
     lines = []
     for name in PRODUCER_FILES:
-        relative = "experiments/graph_attest_702/" + name
+        relative = os.path.normpath("experiments/graph_attest_702/" + name)
         blob = git("show", commit + ":" + relative, binary=True)
         seal_check("producer file", name, "current", where="Window4 producer",
                    same=(root / relative).read_bytes() == blob,

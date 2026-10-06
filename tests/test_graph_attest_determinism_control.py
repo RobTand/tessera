@@ -367,8 +367,7 @@ def test_piece_major_probe_reads_matched_comparator_and_keeps_profiles_after_all
     prompts_path = tmp_path / "prompts.json"  # the single store_population prompt file
     prompts, _, _ = population_fixture()
     prompts_path.write_text(json.dumps(prompts))
-    client = tmp_path / "client"
-    client.mkdir()
+    client = benchmark.CLIENT
     (client / "comparison_inputs.py").write_text(
         "import json\nfrom pathlib import Path\n"
         "def load_manifest(path): return json.loads(Path(path).read_text()), None, None, None\n"

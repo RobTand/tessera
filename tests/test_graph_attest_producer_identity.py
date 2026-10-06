@@ -53,7 +53,9 @@ def make_producer(tmp_path, *, message="reviewed producer"):
     root = tmp_path / "producer"
     (root / "experiments/graph_attest_702").mkdir(parents=True)
     for name in recipe.PRODUCER_FILES:
-        (root / "experiments/graph_attest_702" / name).write_bytes((HERE / name).read_bytes())
+        target = root / "experiments/graph_attest_702" / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((HERE / name).read_bytes())
     git(root, "init", "-q")
     git(root, "config", "user.name", "CPU fixture")
     git(root, "config", "user.email", "fixture@example.invalid")
