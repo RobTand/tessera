@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from tessera._dev.source_dependencies import file_imports
+from tessera._dev.source_dependencies import _MAX_LINK_DEPTH, file_imports
 
 
 def _scan(source, root, *, consumer="consumer.py"):
@@ -524,11 +524,14 @@ def test_link_cycles_share_a_bounded_budget(tmp_path, monkeypatch, shape, templa
     _guard_resolve_to_root(monkeypatch, root)
     original = os.readlink
     followed = []
+    # Each resolution of the cycle gets one fresh budget.  A glob base is
+    # resolved twice: once as the directory node and once for its exact edges.
+    limit = (_MAX_LINK_DEPTH + 1) * (2 if shape.startswith("glob-base") else 1)
 
     def bounded_readlink(path, *args, **kwargs):
         if Path(path).name in {"a", "b"}:
             followed.append(path)
-            assert len(followed) <= 41, "symlink cycle exceeded its traversal budget"
+            assert len(followed) <= limit, "symlink cycle exceeded its traversal budget"
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(os, "readlink", bounded_readlink)
@@ -589,7 +592,9 @@ def test_glob_checks_links_before_directory_filtering(tmp_path, monkeypatch, rea
     action = '(p / "data.txt").read_text()' if reader else 'runpy.run_path(p / "driver.py")'
     found, unknown, unplaced = _scan_full(
         f'from pathlib import Path\nimport runpy\nfor p in Path(".").glob({pattern!r}):\n    {action}\n', root)
-    assert found == set()
+    # The base is a directory-wide read, so it is held as a node (PB1496);
+    # the refused pattern still adds no member edge.
+    assert found == {root}
     assert unknown is (not reader)
     assert unplaced is reader
 
@@ -602,7 +607,7 @@ def test_plain_glob_retains_exact_edges(tmp_path, monkeypatch):
     _guard_resolve_to_root(monkeypatch, root)
     found, unknown, unplaced = _scan_full(
         'from pathlib import Path\nimport runpy\nfor p in Path(".").glob("*.py"):\n    runpy.run_path(p)\n', root)
-    assert found == {target}
+    assert found == {target, root}
     assert not unknown
     assert not unplaced
 
@@ -624,10 +629,69 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
               'for next_path in Path("link").glob("*.json"):\n'
               f'    value = ({expression}).read_text()\n')
     found, unknown, unplaced = _scan_full(source, root)
-    expected = {root / "target.json", root / "link"}
+    expected = {root / "target.json", root / "link", root / "nested" / "child"}
     if '".."' not in expression:
         expected.add(root / "nested" / "child" / "chosen.json")
     assert found == expected
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("method", ["glob", "rglob"])
+@pytest.mark.parametrize("form", ["unbound", "bound", "direct"])
+def test_an_aliased_glob_method_keeps_its_named_base(tmp_path, method, form):
+    # ``original = Path.glob; original(path, pattern)``,
+    # ``scan = DOCS.glob; scan(pattern)`` and the direct ``Path.glob(path,
+    # pattern)`` still name their directory (PB1496).
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    if form == "unbound":
+        source = ('from pathlib import Path\n'
+                  f'original = Path.{method}\n'
+                  'original(Path("docs"), "*.json")\n')
+    elif form == "direct":
+        source = ('import pathlib\n'
+                  f'pathlib.Path.{method}(pathlib.Path("docs"), "*.json")\n')
+    else:
+        source = ('from pathlib import Path\n'
+                  f'scan = Path("docs").{method}\n'
+                  'scan("*.json")\n')
+    found, unknown, unplaced = _scan_full(source, root)
+    assert found == {root / "docs"}
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("method", ["glob", "rglob"])
+def test_an_aliased_glob_method_with_no_nameable_receiver_names_no_base(tmp_path, method):
+    root = tmp_path / "repo"
+    root.mkdir()
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'original = Path.{method}\n'
+        'original(somewhere, "*.json")\n', root)
+    assert found == set()
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("pattern", ["../data/*.json", "/abs/*.json"])
+def test_a_glob_pattern_that_can_leave_its_receiver_is_refused(tmp_path, pattern):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'Path("docs").glob({pattern!r})\n', root)
+    assert found == set()
+    assert unplaced or unknown
+
+
+def test_a_glob_prefix_that_is_a_link_keeps_the_link_and_its_target(tmp_path):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'Path("docs").glob("link/*.json")\n', root)
+    assert {root / "docs", root / "data", root / "docs" / "link"} <= found
     assert not unknown and not unplaced
 
 
@@ -640,7 +704,7 @@ def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypat
         'from pathlib import Path\n'
         'for item in Path("link").glob("*.json"):\n'
         '    item.read_text()\n', root)
-    assert found == {root / "link"}
+    assert found == {root / "link", root / "empty"}
     assert not unknown and not unplaced
 
 
