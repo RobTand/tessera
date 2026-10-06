@@ -1923,3 +1923,51 @@ def test_unproven_import_source_read_keeps_unknown_origin(tmp_path, expression):
     assert result["verdict"] == "full", result
     assert result["tests"] == ["tests/test_dynamic.py"]
     assert result["unresolved_file_loaders"] == ["support/reader.py"]
+
+
+_UNKNOWN_READER = '''
+    def consume(handle):
+        exec("pass", {})
+        return open(handle).read()
+'''
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".rst"])
+def test_a_doc_change_cannot_hide_a_conftest_unknown_reader(tmp_path, suffix):
+    """PB1496: an inert suffix is not proof that an unknown loader cannot read it.
+
+    ``consume`` executes source and opens a path nothing here can name, so it
+    may read any file the diff holds, a Markdown note included.  A conftest
+    imports it, so every test below that conftest is unpredictable and a diff
+    holding only prose must still force the population, as a non-inert
+    suffix already does.
+    """
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/reader.py": _UNKNOWN_READER,
+        "tests/conftest.py": "from support.reader import consume\n",
+        f"docs/note{suffix}": "before\n",
+    })
+    (repo / f"docs/note{suffix}").write_text("after\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "prose changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["verdict"] == "full", result
+    assert result["unresolved_file_loaders"] == ["support/reader.py"], result
+
+
+@pytest.mark.parametrize("suffix", [".md", ".txt", ".rst"])
+def test_a_doc_change_selects_the_consumers_of_an_unknown_reader(tmp_path, suffix):
+    """The same unknown reader behind a test, not a conftest, selects that test."""
+    repo, base = _dynamic_repo(
+        tmp_path,
+        "from support.reader import consume\n\n\ndef test_reads(): pass\n",
+        {"support/reader.py": _UNKNOWN_READER, f"docs/note{suffix}": "before\n"})
+    (repo / f"docs/note{suffix}").write_text("after\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "prose changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_dynamic.py" in result["tests"], result
