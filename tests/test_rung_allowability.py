@@ -136,6 +136,10 @@ class Admission(unittest.TestCase):
 class GeometryHarvest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        import importlib.util
+        if importlib.util.find_spec('torch') is None:
+            # bench_rates imports torch at module level; the hosted bytes-only run has none.
+            raise unittest.SkipTest('torch is required by experiments/t8r_speed/bench_rates.py')
         from pathlib import Path
         sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'experiments'/'t8r_speed'))
         import bench_rates, rung_allowability_table

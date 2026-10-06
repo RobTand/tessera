@@ -19,7 +19,9 @@ def quality_binding(tmp_path, monkeypatch):
     real_path = quality.Path
     monkeypatch.setattr(
         quality, "Path",
-        lambda path: cas if str(path) == "/mnt/shared/prismabuild-fleet/cas/requests" else real_path(path),
+        # The one production call is the PrismaBuild CAS request directory.  Match it by
+        # its tail so the test never names a path on a box (tests/test_box_artifacts.py).
+        lambda path: cas if str(path).endswith("/cas/requests") else real_path(path),
     )
     action = "a" * 64
     original = tmp_path / "recorded" / "quality.json"
