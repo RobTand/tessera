@@ -13,7 +13,11 @@ a compute fallback. CPU preparation is compared against `materialize_stock`;
 `--correctness` runs bounded GPU code/scale-byte and dense/grouped arithmetic
 oracles before geometry. Incoming TCQ history advances with the local pair
 index; canonical serialized row cuts are checked against stock code/scale
-bytes on CPU and in the GPU diagnostic. The quality helper takes `--quality-structure` and
+bytes on CPU and in the GPU diagnostic. Before a grouped TCQ launch shares its
+first label lookup, preparation compares every other actual current table
+by shape, dtype and bytes. Unequal tables refuse in both development and
+certified modes; generator names and profile identity are not the criterion.
+The quality helper takes `--quality-structure` and
 records each actual served recipe and encoder byte count independently.
 This reader admits exactly the served twelve-bit WINDOW scope, not wider
 research windows. The D41 image wrapper resolves actual Docker facts and

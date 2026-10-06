@@ -220,6 +220,10 @@ class PreparedA4Wire:
         for unit in self.units[1:]:
             if (unit.rows, unit.cols, unit.body_kind, unit.memory, unit.window_bits, unit.layout) != (first.rows, first.cols, first.body_kind, first.memory, first.window_bits, first.layout):
                 raise GrammarError("expert packed layouts differ")
+            if unit.body_kind == "tcq" and unit.labels is not first.labels:
+                if (unit.labels.shape != first.labels.shape or unit.labels.dtype != first.labels.dtype
+                        or not torch.equal(unit.labels.view(torch.uint8), first.labels.view(torch.uint8))):
+                    raise GrammarError("current TCQ label tables differ; one grouped launch shares the actual table")
         self.gs = input_global_scale
         self.body = torch.stack([u.body for u in self.units])
         self.codes = torch.stack([u.codes for u in self.units])
