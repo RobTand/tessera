@@ -255,6 +255,19 @@ def fixture_v2(body='window',decoder='fused_window'):
 
 
 class BodyAwareGrammar(unittest.TestCase):
+    def test_empty_required_native_input_planes_refuse(self):
+        for name in ('select','label','nibbles'):
+            t=fixture_v2('tcq','native_tcq');a=t['rungs'][0]['measurements'][0]['geometry']['alignment']
+            a['plane_shapes'][name]=[0];a['plane_bytes'][name]=0
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_nonempty_point_for_zero_width_field_refuses(self):
+        t=fixture_v2('tcq','native_tcq');g=t['rungs'][0]['measurements'][0]['geometry']
+        g['decode_width']['run_widths']=[1]
+        g['alignment']['plane_shapes']['code_nibbles']=[4];g['alignment']['plane_bytes']['code_nibbles']=4
+        with self.assertRaises(ValueError):validate_table(t)
+
+
     def test_quality_scope_missing_or_wrong_family_refuses(self):
         for change in ('missing','family','grid','arity','recipe'):
             t=fixture_v2('tcq','native_tcq');s=t['rungs'][0]['quality']['scope']

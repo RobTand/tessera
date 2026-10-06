@@ -32,7 +32,8 @@ not positive placeholders. Native TCQ records real plane shapes/bytes,
 memory/span/arity, history lookup and native block/scale geometry; Triton
 register/spill/shared counts do not become fabricated ELF stack/local bytes.
 Native TCQ requires the exact seven owner planes with element-size/shape byte
-identity. Version-two quality is bound to the actual encoder format, grid,
+identity. Every non-POINT plane is nonempty; POINT is empty if and only if
+the actual field width is zero. Version-two quality is bound to the actual encoder format, grid,
 arity, rung, structure and recipe; missing scope remains unmeasured.
 Unknown bodies/owners or missing facts refuse. Quality, anomaly, paired-mean,
 coverage and adjacent-higher witness rules are unchanged. Current index

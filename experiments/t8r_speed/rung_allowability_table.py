@@ -40,10 +40,10 @@ def body_geometry(head,cell,geometry,meta,grid):
     g=copy.deepcopy(geometry)
     recipe=head.get('recipe')
     body=head.get('body_kind',recipe.get('body') if isinstance(recipe,dict) else None)
-    if body is None and grid.name in ('BF16','E4M3'):
+    if recipe is None and grid.name in ('BF16','E4M3'):
         from tessera.export import wire_recipe
         recipe=wire_recipe(grid,head['q256']).to_config()
-        body=recipe['body']
+        if body is None:body=recipe['body']
     body=str(body).lower()
     compact=bool(cell.get('compiler_resources'))
     if meta.get('library')=='native_span2':
