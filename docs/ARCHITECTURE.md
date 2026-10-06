@@ -34,6 +34,12 @@ count the actual `routed_fused_forward` word-layout boolean, library, mode,
 token count and block-row value. It reuses the existing histogram, serving
 predicate and writer; runtime source, kernel arithmetic and ship defaults
 are not changed.
+Recorded artifact digest, data-manifest filename and preregistration runtime
+labels use the existing D32 seal helper: development mode stamps and continues.
+Actual current paths/ranges/population, protocol/timing facts, complete-file
+type/length, SDK byte integrity, resource caps and owned cleanup still refuse
+invalid input in every mode; mixed dictionaries do not turn those facts into
+provenance stamps.
 The 107 GiB start gate, 900-second headroom wait, 104 GiB host/102 GiB GPU
 subset caps, strict one-Hertz below-two-GiB guard, exact owned cleanup, byte
 integrity and paired-rank comparability remain unchanged. The same entry

@@ -186,7 +186,7 @@ def submit(root: Path, reviews: Path):
     stored_rows = json.loads((root / "manifest.json").read_text())
     expected_rows = rows(root, setup["config"], env)
     safety_keys = ("tags", "demand", "gpu_memory_gb", "exclusive", "measurement", "host_class",
-                   "max_attempts", "priority", "timeout_s", "data_manifest", "residency", "residency_ram", "residency_share")
+                   "max_attempts", "priority", "timeout_s", "residency", "residency_ram", "residency_share")
     if (
             [{key: row.get(key) for key in safety_keys} for row in stored_rows] !=
             [{key: row.get(key) for key in safety_keys} for row in expected_rows]):

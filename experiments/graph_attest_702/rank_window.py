@@ -92,9 +92,16 @@ class LocalArm:
         declared = json.loads(Path(self.config["artifact_manifest"]).read_bytes())
         artifact = Path(self.config["artifact"])
         expected = {(str(artifact / row["name"]), 0): dict(path=str(artifact / row["name"]),
-                    offset=0, bytes=row["bytes"], sha256=row["sha256"]) for row in declared}
-        if self.staged_inputs.entries != expected:
+                    offset=0, bytes=row["bytes"]) for row in declared}
+        ranges = {key: {field: row[field] for field in ("path", "offset", "bytes")}
+                  for key, row in self.staged_inputs.entries.items()}
+        if ranges != expected:
             raise Refused("declared staged input ranges differ from the complete actual artifact population")
+        seal_check("artifact staged digest provenance",
+                   {str(artifact / row["name"]): row["sha256"] for row in declared},
+                   {path: row["sha256"] for (path, _), row in self.staged_inputs.entries.items()},
+                   where="Window4 staged inputs",
+                   refusal=Refused("recorded artifact staged digest provenance differs"))
         evidence = []
         for path, offset in expected:
             fd, entry, serving = self.staged_inputs.pinned_file(path)

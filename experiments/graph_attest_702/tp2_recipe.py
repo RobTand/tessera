@@ -100,7 +100,7 @@ def require_producer(root: Path, commit: str, expected: str, *, exact_head: bool
 def check_control_record(recorded, current, *, where, refusal):
     """Scope/geometry/comparability must still match exactly; only the recorded
     run identity (commits, digests, stamps) is a D32 seal that dev mode stamps."""
-    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts"}
+    identity = {"source_commit", "producer_commit", "pq_pin_commit", "artifact_authentication", "ts", "data_manifest"}
     identity.update(key for key in set(recorded) | set(current) if key.endswith("sha256"))
     comparable = (set(recorded) | set(current)) - identity
     if {key: recorded.get(key) for key in comparable} != {key: current.get(key) for key in comparable}:

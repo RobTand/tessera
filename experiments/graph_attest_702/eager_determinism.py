@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 import uuid
 
-from managed_window import Refused, atomic_json
+from managed_window import Refused, atomic_json, seal_check
 
 MODE = "investigate-eager-control-2048"
 PIECE_MAJOR_MODE = "investigate-eager-piece-major-2048"
@@ -171,8 +171,18 @@ def require_piece_major_control(root, config):
     control_baseline(Path(config["control_root"]))
     stored_outputs(root, NAMES[2])
     record = json.loads((root / "control-preregistration.json").read_bytes())
-    if record != preregistration_value(root, config, matched=True):
+    current = preregistration_value(root, config, matched=True)
+    labels = {"control_root", "runtime_comparisons", "runtime_comparable"}
+    comparable = lambda value: [{key: row.get(key) for key in ("fabric", "control_protocol")}
+                                for row in value["runtime_comparisons"]]
+    if ({key: value for key, value in record.items() if key not in labels} !=
+            {key: value for key, value in current.items() if key not in labels} or
+            comparable(record) != comparable(current)):
         raise Refused("piece-major preregistration differs from its actual matched OFF observations")
+    seal_check("piece-major preregistration provenance",
+               {key: record[key] for key in labels}, {key: current[key] for key in labels},
+               where="Window4 piece-major control",
+               refusal=Refused("recorded piece-major preregistration provenance differs"))
 
 
 def probes(adapter, arm, peer):
@@ -235,10 +245,15 @@ def input_preflight(config):
     sys.path.insert(0, "/mnt/shared/prismabuild-fleet/repo/src")
     from prismabuild import client as sdk
     data_manifest, _ = sdk.read_data_manifest(config["data_manifest"])
-    expected_entries = [dict(path=str(artifact / row["name"]), offset=0,
-                             bytes=row["bytes"], sha256=row["sha256"]) for row in manifest]
-    if data_manifest["entries"] != expected_entries:
+    expected_entries = [dict(path=str(artifact / row["name"]), offset=0, bytes=row["bytes"])
+                        for row in manifest]
+    ranges = [{field: row[field] for field in ("path", "offset", "bytes")}
+              for row in data_manifest["entries"]]
+    if ranges != expected_entries:
         raise Refused("PB declared staged inputs differ from the complete actual artifact ranges")
+    seal_check("artifact staged digest provenance", [row["sha256"] for row in manifest],
+               [row["sha256"] for row in data_manifest["entries"]], where="Window4 input preflight",
+               refusal=Refused("recorded artifact staged digest provenance differs"))
     reads = []
     for entry in manifest:
         path = artifact / entry["name"]

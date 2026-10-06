@@ -16,6 +16,10 @@ descriptors through model lifetime with no bulk origin fallback, then releases
 only after exact owned physical cleanup.
 Default-off, quality, adoption, ship and pin decisions are unchanged.
 Fresh same-entry CPU preflight and exact-head review precede changed GPU work.
+Split staged-digest, filename and preregistration provenance into existing D32
+stamps; keep actual ranges, byte integrity, timing/protocol, caps and cleanup
+as refusals. Add real-file development/certified boundary regressions and
+remove permanent observer-AST and command-echo-only tests.
 
 ## 2026-10-06 — issue 995: exact-field native span-two reads
 
