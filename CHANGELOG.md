@@ -17,6 +17,8 @@ bounded before shifting. Grouped preparation shares a TCQ label lookup only
 when the actual current table shape, dtype and bytes agree across experts,
 independently of generator names or profile identities. No stored bytes,
 serving defaults, recipes, pins, canonical table or admission gate change.
+Remove the obsolete wrapper-text identity assertion and refresh offline issue
+references; actual image-identity mode and byte-boundary controls remain.
 
 ## 2026-10-06 — issue931: seeded L2048 determinism investigation
 
