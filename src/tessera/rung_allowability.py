@@ -136,8 +136,21 @@ def validate_table(table):
         evidence = row["dominance_evidence"]
         _require(len(evidence) == len(keys) and {e.get("cell_id") for e in evidence} == {k[0] for k in keys}, "dominance cell coverage")
         for e in evidence:
-            low = next(m for m in row["measurements"] if m["cell_id"] == e["cell_id"])
-            high = next(m for m in higher["measurements"] if m["cell_id"] == e["cell_id"])
+            canonical_low = next(m for m in row["measurements"] if m["cell_id"] == e["cell_id"])
+            canonical_high = next(m for m in higher["measurements"] if m["cell_id"] == e["cell_id"])
+            low = e.get("lower_measurement", canonical_low)
+            high = e.get("higher_measurement", canonical_high)
+            # Neighbor-overlap quanta may carry the same higher rung in two
+            # paired runs. Its witness is real measured data, not a substituted
+            # canonical timing from a different clock window.
+            for witness, canonical in ((low, canonical_low), (high, canonical_high)):
+                _structure(witness, TABLE_SCHEMA["$defs"]["measurement"], TABLE_SCHEMA)
+                _require(_cell(witness) == _cell(canonical), "dominance witness cell scope")
+                _require(witness["measurement_status"] == "measured" and witness.get("measurement_build_id") == build["id"], "dominance witness build/status")
+                _require(witness["geometry"] == canonical["geometry"] and witness["kernel_path"] == canonical["kernel_path"], "dominance witness kernel/geometry")
+                _require(_number(witness["kernel_time_us"]) and witness["kernel_time_us"] > 0, "dominance witness time")
+                _require(isinstance(witness.get("pass_times_us"), list) and len(witness["pass_times_us"]) == 2 and all(_number(t) and t > 0 for t in witness["pass_times_us"]), "dominance witness passes")
+
             _require(e.get("lower_time_us") == low["kernel_time_us"] and e.get("higher_time_us") == high["kernel_time_us"] <= low["kernel_time_us"], "dominance times")
             for field in ("comparison_id", "paired_seed_contract", "timing_statistic", "timer"):
                 _require(_text(low["evidence"].get(field)) and low["evidence"].get(field) == high["evidence"].get(field), "unpaired dominance: " + field)

@@ -105,5 +105,17 @@ class Admission(unittest.TestCase):
         for q in (898,899):self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=q)['status'],'wait')
 
 
+    def test_boundary_overlap_uses_real_paired_witnesses(self):
+        t=fixture();low,high=t['rungs']
+        low.update(excluded=True,dominating_rung=769)
+        a=copy.deepcopy(low['measurements'][0]);b=copy.deepcopy(high['measurements'][0])
+        high['measurements'][0]['evidence']['comparison_id']='next-quantum'
+        low['dominance_evidence']=[{'cell_id':a['cell_id'],'lower_time_us':a['kernel_time_us'],'higher_time_us':b['kernel_time_us'],'comparison_id':'paired','lower_measurement':a,'higher_measurement':b}]
+        self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=768)['status'],'excluded')
+        for field,value in [('measurement_build_id','different'),('shape_id','wrong'),('kernel_time_us',float('inf'))]:
+            bad=copy.deepcopy(t);bad['rungs'][0]['dominance_evidence'][0]['higher_measurement'][field]=value
+            with self.assertRaises(ValueError):validate_table(bad)
+
+
 
 if __name__=='__main__': unittest.main()

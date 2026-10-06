@@ -93,6 +93,7 @@ def main():
         except json.JSONDecodeError:pass
     # Prefer the quantum where the rung and its next neighbor share one F/R run.
     candidates={}
+    alternates={}
     for path,data in completed:
         if any(data['meta'].get(k)!=v for k,v in signature.items()):
             continue  # Different actual build belongs in a different table, not mixed numerics.
@@ -111,6 +112,7 @@ def main():
                 preference=(int(q+1 in qs),int(candidate['measurement_status']=='measured'))
                 ckey=(q,key['cell_id'])
                 if ckey not in candidates or preference>candidates[ckey][0]:candidates[ckey]=(preference,candidate)
+                alternates.setdefault(ckey,[]).append(candidate)
     for q,row in by_rung.items():
         row['measurements']=[candidates[(q,k['cell_id'])][1] for k in required if (q,k['cell_id']) in candidates]
         row['quality']=quality.get('rungs',{}).get(str(q),{'measurement_status':'pending'})
@@ -123,14 +125,22 @@ def main():
         if q in (880,912):row['observations'].append({'kind':'missing_census','issue':689,'url':'https://github.com/RobTand/tessera/issues/689','blocking':False,'exclusion_basis':False})
     for q,row in by_rung.items():
         high=by_rung.get(q+1)
+        # Keep every logical adjacent comparison, including quantum boundaries,
+        # on the exact common receipt, rather than crossing clock windows.
+        paired_cells=[]
+        for key in required:
+            low_options=alternates.get((q,key['cell_id']),[])
+            high_options=alternates.get((q+1,key['cell_id']),[])
+            pair=next(((a,b) for a in low_options for b in high_options if a['measurement_status']=='measured' and b['measurement_status']=='measured' and all(a['evidence'].get(k) and a['evidence'].get(k)==b['evidence'].get(k) for k in ('comparison_id','paired_seed_contract','timing_statistic','timer'))),None)
+            if pair:
+                a,b=pair
+                paired_cells.append({'cell_id':key['cell_id'],'lower_time_us':a['kernel_time_us'],'higher_time_us':b['kernel_time_us'],'comparison_id':a['evidence']['comparison_id'],'lower_measurement':a,'higher_measurement':b})
+        if high:
+            row['observations'].append({'kind':'adjacent_higher_comparison','higher_rung':q+1,'paired_cells_completed':len(paired_cells),'required_cells':len(required),'all_cell_at_least_as_fast':len(paired_cells)==len(required) and all(e['higher_time_us']<=e['lower_time_us'] for e in paired_cells),'evidence':paired_cells})
         if row['measurement_status']!='measured' or not high or high['measurement_status']!='measured' or high['supported'] is not True or high['anomaly_flags']:continue
-        proof=[]
-        for low_m,high_m in zip(row['measurements'],high['measurements']):
-            a,b=low_m['evidence'],high_m['evidence']
-            paired=all(a.get(k) and a.get(k)==b.get(k) for k in ('comparison_id','paired_seed_contract','timing_statistic','timer'))
-            if not paired or high_m['kernel_time_us']>low_m['kernel_time_us']:break
-            proof.append({'cell_id':low_m['cell_id'],'lower_time_us':low_m['kernel_time_us'],'higher_time_us':high_m['kernel_time_us'],'comparison_id':a['comparison_id']})
-        if len(proof)==len(required):row.update(excluded=True,dominating_rung=q+1,dominance_evidence=proof)
+        if len(paired_cells)==len(required) and all(e['higher_time_us']<=e['lower_time_us'] for e in paired_cells):
+            row.update(excluded=True,dominating_rung=q+1,dominance_evidence=paired_cells)
+
     baseline=by_rung[1024]
     for q,row in by_rung.items():
         if q>1024:
@@ -144,7 +154,7 @@ def main():
            'scope':{'rung_min':768,'rung_max':1152,'grid_step_q256':1,'grid_owner':'prismaquant.tessera_formats.realisable_rungs(step_q256=1), lines 1145-1159','required_cells':required,'shapes':[{'shape_id':n,'kernel_kind':k,'rows':r,'columns':c,'mode':mode} for k,n,r,c,mode in SHAPES],'timing_statistic':meta['statistic'],'shape_owner':'bench_rates TP2 shapes; actual GLM config hidden4096, routed inter2048/2, experts288, topk8'},'rungs':rows,'evidence':{'summary':dict(Counter(r['measurement_status'] for r in rows)),'completed_quanta':len(completed),'quality_scope':'fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL','exclusion_review_status':'pending independent review; no defaults promoted'}}
     validate_table(table)
     import jsonschema
-    jsonschema.Draft202012Validator(json.loads(Path(args.schema).read_text())).validate(table)
+    jsonschema.Draft202012Validator(json.loads(Path(args.schema).read_text()), format_checker=jsonschema.FormatChecker()).validate(table)
     relative=f'{FORMAT}/{build_id}/v{args.version:04d}.json'
     index={'schema':'fleet.rung_allowability.index.v1','formats':{FORMAT:{'kernel_builds':{build_id:{'current_version':args.version,'versions':{str(args.version):{'path':relative,'table_schema':table['schema'],'table_status':table['table_status']}}}}}}}
     validate_index(index)
