@@ -164,6 +164,34 @@ def pick_recorded(root, ms):
     return out
 
 
+def stage_geometry_inputs(args):
+    """Copy admitted whole-file inputs through the existing pinned reader."""
+    if not args.data_manifest:
+        if args.routing and not args.cpu_preflight:
+            raise ValueError('GPU recorded routing needs its admitted data manifest')
+        return
+    from pathlib import Path
+    import tempfile
+    from pb_staged_store import StagedInputs
+    inputs=StagedInputs(args.data_manifest)
+    args._staged_input_owner=tempfile.TemporaryDirectory(prefix='d41-geometry-inputs-',dir='/tmp')
+    local_root=Path(args._staged_input_owner.name)
+    try:
+        for path,offset in inputs.entries:
+            if offset!=0:raise ValueError('geometry routing inputs must be whole files')
+            local=local_root/path.lstrip('/')
+            local.parent.mkdir(parents=True,exist_ok=True)
+            local.write_bytes(inputs.read(path))
+        with open(os.path.join(args.out,'staged-reads.json'),'w') as stream:
+            json.dump(inputs.reads,stream,indent=1)
+    finally:
+        inputs.close()
+    for field in ('config','routing'):
+        original=getattr(args,field)
+        if original:setattr(args,field,str(local_root/original.lstrip('/')))
+
+
+
 def compact_projection(p, rows, cols, *, grouped):
     """Use the public compact constructors, including actual wide BF16 tables.
 
@@ -702,10 +730,12 @@ def main():
     ap.add_argument("--config", default="", help="actual GLM config for shape provenance")
     ap.add_argument("--ncu", action="store_true",
                     help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
+    ap.add_argument('--data-manifest',default='',help='admitted PB whole-file routing readset')
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
     library = args.library or rf.library_for("e4m3")
+    stage_geometry_inputs(args)
     mma8 = rf.library_mma8(library)
     if args.cpu_preflight:
         cases = [parse_case(c, rf.LIBRARIES[library][1]) for c in args.cases.split(",")]

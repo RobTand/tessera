@@ -133,4 +133,60 @@ class Admission(unittest.TestCase):
 
 
 
+class GeometryHarvest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from pathlib import Path
+        sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'experiments'/'t8r_speed'))
+        import bench_rates, rung_allowability_table
+        cls.rates,cls.harvest=bench_rates,rung_allowability_table
+
+    def test_bf16_true_step_and_wide_boundaries(self):
+        for q in (256,257,2048,2049,3584,3585,3840,3841,4095,4096):
+            rate,fraction=self.rates.parse_case(f'q{q}','value')
+            self.assertEqual(self.rates.q256_of(rate,fraction),q)
+        for q in (255,4097):
+            with self.assertRaises(ValueError):self.rates.parse_case(f'q{q}','value')
+        with self.assertRaises(ValueError):self.rates.parse_case('q2049','e4m3')
+
+    def test_bf16_projection_uses_actual_recipe_width_and_finite_table(self):
+        import torch
+        from tessera import routed_fused
+        for q,width in ((3584,14),(3585,15),(3840,15),(3841,16),(4096,16)):
+            rate,fraction=self.rates.parse_case(f'q{q}','value')
+            p=self.rates.build_projection(routed_fused,1,512,256,rate,
+                round(256*(fraction or 0)),41,torch.device('cpu'),False,bf16_table=True)
+            self.assertEqual(p['window_bits'],width)
+            self.assertEqual(p['table'].numel(),1<<width)
+            self.assertTrue(bool(torch.isfinite(p['table'].view(torch.bfloat16)).all()))
+            self.assertTrue(bool(((p['init']>=0)&(p['init']<(1<<width))).all()))
+
+    def test_index_merge_preserves_t8_and_immutable_versions(self):
+        index={'schema':'fleet.rung_allowability.index.v1','formats':{
+            'TESSERA_E4M3_K1':{'kernel_builds':{'existing':{
+                'current_version':9,'versions':{'9':{'path':'TESSERA_E4M3_K1/existing/v0009.json',
+                'table_schema':'fleet.rung_allowability.v1','table_status':'complete'}}}}}}}
+        before=copy.deepcopy(index['formats']['TESSERA_E4M3_K1'])
+        table={'schema':'fleet.rung_allowability.v1','table_status':'partial'}
+        self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/v0001.json',table)
+        self.assertEqual(index['formats']['TESSERA_E4M3_K1'],before)
+        with self.assertRaises(ValueError):
+            self.harvest.merge_index(index,'TESSERA_BF16_K1','value',1,'TESSERA_BF16_K1/value/v0001.json',table)
+
+    def test_actual_adapter_normalization_does_not_require_fused_symbols(self):
+        from tessera.alphabet import E2M1_GRID,tuple_grid
+        m=fixture()['rungs'][0]['measurements'][0]
+        head={'kind':'dense','shape':'o_proj','q256':896,'body_kind':'TCQ','window_bits':0}
+        cell={'F':{'median_ms':1,'timer':'graph'},'R':{'median_ms':1,'timer':'graph'},
+              'ms':1,'bm':64,'kernel_path':'actual_span2','normalized_geometry':m['geometry']}
+        data={'meta':{'pb_action':'actual','statistic':'paired'}}
+        out=self.harvest.measurement('actual.json',data,head,cell,
+            {'cell_id':'dense:o_proj:M1','kernel_kind':'dense','shape_id':'o_proj','M':1},
+            'build',4096,4096,tuple_grid(E2M1_GRID,2))
+        self.assertEqual(out['measurement_status'],'measured')
+        self.assertIs(out['geometry'],cell['normalized_geometry'])
+        self.assertEqual(out['kernel_path'],'actual_span2')
+
+
+
 if __name__=='__main__': unittest.main()

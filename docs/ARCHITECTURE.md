@@ -20,6 +20,17 @@ cells are remeasured before the next allocation. Untouched rows may inherit
 explicit measurement lineage; this is evidence coverage, not a new identity
 seal, freeze, re-seal ceremony or permission to reuse changed-path timings.
 
+Re-stamped 2026-10-06 for issues #989 and #750: the D41 geometry harness
+also parses the scalar BF16 producer axis at true q256 step one (256–4096).
+Its finite BF16 table follows the exporter's actual 14/15/16-bit window recipe,
+with BF16 activations without activation scales and folded weight arithmetic.
+Above the fused specialization's bounds it measures the existing public
+compact projection constructors and records their independent serving-intake
+rate refusals. These are measurement scopes, not newly qualified serving
+cells. The terminal WINDOW recipe is not replaced with a BF16 passthrough
+reference. Missing timings, compiler resources or actual sampled expert
+quality leave the versioned table rows pending; no T8 timings are inherited.
+
 Re-stamped 2026-10-05 for issue984: opt-in
 `WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
 same MNBT4096, through the existing pair-table/row validator from issue980.
