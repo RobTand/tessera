@@ -20,6 +20,39 @@ cells are remeasured before the next allocation. Untouched rows may inherit
 explicit measurement lineage; this is evidence coverage, not a new identity
 seal, freeze, re-seal ceremony or permission to reuse changed-path timings.
 
+Re-stamped 2026-10-06 for PB1496 (unnameable base): the impacted-test selector's
+documented limit is unchanged -- a directory read whose base nothing names, in a
+module that executes nothing, states no dependency and selects no test (#148;
+treating it as an unplaced read selected 424 of 424 test files for any change).
+The result now lists each such read under `unnamed_directory_reads` and the
+text receipt prints it, so a reader of this shape is seen instead of silently
+unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
+when this was added (117 modules, 178 sites, most taking the directory as a
+parameter or calling the standard library's `glob.glob(pattern)`) and fails if
+it rises. Selector infrastructure only: no wire, recipe
+table, serving lane, plugin contract, numerical path, residency or performance
+default moves.
+
+Re-stamped 2026-10-06 for PB1496: the impacted-test selector no longer treats a
+`.md`, `.txt` or `.rst` change as proof that an unknown loader did not read it.
+A module that executes source and opens a path the resolver cannot name may read
+any file, so its consumers are selected for a prose-only diff, and a conftest
+that reaches one forces the full population, as a non-inert suffix already did.
+On this tree a docs-only diff selected 79 tests before and about 355 now.
+Selector infrastructure only: no wire, recipe table, serving lane, plugin
+contract, numerical path, residency or performance default moves.
+
+Re-stamped 2026-10-06 for PB1496 (glob): the impacted-test selector treats
+`Path.glob`, including its `**` spelling, as a directory-wide read like
+`rglob`, so an added, deleted or renamed member of a globbed directory selects
+the tests that read it. Before, a deleted member of a glob that reads its
+matches, an added, deleted or renamed member of a names-only glob, and every
+change under the recursive spelling gave verdict `none`. Review of the same
+change added the aliased spellings and the patterns that leave the receiver
+(`../data/*.md`, a link to another directory). Selector
+infrastructure only: no wire, recipe table, serving lane, plugin contract,
+numerical path, residency or performance default moves.
+
 Re-stamped 2026-10-05 for issue984: opt-in
 `WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
 same MNBT4096, through the existing pair-table/row validator from issue980.
@@ -810,9 +843,10 @@ exact) and attaches the copy to the module
 M >= `e4m3_prefill.MIN_M` (256, the measured crossover) with
 `torch._scaled_mm` row-wise on the unchanged E4M3 epilogue contract, and every
 smaller M on its window lane. The lane is EAGER-ONLY: the M branch is host
-Python, so the route refuses the flag AT LOAD when vLLM's compilation mode is
-not NONE (`compile_identity.current_forward_is_compiled`); a raise in `apply`
-under `torch.compile` is only a backstop, since Dynamo may run around it. A
+Python, so the route refuses the flag AT LOAD when the compilation mode saved
+at model construction is not NONE (`compile_identity.declared_forward_is_compiled`),
+even after the current-config context exits. A raise in `apply` under
+`torch.compile` is only a backstop, since Dynamo may run around it. A
 copy-holding module declares a distinct compile-cache dispatch fact
 (`<window op>|<decode-once op>`). The route stamps `launch_pair_for(M)` (the
 pair that ran) only for a copy-holding module; every other module stamps its
@@ -3408,15 +3442,27 @@ repository-relative path. A conservative text fallback also selects tests that
 name a changed non-Python file when a helper hides the read from the resolver.
 This includes Markdown and other documentation suffixes: a named test input is
 not inert merely because it is prose (#358). Directory-wide reads are edges to
-the base directory itself: `Path.rglob`/`iterdir`, `os.listdir`/`scandir`/
-`walk` consume the directory's *membership*, not one named file, so the graph
-holds the resolved base under its repository path and the selector seeds every
-changed path's ancestor directories against it -- a changed, added or deleted
-member selects the reader, pattern-agnostically, because matching the pattern
-would trade a sound over-selection for an under-selection any new file can
-trigger (#923). An out-of-tree or otherwise refused base keeps the #338
+the base directory itself: `Path.glob`/`rglob`/`iterdir`, `os.listdir`/
+`scandir`/`walk` consume the directory's *membership*, not one named file, so
+the graph holds the resolved base under its repository path and the selector
+seeds every changed path's ancestor directories against it -- a changed, added
+or deleted member selects the reader, pattern-agnostically, because matching
+the pattern would trade a sound over-selection for an under-selection any new
+file can trigger (#923; `Path.glob`, including its `**` spelling, joined in
+PB1496, where it had selected nothing for a deleted, renamed or recursively
+matched member). A glob called through a name resolves its receiver when the
+name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
+the unbound method, called directly or through an alias
+(`Path.glob(DOCS, ...)`). A pattern that is absolute or
+contains `..` can read another directory and is refused, and a literal
+directory in front of the first wildcard is placed as well, so a link there
+keeps the link and its target. A link reached only through a wildcard
+component is not followed: nothing is crawled to find it. An out-of-tree or
+otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
-and follows the named/unnamed rule; a conftest's enumeration is collection
+and follows the named/unnamed rule -- and where nothing executes it states no
+dependency, so the receipt lists it under `unnamed_directory_reads` instead of
+leaving it silent (PB1496); a conftest's enumeration is collection
 machinery and joins the probe exclusion, because pytest imports the conftest
 for every test in its scope whatever changed, and a per-change edge from an
 ancestor listing would close the cycle that holds every verdict at full
@@ -3451,7 +3497,7 @@ rule with one home, and the three entry points -- a bare loader argument, an
 explicit `.resolve()`, and a glob base -- all call it. A target that
 resolved outside the tree used to be dropped in silence; it is now that same
 refusal, which is the conservative direction. An unresolved recognized loader conservatively seeds its
-importing module and downstream tests for every non-inert change; an unresolved
+importing module and downstream tests for every change, whatever its suffix; an unresolved
 loader reaching a conftest forces the full population. An unresolved *read* is
 an unknown module only for a module that can parse or execute Python source
 (`_SOURCE_BUILTINS`/`_SOURCE_ATTRIBUTES`/`_SOURCE_QUALIFIED`, matched by
