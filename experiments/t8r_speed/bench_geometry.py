@@ -47,6 +47,7 @@ Usage: bench_geometry.py --out DIR --part routed|dense|all
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -114,10 +115,10 @@ def resource_usage(lib):
     return {"so": so, "kernels": out}
 
 
-def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True):
-    """The instantiation ``routed_fused_kernel<FP8, MODE, DENSE, SPLIT=false, RL, TWO, BMT>``'s row."""
-    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, false, {r_lo}, " \
-           f"{'true' if two else 'false'}, {bm}>"
+def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True, *, split=False):
+    """Actual original-order, unpaired instantiation, including its K-split specialization."""
+    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, {'true' if split else 'false'}, {r_lo}, " \
+           f"{'true' if two else 'false'}, {bm}, false, false>"
     for k, v in usage.get("kernels", {}).items():
         if want in k:
             return v
@@ -174,7 +175,7 @@ class Sweep:
         self.cells = {}
         self.ms = [int(v) for v in args.ms.split(",")]
         self.power_ms = {int(v) for v in args.power_ms.split(",") if v}
-        self.recorded = pick_recorded(args.routing, [512, 8192]) if args.routing else {}
+        self.recorded = pick_recorded(args.routing, self.ms) if args.routing else {}
 
     # -- groups: (key, build) where build() returns [(cell_key, meta, call, out)] lazily
     def groups(self):
@@ -198,8 +199,9 @@ class Sweep:
 
     def variants(self, kind):
         if kind in ("routed", "vllm_fp8_moe", "vllm_bf16_moe"):
-            v = [(m, "balanced") for m in self.ms]
-            v += [(m, "recorded") for m in sorted(self.recorded)]
+            v = [(m, "balanced") for m in self.ms] if self.args.routing_kind != "recorded" else []
+            if self.args.routing_kind != "balanced":
+                v += [(m, "recorded") for m in sorted(self.recorded)]
             return v
         return [(m, None) for m in self.ms]
 
@@ -216,7 +218,7 @@ class Sweep:
         r_lo, frac = parse_case(f"q{q}")
         rows, cols = (INTER, HIDDEN) if mode == 0 else (HIDDEN, INTER)
         n_hi = 0 if frac is None else round(cols * frac)
-        seed = zlib.crc32(f"q{q}:{mode}".encode())
+        seed = zlib.crc32(f"paired:{mode}".encode())
         projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, self.dev, self.mma8,
                                   bf16_table=not self.fp8)
                  for i in range(2 if mode == 0 else 1)]
@@ -233,7 +235,7 @@ class Sweep:
             ids, w = self.routing(m, how)
             offsets, flat_sorted, rw_sorted, item_off = routing_tables(ids, w, EXPERTS, bm)
             routes = m * TOP_K
-            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{q}:{mode}:{m}:{how}".encode()))
+            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{mode}:{m}:{how}".encode()))
             xrows = m if mode == 0 else routes
             x, a_scale = self.activation(xrows, cols, g)
             out = torch.empty((routes, rows), dtype=torch.bfloat16, device=self.dev)
@@ -268,12 +270,12 @@ class Sweep:
         if rows % rf.BN:
             head["refused"] = f"{rows} rows; the dense identity needs a multiple of {rf.BN}"
             return head, None, None
-        p = build_projection(rf, 1, rows, cols, r_lo, n_hi, zlib.crc32(f"{shape}:q{q}".encode()),
+        p = build_projection(rf, 1, rows, cols, r_lo, n_hi, zlib.crc32(f"paired:{shape}".encode()),
                              self.dev, self.mma8, bf16_table=not self.fp8)
         head["tile_words"] = p["tile_words"]
 
         def make(m, _how):
-            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{shape}:{q}:{m}".encode()))
+            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{shape}:{m}".encode()))
             x, a_scale = self.activation(m, cols, g)
             out = torch.empty((m, rows), dtype=torch.bfloat16, device=self.dev)
             counter = torch.zeros(1, dtype=torch.int32, device=self.dev)
@@ -522,6 +524,7 @@ class Sweep:
                         how_t, samples = time_call(call, a.warmup, a.iters,
                                                    graph=kind not in ("vllm_fp8_moe", "vllm_bf16_moe"))
                         cell[pas] = {"median_ms": statistics.median(samples), "min_ms": min(samples),
+                                     "samples_ms": samples,
                                      "timer": how_t, "unix": time.time(), "clock": self.clock.read()}
                         if pas == "F":
                             cell.update({k: v for k, v in meta.items()})
@@ -532,7 +535,7 @@ class Sweep:
                                 cell["power"] = self.power.sample_during(call, a.power_s)
                             if kind in ("routed", "dense"):
                                 u = kernel_usage(usage, head.get("mode", 2), kind == "dense", head["r_lo"],
-                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8)
+                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8, split=meta.get("k_split", 1) > 1)
                                 rec["usage"][str(meta.get("bm", 64))] = u
                         else:
                             f, r = cell.get("F", {}).get("median_ms"), cell["R"]["median_ms"]
@@ -564,7 +567,8 @@ def main():
     ap.add_argument("--cases", default=",".join(f"q{q}" for q in DEFAULT_RUNGS))
     ap.add_argument("--ms", default="1,64,512,8192")
     ap.add_argument("--shapes", default="o_proj,q_b,kda_in,kda_in_12416")
-    ap.add_argument("--routing", default="", help="recorded routing root (m512/, m8192/)")
+    ap.add_argument("--routing", default="", help="recorded routing root with m<M>/ for the requested M")
+    ap.add_argument("--routing-kind", choices=("balanced", "recorded", "both"), default="both")
     ap.add_argument("--refs", action="store_true", help="vLLM FP8 MoE and torch._scaled_mm references")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
@@ -572,6 +576,8 @@ def main():
     ap.add_argument("--power-ms", default="512,8192")
     ap.add_argument("--power-s", type=float, default=0.5)
     ap.add_argument("--library", default=None)
+    ap.add_argument("--cpu-preflight", action="store_true", help="CPU imports, parsing, shapes, tiny packed-wire read; no CUDA timing")
+    ap.add_argument("--config", default="", help="actual GLM config for shape provenance")
     ap.add_argument("--ncu", action="store_true",
                     help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
     args = ap.parse_args()
@@ -579,6 +585,29 @@ def main():
     from tessera import routed_fused as rf
     library = args.library or rf.library_for("e4m3")
     mma8 = rf.library_mma8(library)
+    if args.cpu_preflight:
+        cases = [parse_case(c) for c in args.cases.split(",")]
+        ms = [int(m) for m in args.ms.split(",")]
+        assert ms and all(m > 0 for m in ms)
+        shapes = {s: PROTOCOL_DENSE[s] for s in args.shapes.split(",")}
+        config = json.load(open(args.config)) if args.config else None
+        if config:
+            text = config.get("text_config", config)
+            assert (text["hidden_size"], text["moe_intermediate_size"] // 2, text["n_routed_experts"], text["num_experts_per_tok"]) == (HIDDEN, INTER, EXPERTS, TOP_K)
+        tiny = []
+        for r, frac in cases:
+            p = build_projection(rf, 1, 512, 256, r, round(256 * (frac or 0)), 41, torch.device("cpu"), mma8)
+            assert p["words"].shape == (1, p["tile_words"])
+            tiny.append({"q256": q256_of(r, frac), "tile_words": p["tile_words"], "word": int(p["words"][0, 0])})
+        recorded = pick_recorded(args.routing, ms) if args.routing else {}
+        for m, entry in recorded.items():
+            ids, _weights = recorded_routing(entry["path"], m, "cpu")
+            assert tuple(ids.shape) == (m, TOP_K) and int(ids.min()) >= 0 and int(ids.max()) < EXPERTS
+        if args.routing_kind == "recorded":
+            assert recorded, "No recorded routing at the requested M"
+        json.dump({"cpu_preflight": "passed", "library": library, "shapes": shapes, "M": ms, "tiny_wire_reads": tiny, "config": args.config, "recorded": recorded, "routing_kind": args.routing_kind}, open(os.path.join(args.out, "cpu-preflight.json"), "w"), indent=2)
+        print("CPU preflight passed; no GPU results", flush=True)
+        return 0
     lib = rf._ext(library)
     dev = torch.device("cuda")
     sms = torch.cuda.get_device_properties(dev).multi_processor_count
@@ -588,7 +617,12 @@ def main():
         sw.run_ncu()
         print("done", flush=True)
         return 0
+    props = torch.cuda.get_device_properties(dev)
     meta = {"device": torch.cuda.get_device_name(), "sms": sms, "experts": EXPERTS, "hidden": HIDDEN,
+            "architecture": f"sm_{props.major}{props.minor}", "shared_memory_available": props.shared_memory_per_block_optin,
+            "library_sha256": hashlib.sha256(open(lib.__file__, "rb").read()).hexdigest(),
+            "activation_contract": "float8_e4m3fn per-row float32 scale; BF16 output; seeded normal std=0.5",
+            "paired_seed_contract": "fixed shape/mode/M/routing seeds independent of rung; synthetic packed wires",
             "inter": INTER, "top_k": TOP_K, "part": args.part, "cases": args.cases, "ms": args.ms,
             "shapes": args.shapes, "recorded": sw.recorded, "library": library,
             "family": rf.LIBRARIES[library][1], "mma_tflops": sw.tflops,
