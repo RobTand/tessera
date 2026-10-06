@@ -449,7 +449,7 @@ def main():
             unit = encode_linear(samples["gate"], grid=grid, q256=q, **recipe_kwargs(recipe))
             from tessera.compact_prep import parse_compact_wire
             wire = parse_compact_wire(unit.blob, device="cpu", name="D38")
-            if (wire.rows, wire.cols) != (32, 256):
+            if (wire.rows, wire.metadata.columns) != (32, 256):
                 raise ValueError("tiny parsed wire has wrong shape")
             tiny.append({"q256": q, "arity": grid.arity, "recipe": recipe.to_config(), "exact_bytes": unit.exact_bytes})
         recorded = pick_recorded(args.routing, args.ms_values) if args.routing else {}
