@@ -704,9 +704,8 @@ def _unnamed_directory_reads(source, root):
 @pytest.mark.parametrize("source", [
     "def f(x):\n    def walk(a):\n        return a\n    return walk(x)\n",
     "def walk(a):\n    return a\n\n\ndef f(x):\n    return walk(x)\n",
-    "class walk:\n    pass\n\n\ndef f(x):\n    return walk(x)\n",
     "def glob(a):\n    return a\n\n\ndef f(x):\n    return glob(x)\n",
-], ids=["nested-def", "module-def", "class", "glob"])
+], ids=["nested-def", "module-def", "glob"])
 def test_a_function_the_file_defines_is_not_a_directory_read(tmp_path, source):
     # A bare ``walk(...)`` is os.walk only if something names it so.  A name the
     # file defines itself and never imports is that function, not an enumeration
@@ -757,6 +756,18 @@ _SHADOWED_WALK = {
     "loop-variable": (
         "import os\n\n\ndef walk(a):\n    return a\n\n\ndef f(x):\n"
         "    for walk in (os.walk,):\n        return list(walk(x))\n"),
+    "star-import-after-def": (
+        "def walk(a):\n    return a\n\n\nfrom os import *\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "conditional-class-binding": (
+        "import os\n\nif os.environ:\n    class walk:\n        pass\nelse:\n    walk = os.walk\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "metaclass-binds-os-walk": (
+        "import os\n\n\nclass Meta(type):\n    def __new__(mcs, name, bases, namespace):\n"
+        "        return os.walk\n\n\nclass walk(metaclass=Meta):\n    pass\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "class-body-comprehension": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\nclass A:\n    walk = os.walk\n"
+        "    results = [walk(x) for x in range(3)]\n"),
     "def-in-another-function": (
         "import os\n\n\ndef g():\n    def walk(a):\n        return a\n    return walk\n\n\n"
         "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
