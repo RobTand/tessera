@@ -15,6 +15,26 @@ NAMES = ("control_off_first", "control_off_restart", "control_decode_once", "con
 FLAGS = ("TESSERA_E4M3_DECODE_ONCE", "TESSERA_GLM53_KDA_CONV_SPLIT", "TESSERA_ROUTED_PIECE_MAJOR")
 
 
+def local_generation_reader(directory):
+    """Point the control at the real maintained validator without a box artifact.
+
+    ``eager_benchmark.CLIENT`` is a shared-storage directory the hosted runner
+    does not have; the same source is tools/served_generation_client.py.
+    """
+    import eager_benchmark
+    client = Path(directory) / "client-source"
+    client.mkdir(parents=True, exist_ok=True)
+    source = HERE.parents[1] / "tools/served_generation_client.py"
+    (client / "u4_speed_client.py").write_bytes(source.read_bytes())
+    return eager_benchmark, client
+
+
+@pytest.fixture(autouse=True)
+def local_client(tmp_path, monkeypatch):
+    benchmark, client = local_generation_reader(tmp_path)
+    monkeypatch.setattr(benchmark, "CLIENT", client)
+
+
 def control_plan(tmp_path):
     path = tmp_path / "control.txt"
     lines = []
@@ -269,6 +289,8 @@ if __name__ == "__main__":
     import rank_window
     from test_graph_attest_window_scenarios import CpuArm
     parent, rank, changed = Path(sys.argv[2]), int(sys.argv[3]), bool(int(sys.argv[4]))
+    benchmark, client = local_generation_reader(parent / f"client-rank{rank}")
+    benchmark.CLIENT = client
     root, queue = parent / "run", parent / "queue"
     owned = window.read_json(parent / f"identity{rank}.json")
     envelope = window.Envelope(owned["window_end_unix"], cleanup_seconds=1)
