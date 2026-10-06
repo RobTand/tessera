@@ -74,5 +74,36 @@ class Admission(unittest.TestCase):
         bad=copy.deepcopy(index);bad['formats']['TESSERA_E4M3_K1']['kernel_builds']['build']['current_version']=2
         with self.assertRaises(ValueError):validate_index(bad)
 
+    def test_generated_timestamp_required_and_valid(self):
+        for value in (None,"not-a-time","2026-10-06","2026-02-30T03:00:00Z","2026-10-06T03:00:00"):
+            t=fixture()
+            if value is None:t.pop('generated_at')
+            else:t['generated_at']=value
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_dominating_key_required_even_when_not_excluded(self):
+        t=fixture();t['rungs'][0].pop('dominating_rung')
+        with self.assertRaises(ValueError):validate_table(t)
+
+    def test_pending_cell_required_structural_fields(self):
+        t=fixture();t['table_status']='partial';r=t['rungs'][0]
+        r.update(measurement_status='pending',supported=None,quality={})
+        m=r['measurements'][0]
+        m.update(measurement_status='pending',kernel_time_us=None,kernel_path=None,geometry=None,evidence={})
+        self.assertIs(validate_table(t),t)
+        self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=768)['status'],'wait')
+        for field in ('measurement_status','kernel_time_us','kernel_path','geometry','evidence'):
+            bad=copy.deepcopy(t);bad['rungs'][0]['measurements'][0].pop(field)
+            with self.assertRaises(ValueError):validate_table(bad)
+
+    def test_reader_full_roster_pending_and_unlisted_wait(self):
+        t=fixture();t['scope'].update(rung_min=896,rung_max=898);t['table_status']='partial'
+        t['rungs'][0]['rung']=896;t['rungs'][1]['rung']=897
+        pending=copy.deepcopy(t['rungs'][0]);pending.update(rung=898,measurement_status='pending',supported=None,measurements=[],quality={})
+        t['rungs'].append(pending)
+        validate_table(t)
+        for q in (898,899):self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=q)['status'],'wait')
+
+
 
 if __name__=='__main__': unittest.main()
