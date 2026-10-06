@@ -14,12 +14,14 @@ Rows compare only on a matched (structure, module, family, grid, rate) key
 with agreeing rank-local geometry, and agreement is never presumed: a row
 with no geometry of its own is a nonpassing `geometry_missing` verdict in
 the JSON receipt (the CLI still exits 0), never a borrow of the reference
-shape. Malformed geometry, duplicate comparison rows, a median outside the
-band, a timing cell that is not a JSON object, and a cell without a numeric
-`samples_ms` array are named `ValueError` refusals (CLI exit 2), not silent
-passes or tracebacks; the reviewer CLI binds, pins and proves
-one owned read per file. Dense panel
-rows project from a validated `tessera.shape_time_panel.v1` receipt;
+shape. A median outside the recorded band is likewise a `gap` verdict
+carrying both numbers (CLI 0), not a reproduction and not a refusal.
+Malformed geometry, duplicate comparison rows, a timing cell
+that is not a JSON object, and a cell without a numeric `samples_ms`
+array are named `ValueError` refusals (CLI exit 2), not silent passes or
+tracebacks; the reviewer CLI binds, pins and proves one owned read per
+file. Dense panel rows project from a validated
+`tessera.shape_time_panel.v1` receipt;
 routed rows refuse projection by name until the panel schema grows one.
 Historical runtime-identity drift stamps and continues under the landed
 development-mode split; byte integrity, execution scope, grammar and

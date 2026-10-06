@@ -885,8 +885,10 @@ preserved table before anything compares, never the panel's interpolated
 (structure, module, family, grid, rate) key with agreeing rank-local
 geometry validated before anything is serialized: a row with no geometry of
 its own is a nonpassing `geometry_missing` verdict in the JSON receipt (the
-CLI still exits 0), never a borrow from the reference. Duplicate comparison
-rows, malformed rank-local geometry, a median outside the band, and a
+CLI still exits 0), never a borrow from the reference. A median outside
+the recorded band is likewise a `gap` verdict carrying both numbers (CLI
+0), not a reproduction and not a refusal. Duplicate comparison
+rows, malformed rank-local geometry, and a
 baseline cell whose timing is not an object carrying a numeric `samples_ms`
 array are named refusals (CLI exit 2), never silent passes or tracebacks.
 The reviewer CLI binds, pins and
