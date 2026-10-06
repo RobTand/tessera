@@ -1,5 +1,22 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
+`--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
+WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
+keeps TCQ BODY bytes packed and uses the existing forest label/code owners;
+WINDOW preparation uses `lane_planes.pack_window_planes`, including its
+incoming history, column alignment and trailing slack. The separate
+`kernel_a4_wire` decoder reads actual rate and bit-start tables, reconstructs
+code bytes inside the native FP4 mainloop and uses the existing activation
+quantizer and LUT scale arithmetic. Diagnostic stock-byte rendering is never
+a compute fallback. CPU preparation is compared against `materialize_stock`;
+`--correctness` runs bounded GPU code/scale-byte and dense/grouped arithmetic
+oracles before geometry. The quality helper takes `--quality-structure` and
+records each actual served recipe and encoder byte count independently.
+Serving does not import this reader. No encoded bytes, serving recipe, format
+menu, pin, default or admission gate changes. Existing uniform reader
+measurements and immutable allowability tables remain unchanged.
+
 Re-stamped 2026-10-06 for the issue931 correctness investigation: the separate
 opt-in `WINDOW_MODE=investigate-eager-determinism-2048` uses the existing
 managed rank lifecycle at A8S/socket/TP2/resident/c1 and maximum batched
