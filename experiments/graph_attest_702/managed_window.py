@@ -289,6 +289,18 @@ class Rendezvous:
             time.sleep(min(self.poll_seconds, self.envelope.remaining()))
 
 
+def prismabuild_import_root() -> str | None:
+    """The admitted PrismaBuild ``src`` that carries ``prismabuild.client``, or None.
+
+    The launcher owns PRISMABUILD_READER_HELPER_ROOT: an immutable generation of the
+    PrismaBuild repository, supplied inside admission.  There is no fallback to the
+    shared checkout, which moves between runs; outside admission the caller's
+    explicitly supplied SDK is what imports.  Never Tessera's own ``src``.
+    """
+    helper = os.environ.get("PRISMABUILD_READER_HELPER_ROOT")
+    return str(Path(helper) / "src") if helper else None
+
+
 def terminal_cleanup(identity: dict, terminal: dict) -> dict:
     """A successful payload is not a physical owned-scope handoff."""
     control = terminal.get("resource_scope", {})

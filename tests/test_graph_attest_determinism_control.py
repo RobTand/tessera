@@ -37,6 +37,21 @@ def local_client(tmp_path, monkeypatch):
     monkeypatch.setattr(benchmark, "CLIENT", client)
 
 
+def test_the_prismabuild_import_root_is_derived_not_hardcoded(tmp_path, monkeypatch):
+    """The seeded control and the staged-input reader import the PrismaBuild package.
+
+    The root is the launcher-owned immutable generation in PRISMABUILD_READER_HELPER_ROOT
+    and nothing else: a literal ``.../src`` is what tests/test_experiment_import_roots.py
+    forbids, and falling back to the shared checkout would re-admit a tree that moves
+    between runs.  Unset, no path is added.
+    """
+    import managed_window as window
+    monkeypatch.setenv("PRISMABUILD_READER_HELPER_ROOT", str(tmp_path))
+    assert window.prismabuild_import_root() == str(tmp_path / "src")
+    monkeypatch.delenv("PRISMABUILD_READER_HELPER_ROOT")
+    assert window.prismabuild_import_root() is None
+
+
 def phase_plan(tmp_path, mode):
     """Per-phase arm rows: the control phase is exactly its two all-OFF restart
     blocks; the piece-major phase is exactly its matched OFF block plus the

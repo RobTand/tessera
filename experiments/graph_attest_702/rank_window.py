@@ -15,7 +15,7 @@ import time
 
 from managed_window import (WINDOW_SECONDS, CLEANUP_SECONDS, MEMORY_POLICY, Envelope, HOSTS, Refused,
                             seal_check, check_memory_policy,
-                            Rendezvous, atomic_json, read_json, require_claim)
+                            Rendezvous, atomic_json, prismabuild_import_root, read_json, require_claim)
 import tp2_recipe as recipe
 
 
@@ -83,7 +83,9 @@ class LocalArm:
         if self.config.get("window_mode") not in recipe.PHASE_MODES or self.staged_inputs is not None:
             return
         import importlib.util
-        sys.path.insert(0, "/mnt/shared/prismabuild-fleet/repo/src")
+        sdk_root = prismabuild_import_root()
+        if sdk_root:
+            sys.path.insert(0, sdk_root)
         module_path = Path(__file__).resolve().parents[1] / "t8r_speed/pb_staged_store.py"
         spec = importlib.util.spec_from_file_location("resident_window_staged_inputs", module_path)
         module = importlib.util.module_from_spec(spec)

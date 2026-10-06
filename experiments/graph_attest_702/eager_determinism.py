@@ -12,7 +12,7 @@ from pathlib import Path
 import sys
 import uuid
 
-from managed_window import Refused, atomic_json, seal_check
+from managed_window import Refused, atomic_json, prismabuild_import_root, seal_check
 
 MODE = "investigate-eager-control-2048"
 PIECE_MAJOR_MODE = "investigate-eager-piece-major-2048"
@@ -242,7 +242,9 @@ def input_preflight(config):
     names = [entry["name"] for entry in manifest]
     if len(names) != 128 or len(set(names)) != 128 or names != sorted(names):
         raise Refused("seeded control artifact manifest roster differs")
-    sys.path.insert(0, "/mnt/shared/prismabuild-fleet/repo/src")
+    sdk_root = prismabuild_import_root()
+    if sdk_root:
+        sys.path.insert(0, sdk_root)
     from prismabuild import client as sdk
     data_manifest, _ = sdk.read_data_manifest(config["data_manifest"])
     expected_entries = [dict(path=str(artifact / row["name"]), offset=0, bytes=row["bytes"])

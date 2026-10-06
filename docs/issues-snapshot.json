@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-06T05:02:22Z",
+ "generated": "2026-10-06T12:06:51Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5528,7 +5528,7 @@
     "title": "Integrate accepted test dedup (#2233) and checker-config isolation (#2218)"
    },
    "2241": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] The io engine cannot import or open sealed buffers on interpreters without build-time fcntl/os seal names"
    },
    "2242": {
@@ -5872,7 +5872,7 @@
     "title": "Integration batch 41: #2317 tools spaced-JSON routes through DIRECT_ASCII_SPACED_LAX (stacked on batch 38)"
    },
    "2319": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Allocator cannot spend the byte budget at unit granularity: consume per-unit routed rates once Tessera#967 lands"
    },
    "232": {
@@ -5892,7 +5892,7 @@
     "title": "Integration batch 39: #2313 reprice deciding T-8 routed layers on the real 128x2048 Fisher basis (stacked on batch 38)"
    },
    "2323": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Allocate research routed rates at priced-unit granularity"
    },
    "2324": {
@@ -5900,7 +5900,7 @@
     "title": "Integration batch 40: #2313 reprice deciding T-8 routed layers on the real 128x2048 Fisher basis"
    },
    "2325": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Add default-off CPU input/readset preflight to joint_adjoint_capture (D38)"
    },
    "2326": {
@@ -5924,7 +5924,7 @@
     "title": "[P1] Validate the producer\u2019s v9 smoke-record grammar before deriving admission"
    },
    "2330": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Reuse shared qname grammars in comparison and budget CLIs"
    },
    "2331": {
@@ -5932,20 +5932,96 @@
     "title": "[P1] D41: require current producer-admitted measured rungs in allocation"
    },
    "2332": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Add default-off CPU adjoint input/readset preflight"
    },
    "2333": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Cut the comparison and retained-budget CLIs over to the owned qname grammars (#2330)"
+   },
+   "2334": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the shared forward-KL primitive in final-vocabulary scoring"
+   },
+   "2335": {
+    "state": "CLOSED",
+    "title": "Integration batch 43: #2332 default-off CPU adjoint input/readset preflight"
+   },
+   "2336": {
+    "state": "CLOSED",
+    "title": "Reuse the shared forward-KL owner in final-vocabulary scoring"
+   },
+   "2337": {
+    "state": "CLOSED",
+    "title": "Integration batch 44: #2323 allocate research routed rates at priced-unit granularity (stacked on batch 45)"
+   },
+   "2338": {
+    "state": "CLOSED",
+    "title": "Integration batch 45: #2332 CPU adjoint preflight and #2336 final-vocabulary KL owner reuse (one bundle)"
+   },
+   "2339": {
+    "state": "OPEN",
+    "title": "[P2+] Bind Stage A produced-output launch context without input residency"
    },
    "234": {
     "state": "CLOSED",
     "title": "[P2] Preserve serving conditions in production Tessera route admission"
    },
+   "2340": {
+    "state": "OPEN",
+    "title": "[P1] D41: delegate v1/v2 body-aware table intake to canonical producer"
+   },
+   "2341": {
+    "state": "OPEN",
+    "title": "[P2+] Bind produced-output queue without input residency"
+   },
+   "2342": {
+    "state": "CLOSED",
+    "title": "[P1] Apply declared bind-seal classification to forward-split relaunches"
+   },
+   "2343": {
+    "state": "OPEN",
+    "title": "Support explicit selected calibration capture and disjoint research moments"
+   },
+   "2344": {
+    "state": "CLOSED",
+    "title": "[P1] Refuse zero-sized reads in the shared file digest owner"
+   },
+   "2345": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse declared bind seals for forward-split relaunches"
+   },
+   "2346": {
+    "state": "CLOSED",
+    "title": "Integration batch 47: #2341 produced-output queue binding and #2345 forward-split bind-seal reuse (one bundle)"
+   },
+   "2347": {
+    "state": "CLOSED",
+    "title": "fix: refuse zero read counts in file_sha256hex (#2344)"
+   },
+   "2348": {
+    "state": "CLOSED",
+    "title": "Integration batch 48: #2345 forward-split bind-seal reuse and #2347 zero read-count refusal (one bundle, no #2341)"
+   },
+   "2349": {
+    "state": "OPEN",
+    "title": "[P2] Consolidate digest test nodes while preserving every asserted outcome"
+   },
    "235": {
     "state": "CLOSED",
     "title": "Bind Tessera export inputs and preserve runtime admission evidence"
+   },
+   "2350": {
+    "state": "OPEN",
+    "title": "Integration batch 49: D41 v1/v2 body-aware rung allowability (#2331 + #2340 at f4cc875e), stacked on batch 48"
+   },
+   "2351": {
+    "state": "OPEN",
+    "title": "Integration batch 51: consolidate digest test nodes, preserving all 618 outcomes (#2349), on main"
+   },
+   "2352": {
+    "state": "OPEN",
+    "title": "[P1] RTN FP8 helper returns NaN for finite FP16 zero and tiny rows"
    },
    "236": {
     "state": "CLOSED",
@@ -9348,6 +9424,34 @@
    "100": {
     "state": "CLOSED",
     "title": "The \"pinned\" vLLM is a floating tag, and the two boxes hold different images under it"
+   },
+   "1000": {
+    "state": "CLOSED",
+    "title": "[P2] Resolve a string path as the directory an enumeration reads"
+   },
+   "1001": {
+    "state": "CLOSED",
+    "title": "[P1] An ordinary import is not masked by a probe of the same file"
+   },
+   "1002": {
+    "state": "OPEN",
+    "title": "[P2+] Bound eager control and piece-major decision phases to native 30-minute gangs"
+   },
+   "1003": {
+    "state": "OPEN",
+    "title": "Bound seeded eager control and piece-major-only native phases"
+   },
+   "1004": {
+    "state": "CLOSED",
+    "title": "[P2+] D41 staged v2 activation selects an invalid legacy native TCQ table"
+   },
+   "1005": {
+    "state": "OPEN",
+    "title": "[P1] Qualify actual mixed rate and dense T4 geometry coverage"
+   },
+   "1006": {
+    "state": "OPEN",
+    "title": "Add actual mixed TCQ and dense twelve-bit T4 geometry readers"
    },
    "101": {
     "state": "CLOSED",
@@ -13286,7 +13390,7 @@
     "title": "[P1] Treat Path.glob as a directory-wide read in the impacted-test selector (PB1496)"
    },
    "989": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Publish measured T8 rung allowability and shared admission API"
    },
    "99": {
@@ -13298,7 +13402,7 @@
     "title": "[P1] Stop an inert suffix from suppressing the unknown-loader escalation (PB1496)"
    },
    "991": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Publish canonical measured rung admission and D41 geometry producer"
    },
    "992": {
@@ -13306,12 +13410,32 @@
     "title": "[P1] List a directory read whose base cannot be named, and guard the count (PB1496)"
    },
    "993": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add seeded L2048 OFF/OFF restart control"
    },
    "994": {
     "state": "OPEN",
     "title": "Measure actual E2M1 recipes for D41 rung allowability"
+   },
+   "995": {
+    "state": "CLOSED",
+    "title": "[P2+] Native E2M1 middle-rate POINT read crosses its exact plane boundary and blocks D41 prefill measurement"
+   },
+   "996": {
+    "state": "CLOSED",
+    "title": "Extend D41 to BF16 geometry and body-aware measured-rung metadata"
+   },
+   "997": {
+    "state": "CLOSED",
+    "title": "Bound native span-two field reads at exact byte boundaries"
+   },
+   "998": {
+    "state": "CLOSED",
+    "title": "[P3] Narrow the issue 995 changelog claim to what the boundary regression checks"
+   },
+   "999": {
+    "state": "CLOSED",
+    "title": "[P3] Do not read a function the file defines as a directory enumeration"
    }
   }
  }
