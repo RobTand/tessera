@@ -3576,6 +3576,8 @@ pattern: the literal directory in front of the first wildcard is placed like any
 and a module that can execute source keeps its unknown-loader flag. A base outside the tree
 (an absolute box path, a pattern that climbs out) stays unnamed and is listed, not kept as an
 unplaced read, because that would select the readers' consumers on every change (#1010). A
+relative pattern or string base in a module that calls `chdir` is not assumed relative to the
+tree's root and is kept as an unplaced read. A
 glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
 the unbound method, called directly or through an alias

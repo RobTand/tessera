@@ -1126,7 +1126,7 @@ def _with_link_targets(placed, specs, root, refused, links):
     return placed | found
 
 
-def _module_glob_bases(call, scope, root, refused, links, from_string):
+def _module_glob_bases(call, scope, root, refused, links, from_string, changes_cwd=False):
     """The directory a module-level ``glob.glob``/``glob.iglob`` call reads, or None.
 
     Unlike ``Path.glob`` the base is not a receiver: it is the literal directory
@@ -1139,7 +1139,9 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     repository files, and an unplaced read seeds its reader's consumers on every
     change, which made ``serving/ext.py`` select the whole population (#148).
     ``root_dir``, ``dir_fd``, extra positional arguments, a pattern nothing names
-    and a ``..`` after the first wildcard also stay unnamed (#1010).
+    and a ``..`` after the first wildcard also stay unnamed (#1010).  A module that
+    changes directory (``chdir``) cannot have a relative pattern assumed relative to
+    the tree's root: it is kept as an unplaced read.
     """
     if len(call.args) != 1 or isinstance(call.args[0], ast.Starred) or any(
             keyword.arg not in ("recursive", "include_hidden") for keyword in call.keywords):
@@ -1153,6 +1155,9 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
         base = Path(*prefix) if prefix else Path(".")
         if ".." in PurePath(pattern).parts[len(prefix):]:
             return None
+        if changes_cwd and not PurePath(pattern).is_absolute():
+            refused.append(base)
+            return None
         bases.add(base)
         components = _wildcard_directory_components(pattern, prefix)
         if components:
@@ -1165,7 +1170,15 @@ def _module_glob_bases(call, scope, root, refused, links, from_string):
     return placed
 
 
-def _enumeration_bases(loader, call, scope, root, refused, links, from_string=None):
+def _changes_cwd(tree):
+    """True when the module calls ``chdir`` in any spelling (``os.chdir``, ``monkeypatch.chdir``)."""
+    return any(isinstance(node, ast.Call) and (
+        (isinstance(node.func, ast.Attribute) and node.func.attr == "chdir")
+        or (isinstance(node.func, ast.Name) and node.func.id == "chdir"))
+        for node in ast.walk(tree))
+
+
+def _enumeration_bases(loader, call, scope, root, refused, links, from_string=None, changes_cwd=False):
     """The base directories an enumeration call consumes, or ``None``.
 
     A directory-wide read consumes the directory's *membership*: what can
@@ -1187,7 +1200,7 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
     if loader in ("glob", "iglob"):
         functions = _values(call.func, scope, root)
         if functions and functions <= _MODULE_GLOBS:
-            return _module_glob_bases(call, scope, root, refused, links, from_string)
+            return _module_glob_bases(call, scope, root, refused, links, from_string, changes_cwd)
     specs = []
     if loader == "iterdir":
         bases = _values(call.func.value, scope, root, refused=refused, links=links)
@@ -1203,6 +1216,11 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
             # a string path is the same base, placed (or refused) by the same
             # boundary guard.  Only the Path spelling was resolved, so a file
             # added under a directory listed by string selected no reader.
+            if changes_cwd and any(isinstance(base, str) and not PurePath(base).is_absolute()
+                                   for base in bases):
+                # After a chdir the runtime directory is not the tree's root.
+                refused.extend(Path(base) for base in bases if isinstance(base, str))
+                return None
             if from_string is not None and any(isinstance(base, str) for base in bases):
                 from_string.append(True)
             bases = {Path(base) if isinstance(base, str) else base for base in bases}
@@ -1323,6 +1341,7 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
 
     found, unknown, unplaced = set(), False, False
     own_definitions = _sole_plain_definitions(tree)
+    changes_cwd = _changes_cwd(tree)
 
     def refuse(reading):
         """Record a target this resolver named and then declined to place.
@@ -1353,7 +1372,7 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
             refused, links, from_string = [], set(), []
             try:
                 targets = _enumeration_bases(
-                    loader, call, scope, root, refused, links, from_string)
+                    loader, call, scope, root, refused, links, from_string, changes_cwd)
             except (OSError, ValueError, TypeError, RecursionError):
                 targets = None
             if targets is None:
