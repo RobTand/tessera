@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--cases", default=",".join(str(q) for q in range(768, 1153)))
+    ap.add_argument("--grid", default="E4M3")
     ap.add_argument("--preflight", action="store_true")
     args = ap.parse_args()
     torch.set_num_threads(1)
@@ -42,7 +43,7 @@ def main():
     if args.preflight:
         print(json.dumps({"status":"passed", "samples":[m for _,m in samples]}), flush=True)
         return
-    grid = grid_for_name("E4M3")
+    grid = grid_for_name(args.grid)
     result = {"schema":"tessera.rung_quality.v1", "source_kind":"actual_sampled_expert_weights",
               "device":"cpu", "model":str(model), "sample_selection":"layer 3, expert 0; first 32 rows and 256 columns of gate/up/down",
               "objective":"unweighted weight-space relative SSE; not served KL or promotion",
