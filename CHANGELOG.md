@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-06 — issue 995: exact-field native span-two reads
+
+Native A4 SELECT and POINT reads load a second byte only when the meaningful
+field crosses the first byte. Zero-width POINT fields do not load. Big-endian
+extraction, code lookups, GEMM and scale/epilogue algebra are unchanged, as are
+wire bytes, prepared allocations, shape admission and serving gates. The
+boundary regression uses exact field/stock decoding and an FP32-derived GEMM
+error bound; detecting an unused out-of-bounds read requires compute-sanitizer
+with the caching allocator disabled, not numerical parity alone. D41 native
+rows require fixed-build remeasurement before allocation; old timings remain
+historical. No serving default or runtime pin moves.
+
 ## 2026-10-05 — issue968: explicit MNBT8192 ship-window selector
 
 Add `WINDOW_MODE=ship-eager-4096-8192` and the exact eager4096/eager8192
