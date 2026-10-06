@@ -32,7 +32,7 @@ from pathlib import Path
 
 import pytest
 
-from tessera._dev.source_dependencies import file_imports
+from tessera._dev.source_dependencies import _MAX_LINK_DEPTH, file_imports
 
 
 def _scan(source, root, *, consumer="consumer.py"):
@@ -524,11 +524,14 @@ def test_link_cycles_share_a_bounded_budget(tmp_path, monkeypatch, shape, templa
     _guard_resolve_to_root(monkeypatch, root)
     original = os.readlink
     followed = []
+    # Each resolution of the cycle gets one fresh budget.  A glob base is
+    # resolved twice: once as the directory node and once for its exact edges.
+    limit = (_MAX_LINK_DEPTH + 1) * (2 if shape.startswith("glob-base") else 1)
 
     def bounded_readlink(path, *args, **kwargs):
         if Path(path).name in {"a", "b"}:
             followed.append(path)
-            assert len(followed) <= 41, "symlink cycle exceeded its traversal budget"
+            assert len(followed) <= limit, "symlink cycle exceeded its traversal budget"
         return original(path, *args, **kwargs)
 
     monkeypatch.setattr(os, "readlink", bounded_readlink)
@@ -589,7 +592,9 @@ def test_glob_checks_links_before_directory_filtering(tmp_path, monkeypatch, rea
     action = '(p / "data.txt").read_text()' if reader else 'runpy.run_path(p / "driver.py")'
     found, unknown, unplaced = _scan_full(
         f'from pathlib import Path\nimport runpy\nfor p in Path(".").glob({pattern!r}):\n    {action}\n', root)
-    assert found == set()
+    # The base is a directory-wide read, so it is held as a node (PB1496);
+    # the refused pattern still adds no member edge.
+    assert found == {root}
     assert unknown is (not reader)
     assert unplaced is reader
 
@@ -602,7 +607,7 @@ def test_plain_glob_retains_exact_edges(tmp_path, monkeypatch):
     _guard_resolve_to_root(monkeypatch, root)
     found, unknown, unplaced = _scan_full(
         'from pathlib import Path\nimport runpy\nfor p in Path(".").glob("*.py"):\n    runpy.run_path(p)\n', root)
-    assert found == {target}
+    assert found == {target, root}
     assert not unknown
     assert not unplaced
 
@@ -624,11 +629,227 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
               'for next_path in Path("link").glob("*.json"):\n'
               f'    value = ({expression}).read_text()\n')
     found, unknown, unplaced = _scan_full(source, root)
-    expected = {root / "target.json", root / "link"}
+    expected = {root / "target.json", root / "link", root / "nested" / "child"}
     if '".."' not in expression:
         expected.add(root / "nested" / "child" / "chosen.json")
     assert found == expected
     assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("method", ["glob", "rglob"])
+@pytest.mark.parametrize("form", ["unbound", "bound", "direct"])
+def test_an_aliased_glob_method_keeps_its_named_base(tmp_path, method, form):
+    # ``original = Path.glob; original(path, pattern)``,
+    # ``scan = DOCS.glob; scan(pattern)`` and the direct ``Path.glob(path,
+    # pattern)`` still name their directory (PB1496).
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    if form == "unbound":
+        source = ('from pathlib import Path\n'
+                  f'original = Path.{method}\n'
+                  'original(Path("docs"), "*.json")\n')
+    elif form == "direct":
+        source = ('import pathlib\n'
+                  f'pathlib.Path.{method}(pathlib.Path("docs"), "*.json")\n')
+    else:
+        source = ('from pathlib import Path\n'
+                  f'scan = Path("docs").{method}\n'
+                  'scan("*.json")\n')
+    found, unknown, unplaced = _scan_full(source, root)
+    assert found == {root / "docs"}
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("method", ["glob", "rglob"])
+def test_an_aliased_glob_method_with_no_nameable_receiver_names_no_base(tmp_path, method):
+    root = tmp_path / "repo"
+    root.mkdir()
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'original = Path.{method}\n'
+        'original(somewhere, "*.json")\n', root)
+    assert found == set()
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("pattern", ["../data/*.json", "/abs/*.json"])
+def test_a_glob_pattern_that_can_leave_its_receiver_is_refused(tmp_path, pattern):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        f'Path("docs").glob({pattern!r})\n', root)
+    assert found == set()
+    assert unplaced or unknown
+
+
+def test_a_glob_prefix_that_is_a_link_keeps_the_link_and_its_target(tmp_path):
+    root = tmp_path / "repo"
+    (root / "docs").mkdir(parents=True)
+    (root / "data").mkdir()
+    (root / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'Path("docs").glob("link/*.json")\n', root)
+    assert {root / "docs", root / "data", root / "docs" / "link"} <= found
+    assert not unknown and not unplaced
+
+
+def _unnamed_directory_reads(source, root):
+    unnamed = []
+    file_imports(ast.parse(source), root / "consumer.py", root, unnamed=unnamed)
+    return unnamed
+
+
+@pytest.mark.parametrize("source", [
+    "def f(x):\n    def walk(a):\n        return a\n    return walk(x)\n",
+    "def walk(a):\n    return a\n\n\ndef f(x):\n    return walk(x)\n",
+    "def glob(a):\n    return a\n\n\ndef f(x):\n    return glob(x)\n",
+], ids=["nested-def", "module-def", "glob"])
+def test_a_function_the_file_defines_is_not_a_directory_read(tmp_path, source):
+    # A bare ``walk(...)`` is os.walk only if something names it so.  A name the
+    # file defines itself and never imports is that function, not an enumeration
+    # (PB1496: the codebook's recursive ``walk`` was listed as an unnamed read).
+    assert _unnamed_directory_reads(source, tmp_path) == []
+
+
+@pytest.mark.parametrize("source", [
+    "from os import walk\n\n\ndef f(x):\n    return list(walk(x))\n",
+    "import os\n\n\ndef f(x):\n    return list(os.walk(x))\n",
+    "from os import walk as step\n\n\ndef f(x):\n    return list(step(x))\n",
+    "import os\nwalk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n",
+    # A star import may bring os.walk in; a same-named def elsewhere cannot rule it out.
+    "from os import *\n\n\ndef g():\n    def walk(a):\n        return a\n\n\ndef f(x):\n    return list(walk(x))\n",
+    # An import of the real name keeps the alias even if the file also defines one.
+    "from os import walk\n\n\ndef g():\n    def walk(a):\n        return a\n\n\ndef f(x):\n    return list(walk(x))\n",
+], ids=["from-os", "os-attribute", "renamed-import", "assigned-alias", "star-import", "import-and-def"])
+def test_a_real_directory_walk_is_still_listed(tmp_path, source):
+    assert _unnamed_directory_reads(source, tmp_path), source
+
+
+def _unnamed_and_unknown(source, root):
+    unnamed = []
+    _, unknown, _ = file_imports(ast.parse(source), root / "consumer.py", root, unnamed=unnamed)
+    return unnamed, unknown
+
+
+# The name that is called must resolve, lexically, to a plain def or class: an
+# unrelated definition elsewhere in the file proves nothing about this call.
+_SHADOWED_WALK = {
+    "method-elsewhere-and-parameter-default": (
+        "import os\n\n\nclass T:\n    def walk(self):\n        return 1\n\n\n"
+        "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
+    "decorator-returns-os-walk": (
+        "import os\n\n\ndef replace(fn):\n    return os.walk\n\n\n@replace\n"
+        "def walk(a):\n    return a\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "parameter-shadows-module-def": (
+        "def walk(a):\n    return a\n\n\ndef f(x, walk):\n    return walk(x)\n"),
+    "def-in-one-branch-assignment-in-the-other": (
+        "import os\n\nif os.environ:\n    def walk(a):\n        return a\nelse:\n"
+        "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "import-with-def-fallback": (
+        "try:\n    from os import walk\nexcept ImportError:\n    def walk(a):\n        return a\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "global-rebinding": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\ndef g():\n    global walk\n"
+        "    walk = os.walk\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "loop-variable": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\ndef f(x):\n"
+        "    for walk in (os.walk,):\n        return list(walk(x))\n"),
+    "star-import-after-def": (
+        "def walk(a):\n    return a\n\n\nfrom os import *\n\n\ndef f(x):\n    return list(walk(x))\n"),
+    "conditional-class-binding": (
+        "import os\n\nif os.environ:\n    class walk:\n        pass\nelse:\n    walk = os.walk\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "metaclass-binds-os-walk": (
+        "import os\n\n\nclass Meta(type):\n    def __new__(mcs, name, bases, namespace):\n"
+        "        return os.walk\n\n\nclass walk(metaclass=Meta):\n    pass\n\n\n"
+        "def f(x):\n    return list(walk(x))\n"),
+    "class-body-comprehension": (
+        "import os\n\n\ndef walk(a):\n    return a\n\n\nclass A:\n    walk = os.walk\n"
+        "    results = [walk(x) for x in range(3)]\n"),
+    "def-in-another-function": (
+        "import os\n\n\ndef g():\n    def walk(a):\n        return a\n    return walk\n\n\n"
+        "def f(x, walk=os.walk):\n    return list(walk(x))\n"),
+}
+
+
+@pytest.mark.parametrize("source", list(_SHADOWED_WALK.values()), ids=list(_SHADOWED_WALK))
+def test_a_defined_name_does_not_hide_a_call_that_resolves_elsewhere(tmp_path, source):
+    unnamed, _ = _unnamed_and_unknown(source, tmp_path)
+    assert unnamed, source
+
+
+@pytest.mark.parametrize("source", list(_SHADOWED_WALK.values()), ids=list(_SHADOWED_WALK))
+def test_a_module_that_executes_source_keeps_its_unknown_loader_flag(tmp_path, source):
+    # The misread would also have dropped the unknown-loader flag of a module
+    # that can run what it reads, which is the escalation a real walk gets.
+    unnamed, unknown = _unnamed_and_unknown(source + '\n\nexec("pass")\n', tmp_path)
+    assert unknown, source
+
+
+def test_a_local_wrapper_around_walk_keeps_the_directory_it_names(tmp_path):
+    # ``walk(Path("docs"))`` reads docs through the wrapper: the call site names the
+    # directory, so the resolved dependency must survive the exemption.  Only the
+    # warning that a base is unnamed may be suppressed, never the call (PB1496).
+    (tmp_path / "docs").mkdir()
+    source = ("import os\nfrom pathlib import Path\n\n\ndef walk(root):\n    return os.walk(root)\n\n\n"
+              "def f():\n    return list(walk(Path('docs')))\n")
+    found, unknown, unplaced = file_imports(ast.parse(source), tmp_path / "consumer.py", tmp_path)
+    assert tmp_path / "docs" in found, (found, unknown, unplaced)
+
+
+def test_a_recursive_local_def_is_still_not_a_directory_read(tmp_path):
+    source = ("def f(items):\n    def walk(level):\n        if level == 0:\n"
+              "            return [level]\n        return walk(level - 1) + walk(level - 1)\n"
+              "    return walk(items)\n")
+    assert _unnamed_directory_reads(source, tmp_path) == []
+
+
+@pytest.mark.parametrize("source", [
+    "import os\nx = os.listdir('docs')\n",
+    "import os\nx = list(os.walk('docs'))\n",
+    "import os\nx = list(os.scandir('docs'))\n",
+    "import os\nDOCS = 'docs'\nx = os.listdir(DOCS)\n",
+    "from os import listdir\nx = listdir('docs')\n",
+    "import os\nx = os.listdir('./docs')\n",
+], ids=["listdir", "walk", "scandir", "constant", "from-import", "dot-slash"])
+def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source):
+    # ``os.listdir("docs")`` reads the same directory as ``os.listdir(Path("docs"))``;
+    # only the Path spelling used to be resolved, so a file added under the
+    # directory selected no reader (PB1496).
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced
+
+
+@pytest.mark.parametrize("source", [
+    # A custom ``walk`` is recognized by its name alone; its string argument may
+    # not be a path at all, so resolving it must ADD an edge and never replace the
+    # unknown-loader flag a module that can execute source already had.
+    "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk('mode')\n",
+    "import os\n\n\ndef f():\n    exec('pass')\n    return os.listdir('mode')\n",
+    "from os import walk\n\n\ndef f():\n    exec('pass')\n    return list(walk('mode'))\n",
+], ids=["custom-walk", "os-listdir", "from-import-walk"])
+def test_a_string_base_adds_an_edge_without_dropping_the_unknown_loader_flag(tmp_path, source):
+    (tmp_path / "mode").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "mode" in found, (found, unknown, unplaced)
+    assert unknown, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "import os\nx = os.listdir('/etc')\n",
+    "import os\nx = os.listdir('../outside')\n",
+], ids=["absolute", "escaping"])
+def test_a_string_path_outside_the_tree_is_refused_not_resolved(tmp_path, source):
+    # The boundary guard is the same one the Path spelling meets: refused, kept
+    # as an unplaced read, and never stat'ed outside the tree.
+    (tmp_path / "docs").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == set()
+    assert unplaced and not unknown
 
 
 def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
@@ -640,7 +861,7 @@ def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypat
         'from pathlib import Path\n'
         'for item in Path("link").glob("*.json"):\n'
         '    item.read_text()\n', root)
-    assert found == {root / "link"}
+    assert found == {root / "link", root / "empty"}
     assert not unknown and not unplaced
 
 

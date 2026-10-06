@@ -234,3 +234,36 @@ python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py --cwd . --tag gb10 --e
   --env TEST_RUNNER_SP=/home/rob/venvs/pb-cpu/lib/python3.12/site-packages \
   -- bash experiments/t8r_speed/e4m3_prefill_action.sh OUT
 ```
+
+## Correction, 2026-10-06: historical load-refusal qualification
+
+The original "Not done" entry above saying that the load-time refusal "is
+queued" is stale. It is preserved as recorded history, not a statement of
+the final qualification at branch commit
+`ca62193aadef747bdcb1a58219f4057f9dd1eed9`.
+
+- Before that refusal, PB `65a62a2b6961` ran snapshot `4e1169b2a9c3`, parent
+  `232603915029`, on sparky. Its retained
+  `prefix4-20261005T003758Z/test.log` records
+  `test_a_compiled_vllm_forward_refuses_the_flag_at_load[1]` failing with
+  `Failed: DID NOT RAISE RuntimeError`. The flag-off arm passed; the
+  population records one pass, one failure, no skips or uncollected modules,
+  and two tests allocating on the CUDA device. The failed action has no
+  success CAS receipt.
+- The final PB `f63d380e6948` ran snapshot `b3976a1d9434`, parent
+  `ca62193aadef`, on sparky with four pytest workers in the pinned
+  `spark-vllm-nccl230` image. Its retained
+  `integ4-20261005T003758Z/test/surface.json` and `test/junit.xml` record
+  2,549 passed, zero failures or errors, 60 skipped and eight expected
+  failures; 928 tests allocated on the CUDA device, and no modules were
+  uncollected. CAS receipt SHA-256:
+  `36de20c751f72d1d3d5a76b99408f5670dbe741acf6856d99269a589a94b4577`.
+
+Both retained paths are beneath
+`/mnt/shared/tessera-measurements/e4m3-prefill-20261004/`. These are the
+original measurements, read without rerunning them. The final load test kept
+the vLLM config current during weight loading: it did not qualify the case
+where that context has already exited (PR 935 review comment 5986512889,
+finding N1). This correction records the historical result, not new kernel,
+performance, source-equivalence, served-gain or flag-on census evidence. The
+other unmeasured items in the original "Not done" list remain unmeasured.

@@ -39,7 +39,7 @@ from __future__ import annotations
 import ast
 import os.path
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PurePath
 
 #: The node an unknown *module* dependency edges to: this reader can run
 #: Python it cannot name, so it may import anything in the tree.
@@ -333,11 +333,12 @@ _READ_METHODS = {"read_text", "read_bytes", "open"}
 #: directory's *membership*, not one named file: what can change under it is
 #: any path at or below the base -- added, edited or deleted -- so the edge it
 #: resolves to is the base directory itself, and no pattern is matched
-#: (tessera#923).  ``Path.glob`` is deliberately absent: single-directory
-#: globs already resolve to exact matched edges through the expression
-#: resolver, and a recursive pattern stays unbounded there by the same rule
-#: that keeps it from crawling outside the tree.
-_ENUMERATIONS = {"rglob", "iterdir", "listdir", "scandir", "walk"}
+#: (tessera#923).  ``Path.glob`` is one of them (PB1496): its matches are
+#: still exact edges through the expression resolver where a loader or reader
+#: consumes them, but that edge names only the files that exist now, so a
+#: deleted, added or renamed member -- and every change under the recursive
+#: ``**`` spelling, which that resolver leaves unbounded -- selected nothing.
+_ENUMERATIONS = {"glob", "rglob", "iterdir", "listdir", "scandir", "walk"}
 _KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
 
 
@@ -979,7 +980,46 @@ def source_execution_modules(trees, modules, targets, *, scanners=None,
     }
 
 
-def _enumeration_bases(loader, call, scope, root, refused, links):
+def _literal_prefix(pattern):
+    """The directory names in front of a pattern's first wildcard component."""
+    prefix = []
+    for part in PurePath(pattern).parts[:-1]:
+        if any(wildcard in part for wildcard in "*?["):
+            break
+        prefix.append(part)
+    return prefix
+
+
+def _glob_receiver(loader, call, scope, root, refused, links):
+    """``(bases, pattern arguments)`` of a ``glob``/``rglob`` call, or None.
+
+    The method is named directly (``DOCS.glob(...)``, ``Path.glob(DOCS, ...)``)
+    or through a name, which resolves only when it has one binding that is
+    lexically the method.  Whichever way it is spelled, the owner is either a
+    directory, which is the receiver, or the class ``Path``, whose receiver is
+    the first argument.  Anything else names nothing, which the caller treats as
+    an unnameable base.
+    """
+    if isinstance(call.func, ast.Attribute):
+        owner = _values(call.func.value, scope, root, refused=refused, links=links)
+    else:
+        here = scope
+        while here and call.func.id not in here.bindings:
+            here = here.parent
+        if here is None or len(here.bindings[call.func.id]) != 1:
+            return None
+        expression = here.bindings[call.func.id][0]
+        if not (isinstance(expression, ast.Attribute) and expression.attr == loader):
+            return None
+        owner = _values(expression.value, here, root, refused=refused, links=links)
+    if owner == {("symbol", "pathlib.Path")}:
+        if not call.args:
+            return None
+        return _values(call.args[0], scope, root, refused=refused, links=links), call.args[1:]
+    return owner, call.args
+
+
+def _enumeration_bases(loader, call, scope, root, refused, links, from_string=None):
     """The base directories an enumeration call consumes, or ``None``.
 
     A directory-wide read consumes the directory's *membership*: what can
@@ -1007,25 +1047,95 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
         if not call.args:
             return None
         bases = _values(call.args[0], scope, root, refused=refused, links=links)
-    else:  # rglob: the receiver names the tree, the argument the pattern.
-        bases = _values(call.func.value, scope, root, refused=refused, links=links)
+        if bases is not None:
+            # ``os.listdir("docs")`` reads the directory ``Path("docs")`` names:
+            # a string path is the same base, placed (or refused) by the same
+            # boundary guard.  Only the Path spelling was resolved, so a file
+            # added under a directory listed by string selected no reader.
+            if from_string is not None and any(isinstance(base, str) for base in bases):
+                from_string.append(True)
+            bases = {Path(base) if isinstance(base, str) else base for base in bases}
+    else:  # glob and rglob: the receiver names the tree, the argument the pattern.
+        receiver = _glob_receiver(loader, call, scope, root, refused, links)
+        if receiver is None:
+            return None
+        bases, arguments = receiver
         if bases is None:
             return None
-        if len(call.args) != 1 or call.keywords:
+        if len(arguments) != 1 or call.keywords:
             refused.extend(base for base in bases if isinstance(base, Path))
             return None
-        patterns = _values(call.args[0], scope, root, refused=refused, links=links)
+        patterns = _values(arguments[0], scope, root, refused=refused, links=links)
         if patterns is None or not all(
                 isinstance(pattern, str) for pattern in patterns):
             refused.extend(base for base in bases if isinstance(base, Path))
             return None
+        if any(PurePath(pattern).is_absolute() or ".." in PurePath(pattern).parts
+               for pattern in patterns):
+            # A pattern can leave the receiver; nothing here proves where.
+            refused.extend(base for base in bases if isinstance(base, Path))
+            return None
+        if all(isinstance(base, Path) for base in bases):
+            # A literal directory in front of the first wildcard may be a link
+            # to another directory.  Placing it keeps the link and the target.
+            bases = bases | {
+                base.joinpath(*prefix)
+                for base in bases for prefix in (_literal_prefix(pattern) for pattern in patterns)
+                if prefix}
     if bases is None or not all(isinstance(base, Path) for base in bases):
         return None
     return _place(bases, root, refused, links)
 
 
-def file_imports(tree, path, root, *, executes_source=None):
+def _sole_plain_definitions(tree):
+    """Names the file binds exactly once, in any scope, with an undecorated ``def``.
+
+    This is a fallback, not a resolver (PB1496), and it only decides whether the
+    unnamed-read warning is printed: no call is ever dropped from analysis.  A
+    bare ``walk(...)`` is the file's own function only when nothing else in the
+    file can bind the name:
+    one ``def`` and no parameter, assignment, import, ``global``, loop or
+    ``with`` target, ``except`` name, pattern capture, type parameter, decorator
+    or class.  A star import anywhere voids the proof for every name, since it
+    can rebind any of them.  Anything this cannot prove keeps its warning.
+    """
+    if any(isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
+           for node in ast.walk(tree)):
+        return set()
+    count, plain = defaultdict(int), set()
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            names = [node.name]
+            if not node.decorator_list:
+                plain.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            names = [node.name]
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            names = [node.id]
+        elif isinstance(node, ast.arg):
+            names = [node.arg]
+        elif isinstance(node, ast.alias):
+            names = [node.asname or node.name.split(".")[0]]
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names = list(node.names)
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            names = [node.name] if node.name else []
+        elif isinstance(node, ast.MatchMapping):
+            names = [node.rest] if node.rest else []
+        elif type(node).__name__ in ("TypeVar", "ParamSpec", "TypeVarTuple"):
+            names = [node.name]
+        for name in names:
+            count[name] += 1
+    return {name for name in plain if count[name] == 1}
+
+
+def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
     """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
+
+    ``unnamed``, when a list is given, receives the line of each directory read
+    whose base nothing names in a module that executes nothing: the limit that
+    selects no test and forces no run, listed so it is seen (PB1496).
 
     The third value is the one #338 exists for.  ``unknown`` says this module
     may import Python it cannot name; ``unplaced`` says it reads a file it
@@ -1035,7 +1145,7 @@ def file_imports(tree, path, root, *, executes_source=None):
     unknown importer, so it recorded nothing at all) or lost #148 (an
     unnameable read is not "every module in the tree").
 
-    Directory-enumeration calls (``rglob``, ``iterdir``, ``os.listdir``/
+    Directory-enumeration calls (``glob``, ``rglob``, ``iterdir``, ``os.listdir``/
     ``scandir``/``walk``) resolve to the base directory itself, under the same
     boundary guard and the same named/unnamed split: a resolvable base comes
     back in ``found`` as one directory node, a named-but-refused one as
@@ -1050,6 +1160,7 @@ def file_imports(tree, path, root, *, executes_source=None):
         return executes or not reading
 
     found, unknown, unplaced = set(), False, False
+    own_definitions = _sole_plain_definitions(tree)
 
     def refuse(reading):
         """Record a target this resolver named and then declined to place.
@@ -1077,10 +1188,10 @@ def file_imports(tree, path, root, *, executes_source=None):
             continue
         loader = next(iter(loaders))
         if loader in _ENUMERATIONS:
-            refused, links = [], set()
+            refused, links, from_string = [], set(), []
             try:
                 targets = _enumeration_bases(
-                    loader, call, scope, root, refused, links)
+                    loader, call, scope, root, refused, links, from_string)
             except (OSError, ValueError, TypeError, RecursionError):
                 targets = None
             if targets is None:
@@ -1091,10 +1202,27 @@ def file_imports(tree, path, root, *, executes_source=None):
                 if refused:
                     refuse(True)
                 else:
+                    if (unnamed is not None and not wildcard(True)
+                            and not (isinstance(call.func, ast.Name)
+                                     and call.func.id in own_definitions)):
+                        # A directory read of a base nothing names, in a module
+                        # that executes nothing, states no dependency (#148).
+                        # It is the one case the selector can neither select
+                        # nor escalate, so it is listed (PB1496).  Only this
+                        # warning is ever withheld, for a call to the file's own
+                        # sole plain def: the call itself is processed exactly
+                        # as for any other, so a base it names keeps its edge.
+                        unnamed.append(call.lineno)
                     unknown = unknown or wildcard(True)
             else:
                 found.update(targets)
                 found.update(links)
+                if from_string:
+                    # A bare ``walk("mode")`` is recognized by its name alone, and
+                    # a string need not be a path.  Naming it adds the edge; it
+                    # must not replace the unknown-loader flag a module that can
+                    # execute source had while the string was "unnamed".
+                    unknown = unknown or wildcard(True)
             continue
         # Refusals by the boundary guard anywhere inside this call's
         # expressions, so the ``values is None`` below can tell "no target

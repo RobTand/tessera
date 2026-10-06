@@ -10,7 +10,7 @@ import subprocess
 
 from managed_window import MEMORY_POLICY, NOT_COMPUTED, Refused, dev_mode_enabled, seal_check
 from submit import parse_plan, IMAGE
-from eager_benchmark import EAGER_LEVER_MODE, GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
+from eager_benchmark import DETERMINISM_MODE, EAGER_LEVER_MODE, GRAPH_SHIP_MODE, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
 
 CONTROL = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 CONFIG_SHA = "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898"
@@ -41,7 +41,8 @@ def src_sha(root: Path) -> str:
 PRODUCER_FILES = ("managed_window.py", "tp2_recipe.py", "rank_window.py", "window_driver.py",
                   "submit.py", "watch_window_queue.py", "arm_tp2.sh", "drive_tp2.sh", "plan-artifact.txt",
                   "eager_benchmark.py", "plan-eager-window4.txt", "plan-eager-ship-8192.txt", "plan-graph-ship.txt",
-                  "plan-eager-levers-4096.txt")
+                  "plan-eager-levers-4096.txt", "eager_determinism.py", "seeded_control_client.py",
+                  "plan-eager-determinism-2048.txt")
 
 
 def producer_sha() -> str:
@@ -178,6 +179,9 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
         else:
             result["window_mode"] = mode
             result["profile_dir"] = str(Path(env["RECEIPTS"]).parent / "profiles")
+        if mode == DETERMINISM_MODE:
+            from eager_determinism import PROTOCOL
+            result.update(control_protocol=PROTOCOL, artifact_manifest=env.get("ARTIFACT_MANIFEST", ""))
     return result
 
 
@@ -200,7 +204,7 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
         raise Refused(pair_refusal(mode))
     arm = arm_settings(name, env)
     graph_ship = mode == GRAPH_SHIP_MODE
-    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE)
+    lever_pair = mode in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, DETERMINISM_MODE)
     label = "Ship graph" if graph_ship else "Ship eager lever"
     fields = {"EAGER", "SPEC_JSON", "FABRIC", "MAX_BATCHED"}
     if graph_ship:
@@ -217,7 +221,11 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
             if levers[key] not in choices:
                 raise Refused(f"{label} plan requires explicit {key}={'/'.join(choices)}")
         enabled = [levers[key] == choices[1] for key, choices in LEVER_VALUES.items()]
-        if any(enabled) != (name == BENCHMARK_PAIRS[mode][1][0]):
+        if mode == DETERMINISM_MODE:
+            from eager_determinism import FLAGS, NAMES, VALUES
+            if levers != dict(zip(FLAGS, VALUES[NAMES.index(name)])):
+                raise Refused("Seeded investigation fixes two OFF restarts then exactly one named lever per arm")
+        elif any(enabled) != (name == BENCHMARK_PAIRS[mode][1][0]):
             raise Refused(f"{label} pair requires all levers off in the first arm and at least one on in the second")
         arm["lever_env"] = levers
     return dict(arm, max_batched=int(env["MAX_BATCHED"]), fabric="socket")
@@ -258,7 +266,9 @@ def serve(config: dict, arm: dict, rank: int, *, master_port=29541, api_port=814
              "--no-enable-prefix-caching", "--gpu-memory-utilization", "0.5", "--kv-cache-memory-bytes",
              "2147483648", "--trust-remote-code", "--max-logprobs", "20", "--served-model-name", "glm53-artifact"]
     argv += ["--enforce-eager"] if arm["eager"] == "1" else ["--compilation-config", arm["compilation"]]
-    if benchmark_window:
+    if config.get("window_mode") == DETERMINISM_MODE:
+        argv += ["--seed", str(config["control_protocol"]["server_seed"])]
+    elif benchmark_window:
         argv += ["--profiler-config", json.dumps(dict(profiler="torch",
                  torch_profiler_dir=config["profile_dir"], torch_profiler_with_stack=False,
                  torch_profiler_record_shapes=True, ignore_frontend=True), separators=(",", ":"))]
@@ -293,12 +303,12 @@ def container(config: dict, arm: dict, identity: dict, out: Path, ext: Path,
                OMP_NUM_THREADS="1", MKL_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", NUMEXPR_NUM_THREADS="1",
                MAX_JOBS="1", VLLM_HOST_IP=("10.100.96.2", "10.100.96.1")[rank],
                T695_GC_BEFORE_DRAFTER="1", TESSERA_FUSED_E4M3_MMA="e4m3", **image_env)
-    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE):
+    if config.get("window_mode") in (GRAPH_SHIP_MODE, EAGER_LEVER_MODE, DETERMINISM_MODE):
         env.update(arm["lever_env"])
     for key, value in env.items():
         argv += ["-e", f"{key}={value}"]
     local_config = config
-    if config.get("window_mode") in BENCHMARK_PAIRS:
+    if config.get("window_mode") in BENCHMARK_PAIRS and config.get("window_mode") != DETERMINISM_MODE:
         directory = Path(config["profile_dir"]) / arm["arm"]
         argv += ["-v", f"{directory}:{directory}"]
         local_config = dict(config, profile_dir=str(directory))

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-10-06 — issue931: seeded L2048 determinism investigation
+
+Add a dedicated correctness-only OFF/OFF restart control to the existing
+managed TP2 rank lifecycle. The versioned client retains eleven full streamed
+responses per arm, with explicit request and server initialization seeds.
+Only complete OFF/OFF equality permits each of the three levers individually;
+a self-mismatch reports serving nondeterminism and starts no lever server.
+The reduced population does not replace the existing 33-output ship gate.
+The manifest uses normal priority zero and waits for the actual D42 Stage One
+priority handoff before publication. CPU input preflight and regressions are
+not served determinism, performance, quality, adoption or shipping evidence.
+
+## 2026-10-06 — issue 995: exact-field native span-two reads
+
+Native A4 SELECT and POINT reads load a second byte only when the meaningful
+field crosses the first byte. Zero-width POINT fields do not load. Big-endian
+extraction, code lookups, GEMM and scale/epilogue algebra are unchanged, as are
+wire bytes, prepared allocations, shape admission and serving gates. The
+boundary regression compares decoded states, packed codes and scale bytes with
+exact field and stock wire decoding; it compares no GEMM output, and its native
+part needs CUDA and skips without it. Detecting an unused out-of-bounds read
+requires compute-sanitizer with the caching allocator disabled, not numerical
+parity alone. D41 native
+rows require fixed-build remeasurement before allocation; old timings remain
+historical. No serving default or runtime pin moves.
+
 ## 2026-10-05 — issue968: explicit MNBT8192 ship-window selector
 
 Add `WINDOW_MODE=ship-eager-4096-8192` and the exact eager4096/eager8192
