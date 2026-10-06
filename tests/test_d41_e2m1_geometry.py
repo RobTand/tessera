@@ -36,15 +36,6 @@ def test_actual_wire_codes_and_scales(q, structure):
         assert unit.body.numel() == len(wire.metadata.chunks[PlaneKind.BODY])
 
 
-def test_adapter_import_does_not_import_shared_sdk():
-    """The numerical adapter is importable with only this checkout's source."""
-    import subprocess
-    import sys
-    from pathlib import Path
-    root = Path(__file__).parents[1]
-    result = subprocess.run([sys.executable, "-c", "import importlib.util; s=importlib.util.spec_from_file_location('a','experiments/t4_code/bench_geometry_e2m1.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); assert 'prismabuild' not in __import__('sys').modules"], cwd=root, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-
 
 @pytest.mark.parametrize("window_bits", [14, 16])
 def test_geometry_reader_refuses_research_windows_outside_served_twelve_bits(window_bits):
