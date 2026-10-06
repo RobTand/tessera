@@ -515,6 +515,12 @@ def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
         "bf16_terms": "none: both sides share one quantizer over the same bfloat16 inputs, accumulate in float32, and return float32",
     })
 
+def check_packed_fp4_arithmetic(actual, expected, operand_magnitude, *, k):
+    """Apply the arithmetic gate and return its numerical receipt."""
+    tolerances, receipt = derive_packed_fp4_arithmetic_bound(operand_magnitude, k=k)
+    torch.testing.assert_close(actual, expected, **tolerances)
+    return receipt
+
 
 def run_correctness(args, grid, samples):
     """Real packed-byte and native arithmetic oracles, bounded to 64 by 256."""
@@ -574,7 +580,7 @@ def run_correctness(args, grid, samples):
                 bound_template = receipt
                 expected = rendered_x @ weights[0].T
                 actual = dense(x, out_dtype=torch.float32)
-                torch.testing.assert_close(actual, expected, rtol=tolerances["rtol"], atol=tolerances["atol"])
+                check_packed_fp4_arithmetic(actual, expected, magnitude, k=k)
                 errors.append(float((actual - expected).abs().max()))
                 magnitudes.append(float(magnitude))
                 gate_atols.append(float(tolerances["atol"]))
@@ -589,7 +595,7 @@ def run_correctness(args, grid, samples):
                     actual = grouped(x, expert_offsets=offsets, route_ids=tokens, num_routes=5, out_dtype=torch.float32)
                     expected = torch.cat((rendered_x[tokens[:3].long()] @ weights[0].T,
                                           rendered_x[tokens[3:].long()] @ weights[1].T))
-                    torch.testing.assert_close(actual, expected, rtol=grouped_tolerances["rtol"], atol=grouped_tolerances["atol"])
+                    check_packed_fp4_arithmetic(actual, expected, grouped_magnitude, k=k)
                     errors.append(float((actual - expected).abs().max()))
                     magnitudes.append(float(grouped_magnitude))
                     gate_atols.append(float(grouped_tolerances["atol"]))
