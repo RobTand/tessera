@@ -48,6 +48,12 @@ Usage::
 
     python experiments/window_viterbi_best_form_ab.py --mode time \\
         --out /mnt/shared/tessera-measurements/.../ab.json
+
+The G2 cases reproduce the joined-call geometry and production driver with
+generated targets and weights. They are not a captured G2 calibration block
+or a complete encoder-unit measurement. Before a GPU submission, run the
+same command with ``--cpu-dry-run`` through PrismaBuild on an x86 worker; it
+reads the tables and checks the gathers on four rows without launching CUDA.
 """
 from __future__ import annotations
 
@@ -387,6 +393,7 @@ def _g2_config(cfg, args, dev):
                units_per_block=block_cols // 32, sealed_tile=G2_TILE,
                graph="auto", rate_streams="default",
                table="E4M3_GRID window_table sigma=1.0 seed=0",
+               input_kind="generated targets and weights; G2 joined geometry",
                arms=[a for a, _, _ in G2_ARMS],
                plan={f"{arm}@R{rate}": _plan_shape(arm, width_cap, L, rate,
                                                    cols_rate, dev)
@@ -423,8 +430,8 @@ def _g2_config(cfg, args, dev):
     torch.cuda.empty_cache()
     if not all(all(v["states_equal"].values()) and all(v["sse_equal"].values())
                for v in rec["identity"].values()):
-        rec["verdict"] = "an arm does not return the reference's answer"
-        return rec
+        raise RuntimeError(f"{name}: an arm does not return the reference's answer")
+
 
     if args.mode == "ncu":
         # The NCU driver: one captured group per arm and nothing else.  NCU
@@ -501,7 +508,7 @@ def _g2_config(cfg, args, dev):
         group(arm, width_cap, tile)
         torch.cuda.synchronize()
         single[arm] = time.perf_counter() - t0
-    inner = {arm: max(1, int(a.min_block_s / single[arm]) + 1)
+    inner = {arm: max(1, int(args.min_block_s / single[arm]) + 1)
              for arm, _, _ in G2_ARMS}
     rec["inner_repeats"] = inner
     rec["single_call_s"] = {k: round(v, 5) for k, v in single.items()}
@@ -577,6 +584,30 @@ def _joined_w_for(calls, rate):
     return torch.cat([c.weights for c in calls[rate]], dim=1)
 
 
+def _g2_cpu_dry_run(cfg):
+    """Read the real table and exercise the joined gathers on a small slice."""
+    name, q_rung, L, arity, rows, block_cols, r4, r5 = cfg
+    targets, vectors, weights = _inputs(L, 4, arity, 4, block_cols, "cpu")
+    which = _g2_rate_schedule(block_cols, r4, r5, "cpu")
+    calls = _g2_calls(targets, weights, vectors, L, which)
+    for rate, count in ((4, r4), (5, r5)):
+        joined = _joined_for(calls, rate)
+        joined_weights = _joined_w_for(calls, rate)
+        assert joined.shape == joined_weights.shape == (4, count)
+        assert torch.equal(joined, targets[:, which[rate]])
+        assert torch.equal(joined_weights, weights[:, which[rate]])
+        assert len(calls[rate]) == block_cols // 32
+    assert vectors.shape == (1 << L, arity)
+    assert torch.isfinite(targets).all() and torch.isfinite(weights).all()
+    assert torch.isfinite(vectors).all()
+    return dict(config=name, cpu_dry_run=True, q_rung=q_rung,
+                production_rows=rows, sampled_rows=4, block_cols=block_cols,
+                r4_cols=r4, r5_cols=r5, window_bits=L, arity=arity,
+                best_tile=G2_TILE, joined_gathers_equal=True,
+                input_kind="generated targets and weights; G2 joined geometry",
+                measured=False, source=str(Path(wv.__file__).resolve()))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=("time", "pbprofile", "ncu"), default="time")
@@ -588,25 +619,32 @@ def main():
     ap.add_argument("--configs", nargs="*", default=None)
     ap.add_argument("--g2", action="store_true",
                     help="the sealed G2 joined-block configs (issue #652)")
+    ap.add_argument("--cpu-dry-run", action="store_true",
+                    help="read G2 inputs and check joined gathers on four CPU rows; "
+                         "no timing or GPU qualification")
     a = ap.parse_args()
 
     dev = "cuda"
     records = []
     if a.g2:
         want = [c for c in G2_CONFIGS if not a.configs or c[0] in a.configs]
+        if not want or (a.configs and set(a.configs) - {c[0] for c in G2_CONFIGS}):
+            ap.error("--configs must name existing G2 configurations")
         if a.mode == "pbprofile" and len(want) != 1:
             raise SystemExit(
                 "pbprofile takes exactly one --configs entry: the fleet "
                 f"names one path and {len(want)} configs would overwrite "
                 "each other in it")
         for cfg in want:
-            rec = _g2_config(cfg, a, dev)
+            rec = _g2_cpu_dry_run(cfg) if a.cpu_dry_run else _g2_config(cfg, a, dev)
             records.append(rec)
             print(json.dumps(rec), flush=True)
         with open(a.out, "w") as fh:
             json.dump(records, fh, indent=2)
         print(f"wrote {a.out}")
         return
+    if a.cpu_dry_run:
+        ap.error("--cpu-dry-run requires --g2")
     want = [c for c in CONFIGS if not a.configs or c[0] in a.configs]
     for name, L, R, arity, rows, cols in want:
         targets, vectors, weights = _inputs(L, R, arity, rows, cols, dev)
