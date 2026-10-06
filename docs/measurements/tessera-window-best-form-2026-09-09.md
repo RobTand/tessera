@@ -331,3 +331,110 @@ no new seal or permission requirement was introduced. Cache counters,
 achieved resident bandwidth and a limiting-resource conclusion remain
 unmeasured, so the full issue 652 acceptance is still open.
 
+### Recovered Nsight endings and final generated-input packet
+
+The two original actions completed on sparky without resubmission. The
+incumbent action `925589c5cad78e160e34f1a3f2a366c677f31c3978f1f7ffcdd9e149c5abf889` returned zero in 20.84215 seconds;
+the front control `5e12c1972a2583bb3574819cbce5c74a0c70db54a08f77e2808feb8cdcbfd5ab` returned zero in 24.46473 seconds.
+Published action readers and `pbwait.py --wait-s 0` observed both endings.
+Their receipt digests are, respectively,
+`19b13e7fb676ef83d8b4e2c0ce3ec0657944ae7c63032ba54a297c2dccc67c8d` and
+`46a04c3885bd9774e2ca20eef3b0a13972cbcc4b2f589ce2476fc0601064b4f1`.
+Both local result claims passed payload-byte, digest and manifest-binding
+checks; both stdout and stderr files matched their own recorded digests.
+
+The reports were decoded **without running another GPU workload** by CPU
+PrismaBuild action
+`efe1f380091149a52c0322d0b1773657c6e82b69905f5130f719817400c847c3` on dl380g10 (return code zero,
+44.99666 seconds; receipt digest
+`74afa308176848911ade7ea710f9559db9820b0ca404cc9ff2b4b73d13794858`).
+It used the public NVIDIA x86 reader, version 2025.3.1.0, build 36398880,
+whose 322,049,776-byte distribution matched published digest
+`d3c0a0402511034c58227b817cbfed599765f32dc662cdcda58922247b52dd7a`.
+The temporary reader installation was removed on completion. An unexecuted
+ARM reader was withdrawn from the ready queue; two failed CPU-only decoder
+commands remain recorded as failures, not measurements or success receipts.
+They failed on a quoted newline and an unsupported printing option,
+respectively. No original timing or profile action was duplicated.
+
+Each capture contains eight matching step launches at rung 1088 with 4096
+rows. All incumbent launches have grid `(16,48,1)`, block `(64,1,1)` and
+stream 13; all front launches have grid `(16,16,1)`, block `(128,1,1)` and
+stream 13. Thus these are sampled, differently sized launches, **not equal
+work per kernel or the complete two-rate joined group**. Each launch took
+nineteen replay passes. The original command leaves Nsight's cache control
+and clock control at their documented defaults: cache flush before each
+replay and base clocks. See the [Nsight Compute 2025.3 command-line
+contract](https://docs.nvidia.com/nsight-compute/2025.3/NsightComputeCli/index.html).
+These counters cannot certify unflushed production cache residency.
+
+The following are means across the eight retained launches in each report;
+full per-launch values, units, ranges and sampled warp-state counts are in
+the packet. Traffic rates multiply the measured sector counts by 32 bytes
+and divide by that launch's measured duration. Gigabytes are decimal.
+
+| Counter or derived rate | Incumbent best | Front control |
+|---|---:|---:|
+| Profiled duration, microseconds | 21.372 | 15.876 |
+| Total L2 traffic, gigabytes per second | 133.593 | 285.144 |
+| L2 sector hit rate, percent | 38.491 | 5.305 |
+| L2 throughput, percent of sustained elapsed peak | 12.649 | 17.189 |
+| System-memory fill proxy, gigabytes per second | 40.231 | 136.749 |
+| System-memory write proxy, gigabytes per second | 46.428 | 134.717 |
+| Issue active, percent of sustained elapsed peak | 23.026 | 5.612 |
+| Active warps, percent of sustained active peak | 63.868 | 41.456 |
+| Registers per thread | 40 | 40 |
+| Total shared bytes per block, including driver allocation | 2048 | 3072 |
+| Long-scoreboard not-issued samples, total | 4257 | 7602 |
+| Drain not-issued samples, total | 1617 | 1080 |
+| Memory-input/output throttle not-issued samples, total | 1253 | 85 |
+| Short-scoreboard not-issued samples, total | 926 | 118 |
+
+Recomputing traffic rates against the printed sector-per-nanosecond counters
+differs by at most 0.000015879 gigabytes per second, within printed rounding.
+Sampled stall counts are not percentages of wall time. Neither report
+contains a direct `dram__` or `sys__` metric: L2 system-memory fills and
+writes are retained **as proxies, not direct DRAM-controller counters**.
+The L2 rates above are achieved rates in these cache-flushed sampled kernels,
+not a measured resident-bandwidth ceiling or a remaining-limiter diagnosis.
+
+Both-Spark Netdata power and CPU responses now bracket the actual profiler
+action windows, including their fractional start and finish times:
+
+| Action window in UTC | Sparky returned mean watts | Sparklina returned mean watts |
+|---|---:|---:|
+| Front: 20:04:01.166 through 20:04:26.611 | 16.6444 | 44.0000 |
+| Incumbent: 20:05:29.989 through 20:05:52.065 | 14.9200 | 13.9760 |
+
+The returned windows are 20:04:01–20:04:27 and 20:05:29–20:05:53,
+respectively. They have 27 and 25 one-second buckets, but only three and four
+native ten-second power points. No returned power point has an empty,
+reset or partial annotation. Recomputed bucket means agree with Netdata's
+view means within 0.000000045 watts. These short replay windows include
+startup, reference checks and both forms; they cannot supply per-kernel
+joules. The receipt's faster sampler separately records sparky mean/peak
+22.164/60.220 watts for the incumbent and 21.051/55.130 watts for the front
+control. These are different sampling instruments, not interchangeable
+energy reductions. The existing four unprofiled timing and work-per-joule
+rows above remain the comparison evidence and were reused unchanged.
+
+Final machine-readable packet:
+`/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/issue652-before-profile-packet-final.json`,
+SHA-256 `490b4fd62e20be1cbf832c7720ce6f4ab65119ab6dbc2743ec40c15f41f9567a`.
+It retains all successful original receipts, raw counter exports and their
+own digests, both-Spark windows, resource observations, timing reductions,
+failed decoder attempts and exact missing acceptance. The benchmark source
+remains `2b711e0e7498802954bf75cfdabe7b93c6f47737`; this addition changes
+only documentation.
+
+**Draft-source readiness, not issue closure:** the generated weighted-target
+before packet is ready for parent source and receipt review. Direct DRAM
+counters, an unflushed resident-bandwidth measurement, captured G2 inputs,
+complete encoder-unit before/after seconds and joules, explicit tie-case and
+packed-wire comparisons, a production candidate and a defensible remaining
+limiter are still missing. No production source, default, wire, serving pin
+or admission gate changed; no optimization or root-cause claim is made.
+Pull request 1016 remains draft and issue 652 remains open. Hosted `pure`
+was observed successful only on documentation head
+`a35f0c93ae9bca5b1e268d6f992c6b6bf6d2b7ea`; parent approval, current-master
+refresh and integration-head checks are not claimed for this later addition.
