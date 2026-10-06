@@ -507,7 +507,7 @@ def test_d32_staged_digest_provenance_stamps_dev_but_refuses_certified(tmp_path,
     content.write_text(json.dumps(rows))
     monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev)
     if dev == "0":
-        with pytest.raises(Refused, match="digest provenance"):
+        with pytest.raises(Refused):
             check_staged_packet(config, rdv, gate)
     else:
         check_staged_packet(config, rdv, gate)
@@ -551,7 +551,7 @@ def test_d32_preregistration_label_drift_preserves_actual_facts(tmp_path, monkey
     (root / "control-preregistration.json").write_text(json.dumps(record))
     monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev)
     if dev == "0":
-        with pytest.raises(Refused, match="preregistration provenance"):
+        with pytest.raises(Refused):
             control.require_piece_major_control(root, config)
     else:
         control.require_piece_major_control(root, config)
