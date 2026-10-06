@@ -168,7 +168,7 @@ def test_actual_finalized_production_bank_metadata_fails_closed(arm, fault):
 
 
 @pytest.mark.parametrize("arm", [0, 4])
-def test_native_cpu_map_checks_runner_before_mapping(monkeypatch, arm):
+def test_native_cpu_map_checks_runner_before_mapping(tmp_path, monkeypatch, arm):
     import sys
     from experiments.t4_code import prefetch_qualification as qualified
 
@@ -177,4 +177,7 @@ def test_native_cpu_map_checks_runner_before_mapping(monkeypatch, arm):
         raise AssertionError("missing runner must fail before native mapping")
     monkeypatch.setattr(qualified, "leased_banks", unexpected_mapping)
     with pytest.raises(ModuleNotFoundError, match="pytest"):
-        qualified.consume(SimpleNamespace(arm=arm, cpu_map=True))
+        qualified.consume(SimpleNamespace(
+            command="consume", manifest=str(tmp_path / "readset.json"),
+            out=str(tmp_path / "native"), arm=arm, cpu_map=True,
+        ))
