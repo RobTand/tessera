@@ -3483,13 +3483,13 @@ the unbound method, called directly or through an alias
 contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
 keeps the link and its target. A link reached only through a wildcard
-component is not followed: nothing is crawled to find it. Recognition is a fallback, not a resolver: a bare call named like an enumeration
-is dropped only in a module that executes nothing, and only when the file binds
-that name exactly once, with an undecorated `def`, and has no star import. A
-parameter, assignment, import, `global`, decorator, class, loop or `with` target,
-pattern capture or second binding anywhere keeps it an enumeration, and a module
-that can execute source never drops one. Over-selection is the accepted cost;
-a missed test is the only defect. An out-of-tree or
+component is not followed: nothing is crawled to find it. Every call named like an enumeration is analysed the same way whatever the file
+defines, so a base it names keeps its edge and a refused base its uncertainty;
+only the `unnamed_directory_reads` warning can be withheld, for a bare call to a
+name the file binds exactly once, with an undecorated `def`, in a module that
+executes nothing and has no star import. Anything else keeps the warning. The
+selector's rule is soundness: over-selection is the accepted cost and a missed
+test is the only defect. An out-of-tree or
 otherwise refused base keeps the #338
 unplaced-read uncertainty; a base assembled from runtime state names nothing
 and follows the named/unnamed rule -- and where nothing executes it states no

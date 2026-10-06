@@ -1082,13 +1082,14 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
 def _sole_plain_definitions(tree):
     """Names the file binds exactly once, in any scope, with an undecorated ``def``.
 
-    This is a fallback, not a resolver (PB1496).  A bare ``walk(...)`` is the
-    file's own function only when nothing else in the file can bind the name:
+    This is a fallback, not a resolver (PB1496), and it only decides whether the
+    unnamed-read warning is printed: no call is ever dropped from analysis.  A
+    bare ``walk(...)`` is the file's own function only when nothing else in the
+    file can bind the name:
     one ``def`` and no parameter, assignment, import, ``global``, loop or
     ``with`` target, ``except`` name, pattern capture, type parameter, decorator
     or class.  A star import anywhere voids the proof for every name, since it
-    can rebind any of them.  Anything this cannot prove is left a candidate:
-    over-recognizing a call only selects more, missing one selects too little.
+    can rebind any of them.  Anything this cannot prove keeps its warning.
     """
     if any(isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
            for node in ast.walk(tree)):
@@ -1173,11 +1174,6 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
         loaders = kind(call.func)
         if not loaders:
             continue
-        if (loaders <= _ENUMERATIONS and not executes and isinstance(call.func, ast.Name)
-                and call.func.id in own_definitions):
-            # A module that can execute source never drops a call: it keeps the
-            # unknown-loader flag whatever the file defines.
-            continue
         reading = loaders <= _READ_METHODS | _ENUMERATIONS
         if len(loaders) != 1:
             unknown = unknown or wildcard(reading)
@@ -1198,11 +1194,16 @@ def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
                 if refused:
                     refuse(True)
                 else:
-                    if unnamed is not None and not wildcard(True):
+                    if (unnamed is not None and not wildcard(True)
+                            and not (isinstance(call.func, ast.Name)
+                                     and call.func.id in own_definitions)):
                         # A directory read of a base nothing names, in a module
                         # that executes nothing, states no dependency (#148).
                         # It is the one case the selector can neither select
-                        # nor escalate, so it is listed (PB1496).
+                        # nor escalate, so it is listed (PB1496).  Only this
+                        # warning is ever withheld, for a call to the file's own
+                        # sole plain def: the call itself is processed exactly
+                        # as for any other, so a base it names keeps its edge.
                         unnamed.append(call.lineno)
                     unknown = unknown or wildcard(True)
             else:
