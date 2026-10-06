@@ -1079,8 +1079,12 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
     return _place(bases, root, refused, links)
 
 
-def file_imports(tree, path, root, *, executes_source=None):
+def file_imports(tree, path, root, *, executes_source=None, unnamed=None):
     """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
+
+    ``unnamed``, when a list is given, receives the line of each directory read
+    whose base nothing names in a module that executes nothing: the limit that
+    selects no test and forces no run, listed so it is seen (PB1496).
 
     The third value is the one #338 exists for.  ``unknown`` says this module
     may import Python it cannot name; ``unplaced`` says it reads a file it
@@ -1146,6 +1150,12 @@ def file_imports(tree, path, root, *, executes_source=None):
                 if refused:
                     refuse(True)
                 else:
+                    if unnamed is not None and not wildcard(True):
+                        # A directory read of a base nothing names, in a module
+                        # that executes nothing, states no dependency (#148).
+                        # It is the one case the selector can neither select
+                        # nor escalate, so it is listed (PB1496).
+                        unnamed.append(call.lineno)
                     unknown = unknown or wildcard(True)
             else:
                 found.update(targets)

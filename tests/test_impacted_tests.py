@@ -27,15 +27,18 @@ def _checkout_import_graph():
     original = impacted.import_graph
     graph = None
     guards = {}
+    unnamed = {}
 
-    def read(root, *, guarded_edges=None):
+    def read(root, *, guarded_edges=None, unnamed_reads=None):
         nonlocal graph
         if root != ROOT:
-            return original(root, guarded_edges=guarded_edges)
+            return original(root, guarded_edges=guarded_edges, unnamed_reads=unnamed_reads)
         if graph is None:
-            graph = original(root, guarded_edges=guards)
+            graph = original(root, guarded_edges=guards, unnamed_reads=unnamed)
         if guarded_edges is not None:
             guarded_edges.update(deepcopy(guards))
+        if unnamed_reads is not None:
+            unnamed_reads.update(deepcopy(unnamed))
         return deepcopy(graph)
 
     return read
@@ -2107,3 +2110,102 @@ def test_a_doc_change_selects_the_consumers_of_an_unknown_reader(tmp_path, suffi
     result = _selector(repo, f"{base}...HEAD")
 
     assert "tests/test_dynamic.py" in result["tests"], result
+
+
+_UNNAMED_BASE_READER = '''
+    import os
+    from pathlib import Path
+
+    DIR = Path(os.environ["READ_DIR"])
+
+
+    def test_reads():
+        assert sorted(DIR.rglob("*.md"))
+'''
+
+
+def test_a_directory_read_of_an_unnameable_base_is_listed_not_selected(tmp_path):
+    """PB1496: the documented limit stays, and is no longer silent.
+
+    A reader that executes nothing and enumerates a directory nothing names
+    states no dependency, so a docs change selects nothing (#148).  The result
+    lists the reader and the line, and the text receipt prints it, so a reader
+    of this shape is seen and not just unselected.
+    """
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_r.py": _UNNAMED_BASE_READER, "docs/a.md": "before\n"})
+    (repo / "docs/a.md").write_text("after\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "docs changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+    line = textwrap.dedent(_UNNAMED_BASE_READER).splitlines().index(
+        '    assert sorted(DIR.rglob("*.md"))') + 1
+    assert result["unnamed_directory_reads"] == {"tests/test_r.py": [line]}, result
+    assert "tests/test_r.py" not in result["tests"], result
+
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(repo), "--ref", f"{base}...HEAD"],
+        capture_output=True, text=True, check=False)
+    assert "base cannot be named" in completed.stdout, completed.stdout
+    assert "tests/test_r.py" in completed.stdout, completed.stdout
+
+
+@pytest.mark.parametrize("reader, why", [
+    ('from pathlib import Path\n\nDIR = Path(__file__).resolve().parent / "data"\n\n\n'
+     'def test_reads():\n    assert sorted(DIR.rglob("*.md"))\n', "the base is named"),
+    ('import os\nfrom pathlib import Path\n\nDIR = Path(os.environ["READ_DIR"])\n\n\n'
+     'def test_reads():\n    exec("pass")\n    assert sorted(DIR.rglob("*.md"))\n',
+     "a module that executes source is an unknown loader, escalated not listed"),
+])
+def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_r.py": reader, "docs/a.md": "before\n"})
+    (repo / "docs/a.md").write_text("after\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "docs changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert result["unnamed_directory_reads"] == {}, (why, result)
+
+
+# What the real tree held when this guard was added: modules with a directory
+# read whose base nothing names, in a module that executes nothing, and the
+# read sites in them.  Most take the directory as a parameter or are test
+# scaffolding, and some are the standard library's glob.glob(pattern), whose
+# base sits in the pattern string; the count is a ceiling, not a verdict on any
+# of them (it was 46 and 58 before Path.glob became an enumeration).  A new one
+# should name its base; if it cannot, raise these numbers in the same commit
+# and say why (PB1496).
+_UNNAMED_DIRECTORY_READ_MODULES = 117
+_UNNAMED_DIRECTORY_READ_SITES = 178
+
+
+def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:
+    return modules > _UNNAMED_DIRECTORY_READ_MODULES or sites > _UNNAMED_DIRECTORY_READ_SITES
+
+
+@pytest.mark.parametrize("modules, sites, exceeds", [
+    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES, False),
+    (_UNNAMED_DIRECTORY_READ_MODULES - 1, _UNNAMED_DIRECTORY_READ_SITES, False),
+    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES - 1, False),
+    (_UNNAMED_DIRECTORY_READ_MODULES + 1, _UNNAMED_DIRECTORY_READ_SITES, True),
+    (_UNNAMED_DIRECTORY_READ_MODULES, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
+    # Fewer modules with more sites is still a gained read; a tuple comparison
+    # orders on the module count first and lets it through.
+    (_UNNAMED_DIRECTORY_READ_MODULES - 1, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
+    (1, _UNNAMED_DIRECTORY_READ_SITES + 1, True),
+    (_UNNAMED_DIRECTORY_READ_MODULES + 1, 1, True),
+])
+def test_the_unnamed_directory_read_ceiling_bounds_modules_and_sites_independently(
+        modules, sites, exceeds):
+    assert _exceeds_unnamed_directory_read_ceiling(modules, sites) is exceeds
+
+
+def test_this_repository_does_not_gain_an_unnamed_directory_read():
+    listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
+    sites = sum(len(lines) for lines in listed.values())
+    assert not _exceeds_unnamed_directory_read_ceiling(len(listed), sites), (
+        "a directory read whose base cannot be named was added; name its base, "
+        "or raise the ceiling here with the reason", len(listed), sites, sorted(listed))
