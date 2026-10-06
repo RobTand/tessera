@@ -2477,6 +2477,45 @@ def test_a_module_glob_after_a_chdir_selects_the_reader_for_the_runtime_director
     assert "tests/test_cwd.py" in result["tests"], result
 
 
+def test_deleting_the_last_member_behind_a_link_selects_a_directory_only_glob(tmp_path):
+    """``docs/*/`` lists directories, so deleting ``data``'s only file changes its result."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": "import glob\n\n\ndef test_lists():\n    assert glob.glob('docs/*/') is not None\n",
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link to data")
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "rm", "-q", "data/seed.md")
+    _git(repo, "commit", "-qm", "data loses its only file")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
+def test_editing_the_file_a_terminal_link_points_to_selects_the_reader(tmp_path):
+    """The reader names ``manifest.md``; the changed file is ``payload.md``, a basename it
+    never mentions, so only the link makes it a dependency."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": (
+            "from pathlib import Path\n\nDOCS = Path(__file__).resolve().parents[1] / 'docs'\n\n\n"
+            "def test_reads():\n    for p in DOCS.glob('*/manifest.md'):\n"
+            "        assert p.read_text() == 'expected'\n"),
+        "docs/plain/a.md": "x\n", "data/payload.md": "expected\n"})
+    (repo / "docs" / "plain" / "manifest.md").symlink_to("../../data/payload.md")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a file link behind a wildcard directory")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "payload.md").write_text("changed\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "the target file changes")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

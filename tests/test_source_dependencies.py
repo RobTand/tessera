@@ -1005,6 +1005,52 @@ def test_a_dangling_link_behind_a_wildcard_still_retains_its_in_tree_target(tmp_
     assert tmp_path / "data" in found, (found, unknown, unplaced)
 
 
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = list(Path('docs').glob('*/'))\n",
+    "import glob\nx = glob.glob('docs/*/')\n",
+], ids=["path", "module"])
+def test_a_trailing_separator_pattern_still_scans_its_last_component(tmp_path, monkeypatch, source):
+    # PurePath drops the trailing separator and the last component was never scanned, so
+    # ``docs/*/`` found nothing behind ``docs/link`` (#1011 review).  The link is dangling.
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "link").symlink_to("../data", target_is_directory=True)
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" in found, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*/manifest.md')]\n",
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*/*.md')]\n",
+    "import glob\nx = glob.glob('docs/*/manifest.md')\n",
+], ids=["terminal-literal", "terminal-wildcard", "module-literal"])
+def test_a_file_link_matched_by_the_terminal_component_retains_its_target(tmp_path, monkeypatch, source):
+    # ``docs/plain/manifest.md`` -> ``../../data/payload.md``.  Only ``docs/plain`` holds a
+    # link; ``docs`` itself holds none, so the ``*`` scan cannot find it.  The terminal
+    # component matches a link to a FILE; reading it reads ``data/payload.md``.
+    (tmp_path / "docs" / "plain").mkdir(parents=True)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "payload.md").write_text("x\n")
+    (tmp_path / "docs" / "plain" / "manifest.md").symlink_to("../../data/payload.md")
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" / "payload.md" in found, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('manifest.md')]\n",
+    "from pathlib import Path\nx = [p.read_text() for p in Path('docs').glob('*.md')]\n",
+], ids=["literal", "wildcard"])
+def test_a_file_link_in_the_base_itself_retains_its_target(tmp_path, monkeypatch, source):
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "payload.md").write_text("x\n")
+    (tmp_path / "docs" / "manifest.md").symlink_to("../data/payload.md")
+    _guard_resolve_to_root(monkeypatch, tmp_path)
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "data" / "payload.md" in found, (found, unknown, unplaced)
+
+
 def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatch):
     (tmp_path / "docs" / "plain").mkdir(parents=True)
     _guard_resolve_to_root(monkeypatch, tmp_path)
