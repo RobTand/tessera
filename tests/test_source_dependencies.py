@@ -944,6 +944,41 @@ def test_a_pattern_named_inside_the_tree_that_climbs_after_a_wildcard_stays_unpl
     assert unplaced and not unknown, (found, unknown, unplaced)
 
 
+_OUTSIDE_CLIMB = "'/usr/*/../x/*.md'"
+_INSIDE_READ = "str(HERE / 'docs' / '*.md')"
+
+
+@pytest.mark.parametrize("order", ["outside-first", "inside-first"])
+def test_an_outside_alternative_does_not_discard_an_in_tree_one(tmp_path, order):
+    # One pattern name with two bindings: a box path that climbs after a wildcard (never stat'ed,
+    # unnamed) and an anchored pattern naming ``docs``.  Whichever binding comes first, the
+    # in-tree alternative is still a read of ``docs`` and keeps its edge (#1010 review).
+    (tmp_path / "docs").mkdir()
+    bindings = [_OUTSIDE_CLIMB, _INSIDE_READ]
+    if order == "inside-first":
+        bindings.reverse()
+    source = ("import glob\n" + _HERE + f"PATTERN = {bindings[0]}\nPATTERN = {bindings[1]}\n"
+              "x = glob.glob(PATTERN)\n")
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert found == {tmp_path / "docs"}, (found, unknown, unplaced)
+    assert not unknown and not unplaced, (unknown, unplaced)
+
+
+@pytest.mark.parametrize("order", ["outside-first", "inside-first"])
+def test_an_outside_climb_beside_an_in_tree_climb_stays_unplaced(tmp_path, order):
+    # Both alternatives climb after a wildcard.  The in-tree one names a base inside the tree and
+    # keeps the #338 uncertainty whatever the outside one does.
+    (tmp_path / "docs").mkdir()
+    inside = "str(HERE / 'docs') + '/*/../../x/*.md'"
+    bindings = [_OUTSIDE_CLIMB, inside]
+    if order == "inside-first":
+        bindings.reverse()
+    source = ("import glob\n" + _HERE + f"PATTERN = {bindings[0]}\nPATTERN = {bindings[1]}\n"
+              "x = glob.glob(PATTERN)\n")
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert unplaced and not unknown, (found, unknown, unplaced)
+
+
 def test_an_unnamed_module_glob_still_escalates_in_a_module_that_executes_source(tmp_path):
     found, unknown, unplaced = _scan_full(
         "import glob\nexec('pass')\nx = glob.glob('/usr/local/cuda-*')\n", tmp_path)

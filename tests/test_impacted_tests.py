@@ -2589,6 +2589,28 @@ def test_an_anchored_module_glob_behind_an_outside_bridge_selects_the_reader_for
     assert "tests/test_lister.py" in result["tests"], result
 
 
+@pytest.mark.parametrize("order", ["outside-first", "inside-first"])
+def test_an_outside_alternative_does_not_hide_an_in_tree_module_glob(tmp_path, order):
+    """One pattern name bound to a box path that climbs after a wildcard and to an anchored
+    ``docs`` pattern: the box path is never stat'ed, but the ``docs`` alternative still reads
+    ``docs``, so a new member there selects the reader whichever binding comes first."""
+    bindings = ["'/usr/*/../x/*.md'", "str(ROOT / 'docs' / '*.md')"]
+    if order == "inside-first":
+        bindings.reverse()
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": ("import glob\n" + _ROOT_ANCHOR + f"\nPATTERN = {bindings[0]}\n"
+                                 f"PATTERN = {bindings[1]}\n\n"
+                                 "def test_lists():\n    assert glob.glob(PATTERN) is not None\n"),
+        "docs/seed.md": "x\n"})
+    (repo / "docs" / "added.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a new member of docs")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())
