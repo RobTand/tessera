@@ -35,6 +35,9 @@ def _moe(experts=4, hidden=128, inter=64, **over):
         "family": S.TESSERA_FP8, "structure": S.STRUCTURE_ROUTED_MOE,
         "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL",
         "experts": experts,
+        "expert_ids": list(range(experts)) if type(experts) is int else [],
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [1024, 1024], "w2": [1024]}}],
         "groups": {
             "w13": _group(2 * inter, hidden, [["gate_proj", inter], ["up_proj", inter]]),
             "w2": _group(hidden, inter, [["down_proj", hidden]]),

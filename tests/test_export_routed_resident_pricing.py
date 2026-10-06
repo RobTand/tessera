@@ -145,8 +145,12 @@ def _runtime_bytes(family: str, units_by_part: dict, experts: int, *,
             cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
             family=family, arithmetic="folded" if family == "value" else "epilogue")
 
+    q256 = {group: [256 * sum(units_by_part[group, part, 0].rep.rates)
+                    // units_by_part[group, part, 0].cols for part in MOE_GROUP_PROJECTIONS[group]]
+            for group in MOE_GROUPS}
+    classes = [{"start": 0, "end": experts, "q256": q256}]
     bundles = PackedWindowMoeBundles(gate=bundle("w13", "gate_proj"), up=bundle("w13", "up_proj"),
-                                     down=bundle("w2", "down_proj"), family=family)
+                                     down=bundle("w2", "down_proj"), family=family, expert_classes=classes)
     if not fused_lane:
         return bundles.resident_bytes(), None
     # What ``FusedRoutedWindowMoE.resident_bytes`` adds, built by the helpers
@@ -157,7 +161,7 @@ def _runtime_bytes(family: str, units_by_part: dict, experts: int, *,
         runs, bdesc, _tile_words, _slot_words = projection_tables(b)
         fused += (compose_table16(b).numel() * 2 + runs.numel() * runs.element_size()
                   + bdesc.numel() * bdesc.element_size())
-    return bundles.resident_bytes(), fused
+    return bundles.resident_bytes(), fused + 8 * len(classes)
 
 
 def _stack_units(lane: str, experts: int, rows_of, rates_of, bits=WINDOW_BITS) -> dict:
@@ -293,14 +297,19 @@ def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables(monkeypatch):
     part_bytes = 3 * routed_window_part_resident_bytes(EXPERTS)
     fused_bytes = 3 * EXPERTS * routed_fused_unit_bytes(WINDOW_BITS, 128)
     mixed = (3, 4) * 64
-    _units, stack = export.routed_stack_resident_bytes("TESSERA_FP8", EXPERTS, _stack_layouts(mixed, mixed))
-    assert stack == part_bytes + fused_bytes
+    classes = [{"start": 0, "end": EXPERTS, "q256": {"w13": [896, 896], "w2": [896]}}]
+    _units, stack = export.routed_stack_resident_bytes(
+        "TESSERA_FP8", EXPERTS, _stack_layouts(mixed, mixed), expert_classes=classes)
+    assert stack == part_bytes + fused_bytes + 4 * EXPERTS + 8
     high = _stack_layouts((7,) * 128, (7,) * 128)
-    _units, stack = export.routed_stack_resident_bytes("TESSERA_BF16", EXPERTS, high)
-    assert stack == part_bytes + fused_bytes
+    classes[0]["q256"] = {"w13": [1792, 1792], "w2": [1792]}
+    _units, stack = export.routed_stack_resident_bytes(
+        "TESSERA_BF16", EXPERTS, high, expert_classes=classes)
+    assert stack == part_bytes + fused_bytes + 4 * EXPERTS + 8
     monkeypatch.setattr(routed_fused, "SM121_MAX_DYNAMIC_SMEM", routed_fused.smem_bytes(0, 8))
-    _units, stack = export.routed_stack_resident_bytes("TESSERA_BF16", EXPERTS, high)
-    assert stack == part_bytes
+    _units, stack = export.routed_stack_resident_bytes(
+        "TESSERA_BF16", EXPERTS, high, expert_classes=classes)
+    assert stack == part_bytes + 4 * EXPERTS
 
 
 def _accepts_fit_flag() -> bool:
@@ -366,8 +375,8 @@ def test_routed_stack_bytes_are_the_compact_lane_allocation_plus_compose_tables(
         # Per unit: the 2^L-entry 16-bit table, the int32 [8] run pair and
         # one 48-byte descriptor per 32 columns.
         tables = sum(2 * (1 << bits) + 4 * 8 + 48 * (cols // 32)
-                     for _rows, cols, _rates, bits in layouts.values())
-    assert record["resident_bytes_resident_mode"] == planes + tables
+                     for _rows, cols, _rates, bits in layouts.values()) + 8 * len(record["expert_classes"])
+    assert record["resident_bytes_resident_mode"] == planes + tables + 4 * EXPERTS
     # The whole stack admits the fused lane at TP1 (128 columns, rate 4, L=14).
     for (group, part, _e), (rows, cols, rates, bits) in layouts.items():
         assert fused_routed_unit_shape_refusal(
@@ -413,6 +422,7 @@ def test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum(exported, a
             routed, _tables = _runtime_bytes("e4m3", units, EXPERTS)
         else:
             routed = _reference_bytes("e4m3", units, EXPERTS)
+        routed += 4 * EXPERTS
         assert row["items"] == {"routed_moe_resident_mode_bytes": routed,
                                 "mtp_draft_embed_head_duplicate_bytes": duplicate}
         assert row["total_bytes"] == sum(row["items"].values())
@@ -460,3 +470,22 @@ def test_glm_per_rank_pricing_matches_the_measured_load_bench():
     assert fp8 == 1_628_183_832
     manifest_before = 7_257_194_496
     assert manifest_before // tp > 1.9 * bf16
+
+
+
+def test_different_expert_class_schedules_retain_all_fused_storage():
+    layouts = _stack_layouts((3, 4) * 64, (3, 4) * 64)
+    for index, layout in enumerate(layouts):
+        if index % EXPERTS == 1:
+            layout["rates"] = (4,) * 128
+    classes = [{"start": e, "end": e + 1, "q256": {"w13": [q, q], "w2": [q]}}
+               for e, q in enumerate((896, 1024))]
+    units, stack = export.routed_stack_resident_bytes(
+        "TESSERA_FP8", EXPERTS, layouts, expert_classes=classes)
+    expected_units = sum(routed_window_unit_resident_bytes(
+        "TESSERA_FP8", layout["rows"], layout["cols"], layout["rates"],
+        window_bits=WINDOW_BITS, tile_rows=kg.TILE_ROWS) for layout in layouts)
+    expected_stack = (3 * routed_window_part_resident_bytes(EXPERTS) + 4 * EXPERTS
+                      + 8 * len(classes) + len(layouts) * routed_fused_unit_bytes(WINDOW_BITS, 128))
+    assert (units, stack) == (expected_units, expected_stack)
+

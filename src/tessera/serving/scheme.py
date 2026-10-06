@@ -1951,8 +1951,20 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
             f"tessera target {target!r}: w13 takes {declared_groups['w13']['columns']} input "
             f"columns and w2 stacks {declared_groups['w2']['rows']} rows; both are the model's "
             "hidden size, so they are one number")
+    from tessera.expert_classes import normalize_expert_metadata, validate_gate_up_schedule
+
+    matrices = {name: group.get("expert_role_q256", [group["role_q256"]] * experts)
+                for name, group in declared_groups.items()}
+    metadata = normalize_expert_metadata(
+        scheme.get("expert_ids"), scheme.get("expert_classes"), matrices, target=target)
+    if family in (TESSERA_FP8, TESSERA_BF16) and shared["body"] == "WINDOW":
+        for descriptor in metadata["expert_classes"]:
+            validate_gate_up_schedule(
+                *descriptor["q256"]["w13"], declared_groups["w13"]["columns"],
+                target=f"{target} class {descriptor['start']}:{descriptor['end']}")
     return {
         "family": family, "structure": STRUCTURE_ROUTED_MOE, "experts": experts,
+        **metadata,
         "source_layout": source_layout,
         "grid": declared_groups["w13"]["grid"], "body": declared_groups["w13"]["body"],
         "plane": declared_groups["w13"]["plane"],

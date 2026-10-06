@@ -791,6 +791,12 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             roles = record.get("roles", ())
             declared = validate_tessera_moe_scheme(scheme, f"explicit plan {name}")
             experts = declared["experts"]
+            from .expert_classes import inverse_expert_ids
+
+            inverse = inverse_expert_ids(declared["expert_ids"])
+            if any(record.get(field) != declared[field]
+                   for field in ("expert_ids", "expert_classes")):
+                raise ValueError(f"explicit plan stack {name}: manifest expert metadata differs from config")
             expected_roles = {(expert, projection) for expert in range(experts)
                               for projections in MOE_GROUP_PROJECTIONS.values()
                               for projection in projections}
@@ -814,7 +820,7 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if unknown:
                 raise ValueError(f"explicit plan stack {name}: unknown projected units {unknown[:5]}")
             declared_rungs = {
-                (expert, role["roles"][0][0]): role["q256"]
+                (declared["expert_ids"][expert], role["roles"][0][0]): role["q256"]
                 for expert in range(experts) for group in declared["groups"].values()
                 for role in expert_role_declarations(group, expert=expert)}
             selected_rungs = {by_unit.get(r["tensor"].removesuffix(".weight"), wanted_rung)
@@ -823,6 +829,19 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if record.get("q256") != manifest_baseline:
                 raise ValueError(f"explicit plan stack {name}: manifest baseline rung differs from plan")
             for role in roles:
+                original = role["expert"]
+                storage = role.get("storage_expert")
+                if type(storage) is not int or storage != inverse[original]:
+                    raise ValueError(f"explicit plan {name}: storage_expert disagrees with expert_ids")
+                prefix = f"{name}.{original}."
+                tensor = role.get("tensor", "")
+                if not tensor.startswith(prefix) or not tensor.endswith(".weight"):
+                    raise ValueError(f"explicit plan {name}: tensor must retain its original expert id")
+                wire = f"{name}.{storage}.{tensor.removeprefix(prefix).removesuffix('.weight')}.wire"
+                if role.get("wire") != wire:
+                    raise ValueError(f"explicit plan {name}: wire must name its storage expert id")
+                if role.get("source_slice", {}).get("expert", original) != original:
+                    raise ValueError(f"explicit plan {name}: source_slice must retain its original expert id")
                 want = (by_unit.get(role["tensor"].removesuffix(".weight"), wanted_rung)
                         if by_unit else wanted_rung)
                 if role.get("q256") != want:

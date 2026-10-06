@@ -1440,9 +1440,10 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
                                                "transpose": False},
                               "expert": index, "projection": projection, "group": group,
                               "rows": shape[0], "cols": shape[1]})
-    return {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
-            "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
-            "source_layout": source_layout, "groups": groups, "units": units}
+    record = {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
+              "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
+              "source_layout": source_layout, "groups": groups, "units": units}
+    return assign_expert_unit_rungs(record, {})
 
 
 def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
@@ -1533,28 +1534,23 @@ def require_plannable_unit_layout(layout, q256, target, *, manifest=None):
                     "placement is not plannable. Refusing before the shard write.")
 
 def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
-                                tp_size: int = 1, tp_rank: int = 0) -> tuple[int, int]:
+                                expert_classes, tp_size: int = 1, tp_rank: int = 0) -> tuple[int, int]:
     """``(unit_bytes, stack_bytes)`` one rank retains of a routed stack.
 
-    ``unit_bytes`` is the sum over expert projections of what the lane holds
-    per unit; ``stack_bytes`` the terms the lane holds once per stack: for
-    the compact window lane one ``run_off`` per part
-    (:func:`~tessera.serving_parts.routed_window_part_resident_bytes`) and,
-    when every unit's wire shape admits the fused lane and the projection
-    schedules/strides agree across experts (gate/up also share tile_words), its
-    composed table (#685), run pair and block descriptors (contract v45,
-    tessera#694) per unit (:func:`~tessera.serving_parts.
-    routed_fused_unit_bytes`) -- since v45 at every one- or two-rate shape
-    the lane reads, not rate 4 alone.  An NVFP4 stack is the stock tile per
-    unit and nothing per stack.  ``layouts`` are the units' verified wire
-    layouts as the write loop recorded them; a TP cut prices each rank's
-    rows/columns/rates through :func:`routed_unit_rank_cut`.
+    Unit terms retain the existing packed-window pricing. Stack terms charge
+    the global run offsets, the single int32 global-to-storage inverse, and
+    class dispatch counters. Composed tables, run pairs and block descriptors
+    are counted once per projection; class-local views alias that storage,
+    even when different classes carry different schedules. Tensor-parallel
+    cuts price each rank's actual rows, columns and rates as before.
     """
     from tessera.kernel_window_gemv import TILE_ROWS
     from tessera.routed_fused import fused_routed_unit_shape_refusal
 
     units_total, parts, refused, fused_total = 0, set(), False, 0
-    schedules = {}
+    from tessera.expert_classes import normalize_expert_classes
+
+    classes = normalize_expert_classes(expert_classes, experts)
     for layout in layouts:
         cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
         if family == NVFP4:
@@ -1565,26 +1561,18 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
             window_bits=cut["window_bits"], tile_rows=TILE_ROWS)
         part = "down" if cut["group"] == "w2" else str(cut["projection"]).removesuffix("_proj")
         parts.add(part)
-        counts = tuple((rate, cut["rates"].count(rate)) for rate in sorted(set(cut["rates"])))
-        signature = (cut["rows"], cut["cols"], int(cut["window_bits"]), counts)
-        if schedules.setdefault(part, signature) != signature:
-            refused = True
         window_bits = int(cut["window_bits"])
         if fused_routed_unit_shape_refusal(
                 "value" if family == BF16 else "e4m3", part, rows=cut["rows"],
                 cols=cut["cols"], rates=cut["rates"], window_bits=window_bits) is not None:
             refused = True
-        elif not refused:
+        else:
             fused_total += routed_fused_unit_bytes(window_bits, cut["cols"])
-    gate, up = schedules.get("gate"), schedules.get("up")
-    if gate is not None and up is not None:
-        if sum(r * n for r, n in gate[-1]) != sum(r * n for r, n in up[-1]):
-            refused = True
     if family == NVFP4 or not layouts:
         return units_total, 0
-    stack_total = len(parts) * routed_window_part_resident_bytes(experts)
+    stack_total = len(parts) * routed_window_part_resident_bytes(experts) + 4 * experts
     if not refused:
-        stack_total += fused_total
+        stack_total += fused_total + 8 * len(classes)
     return units_total, stack_total
 
 
@@ -1838,6 +1826,27 @@ def assign_expert_unit_rungs(record, assignments):
                 "E4M3/BF16 loader; mixed NVFP4 expert schedules are not supported")
         record["unit_q256"] = {name: rung for name, rung in sorted(effective.items())
                                if rung != record["q256"]}
+    from tessera.expert_classes import build_expert_metadata, inverse_expert_ids, validate_gate_up_schedule
+
+    by_unit = {(u["expert"], u["projection"]): expert_unit_q256(record, u)
+               for u in record["units"]}
+    matrices = {group: [[by_unit[e, role] for role in roles]
+                        for e in range(record["experts"])]
+                for group, roles in MOE_GROUP_PROJECTIONS.items()}
+    try:
+        if record["family"] != NVFP4:
+            for expert, row in enumerate(matrices["w13"]):
+                validate_gate_up_schedule(*row, record["groups"]["w13"]["columns"],
+                                          target=f"{record['stack']} expert {expert}")
+        record.update(build_expert_metadata(matrices, target=record["stack"]))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    inverse = inverse_expert_ids(record["expert_ids"])
+    for unit in record["units"]:
+        unit["storage_expert"] = inverse[unit["expert"]]
+        prefix = f"{record['stack']}.{unit['expert']}."
+        projection = unit["tensor"].removeprefix(prefix).removesuffix(".weight")
+        unit["wire"] = f"{record['stack']}.{unit['storage_expert']}.{projection}.wire"
     return record
 
 
@@ -1846,7 +1855,7 @@ def expert_group_q256(record, group):
     roles = MOE_GROUP_PROJECTIONS[group]
     by_slot = {(u["expert"], u["projection"]): expert_unit_q256(record, u)
                for u in record["units"] if u["group"] == group}
-    matrix = [[by_slot[e, role] for role in roles] for e in range(record["experts"])]
+    matrix = [[by_slot[e, role] for role in roles] for e in record["expert_ids"]]
     from tessera.serving.scheme import expert_group_q256 as spell_group_q256
     return spell_group_q256(matrix)
 
@@ -3125,6 +3134,8 @@ def main():
     # manifest's ``serving_gate`` block carries the refusal beside it.
     moe_records = {stack: {"family": record["family"], "grid": record["grid"].name,
                            "q256": record["q256"], "experts": record["experts"],
+                           "expert_ids": record["expert_ids"],
+                           "expert_classes": record["expert_classes"],
                            "attested_by": [
                                cell["id"] for cell in attested_cells(
                                    PAYLOAD_FAMILY_BY_ROUTE[record["family"]],
@@ -3352,6 +3363,7 @@ def main():
                             "source_layout": unit["source_layout"],
                             "source_slice": unit["source_slice"],
                             "role": unit["projection"], "expert": unit["expert"],
+                            "storage_expert": unit["storage_expert"], "wire": unit["wire"],
                             "group": unit["group"], "rows": exported.rows,
                             "cols": exported.columns, "grid": unit_grid.name,
                             "q256": unit_q256, "family": stack_spec["family"],
@@ -3628,6 +3640,7 @@ def main():
         scheme = {
             "family": spec["family"], "structure": STRUCTURE_ROUTED_MOE,
             "source_layout": spec["source_layout"],
+            "expert_ids": spec["expert_ids"], "expert_classes": spec["expert_classes"],
             "grid": spec["grid"].name, "body": recipe.body.name,
             "plane": recipe.scale_plane.name, "experts": spec["experts"], "groups": groups,
         }
@@ -3647,7 +3660,8 @@ def main():
             # wire shape admits the fused lane, its composed tables (#685),
             # run pairs and block descriptors (contract v45).
             stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
-                spec["family"], spec["experts"], routed_layouts[stack])[1]
+                spec["family"], spec["experts"], routed_layouts[stack],
+                expert_classes=spec["expert_classes"])[1]
         stack_record["roles"].sort(key=lambda r: (r["expert"], r["group"], r["role"]))
         module_records[stack] = stack_record
         for role in stack_record["roles"]:
@@ -3750,6 +3764,7 @@ def main():
     routed_by_rank = [
         sum(sum(routed_stack_resident_bytes(
             stack_plan[stack]["family"], stack_plan[stack]["experts"], layouts,
+            expert_classes=stack_plan[stack]["expert_classes"],
             tp_size=fit_tp, tp_rank=rank)) for stack, layouts in routed_layouts.items())
         for rank in range(fit_tp)]
     mtp_layers = int(src_config.get("text_config", src_config).get("num_nextn_predict_layers") or 0)
