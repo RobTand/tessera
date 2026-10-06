@@ -402,6 +402,9 @@ def import_graph(
         for path, tree in trees.items()
     }
     unconditional, conditional = set(), {}
+    # Pairs an ordinary import statement produced.  A by-path probe of the same pair
+    # must not mask them: the probe exclusion is keyed by the pair alone.
+    statement_edges = set()
 
     def add_statements(requests, importer, *, loaded_target=None, coarse_only=False):
         """Retain initialization; forward only proved guarded attribute demands.
@@ -438,6 +441,8 @@ def import_graph(
 
         add(requests)
         if coarse_only:
+            if loaded_target is None:
+                statement_edges.update(edges)
             return edges
         while pending:
             target, demand = pending.popleft()
@@ -466,6 +471,8 @@ def import_graph(
                     ast.Module(body=[imported], type_ignores=[]), module_of[target],
                     is_package=path.name == "__init__.py"))
         unconditional.update(edges)
+        if loaded_target is None:
+            statement_edges.update(edges)
         return edges
 
     for node, path in by_name.items():
@@ -501,7 +508,11 @@ def import_graph(
                 # Loading a file does not prove which attributes its caller
                 # can request, so it retains every possible lazy dependency.
                 add_statements({}, node, loaded_target=target)
-            if _is_collection_probe(path, by_name.get(target)):
+            if (_is_collection_probe(path, by_name.get(target))
+                    and (target, node) not in statement_edges):
+                # An ordinary import of the same file is a real dependency, and
+                # the exclusion is keyed by the pair, so marking it would drop
+                # that import too (PB1496 review).
                 probes.add((target, node))
         for target in data:
             importers[target].add(node)
