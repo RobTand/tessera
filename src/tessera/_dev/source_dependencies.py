@@ -1062,9 +1062,14 @@ def _scan_children(directories, recursive, root, links, found, budget):
             if entry.is_symlink():
                 placed = _place({path}, root, [], links)
                 target = next(iter(placed)) if placed else None
-                if target is None or not target.is_dir():
+                if target is None:
                     continue
+                # A dependency even when absent: deleting the last member behind an
+                # unchanged link leaves it dangling and the read still names it.  Only
+                # traversal needs a directory.
                 found.add(target)
+                if not target.is_dir():
+                    continue
             elif entry.is_dir(follow_symlinks=False):
                 target = path
             else:
@@ -1096,6 +1101,9 @@ def _wildcard_link_dirs(start, components, root, links):
         else:
             frontier = {target for directory in frontier
                         for target in (_place({directory / component}, root, [], links) or ())}
+            # A literal component after a wildcard can itself be a link: where it leads
+            # is read, so it is a dependency and not only traversal state.
+            found |= frontier
     return found
 
 
