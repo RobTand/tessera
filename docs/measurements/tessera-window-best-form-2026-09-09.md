@@ -207,3 +207,74 @@ paired kernel attribution the first four traces could not. What is still owed
 is breadth, not a real encode -- the upper `R1088` endpoint, which root is
 staging, and the dense shapes. The default stays off until those and a review
 say otherwise.
+
+## 2026-10-06: issue 652 joined-geometry before packet
+
+This continuation reuses the retained geometry extension at
+`0e1f33ae834600b2dfc713da7b5aa9a0ce85bc3c`. The four cases use window bits
+14, arity one, eight units with 32 columns each, and the incumbent best-form
+tile `64,4,2`: rung 1088 joins 192 columns at rate four and 64 at rate five;
+rung 1152 joins 128 columns at each rate. Both 2048-row and 4096-row cases
+are expressed. The production joined-call driver and its automatic graph
+behavior run on **generated targets and weights**, not a captured G2
+calibration block or an entire encoder unit.
+
+The benchmark now has `--cpu-dry-run`, which exercises its own argument
+parser, table construction and joined gathers on four CPU rows before a GPU
+submission. It also fixes the G2 timing routine's undefined argument variable,
+refuses actual numerical disagreement with the reference, and brackets the
+warmed Nsight Compute capture. No production source or defaults changed.
+
+Final benchmark source: `2b711e0e7498802954bf75cfdabe7b93c6f47737`.
+The final-source CPU action
+`06865752b875b962393dfa71adbcc13a4ff5d79daa52c87cfbac541d1c903f90`
+executed on dl380g10 with return code zero. Seven entry-point invocations
+covered all four geometry cases plus timing, Torch profiling and Nsight
+argument modes. These dry runs did not execute CUDA kernels.
+
+The first exclusive GB10 measurement was allowed to choose either Spark and
+ran on sparklina. Action
+`df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597`
+returned zero in 39.49199 seconds. At rung 1088 with 2048 rows, both forms
+returned reference-identical states and squared errors at both rates.
+
+| Existing form | Median seconds per joined group | Branch evaluations per joule |
+|---|---:|---:|
+| Front counterfactual | 0.06914 | 1.6743915725 billion |
+| Incumbent best form | 0.02289 | 4.0642715040 billion |
+
+The work denominator is the benchmark's branch-evaluation count, not tokens,
+encoded-model throughput or served quality. Energy uses each form's own
+three timestamped power blocks; all six blocks were bracketed and fully
+covered. Recomputing reductions from those blocks differed by at most
+0.000001635 seconds per call and 0.034607 branch evaluations per joule,
+within the report's rounding. These are existing-form comparisons, **not a
+before/after optimization claim**.
+
+The exact 19:30:02–19:30:42 UTC window was recovered from Netdata on both
+Sparks through CPU action
+`fc3f2841e6342b65f26e04fce36c1cfdc89c0ba619b445b8a83a15517aef44d6`
+(return code zero). Sparky mean GPU power was 13 W; sparklina mean was
+60.995 W, median 71.05 W and maximum 73 W. Native power collection cadence
+was ten seconds; returned one-second buckets are not one-second sensor
+samples and cannot qualify the benchmark's five-second blocks individually.
+The first collection action returned zero but recorded DNS errors; its error
+receipts remain retained, and recovery used verified numerical addresses.
+
+Raw results and power responses are under
+`/mnt/shared/tessera-measurements/issue-652-geometry-sol-20261006/`.
+The timing receipt is
+`/mnt/shared/prismabuild-fleet/cas/actions/v3/df/df7dc3ca89f1e763a11c80b06cf682330664104a874ea308d3d8657994d2d597.json`,
+receipt digest
+`40914fb09e48449ade9c8fc701d3e13486140e59bfeb266b83ff6ae9c262b9d3`.
+The full action list, commands, completion clients and limits are in
+`/home/rob/fleet/records/kernels-652-g2-geometry-sol-20261006.json`.
+
+**Still incomplete:** the other three timing cases, the Torch and Python
+sampling profiles, and the incumbent/front Nsight Compute profiles were
+admitted with completion clients, but the observed scheduler holds were
+`measurement_host_not_idle` and `transition_busy`. No profiling result,
+cache-bandwidth roofline, limiting-resource conclusion, packed-wire equality,
+G2 unit timing, production optimization or issue closure is claimed here.
+Do not optimize production code from this partial packet.
+
