@@ -2435,6 +2435,29 @@ def test_deleting_the_last_member_behind_an_unchanged_link_selects_the_reader(tm
     assert "tests/test_lister.py" in result["tests"], result
 
 
+def test_an_outside_bridge_behind_a_wildcard_selects_the_reader_for_any_change(tmp_path):
+    """``docs/link`` points outside the tree; the bridge may lead back to ``data``.
+    The selector will not look, so the reader cannot be tied to a file and is kept
+    for every change (#338): ``data/later.md`` is changed and unmentioned."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "tests/test_lister.py": _LINK_READER.format(pattern="*/*.md"),
+        "docs/plain/a.md": "x\n", "data/seed.md": "x\n"})
+    (repo / "docs" / "link").symlink_to(outside, target_is_directory=True)
+    (outside / "bridge").symlink_to(repo / "data", target_is_directory=True)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a link that leaves the tree")
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "data" / "later.md").write_text("new\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "an unmentioned member of data")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_lister.py" in result["tests"], result
+
+
 def test_this_repository_does_not_gain_an_unnamed_directory_read():
     listed = impacted.select(ROOT, ["README.md"])["unnamed_directory_reads"]
     sites = sum(len(lines) for lines in listed.values())

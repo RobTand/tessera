@@ -988,16 +988,25 @@ def test_a_wildcard_over_an_ordinary_directory_adds_nothing(tmp_path, monkeypatc
     assert found == {tmp_path / "docs"} and not unknown and not unplaced
 
 
-def test_a_link_out_of_the_tree_is_kept_but_never_approached(tmp_path, monkeypatch):
+@pytest.mark.parametrize("source, link", [
+    ("from pathlib import Path\nx = list(Path('docs').glob('*/*.md'))\n", "docs/out"),
+    ("from pathlib import Path\nx = list(Path('docs').glob('*/link/*.md'))\n", "docs/plain/link"),
+    ("import glob\nx = glob.glob('docs/*/*.md')\n", "docs/out"),
+], ids=["wildcard", "literal-after-wildcard", "module"])
+def test_a_link_leaving_the_tree_keeps_the_read_unplaced_and_is_never_approached(
+        tmp_path, monkeypatch, source, link):
+    # An outside bridge may lead straight back into the tree, so the read cannot be
+    # attributed to any file.  The guard declines to look; the answer is the #338
+    # uncertainty (select the reader's consumers), not a silent success (#1011 review).
     outside = tmp_path.parent / (tmp_path.name + "-outside")
     outside.mkdir()
     root = tmp_path / "repo"
-    (root / "docs").mkdir(parents=True)
-    (root / "docs" / "out").symlink_to(outside, target_is_directory=True)
+    (root / "docs" / "plain").mkdir(parents=True)
+    (root / link).symlink_to(outside, target_is_directory=True)
     _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
-    found, _, _ = _scan_full(
-        "from pathlib import Path\nx = list(Path('docs').glob('*/x.md'))\n", root)
-    assert outside not in found and root / "docs" / "out" in found
+    found, unknown, unplaced = _scan_full(source, root)
+    assert outside not in found
+    assert unplaced and not unknown, (found, unknown, unplaced)
 
 
 def test_a_scan_over_its_budget_falls_back_to_an_unplaced_read(tmp_path, monkeypatch):
