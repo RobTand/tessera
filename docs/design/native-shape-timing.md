@@ -216,11 +216,13 @@ development mode through the existing `seal_check` routing, and this module
 adds no seal, clean-tree, installation-proof, re-seal or permission
 prerequisite. What still refuses are its own comparability grounds, which
 are correctness checks and never stamps: byte integrity (a table or panel
-must match its own pinned digest), table grammar (every timing cell must
-carry its `samples_ms` array, refused by name before summarizing),
-comparison-key and rank-local geometry agreement -- agreement is never
-presumed: a row without its own complete rank-local geometry is a
-nonpassing geometry verdict, never a borrow of the reference shape -- and
+must match its own pinned digest, bound from the one buffer the reviewer
+actually read), table grammar (every timing cell must be a JSON object
+carrying a numeric `samples_ms` array, refused by name before
+summarizing), comparison-key and rank-local geometry agreement --
+agreement is never presumed: a row without its own complete rank-local
+geometry is a nonpassing geometry verdict, never a borrow of the reference
+shape -- and
 the panel validator's execution-scope refusals. A passing comparison
 promotes nothing: it says
 the new rows sit inside the band the preserved bench recorded, not that

@@ -94,7 +94,13 @@ def bench_quartile(sorted_samples: Sequence[float], p: float) -> float:
 
 def bench_summarize(samples: Sequence[float]) -> dict[str, Any]:
     """The recorded median/p25/p75/IQR/min/n of one timing cell."""
-    s = sorted(float(v) for v in samples)
+    values = []
+    for v in samples:
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            raise ValueError(f"baseline timing cell: samples_ms entries must be "
+                             f"numbers, got {v!r}")
+        values.append(float(v))
+    s = sorted(values)
     if len(s) < 3:
         raise ValueError("baseline timing cell: requires at least three samples")
     q25, med, q75 = (bench_quartile(s, 0.25), bench_quartile(s, 0.5),
@@ -132,6 +138,9 @@ def verify_recorded_statistics(raw: bytes, *, where: str = "baseline") -> dict[s
             raise ValueError(f"{where}: group without timings: {group!r}")
         groups.add(str(group.get("group")))
         for m, cell in sorted(group["timings"].items()):
+            if not isinstance(cell, Mapping):
+                raise ValueError(f"{where}: {group.get('group')} M={m} timing cell "
+                                 "must be a JSON object")
             if not isinstance(cell.get("samples_ms"), list):
                 raise ValueError(
                     f"{where}: {group.get('group')} M={m} samples_ms must be an array")

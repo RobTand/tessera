@@ -11,9 +11,13 @@ nearest-sample quartile rule verbatim and proves it against every recorded
 cell of a preserved table before comparing anything: the recorded band is
 the band the historical bench wrote, never a rebuilt or interpolated one.
 Rows compare only on a matched (structure, module, family, grid, rate) key
-with agreeing rank-local geometry; duplicate comparison rows, a median
-outside the band, and a baseline cell without a `samples_ms` array are
-named refusals (CLI exit 2), not silent passes or tracebacks. Dense panel
+with agreeing rank-local geometry, and agreement is never presumed: a row
+whose own geometry is missing or malformed is a nonpassing geometry
+verdict, never a borrow of the reference shape. Duplicate comparison rows,
+a median outside the band, a timing cell that is not a JSON object, and a
+cell without a numeric `samples_ms` array are named refusals (CLI exit 2),
+not silent passes or tracebacks; the reviewer CLI binds, pins and proves
+one owned read per file. Dense panel
 rows project from a validated `tessera.shape_time_panel.v1` receipt;
 routed rows refuse projection by name until the panel schema grows one.
 Historical runtime-identity drift stamps and continues under the landed

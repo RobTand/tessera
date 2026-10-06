@@ -384,3 +384,44 @@ def test_verify_table_replacement_and_pin_stay_hard_across_runs(tmp_path):
     receipt = json.loads(proc.stdout)
     assert receipt["baseline"]["sha256"] == hashlib.sha256(second).hexdigest()
     assert receipt["baseline"]["bytes"] == len(second)
+
+
+def test_timing_cell_must_be_an_object_named_at_the_boundary():
+    from tessera.serving import panel_baseline as pb
+    with pytest.raises(ValueError, match="timing cell"):
+        pb.verify_recorded_statistics(
+            json.dumps({"results": [{"group": "broken",
+                                     "timings": {"1": "median"}}]}).encode())
+    with pytest.raises(ValueError, match="timings"):
+        pb.verify_recorded_statistics(
+            json.dumps({"results": [{"group": "broken",
+                                     "timings": ["1"]}]}).encode())
+
+
+def test_the_reviewer_cli_names_a_nonobject_cell_without_a_traceback(tmp_path):
+    baseline = tmp_path / "bad-cell.json"
+    baseline.write_text(json.dumps({"results": [{"group": "broken",
+                                                 "timings": {"1": "median"}}]}))
+    proc = _run_cli(["verify-table", "--baseline", str(baseline)], tmp_path)
+    assert proc.returncode == 2, proc.stderr
+    assert "REFUSED" in proc.stderr and "timing cell" in proc.stderr
+    assert "Traceback" not in proc.stderr
+
+
+def test_samples_must_be_numbers_named_at_the_boundary():
+    from tessera.serving import panel_baseline as pb
+    for bad in ([1.0, None, 3.0, 4.0], ["1", "2", "3"], [True, False, True, False],
+                [1.0, [2.0], 3.0, 4.0]):
+        with pytest.raises(ValueError, match="samples_ms"):
+            pb.bench_summarize(bad)
+
+
+def test_the_reviewer_cli_names_null_samples_without_a_traceback(tmp_path):
+    baseline = tmp_path / "null-samples.json"
+    baseline.write_text(json.dumps({"results": [{"group": "broken", "timings": {"1": {
+        "samples_ms": [1.0, None, 3.0, 4.0], "median_ms": 2.0, "p25_ms": 1.0,
+        "p75_ms": 3.0, "iqr_ms": 2.0, "min_ms": 1.0, "n": 4}}}]}))
+    proc = _run_cli(["verify-table", "--baseline", str(baseline)], tmp_path)
+    assert proc.returncode == 2, proc.stderr
+    assert "REFUSED" in proc.stderr and "samples_ms" in proc.stderr
+    assert "Traceback" not in proc.stderr
