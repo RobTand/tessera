@@ -32,6 +32,21 @@ def _text(value):
     return isinstance(value, str) and bool(value)
 
 
+def _paired_mean_matches(measurement):
+    """Only binary64 rounding from unit conversion/addition may move the mean."""
+    a, b = measurement["pass_times_us"]
+    expected = 0.5 * a + 0.5 * b
+    # The harness multiplies its millisecond mean by 1000; stored pass values
+    # multiply first. This bound covers those binary64 representation steps,
+    # not a benchmark tolerance or a permission to change the statistic.
+    roundoff = math.ulp(a) + math.ulp(b) + math.ulp(expected)
+    _require(abs(measurement["kernel_time_us"] - expected) <= roundoff,
+             "kernel time differs from mean of paired pass medians")
+
+
+
+
+
 def _cell(cell):
     _require(isinstance(cell, dict), "cell must be an object")
     _require(_text(cell.get("cell_id")) and _text(cell.get("shape_id")), "cell identifiers missing")
@@ -90,6 +105,9 @@ def validate_table(table):
         _require(isinstance(row.get("anomaly_flags"), list) and all(_text(f) for f in row["anomaly_flags"]) and len(set(row["anomaly_flags"])) == len(row["anomaly_flags"]), "anomaly flags")
         _require(isinstance(row.get("observations"), list) and isinstance(row.get("quality"), dict) and isinstance(row.get("dominance_evidence"), list), "rung evidence fields")
         _require(isinstance(row.get("excluded"), bool), "exclusion flag")
+        quality_flags = row["quality"].get("anomaly_flags", [])
+        _require(isinstance(quality_flags, list) and all(_text(f) for f in quality_flags) and len(set(quality_flags)) == len(quality_flags), "quality anomaly flags")
+        _require(set(quality_flags) == set(row["anomaly_flags"]), "quality and rung anomaly flags disagree")
         measurements = row.get("measurements")
         _require(isinstance(measurements, list), "measurements")
         seen = set()
@@ -123,6 +141,7 @@ def validate_table(table):
                 reg = geom["register_pressure"]
                 _require(_integer(reg.get("REG")) and reg["REG"] > 0 and all(_integer(reg.get(k)) and reg[k] >= 0 for k in ("STACK", "LOCAL", "SHARED")), "compiler resources missing")
                 _require(isinstance(m.get("pass_times_us"), list) and len(m["pass_times_us"]) == 2 and all(_number(t) and t > 0 for t in m["pass_times_us"]), "paired pass times")
+                _paired_mean_matches(m)
         if row["measurement_status"] == "measured":
             _require(row["supported"] is True and seen == set(keys) and all(m["measurement_status"] == "measured" for m in measurements), "measured row incomplete")
             quality = row["quality"]
@@ -161,6 +180,7 @@ def validate_table(table):
                 _require(witness["geometry"] == canonical["geometry"] and witness["kernel_path"] == canonical["kernel_path"], "dominance witness kernel/geometry")
                 _require(_number(witness["kernel_time_us"]) and witness["kernel_time_us"] > 0, "dominance witness time")
                 _require(isinstance(witness.get("pass_times_us"), list) and len(witness["pass_times_us"]) == 2 and all(_number(t) and t > 0 for t in witness["pass_times_us"]), "dominance witness passes")
+                _paired_mean_matches(witness)
 
             _require(e.get("lower_time_us") == low["kernel_time_us"] and e.get("higher_time_us") == high["kernel_time_us"] <= low["kernel_time_us"], "dominance times")
             for field in ("comparison_id", "paired_seed_contract", "timing_statistic", "timer"):

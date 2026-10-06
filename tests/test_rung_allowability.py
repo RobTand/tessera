@@ -14,8 +14,8 @@ def fixture():
     for q in (768,769):
         evidence={"comparison_id":"paired","paired_seed_contract":"same","timing_statistic":"F/R","timer":"graph"}
         geom={"bits_per_256_weight_tile":{"numerator":q,"denominator":1},"alignment":{"lane_bits":[24],"lane_ends_on_word":[False],"half_bytes":[24],"half_copy":["8B tail"],"slot_words":8},"shared_memory":{"requested_bytes":2,"available_bytes":3,"fits":True},"register_pressure":{"REG":32,"STACK":0,"LOCAL":0,"SHARED":0},"decode_width":{"window_bits":14,"value_bits":8,"run_widths":[3],"word_stages":3,"superblock_rows":64,"k_split":1}}
-        m={**cell,"measurement_status":"measured","kernel_time_us":10-q%2,"kernel_path":"native","geometry":geom,"evidence":evidence,"pass_times_us":[10,10],"measurement_build_id":"build"}
-        quality={"measurement_status":"measured","source_kind":"actual_sampled_expert_weights","device":"cpu","samples":[{"source_sha256":"actual","source_squared_norm":2.0,"relative_sse":.1,"exact_bytes":3}]}
+        m={**cell,"measurement_status":"measured","kernel_time_us":10-q%2,"kernel_path":"native","geometry":geom,"evidence":evidence,"pass_times_us":[10-q%2,10-q%2],"measurement_build_id":"build"}
+        quality={"measurement_status":"measured","source_kind":"actual_sampled_expert_weights","device":"cpu","anomaly_flags":[],"samples":[{"source_sha256":"actual","source_squared_norm":2.0,"relative_sse":.1,"exact_bytes":3}]}
         rows.append({"rung":q,"measurement_status":"measured","supported":True,"anomaly_flags":[],"observations":[],"excluded":False,"dominating_rung":None,"measurements":[m],"quality":quality,"dominance_evidence":[],"lineage":{}})
     return {"schema":"fleet.rung_allowability.v1","table_version":1,"table_status":"complete","format":"TESSERA_E4M3_K1","generated_at":"2026-10-06T03:00:00Z","kernel_build":build,"scope":{"rung_min":768,"rung_max":769,"grid_step_q256":1,"grid_owner":"owner","required_cells":[cell]},"rungs":rows}
 
@@ -39,7 +39,7 @@ class Admission(unittest.TestCase):
         self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=768)['status'],'wait')
 
     def test_anomaly_hold_separate(self):
-        t=fixture(); t['rungs'][0]['anomaly_flags']=['quality_unexplained']
+        t=fixture(); t["rungs"][0]["anomaly_flags"]=["quality_unexplained"]; t["rungs"][0]["quality"]["anomaly_flags"]=["quality_unexplained"]
         self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=768)['status'],'hold')
 
     def test_observations_do_not_exclude(self):
@@ -121,6 +121,16 @@ class Admission(unittest.TestCase):
         for field in ("alignment","decode_width"):
             t=fixture();t["rungs"][0]["measurements"][0]["geometry"][field]={}
             with self.assertRaises(ValueError):validate_table(t)
+
+    def test_quality_flags_must_match_row_flags(self):
+        t=fixture();t['rungs'][0]['quality']['anomaly_flags']=['unexplained_quality']
+        with self.assertRaises(ValueError):validate_table(t)
+
+    def test_aggregate_must_match_paired_passes(self):
+        t=fixture();t['rungs'][0]['measurements'][0]['kernel_time_us']=9.0
+        t['rungs'][0]['measurements'][0]['pass_times_us']=[10.0,10.0]
+        with self.assertRaises(ValueError):validate_table(t)
+
 
 
 if __name__=='__main__': unittest.main()
