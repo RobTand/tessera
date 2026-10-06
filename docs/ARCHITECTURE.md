@@ -13,6 +13,13 @@ a compute fallback. CPU preparation is compared against `materialize_stock`;
 `--correctness` runs bounded GPU code/scale-byte and dense/grouped arithmetic
 oracles before geometry. The quality helper takes `--quality-structure` and
 records each actual served recipe and encoder byte count independently.
+This reader admits exactly the served twelve-bit WINDOW scope, not wider
+research windows. The D41 image wrapper resolves actual Docker facts and
+routes digest/pin identity drift through `tessera.dev_mode.seal_check`: default
+development mode stamps and continues; explicit certified mode retains the
+identity refusal. Unavailable images, invalid shapes/rates and packed-byte
+bounds remain refusals in both modes. The actual resolved image declaration
+is carried into the measurement container; this does not alter serving policy.
 Serving does not import this reader. No encoded bytes, serving recipe, format
 menu, pin, default or admission gate changes. Existing uniform reader
 measurements and immutable allowability tables remain unchanged.

@@ -44,3 +44,17 @@ def test_adapter_import_does_not_import_shared_sdk():
     root = Path(__file__).parents[1]
     result = subprocess.run([sys.executable, "-c", "import importlib.util; s=importlib.util.spec_from_file_location('a','experiments/t4_code/bench_geometry_e2m1.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); assert 'prismabuild' not in __import__('sys').modules"], cwd=root, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("window_bits", [14, 16])
+def test_geometry_reader_refuses_research_windows_outside_served_twelve_bits(window_bits):
+    from tessera.compact_prep import prepare_a4_wire_compact
+    from tessera.errors import GrammarError
+    from tessera.manifest import BodyKind, ScalePlaneKind
+    source = torch.linspace(-0.2, 0.2, 8 * 32).reshape(8, 32).to(torch.bfloat16)
+    encoded = encode_linear(source, grid=grid_for_name("E2M1x2"), q256=640,
+        body=BodyKind.WINDOW, span=1, scale_plane=ScalePlaneKind.LUT, window_bits=window_bits)
+    wire = parse_compact_wire(encoded.blob, device="cpu")
+    with pytest.raises(GrammarError, match="twelve bit WINDOW"):
+        prepare_a4_wire_compact(wire, device="cpu")
+

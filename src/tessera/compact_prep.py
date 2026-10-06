@@ -941,6 +941,8 @@ def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
         initial = md.shard_state.reshape(-1).to(device=device, dtype=torch.int32)
     memory = 0
     if md.body is BodyKind.WINDOW:
+        if int(md.manifest.window_bits) != 12:
+            raise GrammarError("packed A4 geometry requires the actual served twelve bit WINDOW")
         lp.require_window_geometry(md.manifest.window_bits, rates)
         # Existing packer is the byte-order, padding, offsets and slack owner.
         parsed = _window_unit(md, device)
