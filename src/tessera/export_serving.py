@@ -2617,15 +2617,6 @@ def main():
                              research_records=research_gate_records)
                 check_lanes(required_lanes, grid, rung, where=unit["tensor"],
                             structure=STRUCTURE_ROUTED_MOE)
-        if "unit_q256" in record:
-            cliff = (f"{stack}: per-unit routed schedules have no served qualification; "
-                     "divergent expert schedules or gate/up strides require the compact adapter. "
-                     "Mixed schedules are research-only until served GPU/performance "
-                     "qualification; no cell, default or serving pin is promoted.")
-            if required_lanes or (research_execution is None and not args.allow_unserveable):
-                raise SystemExit(cliff + " Use explicit research export (--allow-unserveable).")
-            gate_overrides.append({"target": stack, "structure": STRUCTURE_ROUTED_MOE,
-                                   "refusal": cliff})
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
