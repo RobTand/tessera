@@ -355,6 +355,8 @@ _GLOB_READERS = {
     "bound-alias": 'scan = DOCS.glob\n\n\ndef test_lists():\n    assert sorted(scan("*.md"))\n',
     "unbound-alias": ('original = Path.glob\n\n\ndef test_lists():\n'
                       '    assert sorted(original(DOCS, "*.md"))\n'),
+    "direct-unbound": 'def test_lists():\n    assert sorted(Path.glob(DOCS, "*.md"))\n',
+    "direct-unbound-rglob": 'def test_lists():\n    assert sorted(Path.rglob(DOCS, "*.md"))\n',
 }
 
 
@@ -402,6 +404,8 @@ def _change_docs(repo: Path, change: str) -> None:
     ("recursive", "delete"), ("recursive", "delete-nested"), ("recursive", "rename"),
     ("bound-alias", "add"), ("bound-alias", "delete"),
     ("unbound-alias", "add"), ("unbound-alias", "delete"),
+    ("direct-unbound", "add"), ("direct-unbound", "delete"),
+    ("direct-unbound-rglob", "add"), ("direct-unbound-rglob", "delete"),
 ])
 def test_a_membership_change_selects_a_glob_reader(tmp_path, spelling, change):
     """PB1496: ``Path.glob`` consumes a directory's membership like ``rglob`` does.

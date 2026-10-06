@@ -637,16 +637,20 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
 
 
 @pytest.mark.parametrize("method", ["glob", "rglob"])
-@pytest.mark.parametrize("form", ["unbound", "bound"])
+@pytest.mark.parametrize("form", ["unbound", "bound", "direct"])
 def test_an_aliased_glob_method_keeps_its_named_base(tmp_path, method, form):
-    # ``original = Path.glob; original(path, pattern)`` and
-    # ``scan = DOCS.glob; scan(pattern)`` still name their directory (PB1496).
+    # ``original = Path.glob; original(path, pattern)``,
+    # ``scan = DOCS.glob; scan(pattern)`` and the direct ``Path.glob(path,
+    # pattern)`` still name their directory (PB1496).
     root = tmp_path / "repo"
     (root / "docs").mkdir(parents=True)
     if form == "unbound":
         source = ('from pathlib import Path\n'
                   f'original = Path.{method}\n'
                   'original(Path("docs"), "*.json")\n')
+    elif form == "direct":
+        source = ('import pathlib\n'
+                  f'pathlib.Path.{method}(pathlib.Path("docs"), "*.json")\n')
     else:
         source = ('from pathlib import Path\n'
                   f'scan = Path("docs").{method}\n'
