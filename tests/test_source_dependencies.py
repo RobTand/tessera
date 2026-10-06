@@ -592,9 +592,11 @@ def test_glob_checks_links_before_directory_filtering(tmp_path, monkeypatch, rea
     action = '(p / "data.txt").read_text()' if reader else 'runpy.run_path(p / "driver.py")'
     found, unknown, unplaced = _scan_full(
         f'from pathlib import Path\nimport runpy\nfor p in Path(".").glob({pattern!r}):\n    {action}\n', root)
-    # The base is a directory-wide read, so it is held as a node (PB1496);
-    # the refused pattern still adds no member edge.
-    assert found == {root}
+    # The link leaves the tree, so the call is kept as an unplaced read (#338; flags
+    # asserted below), which supersedes the base node it used to return alone: the
+    # last pattern component is now scanned for links and the guard declines this one
+    # without approaching it (#1011 review).
+    assert found == set()
     assert unknown is (not reader)
     assert unplaced is reader
 
@@ -629,9 +631,11 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
               'for next_path in Path("link").glob("*.json"):\n'
               f'    value = ({expression}).read_text()\n')
     found, unknown, unplaced = _scan_full(source, root)
-    expected = {root / "target.json", root / "link", root / "nested" / "child"}
-    if '".."' not in expression:
-        expected.add(root / "nested" / "child" / "chosen.json")
+    # ``chosen.json`` is a link entry the glob's own terminal component matches, so it is
+    # a dependency whatever the read spells (#1011 review); before, only a read through
+    # it was.
+    expected = {root / "target.json", root / "link", root / "nested" / "child",
+                root / "nested" / "child" / "chosen.json"}
     assert found == expected
     assert not unknown and not unplaced
 

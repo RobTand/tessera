@@ -1027,14 +1027,14 @@ _LINK_SCAN_BUDGET = 20000
 
 
 def _wildcard_directory_components(pattern, prefix=(), recursive=False):
-    """The directory components of *pattern* at and after its first wildcard.
+    """The components of *pattern* after its literal prefix, the last one included.
 
-    ``rglob(pattern)`` is ``glob('**/' + pattern)``: the recursion runs over the whole
-    base, so its literal components are not a prefix of the base.
+    The last component is scanned like the others: it can match a link to a file, and a
+    trailing separator (``docs/*/``, which ``PurePath`` drops) makes it a directory
+    component.  ``rglob(pattern)`` is ``glob('**/' + pattern)``: the recursion runs over the
+    whole base, so its literal components are not a prefix of the base.
     """
-    parts = PurePath(pattern).parts[len(prefix):]
-    components = list(parts[:-1]) + ([parts[-1]] if parts and parts[-1] == "**" else [])
-    return (["**"] if recursive else []) + components
+    return (["**"] if recursive else []) + list(PurePath(pattern).parts[len(prefix):])
 
 
 def _scan_children(directories, recursive, root, links, found, budget, refused):
@@ -1100,11 +1100,16 @@ def _wildcard_link_dirs(start, components, root, links, refused):
             if frontier is None:
                 return None
         else:
-            frontier = {target for directory in frontier
-                        for target in (_place({directory / component}, root, refused, links) or ())}
-            # A literal component after a wildcard can itself be a link: where it leads
-            # is read, so it is a dependency and not only traversal state.
-            found |= frontier
+            reached = set()
+            for directory in frontier:
+                for target in _place({directory / component}, root, refused, links) or ():
+                    reached.add(target)
+                    # A literal component can itself be a link: where it leads is read, so
+                    # it is a dependency and not only traversal state.  A plain path under
+                    # the base is already covered by the base node.
+                    if target != directory / component:
+                        found.add(target)
+            frontier = reached
     return found
 
 

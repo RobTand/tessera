@@ -3586,7 +3586,8 @@ contains `..` can read another directory and is refused, and a literal
 directory in front of the first wildcard is placed as well, so a link there
 keeps the link and its target. A link reached through a wildcard component (`docs/*/x.md`,
 `**`, `rglob`) is found by reading the directory entries below the base without following
-links: each link is resolved by the same boundary guard and a target in the tree becomes a
+links, the last component included (so `docs/*/` and a link to a file matched by `docs/*/m.md`
+are covered): each link is resolved by the same boundary guard and a target in the tree becomes a
 node alongside the link, even when it no longer exists, as does where a literal component
 after a wildcard leads. A link the guard declines is never approached and keeps the read as an
 unplaced one, since it may lead straight back in (#338), and so does a scan over its budget
