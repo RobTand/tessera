@@ -6,9 +6,11 @@ Native A4 SELECT and POINT reads load a second byte only when the meaningful
 field crosses the first byte. Zero-width POINT fields do not load. Big-endian
 extraction, code lookups, GEMM and scale/epilogue algebra are unchanged, as are
 wire bytes, prepared allocations, shape admission and serving gates. The
-boundary regression uses exact field/stock decoding and an FP32-derived GEMM
-error bound; detecting an unused out-of-bounds read requires compute-sanitizer
-with the caching allocator disabled, not numerical parity alone. D41 native
+boundary regression compares decoded states, packed codes and scale bytes with
+exact field and stock wire decoding; it compares no GEMM output, and its native
+part needs CUDA and skips without it. Detecting an unused out-of-bounds read
+requires compute-sanitizer with the caching allocator disabled, not numerical
+parity alone. D41 native
 rows require fixed-build remeasurement before allocation; old timings remain
 historical. No serving default or runtime pin moves.
 
