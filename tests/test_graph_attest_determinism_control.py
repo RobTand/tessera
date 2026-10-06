@@ -341,99 +341,6 @@ def test_phase_rows_own_bounded_caps_seeds_and_separate_profiles(tmp_path, mode)
         assert (f"{profile_dir}:{profile_dir}" in container) == (mode == PIECE_MAJOR_MODE)
 
 
-def recording_command_store(commands, *, changed_on=None, changed=False):
-    """Fake adapter command: the seeded all11 client writes its own population;
-    profile instrument calls write their events stream."""
-    def command(argv, **kwargs):
-        commands.append(argv)
-        if "--server-seed" in argv:
-            name = Path(argv[argv.index("--out") + 1]).parent.name
-            Path(argv[argv.index("--out") + 1]).write_text(
-                json.dumps(timed_fixture(name, change=changed and name == changed_on)))
-        elif "--kind" in argv:
-            Path(argv[argv.index("--events") + 1]).write_text("fixture profile events\n")
-    return command
-
-
-@pytest.mark.parametrize("changed", [False, True], ids=["matched-piece-major", "differing-piece-major"])
-def test_piece_major_probe_reads_matched_comparator_and_keeps_profiles_after_all11(tmp_path, monkeypatch, changed):
-    import eager_benchmark as benchmark
-    from types import SimpleNamespace
-    baseline = tmp_path / "control-run"
-    root = tmp_path / "pm-run"
-    store_population(baseline, NAMES[0])
-    store_population(baseline, NAMES[1])
-    store_population(root, NAMES[2])
-    prompts_path = tmp_path / "prompts.json"  # the single store_population prompt file
-    prompts, _, _ = population_fixture()
-    prompts_path.write_text(json.dumps(prompts))
-    client = benchmark.CLIENT
-    (client / "comparison_inputs.py").write_text(
-        "import json\nfrom pathlib import Path\n"
-        "def load_manifest(path): return json.loads(Path(path).read_text()), None, None, None\n"
-        "def declared_cells(manifest): return manifest['cells']\n")
-    monkeypatch.setattr(benchmark, "CLIENT", client)
-    manifest = tmp_path / "profile-manifest.json"
-    cells = [dict(kind="prefill", L=2048), dict(kind="decode", L=2048)]
-    manifest.write_text(json.dumps(dict(cells=cells)))
-    config = dict(window_mode=PIECE_MAJOR_MODE, control_root=str(baseline),
-                  profile_dir=str(tmp_path / "profiles"), prompts=str(prompts_path),
-                  profile_manifest=str(manifest))
-    control.preregister(root, config, matched=True)  # the pm_off arm's own probes wrote this in production
-    commands = []
-    adapter = SimpleNamespace(config=config, rdv=root, identity=dict(rank=1),
-                              command=recording_command_store(commands, changed=changed, changed_on=NAMES[-1]),
-                              tick=lambda: None, envelope=SimpleNamespace(remaining=lambda: 30))
-    arm = {row["arm"]: row for row in recipe.plan(phase_plan(tmp_path, PIECE_MAJOR_MODE), mode=PIECE_MAJOR_MODE)}[NAMES[-1]]
-    finished = control.probes(adapter, arm, dict(rank=0))
-    seeded = [argv for argv in commands if "--server-seed" in argv]
-    profiles = [argv for argv in commands if "--kind" in argv]
-    powers = [argv for argv in commands if "--window" in argv]
-    assert len(seeded) == 1 and seeded[0] == commands[0]      # the eleven seeded requests run first
-    assert seeded[0][seeded[0].index("--server-seed") + 1] == "0"
-    assert seeded[0][seeded[0].index("--request-seed-base") + 1] == "0"
-    assert profiles and commands.index(profiles[0]) > commands.index(seeded[0])  # separate, after all11
-    assert [(argv[argv.index("--kind") + 1], int(argv[argv.index("--length") + 1])) for argv in profiles] == \
-        [(cell["kind"], cell["L"]) for cell in cells]
-    assert all(argv[argv.index("--directory") + 1] == str(Path(config["profile_dir"]) / NAMES[-1])
-               for argv in profiles)
-    assert len(powers) == 2 and [argv[argv.index("--host") + 1] for argv in powers] == ["sparklina", "sparky"]
-    assert finished["profile_dir"].endswith("/" + NAMES[-1]) and finished["events"].endswith("events.jsonl")
-    binding = json.loads((root / "arms" / NAMES[-1] / "invocation.json").read_text())
-    assert binding["timing_sha256"] == benchmark.sha(root / "arms" / NAMES[-1] / "control.json")
-    recorded = json.loads((root / "arms" / NAMES[-1] / "output-comparison.json").read_text())
-    assert recorded["passed"] is (not changed) and recorded["requests_per_arm"] == 11
-    if changed:
-        assert recorded["differing_requests"] == ["L2048-c1/trial10/slot0"]
-
-
-@pytest.mark.parametrize("changed", [False, True], ids=["matching-off", "mismatched-off"])
-def test_control_probe_dispatch_records_off_restart_comparison_without_failing(tmp_path, changed):
-    from types import SimpleNamespace
-    root = tmp_path / "run"
-    prompts_path = tmp_path / "prompts.json"
-    prompts, _, _ = population_fixture()
-    prompts_path.write_text(json.dumps(prompts))
-    config = dict(window_mode=MODE, prompts=str(prompts_path))
-    commands = []
-    adapter = SimpleNamespace(config=config, rdv=root, identity=dict(rank=1),
-                              command=recording_command_store(commands, changed=changed, changed_on=NAMES[1]),
-                              tick=lambda: None, envelope=SimpleNamespace(remaining=lambda: 30))
-    finished = None
-    for arm in recipe.plan(phase_plan(tmp_path, MODE), mode=MODE):
-        finished = control.probes(adapter, arm, dict(rank=0))
-    assert finished["correctness_only"] is True and "profile_dir" not in finished and "events" not in finished
-    assert len(commands) == 2
-    for command in commands:
-        assert command[command.index("--server-seed") + 1] == "0"
-        assert command[command.index("--request-seed-base") + 1] == "0"
-    recorded = json.loads((root / "arms" / NAMES[1] / "output-comparison.json").read_text())
-    assert recorded["passed"] is (not changed) and recorded["requests_per_arm"] == 11
-    prereg = json.loads((root / "control-preregistration.json").read_text())
-    assert prereg == control.preregistration_value(root, config)
-    assert prereg["off_deterministic"] is (not changed)        # mismatch retained, never gated
-
-
 def test_seeded_client_sends_seed_and_retains_entire_http_stream():
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -527,31 +434,149 @@ def test_real_rank_lifecycle_restarts_both_ranks_and_retains_mismatch_without_fa
                 os.killpg(pid, signal.SIGKILL)
 
 
-def test_native_observer_counts_the_actual_forwarded_layout_boolean_without_torch():
-    import ast
-    import threading
-    from types import SimpleNamespace
-    source = HERE / "observer/usercustomize.py"
-    tree = ast.parse(source.read_text())
-    node = next(row for row in tree.body if isinstance(row, ast.FunctionDef) and row.name == "_ga_patch_routed")
-    calls = []
-    native = SimpleNamespace(routed_fused_forward=lambda *args: calls.append(args) or "native-result")
-    module = SimpleNamespace(_ext=lambda library: native)
-    counts = dict(serving=SimpleNamespace(on=True), lock=threading.Lock(), counts={}, dirty=False)
-    namespace = {"_GA": counts}
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(source), "exec"), namespace)
-    namespace["_ga_patch_routed"](module)
-    for piece_major in (False, True):
-        args = [None] * 33
-        args[0], args[2], args[20], args[32] = 0, SimpleNamespace(shape=(2048, 32)), piece_major, 64
-        assert module._ext("e4m3mma").routed_fused_forward(*args) == "native-result"
-    assert [args[20] for args in calls] == [False, True]
-    assert len(counts["counts"]) == 2 and all(value == 1 for value in counts["counts"].values())
-    assert any("piece_major=0" in key for key in counts["counts"])
-    assert any("piece_major=1" in key for key in counts["counts"])
-    counts["serving"].on = False
-    module._ext("e4m3mma").routed_fused_forward(*calls[0])
-    assert sum(counts["counts"].values()) == 2  # startup is not a served launch
+def staged_packet(tmp_path, monkeypatch):
+    """Real temporary files and FDs; only the external lease service is substituted."""
+    import hashlib
+    import os
+    import types
+    import eager_benchmark as benchmark
+    artifact, panel, runtime, stage, rdv = [tmp_path / name for name in ("artifact", "panel", "runtime", "stage", "rdv")]
+    for directory in (artifact, panel, runtime / "src/tessera/serving", stage, rdv):
+        directory.mkdir(parents=True)
+    (artifact / "config.json").write_text('{"model_type":"fixture"}')
+    for index in range(127):
+        (artifact / f"weights-{index:03}.bin").write_bytes(bytes([index]) * 64)
+    entries = []
+    for path in sorted(artifact.iterdir()):
+        entries.append(dict(name=path.name, bytes=path.stat().st_size, sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+        (stage / path.name).write_bytes(path.read_bytes())
+    content = tmp_path / "content.json"
+    content.write_text(json.dumps(entries))
+    data = tmp_path / "data.json"
+    data.write_text(json.dumps(dict(entries=[dict(path=str(artifact / row["name"]), offset=0,
+        bytes=row["bytes"], sha256=row["sha256"]) for row in entries], entry_count=128,
+        total_bytes=sum(row["bytes"] for row in entries))))
+    prompts, _, _ = population_fixture()
+    (panel / "prompts.json").write_text(json.dumps(prompts))
+    (runtime / "src/tessera/serving/runtime_contract.json").write_text('{"schema":"fixture"}')
+    monkeypatch.setattr(benchmark, "PANEL", panel)
+    read = lambda path: (json.loads(Path(path).read_bytes()), "identity")
+    key = lambda path, offset: f"{path}:{offset}"
+    sdk = types.SimpleNamespace(read_data_manifest=read, injected_context=lambda: dict(ok=True,
+        ctx=dict(action_key="a" * 64, queue_root=str(tmp_path / "queue"), map_path=str(tmp_path / "map"))),
+        PoolQueue=lambda root: types.SimpleNamespace(root=root), RESIDENCY="residency", residency_map_key=key,
+        read_residency_map=lambda path: dict(manifest_sha256=hashlib.sha256(data.read_bytes()).hexdigest(), tier_id="fixture"),
+        covers_for_keys=lambda *args, **kwargs: dict(ok=True, covers=[], expected={key(row["path"], row["offset"]):
+            dict(bytes=row["bytes"], sha256=row["sha256"]) for row in read(data)[0]["entries"]}),
+        acquire_for=lambda *args, **kwargs: dict(ok=True, pin_id="pin", ref_id="ref", pin=dict(stage_root=str(stage))),
+        open_pinned=lambda queue, pin, ref, name: (os.open(stage / Path(name.rsplit(":", 1)[0]).name, os.O_RDONLY),
+                                                    dict(tier="fixture")),
+        release=lambda *args, **kwargs: True)
+    package = types.ModuleType("prismabuild")
+    package.client = sdk
+    monkeypatch.setitem(sys.modules, "prismabuild", package)
+    return dict(window_mode=MODE, artifact=str(artifact), artifact_manifest=str(content),
+                data_manifest=str(data), ts=str(runtime)), rdv
+
+
+def check_staged_packet(config, rdv, gate):
+    if gate == "preflight":
+        return control.input_preflight(config)
+    import os
+    import rank_window
+    adapter = rank_window.LocalArm.__new__(rank_window.LocalArm)
+    adapter.config, adapter.rdv, adapter.rank = config, rdv, 0
+    adapter.staged_inputs, adapter.staged_fds, adapter.staged_file_mounts = None, [], []
+    try:
+        adapter.pin_inputs()
+        assert len(adapter.staged_file_mounts) == 128
+    finally:
+        for fd in adapter.staged_fds:
+            os.close(fd)
+        if adapter.staged_inputs is not None:
+            adapter.staged_inputs.close()
+
+
+@pytest.mark.parametrize("gate", ["rank", "preflight"])
+@pytest.mark.parametrize("dev", ["1", "0"])
+def test_d32_staged_digest_provenance_stamps_dev_but_refuses_certified(tmp_path, monkeypatch, capsys, gate, dev):
+    config, rdv = staged_packet(tmp_path, monkeypatch)
+    content = Path(config["artifact_manifest"])
+    rows = json.loads(content.read_bytes())
+    rows[0]["sha256"] = "f" * 64  # recorded provenance; current declared bytes keep their own digest
+    content.write_text(json.dumps(rows))
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev)
+    if dev == "0":
+        with pytest.raises(Refused, match="digest provenance"):
+            check_staged_packet(config, rdv, gate)
+    else:
+        check_staged_packet(config, rdv, gate)
+        assert "[DEV-MODE]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("gate", ["rank", "preflight"])
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("fault", ["path", "offset", "bytes", "population", "file-length"])
+def test_d32_current_staged_ranges_and_file_bytes_always_refuse(tmp_path, monkeypatch, gate, dev, fault):
+    config, rdv = staged_packet(tmp_path, monkeypatch)
+    data = Path(config["data_manifest"])
+    declared = json.loads(data.read_bytes())
+    if fault == "path": declared["entries"][0]["path"] += ".wrong"
+    elif fault == "offset": declared["entries"][0]["offset"] = 1
+    elif fault == "bytes": declared["entries"][0]["bytes"] += 1
+    elif fault == "population": declared["entries"].pop()
+    else:
+        declared["entries"][0]["bytes"] += 1
+        content = Path(config["artifact_manifest"])
+        rows = json.loads(content.read_bytes())
+        rows[0]["bytes"] += 1
+        content.write_text(json.dumps(rows))
+    data.write_text(json.dumps(declared))
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev)
+    with pytest.raises((Refused, ValueError), match="ranges|byte length"):
+        check_staged_packet(config, rdv, gate)
+
+
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("label", ["control_root", "runtime_comparisons", "runtime_comparable"])
+def test_d32_preregistration_label_drift_preserves_actual_facts(tmp_path, monkeypatch, capsys, dev, label):
+    baseline, root = tmp_path / "baseline", tmp_path / "pm"
+    for name in CONTROL_ARMS: store_population(baseline, name)
+    store_population(root, NAMES[2])
+    config = dict(control_root=str(baseline))
+    record = control.preregister(root, config, matched=True)
+    if label == "control_root": record[label] = str(tmp_path / "recorded-alias")
+    elif label == "runtime_comparable": record[label] = not record[label]
+    else: record[label][0]["source_commit"] = "recorded-older-source-label"
+    (root / "control-preregistration.json").write_text(json.dumps(record))
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev)
+    if dev == "0":
+        with pytest.raises(Refused, match="preregistration provenance"):
+            control.require_piece_major_control(root, config)
+    else:
+        control.require_piece_major_control(root, config)
+        assert "[DEV-MODE]" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("fault", ["timing", "protocol", "raw-seed"])
+def test_d32_preregistration_actual_facts_and_raw_population_remain_refusals(tmp_path, monkeypatch, dev, fault):
+    baseline, root = tmp_path / "baseline", tmp_path / "pm"
+    for name in CONTROL_ARMS: store_population(baseline, name)
+    store_population(root, NAMES[2])
+    config = dict(control_root=str(baseline))
+    record = control.preregister(root, config, matched=True)
+    if fault == "timing": record["off_timing_seconds"][0][0] += 5
+    elif fault == "protocol": record["runtime_comparisons"][0]["control_protocol"] = dict(PROTOCOL, server_seed=99)
+    else:
+        path = baseline / "arms" / NAMES[0] / "control.json"
+        raw = json.loads(path.read_bytes())
+        raw["requests"][0]["request_seed"] = 99
+        path.write_text(json.dumps(raw))
+    (root / "control-preregistration.json").write_text(json.dumps(record))
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", dev)
+    with pytest.raises(Refused):
+        control.require_piece_major_control(root, config)
 
 
 

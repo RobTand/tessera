@@ -267,3 +267,33 @@ def test_dev_mode_producer_sha_reports_the_stored_env_without_hashing(monkeypatc
     assert recipe.producer_sha() == NOT_COMPUTED
     monkeypatch.setenv(DEV_MODE_ENV, "0")
     assert recipe.producer_sha() == disk_digest(ROOT)
+
+
+@pytest.mark.parametrize("dev", ["1", "0"])
+@pytest.mark.parametrize("fault", ["filename", "memory-cap", "residency"])
+def test_d32_manifest_filename_is_not_mixed_into_cap_refusals(tmp_path, monkeypatch, capsys, dev, fault):
+    producer, reviewed = make_producer(tmp_path)
+    config, env, root, reviews = fixture_inputs(monkeypatch, tmp_path, producer, reviewed)
+    config["data_manifest"] = str(tmp_path / "declared.json")
+    setup = json.loads((root / "inputs.json").read_bytes())
+    setup["config"] = config
+    (root / "inputs.json").write_text(json.dumps(setup))
+    row = dict(cwd=str(producer), tags=["fixture"], demand=dict(cpu=1, mem_gb=104, gpu=1),
+               gpu_memory_gb=102, exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
+               priority=-10, timeout_s=1800, data_manifest=config["data_manifest"],
+               residency="stage", residency_ram="auto", residency_share="auto")
+    monkeypatch.setattr(driver, "rows", lambda *args, **kwargs: [row])
+    stored = json.loads(json.dumps(row))
+    if fault == "filename": stored["data_manifest"] = str(tmp_path / "recorded-alias.json")
+    elif fault == "memory-cap": stored["demand"]["mem_gb"] = 105
+    else: stored["residency"] = "none"
+    (root / "manifest.json").write_text(json.dumps([stored]))
+    monkeypatch.setenv(DEV_MODE_ENV, dev)
+    if fault == "filename" and dev == "1":
+        with pytest.raises(ReachedAdmission):
+            driver.submit(root, reviews)
+        assert "prepared manifest identity" in capsys.readouterr().out
+    else:
+        with pytest.raises(managed_window.Refused, match="prepared PB"):
+            driver.submit(root, reviews)
+
