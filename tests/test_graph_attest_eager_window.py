@@ -341,6 +341,9 @@ def test_actual_binding_hashes_and_roster_refuse_drift(bound_files, fault, monke
     if fault == "none":
         result = benchmark.bindings(env, artifact)
         assert result["artifact_files"] == 128 and result["pq_pin_commit"] == benchmark.PQ_PIN_COMMIT
+        assert result["client_source"] == str(benchmark.CLIENT)
+        assert result["client_identity_sha256"] == benchmark.SOURCE_IDENTITY_SHA
+        assert result["profile_program_sha256"] == benchmark.PROFILE_SHA
         return
     if fault == "inventory": Path(env["ARTIFACT_MANIFEST"]).write_text("[]")
     if fault == "roster": (artifact / entries[0]["name"]).unlink()
