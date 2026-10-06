@@ -873,6 +873,26 @@ evidence. Measurement requires the sealed request digest; the producer
 hashes and parses one owned byte buffer before any native phase. See
 [the bounded receipt contract](design/native-shape-timing.md).
 
+Re-stamped 2026-10-06 (Refs #688): the #685 baseline comparison consumer
+lands as a separate stdlib module, `serving.panel_baseline` (schema
+`tessera.shape_time_baseline_comparison.v1`) with the reviewer CLI
+`tools/tessera_panel_baseline.py` (CPU-only; it executes no measurement).
+Its one normative rule: the recorded band is the band the historical bench
+itself wrote -- nearest-sample quartiles with Python's half-to-even round,
+reconstructed verbatim and proven against every recorded cell of a
+preserved table before anything compares, never the panel's interpolated
+`timing_summary` quartiles. Rows compare only on a matched
+(structure, module, family, grid, rate) key with agreeing rank-local
+geometry; duplicate comparison rows, a median outside the band, and a
+baseline cell whose timing lacks a `samples_ms` array are named refusals
+(CLI exit 2), never silent passes or tracebacks. The consumer rides the
+landed D32 runtime split: historical runtime-identity drift in a validated
+panel stamps and continues in development mode, while byte integrity
+(pinned table and panel digests), table grammar, execution scope and
+comparison-key checks remain refusals. A comparison verdict is about the
+comparison only: it is not a measurement, an admission, a price or a pin,
+and no #688 native acceptance closes with it.
+
 Re-stamped 2026-10-02 for shared inspected-stock interface facts. The current prefill
 guards reuse `serving.stock_interface` and keep their own pins and parameters.
 Empty-RoPE and shared-add adaptations remain separate experimental follow-ups. Complete digest tuples stay indivisible.

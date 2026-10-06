@@ -207,3 +207,20 @@ never a silent pass. Dense rows project from a validated
 `tessera.shape_time_panel.v1` receipt; a routed row has no projection until
 the panel schema grows one, and the refusal says so rather than comparing a
 routed stack by dense projection.
+
+The consumer inherits the current runtime split instead of adding an
+identity policy of its own: historical runtime-identity drift in a
+validated panel (image, Tessera commit, serving-source and contract
+digests, Torch/vLLM versions, package origin) stamps and continues in
+development mode through the existing `seal_check` routing, and this module
+adds no seal, clean-tree, installation-proof, re-seal or permission
+prerequisite. What still refuses are its own comparability grounds, which
+are correctness checks and never stamps: byte integrity (a table or panel
+must match its own pinned digest), table grammar (every timing cell must
+carry its `samples_ms` array, refused by name before summarizing),
+comparison-key and rank-local geometry agreement, and the panel validator's
+execution-scope refusals. A passing comparison promotes nothing: it says
+the new rows sit inside the band the preserved bench recorded, not that
+anything is measured, admitted, priced or pinned, and the #688 native
+acceptance (routed projection, the 304-row measured panel, four-group
+reproduction) stays open until real measurements exist.
