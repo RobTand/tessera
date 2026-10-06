@@ -366,6 +366,7 @@ def build_group(grid, q, shape, args, recorded, capture):
 
 def run_gpu(args, grid):
     from tessera import kernel_a4
+    from tessera.serving.runtime_image import CENSUS_IMAGE_ENV
     power = PowerSampler()
     if power.source != "pynvml":
         raise RuntimeError("D41 requires actual NVML board power; pynvml not available")
@@ -384,7 +385,9 @@ def run_gpu(args, grid):
             "kernel_sha": source_sha, "library_sha256": None, "tessera_head": os.environ.get("TESSERA_HEAD"),
             "library_kind": "actual Triton compiled CUDA binary set, not an ELF extension",
             "activation_contract": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer",
-            "image": os.environ.get("ORACLE_IMAGE"), "torch": torch.__version__, "host": os.environ.get("HOST_NAME"),
+            "image": os.environ.get(CENSUS_IMAGE_ENV, os.environ.get("ORACLE_IMAGE")),
+            "requested_image": os.environ.get("ORACLE_IMAGE"),
+            "torch": torch.__version__, "host": os.environ.get("HOST_NAME"),
             "pb_action": os.environ.get("PB_ACTION_KEY", os.environ.get("PRISMABUILD_ACTION_KEY")),
             "paired_seed_contract": "fixed full-shape weight and activation seeds independent of rung; identical routing IDs and uniform weights1/8",
             "statistic": "mean of forward and reverse pass medians; graph replay with event fallback recorded",
