@@ -406,3 +406,17 @@ def test_a_failed_shard_write_keeps_the_previous_published_bytes(tmp_path, monke
              {name: "BF16"}, "--layers", "0")
     assert previous.read_bytes() == b"previous published shard"
     assert sorted(p.name for p in out.iterdir()) == ["model.safetensors"]
+
+
+def test_plan_snapshot_hashes_the_exact_crlf_bytes(tmp_path):
+    import hashlib
+    entries = {NAME: "PASSTHROUGH"}
+    raw = json.dumps(entries, indent=2).replace("\n", "\r\n").encode("utf-8")
+    plan = tmp_path / "crlf-plan.json"
+    plan.write_bytes(raw)
+    snapshot = exporter.PlanSnapshot.read(plan)
+    assert snapshot.sha256 == hashlib.sha256(raw).hexdigest()
+    assert snapshot.published() == entries
+    plan.write_bytes(b"{}")
+    assert snapshot.sha256 == hashlib.sha256(raw).hexdigest()
+    assert snapshot.published() == entries

@@ -47,6 +47,7 @@ Usage: bench_geometry.py --out DIR --part routed|dense|all
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -114,10 +115,10 @@ def resource_usage(lib):
     return {"so": so, "kernels": out}
 
 
-def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True):
-    """The instantiation ``routed_fused_kernel<FP8, MODE, DENSE, SPLIT=false, RL, TWO, BMT>``'s row."""
-    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, false, {r_lo}, " \
-           f"{'true' if two else 'false'}, {bm}>"
+def kernel_usage(usage, mode, dense, r_lo, two, bm, fp8=True, *, split=False):
+    """Actual original-order, unpaired instantiation, including its K-split specialization."""
+    want = f"routed_fused_kernel<{'true' if fp8 else 'false'}, {mode}, {'true' if dense else 'false'}, {'true' if split else 'false'}, {r_lo}, " \
+           f"{'true' if two else 'false'}, {bm}, false, false>"
     for k, v in usage.get("kernels", {}).items():
         if want in k:
             return v
@@ -163,10 +164,108 @@ def pick_recorded(root, ms):
     return out
 
 
+def stage_geometry_inputs(args):
+    """Copy admitted whole-file inputs through the existing pinned reader."""
+    if not args.data_manifest:
+        if args.routing and not args.cpu_preflight:
+            raise ValueError('GPU recorded routing needs its admitted data manifest')
+        return
+    from pathlib import Path
+    import tempfile
+    from pb_staged_store import StagedInputs
+    inputs=StagedInputs(args.data_manifest)
+    args._staged_input_owner=tempfile.TemporaryDirectory(prefix='d41-geometry-inputs-',dir='/tmp')
+    local_root=Path(args._staged_input_owner.name)
+    try:
+        for path,offset in inputs.entries:
+            if offset!=0:raise ValueError('geometry routing inputs must be whole files')
+            local=local_root/path.lstrip('/')
+            local.parent.mkdir(parents=True,exist_ok=True)
+            local.write_bytes(inputs.read(path))
+        with open(os.path.join(args.out,'staged-reads.json'),'w') as stream:
+            json.dump(inputs.reads,stream,indent=1)
+    finally:
+        inputs.close()
+    for field in ('config','routing'):
+        original=getattr(args,field)
+        if original:setattr(args,field,str(local_root/original.lstrip('/')))
+
+
+
+def compact_projection(p, rows, cols, *, grouped):
+    """Use the public compact constructors, including actual wide BF16 tables.
+
+    This is geometry below intake, not an override of compact_prep's served
+    rate bounds. Its independent owner refusal is recorded with each group.
+    """
+    e = p["words"].shape[0]
+    pair = p["runs"].reshape(e, 2, 4)
+    nr = 2 if int(pair[0, 1, 2]) else 1
+    runs = pair[:, :nr].contiguous()
+    table = p["table"].view(torch.bfloat16)
+    empty = torch.empty(0, dtype=torch.uint8, device=p["words"].device)
+    if not grouped:
+        from tessera.window_gemm import PreparedWindowGemm
+        return PreparedWindowGemm(words=p["words"][0], table=table[0], codes=empty,
+            native=empty, scale=p["scale"][0], runs=runs[0], init_perm=p["init"][0],
+            perm=p["perm"][0], tile_words=p["tile_words"], total_words=p["words"].shape[1],
+            rows=rows, cols=cols, window_bits=p["window_bits"], family="value", has_init=True,
+            block_m=64, block_n=64, block_k=64, arithmetic="folded")
+    from tessera.window_gemm_grouped import prepare_grouped_window_gemm_from_soa
+    dev = p["words"].device
+    width = p["words"].shape[1]
+    return prepare_grouped_window_gemm_from_soa(words_all=p["words"], table_all=table,
+        codes_all=empty, native_all=empty, scale_all=p["scale"], runs_all=runs,
+        init_all=p["init"], has_init=p["has_init"],
+        word_off=torch.arange(e, device=dev, dtype=torch.int32) * width,
+        tile_words=torch.full((e,), p["tile_words"], device=dev, dtype=torch.int32),
+        total_words=torch.full((e,), width, device=dev, dtype=torch.int32),
+        run_off=torch.arange(e + 1, device=dev, dtype=torch.int32) * nr,
+        perm_all=p["perm"], rows=rows, cols=cols, experts=e, window_bits=p["window_bits"],
+        family="value", arithmetic="folded")
+
+
+class CompilerSpy:
+    """Retain exactly the CompiledKernel returned by a real Triton launch."""
+    def __init__(self, jit):
+        self.jit, self.resources = jit, {}
+
+    def __getitem__(self, grid):
+        launch = self.jit[grid]
+        def run(*args, **kwargs):
+            compiled = launch(*args, **kwargs)
+            if compiled is not None:
+                self.resources[compiled.name] = {
+                    "REG": compiled.n_regs, "spills": compiled.n_spills,
+                    "SHARED": compiled.metadata.shared,
+                    "num_warps": compiled.metadata.num_warps,
+                    "compiler": "Triton actual CompiledKernel", "launch": kwargs}
+            return compiled
+        return run
+
+
+def capture_compiler(call, grouped):
+    from tessera import window_gemm, window_gemm_grouped
+    module = window_gemm_grouped if grouped else window_gemm
+    symbol = "_grouped_window_gemm_kernel" if grouped else "_window_gemm_kernel"
+    spy = CompilerSpy(getattr(module, symbol))
+    def wrapped():
+        original = getattr(module, symbol)
+        setattr(module, symbol, spy)
+        try:
+            return call()
+        finally:
+            setattr(module, symbol, original)
+    wrapped.compiler_resources = spy.resources
+    return wrapped
+
+
+
 class Sweep:
     def __init__(self, args, rf, lib, library, mma8, dev, sms):
         self.args, self.rf, self.lib, self.library, self.mma8 = args, rf, lib, library, mma8
         self.fp8 = rf.LIBRARIES[library][1] == "e4m3"
+        self.family = rf.LIBRARIES[library][1]
         self.tflops = MMA_E4M3_TFLOPS if self.fp8 else MMA_BF16_TFLOPS
         self.abytes = 1 if self.fp8 else 2          # activation bytes per element (e4m3 or bf16)
         self.dev, self.sms = dev, sms
@@ -174,14 +273,14 @@ class Sweep:
         self.cells = {}
         self.ms = [int(v) for v in args.ms.split(",")]
         self.power_ms = {int(v) for v in args.power_ms.split(",") if v}
-        self.recorded = pick_recorded(args.routing, [512, 8192]) if args.routing else {}
+        self.recorded = pick_recorded(args.routing, self.ms) if args.routing else {}
 
     # -- groups: (key, build) where build() returns [(cell_key, meta, call, out)] lazily
     def groups(self):
         a = self.args
         parts = ("routed", "dense") if a.part == "all" else (a.part,)
         g = []
-        rungs = [int(c[1:]) if c.startswith("q") else q256_of(*parse_case(c)) for c in a.cases.split(",")]
+        rungs = [int(c[1:]) if c.startswith("q") else q256_of(*parse_case(c, self.family)) for c in a.cases.split(",")]
         if "routed" in parts:
             if a.refs:
                 g.append(("vllm_fp8_moe" if self.fp8 else "vllm_bf16_moe", None))
@@ -198,8 +297,9 @@ class Sweep:
 
     def variants(self, kind):
         if kind in ("routed", "vllm_fp8_moe", "vllm_bf16_moe"):
-            v = [(m, "balanced") for m in self.ms]
-            v += [(m, "recorded") for m in sorted(self.recorded)]
+            v = [(m, "balanced") for m in self.ms] if self.args.routing_kind != "recorded" else []
+            if self.args.routing_kind != "balanced":
+                v += [(m, "recorded") for m in sorted(self.recorded)]
             return v
         return [(m, None) for m in self.ms]
 
@@ -213,10 +313,12 @@ class Sweep:
     # -- builders
     def build_routed(self, q, mode):
         rf = self.rf
-        r_lo, frac = parse_case(f"q{q}")
+        if not self.fp8 and q > 256 * rf.RATE_MAX:
+            return self.build_compact(q, mode=mode)
+        r_lo, frac = parse_case(f"q{q}", self.family)
         rows, cols = (INTER, HIDDEN) if mode == 0 else (HIDDEN, INTER)
         n_hi = 0 if frac is None else round(cols * frac)
-        seed = zlib.crc32(f"q{q}:{mode}".encode())
+        seed = zlib.crc32(f"paired:{mode}".encode())
         projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, self.dev, self.mma8,
                                   bf16_table=not self.fp8)
                  for i in range(2 if mode == 0 else 1)]
@@ -233,7 +335,7 @@ class Sweep:
             ids, w = self.routing(m, how)
             offsets, flat_sorted, rw_sorted, item_off = routing_tables(ids, w, EXPERTS, bm)
             routes = m * TOP_K
-            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{q}:{mode}:{m}:{how}".encode()))
+            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{mode}:{m}:{how}".encode()))
             xrows = m if mode == 0 else routes
             x, a_scale = self.activation(xrows, cols, g)
             out = torch.empty((routes, rows), dtype=torch.bfloat16, device=self.dev)
@@ -260,20 +362,22 @@ class Sweep:
 
     def build_dense(self, q, shape):
         rf = self.rf
+        if not self.fp8 and q > 256 * rf.DENSE_RATE_MAX["value"]:
+            return self.build_compact(q, shape=shape)
         rows, cols = PROTOCOL_DENSE[shape]
-        r_lo, frac = parse_case(f"q{q}")
+        r_lo, frac = parse_case(f"q{q}", self.family)
         n_hi = 0 if frac is None else round(cols * frac)
         head = {"kind": "dense", "q256": q, "shape": shape, "rows": rows, "cols": cols, "r_lo": r_lo,
                 "n_hi": n_hi, "geometry": geometry(rf, r_lo, frac, 2, self.mma8)}
         if rows % rf.BN:
             head["refused"] = f"{rows} rows; the dense identity needs a multiple of {rf.BN}"
             return head, None, None
-        p = build_projection(rf, 1, rows, cols, r_lo, n_hi, zlib.crc32(f"{shape}:q{q}".encode()),
+        p = build_projection(rf, 1, rows, cols, r_lo, n_hi, zlib.crc32(f"paired:{shape}".encode()),
                              self.dev, self.mma8, bf16_table=not self.fp8)
         head["tile_words"] = p["tile_words"]
 
         def make(m, _how):
-            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{shape}:{q}:{m}".encode()))
+            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{shape}:{m}".encode()))
             x, a_scale = self.activation(m, cols, g)
             out = torch.empty((m, rows), dtype=torch.bfloat16, device=self.dev)
             counter = torch.zeros(1, dtype=torch.int32, device=self.dev)
@@ -294,6 +398,51 @@ class Sweep:
                     "floor": floor_ms(wire + act, 2.0 * m * rows * cols, self.tflops)}
             return meta, call, out
         return head, make, p
+
+    def build_compact(self, q, mode=None, shape=None):
+        from tessera.native_window_moe import _silu_and_mul
+        routed = mode is not None
+        rows, cols = ((INTER, HIDDEN) if mode == 0 else (HIDDEN, INTER)) if routed else PROTOCOL_DENSE[shape]
+        r_lo, frac = parse_case(f"q{q}", "value")
+        n_hi = round(cols * (frac or 0))
+        seed = zlib.crc32(f"paired:{mode if routed else shape}".encode())
+        projs = [build_projection(self.rf, EXPERTS if routed else 1, rows, cols,
+                    r_lo, n_hi, seed + i, self.dev, False, bf16_table=True)
+                 for i in range(2 if mode == 0 else 1)]
+        prepared = [compact_projection(p, rows, cols, grouped=routed) for p in projs]
+        width = projs[0]["window_bits"]
+        head = {"kind": "routed" if routed else "dense", "q256": q,
+                "rows": rows, "cols": cols, "r_lo": r_lo, "n_hi": n_hi,
+                "arity": 1, "body_kind": "WINDOW", "window_bits": width,
+                "tile_words": projs[0]["tile_words"],
+                "geometry": geometry(self.rf, r_lo, frac, mode if routed else 2, False),
+                "path": "compact_grouped_folded" if routed else "compact_dense_folded",
+                "owner_refusal": f"compact_prep intake caps {'routed at 8' if routed else 'dense at 14'} bits per column; direct public compact constructor geometry, not serving intake admission"}
+        head["mode" if routed else "shape"] = mode if routed else shape
+        def make(m, how):
+            seed_key=f"x:{mode}:{m}:{how}" if routed else f"x:{shape}:{m}"
+            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(seed_key.encode()))
+            xrows = m * TOP_K if mode == 2 else m
+            x, _scale = self.activation(xrows, cols, g)
+            ids, weights = self.routing(m, how) if routed else (None, None)
+            holder = {}
+            def invoke():
+                if mode == 0:
+                    gate = prepared[0](x, ids, weights, preserve=True)
+                    up = prepared[1](x, ids, weights, preserve=True)
+                    holder["out"] = _silu_and_mul(gate, up, clamp_limit=SWIGLU_LIMIT).reshape(m * TOP_K, rows)
+                elif routed:
+                    holder["out"] = prepared[0](x, ids, weights, route_input=True, round_routes=True)
+                else:
+                    holder["out"] = prepared[0](x)
+                return holder["out"]
+            call = capture_compiler(invoke, routed)
+            meta = {"bm": 64, "k_split": 1, "wire_bytes": sum(p["bytes_per_expert"] for p in projs),
+                    "path_scope": "actual compact public projection; down includes route reduction; gate/up includes clipped SwiGLU" if routed else "actual public PreparedWindowGemm folded BF16",
+                    "window_bits": width}
+            return meta, call, holder
+        return head, make, (projs, prepared)
+
 
     def activation(self, rows, cols, g):
         """The family's A operand: e4m3 with a per-row scale, or bf16 and no scale."""
@@ -522,17 +671,22 @@ class Sweep:
                         how_t, samples = time_call(call, a.warmup, a.iters,
                                                    graph=kind not in ("vllm_fp8_moe", "vllm_bf16_moe"))
                         cell[pas] = {"median_ms": statistics.median(samples), "min_ms": min(samples),
+                                     "samples_ms": samples,
                                      "timer": how_t, "unix": time.time(), "clock": self.clock.read()}
                         if pas == "F":
                             cell.update({k: v for k, v in meta.items()})
                             if isinstance(out, torch.Tensor):
                                 cell["out_sha256"] = sha(out)
+                            elif isinstance(out, dict) and isinstance(out.get("out"), torch.Tensor):
+                                cell["out_sha256"] = sha(out["out"])
                             cell["profile"] = kernel_profile(call, reps=a.prof_reps)
                             if m in self.power_ms:
                                 cell["power"] = self.power.sample_during(call, a.power_s)
+                            if hasattr(call, "compiler_resources"):
+                                cell["compiler_resources"] = call.compiler_resources
                             if kind in ("routed", "dense"):
                                 u = kernel_usage(usage, head.get("mode", 2), kind == "dense", head["r_lo"],
-                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8)
+                                                 head["n_hi"] > 0, meta.get("bm", 64), fp8=self.fp8, split=meta.get("k_split", 1) > 1)
                                 rec["usage"][str(meta.get("bm", 64))] = u
                         else:
                             f, r = cell.get("F", {}).get("median_ms"), cell["R"]["median_ms"]
@@ -564,7 +718,8 @@ def main():
     ap.add_argument("--cases", default=",".join(f"q{q}" for q in DEFAULT_RUNGS))
     ap.add_argument("--ms", default="1,64,512,8192")
     ap.add_argument("--shapes", default="o_proj,q_b,kda_in,kda_in_12416")
-    ap.add_argument("--routing", default="", help="recorded routing root (m512/, m8192/)")
+    ap.add_argument("--routing", default="", help="recorded routing root with m<M>/ for the requested M")
+    ap.add_argument("--routing-kind", choices=("balanced", "recorded", "both"), default="both")
     ap.add_argument("--refs", action="store_true", help="vLLM FP8 MoE and torch._scaled_mm references")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
@@ -572,13 +727,44 @@ def main():
     ap.add_argument("--power-ms", default="512,8192")
     ap.add_argument("--power-s", type=float, default=0.5)
     ap.add_argument("--library", default=None)
+    ap.add_argument("--cpu-preflight", action="store_true", help="CPU imports, parsing, shapes, tiny packed-wire read; no CUDA timing")
+    ap.add_argument("--config", default="", help="actual GLM config for shape provenance")
     ap.add_argument("--ncu", action="store_true",
                     help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
+    ap.add_argument('--data-manifest',default='',help='admitted PB whole-file routing readset')
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
     library = args.library or rf.library_for("e4m3")
+    stage_geometry_inputs(args)
     mma8 = rf.library_mma8(library)
+    if args.cpu_preflight:
+        cases = [parse_case(c, rf.LIBRARIES[library][1]) for c in args.cases.split(",")]
+        ms = [int(m) for m in args.ms.split(",")]
+        assert ms and all(m > 0 for m in ms)
+        shapes = {s: PROTOCOL_DENSE[s] for s in args.shapes.split(",")}
+        config = json.load(open(args.config)) if args.config else None
+        if config:
+            text = config.get("text_config", config)
+            assert (text["hidden_size"], text["moe_intermediate_size"] // 2, text["n_routed_experts"], text["num_experts_per_tok"]) == (HIDDEN, INTER, EXPERTS, TOP_K)
+        tiny = []
+        for r, frac in cases:
+            p = build_projection(rf, 1, 512, 256, r, round(256 * (frac or 0)), 41, torch.device("cpu"), mma8, bf16_table=library == "value")
+            assert p["words"].shape == (1, p["tile_words"])
+            if library == "value":
+                assert bool(torch.isfinite(p["table"].view(torch.bfloat16)).all())
+                compact_projection(p, 512, 256, grouped=False)
+                compact_projection(p, 512, 256, grouped=True)
+            tiny.append({"q256": q256_of(r, frac), "tile_words": p["tile_words"], "word": int(p["words"][0, 0]), "window_bits": p["window_bits"], "table_dtype": str(p["table"].dtype)})
+        recorded = pick_recorded(args.routing, ms) if args.routing else {}
+        for m, entry in recorded.items():
+            ids, _weights = recorded_routing(entry["path"], m, "cpu")
+            assert tuple(ids.shape) == (m, TOP_K) and int(ids.min()) >= 0 and int(ids.max()) < EXPERTS
+        if args.routing_kind == "recorded":
+            assert recorded, "No recorded routing at the requested M"
+        json.dump({"cpu_preflight": "passed", "library": library, "shapes": shapes, "M": ms, "tiny_wire_reads": tiny, "config": args.config, "recorded": recorded, "routing_kind": args.routing_kind}, open(os.path.join(args.out, "cpu-preflight.json"), "w"), indent=2)
+        print("CPU preflight passed; no GPU results", flush=True)
+        return 0
     lib = rf._ext(library)
     dev = torch.device("cuda")
     sms = torch.cuda.get_device_properties(dev).multi_processor_count
@@ -588,16 +774,25 @@ def main():
         sw.run_ncu()
         print("done", flush=True)
         return 0
+    props = torch.cuda.get_device_properties(dev)
     meta = {"device": torch.cuda.get_device_name(), "sms": sms, "experts": EXPERTS, "hidden": HIDDEN,
+            "architecture": f"sm_{props.major}{props.minor}", "shared_memory_available": props.shared_memory_per_block_optin,
+            "library_sha256": hashlib.sha256(open(lib.__file__, "rb").read()).hexdigest(),
+            "activation_contract": "float8_e4m3fn per-row float32 scale; BF16 output; seeded normal std=0.5" if sw.fp8 else "BF16 activations without activation scale; finite BF16 table; folded row scale; seeded normal std=0.5",
+            "paired_seed_contract": "fixed shape/mode/M/routing seeds independent of rung; synthetic packed wires",
             "inter": INTER, "top_k": TOP_K, "part": args.part, "cases": args.cases, "ms": args.ms,
             "shapes": args.shapes, "recorded": sw.recorded, "library": library,
             "family": rf.LIBRARIES[library][1], "mma_tflops": sw.tflops,
+            "dense_seed_without_routing_suffix": True,
             "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
             "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
             "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": sw.power.source,
             "envelope_w": ENVELOPE_W, "start_unix": time.time(), "torch": torch.__version__,
             "statistic": "mean of the forward and reverse passes' medians (graph replay); spread = |F - R| / mean",
             "resource_usage": usage}
+    if sw.family == "value":
+        meta.update(format="TESSERA_BF16_K1", rung_min=256, rung_max=4096, grid_step_q256=1,
+                    grid_owner="prismaquant.tessera_formats.family_q256_bounds/realisable_rungs(default BF16 WINDOW recipe, step_q256=1)")
     path = os.path.join(args.out, f"bench_geometry_{args.part}.json")
 
     def save():

@@ -14,6 +14,25 @@ PB_RECORD_VERIFIER = Path('/mnt/shared/prismabuild-fleet/repo/tools/pbtest_pins.
 PB_IMMUTABLE_GENERATIONS = Path('/mnt/shared/prismabuild-fleet/runtime-generations')
 
 
+def _producer_dev_mode():
+    """The producer checkout's standalone stamp policy, under a private name.
+
+    Loaded by file path, never inserted into sys.path or sys.modules, so it
+    cannot shadow the measured runtime's own tessera package -- and so a
+    legacy installed candidate that predates ``tessera.dev_mode`` still gets
+    default-dev stamp semantics from the tree that ships this worker.
+    """
+    import importlib.util
+    path = ROOT / "src" / "tessera" / "dev_mode.py"
+    spec = importlib.util.spec_from_file_location("tessera_producer_dev_mode_seal", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_DEV_MODE = _producer_dev_mode()
+
+
 def record_verifier_bytes(binding):
     """Hold immutable helper bytes equal to the published PB owner's bytes."""
     path = Path(binding['path'])
@@ -75,8 +94,19 @@ def publish_json(value, path):
     return file_binding(path)
 
 
-def observed_commit(package):
-    """The actual imported package's repository or installed VCS metadata."""
+def observed_commit(package, strict=True):
+    """The actual imported package's repository or installed VCS metadata.
+
+    With ``strict=False`` (D32 default dev mode) the same provenance facts
+    are collected instead of refused and ``(commit, facts)`` is returned: a
+    dirty or untracked tree still yields its HEAD -- the stamps name the
+    drift -- and a tree with no derivable identity yields ``None`` for the
+    caller to retain the stored commit against.
+    """
+    facts = [] if not strict else None
+    def _refuse(message):
+        if strict:raise ValueError(message)
+        facts.append(message)
     location = Path(package.__file__).resolve().parent
     try:
         result = subprocess.run(["git", "-C", str(location), "rev-parse", "--show-toplevel"],
@@ -86,33 +116,40 @@ def observed_commit(package):
     if result.returncode == 0:
         root = Path(result.stdout.strip()).resolve()
         if location.is_relative_to(root):
-            # Dirt anywhere in that immutable source checkout invalidates its label.
             dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=all"],
                                    capture_output=True, text=True, check=True).stdout
             if dirty.strip():
-                raise ValueError("imported Tessera runtime checkout is dirty")
+                _refuse("imported Tessera runtime checkout is dirty")
             tracked = subprocess.run(["git", "-C", str(root), "ls-files", "--error-unmatch", str(Path(package.__file__).resolve().relative_to(root))], capture_output=True, text=True)
             if tracked.returncode != 0:
-                raise ValueError("imported Tessera runtime is not tracked by its observed repository")
-            return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                _refuse("imported Tessera runtime is not tracked by its observed repository")
+            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                                   capture_output=True, text=True, check=True).stdout.strip()
+            if strict:return head
+            return head, facts
     try:
         distribution = importlib.metadata.distribution("tessera-quant")
-        if not distribution.files or not any(Path(distribution.locate_file(p)).resolve() == Path(package.__file__).resolve() for p in distribution.files):
-            raise ValueError("installed VCS metadata does not own the imported Tessera runtime")
-        metadata = distribution.read_text("direct_url.json")
+        owned = distribution.files and any(Path(distribution.locate_file(p)).resolve() == Path(package.__file__).resolve() for p in distribution.files)
+        if not owned:
+            _refuse("installed VCS metadata does not own the imported Tessera runtime")
+        metadata = distribution.read_text("direct_url.json") if owned or strict else distribution.read_text("direct_url.json")
     except importlib.metadata.PackageNotFoundError:
         metadata = None
     if metadata:
         record = json_bytes(metadata)
         commit = record.get("vcs_info", {}).get("commit_id")
         if commit:
-            return hex_identity(commit,40)
-    raise ValueError("imported Tessera runtime has no observed immutable VCS identity")
+            return (hex_identity(commit,40), facts) if not strict else hex_identity(commit,40)
+    _refuse("imported Tessera runtime has no observed immutable VCS identity")
+    if strict:raise ValueError("imported Tessera runtime has no observed immutable VCS identity")
+    return None, facts
 
 
 
-def runtime_origins(expected_root):
+def runtime_origins(expected_root, facts=None):
+ """Import-environment identity. ``facts`` (D32 dev) collects the foreign
+ module origin/owner provenance instead of refusing; the containment checks
+ below refuse in both modes."""
  import importlib
  root=Path(expected_root)
  if not root.is_absolute() or root.resolve()!=root or root.is_relative_to(ROOT):raise ValueError("runtime root must be the installed immutable package outside producer checkout")
@@ -125,35 +162,78 @@ def runtime_origins(expected_root):
  for name in MODULES:
   module=importlib.import_module(name);path=Path(module.__file__).resolve()
   expected=root/("__init__.py" if name=="tessera" else name.removeprefix("tessera.").replace(".","/")+".py")
-  if path!=expected:raise ValueError("foreign runtime module origin: "+name)
+  if path!=expected:
+   if facts is None:raise ValueError("foreign runtime module origin: "+name)
+   facts.append("foreign runtime module origin: "+name)
   files[name]=file_binding(path)
  for name,module in list(sys.modules.items()):
   if name=="tessera" or name.startswith("tessera."):
    path=getattr(module,"__file__",None)
-   if path is None or not Path(path).resolve().is_relative_to(root):raise ValueError("foreign loaded runtime owner: "+name)
+   if path is None or not Path(path).resolve().is_relative_to(root):
+    if facts is None:raise ValueError("foreign loaded runtime owner: "+name)
+    facts.append("foreign loaded runtime owner: "+name)
  return {"package_root":str(root),"modules":files}
 
 
 def observe_software_runtime(expected, record_verifier=None):
- origins=runtime_origins(expected["package_root"])
+ def seal(kind,exp,act,refusal,**kw):
+  return _DEV_MODE.seal_check(kind,exp,act,where="native shape worker before device setup",
+                              refusal=refusal,**kw)
+ dev=_DEV_MODE.dev_mode_enabled()
+ # D32: in default dev mode the provenance facts are collected and stamped;
+ # certified mode keeps every refusing gate verbatim.
+ provenance=[] if dev else None
+ origins=runtime_origins(expected["package_root"],facts=provenance)
  import torch,vllm,tessera
  from tessera.serving import backend,contract,source_identity,runtime_image
  declaration=runtime_image.declared_reference(expected["image"])
- actual_commit=observed_commit(tessera)
- cache=getattr(source_identity,"_cached_digest",None)
- if cache is not None:cache.cache_clear()
- actual_source=source_identity.serving_source_sha256()
+ # VCS provenance stamps and continues; a tree with no derivable identity
+ # retains the stored commit, which the stamps name.
+ if dev:
+  actual_commit,commit_facts=observed_commit(tessera,strict=False)
+  provenance.extend(commit_facts)
+  if actual_commit is None:
+   actual_commit=expected["tessera_commit"]
+   provenance.append("running VCS identity not derivable; the stored commit is retained")
+ else:
+  actual_commit=observed_commit(tessera)
+ # Dev computes no digest over existing data to satisfy identity; the record
+ # retains the stored source identity and the stamps name that.
+ if dev:
+  actual_source=expected["serving_source_sha256"]
+ else:
+  cache=getattr(source_identity,"_cached_digest",None)
+  if cache is not None:cache.cache_clear()
+  actual_source=source_identity.serving_source_sha256()
  raw_contract=contract.contract_path().read_bytes()
  actual_contract=hashlib.sha256(raw_contract).hexdigest()
- if (declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)!=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"]):raise ValueError("runtime source/contract/version differs before device setup")
- if record_verifier is None:raise ValueError("missing sealed installation verifier")
- verifier_bytes=record_verifier_bytes(record_verifier)
- verifier_namespace={"__file__":record_verifier["path"],"__name__":"tessera_owned_record_verifier"}
- exec(compile(verifier_bytes,record_verifier["path"],"exec"),verifier_namespace)
- origins["installation"]=verifier_namespace["verify_install"]("tessera",expected["tessera_commit"])
- if record_verifier_bytes(record_verifier)!=verifier_bytes:raise ValueError("installation verifier changed during execution")
- origins["record_verifier"]=file_binding(record_verifier["path"])
- if origins["record_verifier"]!=record_verifier:raise ValueError("installation verifier source differs")
+ observed=(declaration["image"],actual_commit,actual_source,actual_contract,torch.__version__,vllm.__version__)
+ declared=(expected["image"],expected["tessera_commit"],expected["serving_source_sha256"],expected["contract_sha256"],expected["torch"],expected["vllm"])
+ # The installed code and contract against the frozen expected pin is
+ # cross-pin run identity: it seals in dev mode and refuses verbatim in
+ # certified mode, before anything queries a device.
+ seal("runtime source/contract/version",declared,observed,
+      ValueError("runtime source/contract/version differs before device setup"))
+ for fact in provenance:
+  seal("runtime provenance",expected["tessera_commit"],fact,
+       ValueError("runtime provenance differs before device setup"))
+ if not dev:
+  if record_verifier is None:raise ValueError("missing sealed installation verifier")
+  verifier_bytes=record_verifier_bytes(record_verifier)
+  verifier_namespace={"__file__":record_verifier["path"],"__name__":"tessera_owned_record_verifier"}
+  exec(compile(verifier_bytes,record_verifier["path"],"exec"),verifier_namespace)
+  origins["installation"]=verifier_namespace["verify_install"]("tessera",expected["tessera_commit"])
+  if record_verifier_bytes(record_verifier)!=verifier_bytes:raise ValueError("installation verifier changed during execution")
+  origins["record_verifier"]=file_binding(record_verifier["path"])
+  if origins["record_verifier"]!=record_verifier:raise ValueError("installation verifier source differs")
+ else:
+  # A dev run requires no installation proof and no clean tree: the
+  # PB-published verifier binding is retained when provided, and the stored
+  # installation identity is what the record carries.
+  origins["record_verifier"]=file_binding(record_verifier["path"]) if record_verifier is not None else None
+  origins["installation"]={"module":"tessera","distribution":"unverified (D32 dev mode)",
+   "expected_commit":expected["tessera_commit"],"installed_commit":actual_commit,
+   "origin":str(Path(expected["package_root"])/"__init__.py"),"verified_files":0}
  value={"image":declaration["image"],"tessera_commit":actual_commit,
   "serving_source_sha256":actual_source,
   "contract_sha256":actual_contract,
@@ -161,7 +241,17 @@ def observe_software_runtime(expected, record_verifier=None):
   "execution_mode":"eager","residency":"resident","tp_rank":0,"tp_degree":1,
   "package_root":origins["package_root"],
   "serve_flags":{k:os.environ[k] for k in expected["serve_flags"] if k in os.environ}}
- if canonical(value)!=canonical({k:v for k,v in expected.items() if k!="platform"}):raise ValueError("actually imported software differs from frozen expected context")
+ frozen={k:v for k,v in expected.items() if k!="platform"}
+ # D32 boundary: which CASE executed is comparability, not run identity.
+ # Execution semantics (mode, residency, TP geometry, requested serve flags)
+ # refuse on any mismatch in both modes; only the code/origin identity seals.
+ execution={k:value[k] for k in ("execution_mode","residency","tp_rank","tp_degree","serve_flags") if k in value}
+ frozen_execution={k:frozen[k] for k in ("execution_mode","residency","tp_rank","tp_degree","serve_flags") if k in frozen}
+ if canonical(execution)!=canonical(frozen_execution):raise ValueError("actually imported software differs from frozen expected context")
+ identity={k:value[k] for k in ("image","tessera_commit","serving_source_sha256","contract_sha256","torch","vllm","package_root") if k in value}
+ frozen_identity={k:frozen[k] for k in ("image","tessera_commit","serving_source_sha256","contract_sha256","torch","vllm","package_root") if k in frozen}
+ seal("actually imported software identity",frozen_identity,identity,
+      ValueError("actually imported software differs from frozen expected context"))
  # The installed reader owns all loader, source and registry checks. No caller roster.
  if Path(contract.validate_serving_contract.__code__.co_filename).resolve()!=Path(contract.__file__).resolve():raise ValueError("foreign installed contract validator")
  contract.validate_serving_contract(json_bytes(raw_contract))

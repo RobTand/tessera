@@ -1,0 +1,4 @@
+# Issue946 Window4 only: WINDOW_MODE=window4-eager-2048-4096, socket, c1, TP2,
+# exact October5 clients and A8S/public2dbac191/v56. No graph receipt/population.
+eager2048 FABRIC=socket EAGER=1 MAX_BATCHED=2048 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}
+eager4096 FABRIC=socket EAGER=1 MAX_BATCHED=4096 SPEC_JSON={"method":"mtp","num_speculative_tokens":1,"draft_tensor_parallel_size":2,"moe_backend":"triton"}

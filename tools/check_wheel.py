@@ -40,9 +40,13 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import tomllib
 import zipfile
 from pathlib import Path
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10; declared conditional dependency.
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 

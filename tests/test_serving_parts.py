@@ -595,3 +595,70 @@ def test_explicit_plan_requires_every_source_expert(tmp_path):
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="plan.*coverage"):
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_merge_observed_batch_widths_cover_every_part(tmp_path):
+    source, paths = _fixture(tmp_path)
+    histograms = ({"2": 1, "8": 2}, {"4": 3, "8": 5})
+    for path, histogram in zip(paths, histograms):
+        def stamped(manifest):
+            manifest["encode_batch"] = 8
+            manifest["export_partition"]["identity"]["options"]["encode_batch"] = 8
+            manifest["encode_batch_observed"] = histogram
+        _change(path, stamped)
+    merged = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert merged["encode_batch_observed"] == {"2": 1, "4": 3, "8": 7}
+
+
+def _stamp_observed(paths, histograms):
+    """Give each part the batch schedule and its own observed-width histogram;
+    ``None`` leaves that part without the field, as a part exported before it existed."""
+    for path, histogram in zip(paths, histograms):
+        def stamped(manifest, histogram=histogram):
+            manifest["encode_batch"] = 8
+            manifest["export_partition"]["identity"]["options"]["encode_batch"] = 8
+            if histogram is not None:
+                manifest["encode_batch_observed"] = histogram
+        _change(path, stamped)
+
+
+@pytest.mark.parametrize("calls", [
+    pytest.param(True, id="boolean"),
+    pytest.param(1.5, id="fractional"),
+    pytest.param("3", id="string"),
+    pytest.param(-1, id="negative"),
+])
+def test_merge_refuses_an_observed_count_that_is_not_a_nonnegative_integer(tmp_path, calls):
+    """A count the input does not establish must not be summed into a histogram."""
+    source, paths = _fixture(tmp_path)
+    _stamp_observed(paths, ({"2": 1, "8": 2}, {"4": 3, "8": calls}))
+    with pytest.raises(ValueError, match=r"partition 1: encode_batch_observed\['8'\]"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+@pytest.mark.parametrize("histogram, named", [
+    pytest.param({"8": 2, "08": 1}, "'08'", id="leading-zero-duplicates-a-width"),
+    pytest.param({"8": 2, "0": 1}, "'0'", id="zero-width"),
+    pytest.param({"8": 2, "-1": 1}, "'-1'", id="negative-width"),
+    pytest.param({"8": 2, "x": 1}, "'x'", id="non-numeric-width"),
+    pytest.param({"8": 2, "9": 1}, "'9'", id="width-above-encode-batch"),
+    pytest.param([1, 2], "object", id="not-an-object"),
+])
+def test_merge_refuses_an_observed_histogram_that_is_not_widths_up_to_encode_batch(
+        tmp_path, histogram, named):
+    """Keys are decimal widths from 1 up to the part's encode_batch, one entry per
+    width, and the histogram is an object; anything else is not a width count."""
+    source, paths = _fixture(tmp_path)
+    _stamp_observed(paths, ({"2": 1, "8": 2}, histogram))
+    with pytest.raises(ValueError, match=rf"partition 1: encode_batch_observed.*{named}"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+def test_merge_omits_the_histogram_when_any_part_lacks_it(tmp_path):
+    """A partial observation is not a histogram of the whole merged run."""
+    source, paths = _fixture(tmp_path)
+    _stamp_observed(paths, ({"2": 1, "8": 2}, None))
+    merged = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert "encode_batch_observed" not in merged

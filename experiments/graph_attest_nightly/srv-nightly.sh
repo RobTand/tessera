@@ -92,6 +92,7 @@ up)
   while IFS= read -r _kv; do [ -n "$_kv" ] && imgenv+=(-e "$_kv"); done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
   if docker ps -aq --filter name="^$NAME\$" | grep -q .; then echo "$NAME exists; run: $0 down"; exit 2; fi
   mkdir -p "$EXT" "$SRV_OUT" "$DIR/logs"
+  chmod 0777 "$EXT" "$SRV_OUT"  # the container writes its caches and hook logs as its own user
   { echo "arm=$ARM"; echo "eager=$EAGER"; echo "serve_args=$SERVE_ARGS"
     echo "compilation_json=$COMPILATION_JSON"; echo "spec_json=$SPEC_JSON"; echo "extra_env=${EXTRA_ENV:-}"
     echo "max_num_seqs=$MAX_NUM_SEQS"; echo "caplog=${CAPLOG:-0} prof=${PROF:-0} draftlog=${DRAFTLOG:-0} gcdraft=${GCDRAFT:-0} displog=${DISPLOG:-0}"

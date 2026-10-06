@@ -26,7 +26,7 @@ torch = pytest.importorskip("torch")
 from tessera.serving import fp8_route as route                       # noqa: E402
 from tessera.serving import fp8_gemv                                 # noqa: E402
 from tessera.serving import lane as serving_lane                     # noqa: E402
-from tessera.serving import native_ops, telemetry                    # noqa: E402
+from tessera.serving import native_ops, scheme, telemetry            # noqa: E402
 from tessera.serving.lane import (                                   # noqa: E402
     MODE_RESIDENT, MODE_STREAMED, TESSERA_MODE_ENV, build_tessera_method)
 from tessera.serving.scheme import (                                # noqa: E402
@@ -538,7 +538,8 @@ def test_the_census_expectations_come_from_the_route():
     ``DENSE_LAUNCHES`` -- two pairs, of which any one module stamps one.
     Contract v46 adds the E4M3 instruction library's dense identity as a
     third, experimental pair: a census reads the experimental view, so the
-    expectation is three.
+    expectation is three.  Contract v56 adds the decode-once prefill lane as a
+    fourth experimental pair, eager-only: a compiled census does not expect it.
     Asserted as EQUALITY, because the defect this whole file is about was an
     expectation wider than the dispatch.
 
@@ -549,10 +550,11 @@ def test_the_census_expectations_come_from_the_route():
     """
     expected = set(route.DENSE_LAUNCHES)
     assert (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM) in expected
-    assert len(expected) == 3
+    assert len(expected) == 4
     go = fp8_gemv.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected
     gc = fp8_gemv.census_expected(compiled=True)
-    assert gc["decode"] == expected
-    assert gc["batch"] == expected
+    assert gc["decode"] == expected - scheme.EAGER_ONLY_LAUNCHES
+    assert gc["batch"] == expected - scheme.EAGER_ONLY_LAUNCHES
+    assert route.DENSE_DECODE_ONCE_LAUNCH in scheme.EAGER_ONLY_LAUNCHES

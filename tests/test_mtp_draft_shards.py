@@ -204,7 +204,24 @@ def _fake_vllm(monkeypatch, tmp_path, loader_source):
     return loader_mod, NS(Glm5NextMTP=Draft)
 
 
-def test_unmatched_loader_sources_decline_without_wrapping(monkeypatch, tmp_path, caplog):
+def test_unmatched_loader_sources_stamp_and_install_in_dev_mode(monkeypatch, tmp_path, capsys):
+    """D32: the loader source-digest mismatch stamps and the narrowing installs.
+
+    The whole-checkpoint fallback (164 GiB read instead of the 5.52 GiB
+    four-shard draft) is the certified-mode decline, not the dev-mode one.
+    Fails on the pre-change behavior, which declined here.
+    """
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    loader_mod, glm = _fake_vllm(monkeypatch, tmp_path, "# not the inspected loader\n")
+    shards.install("nightly-20260929", glm, RENAME)
+    assert getattr(loader_mod.DefaultModelLoader, shards._INSTALLED)
+    out = capsys.readouterr().out
+    assert out.count("[DEV-MODE]") == 2  # one per inspected module
+    assert "MTP loader source identity" in out and "continuing with the stored data" in out
+
+
+def test_certified_zero_keeps_the_unmatched_loader_decline(monkeypatch, tmp_path, caplog):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
     loader_mod, glm = _fake_vllm(monkeypatch, tmp_path, "# not the inspected loader\n")
     stock = loader_mod.DefaultModelLoader.get_all_weights
     with caplog.at_level(logging.WARNING, logger=shards.__name__):
@@ -212,6 +229,18 @@ def test_unmatched_loader_sources_decline_without_wrapping(monkeypatch, tmp_path
     assert loader_mod.DefaultModelLoader.get_all_weights is stock
     assert not getattr(loader_mod.DefaultModelLoader, shards._INSTALLED, False)
     assert "reads the whole checkpoint" in caplog.text and "source identity" in caplog.text
+
+
+def test_unreadable_loader_source_still_declines_in_dev_mode(monkeypatch, tmp_path, caplog):
+    monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+    loader_mod, glm = _fake_vllm(monkeypatch, tmp_path, "# not the inspected loader\n")
+    sys.modules[shards._MODULES[1]].__file__ = str(tmp_path / "gone.py")
+    stock = loader_mod.DefaultModelLoader.get_all_weights
+    with caplog.at_level(logging.WARNING, logger=shards.__name__):
+        shards.install("nightly-20260929", glm, RENAME)
+    assert loader_mod.DefaultModelLoader.get_all_weights is stock
+    assert not getattr(loader_mod.DefaultModelLoader, shards._INSTALLED, False)
+    assert "source identity unreadable" in caplog.text
 
 
 def test_unknown_draft_interface_declines(monkeypatch, tmp_path, caplog):

@@ -14,6 +14,7 @@ import re
 import shutil
 import stat
 import struct
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -288,6 +289,91 @@ def source_roster_identity(source: Path) -> dict:
             "tensors": tensors}
 
 
+def exporter_code_root() -> Path:
+    """The tree :func:`export_identity` digests for this running exporter.
+
+    A checkout's root (holding ``src/`` and ``experiments/``) when the
+    module resolves from a checkout; the directory holding the ``tessera``
+    package (a checkout's ``src/``, or ``site-packages``) when it resolves
+    from an install -- the same derivation as
+    ``tessera.serving.source_identity._default_root`` (#691 item 4).
+    Anything else is refused with its location, not hashed as whatever
+    two parents up happens to be.
+    """
+    holder = Path(__file__).resolve().parents[1]
+    checkout = holder.parent
+    if holder.name == "src" and (checkout / "experiments").is_dir():
+        return checkout
+    if (holder / "tessera" / "serving").is_dir():
+        return holder
+    raise SystemExit(
+        f"cannot locate the Tessera code root from {__file__}: {holder} "
+        "is neither a checkout src/ with an experiments/ sibling nor a "
+        "directory holding an installed tessera package.")
+
+
+def _installed_commit_id() -> "str | None":
+    """The commit the running Tessera was installed from, if recorded.
+
+    A non-editable pip install from git records ``direct_url.json`` with the
+    commit in its dist-info; an editable install is a checkout, so git
+    answers before this is ever asked.  The search is restricted to the
+    directory holding the imported ``tessera`` package: a global scan would
+    happily return some OTHER environment's install of Tessera, which is
+    the same provenance hole stamped as a value (#691 item 4).
+    """
+    holder = Path(__file__).resolve().parents[1]
+    try:
+        from importlib.metadata import distributions
+    except ImportError:
+        return None
+    for dist in distributions(path=[str(holder)]):
+        try:
+            text = dist.read_text("direct_url.json")
+        except Exception:
+            continue
+        if not text:
+            continue
+        try:
+            info = json.loads(text)
+        except ValueError:
+            continue
+        commit = (info.get("vcs_info") or {}).get("commit_id")
+        if commit:
+            return commit
+    return None
+
+
+def git_hash() -> str:
+    """The commit this build came from -- git, the environment, or the install.
+
+    A build that runs on a synced copy of the tree has no ``.git`` and used to
+    stamp ``unknown``, which is a provenance hole in an artifact whose whole
+    claim is that the surrogate, the KL and the bytes are one rendering.
+    ``TESSERA_GIT`` is how the caller supplies it when git cannot; a
+    non-editable install from git stamps its ``direct_url.json`` commit
+    (#691 item 4).  When none of the three answers, this refuses instead of
+    stamping ``unknown``.
+    """
+    import os
+
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
+    except Exception:
+        pass
+    caller = os.environ.get("TESSERA_GIT")
+    if caller:
+        return caller
+    commit = _installed_commit_id()
+    if commit:
+        return commit
+    raise SystemExit(
+        "cannot stamp the Tessera commit: no git checkout above the running "
+        "module, no TESSERA_GIT in the environment, and the installed Tessera "
+        "records no commit in its direct_url.json (not a pip install from "
+        "git). Set TESSERA_GIT to the commit this code came from.")
+
+
 def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
                     shards=None, *, digest_cache=None) -> dict:
     """What every serving part of one export must agree on, plus its own input.
@@ -326,8 +412,14 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
         digest.update(b"\0")
     return {"source": source_part_identity(source, shards, digest_cache=digest_cache),
             "code_sha256": digest.hexdigest(),
-            # The dispatch command pins this image. Its observed runtime identity
-            # belongs to the PrismaBuild receipt, not a self-attestation here.
+            # The dispatch command pins this image as the READER/runtime the
+            # parts are destined to serve on. It is never a claim about the
+            # process that WROTE the part: a selected host producer's own
+            # environment is its authenticated receipt
+            # (tessera.export_serving.authenticate_producer_python, sealed in
+            # identity["producer"]), and that producer does not execute this
+            # image. The image's observed runtime identity belongs to the
+            # PrismaBuild receipt, not a self-attestation here.
             "runtime_image": runtime_image, "options": options}
 
 
@@ -688,6 +780,7 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             f"missing declared={sorted(planned_stacks - set(stack_schemes))}, "
             f"extra declared={sorted(set(stack_schemes) - planned_stacks)}")
     from .serving.scheme import MOE_GROUP_PROJECTIONS, validate_tessera_moe_scheme
+    from .serving.scheme import expert_role_declarations
 
     for name, spec in requested.items():
         wanted_grid, wanted_rung = spec["grid"], int(spec["q256"])
@@ -711,12 +804,31 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                 consumed = {r.get("source_tensor", r["tensor"]) for r in roles}
                 if consumed != expected_sources:
                     raise ValueError(f"explicit plan stack {name}: source projection coverage differs")
-            if record.get("grid") != wanted_grid or record.get("q256") != wanted_rung:
-                raise ValueError(f"explicit plan stack {name}: manifest grid/rung differs from plan")
-            if scheme.get("grid") != wanted_grid or any(
-                    any(rung != wanted_rung for rung in group["role_q256"])
-                    for group in declared["groups"].values()):
-                raise ValueError(f"explicit plan stack {name}: declared grid/rung differs from plan")
+            if record.get("grid") != wanted_grid or scheme.get("grid") != wanted_grid:
+                raise ValueError(f"explicit plan stack {name}: manifest/declared grid differs from plan")
+            by_unit = spec.get("unit_q256", {})
+            if by_unit and any(not isinstance(r.get("tensor"), str) for r in roles):
+                raise ValueError(f"explicit plan stack {name}: unit_q256 requires emitted unit tensor names")
+            names = {r["tensor"].removesuffix(".weight") for r in roles} if by_unit else set()
+            unknown = sorted(set(by_unit) - names)
+            if unknown:
+                raise ValueError(f"explicit plan stack {name}: unknown projected units {unknown[:5]}")
+            declared_rungs = {
+                (expert, role["roles"][0][0]): role["q256"]
+                for expert in range(experts) for group in declared["groups"].values()
+                for role in expert_role_declarations(group, expert=expert)}
+            selected_rungs = {by_unit.get(r["tensor"].removesuffix(".weight"), wanted_rung)
+                              if by_unit else wanted_rung for r in roles}
+            manifest_baseline = next(iter(selected_rungs)) if len(selected_rungs) == 1 else wanted_rung
+            if record.get("q256") != manifest_baseline:
+                raise ValueError(f"explicit plan stack {name}: manifest baseline rung differs from plan")
+            for role in roles:
+                want = (by_unit.get(role["tensor"].removesuffix(".weight"), wanted_rung)
+                        if by_unit else wanted_rung)
+                if role.get("q256") != want:
+                    raise ValueError(f"explicit plan {name}: manifest unit rung differs from plan")
+                if declared_rungs[role["expert"], role["role"]] != want:
+                    raise ValueError(f"explicit plan {name}: declared unit rung differs from plan")
         else:
             roles = [r for r in all_roles if r.get("tensor") == name]
             if not roles:
@@ -737,8 +849,155 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                         f"explicit plan tensor {name}: {len(roles)} emitted roles do not tile "
                         f"the tensor by row (windows {windows}, source rows {sorted(totals)})")
         for role in roles:
-            if role.get("grid") != wanted_grid or role.get("q256") != wanted_rung:
+            overrides = spec.get("unit_q256", {})
+            want = (overrides.get(role["tensor"].removesuffix(".weight"), wanted_rung)
+                    if overrides else wanted_rung)
+            if role.get("grid") != wanted_grid or role.get("q256") != want:
                 raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")
+
+def _require_part_carriers(part, manifest):
+    rank, count = part.get("index"), part.get("count")
+    if type(rank) is not int or type(count) is not int or count < 1 or not 0 <= rank < count:
+        raise ValueError("partition index/count must be integer carriers with 0 <= INDEX < COUNT")
+    identity = part["identity"]
+    if "producer" in manifest or "producer" in identity:
+        if not isinstance(identity.get("producer"), dict) or manifest.get("producer") != identity["producer"]:
+            raise ValueError(f"partition {rank}: producer disagrees with sealed export identity")
+    options = identity["options"]
+    if "encode_batch" in manifest or "encode_batch" in options:
+        batch = manifest.get("encode_batch")
+        sealed = options.get("encode_batch")
+        if type(batch) is not int or type(sealed) is not int or batch < 1 or batch != sealed:
+            raise ValueError(f"partition {rank}: encode_batch disagrees with integer sealed export identity")
+
+
+def validate_serving_part(path, source, *, partition=None, producer=None, encode_batch=None,
+                          source_digest_cache=None):
+    """Prove one completed part with the same contents owner as assembly.
+
+    Source inventory/config/auxiliary coverage is whole; only the owned input
+    shards need body hashes. A reused digest is exposed in source_proof.
+    """
+    path, source = Path(path), Path(source)
+    manifest = read_serving_manifest(path / "tessera_serving_manifest.json")
+    part = manifest.get("export_partition") or {}
+    if part.get("schema") != SCHEMA:
+        raise ValueError(f"{path}: unsupported serving partition schema")
+    _require_part_carriers(part, manifest)
+    rank, count = part["index"], part["count"]
+    if partition is not None and (rank, count) != partition:
+        raise ValueError("manifest membership differs from requested partition")
+    if producer is not None and manifest.get("producer") != producer:
+        raise ValueError("manifest producer receipt differs from fresh authentication")
+    if encode_batch is not None and manifest.get("encode_batch") != encode_batch:
+        raise ValueError("manifest encode_batch differs from requested batch")
+    stamped_files = part["identity"]["source"]["files"]
+    whole = source_part_identity(source, stamped_files, digest_cache=source_digest_cache)
+    prove_source_part(part["identity"]["source"], whole, f"partition {rank}")
+    index = read_serving_manifest(path / "model.safetensors.index.json")
+    _prove_part_contents(rank, count, path, part, manifest, index, whole, sha256_file)
+    config = read_serving_manifest(path / "tessera_part_config.json")
+    source_config = read_serving_manifest(source / "config.json")
+    source_config.pop("quantization_config", None)
+    if {k: v for k, v in config.items() if k != "quantization_config"} != source_config:
+        raise ValueError(f"partition {rank}: model config disagrees with source identity")
+    qconfig = config["quantization_config"]
+    declarations = {target for group in qconfig["config_groups"].values() for target in group["targets"]}
+    if qconfig["quant_method"] != "tessera" or declarations != set(manifest["modules"]):
+        raise ValueError(f"partition {rank}: config targets disagree with manifest modules")
+    return {"manifest_sha256": sha256_file(path / "tessera_serving_manifest.json"),
+            "source_proof": source_digest_cache.receipt() if source_digest_cache is not None else None}
+
+
+def consumed_input_content(path, plan, hessian, authority, scales=None):
+    """Current input snapshots must equal the identities consumed by this part."""
+    manifest = read_serving_manifest(Path(path) / "tessera_serving_manifest.json")
+    options = manifest["export_partition"]["identity"]["options"]
+    plan_bytes = Path(plan).read_bytes()
+    plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
+    if manifest.get("plan_sha256") != plan_sha256 or options.get("plan_sha256") != plan_sha256:
+        raise ValueError("consumed.plan_sha256: current bytes differ from the manifest's consumed plan snapshot")
+    if json.loads(plan_bytes, object_pairs_hook=unique_json_pairs) != options.get("plan"):
+        raise ValueError("consumed.plan: current allocation differs from the manifest's consumed plan")
+    current = {"plan_sha256": plan_sha256,
+               "hessian_sha256": sha256_file(Path(hessian)),
+               "authority_sha256": sha256_file(Path(authority)),
+               "input_scales_sha256": sha256_file(Path(scales)) if scales else None}
+    for field, sealed in (("hessian_sha256", "hessian_sha256"),
+                          ("authority_sha256", "producer_authority_sha256"),
+                          ("input_scales_sha256", "input_scales_sha256")):
+        if sealed not in options or current[field] != options[sealed]:
+            raise ValueError(f"consumed.{field}: current bytes differ from the manifest's consumed identity")
+    return current
+
+
+def _prove_part_contents(rank, count, path, part, manifest, index, whole, hash_file):
+    """The single-part ownership and written-payload proof used by assembly."""
+    _require_part_carriers(part, manifest)
+    owned = set(part["source_tensors"])
+    expected = {n for n in whole["tensors"] if partition_owner(n, count) == rank}
+    if owned != expected or len(owned) != len(part["source_tensors"]):
+        raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
+    read = {whole["tensors"][name] for name in owned}
+    if read != set(part["identity"]["source"]["files"]):
+        raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
+                         f"its source tensors live in: stamped "
+                         f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
+    local_map = index["weight_map"]
+    if set(local_map) != _expected_outputs(owned, manifest["modules"]):
+        raise ValueError(f"partition {rank}: written tensor coverage disagrees with source and encoded modules")
+    files = set(local_map.values())
+    if files != set(part["output_sha256"]):
+        raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
+
+    actual, payloads = {}, []
+    for filename in sorted(files):
+        filename = _leaf(filename)
+        payload = path / filename
+        if hash_file(payload) != part["output_sha256"][filename]:
+            raise ValueError(f"partition {rank}: output sha256 mismatch: {filename}")
+        for name in tensor_names(payload):
+            if name in actual:
+                raise ValueError(f"tensor appears in two files: {name}")
+            actual[name] = filename
+        payloads.append((payload, filename))
+    if files != {p.name for p in path.glob("*.safetensors")} or (owned and not files):
+        raise ValueError(f"partition {rank}: output shard coverage disagrees with directory")
+    if actual != local_map:
+        raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
+    return owned, local_map, payloads
+
+
+
+def _merged_batch_widths(loaded) -> dict | None:
+    """The whole run's joined-encode width histogram, or None when any part lacks one."""
+    if not all("encode_batch_observed" in row[3] for row in loaded):
+        return None
+    widths = {}
+    for row in loaded:
+        histogram = row[3]["encode_batch_observed"]
+        if type(histogram) is not dict:
+            raise ValueError(
+                f"partition {row[0]}: encode_batch_observed must be an object of width "
+                f"counts, got {type(histogram).__name__}")
+        limit = row[3].get("encode_batch")
+        for width, calls in histogram.items():
+            # A width is a canonical decimal from 1 up to the part's own encode_batch:
+            # "08" would read as 8 and become a second entry for it, and no joined call
+            # is wider than the knob that bounds it.
+            if (type(width) is not str or not re.fullmatch(r"[1-9][0-9]*", width)
+                    or type(limit) is not int or int(width) > limit):
+                raise ValueError(
+                    f"partition {row[0]}: encode_batch_observed[{width!r}] is not a width "
+                    f"from 1 up to the part's encode_batch ({limit!r})")
+            # Exactly an integer: a boolean would sum as 0 or 1 and a fraction would
+            # stay one, claiming a count the part's own input does not establish.
+            if type(calls) is not int or calls < 0:
+                raise ValueError(
+                    f"partition {row[0]}: encode_batch_observed[{width!r}] must be a "
+                    f"non-negative integer count, got {calls!r}")
+            widths[width] = widths.get(width, 0) + calls
+    return dict(sorted(widths.items(), key=lambda item: int(item[0])))
 
 
 def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
@@ -814,17 +1073,10 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
     # loop hashed that file, so a refusal names the file it named before.
     with _HashAhead(_output_payloads(loaded)) as hashed:
         for rank, path, part, manifest, config, index in loaded:
-            owned = set(part["source_tensors"])
-            expected = {n for n in expected_source if partition_owner(n, count) == rank}
-            if owned != expected or len(owned) != len(part["source_tensors"]) or covered & owned:
+            owned, local_map, payloads = _prove_part_contents(
+                rank, count, path, part, manifest, index, whole, hashed.sha256)
+            if covered & owned:
                 raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
-            # A part that stamped fewer shards than its tensors live in left bytes
-            # it read unproved; one that stamped more claims input it did not use.
-            read = {whole["tensors"][name] for name in owned}
-            if read != set(part["identity"]["source"]["files"]):
-                raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
-                                 f"its source tensors live in: stamped "
-                                 f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
             covered.update(owned)
             qconfig = config["quantization_config"]
             # Validate every carrier before equality: JSON floats and booleans can
@@ -858,26 +1110,8 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
             modules.update(manifest["modules"])
             groups.update(qconfig["config_groups"])
             ignore.update(qconfig["ignore"])
-            local_map = index["weight_map"]
-            if set(local_map) != _expected_outputs(owned, manifest["modules"]):
-                raise ValueError(f"partition {rank}: written tensor coverage disagrees with source and encoded modules")
-            files = set(local_map.values())
-            if files != set(part["output_sha256"]):
-                raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
-            actual = {}
-            for filename in sorted(files):
-                filename = _leaf(filename)
-                payload = path / filename
-                if hashed.sha256(payload) != part["output_sha256"][filename]:
-                    raise ValueError(f"partition {rank}: output sha256 mismatch: {filename}")
-                for name in tensor_names(payload):
-                    if name in actual:
-                        raise ValueError(f"tensor appears in two files: {name}")
-                    actual[name] = filename
-                target = f"part-{rank:05d}-{filename}"
-                copies.append((payload, target))
-            if actual != local_map:
-                raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
+            for payload, filename in payloads:
+                copies.append((payload, f"part-{rank:05d}-{filename}"))
             if weight_map.keys() & local_map.keys():
                 raise ValueError("tensor appears in two partitions")
             weight_map.update({n: f"part-{rank:05d}-{s}" for n, s in local_map.items()})
@@ -899,6 +1133,12 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                                       "config_groups": groups, "ignore": sorted(ignore)}
     manifest = copy.deepcopy(loaded[0][3])
     manifest.pop("export_partition")
+    observed = _merged_batch_widths(loaded)
+    if observed is not None:
+        manifest["encode_batch_observed"] = observed
+    else:
+        # A partial observation is not a histogram of the whole merged run.
+        manifest.pop("encode_batch_observed", None)
     manifest["modules"] = modules
     manifest["merged_from"] = [{"index": r[0], "path": str(r[1]),
                                  "output_sha256": r[2]["output_sha256"]} for r in loaded]

@@ -1,0 +1,15 @@
+{
+  "schema":"tessera.stageprev.admission_revision.v3",
+  "parent_packet":{"path":"experiments/configs/stageprev_793_numeric_packet_v2.json","sha256":"e0276553a1a6b6a326e5f6fd567acb8e467a015fed45a282ceb1f1fd44b27400","qualified_source":"1311cc154255c783648b0075262532b63527786e","cpu_action":"6651db4772177ec9b6db81bf8d792fd6c37e7d084b4dadd908019578d0649e7c"},
+  "authority":"Tessera piece-major performance, designated review parent, routine clarification of existing RootDecisionA",
+  "root_decision":"local://tessera-k32-floor-scope-approval-20261003.json",
+  "remove_requirement":"require_current_actual_positive_kind_refusal",
+  "replace_requirement":"require_verified_current_public_claim_refusal",
+  "approved_proof":"Fresh COMPLETE actual excluded-host claim-ledger effective capacity0 plus verified CURRENT loaded public PoolQueue.claim source identity and positive reservation-kind refusal semantics. Denial events are observed-only metadata, not a mandatory new event.",
+  "public_entrypoint":"prismabuild.client.PoolQueue.claim",
+  "loaded_call_chain":["PoolQueue.claim","PoolQueue._claim","PoolQueue._claim_pass"],
+  "required_loaded_source_branch":"any(total.get(kind,0)<need for kind,need in reservation_demand.items()) ->never_fits_capacity +continue",
+  "retain":"All actual-used filesystem5%+aggregate ROOT/MAX, source/native/image/class/public-reader/quiet/BOTH-Spark telemetry/ninecases/oneworker-fourarm and separate exact numeric GPU decision requirements",
+  "preserve_previous":"Original7763/bd93, v2/e027, actual6651/47P and old checker HOLD remain immutable; no historical proof restamp/replay",
+  "launch_authorized":false
+}

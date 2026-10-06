@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from tessera.serving import bf16_route, fp8_gemv, fp8_route
+from tessera.serving.scheme import EAGER_ONLY_LAUNCHES
 
 
 def forward(module):
@@ -36,9 +37,12 @@ def test_census_is_exactly_the_pairs_emitted_by_dense_forward(route, census, com
     observed = {"decode": set(), "batch": set()}
     for m, regime in [(1, "decode"), (3, "batch")]:
         for pair in route.DENSE_LAUNCHES:
+            if compiled and pair in EAGER_ONLY_LAUNCHES:
+                continue    # its owner refuses under compile (contract v56)
             layer = SimpleNamespace(
                 tessera_native=SimpleNamespace(
-                    launch_pair=pair, apply=lambda *args: torch.zeros(m, 2, dtype=torch.bfloat16)),
+                    launch_pair=pair, decoded=None,
+                    apply=lambda *args: torch.zeros(m, 2, dtype=torch.bfloat16)),
                 tessera_rows=2, tessera_columns=4, tessera_mode=mode,
                 tessera_activation_contract=route.ACTIVATION_CONTRACT,
             )
