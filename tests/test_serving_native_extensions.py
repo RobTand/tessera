@@ -218,9 +218,6 @@ def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int,
     if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name)
             and expr.func.id == "str" and len(expr.args) == 1 and not expr.keywords):
         return read(expr.args[0])
-    if (isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name)
-            and expr.func.id == "Path" and len(expr.args) == 1 and not expr.keywords):
-        return read(expr.args[0])
     if isinstance(expr, ast.Call) and isinstance(expr.func, ast.Name):
         # cpp_extension.load(..., is_python_module=False) returns the path of
         # the library it compiled under its explicit name. Follow that real
@@ -545,13 +542,12 @@ def _compiler_result_sites(tmp_path, *, builder="load", module_name='"tessera_co
     root.mkdir(parents=True)
     (root / "__init__.py").write_text(textwrap.dedent(f"""
         import ctypes
-        from pathlib import Path
         from torch.utils.cpp_extension import load
         {extra}
         def build():
             name = {module_name}
             built = {builder}(name=name, sources=["x.cu"], is_python_module={is_python})
-            ctypes.CDLL(str(Path(built)))
+            ctypes.CDLL(str(built))
     """))
     return scan_jit_extension_loads(tmp_path / "src", ["tessera"])
 

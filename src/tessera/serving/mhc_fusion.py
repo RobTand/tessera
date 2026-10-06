@@ -149,7 +149,7 @@ class MhcFusedLibrary:
                    refusal=lambda: RuntimeError(f"JIT returned {built}, not the declared {predicted_path}"))
         self.library_path = Path(built)
         self.path = str(self.library_path)
-        lib = ctypes.CDLL(self.path)
+        lib = ctypes.CDLL(str(built))
         self._launch = lib.tessera_mhc_fused_post_pre
         self._launch.argtypes = [ctypes.POINTER(_Params), ctypes.c_int, ctypes.c_void_p]
         self._launch.restype = ctypes.c_int
