@@ -397,10 +397,13 @@ incompatible method or dispatch interface, and a layer whose op is not on
 differences stamp and continue in development mode under D32; actual
 interface, shape, launch and safety checks remain active. Required identity
 `bitwise_vs_stock` uses integer-view comparisons in
-`experiments/mhc/mhc_fused_probe.py` and `tests/test_mhc_fusion_cuda.py`. The
-fused asynchronous copy rounds full-FP32 projection operands to TF32 before
-the matrix instruction, matching stock tensor-map conversion. Native controls
-also compare projection and squared-sum workspaces and TF32 halfway inputs. Earlier
+`experiments/mhc/mhc_fused_probe.py` and `tests/test_mhc_fusion_cuda.py`.
+The stock TFLOAT32 tensor-map conversion was measured on GB10 as nearest,
+ties to even (sixteen sparse sign/parity/below/tie/above controls, PB
+`23f83a454a3c`). The fused asynchronous copy retains FP32, then rounds
+significands to that rule before FP32-accumulating TF32 MMAs; the former
+`cvt.rna.tf32.f32` used the wrong halfway rule. Native controls compare
+projection and squared-sum workspaces and all outputs at TF32 halfway inputs. Earlier
 sixty-case receipts used value equality and did not establish signed-zero
 identity. Calls stock runs at split > 1 stay stock. The retained site
 microbenchmarks imply estimated sums of 2.5881 and 3.1111 ms per rank over

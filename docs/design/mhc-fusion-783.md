@@ -58,8 +58,18 @@ cubins came from the probe cache. SASS was read with `cuobjdump` 13.4.
 | Stage | Stock (evidence) | Fused |
 |---|---|---|
 | post | Source `v = post[i]*x; v += comb[j][i]*res[j]`, j = 0..3, which nvcc contracted as `v = comb[0][i]*res[0]` (the FMUL), `v = fma(post[i], x, v)`, then `fma(comb[j][i], res[j], v)` for j = 1..3, bf16 RN. Read by register provenance in the SASS (comb from the 256-bit loads, post from the 128-bit one, x from its own pointer); the other contraction differs on ~1.6e-5 of outputs (first GPU gate, PB `f068e908`). | `__fmul_rn` on comb[0]·res[0], then `__fmaf_rn` in that order |
-| GEMM | `mma.sync m16n8k8 .tf32` on the fp32 bits of bf16 A and the TF32-rounded B values loaded through DeepGEMM's tensor map. K blocks of 64 in order within the split, 8 k-steps. Fragments: a0 = A[g][t], a1 = A[g+8][t], a2 = A[g][t+4], a3 = A[g+8][t+4]. sqrsum per lane is `+= a0*a0 + a2*a2`, then xor 2, xor 1. | The same instruction (`HMMA.1688.F32.TF32`), fragments and order. The asynchronous copy retains FP32, so `cvt.rna.tf32.f32` converts each B operand before the MMA. Native controls compare projection and squared-sum workspaces as well as all four outputs, including full-FP32 weights and TF32 halfway cases. |
+| GEMM | `mma.sync m16n8k8 .tf32` with FP32 accumulators, exact FP32 conversion of bf16 A and B rounded by the TFLOAT32 tensor map to nearest, ties to even. Sparse native controls (PB `23f83a454a3c`) isolate that rounding for both signs and retained-mantissa parities, below/at/above ties and several exponent scales. K blocks of 64 in order within the split, 8 k-steps. Fragments: a0 = A[g][t], a1 = A[g+8][t], a2 = A[g][t+4], a3 = A[g+8][t+4]. sqrsum per lane is `+= a0*a0 + a2*a2`, then xor 2, xor 1. | The same instruction (`HMMA.1688.F32.TF32`), fragments and order. The asynchronous copy retains FP32, so integer significand rounding reproduces nearest-even B conversion before the MMA. The former `cvt.rna.tf32.f32` rounded halfway values away, not as stock does. Native controls compare projection and squared-sum workspaces as well as all four outputs, including full-FP32 weights and TF32 halfway cases. |
 | pre | Split partials summed from 0 in split order. `rsqrtf(rms/16384 + eps)`. IEEE division and full `expf` (no fast math: 17 MUFU.RCP + slow-path calls). Sinkhorn reductions are butterflies: row xor 2,1; column xor 8,4; max xor 2,1. The layer input is `fma(pre, x, +0)` chains; sumsq is FFMA across chunks, then rv order (rv&1)*8 + (rv>>1); the 64-thread sum is xor 32 via smem, then xor 16..1; output is `(bf16(ol)*r)*w`. | The same C expressions, compiled `-O3` without fast math (TileLang's default), the same thread-to-position map and the same reduction trees. |
+
+Stock post mix is computed in FP32: split projection partials are summed from
+zero in split order, multiplied by `rsqrt(sum_sq/16384 + eps)`, then affine
+`fma(mix, scale[1], base[j+4])`, sigmoid and factor two. Retained native SASS
+has affine FFMA, exponential reconstruction and reciprocal refinement;
+BF16 conversion happens in the residual and layer-input paths, not post mix.
+PB `91c849` failed all eight integer-view cases with the nearest-away
+conversion; residual and squared-sum buffers matched, projection and downstream
+outputs did not. The sixteen sparse stock controls establish the correction
+rule, not a passing fused sixty-case result. The integer gate remains unchanged.
 
 ## Design
 

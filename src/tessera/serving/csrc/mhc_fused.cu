@@ -96,12 +96,14 @@ __device__ __forceinline__ void st_evict_last(void* ptr, uint4 v, uint64_t polic
 
 // Stock loads fn through a TFLOAT32 tensor map. Our cp.async copy retains
 // FP32, so reproduce that conversion before supplying B to the TF32 MMA.
-// Already-representable checkpoint values are unchanged; arbitrary FP32
-// weights must not silently lose their low mantissa bits by truncation.
+// Stock TMA rounds to nearest, ties to even (PB 23f83a454a3c sparse
+// positive/negative, even/odd, below/tie/above controls). PTX cvt.rna
+// rounds ties away instead. Round the 13 discarded significand bits
+// with an integer bias; do not change the FP32 accumulation order.
 __device__ __forceinline__ uint32_t tf32_bits(float value) {
-  uint32_t bits;
-  asm("cvt.rna.tf32.f32 %0, %1;" : "=r"(bits) : "f"(value));
-  return bits;
+  const uint32_t bits = __float_as_uint(value);
+  if ((bits & 0x7f800000u) == 0x7f800000u) return bits;  // Inf/NaN
+  return (bits + 0xfffu + ((bits >> 13) & 1u)) & 0xffffe000u;
 }
 
 __device__ __forceinline__ void tf32_mma(float (&d)[4], const uint32_t (&a)[4], const uint32_t (&b)[2]) {
