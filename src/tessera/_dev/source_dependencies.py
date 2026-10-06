@@ -333,11 +333,12 @@ _READ_METHODS = {"read_text", "read_bytes", "open"}
 #: directory's *membership*, not one named file: what can change under it is
 #: any path at or below the base -- added, edited or deleted -- so the edge it
 #: resolves to is the base directory itself, and no pattern is matched
-#: (tessera#923).  ``Path.glob`` is deliberately absent: single-directory
-#: globs already resolve to exact matched edges through the expression
-#: resolver, and a recursive pattern stays unbounded there by the same rule
-#: that keeps it from crawling outside the tree.
-_ENUMERATIONS = {"rglob", "iterdir", "listdir", "scandir", "walk"}
+#: (tessera#923).  ``Path.glob`` is one of them (PB1496): its matches are
+#: still exact edges through the expression resolver where a loader or reader
+#: consumes them, but that edge names only the files that exist now, so a
+#: deleted, added or renamed member -- and every change under the recursive
+#: ``**`` spelling, which that resolver leaves unbounded -- selected nothing.
+_ENUMERATIONS = {"glob", "rglob", "iterdir", "listdir", "scandir", "walk"}
 _KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
 
 
@@ -1007,7 +1008,7 @@ def _enumeration_bases(loader, call, scope, root, refused, links):
         if not call.args:
             return None
         bases = _values(call.args[0], scope, root, refused=refused, links=links)
-    else:  # rglob: the receiver names the tree, the argument the pattern.
+    else:  # glob and rglob: the receiver names the tree, the argument the pattern.
         bases = _values(call.func.value, scope, root, refused=refused, links=links)
         if bases is None:
             return None
@@ -1035,7 +1036,7 @@ def file_imports(tree, path, root, *, executes_source=None):
     unknown importer, so it recorded nothing at all) or lost #148 (an
     unnameable read is not "every module in the tree").
 
-    Directory-enumeration calls (``rglob``, ``iterdir``, ``os.listdir``/
+    Directory-enumeration calls (``glob``, ``rglob``, ``iterdir``, ``os.listdir``/
     ``scandir``/``walk``) resolve to the base directory itself, under the same
     boundary guard and the same named/unnamed split: a resolvable base comes
     back in ``found`` as one directory node, a named-but-refused one as
