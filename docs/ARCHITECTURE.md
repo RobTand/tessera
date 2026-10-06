@@ -404,8 +404,16 @@ ties to even (sixteen sparse sign/parity/below/tie/above controls, PB
 significands to that rule before FP32-accumulating TF32 MMAs; the former
 `cvt.rna.tf32.f32` used the wrong halfway rule. Native controls compare
 projection and squared-sum workspaces and all outputs at TF32 halfway inputs. Earlier
-sixty-case receipts used value equality and did not establish signed-zero
-identity. Calls stock runs at split > 1 stay stock. The retained site
+sixty-case receipts used value equality and did not establish signed-zero identity.
+
+The corrected kernel passed the complete sixty-case integer-view probe on GB10
+(PB `403c665b2ebd`, source SHA256 `0ebf0f43304f01439204855a6bfa6ae7e7e6b20aee6fd05814aa428978c29a30`),
+including tile variants, deterministic reruns and graph replay. Eight random
+FP32/TF32-halfway native tests also passed; their containing action remained
+failed after a population-path error and an insufficient GPU-memory declaration.
+Both the code table and packaged contract remove the obsolete value-equality
+receipt labelled bitwise. The metadata correction changes no kernel or default.
+Calls stock runs at split > 1 stay stock. The retained site
 microbenchmarks imply estimated sums of 2.5881 and 3.1111 ms per rank over
 44 attention and 45 feed-forward sites; these are not measured served chunk
 savings (`docs/measurements/2026-10-04-mhc-fused-783.md`).

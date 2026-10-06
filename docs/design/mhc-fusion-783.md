@@ -120,6 +120,20 @@ All on GB10, image `5be13705`, served checkpoint layer-1 `hc_attn`/`hc_ffn`.
 Times are medians of graph replay over L2-defeating input copies, with stock
 and fused arms interleaved round by round.
 
+**Corrected bit-pattern equality (2026-10-06):** PB `403c665b2ebd`, sparklina,
+exit 0, ran all sixty cases with the unchanged integer-view gate. Every output
+has zero differing words, all tile heights 16/32/48/64 agree, all deterministic
+reruns agree and all six CUDA-graph checks agree. Artifact:
+`/mnt/shared/tessera-measurements/mhc-fusion-783/takeover-894146476-20261006/capacity16/native/mhc_fused_probe.json`.
+Kernel source SHA256:
+`0ebf0f43304f01439204855a6bfa6ae7e7e6b20aee6fd05814aa428978c29a30`.
+The eight random-FP32/halfway tests also passed (eight CUDA allocations, no
+failures/errors/skips), recovered from their retained JUnit by metadata-only
+action `de992b9dd91a`; their containing action `5eb12cdb236b` remains failed
+after a surface-output path error and an 8 GiB GPU-budget breach. The full
+sixty-case action used a corrected 16 GiB GPU reservation. No numerical
+tolerance waiver, default change, served performance or pin claim follows.
+
 **Historical numerical equality**: 60/60 cases × tile heights 16/32/48/64,
 plus graph replay and determinism (PB `fa23b165`, sparky,
 `/mnt/shared/tessera-measurements/mhc-fusion-783/bitwise-c52a7602/mhc_fused_probe.json`;
@@ -129,10 +143,11 @@ sites × 15 shapes, including the sequence-parallel shards and ragged 2049,
 with realistic and adversarial inputs. Corrected integer-view gates cover
 the same population; no historical receipt is relabeled as a corrected result.
 
-**Timing** (PB `286a7d3b`, sparky, exclusive GPU,
+**Historical timing** (PB `286a7d3b`, sparky, exclusive GPU; not remeasured for
+the corrected source), ms per site:
 `timing-c52a7602/mhc_fused_probe.json`), ms per site:
 
-| Site, tokens@batch (split) | Stock | Fused (current rule) | Floor at 273 GB/s |
+| Site, tokens@batch (split) | Stock | Fused (historical source) | Floor at 273 GB/s |
 |---|---|---|---|
 | attn 1024@2048 (1) — served SP | 0.605 | 0.583 (tile 32) | 0.308 |
 | ffn 1024@2048 (1) — served SP | 0.615 | 0.579 (tile 32) | 0.308 |
