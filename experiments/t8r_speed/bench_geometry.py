@@ -175,7 +175,7 @@ class Sweep:
         self.cells = {}
         self.ms = [int(v) for v in args.ms.split(",")]
         self.power_ms = {int(v) for v in args.power_ms.split(",") if v}
-        self.recorded = pick_recorded(args.routing, [512, 8192]) if args.routing else {}
+        self.recorded = pick_recorded(args.routing, self.ms) if args.routing else {}
 
     # -- groups: (key, build) where build() returns [(cell_key, meta, call, out)] lazily
     def groups(self):
@@ -199,8 +199,9 @@ class Sweep:
 
     def variants(self, kind):
         if kind in ("routed", "vllm_fp8_moe", "vllm_bf16_moe"):
-            v = [(m, "balanced") for m in self.ms]
-            v += [(m, "recorded") for m in sorted(self.recorded)]
+            v = [(m, "balanced") for m in self.ms] if self.args.routing_kind != "recorded" else []
+            if self.args.routing_kind != "balanced":
+                v += [(m, "recorded") for m in sorted(self.recorded)]
             return v
         return [(m, None) for m in self.ms]
 
@@ -566,7 +567,8 @@ def main():
     ap.add_argument("--cases", default=",".join(f"q{q}" for q in DEFAULT_RUNGS))
     ap.add_argument("--ms", default="1,64,512,8192")
     ap.add_argument("--shapes", default="o_proj,q_b,kda_in,kda_in_12416")
-    ap.add_argument("--routing", default="", help="recorded routing root (m512/, m8192/)")
+    ap.add_argument("--routing", default="", help="recorded routing root with m<M>/ for the requested M")
+    ap.add_argument("--routing-kind", choices=("balanced", "recorded", "both"), default="both")
     ap.add_argument("--refs", action="store_true", help="vLLM FP8 MoE and torch._scaled_mm references")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
@@ -597,7 +599,13 @@ def main():
             p = build_projection(rf, 1, 512, 256, r, round(256 * (frac or 0)), 41, torch.device("cpu"), mma8)
             assert p["words"].shape == (1, p["tile_words"])
             tiny.append({"q256": q256_of(r, frac), "tile_words": p["tile_words"], "word": int(p["words"][0, 0])})
-        json.dump({"cpu_preflight": "passed", "library": library, "shapes": shapes, "M": ms, "tiny_wire_reads": tiny, "config": args.config}, open(os.path.join(args.out, "cpu-preflight.json"), "w"), indent=2)
+        recorded = pick_recorded(args.routing, ms) if args.routing else {}
+        for m, entry in recorded.items():
+            ids, _weights = recorded_routing(entry["path"], m, "cpu")
+            assert tuple(ids.shape) == (m, TOP_K) and int(ids.min()) >= 0 and int(ids.max()) < EXPERTS
+        if args.routing_kind == "recorded":
+            assert recorded, "No recorded routing at the requested M"
+        json.dump({"cpu_preflight": "passed", "library": library, "shapes": shapes, "M": ms, "tiny_wire_reads": tiny, "config": args.config, "recorded": recorded, "routing_kind": args.routing_kind}, open(os.path.join(args.out, "cpu-preflight.json"), "w"), indent=2)
         print("CPU preflight passed; no GPU results", flush=True)
         return 0
     lib = rf._ext(library)
