@@ -656,7 +656,8 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   retained banks; portable x86 dry runs and the actual arm64 container smoke
   are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* Before GPU qualification, root must authorize the resource/readset. Use the
+* GPU qualification uses normal PrismaBuild admission after fresh D1 disk
+  checks; no separate root-authorization gate remains. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with
