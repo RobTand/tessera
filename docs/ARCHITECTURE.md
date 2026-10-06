@@ -67,6 +67,44 @@ cells are remeasured before the next allocation. Untouched rows may inherit
 explicit measurement lineage; this is evidence coverage, not a new identity
 seal, freeze, re-seal ceremony or permission to reuse changed-path timings.
 
+Re-stamped 2026-10-06 for D41 body-aware metadata: new tables use
+`fleet.rung_allowability.v2` and new indexes use
+`fleet.rung_allowability.index.v2`. The same non-serving canonical API
+explicitly reads immutable v1 history with its exact original fused-WINDOW
+semantics. V2 records body, decoder owner and execution scope per actual
+cell, because routed E2M1 sub-cap recipes are TCQ while dense recipes are
+WINDOW. Raw fused WINDOW keeps positive window/stage/slot and exact compiler
+facts. Compact WINDOW and TCQ record an explicitly absent WINDOW word ring,
+not positive placeholders. Native TCQ records real plane shapes/bytes,
+memory/span/arity, history lookup and native block/scale geometry; Triton
+register/spill/shared counts do not become fabricated ELF stack/local bytes.
+Native TCQ requires the exact seven owner planes with element-size/shape byte
+identity. Every non-POINT plane is nonempty; POINT is empty if and only if
+the actual field width is zero. Version-two quality is bound to the actual encoder format, grid,
+arity, rung, structure and recipe; missing scope remains unmeasured.
+Unknown bodies/owners or missing facts refuse. Quality, anomaly, paired-mean,
+coverage and adjacent-higher witness rules are unchanged. Current index
+selection advances only after the consumer explicitly supports v2; earlier
+schemas, tables and T8 versions are never rewritten. This metadata correction
+requires no GPU timing rerun and grants no serving/default/pin promotion.
+Reattesting existing quality scores reads the supplied stored bytes. Their
+recorded output pathname is run identity: the existing D32 `seal_check` stamps
+and continues in dev mode, preserving the original refusal in certified mode.
+Executed producer/grid/rung/recipe and exact encoder-byte checks remain
+numerical validity refusals in both modes; no archive or score recomputation
+is triggered by relocating stored data.
+
+Re-stamped 2026-10-06 for issues #989 and #750: the D41 geometry harness
+also parses the scalar BF16 producer axis at true q256 step one (256–4096).
+Its finite BF16 table follows the exporter's actual 14/15/16-bit window recipe,
+with BF16 activations without activation scales and folded weight arithmetic.
+Above the fused specialization's bounds it measures the existing public
+compact projection constructors and records their independent serving-intake
+rate refusals. These are measurement scopes, not newly qualified serving
+cells. The terminal WINDOW recipe is not replaced with a BF16 passthrough
+reference. Missing timings, compiler resources or actual sampled expert
+quality leave the versioned table rows pending; no T8 timings are inherited.
+
 Re-stamped 2026-10-06 for PB1496 (unnameable base): the impacted-test selector's
 documented limit is unchanged -- a directory read whose base nothing names, in a
 module that executes nothing, states no dependency and selects no test (#148;

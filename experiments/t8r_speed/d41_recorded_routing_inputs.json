@@ -1,0 +1,347 @@
+{
+  "schema": "prismaquant.prismabuild.data_manifest.v1",
+  "mount_prefix": "/mnt/shared",
+  "entries": [
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000000.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "ec8dca946d947a8dc866fa6bf90d477427a02dec34395569cd9bc9b657cfa5c9"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000001.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "ae93a5b991c771566f4e1030c56e2417d9509b8813f7a7f626f063c7d5d826cc"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000002.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "33f3003c06ca7ccd31f9034f28f3a8d540ef7a234e92f310edd2898e65896ae3"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000003.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "19c45a97471bab8978d5c093b378fa326736508f74afd4e58f564a8468d6cf9e"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000004.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "f502f9979c5c05cf606381a3aec6dd853a9820dba595e4ea278dd8d4dda6909c"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000005.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "20a51749d9ea177de65aab46025eb824e4a83bfcb625c62fbd95b346f34cb03d"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000006.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "ebfa2c7f95d095c0c8b6477fbe27ba639fcd1e4a2c1f53c78b251a2ef4f4f36d"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000007.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "41ab82c0433f9f228ba13d2bf45070f4b52f8eaee24e836eb26bdee33d4caf97"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000008.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "05752b76974428919870cefbf0c212fbed045c982d06d18327a2457eba05e717"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000009.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "7a8e8ed588c557ffd899edcc76a01ef3360c290ead9fbd4432f27d76f90e3c93"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000010.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "7ee7ec3c35115ef1a74e29986df40e89e47fbe29b3c9a05296d7b013ad0434af"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000011.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "7904521f78b4b2a9d0d46306d76f8a975d8c7818a3c9b999e700f06b3096bedc"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000012.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "1c7db74d66f2feb006b3e1aebb72fa2929da0824d671e6be5cace65105dd7795"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000013.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "1c98a71ca069f7fa29b904c20d3bfcc4d9e999ce9fc964917cbf178e3b3f9aaf"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000014.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "0fa7ce8a6638b41b5f1dee1b528e495b7d2d1ad17aa8b344720070ab9ba8959c"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000015.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "9b41a4fc434a13a9c45cf81d5bed9502a1db623b249e5c9d28d96e18fda09424"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000016.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "509a5d01ac774120032ea35f4a308b7a7f75377e4c9568b242dd8844909fd234"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000017.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "d51293fa09e335e343bd96e7a4cfcbc97530deeff0f6b9f4f15d33c684cbd98e"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000018.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "700bf3a37d3393869ce0a2d0a2284e25d5ce9314c890d21e592bfe2b3b7e09e9"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000019.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "2601e0b5fad18b5786057a33cee43c576b020142caa8b3cd7b2219d88cf0b708"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000020.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "2ad034ede413683c775b8fe689fec89bb1d9827820520f26ba331ef04f3703c0"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000021.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "55cea01a22632072850622d90e7a2b6258462323779a18a6d25762be7cfd652c"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000022.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "767438aa4bb7e6a183864f0d41dc79119fb193461711e65567e17e222076442f"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000023.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "91662488b3cebd6a741a7b82a43f38a11981b794d5ae49bd6c60bf346420304f"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000024.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "09e069593b1f269239332cda866b35cb7cf3e209e5b69757d550504573078081"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000025.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "91d3c7fadefe47250db3f270b36ab446900caf6aab65def57678713f02a0aaaa"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000026.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "125fbfbc6089ad500cc0a8f415305e1c4777f3c55a81a39ad55eb6a152e52c0f"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000027.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "fdb5d2910c49f71ac910869dd2c7c5a148c1ee77bb6940003e30d8c57b2c589d"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000028.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "2944e85ca7b5f5aa0cc21c405e019e98931fc499bdd2002311af3e995720ec2a"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000029.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "5e4198b2b1a3fb4df77d5a6a36ec5bbec4cf4382dee69d75da1496c5d6ccc7e6"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000030.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "c749ac3c25544eebeb2a504e6ddb77ed26fec1245b7ca6e690c6d31db869bdb6"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000031.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "135006b605af854dc2cc1ce865818cd4ee3dee1d770ffffff9d00a7ab0475f5a"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000032.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "0140e3527de2d0c2d3ed3c4d2041794696c274edc6c997c200761acae75bd22b"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000033.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "f2107fab5807ad481b7ba446ef66ffc47e7c2e268abdc72fd2fdfcb230366dc5"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000034.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "4ed01bc3e772b329f74c09960b9c3cc1c638ac4d106cab7e9103966a3ed141ca"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m2048/ids-414-000035.pt",
+      "offset": 0,
+      "bytes": 67226,
+      "sha256": "cd33f39ee78a7b7005a1dbde7fecf346a18c9e7c971e4405f23e78f929a6a3c3"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L03-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "12f5d360339a504c8dbe2965461db4486a693aa6340e6447164458009db8a879"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L03-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "9e2f92c55c7a750d28dcede9a03dd84d4561462059beac442d8f72284ca1093a"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L04-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "4e02323387a290ee18cbe717f7f69292196a7623aef8b6c3a74ad1eb862812ce"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L04-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "dcac809e0061d759a1ab625df7c700c63f0648f91fc9b7374a104858eeda03d2"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L05-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "6b5c1242cd816da6150dd13f42210aa0e4c357242de6ebc1d118e18c4273c1aa"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L05-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "1cdfd173e652d785cad227aeeb7cec435a400b1ef5b03fc9d3e3bb459935fc6f"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L06-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "a14389d3e664b82b54fb77181b1cbdac9cfbc3a7b1b1cdaed4e4374c818c68b1"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L06-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "199ee27c3322a7471323b1f6736f382ad48ce7007bd20b7552799f7173ac2cd4"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L07-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "dfc12ecaa555fe67e5af0984ac94d058f65112e27933c801b522ca75b587845c"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L07-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "0fd08e3d73461724ceba8eb7a6fbaa7c21391cd2dfc6cfb981d15d7fe4dcdc48"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L08-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "56e274cd7a85a7f8b05dc1270016389802c894cb610e07daf365fbce80b79c4b"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L08-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "0b279187f95e61207e5e2352c66fcb7ea432dd5fc21c29472acf56f163bac1bf"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L09-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "6790a4dc858b82b734280b28140e3afcfbe4982b5749f1dc5907277792bfcecc"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L09-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "d55ae9da41d9fc235232540af304d8bd7dd848676471932121696b50dbc4b2f9"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L10-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "8ab55d8d5f61cca41660b56d7a55afc56a0bb979d5abb747aaaddcfac46f2ee1"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L10-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "c51251b369043abfcd3b78954efe3e6c260fdd072c9f1b865df79e0a23bdd437"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L11-c01-000000.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "b7e0918600bed855024f1113d5910ebeee340531315eb4c0b33963adc50d3092"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/t8r-speed-20260929/prefill-routing-20260930/m4096/L11-c23-000001.json",
+      "offset": 0,
+      "bytes": 54,
+      "sha256": "1ccf62f4bc10560850d31ef77574eacf96024cf87d1a891b0cf0faba70e17f3f"
+    }
+  ],
+  "produced_by": {
+    "tool": "D41 recorded-routing actual-file accountant",
+    "commit": "3f9bfc5da",
+    "action_key": "26e8e47bf49eb37e086d9c8d354c5154493ed4bb7760060d72bfa15240c9ef1e"
+  },
+  "annotations": {
+    "row_id": "d41-recorded-routing-small-readset",
+    "phases": [
+      {
+        "name": "routing",
+        "bytes": 2421108,
+        "cumulative_bytes": 2421108
+      }
+    ]
+  },
+  "entry_count": 54,
+  "total_bytes": 2421108
+}
