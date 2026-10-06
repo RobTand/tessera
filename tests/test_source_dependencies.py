@@ -884,13 +884,24 @@ def test_a_module_glob_places_the_whole_literal_prefix(tmp_path):
     "import glob\nx = glob.glob('../outside/*.md')\n",
     "import glob\nx = glob.glob('docs/*/../../outside/*.md')\n",
 ], ids=["absolute", "escaping", "parent-after-wildcard"])
-def test_a_module_glob_that_leaves_the_tree_is_refused_not_resolved(tmp_path, source):
-    # The same boundary guard as the Path spelling: refused, kept as an unplaced
-    # read, never stat'ed outside the tree.
+def test_a_module_glob_that_leaves_the_tree_stays_unnamed(tmp_path, source):
+    # The same boundary guard as the Path spelling, never stat'ed outside the tree.
+    # Unlike a Path read it is NOT kept as an unplaced read: this tree's module globs
+    # of that kind name box locations (/usr/local/cuda-*, /mnt/shared/...), and an
+    # unplaced read seeds its reader's consumers on every change (#148).  It stays
+    # listed as an unnamed read, exactly as before.
     (tmp_path / "docs").mkdir()
-    found, unknown, unplaced = _scan_full(source, tmp_path)
-    assert tmp_path / "docs" not in found
-    assert unplaced and not unknown, (found, unknown, unplaced)
+    unnamed = []
+    found, unknown, unplaced = file_imports(
+        ast.parse(source), tmp_path / "consumer.py", tmp_path, unnamed=unnamed)
+    assert found == set() and unnamed, (found, unnamed)
+    assert not unplaced and not unknown, (unknown, unplaced)
+
+
+def test_an_unnamed_module_glob_still_escalates_in_a_module_that_executes_source(tmp_path):
+    found, unknown, unplaced = _scan_full(
+        "import glob\nexec('pass')\nx = glob.glob('/usr/local/cuda-*')\n", tmp_path)
+    assert found == set() and unknown and not unplaced
 
 
 @pytest.mark.parametrize("source", [

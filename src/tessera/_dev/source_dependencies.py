@@ -338,7 +338,7 @@ _READ_METHODS = {"read_text", "read_bytes", "open"}
 #: consumes them, but that edge names only the files that exist now, so a
 #: deleted, added or renamed member -- and every change under the recursive
 #: ``**`` spelling, which that resolver leaves unbounded -- selected nothing.
-_ENUMERATIONS = {"glob", "rglob", "iterdir", "listdir", "scandir", "walk"}
+_ENUMERATIONS = {"glob", "iglob", "rglob", "iterdir", "listdir", "scandir", "walk"}
 _KINDS = set(_LOADERS) | _READ_METHODS | _ENUMERATIONS
 
 
@@ -1019,6 +1019,43 @@ def _glob_receiver(loader, call, scope, root, refused, links):
     return owner, call.args
 
 
+_MODULE_GLOBS = {("symbol", "glob.glob"), ("symbol", "glob.iglob")}
+
+
+def _module_glob_bases(call, scope, root, refused, links, from_string):
+    """The directory a module-level ``glob.glob``/``glob.iglob`` call reads, or None.
+
+    Unlike ``Path.glob`` the base is not a receiver: it is the literal directory
+    in front of the pattern's first wildcard, relative to the process (joined to
+    the tree like every other relative spelling), placed by the same boundary
+    guard.  Only a base that lands inside the tree adds an edge.  A base the guard
+    declines -- an absolute path such as ``/usr/local/cuda-*`` or a pattern that
+    climbs out -- stays *unnamed*, as before, and is never kept as an unplaced
+    read: this tree's module globs of that kind name box locations, not
+    repository files, and an unplaced read seeds its reader's consumers on every
+    change, which made ``serving/ext.py`` select the whole population (#148).
+    ``root_dir``, ``dir_fd``, extra positional arguments, a pattern nothing names
+    and a ``..`` after the first wildcard also stay unnamed (#1010).
+    """
+    if len(call.args) != 1 or isinstance(call.args[0], ast.Starred) or any(
+            keyword.arg not in ("recursive", "include_hidden") for keyword in call.keywords):
+        return None
+    patterns = _values(call.args[0], scope, root, refused=refused, links=links)
+    if patterns is None or not all(isinstance(pattern, str) for pattern in patterns):
+        return None
+    bases = set()
+    for pattern in patterns:
+        prefix = _literal_prefix(pattern)
+        base = Path(*prefix) if prefix else Path(".")
+        if ".." in PurePath(pattern).parts[len(prefix):]:
+            return None
+        bases.add(base)
+    placed = _place(bases, root, [], links)
+    if placed is not None and from_string is not None:
+        from_string.append(True)
+    return placed
+
+
 def _enumeration_bases(loader, call, scope, root, refused, links, from_string=None):
     """The base directories an enumeration call consumes, or ``None``.
 
@@ -1038,6 +1075,10 @@ def _enumeration_bases(loader, call, scope, root, refused, links, from_string=No
     unknown -- is appended to ``refused`` so the caller keeps the #338
     unplaced-read uncertainty instead of dropping the directory.
     """
+    if loader in ("glob", "iglob"):
+        functions = _values(call.func, scope, root)
+        if functions and functions <= _MODULE_GLOBS:
+            return _module_glob_bases(call, scope, root, refused, links, from_string)
     if loader == "iterdir":
         bases = _values(call.func.value, scope, root, refused=refused, links=links)
         if bases is not None and (call.args or call.keywords):

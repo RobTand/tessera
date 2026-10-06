@@ -3570,7 +3570,12 @@ matched member). A base given as a string (`os.listdir("docs")`, or `os.walk(DOC
 boundary guard; before this only the `Path` spelling resolved, so a file added under a
 directory listed by string selected no reader. A string need not be a path (a bare
 `walk("mode")` is recognized by its name), so resolving one adds the edge and a module that
-can execute source keeps the unknown-loader flag it had while the string was unnamed. A
+can execute source keeps the unknown-loader flag it had while the string was unnamed. The
+module function `glob.glob`/`glob.iglob` (also `from glob import glob`) carries its base in the
+pattern: the literal directory in front of the first wildcard is placed like any other base,
+and a module that can execute source keeps its unknown-loader flag. A base outside the tree
+(an absolute box path, a pattern that climbs out) stays unnamed and is listed, not kept as an
+unplaced read, because that would select the readers' consumers on every change (#1010). A
 glob called through a name resolves its receiver when the
 name has one lexical binding: a directory-bound alias (`scan = DOCS.glob`) or
 the unbound method, called directly or through an alias
