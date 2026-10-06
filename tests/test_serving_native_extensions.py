@@ -235,7 +235,10 @@ def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int,
         non_python = any(keyword.arg == "is_python_module"
                          and isinstance(keyword.value, ast.Constant)
                          and keyword.value.value is False for keyword in expr.keywords)
-        if expr.func.id in imports and non_python and not rebound:
+        standalone = any(keyword.arg == "is_standalone"
+                         and not (isinstance(keyword.value, ast.Constant)
+                                  and keyword.value.value is False) for keyword in expr.keywords)
+        if expr.func.id in imports and non_python and not standalone and not rebound:
             return read(_name_argument(expr))
     if isinstance(expr, ast.BinOp) and isinstance(expr.op, ast.Add):
         left = read(expr.left)
@@ -564,6 +567,7 @@ def test_compiler_returned_library_path_keeps_its_explicit_inventory_name(tmp_pa
     ({"builder": "choose_runtime_library"}, [None]),
     ({"module_name": "unknown_name"}, [None, None]),
     ({"is_python": "True"}, ["tessera_compiler_result", None]),
+    ({"is_python": "False, is_standalone=True"}, ["tessera_compiler_result", None]),
     ({"extra": "load = choose_runtime_library"}, ["tessera_compiler_result", None]),
 ])
 def test_compiler_result_proof_keeps_opaque_and_rebound_factories_unreadable(tmp_path, changes, expected):
