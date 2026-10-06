@@ -2238,6 +2238,25 @@ def test_a_string_path_directory_reader_is_selected_by_a_new_member(tmp_path, sp
     assert "tests/test_lister.py" in result["tests"], result
 
 
+def test_a_string_argument_does_not_hide_an_unknown_loader_from_its_consumers(tmp_path):
+    """A module that executes source and calls a custom ``walk("mode")`` stays an
+    unknown loader: resolving the string as a directory adds an edge, it must not
+    replace the wildcard, or a change it may load selects its consumer no more."""
+    repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
+        "support/helper.py": (
+            "def walk(mode):\n    return mode\n\n\ndef run():\n    exec('pass')\n"
+            "    return walk('mode')\n"),
+        "tests/test_consumer.py": "from support.helper import run\n\n\ndef test_run():\n    assert run\n",
+        "mode/seed.txt": "x\n"})
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "a source file the unknown loader may execute changed")
+
+    result = _selector(repo, f"{base}...HEAD")
+
+    assert "tests/test_consumer.py" in result["tests"], result
+
+
 def test_a_string_path_directory_reader_is_not_selected_by_another_directory(tmp_path):
     repo, base = _dynamic_repo(tmp_path, "def test_unrelated(): pass\n", {
         "tests/test_lister.py": "import os\n\n\ndef test_lists():\n    assert os.listdir('docs')\n",

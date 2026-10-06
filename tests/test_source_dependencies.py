@@ -825,6 +825,21 @@ def test_a_string_path_names_the_directory_an_enumeration_reads(tmp_path, source
 
 
 @pytest.mark.parametrize("source", [
+    # A custom ``walk`` is recognized by its name alone; its string argument may
+    # not be a path at all, so resolving it must ADD an edge and never replace the
+    # unknown-loader flag a module that can execute source already had.
+    "def walk(mode):\n    return mode\n\n\ndef f():\n    exec('pass')\n    return walk('mode')\n",
+    "import os\n\n\ndef f():\n    exec('pass')\n    return os.listdir('mode')\n",
+    "from os import walk\n\n\ndef f():\n    exec('pass')\n    return list(walk('mode'))\n",
+], ids=["custom-walk", "os-listdir", "from-import-walk"])
+def test_a_string_base_adds_an_edge_without_dropping_the_unknown_loader_flag(tmp_path, source):
+    (tmp_path / "mode").mkdir()
+    found, unknown, unplaced = _scan_full(source, tmp_path)
+    assert tmp_path / "mode" in found, (found, unknown, unplaced)
+    assert unknown, (found, unknown, unplaced)
+
+
+@pytest.mark.parametrize("source", [
     "import os\nx = os.listdir('/etc')\n",
     "import os\nx = os.listdir('../outside')\n",
 ], ids=["absolute", "escaping"])
