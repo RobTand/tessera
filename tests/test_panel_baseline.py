@@ -29,10 +29,17 @@ from pathlib import Path
 
 import pytest
 
+import box_artifacts
+
 from tessera.serving import timing_panel as tp
 
-BEFORE = Path("/mnt/shared/tessera-runs/pact-tradeoff-20260927/full/bench_linears.json")
-AFTER = Path("/mnt/shared/tessera-measurements/kernel-640-pact-bench/bench-after-20260928T092811Z/bench_linears.json")
+#: The preserved #685 tables, addressed through the box-artifact roots that
+#: own them (tests/box_artifacts.py): a box without the tree skips with the
+#: root, the variable and the path named, instead of a literal only one
+#: machine resolves.
+BEFORE = ("shared_runs", "pact-tradeoff-20260927", "full", "bench_linears.json")
+AFTER = ("measurements", "kernel-640-pact-bench",
+         "bench-after-20260928T092811Z", "bench_linears.json")
 #: The digests the #688 handoff comment records for these two tables; the
 #: comparator pins nothing by itself, the caller pins and the receipt records.
 BEFORE_SHA256 = "9071f5146da3d7a3891b14ab980e3637a718b5436126fa337ab0ec330c14de69"
@@ -41,9 +48,10 @@ AFTER_SHA256 = "4d51fbe9c5113e0d1211c0b1f603a941e518bcfc8e6a95922281d3307f61bc2f
 FOUR_GROUPS = {"experts.T8", "experts.T16", "rate.experts.E4M3_R896", "experts.T4"}
 
 
-def _present(path: Path) -> Path:
-    if not path.is_file():
-        pytest.skip(f"preserved #685 baseline table absent: {path}")
+def _present(artifact) -> Path:
+    path = box_artifacts.path(*artifact)
+    if path is None or not path.is_file():
+        pytest.skip(box_artifacts.reason(artifact[0], path))
     return path
 
 
@@ -91,7 +99,7 @@ def test_compares_the_four_documented_groups_at_the_requested_m_values():
                                 grid=t8["info"]["grid"], q256=(1024, 1024),
                                 rank_local_shape=((2048, 4096), (4096, 1024)), m=m,
                                 median_ms=t8["timings"][str(m)]["median_ms"], samples_n=30))
-    receipt = pb.compare(AFTER.read_bytes(), rows, baseline_sha256=AFTER_SHA256)
+    receipt = pb.compare(_present(AFTER).read_bytes(), rows, baseline_sha256=AFTER_SHA256)
     assert receipt["schema"] == pb.SCHEMA
     assert receipt["baseline"]["sha256"] == AFTER_SHA256
     assert receipt["bench_rule"]["proven_reproduction"] is True
@@ -112,7 +120,7 @@ def test_a_median_outside_the_recorded_band_is_a_named_gap():
                       family=t4["info"]["scheme_family"], grid=t4["info"]["grid"],
                       q256=(896, 896), rank_local_shape=((2048, 4096), (4096, 1024)),
                       m=512, median_ms=band["p75_ms"] * 1.001, samples_n=30)
-    receipt = pb.compare(AFTER.read_bytes(), [row], baseline_sha256=AFTER_SHA256)
+    receipt = pb.compare(_present(AFTER).read_bytes(), [row], baseline_sha256=AFTER_SHA256)
     verdict = receipt["groups"]["experts.T4"]["512"]
     assert verdict["verdict"] == "gap"
     assert verdict["recorded"]["p75_ms"] == band["p75_ms"]
@@ -129,7 +137,7 @@ def test_identity_mismatch_never_compares_numbers():
                       family=t8["info"]["scheme_family"], grid=t8["info"]["grid"],
                       q256=(1024, 1024), rank_local_shape=((2048, 4096), (4096, 512)),
                       m=512, median_ms=t8["timings"]["512"]["median_ms"], samples_n=30)
-    receipt = pb.compare(AFTER.read_bytes(), [row], baseline_sha256=AFTER_SHA256)
+    receipt = pb.compare(_present(AFTER).read_bytes(), [row], baseline_sha256=AFTER_SHA256)
     verdict = receipt["groups"]["experts.T8"]["512"]
     assert verdict["verdict"] == "identity_mismatch"
     assert "4096" in verdict["reason"] and verdict.get("new", {}).get("median_ms") is None
@@ -139,7 +147,7 @@ def test_wrong_baseline_bytes_refuse_against_a_pinned_digest():
     from tessera.serving import panel_baseline as pb
     doc = json.loads(_present(AFTER).read_bytes())
     with pytest.raises(ValueError, match="pinned baseline digest"):
-        pb.compare(AFTER.read_bytes(), [], baseline_sha256="0" * 64)
+        pb.compare(_present(AFTER).read_bytes(), [], baseline_sha256="0" * 64)
 
 
 def test_panel_rows_project_from_a_validated_dense_panel(tmp_path):
@@ -168,7 +176,7 @@ def test_panel_rows_project_from_a_validated_dense_panel(tmp_path):
     assert row["m"] == 512 and row["median_ms"] == 2.5
     # ... and the dense row matches no routed #685 group, by name.
     doc = json.loads(_present(AFTER).read_bytes())
-    receipt = pb.compare(AFTER.read_bytes(), rows, baseline_sha256=AFTER_SHA256)
+    receipt = pb.compare(_present(AFTER).read_bytes(), rows, baseline_sha256=AFTER_SHA256)
     for selector in FOUR_GROUPS:
         assert all(v["verdict"] == "no_panel_row" for v in receipt["groups"][selector].values())
 
