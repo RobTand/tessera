@@ -488,6 +488,10 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
             atomic_json(rdv / f"both-claimed-rank{owned['rank']}.json", event)
             print(json.dumps(event, sort_keys=True), flush=True)
         for arm in arms:
+            if config.get("window_mode") == recipe.DETERMINISM_MODE:
+                from eager_determinism import NAMES, require_deterministic_off
+                if arm["arm"] in NAMES[2:]:
+                    require_deterministic_off(rdv)  # before either local rank starts a lever server
             current = arm
             meeting.check()
             envelope.remaining()
@@ -519,7 +523,8 @@ def run_rank(config, owned, queue, rdv, arms, adapter, envelope, *, poll_seconds
                     envelope.remaining(); meeting.check(); adapter.tick(); time.sleep(poll_seconds)
                 finished = meeting.checked(rdv / f"{stage}-probes-rank{probe_rank}.json", probe_rank)
                 if finished["returncode"] != 0: raise Refused("head probe failed")
-            if config.get("window_mode") in recipe.BENCHMARK_PAIRS and isinstance(adapter, LocalArm):
+            if (config.get("window_mode") in recipe.BENCHMARK_PAIRS and
+                    config.get("window_mode") != recipe.DETERMINISM_MODE and isinstance(adapter, LocalArm)):
                 profile = adapter.verify_profiles(arm, finished)
                 meeting.publish(stage + "-verified", profile=profile)
                 meeting.wait(stage + "-verified", tick=adapter.tick)

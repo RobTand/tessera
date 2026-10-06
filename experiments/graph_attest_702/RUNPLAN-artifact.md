@@ -546,3 +546,60 @@ CPU failing-before control: action `f585e74f487a11271d07a2ca7d88a2960b1b6cb37ad5
 ran5 tests:4 new named-mode controls failed,1 legacy refusal passed;0 skips,
 torch2.11.0+cpu/noCUDA. Passing controls and actual model evidence are separate
 records, not asserted by this source/documentation change.
+
+## Seeded L2048 OFF/OFF investigation (2026-10-06, Refs #931, #803, #739)
+
+This is a separate investigation scope, not a relaxed ship comparison:
+`WINDOW_MODE=investigate-eager-determinism-2048` selects
+`plan-eager-determinism-2048.txt`. The original `ship-eager-levers-4096`
+continues to require OFF then at least one lever ON and all 33 responses.
+The earlier failed combined pair remains failed and is not repeated here.
+
+The dedicated `seeded_control_client.py` preserves the October 5 prompt order,
+stream options, temperature zero, 128 completions and ignored end-of-sequence.
+Only L2048 at concurrency one is selected, with the original ten timed trials
+plus one warmup: eleven full responses per block rather than thirty-three.
+Server initialization seed zero is an explicit `vllm serve --seed 0` input on
+both ranks; request seeds are explicitly 0 through 10 in matching trial order.
+The old client did not send seeds and remains read-only. The new protocol is
+`tessera.eager_determinism_protocol.v1`; client seed arguments are required.
+Request payloads, prompt hashes, trial and slot identities, complete streaming
+choices, final usage, full decoded text, length finish and their hashes are
+retained. Token IDs and log probabilities are retained if the API already
+returns them; unreturned token IDs, logits and effective internal seeds are
+not inferred. This is not a teacher-forced quality measurement.
+
+`control_off_first` and `control_off_restart` each start fresh containers on
+both ranks, with all three levers OFF. Both ranks acknowledge owned cleanup
+before the next arm. OFF/OFF output mismatch writes its comparison, reports
+SERVING NONDETERMINISM, and stops without any lever launch. Before either rank
+starts a lever server, the owner revalidates the full raw OFF populations and
+their normalized records rather than trusting a success label. Only complete
+equality permits `control_decode_once`, `control_kda_split`, and
+`control_piece_major`. Each enables only its named flag and restarts both
+servers. Single-lever differences are retained without skipping later singles.
+Matching singles do not explain a combined interaction or authorize adoption.
+Dense/shared decode-once is the existing at-load path, not routed per-chunk
+decoding. No shader, kernel, wire, encoder, defaults or runtime pin changes.
+
+The normal-priority-zero native gang is not published until the parent has
+the actual D42 Stage One claim/terminal/owned-release handoff or an explicit
+superseding CEO release. There is no old clock fallback. Preserve the existing
+two-rank topology, maximum batched tokens 4096, maximum sequence count one,
+maximum length 8448, resident serving, socket fabric, speculative token one,
+draft parallelism two, fp8_ds_mla KV with two GiB per rank, CPU caps 8/6, host
+cap 104 GiB and GPU subset 102 GiB. The 107 GiB start gate, bounded 900-second
+headroom wait and one-Hertz strictly-below-two-GiB coupled TERM/KILL guard
+with ten-second kill grace are unchanged. Published native driver, completion
+client, broker ownership and independent physical cleanup remain the owners.
+
+Before changed GPU invocation, run the same entry point through PrismaBuild
+on x86 with `--dry-run --preflight-output <fresh JSON>`. It imports the real
+client and frozen generation validator, parses actual seed arguments, validates
+eleven L2048 token-ID prompts and reads at most 64 bytes of every artifact
+file, plus the real model configuration and runtime contract. No full model
+copy or body rehash is performed. This proves CPU argument/input readiness
+only. Parent and independent exact-head code review precede changed GPU work.
+This correctness investigation has no profiling or energy instrument and makes
+no improvement, quality, ship-gate, adoption or serving-pin claim.
+

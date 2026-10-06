@@ -14,6 +14,7 @@ import time
 import uuid
 
 from managed_window import Refused, atomic_json
+from eager_determinism import MODE as DETERMINISM_MODE, NAMES as CONTROL_NAMES
 SHARED_ROOT = Path("/mnt/shared")
 PQ_PIN_COMMIT = "e36e60b77b3d2ab0c5265272515958a0cb67d32b"
 
@@ -27,7 +28,8 @@ LEVER_VALUES = {"TESSERA_E4M3_DECODE_ONCE": ("0", "1"),
 PAIRS = {MODE: [("eager2048", "2048"), ("eager4096", "4096")],
          SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")],
          GRAPH_SHIP_MODE: [("graph2048_off", "2048"), ("graph2048_on", "2048")],
-         EAGER_LEVER_MODE: [("eager4096_off", "4096"), ("eager4096_on", "4096")]}
+         EAGER_LEVER_MODE: [("eager4096_off", "4096"), ("eager4096_on", "4096")],
+         DETERMINISM_MODE: [(name, "4096") for name in CONTROL_NAMES]}
 
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
 CONTRACT_SHA = "47f180efaf97faa5c411df5d48f9da7dff4b9c9fc0c3ddbf9f815bcd4d0aed78"
@@ -44,6 +46,8 @@ MODEL = "glm53-artifact"
 BASE = "http://10.100.96.2:8142"
 
 def pair_refusal(mode):
+    if mode == DETERMINISM_MODE:
+        return "Seeded L2048 investigation requires two OFF restarts followed by decode-once, KDA split and piece-major singly"
     if mode == MODE:
         return "Window4 is exactly eager2048/2048 then eager4096/4096"
     if mode == SHIP_MODE:
@@ -202,6 +206,9 @@ def compare_output_hashes(reference, candidate):
 
 
 def probes(adapter, arm, peer):
+    if adapter.config.get("window_mode") == DETERMINISM_MODE:
+        from eager_determinism import probes as control_probes
+        return control_probes(adapter, arm, peer)
     config, name = adapter.config, arm["arm"]
     out = adapter.rdv / "arms" / name
     out.mkdir(parents=True, exist_ok=True)

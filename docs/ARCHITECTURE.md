@@ -1,5 +1,31 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for the issue931 correctness investigation: the separate
+opt-in `WINDOW_MODE=investigate-eager-determinism-2048` uses the existing
+managed rank lifecycle at A8S/socket/TP2/resident/c1 and maximum batched
+tokens 4096. It first restarts both rank servers for two all-OFF blocks.
+Each block uses only the frozen L2048 prompt population: one warmup and ten
+timed requests, 128 completion tokens, temperature zero, ignore end-of-sequence,
+unchanged speculative decoding with one draft token and draft parallelism two.
+The versioned control client sends request seeds 0 through 10; both rank
+server command lines request initialization seed zero. Effective internal
+random state is not exposed by the streaming API and is not claimed observed.
+Full decoded completion text, length termination, usage, prompt hashes and
+trial identities are retained and compared, including the warmup.
+An OFF/OFF difference is classified as serving nondeterminism and refuses
+every lever launch. Only matching OFF blocks permit the three fresh single
+lever blocks: dense/shared decode-once, KDA split, then piece-major, leaving
+the other two flags OFF. This is not a routed per-chunk decode-once claim.
+The native manifest uses normal priority zero; actual D42 Stage One priority
+handoff precedes publication. The driver dry run imports the real client,
+parses its arguments, checks prompt shapes and reads bounded samples from
+every actual artifact input. Existing D30 guards, admission caps, executing
+code reviews, byte integrity and paired-rank comparability remain unchanged.
+There are no correctness-only profiles, energy or speed claims. The existing
+33-output OFF/ON ship comparison and its at-least-one-ON requirement remain
+unchanged; no adoption, quality, shipping or serving-pin admission is granted.
+See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
+
 Re-stamped 2026-10-05 for issue984: opt-in
 `WINDOW_MODE=ship-eager-levers-4096` adds eager4096_off/eager4096_on at the
 same MNBT4096, through the existing pair-table/row validator from issue980.

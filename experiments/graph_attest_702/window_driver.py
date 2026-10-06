@@ -33,8 +33,11 @@ def dry_arm(name: str, env: dict):
     print(f"  both hosts: MemAvailable >= {MEMORY_POLICY['start_gib']} GiB; 1 Hz strict <2 GiB dual-rank abort; native threads=1")
     for rank in (0, 1):
         print(f"  serve rank{rank}: {shlex.join(recipe.serve(config, arm, rank))}")
-    print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
-          "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
+    if config.get("window_mode") == recipe.DETERMINISM_MODE:
+        print("  correctness only: L2048, one warmup plus ten timed requests, request seeds 0..10, server seed 0; fresh rank servers per arm")
+    else:
+        print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
+              "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
 
 
 def rows(root: Path, config: dict, env: dict) -> list[dict]:
@@ -45,7 +48,7 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
                            demand=dict(cpu=8 if rank == 0 else 6, mem_gb=MEMORY_POLICY["host_cap_gib"], gpu=1),
                            gpu_memory_gb=MEMORY_POLICY["gpu_subset_cap_gib"], exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
-                           priority=10, priority_reason=(("Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
+                           priority=0 if config.get("window_mode") == recipe.DETERMINISM_MODE else 10, priority_reason=(("Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
                                                         "Goal: exact reviewed A8S eager pair ") + config["window_mode"]
                                                         if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
                                                         "Goal: full nominated A8 graph control after exact-head review; one paired window at a time"),
@@ -119,13 +122,14 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
     disks = diskcheck(for_model=not role_preflight)
     root.mkdir(parents=True, exist_ok=False)
     (root / "arms").mkdir()
-    if mode in recipe.BENCHMARK_PAIRS:
+    if mode in recipe.BENCHMARK_PAIRS and mode != recipe.DETERMINISM_MODE:
         for arm in arms:
             directory = Path(config["profile_dir"]) / arm["arm"]
             directory.mkdir(parents=True, exist_ok=False)
             directory.chmod(0o777)
     atomic_json(root / "memory-policy.json", MEMORY_POLICY)
     setup = dict(schema=("tessera.ship_graph_window.v1" if mode == recipe.GRAPH_SHIP_MODE else
+                         "tessera.eager_determinism_window.v1" if mode == recipe.DETERMINISM_MODE else
                          "tessera.eager_lever_window.v1" if mode == recipe.EAGER_LEVER_MODE else
                          "tessera.window4_eager_window.v1" if mode in recipe.BENCHMARK_PAIRS else "tessera.graph_control_window.v1"), run_id=uuid.uuid4().hex,
                  config=config, arms=arms, window_seconds=WINDOW_SECONDS, cleanup_seconds=CLEANUP_SECONDS,
@@ -262,6 +266,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("plan", type=Path)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--preflight-output", type=Path, help="with --dry-run: bounded actual-input D38 proof, no submission")
     ap.add_argument("--prepare", type=Path)
     ap.add_argument("--census-key", action="append", default=[], help="current exact campaign769 GPU action key; two keys, no inferred roster")
     ap.add_argument("--prepare-role-preflight", action="store_true", help="prepare CPU role checks, no model output reservation or submission")
@@ -270,6 +275,12 @@ def main():
     ap.add_argument("--reviews", type=Path)
     args = ap.parse_args()
     if args.dry_run:
+        if args.preflight_output:
+            if os.environ.get("WINDOW_MODE") != recipe.DETERMINISM_MODE:
+                raise Refused("input preflight output requires the explicit seeded investigation scope")
+            from eager_determinism import input_preflight
+            config = recipe.inputs(dict(os.environ), live=False)
+            atomic_json(args.preflight_output, input_preflight(config))
         for arm, env in recipe.parse_plan(args.plan):
             print(f"== arm {arm}")
             dry_arm(arm, {**os.environ, **env})
