@@ -20,6 +20,24 @@ cells are remeasured before the next allocation. Untouched rows may inherit
 explicit measurement lineage; this is evidence coverage, not a new identity
 seal, freeze, re-seal ceremony or permission to reuse changed-path timings.
 
+Re-stamped 2026-10-06 for D41 body-aware metadata: new tables use
+`fleet.rung_allowability.v2` and new indexes use
+`fleet.rung_allowability.index.v2`. The same non-serving canonical API
+explicitly reads immutable v1 history with its exact original fused-WINDOW
+semantics. V2 records body, decoder owner and execution scope per actual
+cell, because routed E2M1 sub-cap recipes are TCQ while dense recipes are
+WINDOW. Raw fused WINDOW keeps positive window/stage/slot and exact compiler
+facts. Compact WINDOW and TCQ record an explicitly absent WINDOW word ring,
+not positive placeholders. Native TCQ records real plane shapes/bytes,
+memory/span/arity, history lookup and native block/scale geometry; Triton
+register/spill/shared counts do not become fabricated ELF stack/local bytes.
+Materialized TCQ has a distinct scope and decoded-weight byte contract.
+Unknown bodies/owners or missing facts refuse. Quality, anomaly, paired-mean,
+coverage and adjacent-higher witness rules are unchanged. Current index
+selection advances only after the consumer explicitly supports v2; earlier
+schemas, tables and T8 versions are never rewritten. This metadata correction
+requires no GPU timing rerun and grants no serving/default/pin promotion.
+
 Re-stamped 2026-10-06 for issues #989 and #750: the D41 geometry harness
 also parses the scalar BF16 producer axis at true q256 step one (256–4096).
 Its finite BF16 table follows the exporter's actual 14/15/16-bit window recipe,

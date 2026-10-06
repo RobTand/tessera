@@ -175,17 +175,90 @@ class GeometryHarvest(unittest.TestCase):
 
     def test_actual_adapter_normalization_does_not_require_fused_symbols(self):
         from tessera.alphabet import E2M1_GRID,tuple_grid
-        m=fixture()['rungs'][0]['measurements'][0]
+        m=fixture_v2('tcq','native_tcq')['rungs'][0]['measurements'][0]
+        a=m['geometry']['alignment']
+        a['plane_shapes']['label_lut']=a['plane_shapes'].pop('labels')
+        a['plane_bytes']['label_lut']=a['plane_bytes'].pop('labels')
         head={'kind':'dense','shape':'o_proj','q256':896,'body_kind':'TCQ','window_bits':0}
         cell={'F':{'median_ms':1,'timer':'graph'},'R':{'median_ms':1,'timer':'graph'},
               'ms':1,'bm':64,'kernel_path':'actual_span2','normalized_geometry':m['geometry']}
-        data={'meta':{'pb_action':'actual','statistic':'paired'}}
+        data={'meta':{'pb_action':'actual','statistic':'paired','library':'native_span2'}}
         out=self.harvest.measurement('actual.json',data,head,cell,
             {'cell_id':'dense:o_proj:M1','kernel_kind':'dense','shape_id':'o_proj','M':1},
             'build',4096,4096,tuple_grid(E2M1_GRID,2))
         self.assertEqual(out['measurement_status'],'measured')
-        self.assertIs(out['geometry'],cell['normalized_geometry'])
+        self.assertEqual(out['geometry']['bits_per_256_weight_tile'],cell['normalized_geometry']['bits_per_256_weight_tile'])
+        self.assertEqual(out['geometry']['body_kind'],'tcq')
         self.assertEqual(out['kernel_path'],'actual_span2')
+
+
+
+def fixture_v2(body='window',decoder='fused_window'):
+    t=fixture()
+    t['schema']='fleet.rung_allowability.v2'
+    for row in t['rungs']:
+        g=row['measurements'][0]['geometry']
+        g.update(body_kind=body,decoder_kind=decoder,decoder_owner='tessera.routed_fused',
+                 execution_scope='raw_packed_window',word_ring={'kind':'staged','owner':'tessera.routed_fused'})
+        g['shared_memory']['kind']='used'
+        g['register_pressure']['compiler']='cuda_cuobjdump'
+    if body=='tcq':
+        t['format']='TESSERA_E2M1_K2';t['scope'].update(rung_min=896,rung_max=896)
+        t['rungs']=t['rungs'][:1];t['rungs'][0]['rung']=896
+        g=t['rungs'][0]['measurements'][0]['geometry']
+        g.update(decoder_owner='tessera.kernel_a4',execution_scope='native_tcq_decode_gemm',
+                 word_ring={'kind':'none','owner':'tessera.kernel_a4'})
+        g['decode_width']={'window_bits':0,'word_stages':None,'value_bits':4,'arity':2,
+            'run_widths':[7],'memory':6,'span':2,'history_lookup_bits':7,'label_lut_entries':128,
+            'block_m':64,'block_n':64,'block_k':128,'mma_k':64,'scale_group':16}
+        g['alignment']={'kind':'tcq_planes','owner':'tessera.compact_prep.prepare_span2_compact',
+            'plane_shapes':{'codes':[256],'labels':[128]},'plane_bytes':{'codes':256,'labels':512},
+            'slot_words':None}
+        g['register_pressure']={'compiler':'triton_compiled_kernel','REG':196,'SPILLS':0,
+            'STACK':None,'LOCAL':None,'SHARED':2,'compiler_symbol':'_a4_span2_gemm_kernel'}
+    return t
+
+
+class BodyAwareGrammar(unittest.TestCase):
+    def test_valid_native_tcq_and_explicit_v1_history(self):
+        t=fixture_v2('tcq','native_tcq')
+        self.assertIs(validate_table(t),t)
+        self.assertEqual(admit_rung(t,format=t['format'],kernel_build_id='build',rung=896)['status'],'allow')
+        legacy=fixture();self.assertIs(validate_table(legacy),legacy)
+
+    def test_window_zero_remains_invalid_in_both_versions(self):
+        for t in (fixture(),fixture_v2()):
+            t['rungs'][0]['measurements'][0]['geometry']['decode_width']['window_bits']=0
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_unknown_missing_body_or_owner_refuses(self):
+        for field,value in (('body_kind','unknown'),('body_kind',None),('decoder_owner',None),('word_ring',{})):
+            t=fixture_v2('tcq','native_tcq');g=t['rungs'][0]['measurements'][0]['geometry']
+            if value is None:g.pop(field)
+            else:g[field]=value
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_native_tcq_scope_and_history_are_real_facts(self):
+        for mutate in (lambda g:g.update(execution_scope='raw_packed_window'),
+                       lambda g:g['decode_width'].update(window_bits=14),
+                       lambda g:g['decode_width'].update(history_lookup_bits=6),
+                       lambda g:g['decode_width'].update(label_lut_entries=64),
+                       lambda g:g['alignment'].update(slot_words=8)):
+            t=fixture_v2('tcq','native_tcq');mutate(t['rungs'][0]['measurements'][0]['geometry'])
+            with self.assertRaises(ValueError):validate_table(t)
+
+    def test_v2_witness_preserves_scope_and_finite_paired_mean(self):
+        t=fixture_v2();low,high=t['rungs'];low.update(excluded=True,dominating_rung=769)
+        a=copy.deepcopy(low['measurements'][0]);b=copy.deepcopy(high['measurements'][0])
+        low['dominance_evidence']=[{'cell_id':a['cell_id'],'lower_time_us':a['kernel_time_us'],
+            'higher_time_us':b['kernel_time_us'],'comparison_id':'paired','lower_measurement':a,'higher_measurement':b}]
+        validate_table(t)
+        for mutate in (lambda w:w['geometry'].update(body_kind='tcq'),
+                       lambda w:w['geometry'].update(execution_scope='native_tcq_decode_gemm'),
+                       lambda w:w.update(kernel_time_us=float('nan')),
+                       lambda w:w.update(pass_times_us=[8,8])):
+            bad=copy.deepcopy(t);mutate(bad['rungs'][0]['dominance_evidence'][0]['higher_measurement'])
+            with self.assertRaises(ValueError):validate_table(bad)
 
 
 

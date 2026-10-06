@@ -13,7 +13,7 @@ code has been deleted is not a reproducible result.
 | `loadcost.py`, `bw.py` | `nvfp4-kernel-attestation.md` — decode cost, and the box's achievable bandwidth |
 | `rotfull.py` | `rotation-decision.md` — the full-tensor re-measurement |
 | `tessera_dominated_rungs.py` | `tessera-dominated-rungs-2026-09-02.md` — the dominated-rung table, the accountant-vs-exporter identity, and the both-axes quality leg |
-| `t8r_speed/bench_geometry.py`, `t8r_speed/rung_quality.py`, `t8r_speed/rung_allowability_table.py` | D41 (#989): every scalar q256 rung 768–1152 at M=1/16/2048/4096; forward/reverse CUDA timing includes balanced and existing recorded M2048/M4096 routing, separate CPU actual-expert weight-space quality, and schema/semantic table production; never served KL |
+| `t8r_speed/bench_geometry.py`, `t8r_speed/rung_quality.py`, `t8r_speed/rung_allowability_table.py`, `t8r_speed/rung_campaign.py` | D41 (#989/#750): scalar E4M3 q256 768–1152 and scalar BF16 256–4096 at true step one, M=1/16/2048/4096 and recorded prefill routing; actual BF16 14/15/16-bit compact paths, CPU sampled-expert quality and exact price, normalized family adapters, immutable index-preserving publication, and public PrismaBuild campaign key journals; never served KL or serving admission |
 
 They expect `PYTHONPATH=src` and a writable `TRITON_CACHE_DIR`. They read
 Qwen3.8-27B from the local HF cache and are not hermetic.

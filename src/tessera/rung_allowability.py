@@ -55,10 +55,91 @@ def _cell(cell):
     return tuple(cell[k] for k in ("cell_id", "kernel_kind", "shape_id", "M"))
 
 
+def _geometry_v1(geom):
+    bits = geom["bits_per_256_weight_tile"]
+    decode = geom["decode_width"]
+    rates = decode.get("run_widths")
+    _require(isinstance(rates, list) and rates and all(_integer(v) and v > 0 for v in rates), "decode run widths missing")
+    _require(all(_integer(decode.get(k)) and decode[k] > 0 for k in ("window_bits", "value_bits", "word_stages", "superblock_rows", "k_split")), "decode width fields missing")
+    alignment = geom["alignment"]
+    _require(_integer(alignment.get("slot_words")) and alignment["slot_words"] > 0, "alignment slot missing")
+    for field in ("lane_bits", "lane_ends_on_word", "half_bytes", "half_copy"):
+        _require(isinstance(alignment.get(field), list) and len(alignment[field]) == len(rates), "alignment fields missing")
+    _require(all(_integer(v) and v > 0 for v in alignment["lane_bits"] + alignment["half_bytes"]), "alignment bit/byte widths")
+    _require(all(isinstance(v, bool) for v in alignment["lane_ends_on_word"]) and all(_text(v) for v in alignment["half_copy"]), "alignment facts")
+
+    _require(_integer(bits.get("numerator")) and bits["numerator"] > 0 and _integer(bits.get("denominator")) and bits["denominator"] > 0, "tile-bit rational")
+    sm = geom["shared_memory"]
+    _require(_integer(sm.get("requested_bytes")) and _integer(sm.get("available_bytes")) and 0 < sm["requested_bytes"] <= sm["available_bytes"] and sm.get("fits") is True, "shared-memory fit")
+    reg = geom["register_pressure"]
+    _require(_integer(reg.get("REG")) and reg["REG"] > 0 and all(_integer(reg.get(k)) and reg[k] >= 0 for k in ("STACK", "LOCAL", "SHARED")), "compiler resources missing")
+
+
+def _geometry_v2(geom):
+    """Explicit grammar variants; no absent WINDOW facts become positive numbers."""
+    body,kind=geom.get('body_kind'),geom.get('decoder_kind')
+    owners={'fused_window':('tessera.routed_fused',),'compact_window':('tessera.window_gemm','tessera.window_gemm_grouped'),
+            'native_tcq':('tessera.kernel_a4',),'materialized_tcq':('tessera.unit_artifact.read_unit_artifact',)}
+    scopes={'fused_window':'raw_packed_window','compact_window':'compact_packed_window',
+            'native_tcq':'native_tcq_decode_gemm','materialized_tcq':'materialized_tcq_gemm'}
+    _require(body in ('window','tcq') and kind in owners,'unknown body/decoder')
+    _require((body=='window')==(kind in ('fused_window','compact_window')),'body/decoder disagreement')
+    _require(geom.get('decoder_owner') in owners[kind] and geom.get('execution_scope')==scopes[kind],'decoder owner/execution scope')
+    ring=geom.get('word_ring',{})
+    _require(ring.get('owner')==geom.get('decoder_owner') and ring.get('kind')==('staged' if kind=='fused_window' else 'none'),'word-ring owner/facts')
+    if kind=='fused_window':
+        _geometry_v1(geom)
+        _require(geom['shared_memory'].get('kind')=='used','fused WINDOW needs its shared-memory request')
+        _require(geom['register_pressure'].get('compiler')=='cuda_cuobjdump','fused WINDOW compiler owner')
+        return
+    decode,alignment,sm,reg=(geom[k] for k in ('decode_width','alignment','shared_memory','register_pressure'))
+    rates=decode.get('run_widths')
+    _require(isinstance(rates,list) and rates and all(_integer(r) and r>0 for r in rates),'decode run widths missing')
+    _require(all(_integer(decode.get(k)) and decode[k]>0 for k in ('value_bits','arity')),'decode value width/arity')
+    _require('word_stages' in decode and decode['word_stages'] is None and 'slot_words' in alignment and alignment['slot_words'] is None,'non-ring decoder must declare absent WINDOW stages/slots')
+    if body=='window':
+        _require(_integer(decode.get('window_bits')) and decode['window_bits']>0 and max(rates)<=decode['window_bits'],'WINDOW width')
+        _require(alignment.get('kind')=='column_chunk_words' and alignment.get('owner')=='tessera.kernel_window_gemv.Repacked','compact WINDOW layout owner')
+        _require(alignment.get('word_alignment_bytes')==4 and alignment.get('tile_rows')==512 and _integer(alignment.get('tile_words')) and alignment['tile_words']>0,'compact WINDOW alignment')
+        _require(alignment.get('column_chunk_words')==[16*r for r in rates],'compact WINDOW column chunks')
+        _require(all(_integer(decode.get(k)) and decode[k]>0 for k in ('block_m','block_n','block_k')),'compact WINDOW launch blocks')
+    else:
+        _require(_integer(decode.get('window_bits')) and decode['window_bits']==0,'TCQ has no WINDOW body')
+        _require(_integer(decode.get('memory')) and 0<decode['memory']<=8 and decode.get('span')==2,'TCQ span/history')
+        _require(decode.get('history_lookup_bits')==decode['memory']+1 and decode.get('label_lut_entries')==1<<(decode['memory']+1),'TCQ history lookup facts')
+        _require(max(rates)<=decode['value_bits']*decode['arity']-1,'TCQ code-rate cap')
+        if kind=='native_tcq':
+            _require(decode['arity']==2 and decode['value_bits']==4 and len(rates)==1,'native span-two E2M1 tuple/rate')
+            _require(all(_integer(decode.get(k)) and decode[k]>0 for k in ('block_m','block_n','block_k','mma_k','scale_group')) and decode['mma_k']==64 and decode['scale_group']==16 and decode['block_k']%decode['mma_k']==0,'native TCQ launch geometry')
+            _require(alignment.get('kind')=='tcq_planes' and alignment.get('owner')=='tessera.compact_prep.prepare_span2_compact','TCQ plane owner')
+            shapes,byte_counts=alignment.get('plane_shapes'),alignment.get('plane_bytes')
+            _require(isinstance(shapes,dict) and shapes and isinstance(byte_counts,dict) and set(shapes)==set(byte_counts),'TCQ plane census')
+            for name,shape in shapes.items():
+                _require(_text(name) and isinstance(shape,list) and shape and all(_integer(v) and v>=0 for v in shape),'TCQ plane shape')
+                _require(_integer(byte_counts[name]) and byte_counts[name]>=0 and ((math.prod(shape)==0)==(byte_counts[name]==0)),'TCQ plane bytes')
+        else:
+            _require(alignment.get('kind')=='materialized_weights' and alignment.get('owner')==geom.get('decoder_owner') and alignment.get('dtype')=='bfloat16' and alignment.get('element_bytes')==2,'materialized TCQ weight facts')
+            shape=alignment.get('shape')
+            _require(isinstance(shape,list) and len(shape)==2 and all(_integer(v) and v>0 for v in shape) and alignment.get('bytes')==2*math.prod(shape),'materialized TCQ bytes')
+    requested,available=sm.get('requested_bytes'),sm.get('available_bytes')
+    _require(_integer(available) and available>0 and _integer(requested) and requested<=available and sm.get('fits') is True,'shared-memory fit/facts')
+    _require((sm.get('kind')=='used' and requested>0) or (sm.get('kind')=='none' and requested==0),'explicit shared-memory presence')
+    _require(_integer(reg.get('REG')) and reg['REG']>0,'register pressure missing')
+    if reg.get('compiler')=='triton_compiled_kernel':
+        _require(_integer(reg.get('SPILLS')) and reg['SPILLS']>=0 and _integer(reg.get('SHARED')) and reg['SHARED']==requested and _text(reg.get('compiler_symbol')),'actual Triton compiler resources')
+        _require('STACK' in reg and reg['STACK'] is None and 'LOCAL' in reg and reg['LOCAL'] is None,'Triton does not report CUDA stack/local byte counts')
+    else:
+        _require(reg.get('compiler')=='cuda_cuobjdump' and all(_integer(reg.get(k)) and reg[k]>=0 for k in ('STACK','LOCAL','SHARED')),'actual CUDA compiler resources')
+    bits=geom['bits_per_256_weight_tile']
+    _require(_integer(bits.get('numerator')) and bits['numerator']>0 and _integer(bits.get('denominator')) and bits['denominator']>0,'tile-bit rational')
+
+
+
 def validate_index(index):
-    """Validate fleet.rung_allowability.index.v1; paths are index-root relative."""
-    _structure(index, INDEX_SCHEMA)
-    _require(isinstance(index, dict) and index.get("schema") == "fleet.rung_allowability.index.v1", "index schema")
+    """Validate an explicitly versioned index; paths are index-root relative."""
+    schema=INDEX_SCHEMAS.get(index.get('schema')) if isinstance(index,dict) and _text(index.get('schema')) else None
+    _require(schema is not None,'index schema')
+    _structure(index,schema)
     _require(isinstance(index.get("formats"), dict), "index formats")
     for fmt, entry in index["formats"].items():
         _require(_text(fmt) and isinstance(entry, dict) and isinstance(entry.get("kernel_builds"), dict), "format entry")
@@ -72,14 +153,16 @@ def validate_index(index):
                 _require(isinstance(rec, dict), "version entry")
                 path = rec.get("path")
                 _require(_text(path) and "\\" not in path and not PurePosixPath(path).is_absolute() and all(p not in ("", ".", "..") for p in path.split("/")), "unsafe table path")
-                _require(rec.get("table_schema") == "fleet.rung_allowability.v1" and rec.get("table_status") in ("partial", "complete"), "table schema/status")
+                allowed=('fleet.rung_allowability.v1',) if index['schema']=='fleet.rung_allowability.index.v1' else tuple(TABLE_SCHEMAS)
+                _require(rec.get('table_schema') in allowed and rec.get('table_status') in ('partial','complete'),'table schema/status')
     return index
 
 
 def validate_table(table):
     """Validate published structure and measured-row semantics; invalid data refuses."""
-    _structure(table, TABLE_SCHEMA)
-    _require(isinstance(table, dict) and table.get("schema") == "fleet.rung_allowability.v1", "table schema")
+    schema=TABLE_SCHEMAS.get(table.get('schema')) if isinstance(table,dict) and _text(table.get('schema')) else None
+    _require(schema is not None,'table schema')
+    _structure(table,schema)
     _require(_integer(table.get("table_version")) and table["table_version"] >= 1, "table version")
     _require(table.get("table_status") in ("partial", "complete") and _text(table.get("format")), "table status/format")
     build = table.get("kernel_build", {})
@@ -123,23 +206,10 @@ def validate_table(table):
                 _require(m.get("measurement_build_id") == build["id"], "measurement build scope")
                 geom = m.get("geometry")
                 _require(isinstance(geom, dict) and all(isinstance(geom.get(k), dict) for k in ("bits_per_256_weight_tile", "alignment", "shared_memory", "register_pressure", "decode_width")), "measured geometry missing")
-                bits = geom["bits_per_256_weight_tile"]
-                decode = geom["decode_width"]
-                rates = decode.get("run_widths")
-                _require(isinstance(rates, list) and rates and all(_integer(v) and v > 0 for v in rates), "decode run widths missing")
-                _require(all(_integer(decode.get(k)) and decode[k] > 0 for k in ("window_bits", "value_bits", "word_stages", "superblock_rows", "k_split")), "decode width fields missing")
-                alignment = geom["alignment"]
-                _require(_integer(alignment.get("slot_words")) and alignment["slot_words"] > 0, "alignment slot missing")
-                for field in ("lane_bits", "lane_ends_on_word", "half_bytes", "half_copy"):
-                    _require(isinstance(alignment.get(field), list) and len(alignment[field]) == len(rates), "alignment fields missing")
-                _require(all(_integer(v) and v > 0 for v in alignment["lane_bits"] + alignment["half_bytes"]), "alignment bit/byte widths")
-                _require(all(isinstance(v, bool) for v in alignment["lane_ends_on_word"]) and all(_text(v) for v in alignment["half_copy"]), "alignment facts")
-
-                _require(_integer(bits.get("numerator")) and bits["numerator"] > 0 and _integer(bits.get("denominator")) and bits["denominator"] > 0, "tile-bit rational")
-                sm = geom["shared_memory"]
-                _require(_integer(sm.get("requested_bytes")) and _integer(sm.get("available_bytes")) and 0 < sm["requested_bytes"] <= sm["available_bytes"] and sm.get("fits") is True, "shared-memory fit")
-                reg = geom["register_pressure"]
-                _require(_integer(reg.get("REG")) and reg["REG"] > 0 and all(_integer(reg.get(k)) and reg[k] >= 0 for k in ("STACK", "LOCAL", "SHARED")), "compiler resources missing")
+                if table['schema']=='fleet.rung_allowability.v1':
+                    _geometry_v1(geom)
+                else:
+                    _geometry_v2(geom)
                 _require(isinstance(m.get("pass_times_us"), list) and len(m["pass_times_us"]) == 2 and all(_number(t) and t > 0 for t in m["pass_times_us"]), "paired pass times")
                 _paired_mean_matches(m)
         if row["measurement_status"] == "measured":
@@ -174,7 +244,7 @@ def validate_table(table):
             # paired runs. Its witness is real measured data, not a substituted
             # canonical timing from a different clock window.
             for witness, canonical in ((low, canonical_low), (high, canonical_high)):
-                _structure(witness, TABLE_SCHEMA["$defs"]["measurement"], TABLE_SCHEMA)
+                _structure(witness,schema['$defs']['measurement'],schema)
                 _require(_cell(witness) == _cell(canonical), "dominance witness cell scope")
                 _require(witness["measurement_status"] == "measured" and witness.get("measurement_build_id") == build["id"], "dominance witness build/status")
                 _require(witness["geometry"] == canonical["geometry"] and witness["kernel_path"] == canonical["kernel_path"], "dominance witness kernel/geometry")
@@ -285,4 +355,33 @@ def _structure(value, schema, root=None, path="$ "):
     if "minimum" in schema and isinstance(value, (int, float)) and not isinstance(value, bool):
         _require(_number(value) and value >= schema["minimum"], path + ": schema minimum")
 
+
+
+
+# V1 objects and their strict WINDOW semantics are retained verbatim above.
+# V2 is an explicit new grammar, never a guessed fallback for an old table.
+import copy as _copy
+TABLE_SCHEMA_V2=_copy.deepcopy(TABLE_SCHEMA)
+TABLE_SCHEMA_V2['$id']='fleet.rung_allowability.v2'
+TABLE_SCHEMA_V2['properties']['schema']={'const':'fleet.rung_allowability.v2'}
+_geometry_schema=TABLE_SCHEMA_V2['$defs']['measurement']['properties']['geometry']
+_geometry_schema.update(type='object',required=['bits_per_256_weight_tile','alignment','shared_memory','register_pressure','decode_width'],
+                        properties={name:{'type':['object','null'] if name=='register_pressure' else 'object'} for name in ('bits_per_256_weight_tile','alignment','shared_memory','register_pressure','decode_width')})
+_geometry_schema['required']+=['body_kind','decoder_kind','decoder_owner','execution_scope','word_ring']
+_geometry_schema['properties'].update({
+    'body_kind':{'enum':['window','tcq']},
+    'decoder_kind':{'enum':['fused_window','compact_window','native_tcq','materialized_tcq']},
+    'decoder_owner':{'type':'string','minLength':1},
+    'execution_scope':{'enum':['raw_packed_window','compact_packed_window','native_tcq_decode_gemm','materialized_tcq_gemm']},
+    'word_ring':{'type':'object','required':['kind','owner'],'properties':{'kind':{'enum':['staged','none']},'owner':{'type':'string','minLength':1}}},
+})
+_geometry_schema['allOf']=[{'if':{'properties':{'body_kind':{'const':'window'}}},'then':{'properties':{'decode_width':{'required':['window_bits'],'properties':{'window_bits':{'type':'integer','minimum':1}}}}}},
+    {'if':{'properties':{'body_kind':{'const':'tcq'}}},'then':{'properties':{'decode_width':{'required':['window_bits','memory','span','history_lookup_bits','label_lut_entries'],'properties':{'window_bits':{'const':0}}}}}}]
+INDEX_SCHEMA_V2=_copy.deepcopy(INDEX_SCHEMA)
+INDEX_SCHEMA_V2['$id']='fleet.rung_allowability.index.v2'
+INDEX_SCHEMA_V2['properties']['schema']={'const':'fleet.rung_allowability.index.v2'}
+_version_schema=INDEX_SCHEMA_V2['properties']['formats']['additionalProperties']['properties']['kernel_builds']['additionalProperties']['properties']['versions']['additionalProperties']
+_version_schema['properties']['table_schema']={'enum':['fleet.rung_allowability.v1','fleet.rung_allowability.v2']}
+TABLE_SCHEMAS={'fleet.rung_allowability.v1':TABLE_SCHEMA,'fleet.rung_allowability.v2':TABLE_SCHEMA_V2}
+INDEX_SCHEMAS={'fleet.rung_allowability.index.v1':INDEX_SCHEMA,'fleet.rung_allowability.index.v2':INDEX_SCHEMA_V2}
 

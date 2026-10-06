@@ -420,7 +420,8 @@ class Sweep:
                 "owner_refusal": f"compact_prep intake caps {'routed at 8' if routed else 'dense at 14'} bits per column; direct public compact constructor geometry, not serving intake admission"}
         head["mode" if routed else "shape"] = mode if routed else shape
         def make(m, how):
-            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(f"x:{mode if routed else shape}:{m}:{how}".encode()))
+            seed_key=f"x:{mode}:{m}:{how}" if routed else f"x:{shape}:{m}"
+            g = torch.Generator(device=self.dev).manual_seed(zlib.crc32(seed_key.encode()))
             xrows = m * TOP_K if mode == 2 else m
             x, _scale = self.activation(xrows, cols, g)
             ids, weights = self.routing(m, how) if routed else (None, None)
@@ -782,6 +783,7 @@ def main():
             "inter": INTER, "top_k": TOP_K, "part": args.part, "cases": args.cases, "ms": args.ms,
             "shapes": args.shapes, "recorded": sw.recorded, "library": library,
             "family": rf.LIBRARIES[library][1], "mma_tflops": sw.tflops,
+            "dense_seed_without_routing_suffix": True,
             "kernel_sha": os.environ.get("KERNEL_SHA"), "tessera_head": os.environ.get("TESSERA_HEAD"),
             "image": os.environ.get("ORACLE_IMAGE"), "host": os.environ.get("HOST_NAME"),
             "pb_action": os.environ.get("PB_ACTION_KEY"), "power_source": sw.power.source,

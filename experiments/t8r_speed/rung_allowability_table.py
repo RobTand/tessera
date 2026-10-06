@@ -34,6 +34,60 @@ def resources(usage,head,cell,*,fp8=True):
     return matches[0] if len(matches)==1 else (None,None)
 
 
+def body_geometry(head,cell,geometry,meta,grid):
+    """Normalize actual decoder facts; canonical validation owns their semantics."""
+    import copy
+    g=copy.deepcopy(geometry)
+    recipe=head.get('recipe')
+    body=head.get('body_kind',recipe.get('body') if isinstance(recipe,dict) else None)
+    if body is None and grid.name in ('BF16','E4M3'):
+        from tessera.export import wire_recipe
+        recipe=wire_recipe(grid,head['q256']).to_config()
+        body=recipe['body']
+    body=str(body).lower()
+    compact=bool(cell.get('compiler_resources'))
+    if meta.get('library')=='native_span2':
+        kind,owner,scope='native_tcq','tessera.kernel_a4','native_tcq_decode_gemm'
+    elif compact:
+        kind='compact_window'
+        owner='tessera.window_gemm_grouped' if head['kind']=='routed' else 'tessera.window_gemm'
+        scope='compact_packed_window'
+    else:
+        kind,owner,scope='fused_window','tessera.routed_fused','raw_packed_window'
+    g.update(body_kind=body,decoder_kind=kind,decoder_owner=owner,execution_scope=scope,
+             word_ring={'kind':'staged' if kind=='fused_window' else 'none','owner':owner})
+    if recipe is not None:g['recipe']=recipe
+    d,a,reg=g['decode_width'],g['alignment'],g.get('register_pressure')
+    request=g['shared_memory'].get('requested_bytes')
+    g['shared_memory']['kind']='used' if isinstance(request,int) and request>0 else ('none' if request==0 else 'unmeasured')
+    if kind=='fused_window':
+        if isinstance(reg,dict):reg['compiler']='cuda_cuobjdump'
+        return g
+    d['word_stages']=None
+    a['slot_words']=None
+    if kind=='native_tcq':
+        a.update(kind='tcq_planes',owner='tessera.compact_prep.prepare_span2_compact')
+        d['history_lookup_bits']=d['memory']+1
+        d['label_lut_entries']=a['plane_shapes']['label_lut'][-1]
+    else:
+        resources=cell.get('compiler_resources',{})
+        observed=cell.get('profile',{}).get('top',{})
+        selected=[(name,value) for name,value in resources.items() if any(name in p or p in name for p in observed)]
+        if len(selected)==1:
+            name,res=selected[0]
+            reg={'REG':res.get('REG'),'SPILLS':res.get('spills'),'SHARED':res.get('SHARED'),'compiler_symbol':name}
+            g['register_pressure']=reg
+            for key in ('block_m','block_n','block_k'):
+                d[key]=res.get('launch',{}).get({'block_m':'BM','block_n':'BN','block_k':'BK'}[key])
+        g['alignment']={'kind':'column_chunk_words','owner':'tessera.kernel_window_gemv.Repacked',
+                        'slot_words':None,'word_alignment_bytes':4,'tile_rows':512,
+                        'tile_words':head['tile_words'],'column_chunk_words':[16*r for r in d['run_widths']]}
+    if isinstance(reg,dict):
+        reg.update(compiler='triton_compiled_kernel',STACK=None,LOCAL=None)
+    return g
+
+
+
 def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
     meta=data['meta']
     f,r=cell.get('F',{}),cell.get('R',{})
@@ -81,6 +135,9 @@ def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
               'input_distribution':meta.get('activation_contract'),'epilogue':'SwiGLU clipped at 10' if mode==0 else ('route-weighted BF16 down' if key['kernel_kind']=='routed' else 'BF16 linear output'),
               'path_scope':cell.get('path_scope',head.get('path','raw packed fused')),
               'owner_refusal':head.get('owner_refusal'), 'decode_sources':meta.get('decode_sources')}
+    if head.get('kind')=='dense' and head.get('path')=='compact_dense_folded' and not meta.get('dense_seed_without_routing_suffix'):
+        evidence['paired_seed_contract']=str(evidence['paired_seed_contract'])+'; legacy compact dense seed has :None suffix'
+    geometry=body_geometry(head,cell,geometry,meta,grid)
     if error:evidence['reason']=error
     elif not good:evidence['reason']='missing paired timer, actual compiler resource or launch geometry evidence'
     return {**key,'measurement_status':'measured' if good else ('failed' if error else 'pending'),'kernel_time_us':cell['ms']*1000 if good else None,
@@ -91,6 +148,7 @@ def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
 def merge_index(index, format_name, build_id, version, relative, table):
     """Preserve every immutable version and every other family's entry."""
     validate_index(index)
+    index['schema']='fleet.rung_allowability.index.v2'
     builds=index['formats'].setdefault(format_name, {'kernel_builds':{}})['kernel_builds']
     entry=builds.setdefault(build_id, {'current_version':version, 'versions':{}})
     if str(version) in entry['versions']:
@@ -111,6 +169,7 @@ def main():
     ap.add_argument('--format',default=FORMAT)
     ap.add_argument('--index',help='existing shared index to preserve')
     ap.add_argument('--publish-root',help='publish immutable table and atomically advance merged index')
+    ap.add_argument('--activate-index',action='store_true',help='advance current selection after the consumer supports this explicit schema')
     ap.add_argument('--catalog',help='family owner catalog with exact recipes and concrete path refusals')
     args=ap.parse_args()
     root=Path(args.root)
@@ -216,9 +275,9 @@ def main():
                 if base and m['measurement_status']=='measured':ratios.append({'cell_id':m['cell_id'],'ratio_to_1024':m['kernel_time_us']/base['kernel_time_us'],'receipt':m['evidence']['action_key'],'baseline_receipt':base['evidence']['action_key'],'paired':m['evidence']['comparison_id']==base['evidence']['comparison_id']})
             row['observations'].append({'kind':'beyond_1024_slow_lane','issue':690,'url':'https://github.com/RobTand/tessera/issues/690','blocking':False,'exclusion_basis':False,'ratios':ratios,'missing_baseline':not bool(ratios)})
     rows=list(by_rung.values())
-    table={"schema":"fleet.rung_allowability.v1","table_version":args.version,"table_status":"complete" if all(r["measurement_status"]!="pending" for r in rows) else "partial","format":format_name,"kernel_build":build,"generated_at":datetime.now(timezone.utc).isoformat(),
+    table={"schema":"fleet.rung_allowability.v2","table_version":args.version,"table_status":"complete" if all(r["measurement_status"]!="pending" for r in rows) else "partial","format":format_name,"kernel_build":build,"generated_at":datetime.now(timezone.utc).isoformat(),
            "scope":{"rung_min":lower,"rung_max":upper,"grid_step_q256":1,"grid_owner":meta.get('grid_owner','prismaquant.tessera_formats.realisable_rungs(step_q256=1)'),"required_cells":required,"shapes":[{"shape_id":n,"kernel_kind":k,"rows":r,"columns":c,"mode":mode} for k,n,r,c,mode in SHAPES],"timing_statistic":meta["statistic"],"shape_owner":"bench_rates TP2 shapes; actual GLM config hidden4096, routed inter2048/2, experts288, topk8"},"rungs":rows,"evidence":{"summary":dict(Counter(r["measurement_status"] for r in rows)),"completed_quanta":len(completed),"quality_scope":"fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL","exclusion_review_status":"pending independent review; no defaults promoted"}}
-    table["scope"]["kernel_execution_scope"]=meta.get('kernel_execution_scope', 'rank-local packed fused and actual public compact projections at TP2 dimensions; synthetic packed wires; each cell names its path; serving intake refusals and gates remain independent')
+    table['scope']['kernel_execution_scope']=meta.get('kernel_execution_scope',meta.get('execution_scope','rank-local packed fused and actual public compact projections at TP2 dimensions; synthetic packed wires; each cell names its path; serving intake refusals and gates remain independent'))
     table["evidence"]["quality_summary_file"]=str(root/"quality-summary.json")
     table["evidence"]["exclusion_review_status"]="Candidate proofs are non-blocking proposals only; no exclusions applied before parent and independent review."
     table['evidence']['compiler_resource_lookup_lineage']={'resource_source':'Actual cuobjdump matched to torch.profiler kernel prefixes, or actual Triton CompiledKernel returned by the measured launch','actual_measured_sources':build['metadata']['actual_source_snapshots'],'no_cross_family_inheritance':True}
@@ -241,8 +300,14 @@ def main():
         publication.mkdir(parents=True,exist_ok=True)
         with (publication/'.publication.lock').open('a') as lock:
             fcntl.flock(lock,fcntl.LOCK_EX)
-            current_path=publication/'index.json'
-            current=json.loads(current_path.read_text()) if current_path.exists() else {'schema':'fleet.rung_allowability.index.v1','formats':{}}
+            selected_path=publication/'index.json'
+            current_path=selected_path if args.activate_index else publication/'index.v2-candidate.json'
+            source_path=current_path if current_path.exists() else selected_path
+            current=json.loads(source_path.read_text()) if source_path.exists() else {'schema':'fleet.rung_allowability.index.v2','formats':{}}
+            if args.activate_index and current.get('schema')=='fleet.rung_allowability.index.v1':
+                history=publication/'index.v1-history.json'
+                if not history.exists():
+                    with history.open('x') as stream:json.dump(current,stream,indent=2,allow_nan=False)
             merge_index(current,format_name,build_id,args.version,relative,table)
             destination=publication/relative
             destination.parent.mkdir(parents=True,exist_ok=True)
@@ -252,6 +317,8 @@ def main():
             temporary.replace(current_path)
             index=current
     report={'status':'schema_and_semantic_validation_passed','table_path':relative,'table_status':table['table_status'],'kernel_build_id':build_id,'summary':table['evidence']['summary'],'excluded':[r['rung'] for r in rows if r['excluded']],'action_key':__import__('os').environ.get('PRISMABUILD_ACTION_KEY')}
+    report['cell_summary']=dict(Counter(m['measurement_status'] for row in rows for m in row['measurements']))
+    report['quality_rungs_measured']=sum(row['quality'].get('measurement_status')=='measured' for row in rows)
     (out/'validation.json').write_text(json.dumps(report,indent=2))
     print(json.dumps(report),flush=True)
 
