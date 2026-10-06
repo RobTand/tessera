@@ -90,9 +90,22 @@ __all__ = [
     "prepare_dense_role",
     "superblock_rows",
     "words_by_expert",
+    "routed_class_launch_pair",
 ]
 
 log = logging.getLogger(__name__)
+
+
+def routed_class_launch_pair(library: str) -> tuple[str, str]:
+    """Name the class dispatcher. This identity does not qualify a contract row."""
+    from .serving.telemetry import (DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
+        DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA, DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED)
+
+    return "tessera::routed_window_classes", {
+        "value": DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED,
+        "e4m3": DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
+        "e4m3mma": DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA}[library]
+
 
 #: ``TESSERA_DENSE_FUSED=0`` keeps the Triton ``tessera::window_gemm_dense``
 #: for every dense module; unset or ``1`` takes this kernel's dense identity
@@ -1329,12 +1342,7 @@ class FusedRoutedWindowMoE:
 
     @property
     def launch_pair(self):
-        from .serving.telemetry import (DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
-            DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA, DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED)
-        return "tessera::routed_window_classes", {
-            "value": DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED,
-            "e4m3": DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
-            "e4m3mma": DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA}[self.library]
+        return routed_class_launch_pair(self.library)
 
     @property
     def experts(self):
