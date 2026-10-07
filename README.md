@@ -257,6 +257,9 @@ Padding also rounds the dimension to equal rank cuts. The planner counts padded 
 An absent `storage` uses the tensor shape and data type. Native layouts use the existing `serving_parts` byte accountant.
 Storage kinds `dense_window` and `routed_window` require `family`, `rates`, `window_bits`, and `tile_rows`.
 Dense shapes use `[rows, columns]`. Routed shapes use `[experts, rows, columns]`. Column shards slice the rate array before byte calculation.
+Both layouts use the compact loader row tile size. The planner refuses a different `tile_rows` value before byte calculation.
+The planner also applies the loader window-width and rate checks before byte calculation.
+Native layout checks read loader metadata. They do not load weights or allocate device tensors.
 The routed layout also declares `fused` as a Boolean. This value includes or excludes fused tables and descriptors.
 The `dense_a4` kind requires `rates`, `arity`, `memory`, `half`, and `lut_entries`. It uses the native four-bit dense accountant.
 Native layouts obey the existing window-width bound and the process address limit.

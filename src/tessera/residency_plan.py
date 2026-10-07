@@ -14,7 +14,7 @@ from math import lcm, prod
 import sys
 from pathlib import Path
 
-from .manifest import WINDOW_BITS_MAX
+from .errors import GrammarError
 from .serving_parts import (
     dense_resident_bytes_resident_mode,
     routed_fused_unit_bytes,
@@ -148,9 +148,18 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
         address_bits = (sys.maxsize // DTYPE_BYTES["int32"]).bit_length()
         if storage["memory"] + 1 >= address_bits:
             _refuse("invalid_storage", field + ".memory", f"{field}.memory exceeds the addressable table size")
-    elif storage["window_bits"] > WINDOW_BITS_MAX:
-        _refuse("invalid_storage", field + ".window_bits",
-                f"{field}.window_bits exceeds the wire limit {WINDOW_BITS_MAX}")
+    else:
+        from .kernel_window_gemv import TILE_ROWS
+        from .lane_planes import require_window_geometry
+
+        if storage["tile_rows"] != TILE_ROWS:
+            _refuse("invalid_storage", field + ".tile_rows",
+                    f"{field}.tile_rows must match the compact loader row tile {TILE_ROWS}")
+        try:
+            require_window_geometry(storage["window_bits"], rates)
+        except GrammarError as exc:
+            key = ".rates" if max(rates) > storage["window_bits"] else ".window_bits"
+            _refuse("invalid_storage", field + key, f"{field}{key}: {exc}")
     if kind != "dense_a4" and storage.get("family") not in ("TESSERA_BF16", "TESSERA_FP8"):
         _refuse("invalid_storage", field + ".family", f"{field}.family has no window byte accountant")
     if kind == "routed_window" and type(storage.get("fused")) is not bool:

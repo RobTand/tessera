@@ -105,24 +105,27 @@ def test_dtype_bytes_and_scalar_shape(planner, dtype, width):
 
 
 def test_native_dense_uses_rank_local_padding_and_tables(planner):
+    from tessera.kernel_window_gemv import TILE_ROWS
     storage = {"kind": "dense_window", "family": "TESSERA_FP8", "rates": [4] * 32,
-               "window_bits": 8, "tile_rows": 64}
+               "window_bits": 8, "tile_rows": TILE_ROWS}
     placement = plan(allocation("dense", ranks=(0, 1), shard_axis=0, storage=storage),
-                     capacities=(2064, 2064))
+                     capacities=(9232, 9232))
     report = planner.plan_residency(spec(dense=([64, 32], "bfloat16")), placement)
-    # Each rank has 32 rows, padded to 64. Both row-scale arrays stay resident.
-    expected = 64 * 32 * 4 // 8 + 256 + 256 + 32 * 4 + 16 + 32 * 8 + 32 * 4
+    # Each rank has 32 rows. The compact loader pads these rows to its row tile.
+    expected = TILE_ROWS * 32 * 4 // 8 + 256 + 256 + 32 * 4 + 16 + 32 * 8 + 32 * 4
     assert [r["peak_bytes"] for r in report["ranks"]] == [expected] * 2
+    assert expected == 9232
 
 
 def test_native_routed_slices_rates_in_placement_order(planner):
+    from tessera.kernel_window_gemv import TILE_ROWS
     storage = {"kind": "routed_window", "family": "TESSERA_FP8", "rates": [3] * 32 + [5] * 32,
-               "window_bits": 8, "tile_rows": 64, "fused": True}
+               "window_bits": 8, "tile_rows": TILE_ROWS, "fused": True}
     placement = plan(allocation("experts", ranks=(1, 0), shard_axis=2, storage=storage),
-                     capacities=(10000, 10000))
+                     capacities=(23800, 15608))
     report = planner.plan_residency(spec(experts=([2, 64, 64], "bfloat16")), placement)
     def expected(rate):
-        unit = 64 * 32 * rate // 8 + 256 + 256 + 64 * 4 + 16 + 32 * 8 + 16
+        unit = TILE_ROWS * 32 * rate // 8 + 256 + 256 + 64 * 4 + 16 + 32 * 8 + 16
         fused = 2 * 256 + 4 * 8 + 4 * 12
         return 2 * (unit + fused) + 8 * (2 + 1)
     assert [r["peak_bytes"] for r in report["ranks"]] == [expected(5), expected(3)]
@@ -201,8 +204,9 @@ def test_cli_fit_and_capacity_refusal(planner, tmp_path):
 @pytest.mark.parametrize("kind", ["dense_window", "dense_a4"])
 def test_oversized_native_table_refuses_by_name(planner, kind):
     from tessera.manifest import WINDOW_BITS_MAX
+    from tessera.kernel_window_gemv import TILE_ROWS
     storage = ({"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
-                "window_bits": WINDOW_BITS_MAX + 1, "tile_rows": 64}
+                "window_bits": WINDOW_BITS_MAX + 1, "tile_rows": TILE_ROWS}
                if kind == "dense_window" else
                {"kind": kind, "rates": [2] * 32, "arity": 2,
                 "memory": 10**100, "half": 16, "lut_entries": 16})
@@ -217,4 +221,57 @@ def test_import_needs_no_tensor_runtime(planner):
     result = subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": "src"},
                             text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+
+@pytest.mark.parametrize("kind", ["dense_window", "routed_window"])
+@pytest.mark.parametrize("tile_rows", [64, 1024])
+def test_native_tile_geometry_refuses_before_pricing(planner, kind, tile_rows):
+    shape = [64, 32] if kind == "dense_window" else [2, 64, 32]
+    storage = {"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
+               "window_bits": 8, "tile_rows": tile_rows}
+    if kind == "routed_window":
+        storage["fused"] = False
+    with pytest.raises(planner.ResidencyRefusal) as caught:
+        planner.plan_residency(spec(x=(shape, "bfloat16")),
+                              plan(allocation("x", storage=storage), capacities=(100000,)))
+    reason = caught.value.report["reasons"][0]
+    assert reason["code"] == "invalid_storage"
+    assert reason["field"].endswith(".tile_rows")
+
+
+def test_routed_rate_wider_than_window_refuses(planner):
+    from tessera.kernel_window_gemv import TILE_ROWS
+    storage = {"kind": "routed_window", "family": "TESSERA_FP8", "rates": [5] * 32,
+               "window_bits": 4, "tile_rows": TILE_ROWS, "fused": False}
+    with pytest.raises(planner.ResidencyRefusal) as caught:
+        planner.plan_residency(spec(x=([2, 64, 32], "bfloat16")),
+                              plan(allocation("x", storage=storage), capacities=(100000,)))
+    reason = caught.value.report["reasons"][0]
+    assert reason["code"] == "invalid_storage"
+    assert reason["field"].endswith(".rates")
+    assert "5" in reason["message"] and "4-bit window" in reason["message"]
+
+
+
+@pytest.mark.parametrize("rows,expected", [(31, 9224), (512, 13072), (513, 21272)])
+def test_dense_row_padding_matches_loader_tiles(planner, rows, expected):
+    from tessera.kernel_window_gemv import TILE_ROWS
+    storage = {"kind": "dense_window", "family": "TESSERA_FP8", "rates": [4] * 32,
+               "window_bits": 8, "tile_rows": TILE_ROWS}
+    report = planner.plan_residency(spec(x=([rows, 32], "bfloat16")),
+                                    plan(allocation("x", storage=storage), capacities=(expected,)))
+    assert report["ranks"][0]["peak_bytes"] == expected
+
+
+def test_dense_loader_padding_refuses_the_old_small_capacity(planner):
+    from tessera.kernel_window_gemv import TILE_ROWS
+    storage = {"kind": "dense_window", "family": "TESSERA_FP8", "rates": [4] * 32,
+               "window_bits": 8, "tile_rows": TILE_ROWS}
+    with pytest.raises(planner.ResidencyRefusal) as caught:
+        planner.plan_residency(spec(x=([64, 32], "bfloat16")),
+                              plan(allocation("x", ranks=(0, 1), shard_axis=0, storage=storage),
+                                   capacities=(2064, 2064)))
+    assert [rank["peak_bytes"] for rank in caught.value.report["ranks"]] == [9232, 9232]
+    assert [reason["excess_bytes"] for reason in caught.value.report["reasons"]] == [7168, 7168]
 
