@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — remove a redundant BF16 coverage assertion
+
+Keep the direct BF16 cell withdrawal check. Remove the empty-loop assertion
+that follows it. Clarify that the rung rule describes capability, not
+served-cell attestation. No product code or numerical expectation changes.
+
 ## 2026-10-07 — require the real vLLM configuration module in hash tests
 
 Check the configuration module before tests call its runtime API. A root

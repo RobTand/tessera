@@ -75,11 +75,12 @@ BF16 = "TESSERA_BF16_K1"
 
 
 def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
-    """Contract v51: Tessera-16's rule attests every one-run rate 1..14 and
-    every adjacent pair, the rates the value library's dense launch reads,
-    over 256..3584.  The range stops where the wire does: above rate 14 the
-    exporter widens the window table to the rate, so 3585 would be cut on
-    another wire (and rates 15 and 16 are excluded by geometry)."""
+    """The BF16 rule admits dense rates 1..14 and each adjacent pair.
+
+    The range covers 256..3584. Above rate 14, the exporter widens the
+    window table. Rung 3585 therefore requires another wire. Geometry
+    excludes rates 15 and 16. This rule is not a served-cell attestation.
+    """
     row = _row(contract, BF16)
     rule = row["allowable_rungs"]
     assert rule["rule"] == "window_rate_set" and rule["code_arity"] == 1
@@ -94,11 +95,11 @@ def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
 
 
 def test_bf16_rungs_are_admitted_by_the_rule_but_covered_by_no_cell(contract):
-    """The rule is family-wide; coverage is per cell.  Contract v59
-    withdraws every BF16 cell, so the rule still admits 256..3584 and no
-    cell covers any of it: a rung the rule admits is covered only by a
-    cell of a structure whose census reached its table, and BF16
-    publishes no cell."""
+    """The rule admits each supported BF16 rung.
+
+    Contract v59 withdraws every BF16 cell. A rung has no serving coverage
+    until a cell qualifies its structure and run table.
+    """
     row = _row(contract, BF16)
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
@@ -109,8 +110,6 @@ def test_bf16_rungs_are_admitted_by_the_rule_but_covered_by_no_cell(contract):
     assert [q for q in range(256, 4097) if rung_allowable(row, q)] == list(range(256, 3585))
     cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == BF16]
     assert cells == []
-    assert [q for q in range(256, 4097)
-            if any(cell_covers_rung(cell, q, row) for cell in cells)] == []
 
 
 def test_a_rung_resolves_to_its_run_table():
