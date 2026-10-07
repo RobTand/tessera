@@ -18,6 +18,8 @@ def fixture_report():
             "properties": {name: {"status": "pass", "cases": 1} for name in PROPERTIES},
             "contract": {"alignment_bits_min": 36, "atom_summands": 65,
                          "scaled_product_error": "0", "atom_error": "(65*2^-35+2^-23)*S"},
+            "output_boundaries": {name: {"status": "pass", "cases": 1} for name in ("float32_multiply", "bfloat16_conversion")},
+            "physical_devices": ["fixture-device"],
             "arithmetic_qualified": False,
             "reviews": {"kernels_parent": False, "independent": False}}
 
@@ -27,12 +29,12 @@ def test_each_failed_property_refuses_the_named_device(property_name):
     report = fixture_report()
     report["properties"][property_name]["status"] = "fail"
     with pytest.raises(FP4QualificationError, match=f"T4 refused on CPU test fixture: required probe {property_name}"):
-        require_t4_device_qualification(report, device="CPU test fixture")
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands")
 
 
 def test_unreviewed_native_results_do_not_qualify():
     with pytest.raises(FP4QualificationError, match="required reviews"):
-        require_t4_device_qualification(fixture_report(), device="CPU test fixture")
+        require_t4_device_qualification(fixture_report(), device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands")
 
 
 def test_empty_population_does_not_establish_a_property():
@@ -102,3 +104,35 @@ def test_independent_interpreter_and_numerical_negative_control():
     assert rows[0]["failures"][0]["error"] == "1"
     with pytest.raises(FP4QualificationError, match="product_exactness"):
         require_probe_contract(bad, device="CPU test fixture")
+
+
+@pytest.mark.parametrize("name,options", [("float32_multiply", {"output_scale": 2}), ("bfloat16_conversion", {"output_dtype": "bfloat16"})])
+def test_failed_boundary_refuses_only_when_the_operation_is_present(name, options):
+    report = fixture_report()
+    report["output_boundaries"][name]["status"] = "fail"
+    derive_attested_fp4_bound(1, k=64, report=report, device="CPU test fixture")
+    with pytest.raises(FP4QualificationError, match=f"required output boundary {name}"):
+        derive_attested_fp4_bound(1, k=64, report=report, device="CPU test fixture", **options)
+
+
+def test_an_unrepresented_output_scale_refuses():
+    with pytest.raises(ValueError, match="already represented float32"):
+        derive_attested_fp4_bound(1, k=64, report=fixture_report(), device="CPU test fixture", output_scale=Fraction(1, 3))
+
+
+def test_an_approved_contract_cannot_transfer_to_an_untested_physical_device():
+    report = fixture_report()
+    report["arithmetic_qualified"] = True
+    report["reviews"] = {"kernels_parent": True, "independent": True}
+    with pytest.raises(FP4QualificationError, match="no required native probes cover physical device untested-device"):
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="untested-device", comparison="exact_represented_operands")
+    assert require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands") == report["contract"]
+
+
+@pytest.mark.parametrize("comparison", ["float32_stock_reference", "complete_fused_epilogue", "tp2_arithmetic"])
+def test_uncharacterized_complete_comparisons_refuse_even_after_approval(comparison):
+    report = fixture_report()
+    report["arithmetic_qualified"] = True
+    report["reviews"] = {"kernels_parent": True, "independent": True}
+    with pytest.raises(FP4QualificationError, match="needs uncharacterized normalization, library, or fused epilogue terms"):
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison=comparison)

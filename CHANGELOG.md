@@ -6,6 +6,8 @@ Add exact native probes for products, scale order, alignment width,
 rounding, subnormal values, and the intermediate domain. Retain rational
 references and expected alternative models beside every native output.
 Add a named-device refusal and an atom-derived diagnostic bound.
+Probe the actual scalar multiplication and bfloat16 output conversion separately.
+Refuse transfer to an untested physical device and uncharacterized complete comparisons.
 Keep arithmetic qualification false before both required reviews.
 Preserve the conditional source, thresholds, original failures, and measurement paths.
 

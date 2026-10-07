@@ -47,13 +47,23 @@ def require_probe_contract(report, *, device):
     return contract
 
 
-def require_t4_device_qualification(report, *, device):
-    """Keep the device gate closed until the two required reviews pass."""
+def require_t4_device_qualification(report, *, device, physical_device, comparison):
+    """Qualify only the explicit represented-operand primitive comparison."""
     contract = require_probe_contract(report, device=device)
+    if comparison != "exact_represented_operands":
+        raise FP4QualificationError(f"T4 refused on {device}: comparison {comparison} needs uncharacterized normalization, library, or fused epilogue terms")
     reviews = report.get("reviews", {})
     if report.get("arithmetic_qualified") is not True or reviews.get("kernels_parent") is not True or reviews.get("independent") is not True:
         raise FP4QualificationError(f"T4 refused on {device}: arithmetic qualification awaits the required reviews")
+    if not isinstance(physical_device, str) or physical_device not in report.get("physical_devices", []):
+        raise FP4QualificationError(f"T4 refused on {device}: no required native probes cover physical device {physical_device}")
     return contract
+
+
+def _require_output_boundary(report, device, name):
+    result = report.get("output_boundaries", {}).get(name, {})
+    if result.get("status") != "pass" or type(result.get("cases")) is not int or result["cases"] < 1:
+        raise FP4QualificationError(f"T4 refused on {device}: required output boundary {name} failed or is absent")
 
 
 def derive_attested_fp4_bound(magnitude, *, k, report, device, output_scale=None, output_dtype="float32"):
@@ -83,6 +93,7 @@ def derive_attested_fp4_bound(magnitude, *, k, report, device, output_scale=None
     error = (factor - 1) * m
     boundary = Fraction(0)
     if output_scale is not None:
+        _require_output_boundary(report, device, "float32_multiply")
         if isinstance(output_scale, bool) or not isinstance(output_scale, (int, float, Fraction)):
             raise ValueError("output_scale must be an already represented finite float32 value")
         if isinstance(output_scale, float) and not math.isfinite(output_scale):
@@ -104,6 +115,7 @@ def derive_attested_fp4_bound(magnitude, *, k, report, device, output_scale=None
         error = abs(scale) * error + boundary
         m = abs(scale) * m
     if output_dtype == "bfloat16":
+        _require_output_boundary(report, device, "bfloat16_conversion")
         # This is the actual fused output boundary, not an input quantizer term.
         bf16_max = Fraction(255) * (1 << 120)
         if m + error > bf16_max:

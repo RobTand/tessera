@@ -297,6 +297,7 @@ def analyze(population, native, device):
               "layout_failures": layout_failures, "properties": properties,
               "alignment_candidates": sorted(alignment_candidates), "rounding_candidates": sorted(rounding_candidates),
               "contract": {"alignment_bits_min": 36, "atom_summands": 65, "scaled_product_error": "0", "atom_error": "(65*2^-35+2^-23)*S"},
+              "physical_devices": [os.environ["HOST_NAME"] + ":cuda:0"] if os.environ.get("HOST_NAME") else [],
               "arithmetic_qualified": False, "reviews": {"kernels_parent": False, "independent": False},
               "scope": "targeted finite implementation attestation, not universal hardware proof",
               "unsupported": ["other instructions or devices", "scale NaN code 127", "nonzero initial accumulator in the derived bound", "overflow", "uncharacterized library reference GEMM", "activation quantization or division", "SwiGLU, router weights, split sums, or token sums"]}
@@ -319,6 +320,11 @@ def main(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     cpu_controls()
+    if args.output_boundaries:
+        if not args.native_attestation:
+            raise ValueError("output boundary probes require --native-attestation")
+        from fp4_output_boundaries import run
+        return run(args, sys.modules[__name__])
     population = cases()
     inputs = b"".join(map(pack, population))
     input_path = out / "inputs.bin"
@@ -342,7 +348,7 @@ def main(args):
             raise AssertionError("negative control received a native contract")
         bound = derive_attested_fp4_bound(F(64), k=64, report=report, device="CPU reference control")
         try:
-            require_t4_device_qualification(report, device="CPU reference control")
+            require_t4_device_qualification(report, device="CPU reference control", physical_device="CPU reference control", comparison="exact_represented_operands")
         except FP4QualificationError as exc:
             review_refusal = str(exc)
         else:
@@ -408,7 +414,7 @@ def main(args):
     except FP4QualificationError as exc:
         failures.append(str(exc))
     try:
-        require_t4_device_qualification(report, device=device["device"])
+        require_t4_device_qualification(report, device=device["device"], physical_device=os.environ.get("HOST_NAME", "unidentified") + ":cuda:0", comparison="exact_represented_operands")
     except FP4QualificationError as exc:
         report["qualification_refusal"] = str(exc)
     else:
@@ -449,5 +455,7 @@ if __name__ == "__main__":
     parser.add_argument("--out", required=True)
     parser.add_argument("--cpu-preflight", action="store_true")
     parser.add_argument("--negative-control", action="store_true")
+    parser.add_argument("--output-boundaries", action="store_true")
+    parser.add_argument("--native-attestation")
     parser.add_argument("--guarded-child", action="store_true", help=argparse.SUPPRESS)
     raise SystemExit(guarded(parser.parse_args()))

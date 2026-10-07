@@ -1949,3 +1949,114 @@ Each action retains fresh disk admission, declared resources, the memory guard, 
 Short GPU actions use ordinary exclusive admission at priority zero.
 They request no quiet-host or measurement-class certificate.
 The report adds no seal, source-identity refusal, serving default, pin, artifact change, or row admission.
+
+
+#### Complete comparison and unsupported compositions
+
+The native primitive bound does not replace the existing stock-reference comparison.
+Let Q be the exact dot on the unnormalized represented code and scale values.
+Let `r*=g/gs` be the exact global ratio, and let `rN` be its stored single-precision value.
+Let X and W be the exact normalized operands.
+Let `Xh` and `Wh` be the actual stock-reference operands after their scalar operations.
+Let R be the actual library multiplication result.
+
+The complete comparison requires these terms:
+
+`E_matrix = [(1+eta)^(K/64)-1]*M_raw`.
+
+`E_native_output = |rN|*E_matrix + 2^-24*|rN|*(M_raw+E_matrix) + 2^-150`.
+
+`E_ratio = |rN-r*|*M_raw`.
+
+`E_operands >= sum_k (|Xh-X|*|W| + |X|*|Wh-W| + |Xh-X|*|Wh-W|)`.
+
+`E_library >= |R-Xh*Wh|`.
+
+`|native_output-R| <= E_native_output + E_ratio + E_operands + E_library`.
+
+The first two terms have targeted native evidence.
+The ratio term requires the actual stored ratio and exact source globals.
+The operand term must include the actual rendered-activation division and weight formation.
+The library term must describe the actual single-precision library implementation.
+Its floating-point output type alone supplies no internal product or reduction guarantee.
+The existing magnitude contraction also retains its separate conditional rounding model.
+
+The new API compares against exact represented arithmetic.
+It does not supply the ratio, operand, library, or magnitude-contraction contracts for the original comparison.
+Those cases remain explicitly unsupported, not silently omitted.
+The original stock-reference checker and its allowance remain unchanged and conditional.
+No complete packed-reader qualification follows from the primitive probes.
+
+The fused source uses `__fmul_rn` and `__float2bfloat16_rn` at its output boundaries.
+The boundary probe issues those actual operations.
+Its two inequalities apply only where those operations occur.
+A split path must also include its actual split lengths and reduction additions.
+A routed path must include router multiplication and token reduction.
+A gate/up path must include its actual activation and intermediate bfloat16 boundaries.
+These additional compositions remain unsupported by the new primitive API.
+No complete fused-network or two-device arithmetic qualification follows.
+
+A device result applies only to the physical device that executes its probes.
+The qualifier requires an explicit comparison name.
+Only `exact_represented_operands` belongs to this primitive contract.
+Stock-reference, complete fused-epilogue, and two-device comparison requests refuse by name.
+These refusals remain after simulated approval flags become true.
+The qualification API refuses an untested physical-device identifier, even after simulated approval flags become true.
+The source records each physical device separately.
+Different source identities remain development-mode stamps, not seal refusals.
+
+#### Observed device evidence
+
+The suite ran independently on both physical devices on 2026-10-07.
+Each matrix action produced 2,221 native atoms and 284,288 output values.
+Each action passed 64 layout controls and all six required properties.
+The property counts were 2,032 products, four scale cases, 62 alignment cases, 16 rounding cases, eight subnormal cases, and 35 domain cases.
+
+| Physical device | Native action | Successful receipt digest |
+|---|---|---|
+| sparky, CUDA device zero | `416d56c1b36e1ab1840ef5502105745d592c5950519b5ebf87d7acebf7528d5d` | `eb76a5eb705448fd37a86c1685fbcbc0b90c3db1ec17dd0d4e64e13d80589620` |
+| sparklina, CUDA device zero | `1f41a0ee2fe0f77a5c19ee8961e4b6d6da089fc6eb11ef7d04cc7e4214d6d5ae` | `80eade20b9974aaa18accad40cf144adf34cb8d21664d57daa134ca62e45e719` |
+
+Cancellation retains `2^-20` through exponent gap 35 and discards it at gap 36.
+The group-order cases reject individual-product alignment and support exact group formation before 36-bit alignment.
+The separate rounding family selects round toward zero.
+The cancellation subset alone retains both final-normalization alternatives.
+Their separate rounding results determine the combined measured model.
+
+The compiler was CUDA 13.0, version 13.0.88.
+The device reported compute capability 12.1, runtime 13000, and driver interface 13020.
+The retained flags were `-O3 -std=c++17 -gencode arch=compute_121a,code=sm_121a --ftz=false --fmad=false`.
+The native code contains `OMMA.SF.16864.F32.E2M1.E2M1.UE4M3.4X`.
+The source digest was `03bd4e8960b5047656dab732eae140dce4cd5fe600fe2755b788c53337250df3`.
+The image reference was `localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a`.
+
+Each physical device also passed 119 multiplication cases and 119 bfloat16 conversion cases.
+Each boundary action exercised three actual bound calls at lengths 64, 128, and 4096.
+The inputs include exact ties, both signs, zero, normal values, and gradual-underflow cases.
+
+| Physical device | Boundary action | Successful receipt digest |
+|---|---|---|
+| sparky, CUDA device zero | `78acfd8125c5e9db1ce8e9581febf095c34121f2dc2808404e753e313c634380` | `c26bbd55212c8d965cf26acfe302907410195de642ad4804bb1789f8507e94b1` |
+| sparklina, CUDA device zero | `9649e746bec209717eb2ff245c1c2d58638319006d5130e35e59dca3b0f4edb2` | `4280e8813a3c09092b16a82726d75938baf0beec50b8de63000712e120559538` |
+
+Three earlier actions remain failed:
+
+- `4545c0f8eb075d9acf5955ff04996e5419aefe641c8c200e117662325f079a0c`: the processor interpreter compared a signed zero bit instead of its value.
+- `794efb97efd1b06feb296f7bb4265dd4bdb14d5a6c7da9a0b4eba832580cc6ed`: the intentional negative control changed an exact zero product to one.
+- `88b1b6302df1f86e18b112f0616d62f1d9efdd6b8825fa39abb977ee56bb73b4`: native execution succeeded, but the interpreter alternatives stopped at 32 alignment bits.
+
+The last failure supplies no defective-device verdict.
+Its exact outputs revealed the missing wider alternative.
+A retained processor projection verified the original input and output digests before the revised probes.
+No failed action has a successful receipt.
+
+The final processor action `b1269009f0eb71d3067d1cd8a3057613044f7e2f33983a0e8f2933f9e189225f` passed 29 controls without skips.
+It exercised the actual bound and qualification APIs, including explicit unsupported-comparison and physical-device refusals.
+It allocated no CUDA device and supplies no native arithmetic proof.
+
+All evidence remains under `/mnt/shared/tessera-measurements/kernels-t4-fp4-mma-attestation-sol-20261007/`.
+The owning record retains full keys, fresh disk results, resources, guards, logs, receipts, and completion custody.
+The successful claim checks verified receipt consistency and payload bytes.
+They did not verify the worker attestation.
+The original comparison, full fused-network composition, and two-device arithmetic remain unqualified.
+The kernels parent review and independent review remain required.

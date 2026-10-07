@@ -61,6 +61,11 @@ All emitted reports keep `arithmetic_qualified` false before those reviews.
 The probe suite does not change serving defaults, pins, row admission,
 the conditional reader allowance, or any live measurement path.
 Section 17.7 of the serving contract gives the model, derivation, and limitations.
+The actual scalar output operations have separate targeted probes.
+The qualifier refuses an untested physical device. Each device has its own evidence.
+The original stock-reference comparison stays conditional. Its division, ratio,
+operand-formation, library-multiplication, and magnitude terms remain unsupported by the new primitive contract.
+Complete fused-network and two-device arithmetic qualification remain false.
 
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
