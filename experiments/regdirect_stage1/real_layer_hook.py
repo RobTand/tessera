@@ -89,8 +89,30 @@ def main():
     classes = [{"start": 0, "end": half, "q256": {"w13": [1024, 1024], "w2": [1024]}},
                {"start": half, "end": a.experts, "q256": {"w13": [1024, 1024], "w2": [1024]}}]
     top_k = 8
+    torch.cuda.synchronize()
+    t_load = time.time() - t0
     parameters, kernel = rr.build_layer(gate, up, down, classes, device, top_k=top_k, max_tokens=2048)
-    rep = {"layer": a.layer, "rank": a.rank, "experts": a.experts, "build_s": round(time.time() - t0, 1), "planes": {}}
+    torch.cuda.synchronize()
+    t_build = time.time() - t0 - t_load
+    # Step 1a/1d of the 14:22Z plan: the per-layer cost of each path, apart from the loader's own work.
+    from tessera.routed_fused import compose_table8
+    tables = tuple(compose_table8(b) for b in (gate, up, down))
+    timings = {}
+    for name, fn in (("layer_stacks", rr.layer_stacks), ("transcode_stacks", rr.transcode_stacks)):
+        fn(gate, up, down, tables)                       # warm: extension build and allocator
+        torch.cuda.synchronize()
+        t1 = time.time()
+        planes = fn(gate, up, down, tables)
+        torch.cuda.synchronize()
+        timings[name] = time.time() - t1
+        if name == "layer_stacks":
+            ref_planes = planes
+    same = {mode: {k: bool(torch.equal(planes[mode][k], v)) if torch.is_tensor(v) else planes[mode][k] == v
+                   for k, v in ref_planes[mode].items()} for mode in (0, 2)}
+    rep = {"layer": a.layer, "rank": a.rank, "experts": a.experts, "build_s": round(t_load + t_build, 1),
+           "loader_s": round(t_load, 2), "build_layer_s": round(t_build, 2),
+           "layer_stacks_s": round(timings["layer_stacks"], 3), "transcode_stacks_s": round(timings["transcode_stacks"], 4),
+           "transcode_equals_layer_stacks": same, "planes": {}}
     for mode in (0, 2):
         ref = torch.load(f"{a.stack}-mode{mode}.pt")
         payload = parameters["regdirect"][mode]
@@ -125,7 +147,8 @@ def main():
     os.makedirs(a.out, exist_ok=True)
     json.dump(rep, open(os.path.join(a.out, f"real-layer-hook-rank{a.rank}.json"), "w"), indent=1)
     print(json.dumps(rep))
-    ok = all(all(v.values()) for v in rep["planes"].values()) and all(all(v.values()) for v in rep["dispatch"].values())
+    ok = (all(all(v.values()) for v in rep["planes"].values()) and all(all(v.values()) for v in rep["dispatch"].values())
+          and all(all(v.values()) for v in rep["transcode_equals_layer_stacks"].values()))
     assert ok, "build_layer on real bundles differs from the checked stacks or the direct launch"
     print("real layer hook passed")
 
