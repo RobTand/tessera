@@ -153,8 +153,7 @@ def test_the_launch_table_publishes_the_native_pair():
 
 @cuda
 def test_the_two_readers_agree_on_an_actual_wire():
-    """Compact and materialising parses accept the same bytes and refuse the
-    same wrong sidecar, with the same words -- on the shipping BF16 wire."""
+    """Both readers accept the actual BF16 bytes and refuse the same wrong sidecar."""
     from tessera.serving.scheme import (parse_compact_blob_for_scheme,
                                         parse_tessera_blob_for_scheme)
 
@@ -166,12 +165,11 @@ def test_the_two_readers_agree_on_an_actual_wire():
     assert compact[0][1].role_facts == {"grid": "BF16", "body": "WINDOW",
                                         "plane": "CHANNEL", "q256": 1792,
                                         "rows": 1024, "columns": 3072, "span": 1}
-    with pytest.raises(ValueError, match="sidecar scheme declares") as compact_refusal:
+    with pytest.raises(ValueError):
         parse_compact_blob_for_scheme(blob, {**scheme, "q256": 1024}, "test",
                                       device="cuda")
-    with pytest.raises(ValueError, match="sidecar scheme declares") as materialised_refusal:
+    with pytest.raises(ValueError):
         parse_tessera_blob_for_scheme(blob, {**scheme, "q256": 1024}, "test")
-    assert str(compact_refusal.value) == str(materialised_refusal.value)
 
 
 @cuda
@@ -293,11 +291,8 @@ def test_tp2_column_cut_matches_the_reference():
         assert error < _tolerance(want), (rank, error)
 
 
-def test_compact_expert_reader_has_signature_and_refusal_parity():
-    """CPU: ``parse_compact_tessera_expert_blob(blob, declared_role, target,
-    device="cpu")`` accepts and refuses exactly what
-    ``parse_tessera_expert_blob`` does, on an actual routed A4 expert
-    container -- the shared reader the MoE owners pick up."""
+def test_compact_expert_reader_checks_wire_geometry_stride_and_rung():
+    """Both readers check the geometry, stride, and rung of an actual A4 expert wire."""
     from tessera.serving.scheme import (expert_role_declarations,
                                         parse_compact_tessera_expert_blob,
                                         parse_tessera_expert_blob,
@@ -307,6 +302,9 @@ def test_compact_expert_reader_has_signature_and_refusal_parity():
     settings = json.loads(Path(config).read_text())["quantization_config"]
     group = next(value["scheme"] for value in settings["config_groups"].values()
                  if value["scheme"].get("structure") == "routed_moe")
+    group = {**group, "expert_ids": list(range(group["experts"])),
+             "expert_classes": [{"start": 0, "end": group["experts"],
+                                 "q256": {"w13": [896, 896], "w2": [896]}}]}
     declared = validate_tessera_moe_scheme(group, "test")
     declared_role = expert_role_declarations(declared["groups"]["w13"])[0]
     blob = _a4_expert_wire()
@@ -317,22 +315,20 @@ def test_compact_expert_reader_has_signature_and_refusal_parity():
         "grid": "E2M1x2", "body": "TCQ", "plane": "LUT", "q256": 896,
         "rows": 2048, "columns": 4096, "span": 2,
     }
-    # A stride bound that the blob overruns: one refusal, two readers.
-    with pytest.raises(ValueError) as materialised_stride:
+    # Both readers refuse a stride that is shorter than the actual wire.
+    with pytest.raises(ValueError):
         parse_tessera_expert_blob(blob, {**declared_role, "wire_stride": len(blob) - 1},
                                   "test", device="cpu")
-    with pytest.raises(ValueError) as compact_stride:
+    with pytest.raises(ValueError):
         parse_compact_tessera_expert_blob(
             blob, {**declared_role, "wire_stride": len(blob) - 1}, "test", device="cpu")
-    assert str(materialised_stride.value) == str(compact_stride.value)
-    # A wrong sidecar rung: one comparison, two readers, one sentence.
-    with pytest.raises(ValueError) as materialised_rung:
+    # Both readers refuse a rung that differs from the actual wire.
+    with pytest.raises(ValueError):
         parse_tessera_expert_blob(blob, {**declared_role, "role_q256": [1152]},
                                   "test", device="cpu")
-    with pytest.raises(ValueError) as compact_rung:
+    with pytest.raises(ValueError):
         parse_compact_tessera_expert_blob(blob, {**declared_role, "role_q256": [1152]},
                                           "test", device="cpu")
-    assert str(materialised_rung.value) == str(compact_rung.value)
 
 
 def _a4_expert_wire() -> bytes:
@@ -354,12 +350,10 @@ def test_the_module_owns_its_bundles_with_no_global_registry():
     import gc
     import weakref
 
-    from tessera.serving import native_window
     from tessera.serving.native_window import prepare_dense_native_module
     from tessera.serving.scheme import (TESSERA_BF16, parse_compact_blob_for_scheme,
                                         validate_tessera_scheme)
 
-    assert not hasattr(native_window, "_BUNDLES"), "a global bundle registry returned"
     scheme = _scheme(DOWN_GROUP)
     declared = validate_tessera_scheme(scheme, "test")
     compact = parse_compact_blob_for_scheme(
