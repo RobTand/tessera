@@ -13,7 +13,7 @@ BENCH_PY=${BENCH_PY:-bench_t8r.py}
 DOCKER_IDENTITY=(--user "$(id -u):$(id -g)")
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
 # D38 exercises the same source entry and output-directory owner before CUDA.
-if [[ "$BENCH_PY" == bench_geometry.py && " $* " == *" --cpu-preflight "* ]]; then
+if [[ ( "$BENCH_PY" == bench_geometry.py || "$BENCH_PY" == bench_class_dispatch.py ) && " $* " == *" --cpu-preflight "* ]]; then
   printf 'D38 Docker user mapping: %s; output owner: %s\n' "${DOCKER_IDENTITY[*]}" "$(stat -c %u:%g "$OUT/home")"
   for directory in "$OUT" "$OUT/home" "$OUT/home/torch_extensions" "$OUT/tmp" "$OUT/triton"; do
     mkdir -p "$directory"
@@ -46,7 +46,7 @@ for ((i=1; i<=$#; i++)); do
   if [[ "${!i}" == --artifact ]]; then j=$((i+1)); ART=${!j}; fi
 done
 ART_MOUNT=()
-if [[ "$BENCH_PY" != bench_geometry.py ]]; then
+if [[ "$BENCH_PY" != bench_geometry.py && "$BENCH_PY" != bench_class_dispatch.py ]]; then
   [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
   ART_MOUNT=(-v "$ART":"$ART":ro)
 fi
