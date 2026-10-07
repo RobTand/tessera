@@ -1,11 +1,28 @@
 #!/usr/bin/env bash
-# Run the full T16 screen in the existing serving image.
+# Run the T16 screen or its GPU tests in the existing serving image.
 set -euo pipefail
 CHECKOUT=$(realpath "$1")
 OUT=$(realpath -m "$2")
 shift 2
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the PB-declared serving image}
 OWNER=${T16_OWNER_TOKEN:?the supervisor supplies the container owner token}
+if [[ "${1:-}" == --tests ]]; then
+  shift
+  export T16_TEST_OUT="$OUT"
+  # Preserve the shared test runner and PB Docker shim. Add only owned cleanup fields.
+  docker() {
+    if [[ "${1:-}" == run ]]; then
+      shift
+      command docker run --cidfile "$T16_TEST_OUT/owned.cid" \
+        --label "tessera.t16_owner=$T16_OWNER_TOKEN" \
+        --memory 16g --memory-swap 16g --pids-limit 512 "$@"
+    else
+      command docker "$@"
+    fi
+  }
+  export -f docker
+  exec bash "$CHECKOUT/experiments/routed_fused_tests.sh" "$CHECKOUT" "$OUT" "$@"
+fi
 source "$CHECKOUT/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE_REF"
 IMAGE_ENV=()

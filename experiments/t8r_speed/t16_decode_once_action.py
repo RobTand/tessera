@@ -1,4 +1,4 @@
-"""Supervise the T16 screen and retain the memory and Netdata evidence."""
+"""Supervise the T16 screen or tests with one memory guard."""
 from __future__ import annotations
 
 import json
@@ -108,18 +108,67 @@ def terminate(child, out, token, cpu, evidence):
         evidence.append({"process_group": child.pid, "signal": "SIGKILL"})
 
 
+def parse_action_args(argv):
+    if not argv:
+        raise ValueError("Supply the output directory and action arguments.")
+    out, args = Path(argv[0]).resolve(), list(argv[1:])
+    if "--tests" not in args:
+        return out, args, "--cpu-preflight" in args, False
+    if "--" not in args:
+        raise ValueError("The test mode requires a -- separator before pytest arguments.")
+    separator = args.index("--")
+    flags, tests = args[:separator], args[separator + 1:]
+    if any(flag not in {"--tests", "--cpu-preflight", "--collect-only"} for flag in flags):
+        raise ValueError("The test mode accepts only test and CPU collection flags before --.")
+    if not any(item.split("::", 1)[0].endswith(".py") for item in tests):
+        raise ValueError("Select an explicit test file. The full suite is not this action.")
+    cpu = "--cpu-preflight" in flags or "--collect-only" in flags
+    return out, tests, cpu, True
+
+
+def uses_xdist(args):
+    return any(arg == "--numprocesses" or arg.startswith("--numprocesses=")
+               or arg == "-n" or arg.startswith("-n") and arg[2:].isdigit() for arg in args)
+
+
+def test_preflight(args, runner_sp):
+    """Read the selected inputs and the existing pure Python runner."""
+    if not runner_sp:
+        raise ValueError("TEST_RUNNER_SP must name the existing pure Python runner.")
+    runner = Path(runner_sp).resolve()
+
+    def small_read(path):
+        with path.open("rb") as handle:
+            data = handle.read(4096)
+        if not data:
+            raise ValueError(f"The preflight input is empty: {path}")
+        return {"path": str(path), "bytes_read": len(data)}
+
+    tests = []
+    for item in args:
+        name = item.split("::", 1)[0]
+        if name.endswith(".py"):
+            path = Path(name)
+            tests.append(small_read(path.resolve() if path.is_absolute() else (ROOT / path).resolve()))
+    packages = ["pytest", "_pytest", "pluggy", "iniconfig", "packaging"]
+    if uses_xdist(args):
+        packages += ["xdist", "execnet"]
+    reads = [small_read(runner / package / "__init__.py") for package in packages]
+    reads.append(small_read(runner / "py.py"))
+    return {"test_reads": tests, "runner_reads": reads,
+            "wrapper_read": small_read(ROOT / "experiments/routed_fused_tests.sh"),
+            "cuda_executed": False, "collection_required": True}
+
+
 def main():
-    if len(sys.argv) < 2:
-        raise SystemExit("Supply the output directory and benchmark arguments.")
-    out = Path(sys.argv[1]).resolve()
-    args = sys.argv[2:]
+    out, args, cpu, tests = parse_action_args(sys.argv[1:])
     out.mkdir(parents=True, exist_ok=True)
-    cpu = "--cpu-preflight" in args
     if (out / "memory_guard.json").exists() or (out / "owned.cid").exists():
         raise RuntimeError("Use a new output directory. Preserve earlier runs.")
     estimate = start_estimate(cpu)
     available = mem_available()
     safety = {"estimate": estimate, "start_available_bytes": available,
+              "mode": "test_collection" if tests and cpu else "tests" if tests else "benchmark",
               "abort_below_bytes": 2 * GIB, "minimum_available_bytes": available,
               "term_then_kill_seconds": 10, "guard_triggered": False,
               "timeout_seconds": 1680, "start_unix": time.time(), "cleanup": [],
@@ -135,7 +184,21 @@ def main():
     environment["PYTHONPATH"] = str(ROOT / "src") + os.pathsep + environment.get("PYTHONPATH", "")
     environment.setdefault("HOST_NAME", os.uname().nodename)
     environment.setdefault("PB_ACTION_KEY", os.environ.get("PRISMABUILD_ACTION_KEY", ""))
-    if cpu:
+    if tests:
+        environment["PYTHONPATH"] += os.pathsep + str(ROOT / "tests") + os.pathsep + str(ROOT / "experiments")
+        environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
+        if uses_xdist(args):
+            environment["TEST_XDIST"] = "1"
+        if cpu:
+            safety["cpu_test_preflight"] = test_preflight(args, environment.get("TEST_RUNNER_SP"))
+            environment["PYTHONPATH"] += os.pathsep + environment["TEST_RUNNER_SP"]
+            plugins = ["-p", "xdist.plugin"] if uses_xdist(args) else []
+            command = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", *plugins,
+                       "--collect-only", "-q", "-rA", f"--junitxml={out / 'collection.xml'}", *args]
+            save(guard, safety)
+        else:
+            command = ["bash", str(HERE / "t16_decode_once.sh"), str(ROOT), str(out), "--tests", *args]
+    elif cpu:
         environment.setdefault("TESSERA_HEAD", subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "HEAD"], text=True).strip())
         command = [sys.executable, str(HERE / "bench_t16_decode_once.py"), "--out", str(out), *args]
     else:
