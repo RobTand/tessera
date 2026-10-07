@@ -27,6 +27,13 @@ Keep the geometry-demotion copy check and the exact BF16 control.
 Record input width variants without a false reachability refusal.
 Keep true quant-config and output-partition disagreements as refusals.
 
+Use a Torch rendezvous URL for the real two-host TP2 artifact proof.
+Record source and image identities without an identity refusal.
+
+Publish the selected current-image construction receipt as the active GLM entry.
+Retain the previous GLM receipt as unchanged history.
+Declare the actual node count and node rank for native TP2 members.
+
 ## 2026-10-07 — projection construction and load checks
 
 Add a small-artifact projection smoke tool with a portable CPU dry run.

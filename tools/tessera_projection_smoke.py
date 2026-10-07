@@ -379,7 +379,7 @@ def _stock_control(item, config, world, rank, original=None, mode="eager"):
     return {**compare(got, expected, name=row["prefix"], dtype=expected.dtype, exact=True), "graph": graph}
 
 
-def run_device(inputs, mode):
+def run_device(inputs, mode, *, distributed_init_method=None):
     import torch
     from vllm.config import ParallelConfig, VllmConfig, set_current_vllm_config
     from vllm.distributed import init_distributed_environment, initialize_model_parallel
@@ -392,20 +392,24 @@ def run_device(inputs, mode):
     world, rank = int(os.environ.get("WORLD_SIZE", "1")), int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     torch.cuda.set_device(0)
-    config = VllmConfig(parallel_config=ParallelConfig(tensor_parallel_size=world))
+    config = VllmConfig(parallel_config=ParallelConfig(
+        tensor_parallel_size=world, nnodes=int(os.environ.get("NNODES", "1")),
+        node_rank=int(os.environ.get("NODE_RANK", "0"))))
     port = os.environ.get("MASTER_PORT", str(_free_port()))
     host = os.environ.get("MASTER_ADDR", "127.0.0.1")
+    init_method = distributed_init_method or f"tcp://{host}:{port}"
     with set_current_vllm_config(config, check_compile=False):
         init_distributed_environment(world_size=world, rank=rank, local_rank=local_rank,
-                                     distributed_init_method=f"tcp://{host}:{port}", backend="gloo")
+                                     distributed_init_method=init_method, backend="gloo")
         initialize_model_parallel(world, 1)
     if world not in (1, 2):
         raise ValueError("The small artifact supports one or two tensor-parallel ranks")
+    import vllm
+    runtime = {"source": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+               "torch": torch.__version__, "vllm": vllm.__version__,
+               "image": os.environ.get("TESSERA_CENSUS_RUNTIME_IMAGE")}
     if world > 1:
-        import vllm
-        context = {"mode": mode, "source": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-                   "torch": torch.__version__, "vllm": vllm.__version__,
-                   "image": os.environ.get("TESSERA_CENSUS_RUNTIME_IMAGE"),
+        context = {"mode": mode,
                    "inputs": [{"row": item["row"],
                                "input": hashlib.sha256(item["input"].view(torch.uint8).numpy().tobytes()).hexdigest(),
                                "bias": hashlib.sha256(item["bias"].view(torch.uint8).numpy().tobytes()).hexdigest() if "bias" in item else None}
@@ -413,8 +417,8 @@ def run_device(inputs, mode):
         peers = [None] * world
         torch.distributed.all_gather_object(peers, context)
         if any(peer != context for peer in peers):
-            raise ValueError("The two ranks must use the same image, source, mode, and artifact inputs")
-    report = {"mode": mode, "world_size": world, "rank": rank, "modules": []}
+            raise ValueError("The two ranks must use the same mode and artifact inputs")
+    report = {"mode": mode, "world_size": world, "rank": rank, "runtime": runtime, "modules": []}
     # All stock controls precede the first installed selected configuration.
     originals = [_stock_control(item, config, world, rank, mode=mode) for item in inputs]
     install()
@@ -517,6 +521,8 @@ def parser():
     ap.add_argument("--mode", choices=("eager", "graph"), required=True)
     ap.add_argument("--m", choices=(1, 3), type=int, default=3)
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--distributed-init-method",
+                    help="the Torch rendezvous URL for the admitted ranks")
     return ap
 
 
@@ -541,7 +547,7 @@ def main(argv=None):
                       for item in inputs]}
     else:
         result = {"schema": "tessera.projection-smoke-result.v1", "status": "device-forward-proof",
-                  **run_device(inputs, args.mode)}
+                  **run_device(inputs, args.mode, distributed_init_method=args.distributed_init_method)}
     out = args.out
     if result.get("world_size", 1) > 1:
         out = out.with_name(out.stem + f".rank-{result['rank']}" + out.suffix)

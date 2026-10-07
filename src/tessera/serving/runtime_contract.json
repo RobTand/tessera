@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 57,
+ "contract_version": 58,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -2547,14 +2547,14 @@
  },
  "construction": {
   "schema": "tessera.construction.v1",
-  "note": "Which Linears the pinned runtime OFFERS to a quant config, per architecture. LinearBase.__init__ takes UnquantizedLinearMethod() in the quant_config is None branch WITHOUT calling get_quant_method, so a model that builds a projection with quant_config=None takes vLLM's own BF16 method and this plugin is never asked -- it cannot refuse, warn, or see the prefix. A wire written there deletes the <module>.weight the runtime wants and puts bytes in its place that nothing decodes. offered/never_offered are vLLM MODULE patterns with repeat indices collapsed to '*'; a producer translates its checkpoint names with hf_to_vllm_mapper_unstacked first (the same table configure_quant_config hands this plugin) and normalises the same way. A name in neither list is a module the runtime does not build -- unless it is listed under the row's optional 'disagreements', which names a pattern whose observed members answered differently and the exact prefixes that differed: such a pattern is struck from 'offered' because it clears none of its members, least of all the ones the census did not observe. Every row is DERIVED from a receipt under docs/measurements/construction/ by contract.construction_entry_from_receipt and re-derived in tests/test_serving_construction.py, so the table cannot drift from the observation; the observation itself is tools/tessera_construction_census.py, which builds the model the way the loader does and records every prefix a probe quant config is offered. An architecture with no row is UNCENSUSED, which is an honest gap and not a claim that everything is routed.",
+  "note": "The active receipts record which modules reach a quant config. An explicit Tessera target can use the selective constructor override. Unselected modules retain their stock method. The offered and never_offered lists use normalized runtime module names. The producer applies hf_to_vllm_mapper_unstacked before the lookup. Each row derives from its named active receipt. Historical receipts remain unchanged. Construction proves reachability, not weight loading or a forward result.",
   "architectures": [
    {
     "architecture": "Glm5NextForConditionalGeneration",
     "runtime": {
-     "image": "prismaquant/glm53-mia-sm121:487ecf187",
-     "image_id": "sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69",
-     "vllm": "0.1.dev20051+g487ecf187"
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "image_id": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "vllm": "0.30.1rc1.dev336+gaf5b4857e.d20260929"
     },
     "model": {
      "model_type": "glm5_next",
@@ -2582,63 +2582,30 @@
     },
     "offered": [
      "language_model.model.layers.*.mlp.down_proj",
+     "language_model.model.layers.*.mlp.gate",
      "language_model.model.layers.*.mlp.gate_up_proj",
      "language_model.model.layers.*.mlp.shared_experts.down_proj",
-     "language_model.model.layers.*.mlp.shared_experts.gate_up_proj"
+     "language_model.model.layers.*.mlp.shared_experts.gate_up_proj",
+     "language_model.model.layers.*.self_attn.f_b_proj",
+     "language_model.model.layers.*.self_attn.fused_qkv_a_proj",
+     "language_model.model.layers.*.self_attn.g_b_proj",
+     "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a",
+     "language_model.model.layers.*.self_attn.indexer.wk_weights_proj",
+     "language_model.model.layers.*.self_attn.indexer.wq_b",
+     "language_model.model.layers.*.self_attn.kv_b_proj",
+     "language_model.model.layers.*.self_attn.o_proj",
+     "language_model.model.layers.*.self_attn.q_b_proj",
+     "visual.blocks.*.attn.proj",
+     "visual.blocks.*.attn.qkv",
+     "visual.blocks.*.mlp.down_proj",
+     "visual.blocks.*.mlp.gate_up_proj",
+     "visual.merger.down_proj",
+     "visual.merger.gate_up_proj",
+     "visual.merger.proj"
     ],
     "never_offered": [
      {
-      "prefix_pattern": "language_model.model.layers.*.mlp.gate",
-      "class": "GateLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.f_b_proj",
-      "class": "ColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.fused_qkv_a_proj",
-      "class": "DeepSeekV2FusedQkvAProjLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.g_b_proj",
-      "class": "ColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a",
-      "class": "_Glm5NextMergedColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wk_weights_proj",
-      "class": "MergedColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wq_b",
-      "class": "ReplicatedLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
       "prefix_pattern": "language_model.model.layers.*.self_attn.k_conv1d",
-      "class": "ColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.kv_b_proj",
-      "class": "ColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.o_proj",
-      "class": "RowParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "language_model.model.layers.*.self_attn.q_b_proj",
       "class": "ColumnParallelLinear",
       "quant_method": "UnquantizedLinearMethod"
      },
@@ -2651,54 +2618,195 @@
       "prefix_pattern": "language_model.model.layers.*.self_attn.v_conv1d",
       "class": "ColumnParallelLinear",
       "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.blocks.*.attn.proj",
-      "class": "RowParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.blocks.*.attn.qkv",
-      "class": "QKVParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.blocks.*.mlp.down_proj",
-      "class": "RowParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.blocks.*.mlp.gate_up_proj",
-      "class": "MergedColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.merger.down_proj",
-      "class": "RowParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.merger.gate_up_proj",
-      "class": "MergedColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
-     },
-     {
-      "prefix_pattern": "visual.merger.proj",
-      "class": "ColumnParallelLinear",
-      "quant_method": "UnquantizedLinearMethod"
      }
     ],
     "offered_non_linear": [
      {
       "prefix_pattern": "language_model.lm_head",
-      "class": "ParallelLMHead"
+      "class": "ParallelLMHead",
+      "instances": [
+       {
+        "prefix": "language_model.lm_head",
+        "class_module": "vllm.model_executor.layers.vocab_parallel_embedding",
+        "parameter_shapes": {
+         "weight": [
+          154880,
+          4096
+         ]
+        },
+        "parameter_dtypes": {
+         "weight": "torch.bfloat16"
+        }
+       }
+      ]
      },
      {
       "prefix_pattern": "language_model.model.layers.*.mlp.experts",
-      "class": "RoutedExperts"
+      "class": "RoutedExperts",
+      "instances": [
+       {
+        "prefix": "language_model.model.layers.1.mlp.experts",
+        "class_module": "vllm.model_executor.layers.fused_moe.routed_experts",
+        "parameter_shapes": {
+         "e_score_correction_bias": [
+          288
+         ],
+         "w13_weight": [
+          288,
+          4096,
+          4096
+         ],
+         "w2_weight": [
+          288,
+          4096,
+          2048
+         ]
+        },
+        "parameter_dtypes": {
+         "e_score_correction_bias": "torch.float32",
+         "w13_weight": "torch.bfloat16",
+         "w2_weight": "torch.bfloat16"
+        }
+       },
+       {
+        "prefix": "language_model.model.layers.2.mlp.experts",
+        "class_module": "vllm.model_executor.layers.fused_moe.routed_experts",
+        "parameter_shapes": {
+         "e_score_correction_bias": [
+          288
+         ],
+         "w13_weight": [
+          288,
+          4096,
+          4096
+         ],
+         "w2_weight": [
+          288,
+          4096,
+          2048
+         ]
+        },
+        "parameter_dtypes": {
+         "e_score_correction_bias": "torch.float32",
+         "w13_weight": "torch.bfloat16",
+         "w2_weight": "torch.bfloat16"
+        }
+       },
+       {
+        "prefix": "language_model.model.layers.3.mlp.experts",
+        "class_module": "vllm.model_executor.layers.fused_moe.routed_experts",
+        "parameter_shapes": {
+         "e_score_correction_bias": [
+          288
+         ],
+         "w13_weight": [
+          288,
+          4096,
+          4096
+         ],
+         "w2_weight": [
+          288,
+          4096,
+          2048
+         ]
+        },
+        "parameter_dtypes": {
+         "e_score_correction_bias": "torch.float32",
+         "w13_weight": "torch.bfloat16",
+         "w2_weight": "torch.bfloat16"
+        }
+       }
+      ]
      }
     ],
-    "receipt": "docs/measurements/construction/glm53-flash-4layer.json"
+    "output_sizes": {
+     "language_model.model.layers.*.mlp.down_proj": [
+      4096
+     ],
+     "language_model.model.layers.*.mlp.gate": [
+      288
+     ],
+     "language_model.model.layers.*.mlp.gate_up_proj": [
+      12288,
+      12288
+     ],
+     "language_model.model.layers.*.mlp.shared_experts.down_proj": [
+      4096
+     ],
+     "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [
+      2048,
+      2048
+     ],
+     "language_model.model.layers.*.self_attn.f_b_proj": [
+      8192
+     ],
+     "language_model.model.layers.*.self_attn.fused_qkv_a_proj": [
+      1536,
+      512
+     ],
+     "language_model.model.layers.*.self_attn.g_b_proj": [
+      8192
+     ],
+     "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a": [
+      8192,
+      8192,
+      8192,
+      64,
+      128,
+      128
+     ],
+     "language_model.model.layers.*.self_attn.indexer.wk_weights_proj": [
+      128,
+      32
+     ],
+     "language_model.model.layers.*.self_attn.indexer.wq_b": [
+      4096
+     ],
+     "language_model.model.layers.*.self_attn.k_conv1d": [
+      8192
+     ],
+     "language_model.model.layers.*.self_attn.kv_b_proj": [
+      32768
+     ],
+     "language_model.model.layers.*.self_attn.o_proj": [
+      4096
+     ],
+     "language_model.model.layers.*.self_attn.q_b_proj": [
+      16384
+     ],
+     "language_model.model.layers.*.self_attn.q_conv1d": [
+      8192
+     ],
+     "language_model.model.layers.*.self_attn.v_conv1d": [
+      8192
+     ],
+     "visual.blocks.*.attn.proj": [
+      1024
+     ],
+     "visual.blocks.*.attn.qkv": [
+      1024,
+      1024,
+      1024
+     ],
+     "visual.blocks.*.mlp.down_proj": [
+      1024
+     ],
+     "visual.blocks.*.mlp.gate_up_proj": [
+      4096,
+      4096
+     ],
+     "visual.merger.down_proj": [
+      4096
+     ],
+     "visual.merger.gate_up_proj": [
+      10240,
+      10240
+     ],
+     "visual.merger.proj": [
+      4096
+     ]
+    },
+    "receipt": "docs/measurements/construction/2026-10-07/glm53-flash-4layer-selected-t8.json"
    },
    {
     "architecture": "Lfm2MoeForCausalLM",
@@ -4845,6 +4953,7 @@
   }
  },
  "changelog": [
+  {"contract_version": 58, "date": "2026-10-07", "change": "The GLM construction entry derives from selected T-8/T-16 calls in the current image. Explicit targets reach the plugin; unselected modules retain stock methods. Historical receipts remain unchanged. Input width variants do not become routing disagreements. This entry proves construction, not a full-model forward or a serving-cell promotion. Defaults, serving pins, wire bytes, and kernels remain unchanged."},
   {"contract_version": 57, "date": "2026-10-05", "change": "Per-unit routed assignment (Refs #967): one expert projection is plannable through stack unit_q256 overrides. Unit wire bytes and uniform schemes are unchanged; across-expert differences use expert-major group q256 matrices. The loader validates each selected unit before TP cuts, preserves exact per-unit word/run storage and retains fused schedule/stride refusals. Mixed schedules explicitly opt into research compact loading; served GPU/performance qualification is separate. No cell, default or serving pin moves."},
   {"contract_version": 56, "date": "2026-10-05", "change": "Publish the default-off decode-once E4M3 dense prefill lane (tessera#931). Under TESSERA_E4M3_DECODE_ONCE=1 the FP8 dense route decodes each RESIDENT module once at load to plain E4M3 bytes, through the module's own Triton window decoder (exact: unit row scale on an FP8 identity), and serves M >= 256 with torch._scaled_mm row-wise on the unchanged E4M3 epilogue contract: same bytes, same per-token activation and per-row weight scales, only the fp32 summation order differs. The lane is EAGER-ONLY: its M branch is host Python, so fp8_route refuses the flag AT LOAD when vLLM's compilation mode is not NONE (PreparedDenseNativeModule.apply also raises under torch.compile, as a backstop only), and a module holding the copy declares a distinct compile-cache dispatch fact (window op|decode-once op). With the flag unset the route never reads the token count to stamp a pair, exactly as at v55. One launch row enters scheme.ROUTE_LAUNCHES[TESSERA_FP8]: (tessera.serving.e4m3_prefill.prefill_apply, native_window_decode_once_e4m3), dense, both regimes, resident only, no extension lane. It enters EXPERIMENTAL_LAUNCHES at the same time, so no cell names it and a v10 lane reader resolves every cell exactly as at v55. The decoded copy (one byte per weight plus the fp32 row scale) is counted in the module's residency accounting (named_tensors). No cell, rung, image, default, artifact or ship gate moves. The pair leaves EXPERIMENTAL_LAUNCHES when a served census of a T-8-projection artifact with the flag on records it. Evidence: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md."},
   {"contract_version": 55, "date": "2026-10-02", "change": "Publish the default-off TESSERA_RESEARCH_MLA_MASK_SKIP stock attention override. Only eager pure-prefill GLM53 FP8 MG geometry is eligible; stock owns decode, mixed/staged/unsupported and CUDA capture paths. The stock source/header identity and FlashInfer's own resolved plan guard the replacement. No production pin, route cell, default, artifact or ship gate changes; separate served TR3/eager-profile qualification is required before campaign use."},
