@@ -1104,8 +1104,9 @@ def ignored_modules(tensor_name: str, shape, architecture: str | None = None, *,
     if fused:
         return (fused[0],)
     names = [module_of(probe)]
-    names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
-                 if (match := pattern.match(probe)))
+    if architecture != "Glm5NextForConditionalGeneration":
+        names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
+                     if (match := pattern.match(probe)))
     return tuple(names)
 
 

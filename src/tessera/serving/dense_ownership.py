@@ -3,7 +3,7 @@
 Two rules live here and they answer different questions.
 
 ``fused_module`` is the NAME rule: which checkpoint tensors vLLM merges into
-one Linear, from the tensor names alone.  It requires no tensor runtime.
+one Linear, from tensor names and the source config. It requires no tensor runtime.
 
 ``partition_members`` is the GEOMETRY rule: how that Linear's rows are cut into
 the output partitions the runtime builds -- ``ColumnParallelLinear.output_sizes``,
@@ -42,13 +42,8 @@ FUSED = (
     (re.compile(r"^(.*\.feed_forward\.)(w1|w3)\.weight$"), "w13", ("w1", "w3")),
 )
 
-# HF ``architectures[0]`` names whose vLLM class keeps the q/k/v Linears
-# SEPARATE -- it builds no ``qkv_proj`` module at all (contract v44
-# construction census).  For these, the q/k/v row of ``FUSED`` names a module
-# the runtime never constructs, which the plugin refuses at load.  This is
-# explicit data keyed on the architecture the exporter already reads from
-# ``config.json``, not a heuristic over the tensor names: the names are
-# identical either way, so no name rule can tell the two apart (tessera#706).
+# These architectures have no generic three-member qkv_proj owner.
+# GLM KDA uses its six-member input owner; MLA can keep a standalone query.
 SEPARATE_QKV_ARCHITECTURES = frozenset({"Glm5NextForConditionalGeneration"})
 
 

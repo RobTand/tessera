@@ -109,7 +109,6 @@ def _export(tmp_path, monkeypatch, *extra):
 #: merged on disk.
 VISION_MODULES = (
     "model.visual.blocks.0.attn.qkv",
-    "model.visual.blocks.0.attn.qkv_proj",
     "model.visual.blocks.0.attn.proj",
     "model.visual.blocks.0.mlp.gate_up_proj",
     "model.visual.blocks.0.mlp.down_proj",
@@ -126,6 +125,8 @@ def test_the_ignore_rule_names_a_non_body_linear():
     # (multimodal.py:167), and which one exists is not the producer's to know.
     assert export.ignored_modules("model.visual.blocks.0.attn.qkv.weight", (192, 64)) == (
         "model.visual.blocks.0.attn.qkv", "model.visual.blocks.0.attn.qkv_proj")
+    assert export.ignored_modules("model.visual.blocks.0.attn.qkv.weight", (192, 64),
+                                  "Glm5NextForConditionalGeneration") == ("model.visual.blocks.0.attn.qkv",)
     assert export.ignored_modules("model.visual.blocks.0.mlp.gate_proj.weight", (128, 64)) == (
         "model.visual.blocks.0.mlp.gate_up_proj",)
     # The FUSED table's output, not an attested fact about Qwen4Exp: that
