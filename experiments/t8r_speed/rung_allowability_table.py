@@ -12,18 +12,109 @@ import json
 from pathlib import Path
 import re
 
-from tessera import routed_fused as rf
-from tessera.control import grid_for_name, unit_wire_bits
-from tessera.rung_allowability import validate_index, validate_table
+"""This module stays free of torch at import time. Each tessera import
+below runs inside the function that needs it, so unit tests load this
+file with stdlib only."""
 
 MS=(1,16,2048,4096)
 SHAPES=(("routed","gate_up",1024,4096,0),("routed","down",4096,1024,2),("dense","o_proj",4096,4096,2),("dense","q_b",8192,1536,2))
 FORMAT="TESSERA_E4M3_K1"
+STRUCTURE_SPEC_SCHEMA="tessera.d41_structure_spec.v1"
+DEFAULT_SHAPE_OWNER="bench_rates TP2 shapes; actual GLM config hidden4096, routed inter2048/2, experts288, topk8"
+RECORDED_ROUTING_MIN_M=2048
 
 
-def roster():
-    cells=[{"cell_id":f"{kind}:{name}:M{m}","kernel_kind":kind,"shape_id":name,"M":m} for kind,name,_r,_c,_mode in SHAPES for m in MS]
-    cells += [{"cell_id":f"routed:{name}:M{m}:recorded","kernel_kind":"routed","shape_id":name,"M":m,"routing":"recorded"} for name in ("gate_up","down") for m in (2048,4096)]
+def _is_count(value):
+    """A positive int that is not a boolean: bool is an int subclass and 1.0 is not a count."""
+    return type(value) is int and value>0
+
+
+def parse_structure_spec(path):
+    """Read a D41 structure spec file and return its sweep geometry."""
+    doc=json.loads(Path(path).read_text())
+    if doc.get("schema")!=STRUCTURE_SPEC_SCHEMA:
+        raise ValueError(f"structure spec schema must be {STRUCTURE_SPEC_SCHEMA}")
+    raw_shapes=doc.get("shapes")
+    if not isinstance(raw_shapes,list) or not raw_shapes:
+        raise ValueError("structure spec needs a non-empty shapes list")
+    shapes=[]
+    for entry in raw_shapes:
+        if not isinstance(entry,dict):
+            raise ValueError("each shape must be an object")
+        kind=entry.get("kernel_kind")
+        if kind not in ("routed","dense"):
+            raise ValueError(f"shape kernel_kind must be routed or dense, got {kind!r}")
+        name=entry.get("shape_id")
+        if not isinstance(name,str) or not name:
+            raise ValueError("each shape needs a non-empty shape_id string")
+        rows=entry.get("rows")
+        columns=entry.get("columns")
+        if not _is_count(rows) or not _is_count(columns):
+            raise ValueError(f"shape {name!r} needs positive integer rows and columns")
+        mode=entry.get("mode")
+        if type(mode) is not int or mode not in (0,2):
+            raise ValueError(f"shape {name!r} mode must be 0 (gate/up) or 2 (down/dense)")
+        shapes.append((kind,name,rows,columns,mode))
+    raw_ms=doc.get("ms")
+    if not isinstance(raw_ms,list) or not raw_ms or any(not _is_count(m) for m in raw_ms):
+        raise ValueError("structure spec needs a non-empty ms list of positive integers")
+    ms=tuple(raw_ms)
+    if len(set(ms))!=len(ms):
+        raise ValueError("structure spec ms must not repeat a value")
+    meta={}
+    for key in ("experts","top_k","hidden","inter"):
+        value=doc.get(key)
+        if not _is_count(value):
+            raise ValueError(f"structure spec needs a positive integer {key}")
+        meta[key]=value
+    if meta["top_k"]>meta["experts"]:
+        raise ValueError(f"structure spec top_k {meta['top_k']} is above experts {meta['experts']}")
+    return {"shapes":tuple(shapes),"ms":ms,"meta":meta,"spec_id":doc.get("spec_id")}
+
+
+def measured_at_spec(meta,group,spec,record):
+    """True when an old measurement was taken at the sweep's own geometry.
+
+    A shape name alone does not say which rows, columns or model it was measured on.
+    A routed group takes its shape name from its mode, so the mode is compared too.
+    A measurement that does not record a field, or records another value, is skipped:
+    the rung stays pending and the table never labels a measurement with a geometry it
+    was not taken at."""
+    _kind,_name,rows,columns,mode=spec
+    effective=group.get("mode",2)   # measurement() reads a group that records no mode as mode 2
+    if type(effective) is not int or effective!=mode:return False
+    recorded=(("rows",group,rows),("cols",group,columns),
+              ("experts",meta,record["experts"]),("top_k",meta,record["top_k"]),
+              ("hidden",meta,record["hidden"]),("inter",meta,record["inter"]))
+    return all(type(source.get(field)) is int and source[field]==expected for field,source,expected in recorded)
+
+
+def resolve_sweep_geometry(structure_spec):
+    """Return shapes, ms, owner text and scope record for one harvest."""
+    if structure_spec is None:
+        return SHAPES,MS,DEFAULT_SHAPE_OWNER,None
+    parsed=parse_structure_spec(structure_spec)
+    meta=parsed["meta"]
+    owner=(f"structure-spec {parsed['spec_id'] or Path(structure_spec).name}; "
+             f"experts{meta['experts']}, top_k{meta['top_k']}, "
+             f"hidden{meta['hidden']}, inter{meta['inter']}")
+    digest=hashlib.sha256(Path(structure_spec).read_bytes()).hexdigest()
+    record={"spec_id":parsed["spec_id"],"sha256":digest,
+              "file":Path(structure_spec).name,
+              "experts":meta["experts"],"top_k":meta["top_k"],
+              "hidden":meta["hidden"],"inter":meta["inter"]}
+    return parsed["shapes"],parsed["ms"],owner,record
+
+
+def roster(shapes=SHAPES,ms=MS):
+    """List one cell per shape and M, plus recorded-routing cells."""
+    cells=[{"cell_id":f"{kind}:{name}:M{m}","kernel_kind":kind,"shape_id":name,"M":m} for kind,name,_r,_c,_mode in shapes for m in ms]
+    seen=[]
+    for kind,name,_r,_c,_mode in shapes:
+        if kind=="routed" and name not in seen:
+            seen.append(name)
+    recorded=[m for m in ms if m>=RECORDED_ROUTING_MIN_M]
+    cells += [{"cell_id":f"routed:{name}:M{m}:recorded","kernel_kind":"routed","shape_id":name,"M":m,"routing":"recorded"} for name in seen for m in recorded]
     return cells
 
 
@@ -100,6 +191,8 @@ def body_geometry(head,cell,geometry,meta,grid):
 
 def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
     meta=data['meta']
+    from tessera import routed_fused as rf
+    from tessera.control import unit_wire_bits
     f,r=cell.get('F',{}),cell.get('R',{})
     timer=f.get('timer') if f.get('timer')==r.get('timer') else None
     fp8 = grid.name == 'E4M3'
@@ -157,6 +250,7 @@ def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
 
 def merge_index(index, format_name, build_id, version, relative, table):
     """Preserve every immutable version and every other family's entry."""
+    from tessera.rung_allowability import validate_index
     validate_index(index)
     index['schema']='fleet.rung_allowability.index.v2'
     builds=index['formats'].setdefault(format_name, {'kernel_builds':{}})['kernel_builds']
@@ -172,6 +266,7 @@ def merge_index(index, format_name, build_id, version, relative, table):
 def activate_published_index(publication, candidate_name="index.v2-candidate.json"):
     """Select the staged immutable versions; never rerun their harvest."""
     import copy,fcntl,os
+    from tessera.rung_allowability import validate_index, validate_table
     publication=Path(publication)
     with (publication/'.publication.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
@@ -228,11 +323,12 @@ def apply_reader_findings(row, findings, format_name, kernel_shas):
 
 def performance_increment(table, raw_inputs, version, findings=()):
     """Upgrade a newly loaded table, preserve history, append only actual cells."""
-    from tessera.rung_allowability import PERFORMANT_POLICY, measured_geometry_classes
+    from tessera.rung_allowability import PERFORMANT_POLICY, measured_geometry_classes, validate_table
     validate_table(table)
     original_schema = table['schema']
     base, arity_text = table['format'].removeprefix('TESSERA_').rsplit('_K', 1)
     from tessera.alphabet import tuple_grid
+    from tessera.control import grid_for_name
     grid = grid_for_name(base)
     if int(arity_text) != 1:
         grid = tuple_grid(grid, int(arity_text))
@@ -317,8 +413,9 @@ def performance_increment(table, raw_inputs, version, findings=()):
 
 def publish_table(table, args):
     """One immutable writer for fresh harvests and class-only metadata increments."""
-    validate_table(table)
+    from tessera.rung_allowability import validate_index, validate_table
     import jsonschema
+    validate_table(table)
     jsonschema.Draft202012Validator(json.loads(Path(args.schema).read_text()), format_checker=jsonschema.FormatChecker()).validate(table)
     format_name, build_id = table['format'], table['kernel_build']['id']
     rows = table['rungs']
@@ -373,6 +470,7 @@ def main():
     ap.add_argument("--input-table", help="existing immutable table for a scoped performance-policy increment")
     ap.add_argument("--measurement-input", action="append", default=[], help="completed raw geometry JSON, normalized by this existing producer")
     ap.add_argument("--candidate-index-name", choices=("index.v2-candidate.json", "index.v3-candidate.json"), default="index.v2-candidate.json")
+    ap.add_argument('--structure-spec',help='D41 structure spec JSON with sweep shapes, experts, top_k, hidden, inter and Ms; without it the tool keeps its compiled GLM defaults')
     args=ap.parse_args()
     if args.activate_index:
         if not args.publish_root:raise ValueError('index activation needs publication root')
@@ -390,6 +488,7 @@ def main():
     if not match:raise ValueError('expected family format name, without a rung suffix')
     base,arity=match[1],int(match[2])
     from tessera.alphabet import tuple_grid
+    from tessera.control import grid_for_name
     scalar=grid_for_name(base)
     grid=scalar if arity==1 else tuple_grid(scalar,arity)
     completed=[]
@@ -413,7 +512,8 @@ def main():
     for path,_ in completed:
         for ninja in path.parent.glob('home/torch_extensions/*/build.ninja'):
             build['metadata']['flags'].append({'file':str(ninja),'cuda_cflags':[l for l in ninja.read_text().splitlines() if l.startswith('cuda_cflags =')]})
-    required=roster()
+    shapes,ms,shape_owner,spec_record=resolve_sweep_geometry(args.structure_spec)
+    required=roster(shapes,ms)
     by_rung={q:{'rung':q,'measurement_status':'pending','supported':None,'anomaly_flags':[],'observations':[], 'excluded':False,'dominating_rung':None,'measurements':[],'quality':{},'dominance_evidence':[],'lineage':{}} for q in range(lower,upper+1)}
     for facts in catalog.get('rungs',[]):
         by_rung[facts['q256']]['observations'].append({'kind':'producer_recipe_and_reader_scope','facts':facts,'blocking':False,'exclusion_basis':False})
@@ -440,8 +540,9 @@ def main():
             q=group.get('q256')
             if q not in by_rung or group.get('kind') not in ('routed','dense'):continue
             kind=group["kind"]; name=group.get("shape") if kind=="dense" else ("gate_up" if group["mode"]==0 else "down")
-            spec=next((s for s in SHAPES if s[:2]==(kind,name)),None)
+            spec=next((s for s in shapes if s[:2]==(kind,name)),None)
             if not spec:continue
+            if spec_record is not None and not measured_at_spec(data['meta'],group,spec,spec_record):continue
             for key in required:
                 if key["kernel_kind"]!=kind or key["shape_id"]!=name:continue
                 m=key["M"]
@@ -492,7 +593,9 @@ def main():
             row['observations'].append({'kind':'beyond_1024_slow_lane','issue':690,'url':'https://github.com/RobTand/tessera/issues/690','blocking':False,'exclusion_basis':False,'ratios':ratios,'missing_baseline':not bool(ratios)})
     rows=list(by_rung.values())
     table={"schema":"fleet.rung_allowability.v2","table_version":args.version,"table_status":"complete" if all(r["measurement_status"]!="pending" for r in rows) else "partial","format":format_name,"kernel_build":build,"generated_at":datetime.now(timezone.utc).isoformat(),
-           "scope":{"rung_min":lower,"rung_max":upper,"grid_step_q256":1,"grid_owner":meta.get('grid_owner','prismaquant.tessera_formats.realisable_rungs(step_q256=1)'),"required_cells":required,"shapes":[{"shape_id":n,"kernel_kind":k,"rows":r,"columns":c,"mode":mode} for k,n,r,c,mode in SHAPES],"timing_statistic":meta["statistic"],"shape_owner":"bench_rates TP2 shapes; actual GLM config hidden4096, routed inter2048/2, experts288, topk8"},"rungs":rows,"evidence":{"summary":dict(Counter(r["measurement_status"] for r in rows)),"completed_quanta":len(completed),"quality_scope":"fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL","exclusion_review_status":"pending independent review; no defaults promoted"}}
+           "scope":{"rung_min":lower,"rung_max":upper,"grid_step_q256":1,"grid_owner":meta.get('grid_owner','prismaquant.tessera_formats.realisable_rungs(step_q256=1)'),"required_cells":required,"shapes":[{"shape_id":n,"kernel_kind":k,"rows":r,"columns":c,"mode":mode} for k,n,r,c,mode in shapes],"timing_statistic":meta["statistic"],"shape_owner":shape_owner},"rungs":rows,"evidence":{"summary":dict(Counter(r["measurement_status"] for r in rows)),"completed_quanta":len(completed),"quality_scope":"fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL","exclusion_review_status":"pending independent review; no defaults promoted"}}
+    if spec_record is not None:
+        table["scope"]["structure_spec"]=spec_record
     table['scope']['kernel_execution_scope']=meta.get('kernel_execution_scope',meta.get('execution_scope','rank-local packed fused and actual public compact projections at TP2 dimensions; synthetic packed wires; each cell names its path; serving intake refusals and gates remain independent'))
     table["evidence"]["quality_summary_file"]=str(root/"quality-summary.json")
     table["evidence"]["exclusion_review_status"]="Candidate proofs are non-blocking proposals only; no exclusions applied before parent and independent review."
