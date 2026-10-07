@@ -39,6 +39,11 @@ shapes and producer imports without model construction. Its output is not a cens
 The constructor check uses real vLLM Linear classes on the supported CPU platform.
 Stock, T-8, and T-16 construction views use fresh processes in one admitted action.
 The selected views retain actual quantization method calls and explicit output partitions.
+The existing action guard accepts an explicit job policy without a new dispatcher.
+It records the measured CPU peak and the unmeasured GPU overhead separately.
+The new policy adds a three-GiB margin and aborts below two GiB.
+It sends SIGTERM, then SIGKILL after ten seconds. PrismaBuild owns scope cleanup.
+The old measurement policy and its callers remain unchanged.
 
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
