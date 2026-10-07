@@ -180,6 +180,20 @@ __device__ __forceinline__ void history(const uint32_t (&o)[R], const uint32_t (
     }
 }
 
+// The same for words [W0, W1] only: a split warp's projection lies in those words.
+template <int R, int W0, int W1>
+__device__ __forceinline__ void history_range(const uint32_t (&o)[R], const uint32_t (&bb)[R], int g,
+                                              uint32_t (&p1)[R], uint32_t (&pp)[R]) {
+    #pragma unroll
+    for (int i = W0; i <= W1; ++i) {
+        const uint32_t up4 = __shfl_up_sync(FULL, o[i], 4);
+        const uint32_t up8 = __shfl_up_sync(FULL, o[i], 8);
+        const uint32_t dn4 = __shfl_down_sync(FULL, bb[i], 4);
+        pp[i] = g < 2 ? bb[i] : up8;
+        p1[i] = g == 0 ? dn4 : up4;
+    }
+}
+
 // Where a lane reads its own words and its boundary words in one rate segment.
 struct SegPtr {
     const uint32_t* own;
@@ -464,17 +478,21 @@ template <int MODE, int RT, bool SPLIT> struct PF {
 // ``enter(slot)`` runs on every live slot in order: at a chunk start it waits
 // for the chunk, syncs the CTA and stages the next chunk; it returns the staged
 // chunk.  Every warp of the CTA walks the same slots, so the barrier is uniform.
-template <int R, int MODE, int RT, bool SPLIT, int D, bool DUMP, class Enter>
+// PRC: the split warp's projection (0 gate, 1 up), compile-time; its pairs lie in words
+// [W0, W1] of the lane, and the warp loads and shuffles only those (-1: all words).
+template <int R, int MODE, int RT, bool SPLIT, int D, bool DUMP, int PRC, class Enter>
 __device__ __forceinline__ void kseg_xs(const Params& p, const SegPtr& sp, int s0, int s1, int slot0, Enter&& enter,
-                                        uint64_t pol_w, int g, int t, int e, int n0, int pr, const uint8_t* tab,
+                                        uint64_t pol_w, int g, int t, int e, int n0, const uint8_t* tab,
                                         int rt_live, const int16_t* kp, float (&acc)[PF<MODE, RT, SPLIT>::NACC][RT][4]) {
     using G = PF<MODE, RT, SPLIT>;
     constexpr int NG = G::NG;
+    constexpr int W0 = PRC < 0 ? 0 : (PRC * 16 * R) / 32;
+    constexpr int W1 = PRC < 0 ? R - 1 : ((PRC + 1) * 16 * R - 1) / 32;
     if (s0 >= s1) return;
     uint32_t wb[D][R], bb[D][R];
     auto load = [&](int d, int s) {
         #pragma unroll
-        for (int i = 0; i < R; ++i) {
+        for (int i = W0; i <= W1; ++i) {
             wb[d][i] = ld_nc(sp.own + (long)s * sp.ostride + i * 32, pol_w);
             bb[d][i] = ld_nc(sp.bnd + (long)s * sp.bstride + i * sp.bistride, pol_w);
         }
@@ -485,22 +503,22 @@ __device__ __forceinline__ void kseg_xs(const Params& p, const SegPtr& sp, int s
         #pragma unroll
         for (int d = 0; d < D; ++d) {
             const bool live = s + d < s1;
-            uint32_t o[R], bv[R], p1[R], pp[R];
+            uint32_t o[R] = {}, bv[R] = {}, p1[R] = {}, pp[R] = {};
             #pragma unroll
-            for (int i = 0; i < R; ++i) { o[i] = wb[d][i]; bv[i] = bb[d][i]; }
-            history<R>(o, bv, g, p1, pp);
+            for (int i = W0; i <= W1; ++i) { o[i] = wb[d][i]; bv[i] = bb[d][i]; }
+            history_range<R, W0, W1>(o, bv, g, p1, pp);
             load(d, min(s + d + D, s1 - 1));
             if (!live) continue;
             const int S = slot0 + s + d;
             const uint8_t* xc = enter(S);
             const uint8_t* xk = xc + (S % XKC) * NG * KSTEP + 8 * t;
             if constexpr (SPLIT) {
+                constexpr int PR = PRC < 0 ? 0 : PRC;
                 uint32_t a[4];
-                if (pr == 0) decode_group<R, 0>(o, p1, pp, tab, a);
-                else decode_group<R, 1>(o, p1, pp, tab + TAB, a);
+                decode_group<R, PR>(o, p1, pp, tab + PR * TAB, a);
                 if constexpr (DUMP) {
                     const int cg = kp[S];
-                    uint8_t* row0 = p.dump + (((long)e * 2 + pr) * p.N + n0 + 2 * g) * p.Kx + cg * KSTEP + 8 * t;
+                    uint8_t* row0 = p.dump + (((long)e * 2 + PR) * p.N + n0 + 2 * g) * p.Kx + cg * KSTEP + 8 * t;
                     *reinterpret_cast<uint2*>(row0) = make_uint2(a[0], a[2]);
                     *reinterpret_cast<uint2*>(row0 + p.Kx) = make_uint2(a[1], a[3]);
                 }
@@ -623,8 +641,15 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
         auto run = [&](auto RC, const uint32_t* seg, const uint32_t* hseg, int a, int b, int slot0) {
             constexpr int RR = decltype(RC)::value;
             const SegPtr sp = seg_ptr<RR>(p, seg, tile_words, hseg, T128, w128, lane, g, t);
-            kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0, pr, smem,
-                                                    rt_live, s_kp, acc);
+            if constexpr (SPLIT) {
+                if (pr == 0) kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP, 0>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
+                                                                       smem, rt_live, s_kp, acc);
+                else kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP, 1>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
+                                                               smem, rt_live, s_kp, acc);
+            } else {
+                kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP, -1>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
+                                                           smem, rt_live, s_kp, acc);
+            }
         };
         if (ra == 4) run(std::integral_constant<int, 4>{}, w0, h0, 0, ksa, 0);
         else run(std::integral_constant<int, 3>{}, w0, h0, 0, ksa, 0);
