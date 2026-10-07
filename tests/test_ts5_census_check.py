@@ -14,22 +14,16 @@ import pytest
 
 from tessera.serving.contract import load_serving_contract
 from tessera.serving.scheme import (
-    ROUTES, MOE_GEMM_SYMBOL, TESSERA_FP8, expert_role_declarations, launch_pairs,
+    ROUTES, TESSERA_FP8, expert_role_declarations, launch_pairs,
     validate_tessera_moe_scheme)
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-# The lane-free launch an FP8 expert stack makes on this build: the compact
-# window MoE adapter (contract v38, tessera#604).  The materialising
-# ``(MOE_GEMM_SYMBOL, torch_materialize_stock)`` pair left the table then,
-# because ``moe_route.compact_window_lane`` answers True for FP8 whenever the
-# compact reader is defined; a record naming it is one no serve here stamps.
-# Since contract v42 (tessera#640) the fused routed window lane is a second
-# pair, made only where its extension built; ``lanes=()`` leaves it out, and
-# these fixtures record the compact launch.
+# A census records the current route, not a qualification decision.
+# The full registry includes unqualified operations.
 (_MOE_LAUNCH,) = launch_pairs(
-    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident", lanes=())
-GEMM_SYMBOL, DECODER_TORCH_STOCK = _MOE_LAUNCH
-assert GEMM_SYMBOL != MOE_GEMM_SYMBOL
+    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident", lanes=(),
+    include_experimental=True)
+GEMM_SYMBOL, DECODER = _MOE_LAUNCH
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "example/runtime@sha256:" + "1" * 64
@@ -110,7 +104,7 @@ def _fixture():
         for target in TARGETS:
             child = f"{target}.routed_experts"
             records[phase][child] = {"kind": "moe", "policy": f"{TESSERA_FP8}:resident",
-                "symbol": GEMM_SYMBOL, "decoder": DECODER_TORCH_STOCK,
+                "symbol": GEMM_SYMBOL, "decoder": DECODER,
                 "contract": ACTIVATION_CONTRACT, "state": "served",
                 "shape": "M1:N128:K128" if phase == "decode" else "M64:N128:K128"}
             owners[phase][child] = target
@@ -287,7 +281,7 @@ def _promote(case):
             "structure": "routed_moe", "family": "TESSERA_E4M3_K1", "regime": regime,
             "rungs_q256": [1024], "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "runtime": {"image": IMAGE, "execution_modes": ["eager"]},
-            "executes": [{"symbol": GEMM_SYMBOL, "decoder": DECODER_TORCH_STOCK}]})
+            "executes": [{"symbol": GEMM_SYMBOL, "decoder": DECODER}]})
 
 
 def test_promotion_replays_current_cells_instead_of_embedded_agreement():
