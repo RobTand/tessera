@@ -646,7 +646,7 @@ def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: i
             "on_disk_bytes": containers, "on_disk_bpp": containers * 8 / params if params else None,
             "resident_mode_bytes": resident,
             "resident_mode_bpp": resident * 8 / params if params else None,
-            "streamed_mode_note": "the prepared planes (~wire bytes + per-unit tables) plus one transient decoded tile per forward",
+            "streamed_mode_note": "dense streamed working storage is reader-specific; routed native WINDOW classes require resident mode and do not materialize expert tiles",
             "by_family": families, "passthrough_bytes": passthrough_bytes,
             "checkpoint_bytes": checkpoint_bytes}
 
