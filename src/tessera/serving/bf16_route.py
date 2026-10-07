@@ -13,13 +13,18 @@ HOW IT LOADS AND RUNS NOW.  The compact reader validates the container and
 the sidecar facts (`scheme.parse_compact_blob_for_scheme`) and expands no
 weight plane; each role is cut to this rank off the layer's ``ShardPlan`` and
 frozen into ``window_gemm.PreparedWindowGemm``, whose table gather, row-scale
-fold and bf16 ``tl.dot`` run in registers/shared memory -- there is no
-materialised bf16 tile in either residency.  The route stamps
-``(tessera::window_gemm_dense, native_window_gemm_folded)``.
+fold and bf16 tl.dot run in registers/shared memory by default.
+The default lane has no materialized BF16 tile. Its launch identity follows
+the packed native lane that the prepared module selects.
 ``prepare_tessera_bf16_module`` and the torch window decode stay as reference
 decoders (``tessera.decode.materialize_bf16``, the unfolded pair), no longer
 reached from a serve; the served arithmetic's oracle is
 ``tessera.decode.materialize_bf16_folded``.
+
+The optional TESSERA_BF16_DECODE_ONCE flag admits an eager resident module.
+TESSERA_BF16_DECODE_ONCE_MIN_M supplies its explicit measurement-selected threshold.
+Each admitted step decodes into shared shape/device scratch, then uses cuBLAS BF16 GEMM.
+The packed role bundles remain the module storage. The route records the actual launch.
 
 WHY THE FAMILY EXISTS.  The window body's error over the E4M3 alphabet
 saturates at ~0.022 out-space from R = 6 upward -- the floor is the
@@ -72,16 +77,18 @@ from typing import List, Optional, Sequence
 
 import torch
 
-from .compile_identity import note_traced_dispatch
+from .compile_identity import declared_forward_is_compiled, note_traced_dispatch
 from .ext import WINDOW_GEMV_MODULE_NAME
 from .lane import MODES
+from . import bf16_prefill
 from .residency import layer_resident_tensors
 from .native_window import prepare_dense_native_module
-from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, WINDOW_GEMM_SYMBOL,
+from .scheme import (BF16_DECODE_ONCE_DENSE_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, WINDOW_GEMM_SYMBOL,
                      WINDOW_GEMV_SYMBOL, launch_pairs, parse_compact_blob_for_scheme,
                      validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported
 from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+                        DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED,
                         DECODER_NATIVE_WINDOW_GEMM_FOLDED, DECODER_TORCH_WINDOW,
                         DECODER_WINDOW_GEMV, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
@@ -91,6 +98,7 @@ __all__ = [
     "ACTIVATION_CONTRACT",
     "DENSE_LAUNCH",
     "DENSE_FUSED_LAUNCH",
+    "DENSE_DECODE_ONCE_LAUNCH",
     "DENSE_LAUNCHES",
     "GEMM_SYMBOL",
     "STREAMED_APPLY_OP",
@@ -120,19 +128,14 @@ ACTIVATION_CONTRACT = ROUTES[TESSERA_BF16]["activation_contract"]
 RESIDENT_ATTRIBUTES = ("tessera_native",)
 GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 
-#: THE dense launches this route makes, owned where the dispatch is; the BF16
-#: counterpart of ``fp8_route.DENSE_LAUNCHES`` and documented there (#538):
-#: the same symbols, on the folded arithmetic's own decoders (tessera#614).
-#: ``apply`` stamps the prepared module's ``launch_pair`` at its one
-#: ``emit_route`` call, ``process_weights_after_loading`` refuses a prepared
-#: module whose pair is not in this tuple, and ``tests/test_serving_contract.py``
-#: asserts ``scheme.ROUTE_LAUNCHES``' dense entry for ``TESSERA_BF16`` is
-#: exactly this set.  ``DENSE_FUSED_LAUNCH`` is the fused window kernel's
-#: dense identity (contract v43), taken for every module whose roles
-#: ``routed_fused.fused_dense_window_supported`` admits.
+#: The route publishes every dense launch it can execute.
+#: apply stamps launch_pair_for(M) only when an eager prefill workspace exists.
+#: The load path checks the packed lane before optional workspace admission.
 DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_FOLDED)
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
-DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH)
+DENSE_DECODE_ONCE_LAUNCH = (BF16_DECODE_ONCE_DENSE_SYMBOL,
+                            DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED)
+DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH, DENSE_DECODE_ONCE_LAUNCH)
 
 #: The JIT module name the GEMV load path asks for -- ``ext``'s constant, so the
 #: contract table and the load call cannot drift (the same string ``fp8_gemv`` reads).
@@ -867,6 +870,13 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                 raise RuntimeError(
                     f"{prefix}: the prepared Tessera BF16 module runs "
                     f"{prepared.launch_pair!r}, the route publishes {DENSE_LAUNCHES!r}")
+            if bf16_prefill.enabled() and layer.tessera_mode == "resident":
+                if declared_forward_is_compiled():
+                    raise RuntimeError(
+                        f"{prefix}: {bf16_prefill.FLAG}=1 serves an eager-only lane; "
+                        "use compilation mode NONE or unset the flag")
+                prepared.enable_bf16_prefill(min_m=bf16_prefill.configured_min_m())
+
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol
@@ -882,7 +892,8 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                                   persistent=False)
             del layer.wire_bytes
             # One graph, one op, declared here: the FP8 route's rule (#91).
-            note_traced_dispatch(prefix, prepared.symbol)
+            note_traced_dispatch(prefix, prepared.symbol if prepared.bf16_prefill is None
+                                 else f"{prepared.symbol}|{BF16_DECODE_ONCE_DENSE_SYMBOL}")
 
         # -- residency declaration (#580) -------------------------------
         def resident_tensors(self, layer):
@@ -910,7 +921,9 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(x2.contiguous())
-            (symbol, decoder), tile_m = native.launch_pair, 0
+            (symbol, decoder), tile_m = (
+                native.launch_pair_for(int(x2.shape[0])) if native.bf16_prefill is not None
+                else native.launch_pair), 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_BF16}:{layer.tessera_mode}",

@@ -264,7 +264,8 @@ class PreparedDenseNativeModule:
     """
 
     __slots__ = ("__roles", "__rows", "__columns", "__device", "__family",
-                 "__arithmetic", "__lane", "__fused", "__lane_reason", "__decoded")
+                 "__arithmetic", "__lane", "__fused", "__lane_reason", "__decoded",
+                 "__bf16_prefill", "__bf16_min_m")
 
     def __init__(self, roles, *, rows: int, columns: int, device: torch.device,
                  family: str, lane: str = LANE_TRITON, fused_roles=None,
@@ -302,6 +303,8 @@ class PreparedDenseNativeModule:
         self.__fused = fused
         self.__lane_reason = lane_reason
         self.__decoded = None
+        self.__bf16_prefill = None
+        self.__bf16_min_m = None
 
     @property
     def rows(self): return self.__rows
@@ -335,6 +338,23 @@ class PreparedDenseNativeModule:
         return (self.symbol, self.decoder)
 
     @property
+    def bf16_prefill(self):
+        """Return the shared BF16 workspace, or None when the lane is not enabled."""
+        return self.__bf16_prefill
+
+    def enable_bf16_prefill(self, *, min_m: int) -> None:
+        """Attach shared scratch with an explicit measurement-selected admission threshold."""
+        if isinstance(min_m, bool) or not isinstance(min_m, int) or min_m < 1:
+            raise ValueError("min_m must be an explicit positive integer")
+        if self.__bf16_prefill is not None:
+            raise ValueError("this module already holds a BF16 prefill workspace")
+        from .bf16_prefill import prepare_bf16_prefill
+
+        self.__bf16_prefill = prepare_bf16_prefill(self)
+        self.__bf16_min_m = min_m
+
+
+    @property
     def decoded(self):
         """The decode-once E4M3 copy (``e4m3_prefill.DecodedE4M3``), or ``None``."""
         return self.__decoded
@@ -361,6 +381,13 @@ class PreparedDenseNativeModule:
         from .e4m3_prefill import MIN_M
         from .scheme import DECODE_ONCE_DENSE_SYMBOL
         from .telemetry import DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3
+
+        if self.__bf16_prefill is not None and int(m) >= self.__bf16_min_m:
+            from .scheme import BF16_DECODE_ONCE_DENSE_SYMBOL
+            from .telemetry import DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED
+
+            return (BF16_DECODE_ONCE_DENSE_SYMBOL,
+                    DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED)
 
         if self.__decoded is not None and int(m) >= MIN_M:
             return (DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
@@ -398,22 +425,24 @@ class PreparedDenseNativeModule:
         return torch.cat([role.bundle.scale for role in self.__roles]).contiguous()
 
     def apply(self, x: torch.Tensor, a_scale: "torch.Tensor | None" = None) -> torch.Tensor:
-        """``x [M, columns]`` in original column order -> ``bf16 [M, rows]``.
+        """Apply the packed module to x in its original column order.
 
-        ``x`` is bf16 for the value family and prequantized fp8 plus its
-        per-token scale for the e4m3 family (the route quantizes before this
-        call, so the contract's quantizer is the one that ran).  On the fused
-        lane one custom-op node serves the whole module; on the Triton lane one
-        node per role.  No host-side data-dependent work on either.  A module
-        holding a decode-once copy serves M >= ``e4m3_prefill.MIN_M`` from it
-        (:meth:`launch_pair_for` names which ran).  That branch reads M on the
-        host, so the decode-once lane is EAGER-ONLY.  The gate is the route's
-        LOAD (``fp8_route`` refuses to attach a copy when vLLM compiles the
-        forward); the raise below is a backstop for a direct caller, and under
-        ``torch.compile`` without ``fullgraph`` it is a graph break Dynamo may
-        run around.  A CUDA-graph capture sees a concrete M and records the
-        branch that ran for it.
+        The value family takes BF16 x without an activation scale.
+        The E4M3 family takes prequantized FP8 x and its per-token scale.
+        Optional prefill lanes require eager dispatch. BF16 admission uses explicit min_m.
+        Each admitted BF16 step decodes into shared scratch before its GEMM.
+        CUDA graphs require external serialization of all shared scratch users.
         """
+        if self.__bf16_prefill is not None:
+            from .bf16_prefill import FLAG, prefill_apply
+
+            if torch.compiler.is_compiling():
+                raise RuntimeError(f"{FLAG}=1 serves an eager-only lane")
+            if a_scale is not None:
+                raise ValueError("the BF16 prefill lane takes no activation scale")
+            if int(x.shape[0]) >= self.__bf16_min_m:
+                return prefill_apply(self.__bf16_prefill, x)
+
         if self.__decoded is not None:
             from .e4m3_prefill import FLAG, MIN_M, prefill_apply
 
@@ -447,7 +476,7 @@ class PreparedDenseNativeModule:
     # -- residency accounting ------------------------------------------------
 
     def named_tensors(self):
-        """References to the exact frozen kernel inputs; no copies or mutation.
+        """Return frozen kernel inputs and the mutable scratch, by reference.
 
         These tensors are held by slotted prepared bundles rather than registered
         buffers. Resource observers use these names beneath the owning Linear;
@@ -470,16 +499,21 @@ class PreparedDenseNativeModule:
             yield "decoded.weight", self.__decoded.weight
             yield "decoded.scale", self.__decoded.scale
 
+        if self.__bf16_prefill is not None:
+            yield "bf16_prefill.weight", self.__bf16_prefill.weight
+
     def packed_bytes(self) -> int:
-        """Device bytes the prepared weights occupy: the packed wire half, plus
-        the decode-once copy when one is attached (``named_tensors``)."""
+        """Return this module's tensor sizes, including shared scratch references.
+
+        Use resident_storage_bytes to deduplicate shared physical storage across modules.
+        """
         return sum(tensor.numel() * tensor.element_size()
                    for _, tensor in self.named_tensors())
 
     def fingerprints(self):
-        """Identity of every frozen tensor, for a load-time/after-forward check."""
+        """Return immutable input identities. The shared scratch is mutable."""
         return tuple((tensor.data_ptr(), tensor._version, tuple(tensor.shape), tensor.dtype)
-                     for _, tensor in self.named_tensors())
+                     for name, tensor in self.named_tensors() if name != "bf16_prefill.weight")
 
 
 @dataclasses.dataclass(frozen=True)

@@ -66,13 +66,64 @@ from .errors import GrammarError
 from .kernel_window_gemv import TILE_ROWS, WindowGemvUnit
 
 __all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK",
-           "ARITHMETICS"]
+           "ARITHMETICS", "decode_window_bf16_into"]
 
 #: ``tl.dot`` needs a 16-row minimum operand; any M is served by masking.
 MIN_BLOCK = 16
 
 #: The value family's two weight arithmetics (see the module docstring).
 ARITHMETICS = ("epilogue", "folded")
+
+
+@triton.jit
+def _window_values(
+    words_ptr, table_ptr, codes_ptr, native_ptr, init_ptr,
+    kglob, live_k, g, t, rows_v, rate, base, tile_words, total_words,
+    L: tl.constexpr, TILE: tl.constexpr, BN: tl.constexpr,
+    HAS_INIT: tl.constexpr, FP8: tl.constexpr, FOLDED: tl.constexpr, wscale,
+):
+    """Gather one WINDOW tile with the served table and weight arithmetic."""
+    live_k2 = live_k[:, None]
+    qq = (t + 1 + rows_v) * rate
+    if HAS_INIT:
+        length = tl.full((BN,), L, tl.int32)
+    else:
+        length = tl.minimum(qq + g * TILE * rate, L)
+    qb = qq - L
+    neg = qb < 0
+    wi = tl.where(neg, -1, qb >> 5)
+    d1 = wi + 1
+    shift = 64 - qq + 32 * wi
+
+    CHUNK = 16 * rate
+    prev_off = -tile_words + CHUNK - 1
+    idx_prev = base[:, None] + prev_off
+    idx_norm = base[:, None] + wi[None, :]
+    idx1 = base[:, None] + d1[None, :]
+    live_prev = live_k2 & (g > 0) & (idx_prev >= 0) & (idx_prev < total_words)
+    live_norm = live_k2 & (idx_norm >= 0) & (idx_norm < total_words)
+    live1 = live_k2 & (idx1 >= 0) & (idx1 < total_words)
+    w0_prev = tl.load(words_ptr + idx_prev, mask=live_prev, other=0).to(tl.int64) & 0xFFFFFFFF
+    w0_norm = tl.load(words_ptr + idx_norm, mask=live_norm, other=0).to(tl.int64) & 0xFFFFFFFF
+    if HAS_INIT:
+        w0_init = tl.load(init_ptr + kglob, mask=live_k, other=0).to(tl.int64) & 0xFFFFFFFF
+        w0 = tl.where(neg[None, :] & (g == 0), w0_init[:, None],
+                      tl.where(neg[None, :], w0_prev, w0_norm))
+    else:
+        w0 = tl.where(neg[None, :], w0_prev, w0_norm)
+    w1 = tl.load(words_ptr + idx1, mask=live1, other=0).to(tl.int64) & 0xFFFFFFFF
+    combined = (w0 << 32) | w1
+    state = (combined >> shift[None, :]) & ((1 << length) - 1)[None, :]
+    if FP8:
+        code = tl.load(codes_ptr + state, mask=live_k2, other=0)
+        byte = tl.load(native_ptr + code.to(tl.int32), mask=live_k2, other=0)
+        val = byte.to(tl.float8e4nv, bitcast=True)
+    else:
+        val = tl.load(table_ptr + state, mask=live_k2, other=0.0)
+        if FOLDED:
+            val = (val.to(tl.float32) * wscale[None, :]).to(tl.bfloat16)
+    return val
+
 
 
 @triton.jit
@@ -97,6 +148,7 @@ def _window_gemm_kernel(
 
     rows_v = tl.arange(0, BN)
     acc = tl.zeros((BM, BN), dtype=tl.float32)
+    wscale = tl.full((BN,), 1.0, tl.float32)
     if FOLDED:
         # the folded value family multiplies every decoded weight by its row's
         # scale, so the scale is read once, before the K loop
@@ -113,57 +165,13 @@ def _window_gemm_kernel(
         for c0 in range(0, ncols, BK):
             offs_k = c0 + tl.arange(0, BK)
             live_k = offs_k < ncols
-            live_k2 = live_k[:, None]
             kglob = col0 + offs_k                        # permuted column index [BK]
             base = tile_base + offs_k * CHUNK            # [BK]
 
-            qq = (t + 1 + rows_v) * rate                 # [BN], ends of the windows
-            if HAS_INIT:
-                # history above row 0 keeps every window full
-                length = tl.full((BN,), L, tl.int32)
-            else:
-                # the first tile's opening is zero-padded; later tiles are not
-                length = tl.minimum(qq + g * TILE * rate, L)
-            qb = qq - L
-            neg = qb < 0
-            # stream word holding the first field bit, relative to `base`:
-            # -1 means the previous tile's last word of the same run, which is
-            # the 32 bits immediately before this tile's first word
-            wi = tl.where(neg, -1, qb >> 5)
-            d1 = wi + 1                                  # current chunk's first word when neg
-            # combined bit of the field's last bit (bit 64-b.L of the pair)
-            shift = 64 - qq + 32 * wi
-
-            prev_off = -tile_words + CHUNK - 1
-            idx_prev = base[:, None] + prev_off
-            idx_norm = base[:, None] + wi[None, :]
-            idx1 = base[:, None] + d1[None, :]
-            live_prev = live_k2 & (g > 0) & (idx_prev >= 0) & (idx_prev < total_words)
-            live_norm = live_k2 & (idx_norm >= 0) & (idx_norm < total_words)
-            live1 = live_k2 & (idx1 >= 0) & (idx1 < total_words)
-            w0_prev = tl.load(words_ptr + idx_prev, mask=live_prev, other=0).to(tl.int64) & 0xFFFFFFFF
-            w0_norm = tl.load(words_ptr + idx_norm, mask=live_norm, other=0).to(tl.int64) & 0xFFFFFFFF
-            if HAS_INIT:
-                w0_init = tl.load(init_ptr + kglob, mask=live_k, other=0).to(tl.int64) & 0xFFFFFFFF
-                w0 = tl.where(neg[None, :] & (g == 0), w0_init[:, None],
-                              tl.where(neg[None, :], w0_prev, w0_norm))
-            else:
-                w0 = tl.where(neg[None, :], w0_prev, w0_norm)
-            w1 = tl.load(words_ptr + idx1, mask=live1, other=0).to(tl.int64) & 0xFFFFFFFF
-
-            combined = (w0 << 32) | w1
-            state = (combined >> shift[None, :]) & ((1 << length) - 1)[None, :]
-
-            if FP8:
-                code = tl.load(codes_ptr + state, mask=live_k2, other=0)
-                byte = tl.load(native_ptr + code.to(tl.int32), mask=live_k2, other=0)
-                val = byte.to(tl.float8e4nv, bitcast=True)
-            else:
-                val = tl.load(table_ptr + state, mask=live_k2, other=0.0)
-                if FOLDED:
-                    # one bf16 rounding of (value * row scale) in registers,
-                    # before the dot: materialize_bf16_folded's tile
-                    val = (val.to(tl.float32) * wscale[None, :]).to(tl.bfloat16)
+            val = _window_values(
+                words_ptr, table_ptr, codes_ptr, native_ptr, init_ptr,
+                kglob, live_k, g, t, rows_v, rate, base, tile_words, total_words,
+                L, TILE, BN, HAS_INIT, FP8, FOLDED, wscale)
 
             xk = tl.load(
                 x_ptr + offs_m[:, None] * cols + kglob[None, :],
@@ -185,6 +193,39 @@ def _window_gemm_kernel(
         out_ptr + offs_m[:, None] * rows + offs_n[None, :],
         y.to(tl.bfloat16), mask=live_m[:, None] & live_n[None, :],
     )
+
+
+@triton.jit
+def _window_bf16_decode_kernel(
+    words_ptr, table_ptr, codes_ptr, native_ptr, scale_ptr, runs_ptr,
+    init_ptr, perm_ptr, out_ptr,
+    n_runs, tile_words, total_words, rows, cols, row_offset,
+    L: tl.constexpr, TILE: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
+    HAS_INIT: tl.constexpr,
+):
+    n0 = tl.program_id(0) * BN
+    g = n0 // TILE
+    t = n0 - g * TILE
+    rows_v = tl.arange(0, BN)
+    offs_n = n0 + rows_v
+    live_n = offs_n < rows
+    kglob = tl.program_id(1) * BK + tl.arange(0, BK)
+    wscale = tl.load(scale_ptr + offs_n, mask=live_n, other=0.0)
+    original_k = tl.load(perm_ptr + kglob, mask=kglob < cols, other=0)
+    for r in range(n_runs):
+        rate = tl.load(runs_ptr + r * 4 + 0)
+        col0 = tl.load(runs_ptr + r * 4 + 1)
+        ncols = tl.load(runs_ptr + r * 4 + 2)
+        word0 = tl.load(runs_ptr + r * 4 + 3)
+        live_k = (kglob >= col0) & (kglob < col0 + ncols) & (kglob < cols)
+        base = g * tile_words + word0 + (kglob - col0) * (16 * rate)
+        val = _window_values(
+            words_ptr, table_ptr, codes_ptr, native_ptr, init_ptr,
+            kglob, live_k, g, t, rows_v, rate, base, tile_words, total_words,
+            L, TILE, BN, HAS_INIT, False, True, wscale)
+        tl.store(out_ptr + (row_offset + offs_n[None, :]) * cols + original_k[:, None],
+                 val, mask=live_k[:, None] & live_n[None, :])
+
 
 
 @dataclasses.dataclass(frozen=True)
@@ -306,6 +347,29 @@ class PreparedWindowGemm:
             num_warps=8,
         )
         return y
+
+
+def decode_window_bf16_into(bundle: PreparedWindowGemm, out: torch.Tensor,
+                            *, row_offset: int = 0) -> None:
+    """Decode folded BF16 weights directly into a shared row-major scratch tensor."""
+    from .kernel_window_gemv import require_legacy_word_layout
+
+    require_legacy_word_layout(bundle.word_layout, "the direct WINDOW scratch decoder")
+    if bundle.family != "value" or bundle.arithmetic != "folded":
+        raise GrammarError("the direct scratch decoder requires the folded BF16 value family")
+    if (out.ndim != 2 or out.shape[1] != bundle.cols or row_offset < 0
+            or row_offset + bundle.rows > out.shape[0] or not out.is_contiguous()
+            or out.dtype != torch.bfloat16 or out.device != bundle.device):
+        raise GrammarError("the direct decoder needs contiguous BF16 scratch for every role row")
+    grid = (triton.cdiv(bundle.rows, bundle.block_n), triton.cdiv(bundle.cols, bundle.block_k))
+    _window_bf16_decode_kernel[grid](
+        bundle.words, bundle.table, bundle.codes, bundle.native, bundle.scale,
+        bundle.runs, bundle.init_perm, bundle.perm, out,
+        int(bundle.runs.shape[0]), bundle.tile_words, bundle.total_words,
+        bundle.rows, bundle.cols, row_offset,
+        L=bundle.window_bits, TILE=TILE_ROWS, BN=bundle.block_n, BK=bundle.block_k,
+        HAS_INIT=bundle.has_init, num_warps=8)
+
 
 
 def _resolve_initial_state(unit: WindowGemvUnit,
