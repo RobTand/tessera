@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-07 — use direct uniform native launches
+
+The uniform native owner binds one complete stack at load and uses the old direct CUDA launch.
+Its forward does not read class tables or class-prefix starts, and it does not create dispatch streams.
+Each projection counter resets before every eager launch and captured replay.
+The inverse remap, decoder arithmetic, retained tensor storage and byte price stay unchanged.
+Mixed layers keep the generic two-stream dispatcher and its kernel interface.
+The uniform execution pair stays experimental and cannot borrow historical qualification.
+The oracle and benchmark consumers accept the actual uniform or mixed entry.
+
 ## 2026-10-07 — compare uniform production entries
 
 The matched D41 panel calls master and PR production adapters in separate source-isolated processes.

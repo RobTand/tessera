@@ -594,9 +594,13 @@ WINDOW_CLASS_LAUNCHES = {
 }
 
 
-def routed_class_launch_pair(library: str) -> tuple[str, str]:
-    """Return the current binding identity without a qualification claim."""
-    launch = WINDOW_CLASS_LAUNCHES[library]
+WINDOW_UNIFORM_LAUNCHES = {library: dict(launch, symbol=ROUTED_FUSED_WINDOW_SYMBOL)
+                          for library, launch in WINDOW_CLASS_LAUNCHES.items()}
+
+
+def routed_class_launch_pair(library: str, *, uniform: bool = False) -> tuple[str, str]:
+    """Return the actual native entry without a qualification claim."""
+    launch = (WINDOW_UNIFORM_LAUNCHES if uniform else WINDOW_CLASS_LAUNCHES)[library]
     return launch["symbol"], launch["decoder"]
 
 
@@ -663,12 +667,13 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": DECODE_ONCE_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
-    ) + (WINDOW_CLASS_LAUNCHES["e4m3"], WINDOW_CLASS_LAUNCHES["e4m3mma"]),
-    # Both WINDOW families share the class operation and keep distinct arithmetic.
+    ) + (WINDOW_CLASS_LAUNCHES["e4m3"], WINDOW_CLASS_LAUNCHES["e4m3mma"],
+         WINDOW_UNIFORM_LAUNCHES["e4m3"], WINDOW_UNIFORM_LAUNCHES["e4m3mma"]),
+    # Both WINDOW families share the class owner and keep distinct arithmetic.
     TESSERA_BF16: _dense_native_window_launch(
         _DECODER_NATIVE_WINDOW_GEMM_FOLDED, _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
         "tessera_routed_fused_value") + (
-        WINDOW_CLASS_LAUNCHES["value"],
+        WINDOW_CLASS_LAUNCHES["value"], WINDOW_UNIFORM_LAUNCHES["value"],
     ),
 }
 
@@ -802,7 +807,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: Historical compact and fused identities remain in HISTORICAL_QUALIFIED_LAUNCHES only.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
-    *((launch["symbol"], launch["decoder"]) for launch in WINDOW_CLASS_LAUNCHES.values()),
+    *((launch["symbol"], launch["decoder"]) for launch in (*WINDOW_CLASS_LAUNCHES.values(), *WINDOW_UNIFORM_LAUNCHES.values())),
 })
 
 #: Launches a compiled (``torch.compile``) forward cannot make: their owner

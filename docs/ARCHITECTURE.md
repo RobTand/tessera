@@ -291,21 +291,25 @@ servable one/two-run schedules are retained. Invalid geometry or gate/up
 pairing is refused by field; only an explicit unservable screen can continue,
 with its refusal recorded. Research inputs cannot bypass native geometry.
 
-E4M3 and folded BF16 WINDOW serving use one `FusedRoutedWindowMoE` class
-dispatcher. The loader consumes storage-named wires into the exact rank-local
+E4M3 and folded BF16 WINDOW serving use one `FusedRoutedWindowMoE` native owner.
+The loader consumes storage-named wires into the exact rank-local
 flat axis, builds one int32 original-to-storage inverse at load, and remaps
 router ids once per invocation without reordering weights or top-k positions.
 The layer's EP `expert_map` remains EP-owned and is not rewritten.
 The native WINDOW builder refuses expert bias before it binds or loads the layer.
 
-Class projection views alias retained words/scales/initial-state planes.
-Composed tables, run pairs and descriptors are prepared once. Device counters
-derive each class's first work item from the live route prefix on every call
-and captured replay, without host route-count reads. Fixed full-SM grids issue
-on two load-time streams; fork/join events and the empty scale seat are also
-load-time resources. Gate/up joins precede activation quantization, and down
-joins precede the fixed-order token reduction. The opaque operation is
-`tessera::routed_window_classes`; its resource registry retains no weights.
+Class projection views alias retained words, scales and initial-state planes.
+Composed tables, run pairs and descriptors are prepared once.
+For mixed layers, device counters derive each class start from the live route prefix on every call and captured replay.
+No host route-count read occurs. Fixed full-SM grids use two load-time streams, with fork/join events and an empty scale tensor.
+Gate/up joins precede activation quantization. Down joins precede the fixed-order token reduction.
+The mixed opaque operation is `tessera::routed_window_classes`; its resource registry retains no weights.
+
+For one class, the loader binds the complete stack to the direct old native launch.
+Every forward uses full device route vectors and zeroes each projection counter before its launch.
+Captured replay repeats those counter resets.
+The uniform forward does not read class tables or class-prefix starts, and it does not fork dispatch streams.
+The mandatory artifact metadata and inverse remap remain. The decoder and resident byte price do not change.
 
 `routed_class_dispatch.py` owns only the stream DAG and live work intervals.
 A load-time kernel binding supplies superblock rows, work units per
@@ -320,10 +324,11 @@ The route builder reads every requested mode and span width from the bound kerne
 It builds each device prefix from one count vector before the stream fork.
 The prefix owner has no 64/128 restriction; a BM8 binding needs no routing override.
 
-The common execution registry names the current class operation for both WINDOW families.
-All class pairs remain experimental and have no served qualification cell.
+The common execution registry names the mixed class operation and the uniform Python entry for both WINDOW families.
+All current pairs remain experimental and have no served qualification cell.
+The uniform entry retains the current class decoder label, distinct from each historical qualified pair.
 Historical compact and fused receipt identities have a separate qualification table.
-Both tables use the same axis filter. A historical receipt cannot qualify a current class operation.
+Both tables use the same axis filter. A historical receipt cannot qualify a current class or uniform operation.
 The offline Step4 consumer reads the same current execution registry.
 It checks actual operations and module populations, not served qualification cells.
 Historical R5 replay uses the qualification registry. It does not rewrite archived operations.
@@ -347,11 +352,11 @@ It sends SIGTERM, waits up to five seconds, and sends SIGKILL if group members r
 Its final cleanup uses the same path after a memory read fails.
 Process-group proof does not qualify Docker workload termination. PrismaBuild issue 1599 owns the shared signal relay.
 
-Today the loaded binding is `_LutClassKernel`; it calls the unchanged CUDA
-decoder for each class on the same two streams. Register-direct remains a
-separate build. It can supply M+1 activation buffers with a zero final row
-and scratch indexed by absolute work unit. A later single-launch dispatcher
-can replace this dispatcher only after its speed matches or exceeds it.
+Mixed layers bind `_LutClassKernel` and call the unchanged CUDA decoder on two streams.
+Uniform layers bind `_UniformWindowKernel` and use the direct native launch on the caller stream.
+Register-direct remains a separate build. Its mixed dispatcher interface does not change.
+It can supply M+1 activation buffers with a zero final row and scratch indexed by absolute work unit.
+A later single-launch dispatcher can replace this dispatcher only after its speed matches or exceeds it.
 
 Successful native-owner retirement drops preparation-only offset/rate/code
 metadata. Residency charges actual distinct backing storage: selected table
@@ -362,10 +367,10 @@ Uniform eager/captured bit parity, changed-routing replay and full-plugin
 loading are device proof obligations. No serving pin, allowable-rung/contract
 row or seal is promoted here; live measurement source/artifact pins stay fixed.
 
-Standalone CPU stock/selected decoders remain reference controls, not a plugin
-fallback. The production D41 harness calls this class dispatcher and includes
-an inverse/opaque-operator companion. Heterogeneous timing comparators are
-explicit pure-control interpolations, never claimed mixed single launches.
+Standalone CPU stock and selected decoders remain reference controls, not a plugin fallback.
+The production D41 harness calls the native owner and records the mapped production boundary.
+Only mixed layers use the opaque operation.
+Heterogeneous timing comparators are explicit pure-control interpolations, never claimed mixed single launches.
 
 Re-stamped 2026-10-05 for D32 dev-mode run-identity seals in the managed
 window (Rob: sealing off until further notice). Dev mode is ON unless

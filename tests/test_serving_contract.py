@@ -1016,14 +1016,14 @@ def test_the_native_route_pairs_are_attested_and_censusable():
     # (tessera#931), default-off, until a served census earns it a cell.
     from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
     decode_once = (DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
-    classes = {routed_class_launch_pair(library) for library in WINDOW_CLASS_LAUNCHES}
+    classes = {routed_class_launch_pair(library, uniform=uniform) for library in WINDOW_CLASS_LAUNCHES for uniform in (False, True)}
     assert EXPERIMENTAL_LAUNCHES == frozenset({decode_once, *classes})
-    fp8_classes = {routed_class_launch_pair("e4m3"), routed_class_launch_pair("e4m3mma")}
+    fp8_classes = {routed_class_launch_pair(library, uniform=uniform) for library in ("e4m3", "e4m3mma") for uniform in (False, True)}
     assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == fp8_classes
     assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {decode_once}
     assert mma_routed in qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
     assert mma_dense in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
-    assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == {routed_class_launch_pair("value")}
+    assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == {routed_class_launch_pair("value", uniform=uniform) for uniform in (False, True)}
     assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == set()
     assert fused_fp8 in qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
     assert fused_bf16 in qualification_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
@@ -1159,7 +1159,7 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
     from tessera.serving.scheme import routed_class_launch_pair
     bare = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                         regime=regime, mode="resident", lanes=(), include_experimental=True)
-    assert bare == {routed_class_launch_pair("e4m3")}
+    assert bare == {routed_class_launch_pair("e4m3", uniform=uniform) for uniform in (False, True)}
     assert bare < moe
     assert moe and moe.isdisjoint(dense)
     bf16_moe = launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE,
