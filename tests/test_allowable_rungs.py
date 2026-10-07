@@ -117,6 +117,15 @@ def test_the_sweep_admission_file_names_bits_1_to_7_and_withholds_bit_8():
     assert "2d5b871f" in withheld["anomaly"], withheld
 
 
+def _bf16_routed_cells(contract):
+    """Every T-16 routed_moe cell: the base decode/batch pair and the two
+    runtime-suffixed twins.  Derived from the contract, never a roster."""
+    cells = [c for c in contract["lane_eligibility"]["cells"]
+             if c["family"] == BF16 and c["structure"] == "routed_moe"]
+    assert len(cells) == 4
+    return cells
+
+
 def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(contract):
     """The rule is family-wide; coverage is per cell.  The value library's
     dense launch reads 1..14 and its routed launches 1..8, so a routed_moe
