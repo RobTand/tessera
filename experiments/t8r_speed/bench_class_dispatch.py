@@ -55,6 +55,7 @@ class Report:
             "tessera_head": os.environ.get("TESSERA_HEAD"), "image": os.environ.get("ORACLE_IMAGE"),
             "host": os.environ.get("HOST_NAME", os.uname().nodename),
             "pb_action": os.environ.get("PB_ACTION_KEY", os.environ.get("PRISMABUILD_ACTION_KEY")),
+            "admission": args.admission_label,
             "torch": torch.__version__, "shape": {"hidden": HIDDEN, "inter": INTER,
                 "experts": EXPERTS, "top_k": TOP_K, "tensor_parallel_size": 2},
             "claim_scope": "synthetic feature proof and measurements only; no artifact or quality qualification",
@@ -97,6 +98,7 @@ def parse_args():
     parser.add_argument("--seed", type=int, default=6141)
     parser.add_argument("--config", default="", help="optional GLM config; read on CPU and GPU")
     parser.add_argument("--ncu", action="store_true", help="outside-timer profiler leg through BENCH_NCU=1")
+    parser.add_argument("--admission-label", default="not declared", help="actual admission scope recorded on every timing row")
     args = parser.parse_args()
     ms = [int(m) for m in args.ms.split(",")]
     if not ms or len(set(ms)) != len(ms) or any(m not in (1, 16, 2048, 4096) for m in ms):
@@ -365,6 +367,7 @@ def measure(args, report, name, rates, tokens, timer, order, arm, usage, power, 
         # Class issue order remains production's fixed order. F/R is arm order.
         row = {"arm": arm, "kind": kind, "order": order, "clock_start": clock.read(), "start_unix": time.time(),
             "library": adapter.library, "launch_pair": adapter.launch_pair,
+            "admission": args.admission_label,
             "route_metadata": route_meta, "packed_metadata": own_meta,
             "map_gather": "same original-to-storage gather for every paired arm",
             "entry": "tessera::routed_window_classes" if kind == "full" and arm == "production" else
@@ -424,6 +427,7 @@ def combine(report):
                            "spread": abs(passes["F"] - passes["R"]) / mean,
                            "comparator_kind": "interpolation of pure whole-stack controls, not a mixed single launch",
                            "by_generation": {}}
+                summary["admission"] = report.data["meta"]["admission"]
                 for generation in (0, 1):
                     counts = group["routing_generations"][generation]["class_routes"]
                     order_values = {}

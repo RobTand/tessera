@@ -11,6 +11,8 @@ Remove the duplicate custom-op layout argument and preserve byte checks across t
 Record the generic dispatcher source hash in the D41 report.
 The offline Step4 consumer now reads that registry and filters operations by residency.
 Historical R5 records retain their original operations during receipt replay.
+Each class timing row records its declared admission scope.
+The temporary ordinary GPU-exclusive scope is not quiet-host certification.
 
 ## 2026-10-07 — refuse unsupported native expert bias
 
