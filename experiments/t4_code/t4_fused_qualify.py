@@ -157,18 +157,24 @@ def routed_scheme(frames, hidden, inter, experts, q256):
                                    roles=[["down_proj", hidden]])})
 
 
+def dense_frame(blob, rows):
+    from tessera.fused_frame import pack_fused
+    return pack_fused([("weight", rows, blob)])
+
+
 def load_dense_route(blob, rows, cols, q256, *, tp_size=1, tp_rank=0, axis="row"):
     import torch
     from tessera.serving.nvfp4_route import build_tessera_nvfp4_method
 
-    scheme = dense_scheme(blob, rows, cols, q256)
+    frame = dense_frame(blob, rows)
+    scheme = dense_scheme(frame, rows, cols, q256)
     layer = torch.nn.Module()  # genuine registered parameters, no method/module mocks
     layer.tp_rank, layer.tp_size = tp_rank, tp_size
     method = build_tessera_nvfp4_method(scheme, "qualification.dense", "resident")
     local_rows = rows // tp_size if axis == "row" else rows
     local_cols = cols // tp_size if axis == "column" else cols
     method.create_weights(layer, local_cols, [local_rows], cols, rows, torch.bfloat16)
-    layer.wire_bytes.data.copy_(torch.frombuffer(bytearray(blob), dtype=torch.uint8))
+    layer.wire_bytes.data.copy_(torch.frombuffer(bytearray(frame), dtype=torch.uint8))
     layer.trellis_input_global_scale.data.fill_(100.0)
     layer.to("cuda")
     method.process_weights_after_loading(layer)
@@ -657,7 +663,12 @@ def dense_cells(args, q, blob, shape, tp_size, rank, axis):
         extent = cols if axis == "column" else rows
         cut = (rank * (extent // tp_size), (rank + 1) * (extent // tp_size))
     weight = ref_weight(blob, cut, "cuda", "cols" if axis == "column" else "rows")
-    base = dict(byte_receipt(blob, rows, cols), q256=q, rate_class=f"R{q // 128}", projection="dense",
+    accounting = byte_receipt(blob, rows, cols)
+    accounting["unit_wire_bytes"] = accounting["wire_bytes"]
+    accounting["wire_bytes"] = len(dense_frame(blob, rows))
+    accounting["framing_bytes"] = accounting["wire_bytes"] - accounting["unit_wire_bytes"]
+    accounting["bits_per_256_weights"] = accounting["wire_bytes"] * 8 * 256 / (rows * cols)
+    base = dict(accounting, q256=q, rate_class=f"R{q // 128}", projection="dense",
         shape_tag=tag, tp_size=tp_size, tp_rank=rank, cut_axis=axis, cut=cut,
         serving_owner=True, serving_intake="nvfp4_route create_weights/load/finalize/apply",
         resident_bytes=storage_bytes(method.resident_tensors(layer)), geometry=geometry(role, 2))
@@ -790,7 +801,8 @@ def qualify_serving(*, q256=(896,), ms=(1, 16), hidden=512, inter=1280, experts=
 def mode_dry_run(args):
     import torch
     from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact
-    from tessera.serving.scheme import validate_tessera_scheme, validate_tessera_moe_scheme
+    from tessera.serving.scheme import (parse_compact_blob_for_scheme, validate_tessera_scheme,
+                                        validate_tessera_moe_scheme)
     from tessera.serving import nvfp4_route, nvfp4_moe_route
     from tessera import routed_fused_e2m1
     from tessera.fused_frame import pack_fused
@@ -803,7 +815,9 @@ def mode_dry_run(args):
         blob, source = encode_bytes(synthetic(32, 256, args.seed, "cpu"), q)
         unit = parse_unit_artifact(blob, "cpu").unit
         decoded = read_unit_artifact(blob, "cpu")
-        validate_tessera_scheme(dense_scheme(blob, 32, 256, q), "cpu.small.dense")
+        frame = dense_frame(blob, 32)
+        parse_compact_blob_for_scheme(frame, dense_scheme(frame, 32, 256, q),
+                                      "cpu.small.dense", device="cpu")
         f = {p: [pack_fused([(ROLE_NAMES[p], 32, blob)])] for p in ROLE_NAMES}
         # Actual small bytes are read above; admission of production shapes
         # uses their declared geometry with placeholder byte COUNTS only,
@@ -818,6 +832,11 @@ def mode_dry_run(args):
             parsed_routing=[dict(m=m, ids_shape=list(routing(m, args.experts, args.top_k,
                                                 args.seed + m, "cpu")[0].shape)) for m in args.ms]))
     reads = []
+    if args.data_manifest:
+        public_sdk = Path(os.environ.get("PRISMABUILD_READER_HELPER_ROOT", "/mnt/shared/prismabuild-fleet/repo"))
+        sys.path.insert(0, str(public_sdk / "src"))
+        from prismabuild.client import read_data_manifest
+        read_data_manifest(args.data_manifest)
     if args.source_spec:
         for spec in json.loads(Path(args.source_spec).read_text())["units"]:
             weight = read_weight(spec, small=True)
@@ -915,8 +934,15 @@ def prepare_inputs(args):
     entries.append(dict(path=str(spec), offset=0, bytes=len(raw_spec),
                         sha256=hashlib.sha256(raw_spec).hexdigest()))
     manifest.write_text(json.dumps(dict(schema="prismaquant.prismabuild.data_manifest.v1",
-        mount_prefix="/mnt/shared", entries=entries, entry_count=len(entries),
+        produced_by={"entry_point": "experiments/t4_code/t4_fused_qualify.py", "source_head": head_stamp()},
+        annotations={"objective": "bounded GLM full units for a raw weight-space screen"},
+        mount_prefix=os.path.commonpath([str(root.resolve()), str(directory.resolve())]),
+        entries=entries, entry_count=len(entries),
         total_bytes=sum(e["bytes"] for e in entries)), indent=1) + "\n")
+    public_sdk = Path(os.environ.get("PRISMABUILD_READER_HELPER_ROOT", "/mnt/shared/prismabuild-fleet/repo"))
+    sys.path.insert(0, str(public_sdk / "src"))
+    from prismabuild.client import read_data_manifest
+    read_data_manifest(manifest)
     return dict(schema=SCHEMA, mode="prepare-inputs", **source_stamp(args),
                 source_spec=str(spec), data_manifest=str(manifest), units=units,
                 full_model_materialized=False)
@@ -1002,6 +1028,8 @@ def mode_quality(args):
 
     if not args.source_spec:
         raise ValueError("quality screen needs the bounded real GLM source specification")
+    if args.quality_device == "cuda" and not args.data_manifest:
+        raise ValueError("GPU quality input ranges must be declared in the PB data manifest")
     specs = json.loads(Path(args.source_spec).read_text())["units"]
     if not specs or not any(s["kind"] == "dense" for s in specs) or not all(
         any(s["kind"] == ROLE_NAMES[p] for s in specs) for p in ROLE_NAMES):
