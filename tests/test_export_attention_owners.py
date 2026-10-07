@@ -89,3 +89,24 @@ def test_mla_input_refuses_an_undeclared_total_only_partition():
     rows = dict(zip(members, [32, 32]))
     with pytest.raises(ValueError, match="cannot be paired"):
         partition_members(module, members, rows, [96], padding_rows={members[1]: 32})
+
+
+def test_bf16_vision_control_keeps_the_prefix_bias_and_numerical_output(tmp_path, monkeypatch):
+    torch = pytest.importorskip("torch")
+    from safetensors.torch import load_file
+    prefix = "model.visual.blocks.0.attn.qkv"
+    weight = torch.arange(96 * 32).reshape(96, 32).bfloat16()
+    bias = torch.arange(96).bfloat16()
+    src = _source(tmp_path, {prefix + ".weight": weight, prefix + ".bias": bias})
+    out = tmp_path / "out"
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps({prefix + ".weight": "PASSTHROUGH"}))
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--grid", "E4M3",
+        "--q256", "1024", "--device", "cpu", "--layers", "0", "--plan-json", str(plan)])
+    exporter.main()
+    written = load_file(str(out / "model.safetensors"))
+    assert set(written) == {prefix + ".weight", prefix + ".bias"}
+    assert written[prefix + ".weight"].dtype == written[prefix + ".bias"].dtype == torch.bfloat16
+    x = torch.ones(1, 32, dtype=torch.bfloat16)
+    assert torch.equal(x @ written[prefix + ".weight"].t() + written[prefix + ".bias"], x @ weight.t() + bias)
+    assert "quantization_config" not in json.loads((out / "config.json").read_text())
