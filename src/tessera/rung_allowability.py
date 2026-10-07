@@ -297,9 +297,13 @@ def validate_table(table):
         _require(higher["measurement_status"] == "measured" and higher["supported"] is True and not higher["anomaly_flags"], "dominator ineligible")
         evidence = row["dominance_evidence"]
         _require(len(evidence) == len(keys_at(q)) and {e.get("cell_id") for e in evidence} == {k[0] for k in keys_at(q)}, "dominance cell coverage")
+        # A per-shape grid can leave the higher rung without a cell the lower one owes: the
+        # dominance proof needs a measured higher counterpart for every lower cell.
+        _require(set(keys_at(q)) <= set(keys_at(dq)), "dominating rung does not carry every lower cell")
         for e in evidence:
             canonical_low = next(m for m in row["measurements"] if m["cell_id"] == e["cell_id"])
-            canonical_high = next(m for m in higher["measurements"] if m["cell_id"] == e["cell_id"])
+            canonical_high = next((m for m in higher["measurements"] if m["cell_id"] == e["cell_id"]), None)
+            _require(canonical_high is not None, "dominating rung lacks a measured counterpart cell")
             low = e.get("lower_measurement", canonical_low)
             high = e.get("higher_measurement", canonical_high)
             # Neighbor-overlap quanta may carry the same higher rung in two
@@ -355,6 +359,10 @@ def admit_rung(table, *, format, kernel_build_id, rung, scope=None, cell_ids=Non
         status, reason = "hold", "quality_or_correctness_anomaly"
     elif row["excluded"]:
         status, reason = "excluded", "adjacent_higher_all_cell_dominance"
+    elif {m["cell_id"] for m in row["measurements"]} != {c["cell_id"] for c in table["scope"]["required_cells"]}:
+        # A per-shape grid leaves some declared shapes unmeasured at this rung; an unscoped
+        # admission covers every declared shape, so it waits for the missing ones.
+        status, reason = "wait", "declared_shape_not_measured_at_rung"
     else:
         status, reason = "allow", "measured_supported_no_anomaly"
     return {"status": status, "reason": reason, "rung": rung, "table_version": table["table_version"], "kernel_build_id": kernel_build_id}

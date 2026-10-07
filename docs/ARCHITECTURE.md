@@ -9,6 +9,9 @@ The decoder is routed only.
 A table scope may give a shape its own rung step in `grid_steps_q256`, as a multiple of the table step.
 k-step rungs step 2 q256 at K=4096 and 16 q256 per TP2 rank of a K=1024 down projection.
 A rung owes exactly the cells whose shape grid it lies on. Version one tables cannot carry per-shape grids.
+An unscoped `admit_rung` waits at a rung where a declared shape has no measurement (`declared_shape_not_measured_at_rung`).
+A dominance proof needs a measured higher-rung counterpart for every lower cell; otherwise the table is refused.
+The published schema files `docs/schema/allowable-rung-table.v2.schema.json` and `.v3` track the Python schemas, descriptions aside.
 A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
 The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
 
