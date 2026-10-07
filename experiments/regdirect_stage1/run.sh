@@ -33,7 +33,7 @@ if [[ "${BENCH_NCU:-0}" == 1 ]]; then
     --csv --log-file "$OUT/ncu.csv" --export "$OUT/regdirect" --force-overwrite
     python3 /work/experiments/regdirect_stage1/bench_stage1.py --ncu)
 fi
-CID="$OUT/container.cid"; rm -f "$CID"
+CID="$OUT/container.cid"; rm -f "$CID" "$OUT/.done"     # a stale .done would stop the watchdog at once
 ( # D30 watchdog
   while sleep 0.5; do
     [[ -f "$OUT/.done" ]] && exit 0

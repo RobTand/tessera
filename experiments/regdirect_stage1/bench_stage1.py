@@ -368,7 +368,7 @@ def main():
     ap.add_argument("--modes", default="0,2")
     ap.add_argument("--profiles", default="R1024,R768,R896")
     ap.add_argument("--ms", default="1,16,2048,4096")
-    ap.add_argument("--check-ms", default="1,2048,4096")
+    ap.add_argument("--check-ms", default="1,16,2048,4096")
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--cpu-preflight", action="store_true")

@@ -67,6 +67,29 @@ def ncu_launch(path):
     return out
 
 
+def compile_receipt_matches(comp, source_sha) -> bool:
+    """The compile receipt's kernel source against the checkout's: a recorded identity, so a D32 seal
+    (``tessera.dev_mode.seal_check``): certified mode refuses, dev mode warns and continues."""
+    from tessera.dev_mode import seal_check
+    return seal_check("kernel source", comp["source_sha256"], source_sha, where="d41_table compile receipt",
+                      refusal=ValueError("the compile receipt is not of the measured kernel source"))
+
+
+def require_checked_cells(run, path):
+    """Every timed register-direct cell needs a passing correctness check at its own (mode, profile, M)."""
+    if run.get("stopped"):
+        raise ValueError(f"{path}: the run stopped ({run['stopped']})")
+    checks = {(int(c["mode"]), str(c["profile"]), int(c["M"])): bool(c["pass"]) for c in run.get("check", [])}
+    for key in run["cells"]:
+        arm, mode, profile, m = key.split(".")
+        if arm != "regdirect":
+            continue
+        cell = (int(mode[4:]), profile, int(m[1:]))
+        if not checks.get(cell, False):
+            state = "failed" if cell in checks else "has no correctness check"
+            raise ValueError(f"{path}: timed cell {mode}.{profile}.{m} {state}")
+
+
 def to_bytes(value, unit):
     unit = unit.split("/")[0]                      # NCU states shared memory per block: "byte/block"
     scale = {"byte": 1, "Kbyte": 1000, "KB": 1000, "Kibyte": 1024, "KiB": 1024, "Mbyte": 10**6}[unit]
@@ -86,8 +109,7 @@ def main():
 
     source_sha = hashlib.sha256(open(SOURCE, "rb").read()).hexdigest()   # run from the checkout root
     comp = json.load(open(a.compile))
-    if comp["source_sha256"] != source_sha:
-        raise ValueError("the compile receipt is not of the measured kernel source")
+    compile_receipt_matches(comp, source_sha)
     regs = {template(k["kernel"]): k for k in comp["kernels"]}
     launch = ncu_launch(a.ncu)
     build_id = f"regdirect-e4m3-sm_121-{source_sha[:16]}"
@@ -97,8 +119,7 @@ def main():
     for path in a.runs:
         run = json.load(open(path))
         meta = run["meta"]
-        if not all(c["pass"] for c in run.get("check", [])) or run.get("stopped"):
-            raise ValueError(f"{path}: correctness checks did not all pass")
+        require_checked_cells(run, path)
         runs.append({"path": path, "action_key": meta["pb_action"], "host": meta["host"], "snapshot": meta["head"],
                      "checks_passed": len(run.get("check", []))})
         for key, cell in run["cells"].items():
