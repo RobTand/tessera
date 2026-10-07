@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sysconfig
 
@@ -26,11 +27,9 @@ def main():
                     default="ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517")
     args = ap.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    nvccs = sorted(args.toolkit.rglob("nvcc"))
-    nvccs = [p for p in nvccs if p.parent.name == "bin"]
-    if len(nvccs) != 1:
-        raise SystemExit(f"expected one nvcc under {args.toolkit}, found {nvccs}")
-    nvcc = nvccs[0]
+    nvcc = args.toolkit / "nvidia" / "cu13" / "bin" / "nvcc"      # the unpacked CUDA 13 wheel's layout
+    if not nvcc.is_file():
+        raise SystemExit(f"no nvcc at {nvcc}")
     src = Path(__file__).resolve().parents[2] / "src/tessera/serving/csrc/regdirect_routed.cu"
     inc = Path(torch.__file__).parent / "include"
     cuda_inc = nvcc.parent.parent / "include"
@@ -74,9 +73,7 @@ def main():
                "kernels": res, "population": "x86 compile-only, sm_121 target, no device execution"}
     (args.out / "compile.json").write_text(json.dumps(receipt, indent=2))
     print(json.dumps(res, indent=1), flush=True)
-    for f in work.iterdir():
-        f.unlink()
-    work.rmdir()
+    shutil.rmtree(work)
     if r.returncode or not res:
         raise SystemExit(r.returncode or 1)
     return 0
