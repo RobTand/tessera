@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
+The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
+Its execution scope is `register_direct_fragment` and its word ring is `register`.
+A cell states fragment-order units from `tessera.fragment_wire`: 32 lanes, 8 history lanes and 32 R words per unit.
+It states one rate or two adjacent rates, the k-step width, prefetch depth, superblock routes, K parts and compiler resources.
+The decoder is routed only.
+A table scope may give a shape its own rung step in `grid_steps_q256`, as a multiple of the table step.
+k-step rungs step 2 q256 at K=4096 and 16 q256 per TP2 rank of a K=1024 down projection.
+A rung owes exactly the cells whose shape grid it lies on. Version one tables cannot carry per-shape grids.
+A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
+The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
+
 ## Register-direct fragment wire (stage 1; not a serving path)
 
 The CPU fragment repack is available in `tessera.fragment_wire` for the register-direct routed build.
