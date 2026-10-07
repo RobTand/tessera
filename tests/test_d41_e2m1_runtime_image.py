@@ -32,7 +32,10 @@ def test_actual_identity_mismatch_stamps_then_returns_observed_record(image, mon
     assert record["refused"] is False
     assert record["resolved_reference"] == OTHER
     assert record["identity_refusal"] in ("image_digest_mismatch", "image_pin_mismatch")
-    assert "[DEV-MODE]" in capsys.readouterr().out
+    # The default-pin stamp is written by runtime_image.resolve to stderr so the CLI's stdout
+    # stays one JSON record; the explicit-digest stamp is written here to stdout.
+    captured = capsys.readouterr()
+    assert "[DEV-MODE]" in captured.out + captured.err
 
 
 @pytest.mark.parametrize("image", [PIN, "vllm/vllm-openai:local"])

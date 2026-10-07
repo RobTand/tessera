@@ -450,6 +450,9 @@ def substitutes_when_unavailable(mode: str, module_name_prefix: str) -> bool:
 #: the stock kernel whose call it intercepts.
 STOCK_KERNEL_OVERRIDE_KINDS = {
     "attention_backend": ("backend", "kernel"),
+    # A stock model method rebound by dotted path, and the stock kernels whose
+    # sequence the replacement computes ('+'-joined, in launch order).
+    "model_method": ("method", "kernels"),
 }
 #: The fields of an entry.  ``library`` is the native library the override
 #: maps into the process, with a ``NATIVE_EXTENSIONS`` entry's legibility rules
@@ -478,6 +481,18 @@ STOCK_KERNEL_OVERRIDES: list[dict] = [{
     "loaded_by": "tessera.serving.mla_sparse_sm120",
     "library": {"module_name_prefix": "tessera_mla_prefill_", "filename_glob": "tessera_mla_prefill_*.so",
                 "match": MATCH_BASENAME_FNMATCH, "source": "csrc/mla_prefill_mg.cu"},
+    "required_identity": IDENTITY_BITWISE_VS_STOCK,
+    "evidence": [],
+}, {
+    "kind": "model_method",
+    "overrides": {"method": "vllm.models.glm5next.common.model.Glm5NextDecoderLayer.hc_fused_post_pre",
+                  "kernels": "mhc_post_tilelang_kernel+sm120_tf32_hc_prenorm_gemm_impl+"
+                             "mhc_pre_big_fuse_with_norm_tilelang_kernel"},
+    "enabled_by": "TESSERA_GLM53_MHC_FUSED",
+    "default": OVERRIDE_DEFAULT_OFF,
+    "loaded_by": "tessera.serving.mhc_fusion",
+    "library": {"module_name_prefix": "tessera_mhc_fused_", "filename_glob": "tessera_mhc_fused_*.so",
+                "match": MATCH_BASENAME_FNMATCH, "source": "csrc/mhc_fused.cu"},
     "required_identity": IDENTITY_BITWISE_VS_STOCK,
     "evidence": [],
 }]
