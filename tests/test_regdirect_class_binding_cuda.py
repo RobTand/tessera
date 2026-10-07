@@ -20,30 +20,17 @@ from fragment_synth import make_stack  # noqa: E402
 
 from tessera import regdirect_routed as rr  # noqa: E402
 from tessera import routed_class_dispatch as rcd  # noqa: E402
-from tessera.routed_fused import _item_off, _Routing  # noqa: E402
+from tessera.routed_fused import _routing_tables  # noqa: E402
 
 E, TOP_K, HIDDEN, INTER = 6, 2, 512, 256
 CLASSES = ((0, 2), (2, 4), (4, 6))
 LIMIT = 10.0
 
 
-class _AnyWidthRouting(_Routing):
-    """Superblock prefixes at any width the bound kernel declares (8, 64, 128 routes)."""
-
-    def superblocks(self, bm):
-        return _item_off(self.offsets[1:] - self.offsets[:-1], int(bm))
-
-
-def _routing(ids, weights):
-    flat = ids.reshape(-1).to(torch.int64)
-    counts = torch.zeros(E, dtype=torch.int32, device=ids.device)
-    counts.scatter_add_(0, flat, torch.ones_like(flat, dtype=torch.int32))
-    offsets = torch.zeros(E + 1, dtype=torch.int32, device=ids.device)
-    offsets[1:] = torch.cumsum(counts, 0, dtype=torch.int32)
-    order = torch.argsort(flat, stable=True)
-    return _AnyWidthRouting(offsets=offsets, flat_sorted=order.to(torch.int32).contiguous(),
-                            rw_sorted=weights.reshape(-1).float()[order].contiguous(),
-                            item_off=_item_off(counts, 64), tokens=ids.shape[0], top_k=TOP_K)
+def _routing(kernel, parameters, ids, weights):
+    """The class build's own tables, at every width this binding declares (8, 64, 128 routes)."""
+    widths = rcd.declared_route_widths(kernel, ids.shape[0], range(len(CLASSES)), parameters)
+    return _routing_tables(ids, weights, E, ids.device, widths)
 
 
 def _stacks(device):
@@ -94,7 +81,7 @@ def test_class_dispatch_equals_one_launch(mode, m):
     resources = _Resources(kernel, device)
     stack = parameters["regdirect"][mode]
     ids, w = _ids(m, 5 + m, device)
-    routing = _routing(ids, w)
+    routing = _routing(kernel, parameters, ids, w)
     x, a_scale = _inputs(m, mode, 7 + m, device)
     outs = []
     for classes in (((0, E),), CLASSES):
@@ -116,7 +103,7 @@ def test_graph_replay_follows_new_routing(mode, m):
     resources = _Resources(kernel, device)
     stack = parameters["regdirect"][mode]
     ids, w = _ids(m, 21, device)
-    routing = _routing(ids, w)
+    routing = _routing(kernel, parameters, ids, w)
     x, a_scale = _inputs(m, mode, 22, device)
     out = torch.zeros(m * TOP_K, stack.rows, dtype=torch.bfloat16, device=device)
     side = torch.cuda.Stream()
@@ -129,9 +116,11 @@ def test_graph_replay_follows_new_routing(mode, m):
         _run(kernel, resources, parameters, mode, x, a_scale, routing, out, classes=CLASSES)
     for seed in (31, 32, 33):
         ids2, w2 = _ids(m, seed, device)
-        fresh = _routing(ids2, w2)
+        fresh = _routing(kernel, parameters, ids2, w2)
         for name in ("offsets", "flat_sorted", "rw_sorted"):
             getattr(routing, name).copy_(getattr(fresh, name))
+        for bm, prefix in fresh.prefixes.items():
+            routing.prefixes[bm].copy_(prefix)
         x2, s2 = _inputs(m, mode, seed + 100, device)
         x.copy_(x2)
         a_scale.copy_(s2)
