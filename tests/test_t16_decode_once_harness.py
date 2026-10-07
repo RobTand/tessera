@@ -65,3 +65,47 @@ def test_real_cli_rejects_a_changed_population(harness, tmp_path):
         harness.parse_args(["--out", str(tmp_path), "--ms", "16,2048"])
     with pytest.raises(ValueError, match="protocol"):
         harness.parse_args(["--out", str(tmp_path), "--iters", "1"])
+
+
+@pytest.fixture
+def action():
+    path = Path(__file__).resolve().parents[1] / "experiments/t8r_speed/t16_decode_once_action.py"
+    spec = importlib.util.spec_from_file_location("t16_action", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("flag", ["--cpu-preflight", "--collect-only"])
+def test_test_mode_collects_on_cpu(action, tmp_path, flag):
+    out, args, cpu, tests = action.parse_action_args(
+        [str(tmp_path), "--tests", flag, "--", "-n", "1",
+         "--durations=10", "tests/test_bf16_prefill.py"])
+    assert out == tmp_path.resolve()
+    assert args == ["-n", "1", "--durations=10", "tests/test_bf16_prefill.py"]
+    assert cpu and tests
+
+
+def test_test_mode_requires_an_explicit_selection(action, tmp_path):
+    with pytest.raises(ValueError, match="test file"):
+        action.parse_action_args([str(tmp_path), "--tests", "--", "-q"])
+    with pytest.raises(ValueError, match="separator"):
+        action.parse_action_args([str(tmp_path), "--tests", "tests/test_bf16_prefill.py"])
+
+
+def test_cpu_test_preflight_reads_real_inputs(action, tmp_path):
+    test = tmp_path / "test_small.py"
+    test.write_text("def test_small():\n    assert 1 + 1 == 2\n")
+    runner = tmp_path / "runner"
+    for name in ("pytest", "_pytest", "pluggy", "iniconfig", "packaging", "xdist", "execnet"):
+        package = runner / name
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("VALUE = 1\n")
+    (runner / "py.py").write_text("VALUE = 2\n")
+    evidence = action.test_preflight([str(test), "-n", "1"], str(runner))
+    assert evidence["test_reads"][0]["bytes_read"] == test.stat().st_size
+    assert len(evidence["runner_reads"]) == 8
+    assert all(item["bytes_read"] > 0 for item in evidence["runner_reads"])
+    (runner / "py.py").unlink()
+    with pytest.raises(FileNotFoundError):
+        action.test_preflight([str(test)], str(runner))
