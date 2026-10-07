@@ -46,7 +46,10 @@ for OBS_VAR in PRISMABUILD_ACTION_PROGRESS_TOKEN PRISMABUILD_ACTION_PROGRESS_PHA
   [[ -z "$OBS_VALUE" ]] || OBS_ENV+=(-e "$OBS_VAR=$OBS_VALUE")
 done
 PREFIX=(bash -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec "$@"' bash)
-COMMAND=(python3 /work/experiments/mhc/mhc_probe.py)
+# MHC_PROBE_SCRIPT selects a sibling probe with the same contract (mhc_fused_probe.py, #783).
+PROBE=${MHC_PROBE_SCRIPT:-mhc_probe.py}
+[[ "$PROBE" =~ ^[a-z_]+\.py$ && -f "$CHECKOUT/experiments/mhc/$PROBE" ]] || { echo "bad MHC_PROBE_SCRIPT: $PROBE" >&2; exit 2; }
+COMMAND=(python3 "/work/experiments/mhc/$PROBE")
 if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
   NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }

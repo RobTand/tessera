@@ -733,6 +733,16 @@ def main():
                     help="profile one call per (group, M) under bench_t8r.sh's BENCH_NCU=1; no timing")
     ap.add_argument('--data-manifest',default='',help='admitted PB whole-file routing readset')
     args = ap.parse_args()
+    if ":" in args.shapes:
+        shapes = {}
+        for item in args.shapes.split(","):
+            name, rows, columns = item.split(":")
+            rows, columns = int(rows), int(columns)
+            if not name or name in shapes or rows <= 0 or columns <= 0:
+                raise ValueError("Invalid or duplicate explicit dense shape")
+            shapes[name] = (rows, columns)
+        PROTOCOL_DENSE.update(shapes)
+        args.shapes = ",".join(shapes)
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
     library = args.library or rf.library_for("e4m3")
