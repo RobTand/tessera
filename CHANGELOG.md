@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — stop class workloads after launcher exit
+
+The D30 guard now checks the owned process group, not only the launcher.
+Surviving group members receive SIGKILL after the bounded SIGTERM grace.
+The guard uses the same stop path after a memory read fails or the launcher exits.
+Process-group proof does not qualify the Docker relay in PrismaBuild issue 1599.
 
 ## 2026-10-07 — routed class execution boundary corrections
 

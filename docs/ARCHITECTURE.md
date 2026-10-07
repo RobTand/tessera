@@ -313,6 +313,11 @@ The offline Step4 consumer reads the same current execution registry.
 It checks actual operations and module populations, not served qualification cells.
 Historical R5 replay uses the qualification registry. It does not rewrite archived operations.
 
+The D30 class harness checks the owned process group after launcher exit.
+It sends SIGTERM, waits up to five seconds, and sends SIGKILL if group members remain.
+Its final cleanup uses the same path after a memory read fails.
+Process-group proof does not qualify Docker workload termination. PrismaBuild issue 1599 owns the shared signal relay.
+
 Today the loaded binding is `_LutClassKernel`; it calls the unchanged CUDA
 decoder for each class on the same two streams. Register-direct remains a
 separate build. It can supply M+1 activation buffers with a zero final row
