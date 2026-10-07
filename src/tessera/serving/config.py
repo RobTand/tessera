@@ -586,7 +586,10 @@ class TesseraConfig(QuantizationConfig):
             if scheme is not None:
                 self._require_a_cutter(prefix)
                 self._declare_once()
-                return build_tessera_method(scheme, prefix, self._mode)
+                from .projection_routes import adapt_method
+
+                method = build_tessera_method(scheme, prefix, self._mode)
+                return adapt_method(method, scheme, prefix, layer)
             if lookup_prefix in ignored:
                 return UnquantizedLinearMethod()
             raise ValueError(

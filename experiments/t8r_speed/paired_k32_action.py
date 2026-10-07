@@ -48,7 +48,7 @@ def owned_cleanup(arm_out, *, run=subprocess.run):
     return {'state':'removed owned CID','cid':cid,'owner':token}
 
 
-def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subprocess.Popen):
+def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subprocess.Popen,policy=None):
     # Reuse the existing routed-load instrument's host UMA/PSI reader.
     if pressure is None:
         path=Path(__file__).resolve().parent.parent/'bench_routed_load.py'
@@ -56,9 +56,27 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
         module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
         pressure=module._host_pressure
     floor=24*(1<<30)
+    start=floor+16*(1<<30)
+    deadline=240.0
+    term_grace=20.0
+    cleanup_container=True
+    if policy is not None:
+        measured=policy["measured_cpu_peak_bytes"]
+        overhead=policy["unmeasured_gpu_overhead_bytes"]
+        deadline=policy["deadline_s"]
+        if type(measured) is not int or measured<=0 or type(overhead) is not int or overhead<0:
+            raise ValueError("The explicit memory policy needs a measured peak and a nonnegative overhead estimate")
+        if isinstance(deadline,bool) or not isinstance(deadline,(int,float)) or not 0<deadline<=1800:
+            raise ValueError("The explicit memory policy needs a positive bounded deadline")
+        floor=2*(1<<30)
+        start=measured+overhead+3*(1<<30)
+        term_grace=10.0
+        cleanup_container=False
     available,psi=pressure()
-    if available < floor+16*(1<<30) or psi>=20:
-        raise RuntimeError('direct numeric launch lacks 40GiB host headroom or PSI full avg10<20')
+    if available < start or psi>=20:
+        if policy is None:
+            raise RuntimeError("direct numeric launch lacks 40GiB host headroom or PSI full avg10<20")
+        raise RuntimeError(f"direct numeric launch lacks {start} bytes of host headroom or PSI full avg10<20")
     child=popen(argv,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
     started=time.monotonic()
     try:
@@ -67,8 +85,9 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
                 available,psi=pressure()
                 elapsed=time.monotonic()-started
                 guard.write(json.dumps({'elapsed_s':elapsed,'available_bytes':available,
-                    'psi_full_avg10':psi,'floor_bytes':floor})+'\n');guard.flush()
-                if available < floor or psi>=20 or elapsed>=240:
+                    "psi_full_avg10":psi,"floor_bytes":floor,"start_bytes":start,
+                    "policy":policy,"gpu_overhead_measured":False if policy is not None else None})+"\n");guard.flush()
+                if available < floor or psi>=20 or elapsed>=deadline:
                     raise RuntimeError('direct numeric memory/pressure/time bound reached')
                 time.sleep(1)
         return child.returncode
@@ -77,14 +96,17 @@ def run_direct_arm(argv,env,log,arm_out,guard_path,*,pressure=None,popen=subproc
             if child.poll() is None:
                 try:os.killpg(child.pid,signal.SIGTERM)
                 except ProcessLookupError:pass  # already exited after the poll
-                try:child.wait(timeout=20)
+                try:child.wait(timeout=term_grace)
                 except subprocess.TimeoutExpired:
                     try:os.killpg(child.pid,signal.SIGKILL)
                     except ProcessLookupError:pass
                     child.wait(timeout=5)
         finally:
-            cleanup=owned_cleanup(arm_out)
-            (arm_out.parent/(arm_out.name+'-cleanup.json')).write_text(json.dumps(cleanup,indent=2)+'\n')
+            if cleanup_container:
+                cleanup=owned_cleanup(arm_out)
+            else:
+                cleanup={"state":"PrismaBuild owns scope and container cleanup"}
+            (arm_out.parent/(arm_out.name+"-cleanup.json")).write_text(json.dumps(cleanup,indent=2)+"\n")
 
 
 def identities(paths):

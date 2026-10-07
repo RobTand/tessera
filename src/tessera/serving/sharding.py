@@ -551,6 +551,19 @@ def layer_replicas(prefix: str, layer, members) -> Tuple[int, ...]:
     roles, and it is refused by name rather than guessed at.
     """
     members = tuple(str(name) for name in members)
+    replicated = getattr(layer, "replicated_shard_ids", None)
+    if replicated is not None:
+        try:
+            indices = tuple(replicated)
+        except TypeError as exc:
+            raise ValueError(f"{prefix}: replicated_shard_ids must contain partition indices") from exc
+        if any(not isinstance(index, int) or isinstance(index, bool)
+               or index < 0 or index >= len(members) for index in indices):
+            raise ValueError(f"{prefix}: replicated_shard_ids {indices!r} do not name valid partitions")
+        if getattr(layer, KV_REPLICAS_ATTRIBUTE, None) is not None:
+            raise ValueError(f"{prefix}: replicated_shard_ids and {KV_REPLICAS_ATTRIBUTE} overlap")
+        _rank, size = layer_tp_coordinates(prefix, layer)
+        return tuple(size if index in indices else 1 for index in range(len(members)))
     declared = getattr(layer, KV_REPLICAS_ATTRIBUTE, None)
     if declared is None:
         return (1,) * len(members)

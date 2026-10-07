@@ -9434,3 +9434,49 @@ CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
 explicit `enforce_eager=True` requirement. This enables the real native factory
 without fabricating a model configuration, and does not admit compiled or
 captured selected execution.
+
+## Explicit GLM projection owners
+
+The dense owner rule identifies the KDA six-member input, the MLA low-rank input, and the DSA key and head-weight pair.
+The source config identifies KDA layers and standalone MLA queries.
+The construction receipt supplies output partitions; the exporter does not derive them from weight shapes.
+KDA roles four and five keep their full source rows on each tensor parallel rank.
+
+The stock NoPE loader pads only kv_a_proj_with_mqa output rows.
+The exporter preserves its source range and records the added zero rows separately.
+BF16 passthrough keeps every original tensor and bias unchanged.
+An explicit plan can select the router and vision Linear units without a default change.
+The selected vision qkv target keeps the stock prefix.
+
+The direct consumer byte rule belongs to serving.projection_routes.
+The DSA head tail uses its stock FP32 cache.
+The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
+Their decoded buffers increase resident prices; they do not become compressed BMM routes.
+The exporter refuses compressed stock twins for constructors that suppress quantization.
+
+The plugin installs a selective LinearBase constructor hook before model construction.
+The hook supplies TesseraConfig only for an explicit target whose constructor has no quant_config.
+Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
+The KDA shard planner reads replicated_shard_ids from the actual layer.
+It does not infer replication from a shape total.
+
+The direct consumer contract separates the head operation from its unused dense output.
+The indexer head uses FP32 inputs and weights without activation quantization.
+The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
+The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
+
+The constructor census records stock and selected views separately.
+Only actual get_quant_method calls establish an offered selected route.
+A meta census proves construction, not a loaded forward or CUDA graph execution.
+The current CPU sparse backend cannot construct the full GLM model.
+That refusal does not qualify a GPU route or permit a substitute backend.
+The census records input width variants separately from reachability disagreements.
+An output projection can have different input widths on KDA and MLA layers without a routing disagreement.
+The TP2 smoke accepts a Torch rendezvous URL for native gang members on distinct GPU hosts.
+Runtime identities remain observations. Only mode and artifact input mismatches stop the peer arithmetic check.
+The active construction entry names one selected receipt for each architecture. Historical receipts remain unchanged.
+The current GLM entry derives from actual T-8/T-16 constructor calls on the current image.
+The topology specifies two nodes with one rank and one CUDA device per node.
+
+Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.
