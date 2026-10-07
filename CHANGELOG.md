@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-07 — explicit GLM projection exports
+
+Use one dense owner rule for KDA, MLA inputs, and DSA key and head weights.
+Read KDA layer identity from the source construction config.
+Keep standalone MLA queries outside the KDA group.
+Read output partitions from the construction receipt.
+Apply the stock NoPE row padding only to the declared key input member.
+Keep original BF16 tensors, vision biases, and the qkv source prefix.
+Select router and vision projections only through explicit plan entries.
+Refuse stock twins that the stock constructor cannot load.
+Price direct consumer buffers through the runtime adapter's shared byte rule.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four

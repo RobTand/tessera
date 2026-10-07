@@ -572,11 +572,8 @@ def test_the_exported_ignore_names_what_vllm_builds(tmp_path, monkeypatch):
 # --------------------------------------------------------------------------
 # The MoE router.
 #
-# ``GateLinear(ReplicatedLinear)`` -- gate_linear.py:18 -- reads ``self.weight``
-# directly at all six dispatch tiers (:179-228) and reads ``self.weight.dtype``
-# to CHOOSE the tier (:84,:101,:128,:165,:174).  It never calls
-# ``quant_method.apply``.  A Tessera method installed there is dead code and the
-# ``weight`` it indexes is gone.
+# The current GateLinear accepts a quantization config.
+# The constructor census still decides which artifact can select it.
 # --------------------------------------------------------------------------
 
 def test_the_moe_router_is_not_a_projection():
@@ -600,8 +597,8 @@ def test_planning_the_router_is_refused_before_any_encode(tmp_path, monkeypatch)
     with pytest.raises(SystemExit) as caught:
         export.main()
     message = str(caught.value)
-    assert "ROUTER" in message, message
-    assert "GateLinear" in message, f"the refusal must name the class that ignores the method: {message}"
+    assert "mlp.gate.weight" in message, message
+    assert "shape" in message or "never_offered" in message, message
     assert not out.exists() or not list(out.glob("*.safetensors"))
 
 

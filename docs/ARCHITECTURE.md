@@ -9334,3 +9334,22 @@ CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
 explicit `enforce_eager=True` requirement. This enables the real native factory
 without fabricating a model configuration, and does not admit compiled or
 captured selected execution.
+
+## Explicit GLM projection owners
+
+The dense owner rule identifies the KDA six-member input, the MLA low-rank input, and the DSA key and head-weight pair.
+The source config identifies KDA layers and standalone MLA queries.
+The construction receipt supplies output partitions; the exporter does not derive them from weight shapes.
+KDA roles four and five keep their full source rows on each tensor parallel rank.
+
+The stock NoPE loader pads only kv_a_proj_with_mqa output rows.
+The exporter preserves its source range and records the added zero rows separately.
+BF16 passthrough keeps every original tensor and bias unchanged.
+An explicit plan can select the router and vision Linear units without a default change.
+The selected vision qkv target keeps the stock prefix.
+
+The direct consumer byte rule belongs to serving.projection_routes.
+The DSA head tail uses its stock FP32 cache.
+The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
+Their decoded buffers increase resident prices; they do not become compressed BMM routes.
+The exporter refuses compressed stock twins for constructors that suppress quantization.
