@@ -1501,20 +1501,10 @@ that the rule admits. A cell covers a rung that is a census rung, or one the
 rule admits in one of its run tables (`contract.cell_covers_rung`). The routed
 export gate (`scheme.refuse_unserveable_wire`), the census join
 (`census.cell_launch_agreement`) and the manifest's `attested_by` read that
-one predicate. The dense resident E4M3 cells cover every rung of 256..2048,
-and the routed resident E4M3 cells cover every rung of 768..1279 (contract
-v59: run table [3] with D41-measured rung 768 on the two base cells; the
-runtime twins stay pinned). `attested_rungs_q256`, `attested_wire` and `rungs_q256`
-still list the census rungs. The committed D41 slice
-experiments/results/t8_d41_r768_census.json carries rung 768. Receipt: [the
-run-table oracle and geometry
+one predicate. The routed and dense resident E4M3 cells now cover every rung
+of 769..1279. `attested_rungs_q256`, `attested_wire` and `rungs_q256` still
+list the census rungs. Receipt: [the run-table oracle and geometry
 sweep](measurements/2026-09-30-t8-run-tables.md).
-
-Re-stamped 2026-10-07 for run table [3] on the routed E4M3 cells (contract
-v59). The two base resident cells admit D41-measured rung 768 and cover
-768..1279. Evidence: the committed slice
-experiments/results/t8_d41_r768_census.json (D41 v0009 row 768). The runtime
-twins stay pinned to the image census.
 
 Re-stamped 2026-09-30 for the 16-bit routed gate/up launch at rates 7 and 8
 (contract v49, Refs #750). `routed_fused_window.cu` instantiates each launch

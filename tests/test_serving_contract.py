@@ -156,8 +156,7 @@ _GLM_X_CELLS = (
      "bf16_unquantized", (("tessera::window_gemm_dense", "native_window_gemm_folded"),
                           ("tessera::fused_window_dense",
                            "native_fused_window_dense_folded"))),
-    # Contract v59: the base routed cells add census rung 768 (run table [3]).
-    ("TESSERA_E4M3_K1", "routed_moe", [768, 832, 864, 896, 928, 944, 960, 1024, 1088],
+    ("TESSERA_E4M3_K1", "routed_moe", [832, 864, 896, 928, 944, 960, 1024, 1088],
      "fp8_per_token_dynamic",
      ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"),
       (_FUSED_MOE, "native_routed_fused_window_e4m3mma"))),
@@ -658,7 +657,7 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
         ("TESSERA_BF16_K1", (1024,), _GLM_X_RUNTIME["image"]),
         ("TESSERA_E2M1_K2", (896,), _GLM_X_RUNTIME["image"]),
-        ("TESSERA_E4M3_K1", (768, 832, 864, 896, 928, 944, 960, 1024, 1088),
+        ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
         ("TESSERA_BF16_K1", (1024,), NIGHTLY_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])

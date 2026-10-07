@@ -1,21 +1,4 @@
 {
- "admits": {
-  "cell_ids": [
-   "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
-   "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
-  ],
-  "family": "TESSERA_E4M3_K1",
-  "pending": "TP2 served census at 768",
-  "run_tables": [
-   [
-    3
-   ]
-  ],
-  "rungs": [
-   768
-  ],
-  "structure": "routed_moe"
- },
  "format": "TESSERA_E4M3_K1",
  "generated_at": "2026-10-06T04:35:43.579710+00:00",
  "kernel_build": {
@@ -626,7 +609,7 @@
   "source_commit": "f0ec9bb35dcf1c21925b1ac6c7b3364d2e99403e"
  },
  "kind": "d41-geometry-row",
- "note": "D41 sweep row for rung 768, committed as the admission evidence for run table [3] on routed T-8 cells. This is a kernel measurement row, not a served route census.",
+ "note": "D41 sweep row for rung 768, committed as staged evidence for run table [3] on routed T-8 cells. This is a kernel measurement row, not a served route census. It admits nothing until the served TP2 census at 768 exists.",
  "rung": {
   "anomaly_flags": [],
   "dominance_evidence": [],
