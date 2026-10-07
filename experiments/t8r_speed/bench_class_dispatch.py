@@ -41,7 +41,7 @@ KINDS = ("gate_up", "down", "full")
 
 def source_evidence():
     package = Path(rf.__file__).resolve().parent
-    sources = [package / name for name in ("routed_fused.py", "native_window_moe.py",
+    sources = [package / name for name in ("routed_fused.py", "routed_class_dispatch.py", "native_window_moe.py",
         "expert_classes.py", "serving/native_window.py", "serving/csrc/routed_fused_window.cu")]
     sources += [Path(__file__).resolve(), Path(__file__).with_name("class_dispatch_inputs.py")]
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in sources}
@@ -185,7 +185,9 @@ def cpu_preflight(args, report):
             raise ValueError("replay ids and weights must change")
         for route, weights in generations:
             storage = inverse.index_select(0, route.flatten().long()).view_as(route)
-            rf._routing_tables(storage, weights, packed.experts, torch.device("cpu"), rf.library_for("e4m3"))
+            widths = tuple(dict.fromkeys(rf.superblock_rows(rf.library_for("e4m3"), mode, route.shape[0])
+                                         for mode in (0, 1, 2)))
+            rf._routing_tables(storage, weights, packed.experts, torch.device("cpu"), widths)
         x, down_x = activations(2, 256, 128, torch.device("cpu"), args.seed)
         if x.shape != (2, 256) or down_x.shape != (16, 128):
             raise ValueError("small activation shape differs")

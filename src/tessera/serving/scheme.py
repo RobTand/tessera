@@ -110,6 +110,9 @@ __all__ = [
     "regime_of_m",
     "route_launches",
     "launch_pairs",
+    "qualification_launch_pairs",
+    "routed_class_launch_pair",
+    "HISTORICAL_QUALIFIED_LAUNCHES",
     "GROUP_SIZE",
     "FUSED_MODULE_FIELDS",
     "FUSED_MODULE_SCHEMA",
@@ -511,12 +514,8 @@ _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
-#: No launch in this table names a lane since #538: the only launch that did
-#: was the dense window-GEMV lane's, and the dispatch that made it was retired
-#: by ``1b767a207``.  ``lane`` stays a ``LAUNCH_FIELDS`` field -- the narrowing
-#: in :func:`route_launches` is about the shape of a launch, not about which
-#: launches exist today -- and ``ext.WINDOW_GEMV_MODULE_NAME`` remains the home
-#: of the extension's name for the load path that still builds it.
+#: A lane row names the extension that its kernel needs.
+#: Both current execution and historical qualification use the same lane filter.
 
 
 def _dense_native_window_launch(decoder: str, fused_decoder: str, lane: str) -> tuple[dict, ...]:
@@ -554,6 +553,51 @@ def _dense_native_window_launch(decoder: str, fused_decoder: str, lane: str) -> 
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
     )
+
+
+# Historical WINDOW receipts retain their original execution identities.
+# These rows validate qualification records; no current dispatcher selects them.
+HISTORICAL_QUALIFIED_LAUNCHES: dict[str, tuple[dict, ...]] = {
+    TESSERA_FP8: (
+        {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_mma_e4m3",
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+    ),
+    TESSERA_BF16: (
+        {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_value",
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+    ),
+}
+
+
+def _window_class_launch(decoder, lane):
+    return {"symbol": "tessera::routed_window_classes", "decoder": decoder,
+            "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": lane,
+            "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False}
+
+
+WINDOW_CLASS_LAUNCHES = {
+    "e4m3": _window_class_launch("native_routed_window_classes", None),
+    "e4m3mma": _window_class_launch("native_routed_window_classes_e4m3mma",
+                                  "tessera_routed_fused_mma_e4m3"),
+    "value": _window_class_launch("native_routed_window_classes_folded", None),
+}
+
+
+def routed_class_launch_pair(library: str) -> tuple[str, str]:
+    """Return the current binding identity without a qualification claim."""
+    launch = WINDOW_CLASS_LAUNCHES[library]
+    return launch["symbol"], launch["decoder"]
 
 
 ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
@@ -619,65 +663,12 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": DECODE_ONCE_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
-    ) + (
-        # The compact window MoE adapter: routed experts served from the
-        # loader's packed units, no decoded tile, on the epilogue arithmetic.
-        # It is the expert half's ONLY launch.  The materialising
-        # ``(MOE_GEMM_SYMBOL, _DECODER_TORCH_STOCK)`` entry that stood before
-        # it left this table at contract v38 (tessera#604): it ran only on a
-        # build that publishes no compact reader, and ``moe_route.
-        # compact_window_lane`` answers True for this family whenever
-        # ``parse_compact_tessera_expert_blob`` is defined, which it is in
-        # this module.  A table row for a launch the build cannot make is the
-        # defect v31 named for the dense routes.
-        {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
-        # The fused warp-specialised lane (tessera#640) on the same epilogue
-        # arithmetic.  ``PackedWindowMoeBundles.adapter`` takes it for every
-        # stack ``routed_fused.fused_routed_window_supported`` admits (the
-        # wire's one- or two-rate run table at rates 1..8 in the packer's
-        # column order, window 14 -- every GLM q256 rung since contract v45,
-        # tessera#694; v42-v44 read rate 4 alone) unless
-        # ``TESSERA_ROUTED_FUSED=0``; the compact pair above stays the
-        # dispatch for the rest (a box whose toolchain cannot build the
-        # library, the opt-out).  The
-        # FIRST lane-bearing row since #538: ``lane`` names the extension
-        # ``native_extensions`` publishes for it, so a cell derives this pair
-        # only at a rung the extension's own ``lane.requires`` admits
-        # (``contract._lanes_a_rung_reaches``), and the compact row keeps
-        # ``when_lane_absent`` False because it still runs beside the lane --
-        # for the stacks the lane's runtime geometry check refuses and for
-        # ``when_unavailable``.  A served route census of a rate-4 GLM stub
-        # (contract v42) is what let the four window routed cells name it.
-        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
-        # The fused lane on the E4M3 instruction (``TESSERA_FUSED_E4M3_MMA=
-        # e4m3``); see the dense row of the same library.  Attested since v47.
-        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_mma_e4m3",
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
-    ),
-    # The dense half: same shape as the FP8 dense half above, and for the same
-    # reason, on the FOLDED weight arithmetic (tessera#614) and therefore its
-    # own decoder.  The expert half (tessera#609) is the compact window MoE
-    # adapter with the same folded arithmetic, resident like every expert
-    # stack.  It has no stock-kernel launch at all: there is no materialising
-    # BF16 expert path to fall back to.  Both halves of the route serve one
-    # arithmetic: the row scale folded into each weight, rounded once.
+    ) + (WINDOW_CLASS_LAUNCHES["e4m3"], WINDOW_CLASS_LAUNCHES["e4m3mma"]),
+    # Both WINDOW families share the class operation and keep distinct arithmetic.
     TESSERA_BF16: _dense_native_window_launch(
         _DECODER_NATIVE_WINDOW_GEMM_FOLDED, _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
         "tessera_routed_fused_value") + (
-        {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
-         "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
-        # The fused lane's folded form (tessera#640); see the FP8 row.
-        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL,
-         "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_value",
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        WINDOW_CLASS_LAUNCHES["value"],
     ),
 }
 
@@ -685,23 +676,19 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: Launches the DISPATCH can make that the packaged runtime contract does not
 #: attest.  A launch here serves, and the routes' census expectation must know
 #: it, but no ``lane_eligibility`` cell names it and no contract version was
-#: promoted for it.  ``route_launches`` therefore leaves these out by default
-#: -- the cell validator and every contract reader see exactly the attested
-#: dispatch -- and the routes' ``census_expected`` opts in with
-#: ``include_experimental=True`` so a served record is compared against what
-#: the build can really launch.  A pair leaves this set when a receipt earns it
-#: a cell.
+#: promoted for it. The default execution query excludes experimental operations.
+#: A census uses include_experimental=True to describe the current build.
+#: Historical receipt validation uses qualification_launch_pairs separately.
+#: A pair leaves this set only after its own receipt earns qualification.
 #:
 #: ``(WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM)`` LEFT at contract v34
 #: (#545): four censuses on the platform's own serve image recorded 112 of 112
 #: dense modules on that pair in both regimes, both residencies, for
-#: ``TESSERA_E4M3_K1`` at q256=1024 and ``TESSERA_BF16_K1`` at q256=1792, and
-#: the four ``tessera_{e4m3_k1,bf16_k1}_dense_sm121_{decode,batch}`` cells name
-#: it.  The removal and the cells are one change: ``contract.
-#: _validate_cell_executes`` derives a cell's ``executes`` from
-#: ``route_launches`` with ``include_experimental=False``, so a cell naming an
-#: experimental pair is refused and a pair removed without its cells would put
-#: an unattested launch in front of every contract reader.
+#: TESSERA_E4M3_K1 uses q256=1024. TESSERA_BF16_K1 uses q256=1792.
+#: The four dense cells name that pair. Their removal and replacement stay one change.
+#: The cell validator uses qualification_launch_pairs with the same axis rules.
+#: That query excludes experimental pairs and preserves historical receipt identities.
+#: A new operation cannot borrow those historical qualifications.
 #:
 #: What stayed at v34, and why.  The two A4 pairs are deferred with the NVFP4
 #: lane (#575) -- no dense or routed A4 census exists -- and the compact window
@@ -810,8 +797,12 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: prefill lane, ``(DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)``
 #: (tessera#931), default-off.  It leaves when a served census of a T-8
 #: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
+#:
+#: The mandatory WINDOW class operation remains unqualified for all three bindings.
+#: Historical compact and fused identities remain in HISTORICAL_QUALIFIED_LAUNCHES only.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
+    *((launch["symbol"], launch["decoder"]) for launch in WINDOW_CLASS_LAUNCHES.values()),
 })
 
 #: Launches a compiled (``torch.compile``) forward cannot make: their owner
@@ -828,27 +819,12 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
                    regime: str | None = None, mode: str | None = None,
                    lanes: "tuple[str, ...] | None" = None,
                    include_experimental: bool = False) -> tuple[dict, ...]:
-    """The launches ``route`` makes for a structure, narrowed by its conditions.
+    """Return current launches with optional structure, regime, residency and lane filters.
 
-    ``structure`` defaults to dense for existing Linear callers. Other axes
-    are optional and ``None`` means "not narrowed on this axis", so a call
-    specifying only structure returns all launches that structure can make --
-    the admissible set a census compares a record against. Narrowing all three
-    is what a ``lane_eligibility`` cell does, and it is what makes the cell's
-    ``executes`` a value rather than a disjunction.
-
-    ``lanes`` is the set of extension lanes PREPARED.  ``()`` is a box with no
-    extension at all -- the honest reading of ``when_unavailable`` -- and a
-    non-empty set drops the ``when_lane_absent`` launch, exactly as the routes'
-    own ``elif ... tessera_gemv is None`` branch does.
-
-    There is deliberately no RATE axis. A rate decides whether a prepared
-    lane can read a rung -- ``refuse_unreachable_lane``, represented here by
-    ``lanes``. Dispatch alternatives come from ``ROUTE_LAUNCHES``, not from a
-    universal GEMV/GEMM split: native dense preparation may serve either
-    regime, and a regime describes problem shape rather than one kernel.
-    Keep any within-regime M/rate decision in the owning lane. Adding a rate
-    filter here would incorrectly erase alternatives from a regime's census.
+    The default view excludes unqualified operations. A census includes experimental operations.
+    Use qualification_launch_pairs to validate historical receipts.
+    This query does not return retired WINDOW launches.
+    Rates select kernel preparation, not route alternatives.
     """
     if route not in ROUTE_LAUNCHES:
         raise ValueError(
@@ -857,8 +833,15 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
     if structure not in STRUCTURES:
         raise ValueError(
             f"{structure!r} is not a structure this package serves ({list(STRUCTURES)})")
+    return _narrow_launches(ROUTE_LAUNCHES[route], structure=structure, regime=regime,
+                            mode=mode, lanes=lanes, include_experimental=include_experimental)
+
+
+def _narrow_launches(launches, *, structure=STRUCTURE_DENSE, regime=None, mode=None,
+                     lanes=None, include_experimental=False):
+    """Apply the same axis rules to execution and historical qualification rows."""
     kept = []
-    for launch in ROUTE_LAUNCHES[route]:
+    for launch in launches:
         if (not include_experimental
                 and (launch["symbol"], launch["decoder"]) in EXPERIMENTAL_LAUNCHES):
             continue
@@ -885,6 +868,15 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
 def launch_pairs(route: str, **narrow) -> set:
     """``{(symbol, decoder)}`` for :func:`route_launches` -- the census's shape."""
     return {(l["symbol"], l["decoder"]) for l in route_launches(route, **narrow)}
+
+
+def qualification_launch_pairs(route: str, *, structure=STRUCTURE_DENSE, regime=None,
+                               mode=None, lanes=None) -> set:
+    """Validate existing receipts without treating historical launches as current execution."""
+    narrow = dict(structure=structure, regime=regime, mode=mode, lanes=lanes)
+    current = launch_pairs(route, **narrow)
+    historical = _narrow_launches(HISTORICAL_QUALIFIED_LAUNCHES.get(route, ()), **narrow)
+    return current | {(row["symbol"], row["decoder"]) for row in historical}
 
 
 def experimental_launch_pairs(route: str, **narrow) -> set:

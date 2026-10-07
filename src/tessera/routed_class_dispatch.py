@@ -34,6 +34,12 @@ class RoutedClassKernel(Protocol):
         ...
 
 
+def declared_route_widths(kernel, tokens, issue_order, parameters, modes=(0, 2)):
+    """Return every bound-kernel width before route prefixes enter the stream DAG."""
+    return tuple(dict.fromkeys(kernel.work_shape(mode, tokens, c, parameters)[0]
+                              for c in issue_order for mode in modes))
+
+
 def initialize_class_counter(counter: torch.Tensor, prefix: torch.Tensor,
                              start: int, work_units: int) -> None:
     """Recompute the device start from this invocation or captured replay."""

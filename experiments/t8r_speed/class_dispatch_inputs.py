@@ -155,7 +155,9 @@ def stitched_references(adapter, x, down_x, storage_ids, weights):
             continue
         local_ids = (flat_ids[take] - cls.start).reshape(-1, 1)
         rw = weights.flatten()[take].reshape(-1, 1)
-        local = rf._routing_tables(local_ids, rw, cls.end - cls.start, x.device, adapter.library)
+        widths = tuple(dict.fromkeys(rf.superblock_rows(adapter.library, mode, take.numel())
+                                     for mode in (0, 1, 2)))
+        local = rf._routing_tables(local_ids, rw, cls.end - cls.start, x.device, widths)
         xq, scale = adapter._quantized(x[take // top_k], None, take.numel())
         act = torch.empty(take.numel(), inter, dtype=torch.bfloat16, device=x.device)
         pure_launch(adapter, cls, 0, xq, scale, local, act, workspace=workspace, a_row_mode=0, mul_weight=False)

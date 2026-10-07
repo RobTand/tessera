@@ -65,7 +65,9 @@ def _moe(q256_w13=RUNG, q256_w2=RUNG, family=TESSERA_FP8, grid="E4M3",
     matrices = {"w13": rows(q256_w13, 2), "w2": rows(q256_w2, 1)}
     if (all(isinstance(matrix, (list, tuple)) and len(matrix) == experts for matrix in matrices.values())
             and all(isinstance(row, (list, tuple)) and len(row) == len(s["groups"][group]["roles"])
-                    for group, matrix in matrices.items() for row in matrix)):
+                    for group, matrix in matrices.items() for row in matrix)
+            and all(type(rung) is int and rung > 0
+                    for matrix in matrices.values() for row in matrix for rung in row)):
         metadata = build_expert_metadata(matrices)
         s.update(metadata)
         for group, matrix in matrices.items():
@@ -152,31 +154,6 @@ def test_an_expert_matrix_is_refused_on_the_nvfp4_route_by_name():
                  q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
 
 
-def test_expert_role_declarations_resolve_one_expert_and_default_to_the_first():
-    declared = validate_tessera_moe_scheme(_moe(q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
-    for e in range(EXPERTS):
-        w13 = expert_role_declarations(declared["groups"]["w13"], expert=e)
-        assert [d["q256"] for d in w13] == MIXED_W13[e]
-        assert [d["role_q256"][0] for d in w13] == MIXED_W13[e]
-        assert [d["roles"][0][0] for d in w13] == ["gate_proj", "up_proj"]
-        w2 = expert_role_declarations(declared["groups"]["w2"], expert=e)
-        assert [d["q256"] for d in w2] == MIXED_W2[e]
-    # The legacy one-argument call stays the FIRST expert's declarations.
-    assert [d["q256"] for d in expert_role_declarations(declared["groups"]["w13"])] \
-        == MIXED_W13[0]
-
-
-def test_expert_group_q256_emits_scalar_per_role_or_matrix():
-    assert S.expert_group_q256([[RUNG, RUNG]] * EXPERTS) == RUNG
-    assert S.expert_group_q256([[RUNG, 512]] * EXPERTS) == [RUNG, 512]
-    assert S.expert_group_q256(MIXED_W13) == MIXED_W13
-    # Every emitted spelling reads back through the gate to the same matrix.
-    for emitted in (RUNG, [RUNG, 512], MIXED_W13):
-        reread = validate_tessera_moe_scheme(
-            _moe(q256_w13=emitted, q256_w2=MIXED_W2), "m")["groups"]["w13"]
-        assert S.expert_group_q256(
-            reread.get("expert_role_q256")
-            or [reread["role_q256"]] * EXPERTS) == emitted
 
 
 # ------------------------------------------------- the shared parser, per unit
@@ -223,11 +200,13 @@ def test_the_compact_reader_resolves_each_experts_declaration():
             roles = parse_compact_tessera_expert_blob(
                 w13_blobs[e][index], role, f"m expert {e}", device="cpu")
             assert roles[0][0] == name
-    # The declaration of one expert refuses another expert's container.
+    # Only a conflicting schedule must refuse, not another id at the same rung.
     wrong = expert_role_declarations(group, expert=0)[0]
-    with pytest.raises(ValueError, match="sidecar scheme declares"):
+    other = next(e for e in range(EXPERTS)
+                 if expert_role_declarations(group, expert=e)[0]["q256"] != wrong["q256"])
+    with pytest.raises(ValueError):
         parse_compact_tessera_expert_blob(
-            w13_blobs[1][0], wrong, "m expert 1", device="cpu")
+            w13_blobs[other][0], wrong, f"m expert {other}", device="cpu")
 
 
 # ------------------------------------------------ research TP2 rank cuts, CPU

@@ -205,7 +205,7 @@ def test_two_stream_events_and_absolute_prefix_reseed(monkeypatch, reverse):
     trace.clear()
     ids = torch.tensor([[0, 2], [1, 3]], dtype=torch.int32)
     rw = torch.ones_like(ids, dtype=torch.float32)
-    routing = rf._routing_tables(ids, rw, 4, torch.device("cpu"), None)
+    routing = rf._routing_tables(ids, rw, 4, torch.device("cpu"), (rf.BM,))
     out = torch.empty(4, 128, dtype=torch.bfloat16)
     x = torch.empty(2, 128, dtype=torch.bfloat16)
     order = (1, 0) if reverse else (0, 1)
@@ -215,7 +215,7 @@ def test_two_stream_events_and_absolute_prefix_reseed(monkeypatch, reverse):
     monkeypatch.setattr(torch.cuda, "Event", no_resource_creation)
     monkeypatch.setattr(torch, "empty", no_resource_creation)
     for prefix in ([0, 2, 3, 5, 5], [0, 0, 0, 1, 3], [0, 1, 6, 7, 8]):
-        routing.item_off.copy_(torch.tensor(prefix, dtype=torch.int32))
+        routing.superblocks(rf.BM).copy_(torch.tensor(prefix, dtype=torch.int32))
         adapter.counters.fill_(-99)
         for mode, n_blocks in ((0, 2), (2, 1)):
             from tessera.routed_class_dispatch import dispatch_class_projection
@@ -257,3 +257,32 @@ def test_dispatch_resources_have_one_adapter_owner(monkeypatch):
         rf.resolve_dispatch_resources(key)
     assert rf.resolve_dispatch_resources(second.resource_key) is second.dispatch_resources
 
+
+
+def test_bound_kernel_widths_recompute_from_one_route_population(monkeypatch):
+    allow_cpu(monkeypatch)
+    adapter = rf.FusedRoutedWindowMoE.from_bundles(*[projection() for _ in range(3)],
+                                                expert_classes=descriptors())
+    class Widths(rf._LutClassKernel):
+        def work_shape(self, mode, tokens, index, parameters):
+            if mode not in (0, 2):
+                raise AssertionError("the binding has no route-preserving projection")
+            return ((8, 64)[index] if mode == 0 else 128), 6
+    adapter = dataclasses.replace(adapter, dispatch_resources=dataclasses.replace(
+        adapter.dispatch_resources, kernel=Widths("value", object())))
+    for counts, expected in (([9, 8, 0, 3], [0, 2, 3, 3, 4]),
+                             ([0, 17, 1, 2], [0, 0, 3, 4, 5])):
+        ids = torch.tensor([e for e, count in enumerate(counts) for _ in range(count)],
+                           dtype=torch.int32).flip(0).reshape(-1, 1)
+        weights = torch.arange(ids.numel(), dtype=torch.float32).reshape_as(ids)
+        routing = adapter._routing(ids, weights)
+        assert routing.superblocks(8).tolist() == expected
+        for width in (64, 128):
+            prefix = [0]
+            for count in counts:
+                prefix.append(prefix[-1] + (count + width - 1) // width)
+            assert routing.superblocks(width).tolist() == prefix
+        assert routing.offsets.diff().tolist() == counts
+        assert torch.equal(routing.rw_sorted, weights.flatten()[routing.flat_sorted.long()])
+        with pytest.raises(GrammarError):
+            routing.superblocks(16)

@@ -48,11 +48,10 @@ def _piece_major_requested() -> bool:
 def _piece_major_admissible(family: str) -> bool:
     """The full intake gate for the piece-major resident layout (tessera#739).
 
-    All four must hold, and each is checked before the transient is re-laid:
+    All three hold before the transient is re-laid:
 
-    * the flag is on (opt-in, default off);
-    * the family is E4M3 -- a BF16 (value) unit stays legacy;
-    * the fused routed window lane is enabled;
+    * the piece-major experiment is requested;
+    * the family is E4M3 -- BF16 keeps canonical word placement;
     * the E4M3 library this process builds is the MMA one, since the
       piece-major reader is instantiated only there.  ``library_for`` reads
       ``TESSERA_FUSED_E4M3_MMA``: an explicit ``f16`` keeps every body legacy.
@@ -61,9 +60,7 @@ def _piece_major_admissible(family: str) -> bool:
         return False
     if family != "e4m3":
         return False
-    from ..routed_fused import fused_routed_window_enabled, library_for, library_mma8
-    if not fused_routed_window_enabled():
-        return False
+    from ..routed_fused import library_for, library_mma8
     return library_mma8(library_for(family))
 
 
@@ -95,7 +92,8 @@ _CENSUS_PAYLOAD_FAMILY = {TESSERA_FP8: "TESSERA_E4M3_K1", TESSERA_BF16: "TESSERA
 
 def native_decoder(family: str) -> str:
     """The actual class decoder selected for this routed window family."""
-    from ..routed_fused import library_for, routed_class_launch_pair
+    from ..routed_fused import library_for
+    from .scheme import routed_class_launch_pair
 
     if family not in _CENSUS_PAYLOAD_FAMILY:
         raise KeyError(f"{family!r} has no native WINDOW expert route")
@@ -111,14 +109,16 @@ def _profiler_label(adapter) -> str:
 def census_expected(*, compiled: bool = False, platform=None,
                     family: str = TESSERA_FP8) -> dict:
     """Expected actual execution pair, not a serving-cell qualification."""
-    from ..routed_fused import library_for, routed_class_launch_pair
+    from .scheme import launch_pairs, route_launches
     from .census import platform_expectation
 
     del compiled
     if family not in _CENSUS_PAYLOAD_FAMILY:
         raise KeyError(f"{family!r} has no expert stack on this window route")
-    pair = routed_class_launch_pair(library_for("value" if family == TESSERA_BF16 else "e4m3"))
-    pairs = {"decode": {pair}, "batch": {pair}}
+    launches = route_launches(family, structure="routed_moe", mode="resident", include_experimental=True)
+    regimes = {regime for launch in launches for regime in launch["regimes"]}
+    pairs = {regime: launch_pairs(family, structure="routed_moe", regime=regime,
+                                 mode="resident", include_experimental=True) for regime in regimes}
     return platform_expectation(_CENSUS_PAYLOAD_FAMILY[family], platform, pairs)
 
 
@@ -340,24 +340,10 @@ def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None
 
 
 def _compact_role_units(blob, declared_role, target, device):
-    """The shared compact-reader boundary, called by its assigned name.
+    """Read one projection through the grammar-owned compressed reader."""
+    from .scheme import parse_compact_tessera_expert_blob
 
-    ``scheme.parse_compact_tessera_expert_blob(blob, declared_role, target,
-    device=...) -> [(role, CompactWire)]`` with the same signature and
-    refusals as ``parse_tessera_expert_blob``.  Until the loader owner
-    publishes it this raises by name; tests monkeypatch THIS seam (never a
-    copy of the wire validation).
-    """
-    from . import scheme as _scheme
-
-    reader = getattr(_scheme, "parse_compact_tessera_expert_blob", None)
-    if reader is None:
-        raise GrammarError(
-            "the shared compact reader scheme.parse_compact_tessera_expert_blob "
-            "is not published yet; the loader owner owns it and a route falls "
-            "back to the materialising parser until then"
-        )
-    return reader(blob, declared_role, target, device=device)
+    return parse_compact_tessera_expert_blob(blob, declared_role, target, device=device)
 
 
 def _compact_expert_units(blob, declared_role, plan, target, *, device, family,
@@ -368,8 +354,7 @@ def _compact_expert_units(blob, declared_role, plan, target, *, device, family,
     exactly one role and it must be the declared member; the plan's own cut
     is applied through ``prepare_window_compact`` (via the dense lane's
     ``_role_cut``, one home for the plan-to-cut mapping), which validates it
-    with ``slicing``'s predicates.  Tests mock this seam while the boundary is
-    unpublished; no wire validation is duplicated here.
+    with ``slicing``'s predicates. Wire validation belongs to the shared reader.
     """
     from ..compact_prep import prepare_window_compact
     from .native_window import _role_cut
@@ -643,6 +628,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     refuse_a_family_with_no_expert_route(family, prefix)
     if family not in (TESSERA_FP8, TESSERA_BF16):
         raise ValueError(f"{prefix}: the routed class method has no {family} window decoder")
+    if getattr(layer.moe_config, 'has_bias', False):
+        raise ValueError(f"{prefix}: native WINDOW classes do not execute expert bias")
     _bind_module_prefix(layer, prefix)
     from .backend import require_platform_backs
     from .contract import PAYLOAD_FAMILY_BY_ROUTE
@@ -666,13 +653,13 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             self.fp8_backend = self.bf16_backend = self.experts_cls = None
             self._tp_size = (int(moe.moe_parallel_config.tp_size) if research_selected is None
                              else research_selected.expected_tensor_parallel_size)
-            self._tp_rank = int(moe.moe_parallel_config.tp_rank)
             if not moe.is_act_and_mul:
                 raise ValueError(f"{prefix}: routed class execution requires gated gate/up experts")
             if research_selected is not None:
                 from vllm.config import get_current_vllm_config
                 _require_eager_selected_context(get_current_vllm_config(), prefix)
                 self._require_research_parallel_contract()
+            self._tp_rank = int(moe.moe_parallel_config.tp_rank)
 
         @property
         def is_monolithic(self):

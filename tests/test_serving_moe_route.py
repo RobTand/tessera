@@ -1,19 +1,9 @@
-"""The routed-MoE expert route's decode half, on real Tessera wires.
+"""Reference-only decode controls over real expert wire containers.
 
-WHAT THIS FILE CAN COVER AND WHAT IT CANNOT.  The route's ``apply`` hands
-vLLM's own fused-MoE modular kernel vLLM's own parameters, and its loader is
-called by ``RoutedExperts.load_weights``; neither exists in a pure test
-environment, and vendoring the serving runtime is forbidden (AGENTS.md).  So
-what is pinned here is the half that is ours: the decode from per-expert
-containers to the stock per-channel FP8 stack, the row order the two w13
-projections land in, and the shard vocabulary the loader dispatches on.  The
-load-and-execute half is a container run
-(``experiments/moe_route_load_probe.py``).
-
-THE LOAD-BEARING ASSERTION is the same one the dense FP8 route makes: the
-decoded tile and per-row scale ARE ``tessera.stock.materialize_stock``'s, expert
-by expert and projection by projection, so the arithmetic the fused-MoE kernel
-runs is the arithmetic the stock lane was measured on.
+These CPU controls compare per-expert tiles and row scales with the encoder
+stock oracle. Production WINDOW serving retains compressed planes and executes
+the native class dispatcher, proved separately through real framework loading
+and eager/captured device execution in the serving image.
 """
 from __future__ import annotations
 

@@ -287,14 +287,13 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     source.mkdir()
     generator = torch.Generator().manual_seed(5)
     stacks = [f"model.language_model.layers.{layer}.mlp.experts" for layer in range(2)]
-    tensors = {f"{stack}.0.{projection}.weight": torch.randn(32, 32, generator=generator) * 0.02
+    tensors = {f"{stack}.0.{projection}.weight": torch.randn(128, 128, generator=generator) * 0.02
                for stack in stacks for projection in exporter.EXPERT_PROJECTIONS}
     tensors["lm_head.weight"] = torch.randn(32, 32, generator=generator)
     safetensors.save_file(tensors, str(source / "model.safetensors"))
     (source / "config.json").write_text(json.dumps({"architectures": ["Glm5NextForConditionalGeneration"],
-        "text_config": {"hidden_size": 32, "moe_intermediate_size": 32, "n_routed_experts": 1}}))
+        "text_config": {"hidden_size": 128, "moe_intermediate_size": 128, "n_routed_experts": 1}}))
     plan = tmp_path / "plan.json"
-    # q256 896: the routed E4M3 cells' rung (contract v38).
     plan.write_text(json.dumps({stack: {"grid": "E4M3", "q256": 896} for stack in stacks}))
     common = ["--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--plan-json", str(plan)]
     paths = []
@@ -472,20 +471,24 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
         owned = [n for n in source_names if n.startswith(stack + ".")]
         modules, groups, ignore = {}, {}, []
         if rank in encoded:
-            names = [n.removesuffix(".weight") + ".wire" for n in owned]
-            if input_scales:
-                names += [n.removesuffix(".weight") + ".input_global_scale" for n in owned]
+            metadata = {"expert_ids": [0], "expert_classes": [{"start": 0, "end": 1,
+                "q256": {"w13": [q256, q256], "w2": [q256]}}]}
             roles = [{"tensor": tensor, "source_tensor": tensor, "expert": 0,
+                      "source_slice": {"expert": 0, "selector": "whole", "transpose": False},
+                      "storage_expert": 0, "wire": tensor.removesuffix(".weight") + ".wire",
                       "role": role, "group": "w2" if role == "down_proj" else "w13",
                       "grid": grid, "q256": q256, "rows": 32, "cols": 32,
                       **({"input_global_scale": 2.5} if input_scales else {})}
                      for tensor, role in zip(owned, ("gate_proj", "up_proj", "down_proj"))]
+            names = [role["wire"] for role in roles]
+            if input_scales:
+                names += [role["wire"].removesuffix(".wire") + ".input_global_scale" for role in roles]
             modules[stack] = {"structure": "routed_moe", "family": family,
-                "grid": grid, "q256": q256, "experts": 1, "roles": roles,
+                "grid": grid, "q256": q256, "experts": 1, **metadata, "roles": roles,
                 "wire_bytes": 6, "container_bytes": 6, "resident_bytes_resident_mode": 3072}
             groups[f"stack{rank}"] = {"targets": [stack], "format": "TESSERA", "scheme": {
                 "structure": "routed_moe", "family": family, "grid": grid,
-                "body": body, "plane": plane, "experts": 1, "groups": {
+                "body": body, "plane": plane, "experts": 1, **metadata, "groups": {
                     "w13": {"q256": q256, "rows": 64, "columns": 32, "wire_stride": 2,
                             "roles": [["gate_proj", 32], ["up_proj", 32]]},
                     "w2": {"q256": q256, "rows": 32, "columns": 32, "wire_stride": 2,
@@ -571,9 +574,13 @@ def test_explicit_plan_checks_declared_group_rungs(tmp_path):
     source, paths, _plan = _moe_plan_parts(tmp_path)
     path = paths[0] / "tessera_part_config.json"
     config = json.loads(path.read_text())
-    next(iter(config["quantization_config"]["config_groups"].values()))["scheme"]["groups"]["w13"]["q256"] = 896
+    scheme = next(iter(config["quantization_config"]["config_groups"].values()))["scheme"]
+    scheme["groups"]["w13"]["q256"] = 896
+    scheme["expert_classes"][0]["q256"]["w13"] = [896, 896]
     path.write_text(json.dumps(config))
-    with pytest.raises(ValueError, match="plan"):
+    _change(paths[0], lambda manifest: next(iter(manifest["modules"].values()))[
+        "expert_classes"][0]["q256"].update(w13=[896, 896]))
+    with pytest.raises(ValueError):
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
 
 
@@ -587,8 +594,8 @@ def test_explicit_plan_requires_every_source_expert(tmp_path):
     role = record["roles"].pop()
     index_path = paths[0] / "model.safetensors.index.json"
     index = json.loads(index_path.read_text())
-    index["weight_map"].pop(role["tensor"].removesuffix(".weight") + ".wire")
-    index["weight_map"][role["tensor"]] = "model.safetensors"
+    index["weight_map"].pop(role["wire"])
+    index["weight_map"][role["source_tensor"]] = "model.safetensors"
     index_path.write_text(json.dumps(index))
     _tensor_file(paths[0] / "model.safetensors", list(index["weight_map"]))
     manifest["export_partition"]["output_sha256"]["model.safetensors"] = parts.sha256_file(paths[0] / "model.safetensors")

@@ -128,12 +128,13 @@ def _routed_window_classes(
     hidden, inter = wscales[2].shape[1], wscales[0].shape[1]
     if input_weight:
         x = x * routing_weights.reshape(-1, 1).to(x.dtype)
-    routing = rf._routing_tables(expert_ids, routing_weights, ends[-1], x.device, library)
     resources = rf.resolve_dispatch_resources(resource_key)
-    xq, a1 = resources.kernel.prepare_input(x, None, tokens, family, x.device)
-    act = torch.empty((routing.routes, inter), dtype=torch.bfloat16, device=x.device)
     parameters = dict(words=words, tables=tables, inits=inits, has_inits=has_inits, wscales=wscales,
         runs=runs, bdescs=bdescs, tile_words=tile_words, slot_words=slot_words, piece_major=piece_major)
+    widths = routed_class_dispatch.declared_route_widths(resources.kernel, tokens, issue_order, parameters)
+    routing = rf._routing_tables(expert_ids, routing_weights, ends[-1], x.device, widths)
+    xq, a1 = resources.kernel.prepare_input(x, None, tokens, family, x.device)
+    act = torch.empty((routing.routes, inter), dtype=torch.bfloat16, device=x.device)
     args = dict(parameters=parameters, starts=starts, ends=ends, issue_order=issue_order,
                 counters=counters, resources=resources)
     routed_class_dispatch.dispatch_class_projection(0, xq, a1, routing, **args, a_row_mode=0,

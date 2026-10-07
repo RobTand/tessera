@@ -157,7 +157,7 @@ def _assert_loaded_coordinates(actual, expected, degree, rank):
         assert (got.rows, got.cols, got.experts) == (want.rows, want.cols, EXPERTS)
         for field in ("words_all", "scale_all", "init_all", "has_init"):
             a, b = getattr(got, field), getattr(want, field)
-            assert torch.equal(a.view(torch.uint8), b.view(torch.uint8)), (role, field, degree, rank)
+            assert torch.equal(a.view(torch.uint8).reshape(-1), b.view(torch.uint8).reshape(-1)), (role, field, degree, rank)
         # The native table is composed from definition-side codes and alphabet.
         table = rf.compose_table(want, library)
         assert torch.equal(got.table_all.view(torch.uint8), table.view(torch.uint8)), (role, "table")

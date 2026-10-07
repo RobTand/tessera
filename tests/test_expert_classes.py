@@ -29,6 +29,7 @@ def test_required_metadata_is_not_inferred(field):
 
 
 def test_producer_sorts_storage_without_renaming_sources():
+    pytest.importorskip("torch")
     from tessera.export_serving import project_expert_plan
 
     stack = "model.layers.1.mlp.experts"
@@ -127,6 +128,7 @@ def test_gate_up_schedule_refuses_but_down_can_differ():
 
 
 def test_original_plan_reconciliation_and_storage_mismatch():
+    pytest.importorskip("torch")
     from copy import deepcopy
     from tessera.export_serving import project_expert_plan, expert_group_q256
     from tessera.serving_parts import validate_explicit_plan
