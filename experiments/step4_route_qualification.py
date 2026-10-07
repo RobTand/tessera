@@ -185,7 +185,7 @@ def _pair_key(symbol, decoder):
     return f"{symbol} / {decoder}"
 
 
-def trace_launches_by_contract(route_trace, contract, *, policy=None, kind=None):
+def _trace_launches(route_trace, contract, *, policy=None, kind=None):
     """``{"<symbol> / <decoder>": {...}}`` for one activation contract.
 
     Each value carries ``symbol``, ``decoder``, ``launches`` (summed over
@@ -257,6 +257,12 @@ def trace_launches_by_contract(route_trace, contract, *, policy=None, kind=None)
     if not seen_contract:
         raise QualificationRefused(
             f"route trace records no dispatch on {contract}; the capture never served the route it prices")
+    return totals, per_m
+
+
+def trace_launches_by_contract(route_trace, contract, *, policy=None, kind=None):
+    """Return per-pair capture totals without exposing the internal M groups."""
+    totals, _groups = _trace_launches(route_trace, contract, policy=policy, kind=kind)
     return totals
 
 
@@ -310,7 +316,7 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
         raise QualificationRefused("routed MoE has no streamed native launch")
     contract, pairs = KIND_LAUNCHES[kind][family]
     policy = f"{family}:{mode}"
-    launches = trace_launches_by_contract(route_trace, contract, policy=policy, kind=kind)
+    launches, per_m = _trace_launches(route_trace, contract, policy=policy, kind=kind)
     expected_keys = [_pair_key(symbol, decoder) for symbol, decoder in pairs]
     foreign = sorted(key for key in launches if key not in expected_keys)
     if foreign:
@@ -319,7 +325,7 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
             f"dispatches on {contract} ({family}/{kind}) used {foreign}, not {admissible}: "
             + json.dumps({key: {k: launches[key][k] for k in ("launches", "modules")}
                           for key in foreign}, sort_keys=True))
-    native = _merge_admissible_launches(launches, expected_keys)
+    native = _merge_admissible_launches(launches, expected_keys, per_m)
     if native["launches"] < 1:
         raise QualificationRefused(f"no served dispatch on {contract} ({family}/{kind}) was counted")
     if native["unnamed_modules"]:
@@ -351,14 +357,11 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
     return {"contract": contract, "policy": policy, "expected": expected, "observed": native}
 
 
-def _merge_admissible_launches(launches, expected_keys):
-    """One observation over the admissible pairs a kind may dispatch on.
+def _merge_admissible_launches(launches, expected_keys, per_m):
+    """Merge counts within each M group, then take the largest group.
 
-    A module runs exactly one adapter, so the per-pair ``modules`` (each a
-    per-M-group maximum) add across pairs, as do launches, entries and the
-    unnamed count; ``module_names`` is the union.  ``by_launch`` keeps each
-    pair's own bucket; ``symbol``/``decoder`` are set only when one pair was
-    observed, so a dense record reads exactly as before.
+    A module can use different admissible pairs at different M values.
+    Preserve each pair bucket, but do not sum its independent maximum.
     """
     present = [key for key in expected_keys if key in launches]
     merged = {"launches": 0, "entries": 0, "modules": 0, "unnamed_modules": 0,
@@ -367,10 +370,18 @@ def _merge_admissible_launches(launches, expected_keys):
     for key in present:
         bucket = launches[key]
         merged["by_launch"][key] = dict(bucket)
-        for field in ("launches", "entries", "modules", "unnamed_modules"):
+        for field in ("launches", "entries"):
             merged[field] += bucket[field]
         names.update(bucket["module_names"])
     merged["module_names"] = sorted(names)
+    groups = {}
+    for (key, token), (count, unnamed) in per_m.items():
+        if key in merged["by_launch"]:
+            group = groups.setdefault(token, [0, 0])
+            group[0] += count
+            group[1] += unnamed
+    merged["modules"] = max((count for count, _unnamed in groups.values()), default=0)
+    merged["unnamed_modules"] = max((unnamed for _count, unnamed in groups.values()), default=0)
     if len(present) == 1:
         merged["symbol"] = launches[present[0]]["symbol"]
         merged["decoder"] = launches[present[0]]["decoder"]
