@@ -1,5 +1,39 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for the producer correction in issue #1018.
+The canonical `fleet.rung_allowability.v3` interface keeps the historical census.
+`performant_rungs` and `admit_rung` use the actual dense or routed structure and kernel build.
+R896 joins the measured menu for T8 and T16 under the D41 half-bit decision.
+`rung_speed` uses the recorded per-cell cost, not a pure-rung cost.
+Queries wait when actual shape, recipe, activation, or token-count evidence is absent.
+Present pending cells wait before class reconstruction. Failed and unsupported cells retain their states.
+Both producer paths apply source-specific reader findings to correctness holds and preserve prior flags and observations.
+Class inheritance selects safe donors before it selects anchors. Held or refused donors never supply times.
+Class-derived times never change measurement status or numerical and serving qualification.
+`geometry_class_identity` retains family, arity, recipe, build, path, shape, activation, and token count.
+`rung_quality` derives quality from whole-anchor chords, not per-rung sample gates.
+The existing producer stages immutable versions through `index.v3-candidate.json`.
+This correction leaves the active index and the campaign blocker clock unchanged.
+Issue #1018 stays open. Historical version one and version two semantics remain explicit.
+No decoder, kernel, format, runtime pin, consumer policy, or serving route changes.
+
+Re-stamped 2026-10-06 for issue #1018: the geometry entry accepts explicit
+dense shapes (`name:rows:columns`) so the missing real shared-expert and
+dense layer zero-to-two projections can use the existing harness and its
+uncompressed BF16-weight comparator. A BF16 activation label alone is never
+that comparator. The near-eight-bit pure R2048 work retains the real
+configuration read through the existing PrismaBuild residency reader.
+Full-source shared roles are 2048 by 4096 and 4096 by 2048; dense roles are
+12288 by 4096 and 4096 by 12288. Tensor parallel size two splits the gate/up
+output rows and down input columns; gate/up role timings are not a fused
+module, collective or served proof. No format, native route or ship gate moves.
+D41 retains the whole-bit menu and half-bit rungs at their measured costs.
+This producer correction restores R896 for T8 and T16 only where actual scoped measurements exist.
+Routed T16 keeps whole-bit R256 through R2048. Dense T16 keeps whole-bit R256 through R3584.
+T4 keeps its historical native times but waits for performance admission.
+Quality uses whole-anchor chords, not per-rung sample gates.
+This work starts no graphics processor campaign and makes no serving or speed qualification claim.
+
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
 `--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
 WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
@@ -77,7 +111,7 @@ point must pass a fresh CPU PrismaBuild preflight after source/argument
 changes. The existing full 33-output ship gate, quality gates, defaults and
 serving pin do not change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
-Re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
+Historical v1/v2 policy, re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index
 semantics. `validate_index(index)` and `validate_table(table)` return the
 input or raise `ValueError`; `admit_rung(table, *, format, kernel_build_id,

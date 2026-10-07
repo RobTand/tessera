@@ -18,6 +18,16 @@ The targeted GPU proof passes 78 tests with no skips or uncollected modules unde
 The new scratch decoder uses wide addresses; its regression fails before the fix at the int32 boundary.
 See `docs/measurements/2026-10-07-t16-decode-once-prefill.md` for the complete evidence and limits.
 
+## 2026-10-07 — issue 1018: producer policy correction
+
+Both table producer paths preserve applicable reader correctness findings as holds.
+Partial timing cells wait before class reconstruction and retain explicit failure states.
+Class inheritance filters held and refused donors before it selects timing anchors.
+The producer restores measured R896 scope under the D41 half-bit decision.
+R896 uses its recorded per-cell cost and receives no pure-rung speed credit.
+The correction leaves the active index, consumer policy, and campaign blocker clock unchanged.
+Issue 1018 stays open. This source change claims no graphics processor or serving qualification.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four
