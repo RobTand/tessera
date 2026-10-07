@@ -53,7 +53,10 @@ def test_the_offered_menu_is_strictly_increasing_in_bits(name, shape):
 def test_the_top_rung_is_always_offered(name):
     grid = grid_for_name(name)
     menu = rate_menu(grid, 64, 512)
-    assert menu.price(rung_ceiling(grid)).is_offered
+    from tessera.manifest import body_rate_cap
+    recipe = served_recipe(grid, rung_ceiling(grid))
+    ceiling = body_rate_cap(recipe.body, grid) * 256 // grid.arity
+    assert menu.price(ceiling).is_offered
 
 
 def test_rate_menu_refuses_a_rung_above_the_grid_ceiling():

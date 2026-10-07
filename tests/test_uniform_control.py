@@ -476,12 +476,13 @@ def _price_both_ways(tessera_formats, shape):
         ("E4M3", "TESSERA_E4M3_K1", 2048),
     ):
         for q in (256, ceiling // 2, ceiling):
-            mine = unit_wire_bits(grid_name, q, rows, columns)
-            theirs = Fraction(
-                tessera_formats.artifact_bpp(family, q, shape=shape)
-            ) * rows * columns
             grid = grid_for_name(grid_name)
-            body = BodyKind(served_recipe(grid, q).body)
+            recipe = served_recipe(grid, q)
+            mine = unit_wire_bits(grid, q, rows, columns)
+            theirs = Fraction(
+                tessera_formats.artifact_bpp(family, q, shape=shape, recipe=recipe)
+            ) * rows * columns
+            body = BodyKind(recipe.body)
             if body is BodyKind.TCQ:
                 rates = bresenham_rate_schedule(
                     root_from_q256(q * grid.arity), columns, grid.rate_cap
@@ -513,9 +514,9 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     (``prismaquant/tessera_formats.py`` ``_forest_bytes``), and the
     disjunction went on certifying a wire it no longer described -- a
     PrismaQuant that stopped charging the forest again would have passed this
-    gate unchanged.  It is not vacuous cover either: of the 27 rows this test
-    prices, 12 carry a TCQ body and every one of them has a forest of 160 to
-    4096 bits, so the excused branch was reachable on every shape.  Issue #388.
+    gate unchanged. The test now passes the same served recipe to both
+    accountants. Their research defaults can differ. Scalar TCQ rows still
+    exercise the forest charge, and the test checks each charge.
 
     ``55f7f87e`` wrote that hole down in this docstring -- "cannot detect a
     regression that drops that charge" -- and left the disjunction standing.
