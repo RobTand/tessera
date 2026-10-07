@@ -19,10 +19,10 @@ What it pins:
 2. every served module joins a nightly cell in both phases, and none does
    without them (the fail-before);
 3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
-   for it, with both required lanes engaged, so the nightly cells name the
    launches their twins name;
 4. each nightly cell covers EXACTLY the rungs the receipt carried, plus the
-   v59 measured widening on T-16 routed cells only.
+   sweep-evidenced rungs the committed admission file names for T-16 routed
+   cells only.
 
 It pins nothing about CUDA graphs: the cells are eager only (see the
 measurement doc for why no compiled scope is claimed on this image).
@@ -36,8 +36,6 @@ from pathlib import Path
 
 import pytest
 
-from test_allowable_rungs import BF16_ROUTED_WHOLE_BITS
-
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
@@ -45,13 +43,20 @@ from tessera.serving.contract import (
     load_serving_contract,
 )
 
-#: Contract v59 widens the T-16 routed cells past their served census on
-#: measured rows alone (no new census); see test_glm_u1_census_cells for the
-#: evidence.  The served re-census at each whole bit is still open.
-WIDENED_PAST_RECEIPT = {("TESSERA_BF16_K1", "routed_moe"): set(BF16_ROUTED_WHOLE_BITS)}
-
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "experiments" / "results"
+#: The committed per-rung production basis for the v59 T-16 routed widening.
+#: This test reads the file itself; the served receipt stays the floor.
+SWEEP_ADMISSION = RESULTS / "t16_routed_sweep_admission.json"
+
+
+def _evidenced_rungs():
+    """Receipt-external rungs with committed production evidence, by scope."""
+    doc = json.loads(SWEEP_ADMISSION.read_text(encoding="utf-8"))
+    admitted = {int(q) for q, row in doc["rungs"].items() if row["status"] == "admitted"}
+    return {("TESSERA_BF16_K1", "routed_moe"): admitted}
+
+
 TOOL = ROOT / "tools" / "tessera_route_census.py"
 RECEIPT = RESULTS / "glm53_u1_stub_b_nightly_tp1_eager_census.json"
 RECEIPT_SHA256 = "a5f1a4a198ef77ae77c86b4eccae28179621667e68d6577c6d4e0fc4b66d0c19"
@@ -200,7 +205,7 @@ def test_the_nightly_cells_cover_exactly_the_rungs_the_receipt_carried():
     assert sorted({(c["family"], c["structure"]) for c in cells.values()}) == sorted(SCOPES)
     for cell in cells.values():
         key = (cell["family"], cell["structure"])
-        allowed = carried[key] | WIDENED_PAST_RECEIPT.get(key, set())
+        allowed = carried[key] | _evidenced_rungs().get(key, set())
         assert set(cell["rungs_q256"]) == allowed, cell["id"]
         assert carried[key] <= set(cell["rungs_q256"]), cell["id"]
         assert cell["evidence"]["grade"] == "route_only", cell["id"]

@@ -21,14 +21,13 @@ NIGHTLY_SUFFIX = "_runtime_" + hashlib.sha256(json.dumps(
     {"image": NIGHTLY_IMAGE, "execution_modes": NIGHTLY_RUNTIME["execution_modes"]},
     sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 #: (family, structure) -> the rungs the nightly stub-B census carried.
-#: Contract v59 widens the T-16 routed pair past that census to the eight
-#: whole-bit rungs on measured rows (speed-test cells, sweep rows, sampled
-#: CPU quality); the served re-census at each whole bit is still open.
+#: Contract v59 widens the T-16 routed pair past that census to whole bits
+#: 1..7 on the sweep-admission file (bit 8 withheld on the rate-8 down
+#: anomaly); the served re-census stays open.
 NIGHTLY_RUNGS = {("TESSERA_E4M3_K1", "dense"): [832, 960, 1024, 1088],
                  ("TESSERA_BF16_K1", "dense"): [832, 880, 960, 1024, 1088],
                  ("TESSERA_E4M3_K1", "routed_moe"): [896, 928, 1024, 1088],
-                 ("TESSERA_BF16_K1", "routed_moe"): [256, 512, 768, 1024, 1280, 1536, 1792,
-                                                     2048]}
+                 ("TESSERA_BF16_K1", "routed_moe"): [256, 512, 768, 1024, 1280, 1536, 1792]}
 
 
 def nightly_id(family: str, structure: str, regime: str) -> str:
