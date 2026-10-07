@@ -11,6 +11,10 @@ from tessera.errors import GrammarError
 from tessera.wire import pack_body
 
 
+RATE_STEPS = ([(rate, rate) for rate in range(3, 9)]
+              + [(ra + 1, ra, ra + 1, ra) for ra in range(3, 8)])
+
+
 def _api():
     from tessera.fragment_wire import decode_fragment, repack_fragment
 
@@ -42,7 +46,7 @@ def _reference(bodies, rates, tables, states=None):
 
 
 @pytest.mark.parametrize("group", ["gate_up", "down"])
-@pytest.mark.parametrize("steps", [(3, 3), (4, 4), (4, 3, 4, 3)])
+@pytest.mark.parametrize("steps", RATE_STEPS)
 def test_fragment_bytes_equal_window_replay(group, steps):
     repack, decode = _api()
     bodies, rates, tables = _case(group, steps)
@@ -70,7 +74,7 @@ def _field(words, lane, bit, width, stride):
 
 
 @pytest.mark.parametrize("group", ["gate_up", "down"])
-@pytest.mark.parametrize("rate", [3, 4])
+@pytest.mark.parametrize("rate", range(3, 9))
 def test_fragment_pairs_follow_the_mma_lane_map(group, rate):
     repack, _decode = _api()
     steps = (rate,) if group == "gate_up" else (rate, rate)
@@ -95,13 +99,14 @@ def test_fragment_pairs_follow_the_mma_lane_map(group, rate):
 
 @pytest.mark.parametrize("group", ["gate_up", "down"])
 @pytest.mark.parametrize("cut", [1, 129])
-def test_tp_cut_history_preserves_nonzero_parent_state(group, cut):
+@pytest.mark.parametrize("steps", RATE_STEPS)
+def test_tp_cut_history_preserves_nonzero_parent_state(group, cut, steps):
     repack, decode = _api()
-    bodies, rates, tables = _case(group, (4, 3, 4, 3), rows=cut + 131)
+    bodies, rates, tables = _case(group, steps, rows=cut + 131)
     initial = torch.full((len(bodies), len(rates)), (1 << 14) - 1, dtype=torch.int32)
     states = initial.clone()
     for p, body in enumerate(bodies):
-        for rate in (3, 4):
+        for rate in sorted(set(rates)):
             columns = torch.tensor([j for j, r in enumerate(rates) if r == rate])
             states[p, columns] = replay_window(body[:cut, columns], 14, rate, initial[p, columns])[-1].int()
     local = [body[cut:] for body in bodies]

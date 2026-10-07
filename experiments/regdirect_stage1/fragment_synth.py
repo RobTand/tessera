@@ -7,8 +7,8 @@ at bit q * 2R (MSB-first), rows 2g and 2g + 1 of the warp's 16 rows, column 8t +
 32-column group.  The history block holds, per slot, R words x 8 lanes: lanes (6, t) and (7, t) of a
 block before row 0, i.e. the codes of rows -4..-1 that the column's start state implies.
 
-``reference_decode`` reads only these planes and the window rule; it does not share code with the
-kernel.  When ``tessera.fragment_wire`` lands, the disk-to-fragment tests replace this generator.
+``reference_decode`` reads only these planes and the window rule.
+It supplies an independent reference for the kernel and disk-to-fragment tests.
 """
 from __future__ import annotations
 
@@ -24,7 +24,11 @@ def pack_rate(ra, rb, ksa):
 
 
 def make_stack(mode, experts, rows, ks, profiles, seed, device):
-    """``profiles[e] = (ra, rb, ksa)``.  Returns a dict of the FragmentStack planes."""
+    """Build synthetic fragment planes for rates 3 to 8.
+
+    ``profiles[e] = (ra, rb, ksa)`` selects one rate or two adjacent rates.
+    A mixed profile uses ``rb = ra + 1``.
+    """
     g = torch.Generator(device=device).manual_seed(seed)
     nt = rows // TILE
     ng = GROUPS[mode]
@@ -59,7 +63,10 @@ def _lane_fields(words, r):
 
 
 def reference_decode(st, e):
-    """E4M3 weight bytes [tables, rows, K] of expert ``e`` from the fragment planes alone."""
+    """Decode rates 3 to 8 from the fragment planes of expert ``e``.
+
+    Return E4M3 weight bytes with shape [tables, rows, K].
+    """
     mode, ks = st["mode"], st["ks"]
     ng = GROUPS[mode]
     rows = st["wscale"].shape[2]

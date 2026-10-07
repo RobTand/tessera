@@ -661,7 +661,7 @@ def resident_hashes() -> dict:
 
 
 def fragment_hashes() -> dict:
-    """Preserve encoded BODY bytes and served E4M3 bytes in fragment order."""
+    """Preserve encoded BODY bits and decoded E4M3 bytes for rates 3 to 8."""
     from tessera.decode import replay_window
     from tessera.encode import encode_unit
     from tessera.export import _plan_for
@@ -671,7 +671,7 @@ def fragment_hashes() -> dict:
     from tessera.wire import pack_body
 
     result = {}
-    for rate in (3, 4):
+    for rate in range(3, 9):
         recipe = wire_recipe(E4M3_GRID, rate * 256)
         rates, forests = _plan_for(E4M3_GRID, rate * 256, 256, recipe.body, recipe.channel_sigma)
         generator = torch.Generator().manual_seed(rate + 731)
