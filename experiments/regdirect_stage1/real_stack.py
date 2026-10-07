@@ -2,9 +2,8 @@
 
 Packs one layer's routed experts, cut to one TP2 rank (``real_units.layer_units``), into the planes
 ``fragment_synth.make_stack`` returns, so the stage-1 bench runs the kernel on the disk codes.  It
-repacks each expert with ``tessera.fragment_wire.repack_fragment`` and only rearranges its
-output into the kernel's planes: the history units (before tile 0) become ``hist``, the rest
-``wire``; the sorted slot rates become the (ra, rb, ksa) profile.
+assembles each expert with ``tessera.regdirect_routed.fragment_stack``, the assembler the
+serving layer build uses.
 
 CPU self-check (D38 for the real-wire path): ``reference_decode`` of the packed planes equals the
 window-rule decode of the disk unit (``real_units.reference_weights``) for the checked experts.
@@ -22,49 +21,24 @@ import time
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from fragment_synth import GROUPS, pack_rate, reference_decode  # noqa: E402
+from fragment_synth import reference_decode  # noqa: E402
 from real_units import Artifact, layer_units, reference_weights  # noqa: E402
 
 
-def pack_expert(mode, units):
-    """One expert -> (wire words, history words, (ra, rb, ksa), kperm, table, wscale)."""
-    from tessera.fragment_wire import repack_fragment
-    from tessera.wire import pack_body
-
-    projs = ("gate_proj", "up_proj") if mode == 0 else ("down_proj",)
-    us = [units[p] for p in projs]
-    rates = us[0].rates
-    if any(u.rates != rates for u in us):
+def _expert(mode, units):
+    """One expert as ``regdirect_routed.fragment_stack`` reads it."""
+    us = [units[p] for p in (("gate_proj", "up_proj") if mode == 0 else ("down_proj",))]
+    if any(u.rates != us[0].rates for u in us):
         raise ValueError("gate and up differ in rate")
-    rows, cols = us[0].codes.shape
-    fw = repack_fragment(tuple(pack_body(u.codes.to(torch.int64), rates) for u in us), rates,
-                         rows=rows, cols=cols, projection_group="gate_up" if mode == 0 else "down",
-                         start_state=torch.stack([u.start for u in us]))
-    hist_words = int(fw.unit_offsets[0, 0, 0] - fw.expert_offsets[0])
-    slot_rates = fw.rates.tolist()
-    ra, rb = slot_rates[0], slot_rates[-1]
-    ksa = slot_rates.count(ra) if ra != rb else len(slot_rates)
-    return (fw.words[hist_words:].clone(), fw.words[:hist_words].clone(), (ra, rb, ksa), fw.perm,
+    return (torch.stack([u.codes.to(torch.int64) for u in us]), us[0].rates, torch.stack([u.start for u in us]),
             torch.stack([u.table for u in us]), torch.stack([u.scale for u in us]))
 
 
 def build(art, layer, rank, experts):
     """{mode: planes} for modes 0 and 2, each expert's units read once."""
-    acc = {m: dict(words=[], hist=[], w0=[], h0=[], prof=[], kperm=[], table=[], wscale=[], wo=0, ho=0) for m in (0, 2)}
-    for e in range(experts):
-        units = layer_units(art, layer, e, rank)
-        for mode, a in acc.items():
-            w, h, pr, kp, tb, ws = pack_expert(mode, units)
-            a["w0"].append(a["wo"]); a["h0"].append(a["ho"])
-            a["wo"] += w.numel(); a["ho"] += h.numel()
-            for key, v in zip(("words", "hist", "prof", "kperm", "table", "wscale"), (w, h, pr, kp, tb, ws)):
-                a[key].append(v)
-    return {mode: dict(mode=mode, wire=torch.cat(a["words"]), expert_word0=torch.tensor(a["w0"], dtype=torch.int64),
-                       hist=torch.cat(a["hist"]), expert_hist0=torch.tensor(a["h0"], dtype=torch.int64),
-                       rate=torch.tensor([pack_rate(*p) for p in a["prof"]], dtype=torch.int32),
-                       kperm=torch.stack(a["kperm"]).contiguous(), table=torch.stack(a["table"]).contiguous(),
-                       wscale=torch.stack(a["wscale"]).contiguous(), ks=a["kperm"][0].numel() // GROUPS[mode])
-            for mode, a in acc.items()}
+    from tessera.regdirect_routed import fragment_stack
+    units = [layer_units(art, layer, e, rank) for e in range(experts)]
+    return {mode: fragment_stack(mode, (_expert(mode, u) for u in units)) for mode in (0, 2)}
 
 
 def main():
