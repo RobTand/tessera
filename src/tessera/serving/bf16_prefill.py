@@ -148,13 +148,15 @@ def decode_into(prepared: Bf16Prefill) -> torch.Tensor:
 
 
 def prefill_apply(prepared: Bf16Prefill, x: torch.Tensor) -> torch.Tensor:
-    """Decode every call, then return a fresh BF16 output from cuBLAS GEMM."""
+    """Decode each nonempty call, then return a fresh BF16 GEMM output."""
     if torch.compiler.is_compiling():
         raise RuntimeError(f"{FLAG}=1 serves an eager-only lane")
     if (x.ndim != 2 or x.shape[1] != prepared.weight.shape[1]
             or x.device != prepared.weight.device or x.dtype != torch.bfloat16
             or not x.is_contiguous()):
         raise ValueError("BF16 prefill requires contiguous BF16 x on the scratch device")
+    if x.shape[0] == 0:
+        return x.new_empty((0, prepared.weight.shape[0]))
     workspace = prepared._workspace
     with torch.cuda.device(prepared.weight.device), workspace.lock:
         capture = torch.cuda.is_current_stream_capturing()
