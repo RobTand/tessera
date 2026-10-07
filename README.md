@@ -259,6 +259,7 @@ Storage kinds `dense_window` and `routed_window` require `family`, `rates`, `win
 Dense shapes use `[rows, columns]`. Routed shapes use `[experts, rows, columns]`. Column shards slice the rate array before byte calculation.
 The routed layout also declares `fused` as a Boolean. This value includes or excludes fused tables and descriptors.
 The `dense_a4` kind requires `rates`, `arity`, `memory`, `half`, and `lut_entries`. It uses the native four-bit dense accountant.
+Native layouts obey the existing window-width bound and the process address limit.
 These counts describe prepared tensor storage. They do not qualify a kernel or predict an undeclared runtime allocation.
 
 The report gives peak bytes, the peak step, named peak allocations, final bytes, and headroom for each rank.
