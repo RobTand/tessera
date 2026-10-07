@@ -26,6 +26,9 @@ from tessera.export import E4M3_RECIPE
 from tessera.rung_allowability import admit_rung, validate_table
 
 FORMAT = "TESSERA_E4M3_K1"
+#: CEO, 2026-10-07: until PrismaBuild 1598 is fixed, timings use ordinary GPU-exclusive
+#: admission; one class is re-measured under the measurement class once 1598 is live.
+ADMISSION = "GPU-exclusive, not quiet-host certified"
 SHAPES = {0: ("gate_up", 1024, 4096), 2: ("down", 4096, 1024)}   # GLM-5.3 Flash TP2 rank, per projection
 MS = (1, 16, 2048, 4096)
 RUNG_MIN, RUNG_MAX, STEP = 768, 1024, 2
@@ -141,7 +144,7 @@ def main():
                              "upper_k_steps": upper, "unit_k_steps": ks, "wire": "synthetic fragment_synth stack, 288 experts",
                              "routing": "balanced", "rows": rows, "columns": cols,
                              "comparison_id": f"{meta['pb_action'][:12]}:{profile}:{m}", "paired_seed_contract": "fixed crc32 seeds",
-                             "timing_statistic": meta["statistic"], "timer": "CUDA graph replay, cold L2",
+                             "timing_statistic": meta["statistic"], "timer": "CUDA graph replay, cold L2", "admission": ADMISSION,
                              "todays_kernel_same_run_us": base["cold_us"]}}
 
     quality_src = {r["rung"]: r for r in json.load(open(a.quality))["rungs"]}
@@ -172,7 +175,8 @@ def main():
                               "activation_contract": "float8_e4m3fn x = 0.5 N(0,1); per-row fp32 scale U(0.01, 0.11); BF16 output",
                               "metadata": {"serving_qualified": False, "kernel_source_sha256": source_sha,
                                            "compile_action": comp.get("action"), "runs": runs,
-                                           "scenario": "register_direct speed scenario; never served speed",
+                                           "scenario": "register_direct speed scenario; never served speed", "admission": ADMISSION,
+                                           "pending": "re-measure one class under the measurement class after PrismaBuild 1598",
                                            "decision": "dec-1007-074543-94b8"}},
              "scope": {"rung_min": RUNG_MIN, "rung_max": RUNG_MAX, "grid_step_q256": STEP, "grid_steps_q256": SHAPE_STEPS,
                        "grid_owner": "tessera.grammar.K_STEP_COLUMNS: one rate per 32-column k-step, quota per unit "
