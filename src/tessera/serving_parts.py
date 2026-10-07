@@ -517,7 +517,7 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
     Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
     (w13) or columns and their rate slice (w2) through the same function.
     """
-    if family not in ("TESSERA_BF16", "TESSERA_FP8"):
+    if family not in ("TESSERA_BF16", "TESSERA_FP8", "TESSERA_NVFP4"):
         raise ValueError(f"no compact routed accounting for family {family!r}")
     rows, cols, bits, tile = int(rows), int(cols), int(window_bits), int(tile_rows)
     rates = tuple(int(rate) for rate in rates)
@@ -525,6 +525,13 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
         raise ValueError("invalid compact routed unit geometry")
     if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
         raise ValueError("invalid compact routed window layout")
+    if family == "TESSERA_NVFP4":
+        if bits != 14 or tile != 512 or rows % 2 or cols % 16:
+            raise ValueError("invalid paired LUT window layout")
+        padded = -(-(rows // 2) // tile) * tile
+        words = padded * sum(rates) // 8
+        return (words + (1 << bits) + rows * cols // 32 + 16 + 4
+                + len(set(rates)) * 16 + cols * 8 + 16)
     padded = -(-rows // tile) * tile
     words = padded * sum(rates) // 8
     tables = (1 << bits) * 2 if family == "TESSERA_BF16" else (1 << bits) + 256
@@ -567,14 +574,18 @@ ROUTED_FUSED_BLOCK_COLS = 32
 ROUTED_FUSED_BDESC_INTS = 12
 
 
-def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
-    """What the fused routed lane holds per expert projection beside the
-    bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
-    the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
-    since contract v45 (tessera#694), the projection's run pair and its
-    block descriptors (``routed_fused.projection_tables``).  ``cols`` is the
-    unit's rank-local column count, which sets the descriptor count."""
+def routed_fused_unit_bytes(window_bits: int, cols: int, *, family: str = "TESSERA_FP8") -> int:
+    """Price native launch tables beside one projection bundle.
+
+    E2M1 uses the bundle code table directly. It adds a run pair,
+    one descriptor per 64 columns and one FP32 epilogue ratio.
+    FP8 and BF16 keep their existing composed-table layout.
+    """
     cols = int(cols)
+    if family == "TESSERA_NVFP4":
+        if int(window_bits) != 14 or cols < 256 or cols % 64:
+            raise ValueError("invalid fused E2M1 window geometry")
+        return 32 + 16 * (cols // 64) + 4
     if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
         raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
                          f"blocks; {cols} columns are not")

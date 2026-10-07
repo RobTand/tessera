@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-07 — native fused T-4 served encoder
+
+Dense and routed E2M1x2 exports use the named WINDOW L14 recipe over LUT16.
+The pure widths 1..8 cover q128..q1024, including the full-width cap.
+Serving exports, cached-unit records and control prices use the same recipe.
+Research defaults and explicit TCQ encodes stay unchanged.
+CPU tests replay the actual serialized bytes and check plane and full-file charges.
+The byte audit includes all pure classes and both structures.
+This change does not assert measured route eligibility or quality.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four

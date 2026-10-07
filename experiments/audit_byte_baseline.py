@@ -623,6 +623,37 @@ def substack_hashes() -> dict:
                 actual.to(torch.float32).contiguous().numpy().tobytes()).hexdigest()
     return out
 
+def _served_window_cases():
+    """Cover every pure paired class through both served structures."""
+    from tessera.structure import STRUCTURES
+    grid = tuple_grid(E2M1_GRID, 2)
+    return [(f"served-{structure}-e2m1x2-{q256}", grid, q256, structure)
+            for structure in STRUCTURES for q256 in range(128, 1025, 128)]
+
+
+def encode_served_window_case(case) -> dict[str, bytes]:
+    """Return the actual unit bytes and decoded float values for one case."""
+    from tessera.export import served_recipe
+    from tessera.unit_artifact import read_unit_artifact
+    label, grid, q256, structure = case
+    recipe = served_recipe(grid, q256, structure)
+    weight = torch.linspace(-0.25, 0.375, 32 * 32).reshape(32, 32)
+    encoded = encode_linear(weight, grid=grid, q256=q256, name=label, verify=False,
+        body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
+    return {"bytes": encoded.blob,
+            "decode": read_unit_artifact(encoded.blob).numpy().tobytes()}
+
+
+def served_window_hashes() -> dict:
+    out = {}
+    for case in _served_window_cases():
+        for kind, payload in encode_served_window_case(case).items():
+            out[case[0] + "/" + kind] = hashlib.sha256(payload).hexdigest()
+    return out
+
+
 def resident_hashes() -> dict:
     """Reach the R4 resident relay on real encoded bytes, including a second tile."""
     from tessera.encode import encode_unit
@@ -709,6 +740,7 @@ def main() -> int:
         "resident": resident_hashes(),
         "batch": batch_hashes(),
         "substack": substack_hashes(),
+        "served_window": served_window_hashes(),
     }
     if not a.encode_only:
         report["decode"] = decode_hashes()
@@ -729,6 +761,7 @@ def main() -> int:
               f"{len(report['resident'])} resident rows, "
               f"{len(report.get('batch', {}))} batch rows, "
               f"{len(report['substack'])} sub-stack rows, "
+              f"{len(report['served_window'])} served-window rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)
