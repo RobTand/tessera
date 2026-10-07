@@ -104,6 +104,7 @@ def test_comparator_refuses_unqualified_or_changed_evidence(tmp_path,fault):
 
 
 def test_driver_admits_only_new_numeric_mode(monkeypatch):
+    pytest.importorskip("torch")
     monkeypatch.syspath_prepend(str(PATH.parent))
     gate = importlib.import_module("bench_t8r").require_single_replay_options
     args = options()
