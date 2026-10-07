@@ -460,7 +460,8 @@ def preflight(model_path: str, runtime_image: str) -> dict:
     if torch.cuda.is_initialized():
         raise RuntimeError("The portable preflight must not initialize CUDA")
     return {"schema": "tessera.construction-preflight.v1", "status": "preflight-only",
-            "construction_performed": False, "runtime_image_requested": runtime_image,
+            "construction_performed": False, "model_construction_performed": False,
+            "cpu_linear_construction_performed": False, "runtime_image_requested": runtime_image,
             "config": {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()},
             "architectures": config["architectures"], "num_hidden_layers": layers,
             "layer_types": text.get("layer_types"), "mlp_layer_types": text.get("mlp_layer_types"),
@@ -698,9 +699,14 @@ def main() -> int:
                 from tessera.serving.dense_ownership import source_padding_rows
         if args.linear_checks:
             receipt["cpu_linear_construction"] = cpu_linear_construction(selected=args.with_selection)
+            receipt["construction_performed"] = True
+            receipt["cpu_linear_construction_performed"] = True
+            receipt["status"] = "cpu-linear-construction-only"
         with open(args.out, "w") as handle:
             json.dump(receipt, handle, indent=1)
-        print(json.dumps({"status": receipt["status"], "construction_performed": False,
+        print(json.dumps({"status": receipt["status"], "construction_performed": receipt["construction_performed"],
+                          "model_construction_performed": receipt["model_construction_performed"],
+                          "cpu_linear_construction_performed": receipt["cpu_linear_construction_performed"],
                           "num_hidden_layers": receipt["num_hidden_layers"],
                           "KDA_geometry": receipt["KDA_geometry"]}))
         return 0

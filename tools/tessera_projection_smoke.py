@@ -17,6 +17,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
+
+import fused_bound as fb
 
 from tools.tessera_construction_census import _checkpoint_name, _free_port
 
@@ -215,19 +218,81 @@ def _dense_weight(parsed, family):
     return (module.decode().float() * module.row_scale().float()[:, None]).bfloat16().float()
 
 
-def compare(got, expected, *, name, dtype, exact=False):
+def compare(got, expected, *, name, dtype, exact=False, bound=None):
     import torch
     if got.shape != expected.shape or got.dtype != dtype:
         raise AssertionError(f"{name}: output shape or dtype differs")
     if not bool(torch.isfinite(got).all()):
         raise AssertionError(f"{name}: the output contains a nonfinite value")
+    ratio = None
     if exact:
-        if not torch.equal(got, expected):
-            raise AssertionError(f"{name}: BF16 control output bits changed")
+        if not torch.equal(got.contiguous().view(torch.uint8), expected.contiguous().view(torch.uint8)):
+            raise AssertionError(f"{name}: output bits changed")
     else:
-        torch.testing.assert_close(got.float(), expected.float(), rtol=0.025, atol=0.015, msg=name)
+        if bound is None or bound.shape != expected.shape or expected.dtype != torch.float64:
+            raise ValueError(f"{name}: the numeric check needs an FP64 reference and a derived bound")
+        if not bool(torch.isfinite(bound).all()) or not bool((bound >= 0).all()):
+            raise ValueError(f"{name}: the derived bound is invalid")
+        ratio = fb.check_within(got, expected, bound, name)
     return {"shape": list(got.shape), "dtype": str(got.dtype),
-            "max_abs_error": float((got.float() - expected.float()).abs().max()), "exact": exact}
+            "max_abs_error": float((got.double() - expected.double()).abs().max()),
+            "exact": exact, "worst_bound_ratio": ratio}
+
+
+def _reference_weight(parsed, family, device):
+    import torch
+    from tessera.serving import fp8_route
+    if family == "TESSERA_FP8":
+        module = fp8_route.prepare_tessera_fp8_module(parsed, device="cpu")
+        values = module.decode().view(torch.float8_e4m3fn).double().to(device)
+        return values * module.row_scale().double().to(device)[:, None]
+    return _dense_weight(parsed, family).double().to(device)
+
+
+def _bias_bound(reference, error, bias):
+    """Charge one FP32 add and one BF16 output cast after the dense cast."""
+    absolute_sum = reference.abs() + error + bias.abs()
+    added = reference + bias
+    before_cast = error + (fb.gamma(1, fb.U32) + fb.gamma(1, fb.U64)) * absolute_sum
+    return added, before_cast + 0.5 * fb.bf16_ulp(added.abs() + before_cast)
+
+
+def _dense_reference(item, label, layer, x):
+    import torch
+    from tessera.serving.sharding import AXIS_COLUMNS, shard_parsed_roles
+    family = FAMILIES[label][0]
+    plan = layer.tessera_shard_plan
+    parsed = shard_parsed_roles(item["parsed"][label], plan)
+    local_input = x
+    if plan.axis == AXIS_COLUMNS:
+        ranges = {(role.lo, role.hi) for role in plan.roles}
+        if len(ranges) != 1:
+            raise ValueError("The row-parallel roles must share one input column range")
+        lo, hi = ranges.pop()
+        local_input = x[:, lo:hi].contiguous()
+    if family == "TESSERA_FP8":
+        from tessera.serving.native_ops import native_fp8_quant
+        codes, scale = native_fp8_quant(local_input)
+        left = codes.double() * scale.double().reshape(-1, 1)
+    else:
+        left = local_input.double()
+    weight = _reference_weight(parsed, family, x.device)
+    k = int(local_input.shape[-1])
+    # K nonempty partials cover every valid prepared split and accumulation order.
+    reference, error = fb.dense_bound("e4m3" if family == "TESSERA_FP8" else "value",
+                                      left, weight, k, k)
+    if "bias" in item and (plan.axis != AXIS_COLUMNS or plan.tp_rank == 0):
+        reference, error = _bias_bound(reference, error, layer.bias.double())
+    if plan.axis == AXIS_COLUMNS:
+        peers = [None] * plan.tp_size
+        torch.distributed.all_gather_object(peers, (reference.cpu(), error.cpu()))
+        references = torch.stack([pair[0] for pair in peers], dim=1).to(x.device)
+        errors = torch.stack([pair[1] for pair in peers], dim=1).to(x.device)
+        reference, error = fb.route_sum_bound(references, errors, top_k_dim=1)
+    return reference, error, {"owner": "tests/fused_bound.py", "K": k, "S_upper": k,
+                               "rank_partials": plan.tp_size if plan.axis == AXIS_COLUMNS else 1,
+                               "bias_additions": int("bias" in item)}
+
 
 
 def _call(layer, x):
@@ -384,17 +449,6 @@ def run_device(inputs, mode):
                 raise AssertionError(f"{row['prefix']}: the requested native dense path was not prepared")
             x = item["input"].cuda()
             weight = _dense_weight(item["parsed"][label], family).cuda()
-            if family == "TESSERA_FP8":
-                from tessera.serving.native_ops import native_fp8_quant
-                a, scale = native_fp8_quant(x)
-                left = a.float() * scale.float()
-            else:
-                left = x.float()
-            expected = (left @ weight.t()).bfloat16()
-            if "bias" in item:
-                expected = expected + item["bias"].cuda()
-            if row["kind"] == "router":
-                expected = expected.float()
             if world > 1:
                 from tessera.serving.sharding import shard_parsed_roles
                 parsed = shard_parsed_roles(item["parsed"][label], layer.tessera_shard_plan)
@@ -404,12 +458,11 @@ def run_device(inputs, mode):
                     if [int(parsed_unit.unit.codes.shape[0]) for _, parsed_unit in parsed] != expected_sizes:
                         raise AssertionError("The KDA shard divided or reordered a replicated role")
                 local_weight = _dense_weight(parsed, family).cuda()
-                if row["kind"] in ("column", "mla", "kda", "merged", "qkv"):
-                    expected = (left @ local_weight.t()).bfloat16()
-                    if "bias" in item:
-                        expected = expected + layer.bias
+            expected, error, bound_facts = _dense_reference(item, label, layer, x)
             got, graph = _execute(lambda value: _call(layer, value), x, mode)
-            numeric = compare(got, expected, name=f"{row['prefix']} {label}", dtype=expected.dtype)
+            output_dtype = torch.float32 if row["kind"] == "router" else torch.bfloat16
+            numeric = compare(got, expected, name=f"{row['prefix']} {label}", dtype=output_dtype, bound=error)
+            numeric["bound"] = bound_facts
             route = telemetry.read_route(layer)
             if route is None or route.get("state") != "served":
                 raise AssertionError(f"{row['prefix']}: no served route exists")

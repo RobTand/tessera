@@ -110,18 +110,32 @@ def test_wire_reader_preserves_numeric_rows_and_role_order(artifact, family):
 def test_numeric_screen_refuses_wrong_head_gate_dtype_and_values():
     expected = torch.tensor([[0.25, -0.75]], dtype=torch.float32)
     with pytest.raises(AssertionError, match="dtype"):
-        smoke.compare(expected.bfloat16(), expected, name="head gate", dtype=torch.float32)
+        smoke.compare(expected.bfloat16(), expected, name="head gate", dtype=torch.float32, exact=True)
     with pytest.raises(AssertionError, match="bits changed"):
         smoke.compare(expected + 0.125, expected, name="head gate", dtype=torch.float32, exact=True)
-    with pytest.raises(AssertionError, match="head gate"):
-        smoke.compare(expected + 1, expected, name="head gate", dtype=torch.float32)
+
+
+def test_numeric_screen_refuses_error_below_the_old_fixed_limit():
+    left = torch.full((1, 16), 0.001, dtype=torch.bfloat16).double()
+    weight = torch.ones(1, 16, dtype=torch.bfloat16).double()
+    reference, bound = smoke.fb.dense_bound("value", left, weight, 16, 16)
+    bad = reference.bfloat16() + torch.tensor(0.01, dtype=torch.bfloat16)
+    with pytest.raises(AssertionError, match="derived bound"):
+        smoke.compare(bad, reference, name="dense", dtype=torch.bfloat16, bound=bound)
 
 
 def test_numeric_screen_refuses_missing_vision_bias():
-    product = torch.tensor([[1.0, 2.0]], dtype=torch.bfloat16)
-    biased = product + torch.tensor([[0.25, -0.25]], dtype=torch.bfloat16)
+    left = torch.tensor([[1.0, 0.0]], dtype=torch.bfloat16).double()
+    weight = torch.tensor([[1.0, 0.0], [2.0, 0.0]], dtype=torch.bfloat16).double()
+    reference, error = smoke.fb.dense_bound("value", left, weight, 2, 2)
+    biased, bound = smoke._bias_bound(reference, error, torch.tensor([[0.25, -0.25]]).double())
     with pytest.raises(AssertionError, match="vision"):
-        smoke.compare(product, biased, name="vision", dtype=torch.bfloat16)
+        smoke.compare(reference.bfloat16(), biased, name="vision", dtype=torch.bfloat16, bound=bound)
+
+
+def test_bitwise_screen_distinguishes_signed_zero():
+    with pytest.raises(AssertionError, match="bits changed"):
+        smoke.compare(torch.tensor([-0.0]), torch.tensor([0.0]), name="stock", dtype=torch.float32, exact=True)
 
 
 def test_numeric_screen_refuses_nonfinite_output():

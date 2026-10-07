@@ -26,7 +26,9 @@ Do not change a serving pin, kernel, or default.
 
 Add a small-artifact projection smoke tool with a portable CPU dry run.
 The device path loads real wires through stock vLLM projection classes.
-It compares eager and CUDA graph outputs with decoded numeric references.
+It compares eager and CUDA graph outputs with decoded FP64 references.
+The dtype and operation-count bounds include the dense cast, bias, and rank reduction.
+Byte views implement the stock and graph checks. No fixed numeric tolerance applies.
 The checks include stock BF16 controls, FP32 indexer gates, absorbed MLA BMM,
 router output dtype, vision biases, and replicated KDA roles.
 Device results remain separate from CPU input proof.
