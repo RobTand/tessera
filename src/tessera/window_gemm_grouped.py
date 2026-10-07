@@ -76,7 +76,8 @@ import triton
 import triton.language as tl
 
 from .errors import GrammarError
-from .kernel_window_gemv import TILE_ROWS, WindowGemvUnit
+from .kernel_window_gemv import WindowGemvUnit
+from .window_geometry import TILE_ROWS
 from .window_gemm import prepare_window_gemm
 
 __all__ = ["prepare_grouped_window_gemm", "PreparedGroupedWindowGemm", "routing_ids_ok"]

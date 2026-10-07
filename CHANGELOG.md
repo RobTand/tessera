@@ -68,6 +68,16 @@ The new policy adds a three-GiB margin and aborts below two GiB.
 It sends SIGTERM, then SIGKILL after ten seconds. PrismaBuild owns scope cleanup.
 The old measurement policy and its callers remain unchanged.
 
+## 2026-10-07 — T-16 routed cells: served-census pin restored
+
+Contract v59 restores the four TESSERA_BF16_K1 routed cells to R1024 with run table [4].
+Independent review refused widening on sweep rows, prototype speed, and quality screens without served receipts.
+It refused bit 8 on the rate-8 down anomaly.
+No rung joins these cells without a served receipt.
+The sweep results stay as research evidence.
+The served re-census stays open.
+This source change claims no graphics processor qualification.
+
 ## 2026-10-07 — issue 1018: producer policy correction
 
 Both table producer paths preserve applicable reader correctness findings as holds.
