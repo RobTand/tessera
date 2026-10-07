@@ -98,3 +98,34 @@ def test_layer_stacks_refuse_a_table_the_register_direct_kernel_does_not_read():
     f16 = tuple(torch.zeros(E, 1 << 14, dtype=torch.int16) for _ in range(3))
     with pytest.raises(GrammarError, match="compose_table8"):
         rr.layer_stacks(gate, up, down, f16)
+
+
+def _layer():
+    gu_rates = [_rates(256, 32, 10 + e) for e in range(E)]
+    down_rates = [_rates(128, 64, 20 + e) for e in range(E)]
+    gate, up, down = _bundle("gate", gu_rates, 1)[0], _bundle("up", gu_rates, 2)[0], _bundle("down", down_rates, 3)[0]
+    rungs = {e: tuple(sum(r) * 256 // len(r) for r in (gu_rates[e], gu_rates[e], down_rates[e])) for e in range(E)}
+    return gate, up, down, tuple(_table(b) for b in (gate, up, down)), rungs
+
+
+def test_layer_stacks_require_each_expert_to_spend_its_class_rung():
+    import pytest
+    from tessera.errors import GrammarError
+    gate, up, down, tables, rungs = _layer()
+    rr.layer_stacks(gate, up, down, tables, rungs)
+    wrong = dict(rungs)
+    wrong[1] = (rungs[1][0], rungs[1][1], rungs[1][2] + 16)
+    with pytest.raises(GrammarError, match="class declares"):
+        rr.layer_stacks(gate, up, down, tables, wrong)
+
+
+def test_a_bresenham_mixed_unit_is_refused_by_name():
+    """A mixed rung placed per column (Bresenham) splits k-steps; the fragment wire needs one
+    rate per 32-column k-step, so the layer build refuses it before any launch."""
+    import pytest
+    from tessera.errors import GrammarError
+    mixed = tuple(3 if c % 2 else 4 for c in range(256))
+    gate, up = _bundle("gate", [mixed] * E, 1)[0], _bundle("up", [mixed] * E, 2)[0]
+    down = _bundle("down", [_rates(128, 64, 20 + e) for e in range(E)], 3)[0]
+    with pytest.raises(GrammarError, match="k-step"):
+        rr.layer_stacks(gate, up, down, tuple(_table(b) for b in (gate, up, down)))
