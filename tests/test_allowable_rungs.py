@@ -142,6 +142,26 @@ def test_bf16_routed_cells_refuse_every_unserved_rung(contract):
             assert not cell_covers_rung(cell, q, row), (cell["id"], q)
 
 
+def test_bf16_family_admission_is_exact_per_structure(contract):
+    """Family-wide admission, not one cell's: every BF16 cell's covered set
+    is pinned by structure and image, so a new cell or a widened twin cannot
+    slip past single-cell checks.  Routed cells cover exactly {1024}; base
+    dense cells cover the rule's whole range; nightly dense cells cover the
+    tables of their stub-B census (769..1279).  Fail-before on the widened
+    contract: routed cells cover seven rungs against [1024]."""
+    row = _row(contract, BF16)
+    cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == BF16]
+    assert len(cells) == 8
+    for cell in cells:
+        covered = [q for q in range(256, 4097) if cell_covers_rung(cell, q, row)]
+        if cell["structure"] == "routed_moe":
+            assert covered == [1024], cell["id"]
+        elif "runtime_" in cell["id"]:
+            assert covered == list(range(769, 1280)), cell["id"]
+        else:
+            assert covered == list(range(256, 3585)), cell["id"]
+
+
 def test_a_rung_resolves_to_its_run_table():
     row = {"grid": "E4M3", "native_terminal_q256": 2048}
     assert rung_rates(row, 1024) == (4,)
