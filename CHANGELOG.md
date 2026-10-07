@@ -2,7 +2,7 @@
 
 ## 2026-10-07 — T-16 decode-once dense prefill lane
 
-Publish the experimental T-16 dense launch in contract v58.
+Publish the experimental T-16 dense launch in contract v59.
 Each admitted nonempty step decodes the packed wire into shared BF16 scratch, then runs BF16 GEMM.
 One allocation serves each projection shape and device. Modules keep their packed weights.
 The T-8 load-time lane and folded T-16 arithmetic remain unchanged.

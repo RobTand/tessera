@@ -975,7 +975,7 @@ the functional reference; no-grad calls keep the optimized CPU path. No
 recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
 serving, and no new throughput claim is made.
 
-Contract v58 publishes the opt-in T-16 decode-once dense prefill launch.
+Contract v59 publishes the opt-in T-16 decode-once dense prefill launch.
 Its identity is `(tessera.serving.bf16_prefill.prefill_apply, native_window_decode_once_bf16_folded)`.
 The launch remains experimental and eager-only. It has no served cell or promotion receipt.
 
