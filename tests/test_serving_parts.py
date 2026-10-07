@@ -475,7 +475,6 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
             metadata = {"expert_ids": [0], "expert_classes": [{"start": 0, "end": 1,
                 "q256": {"w13": [q256, q256], "w2": [q256]}}]}
             roles = [{"tensor": tensor, "source_tensor": tensor, "expert": 0,
-                      "source_layout": "per_expert",
                       "source_slice": {"expert": 0, "selector": "whole", "transpose": False},
                       "storage_expert": 0, "wire": tensor.removesuffix(".weight") + ".wire",
                       "role": role, "group": "w2" if role == "down_proj" else "w13",
