@@ -31,7 +31,8 @@ FORMAT = "TESSERA_E4M3_K1"
 ADMISSION = "GPU-exclusive, not quiet-host certified"
 SHAPES = {0: ("gate_up", 1024, 4096), 2: ("down", 4096, 1024)}   # GLM-5.3 Flash TP2 rank, per projection
 MS = (1, 16, 2048, 4096)
-RUNG_MIN, RUNG_MAX, STEP = 768, 1024, 2
+RUNG_MIN, RUNG_MAX = 256 * min(rr.SERVED_RATES), 256 * max(rr.SERVED_RATES)   # the code rates the kernel serves
+STEP = 2
 SHAPE_STEPS = {"down": 16}                                        # one 64-column unit k-step of K=1024
 SOURCE = "src/tessera/serving/csrc/regdirect_routed.cu"
 
