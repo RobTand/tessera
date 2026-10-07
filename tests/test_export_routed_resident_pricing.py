@@ -31,6 +31,7 @@ from tessera import routed_fused, serving_parts  # noqa: E402
 from tessera.routed_fused import WINDOW_BITS  # noqa: E402
 from tessera.serving.scheme import MOE_GROUPS, MOE_GROUP_PROJECTIONS  # noqa: E402
 from window_pack_reference import pack_bitstream  # noqa: E402
+from tessera.window_geometry import TILE_ROWS  # noqa: E402
 
 export = importlib.import_module("tessera.export_serving")
 moe_write = importlib.import_module("test_export_moe_write")
@@ -182,7 +183,7 @@ def test_unit_pricing_is_the_axis_allocation(family, rows, rates, anchor):
     else:
         actual = _reference_bytes(lane, units, experts)
     per_unit = routed_window_unit_resident_bytes(
-        family, rows, len(rates), rates, window_bits=WINDOW_BITS, tile_rows=kg.TILE_ROWS)
+        family, rows, len(rates), rates, window_bits=WINDOW_BITS, tile_rows=TILE_ROWS)
     assert actual == 3 * experts * per_unit + 3 * routed_window_part_resident_bytes(experts)
     # And it is not the decoded tile the exporter used to charge.
     assert per_unit != rows * len(rates) + rows * 4
@@ -448,9 +449,9 @@ def test_glm_per_rank_pricing_matches_the_measured_load_bench():
 
     def per_rank(family, rates_of):
         gate_up = 2 * routed_window_unit_resident_bytes(
-            family, inter // tp, hidden, rates_of(hidden), window_bits=14, tile_rows=kg.TILE_ROWS)
+            family, inter // tp, hidden, rates_of(hidden), window_bits=14, tile_rows=TILE_ROWS)
         down = routed_window_unit_resident_bytes(
-            family, hidden, inter // tp, rates_of(inter // tp), window_bits=14, tile_rows=kg.TILE_ROWS)
+            family, hidden, inter // tp, rates_of(inter // tp), window_bits=14, tile_rows=TILE_ROWS)
         return experts * (gate_up + down) + 3 * routed_window_part_resident_bytes(experts)
 
     bf16 = per_rank("TESSERA_BF16", lambda cols: (4,) * cols)

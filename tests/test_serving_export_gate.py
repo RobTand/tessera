@@ -510,7 +510,9 @@ def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
     assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
     # With its builder, a BF16 stack reaches the cell check.  Since contract
     # v38 (tessera#604) a routed_moe cell names BF16 at q256 1024, so 1024 is
-    # admitted and 1792 is refused against that cell's rungs.
+    # admitted and 1792 is refused against that cell's rungs.  v59 restores
+    # this pin after review: no rung joins without a served receipt.
+    # Fail-before on the widened contract: 1792 admitted against refused.
     at_1024 = wire_recipe(GRIDS["BF16"], 1024)
     assert refuse_unserveable_wire("BF16", 1024, at_1024.body.name, at_1024.scale_plane.name,
                                    family="TESSERA_BF16", span=at_1024.span,
