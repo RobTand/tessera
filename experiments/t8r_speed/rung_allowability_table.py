@@ -76,10 +76,13 @@ def measured_at_spec(meta,group,spec,record):
     """True when an old measurement was taken at the sweep's own geometry.
 
     A shape name alone does not say which rows, columns or model it was measured on.
+    A routed group takes its shape name from its mode, so the mode is compared too.
     A measurement that does not record a field, or records another value, is skipped:
     the rung stays pending and the table never labels a measurement with a geometry it
     was not taken at."""
-    _kind,_name,rows,columns,_mode=spec
+    _kind,_name,rows,columns,mode=spec
+    effective=group.get("mode",2)   # measurement() reads a group that records no mode as mode 2
+    if type(effective) is not int or effective!=mode:return False
     recorded=(("rows",group,rows),("cols",group,columns),
               ("experts",meta,record["experts"]),("top_k",meta,record["top_k"]),
               ("hidden",meta,record["hidden"]),("inter",meta,record["inter"]))
