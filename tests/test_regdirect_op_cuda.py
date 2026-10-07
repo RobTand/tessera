@@ -73,7 +73,7 @@ def test_output_is_independent_of_the_class_split_and_equals_direct_launches(m):
     # The same flow from direct launches, without the dispatcher.
     from tessera.routed_class_dispatch import declared_route_widths
     parameters = {"regdirect": {0: tuple(bound[0]) + tuple(bound[2]), 2: tuple(bound[1]) + tuple(bound[3])}}
-    routing = rf._routing_tables(ids, w, E, device, declared_route_widths(kernel, m, [0], parameters))
+    routing = rf._routing_tables(ids, w, E, ids.device, declared_route_widths(kernel, m, [0], parameters))
     xq, a1 = kernel.prepare_input(x, None, m, "e4m3", device)
     act = torch.empty((routing.routes, INTER), dtype=torch.bfloat16, device=device)
     g0 = kernel.geometry(0, m, parameters["regdirect"][0])
