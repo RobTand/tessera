@@ -75,18 +75,43 @@ def _geometry_v1(geom):
     _require(_integer(reg.get("REG")) and reg["REG"] > 0 and all(_integer(reg.get(k)) and reg[k] >= 0 for k in ("STACK", "LOCAL", "SHARED")), "compiler resources missing")
 
 
+def _geometry_register_direct(geom):
+    """The register-direct decoder (``tessera.regdirect_routed``): each warp decodes its own MMA
+    A fragment from fragment-order units (``tessera.fragment_wire``), one rate per 32-column
+    k-step, at most two adjacent rates per unit, and prefetches words into registers."""
+    decode,alignment,sm,reg,bits=(geom[k] for k in ('decode_width','alignment','shared_memory','register_pressure','bits_per_256_weight_tile'))
+    rates=decode.get('run_widths')
+    _require(isinstance(rates,list) and rates and all(_integer(r) and r>0 for r in rates) and len(rates)<=2
+             and rates==sorted(set(rates)) and (len(rates)==1 or rates[1]==rates[0]+1),'register-direct run widths: one rate or two adjacent')
+    _require(_integer(decode.get('window_bits')) and max(rates)<=decode['window_bits'] and _integer(decode.get('value_bits')) and decode['value_bits']>0,'register-direct window/value width')
+    _require('word_stages' in decode and decode['word_stages'] is None,'register-direct has no staged word ring')
+    _require(all(_integer(decode.get(k)) and decode[k]>0 for k in ('kstep_columns','prefetch_depth','superblock_routes','k_parts')),'register-direct launch facts')
+    _require(alignment.get('kind')=='fragment_order' and alignment.get('owner')=='tessera.fragment_wire','fragment layout owner')
+    _require(alignment.get('lanes')==32 and alignment.get('history_lanes')==8 and 'slot_words' in alignment and alignment['slot_words'] is None,'fragment lanes')
+    _require(alignment.get('unit_words')==[32*r for r in rates],'fragment unit words')
+    _require(sm.get('kind')=='used' and _integer(sm.get('requested_bytes')) and _integer(sm.get('available_bytes'))
+             and 0<sm['requested_bytes']<=sm['available_bytes'] and sm.get('fits') is True,'register-direct shared-memory fit')
+    _require(reg.get('compiler') in ('cuda_cuobjdump','cuda_ptxas') and _integer(reg.get('REG')) and reg['REG']>0
+             and all(_integer(reg.get(k)) and reg[k]>=0 for k in ('STACK','LOCAL','SHARED')),'register-direct compiler resources')
+    _require(_integer(bits.get('numerator')) and bits['numerator']>0 and _integer(bits.get('denominator')) and bits['denominator']>0,'tile-bit rational')
+
+
 def _geometry_v2(geom):
     """Explicit grammar variants; no absent WINDOW facts become positive numbers."""
     body,kind=geom.get('body_kind'),geom.get('decoder_kind')
     owners={'fused_window':('tessera.routed_fused',),'compact_window':('tessera.window_gemm','tessera.window_gemm_grouped'),
-            'native_tcq':('tessera.kernel_a4',)}
+            'native_tcq':('tessera.kernel_a4',),'register_direct':('tessera.regdirect_routed',)}
     scopes={'fused_window':'raw_packed_window','compact_window':'compact_packed_window',
-            'native_tcq':'native_tcq_decode_gemm'}
+            'native_tcq':'native_tcq_decode_gemm','register_direct':'register_direct_fragment'}
+    rings={'fused_window':'staged','register_direct':'register'}
     _require(body in ('window','tcq') and kind in owners,'unknown body/decoder')
-    _require((body=='window')==(kind in ('fused_window','compact_window')),'body/decoder disagreement')
+    _require((body=='window')==(kind in ('fused_window','compact_window','register_direct')),'body/decoder disagreement')
     _require(geom.get('decoder_owner') in owners[kind] and geom.get('execution_scope')==scopes[kind],'decoder owner/execution scope')
     ring=geom.get('word_ring',{})
-    _require(ring.get('owner')==geom.get('decoder_owner') and ring.get('kind')==('staged' if kind=='fused_window' else 'none'),'word-ring owner/facts')
+    _require(ring.get('owner')==geom.get('decoder_owner') and ring.get('kind')==rings.get(kind,'none'),'word-ring owner/facts')
+    if kind=='register_direct':
+        _geometry_register_direct(geom)
+        return
     if kind=='fused_window':
         _geometry_v1(geom)
         _require(geom['shared_memory'].get('kind')=='used','fused WINDOW needs its shared-memory request')
@@ -198,6 +223,17 @@ def validate_table(table):
     _require(isinstance(required, list) and required, "required cells missing")
     keys = [_cell(c) for c in required]
     _require(len(keys) == len(set(keys)) and len({k[0] for k in keys}) == len(keys), "duplicate required cell")
+    # A shape may carry its own rung grid (k-step rungs: 2 q256 at K=4096, 16 per TP2 rank
+    # of a K=1024 down).  A rung owes exactly the cells whose shape grid it lies on.
+    shape_steps = scope.get("grid_steps_q256")
+    if shape_steps is not None:
+        _require(table["schema"] != "fleet.rung_allowability.v1", "per-shape rung grids need table schema v2 or later")
+        _require(isinstance(shape_steps, dict) and shape_steps and set(shape_steps) <= {k[2] for k in keys}
+                 and all(_integer(v) and v > 0 and v % step == 0 for v in shape_steps.values()), "per-shape rung grid")
+    steps_of = shape_steps or {}
+
+    def keys_at(q):
+        return [k for k in keys if (q - lo) % steps_of.get(k[2], step) == 0]
     rows = table.get("rungs")
     _require(isinstance(rows, list), "rung rows")
     by_rung = {}
@@ -218,7 +254,7 @@ def validate_table(table):
         seen = set()
         for m in measurements:
             key = _cell(m)
-            _require(key in keys and key not in seen, "unknown/duplicate measurement cell")
+            _require(key in keys_at(q) and key not in seen, "unknown/duplicate measurement cell")
             seen.add(key)
             _require(m.get("measurement_status") in STATUSES and isinstance(m.get("evidence"), dict), "measurement status/evidence")
             t = m.get("kernel_time_us")
@@ -232,10 +268,11 @@ def validate_table(table):
                     _geometry_v1(geom)
                 else:
                     _geometry_v2(geom)
+                    _require(geom['decoder_kind']!='register_direct' or m['kernel_kind']=='routed','the register-direct decoder is routed only')
                 _require(isinstance(m.get("pass_times_us"), list) and len(m["pass_times_us"]) == 2 and all(_number(t) and t > 0 for t in m["pass_times_us"]), "paired pass times")
                 _paired_mean_matches(m)
         if row["measurement_status"] == "measured":
-            _require(row["supported"] is True and seen == set(keys) and all(m["measurement_status"] == "measured" for m in measurements), "measured row incomplete")
+            _require(row["supported"] is True and seen == set(keys_at(q)) and keys_at(q) and all(m["measurement_status"] == "measured" for m in measurements), "measured row incomplete")
             quality = row["quality"]
             if table['schema']=='fleet.rung_allowability.v2':
                 _quality_scope_v2(quality,measurements,table['format'],q)
@@ -259,10 +296,14 @@ def validate_table(table):
         higher = by_rung[dq]
         _require(higher["measurement_status"] == "measured" and higher["supported"] is True and not higher["anomaly_flags"], "dominator ineligible")
         evidence = row["dominance_evidence"]
-        _require(len(evidence) == len(keys) and {e.get("cell_id") for e in evidence} == {k[0] for k in keys}, "dominance cell coverage")
+        _require(len(evidence) == len(keys_at(q)) and {e.get("cell_id") for e in evidence} == {k[0] for k in keys_at(q)}, "dominance cell coverage")
+        # A per-shape grid can leave the higher rung without a cell the lower one owes: the
+        # dominance proof needs a measured higher counterpart for every lower cell.
+        _require(set(keys_at(q)) <= set(keys_at(dq)), "dominating rung does not carry every lower cell")
         for e in evidence:
             canonical_low = next(m for m in row["measurements"] if m["cell_id"] == e["cell_id"])
-            canonical_high = next(m for m in higher["measurements"] if m["cell_id"] == e["cell_id"])
+            canonical_high = next((m for m in higher["measurements"] if m["cell_id"] == e["cell_id"]), None)
+            _require(canonical_high is not None, "dominating rung lacks a measured counterpart cell")
             low = e.get("lower_measurement", canonical_low)
             high = e.get("higher_measurement", canonical_high)
             # Neighbor-overlap quanta may carry the same higher rung in two
@@ -299,6 +340,10 @@ def admit_rung(table, *, format, kernel_build_id, rung, scope=None, cell_ids=Non
     validate_table(table)
     if table["format"] != format or table["kernel_build"]["id"] != kernel_build_id:
         return {"status": "wait", "reason": "unmeasured_format_or_build", "rung": rung}
+    if (table["kernel_build"].get("metadata") or {}).get("serving_qualified") is False:
+        # A build measured before it serves is a speed scenario, never an allocation
+        # (dec-1007-074543-94b8): it waits until G3 v2 and an end-to-end serve pass.
+        return {"status": "wait", "reason": "kernel_not_serving_qualified", "rung": rung}
     if scope is not None and any(table["scope"].get(k) != v for k, v in scope.items()):
         return {"status": "wait", "reason": "unmeasured_scope", "rung": rung}
     row = next((r for r in table["rungs"] if r["rung"] == rung), None)
@@ -314,6 +359,10 @@ def admit_rung(table, *, format, kernel_build_id, rung, scope=None, cell_ids=Non
         status, reason = "hold", "quality_or_correctness_anomaly"
     elif row["excluded"]:
         status, reason = "excluded", "adjacent_higher_all_cell_dominance"
+    elif {m["cell_id"] for m in row["measurements"]} != {c["cell_id"] for c in table["scope"]["required_cells"]}:
+        # A per-shape grid leaves some declared shapes unmeasured at this rung; an unscoped
+        # admission covers every declared shape, so it waits for the missing ones.
+        status, reason = "wait", "declared_shape_not_measured_at_rung"
     else:
         status, reason = "allow", "measured_supported_no_anomaly"
     return {"status": status, "reason": reason, "rung": rung, "table_version": table["table_version"], "kernel_build_id": kernel_build_id}
@@ -407,13 +456,14 @@ _geometry_schema.update(type='object',required=['bits_per_256_weight_tile','alig
 _geometry_schema['required']+=['body_kind','decoder_kind','decoder_owner','execution_scope','word_ring']
 _geometry_schema['properties'].update({
     'body_kind':{'enum':['window','tcq']},
-    'decoder_kind':{'enum':['fused_window','compact_window','native_tcq']},
+    'decoder_kind':{'enum':['fused_window','compact_window','native_tcq','register_direct']},
     'decoder_owner':{'type':'string','minLength':1},
-    'execution_scope':{'enum':['raw_packed_window','compact_packed_window','native_tcq_decode_gemm']},
-    'word_ring':{'type':'object','required':['kind','owner'],'properties':{'kind':{'enum':['staged','none']},'owner':{'type':'string','minLength':1}}},
+    'execution_scope':{'enum':['raw_packed_window','compact_packed_window','native_tcq_decode_gemm','register_direct_fragment']},
+    'word_ring':{'type':'object','required':['kind','owner'],'properties':{'kind':{'enum':['staged','register','none']},'owner':{'type':'string','minLength':1}}},
 })
 _geometry_schema['allOf']=[{'if':{'properties':{'body_kind':{'const':'window'}}},'then':{'properties':{'decode_width':{'required':['window_bits'],'properties':{'window_bits':{'type':'integer','minimum':1}}}}}},
     {'if':{'properties':{'body_kind':{'const':'tcq'}}},'then':{'properties':{'decode_width':{'required':['window_bits','memory','span','history_lookup_bits','label_lut_entries'],'properties':{'window_bits':{'const':0}}}}}}]
+TABLE_SCHEMA_V2['properties']['scope']['properties']['grid_steps_q256']={'type':'object','additionalProperties':{'type':'integer','minimum':1}}
 INDEX_SCHEMA_V2=_copy.deepcopy(INDEX_SCHEMA)
 INDEX_SCHEMA_V2['$id']='fleet.rung_allowability.index.v2'
 INDEX_SCHEMA_V2['properties']['schema']={'const':'fleet.rung_allowability.index.v2'}
