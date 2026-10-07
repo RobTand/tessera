@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — isolate the external-path test fixture
+
+Create the external directory through the pytest factory. The directory
+stays outside the scanned tree and receives a unique test-owned path.
+This prevents collisions when pytest removes successful temporary paths.
+The source dependency scanner and its safety rule do not change.
+
 ## 2026-10-07 — T16 FP32 row-scale epilogue cutover
 
 Replace folded per-weight BF16 math with raw BF16 values and separate
