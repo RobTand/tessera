@@ -24,6 +24,11 @@ DEFAULT_SHAPE_OWNER="bench_rates TP2 shapes; actual GLM config hidden4096, route
 RECORDED_ROUTING_MIN_M=2048
 
 
+def _is_count(value):
+    """A positive int that is not a boolean: bool is an int subclass and 1.0 is not a count."""
+    return type(value) is int and value>0
+
+
 def parse_structure_spec(path):
     """Read a D41 structure spec file and return its sweep geometry."""
     doc=json.loads(Path(path).read_text())
@@ -44,14 +49,14 @@ def parse_structure_spec(path):
             raise ValueError("each shape needs a non-empty shape_id string")
         rows=entry.get("rows")
         columns=entry.get("columns")
-        if not isinstance(rows,int) or rows<=0 or not isinstance(columns,int) or columns<=0:
+        if not _is_count(rows) or not _is_count(columns):
             raise ValueError(f"shape {name!r} needs positive integer rows and columns")
         mode=entry.get("mode")
-        if mode not in (0,2):
+        if type(mode) is not int or mode not in (0,2):
             raise ValueError(f"shape {name!r} mode must be 0 (gate/up) or 2 (down/dense)")
         shapes.append((kind,name,rows,columns,mode))
     raw_ms=doc.get("ms")
-    if not isinstance(raw_ms,list) or not raw_ms or any(not isinstance(m,int) or m<=0 for m in raw_ms):
+    if not isinstance(raw_ms,list) or not raw_ms or any(not _is_count(m) for m in raw_ms):
         raise ValueError("structure spec needs a non-empty ms list of positive integers")
     ms=tuple(raw_ms)
     if len(set(ms))!=len(ms):
@@ -59,10 +64,26 @@ def parse_structure_spec(path):
     meta={}
     for key in ("experts","top_k","hidden","inter"):
         value=doc.get(key)
-        if not isinstance(value,int) or value<=0:
+        if not _is_count(value):
             raise ValueError(f"structure spec needs a positive integer {key}")
         meta[key]=value
+    if meta["top_k"]>meta["experts"]:
+        raise ValueError(f"structure spec top_k {meta['top_k']} is above experts {meta['experts']}")
     return {"shapes":tuple(shapes),"ms":ms,"meta":meta,"spec_id":doc.get("spec_id")}
+
+
+def measured_at_spec(meta,group,spec,record):
+    """True when an old measurement was taken at the sweep's own geometry.
+
+    A shape name alone does not say which rows, columns or model it was measured on.
+    A measurement that does not record a field, or records another value, is skipped:
+    the rung stays pending and the table never labels a measurement with a geometry it
+    was not taken at."""
+    _kind,_name,rows,columns,_mode=spec
+    recorded=(("rows",group,rows),("cols",group,columns),
+              ("experts",meta,record["experts"]),("top_k",meta,record["top_k"]),
+              ("hidden",meta,record["hidden"]),("inter",meta,record["inter"]))
+    return all(type(source.get(field)) is int and source[field]==expected for field,source,expected in recorded)
 
 
 def resolve_sweep_geometry(structure_spec):
@@ -518,6 +539,7 @@ def main():
             kind=group["kind"]; name=group.get("shape") if kind=="dense" else ("gate_up" if group["mode"]==0 else "down")
             spec=next((s for s in shapes if s[:2]==(kind,name)),None)
             if not spec:continue
+            if spec_record is not None and not measured_at_spec(data['meta'],group,spec,spec_record):continue
             for key in required:
                 if key["kernel_kind"]!=kind or key["shape_id"]!=name:continue
                 m=key["M"]
