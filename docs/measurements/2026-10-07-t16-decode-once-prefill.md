@@ -145,3 +145,20 @@ It verified `.pbrun-closure.801655af83c45e80.json` for the GPU proof and `.pbrun
 Only those verified entries were excluded. No other tracked path, mode or content blob differs from `d6478a3f5bff9986f6cc0478ba9d0515bb1ab59c`.
 `source-equivalence.json` records `effective_source_agree: true` and preserves both raw snapshot identifiers and generated-entry bindings.
 The audit did not rerun a test or measurement. The later report and verifier files do not change the measured kernel source.
+
+## Contract guard correction
+
+The first PR head removed the #538 table-to-dispatch guard with its hardcoded roster. That removal was wrong.
+The corrected test retains the equality invariant and derives its expected pairs from each live route owner.
+The attestation test now checks disjoint producer/census partitions and known decoders across every declared route structure.
+It does not pin a list of native pairs. Both tests retain their original names.
+
+Fault action `b6ecfb4df582b02fe217e451761e1949187e1c1fbf31bc6b93c24047cb3aae0a` removes the served BF16 pair in a separate before tree.
+The restored #538 guard fails with AssertionError at `tests/test_serving_contract.py:777`.
+This is a deliberate faulty-table probe, not a runtime defect in the measured prototype.
+The initial corrected contract run `7ae5e715d81ac58488e54d684a693c6f01d7324b2103df192e8f6ff2b029c046` passes 93 tests.
+It reports no skips and no uncollected modules on Torch 2.11.0+cpu, with no CUDA device.
+
+Selector correction: the retained PB receipt reports FULL because its unexcluded stamp is not a source path.
+ts-integrator reports a clean-worktree narrowed result with 433 tests. The earlier FULL statement describes that stamped receipt only.
+The integration coordinator still owns one full suite on the merge result. The KILL measurement and GPU numerical evidence remain unchanged.

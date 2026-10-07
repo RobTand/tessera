@@ -8,7 +8,7 @@ One allocation serves each projection shape and device. Modules keep their packe
 The T-8 load-time lane and folded T-16 arithmetic remain unchanged.
 No default, serving pin, seal or served cell changes.
 
-Remove two tests that pin implementation rosters. Keep the consumer contract checks and numerical runtime tests.
+Replace the hardcoded launch rosters with dynamic table-to-dispatch and attestation-partition guards. Keep the #538 consistency check.
 
 The fixed KDA screen reports KILL: 5.798336 ms at M2048 against 2.678376 ms for the same-wire BF16 control.
 Decode alone takes 3.087368 ms. The shared shape scratch occupies 103022592 bytes. Do not select this prototype for service.

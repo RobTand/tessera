@@ -780,17 +780,18 @@ def test_the_dense_launch_table_is_the_launch_apply_makes():
 def test_the_native_route_pairs_are_attested_and_censusable():
     """Census sees the full dispatch; producer gates exclude experimental pairs."""
     pytest.importorskip("torch")
-    from tessera.serving import bf16_route, fp8_route, telemetry
-    from tessera.serving.scheme import (STRUCTURE_DENSE, TESSERA_BF16, TESSERA_FP8,
-                                        experimental_launch_pairs, launch_pairs)
+    from tessera.serving import telemetry
+    from tessera.serving.scheme import ROUTE_LAUNCHES, experimental_launch_pairs, launch_pairs
 
-    for route, owner in ((TESSERA_BF16, bf16_route), (TESSERA_FP8, fp8_route)):
-        attested = launch_pairs(route, structure=STRUCTURE_DENSE)
-        experimental = experimental_launch_pairs(route, structure=STRUCTURE_DENSE)
-        census = launch_pairs(route, structure=STRUCTURE_DENSE, include_experimental=True)
-        assert not attested & experimental
-        assert census == attested | experimental == set(owner.DENSE_LAUNCHES)
-        assert {decoder for _, decoder in census} <= telemetry.DECODERS
+    for route, entries in ROUTE_LAUNCHES.items():
+        structures = {structure for entry in entries for structure in entry["structures"]}
+        for structure in structures:
+            attested = launch_pairs(route, structure=structure)
+            experimental = experimental_launch_pairs(route, structure=structure)
+            census = launch_pairs(route, structure=structure, include_experimental=True)
+            assert not attested & experimental
+            assert census == attested | experimental
+            assert {decoder for _, decoder in census} <= telemetry.DECODERS
 
 
 def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
