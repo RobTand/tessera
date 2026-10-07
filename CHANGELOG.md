@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-07 — observe the uniform production launch
+
+The paired-K32 numeric observer now records the actual uniform binding.
+It ignores other owners and restores the launch before profiling or after a refusal.
+The CPU regression calls the production owner and detects missing roles, changed bits, invalid reduction and wrong profiles.
+The test failed before the correction because the old observer did not expose either native role.
+Normal serving keeps its direct launch and no class-table work. No kernel default or qualification changes.
+
 ## 2026-10-07 — cover every routed execution entry
 
 The route-kind proof now uses every current admissible entry, including uniform launches.

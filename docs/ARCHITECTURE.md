@@ -311,6 +311,12 @@ Captured replay repeats those counter resets.
 The uniform forward does not read class tables or class-prefix starts, and it does not fork dispatch streams.
 The mandatory artifact metadata and inverse remap remain. The decoder and resident byte price do not change.
 
+The paired-K32 numeric observer wraps the loaded uniform binding used by the production owner.
+It records gate/up and down-route outputs only for that binding.
+It restores the launch before profiling, independent reference execution, or any error return.
+The CPU regression calls the production owner with controlled native primitives, not the retired dispatch seam.
+That CPU proof does not qualify CUDA arithmetic, serving or a paired build.
+
 `routed_class_dispatch.py` owns only the stream DAG and live work intervals.
 A load-time kernel binding supplies superblock rows, work units per
 superblock, activation operands and the native launch. The factor includes

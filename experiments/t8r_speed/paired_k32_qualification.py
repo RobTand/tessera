@@ -124,25 +124,25 @@ def _reference_prefix(fn, store, x, ids, weights, actual, reference_holder):
 def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, independent_reference=True, reference_holder=None):
     import torch
     from tessera import routed_fused as rf
-    from tessera import routed_class_dispatch
 
     native = fn.native_adapter
     if type(native) is not rf.FusedRoutedWindowMoE or native.library != 'e4m3mma':
         raise ValueError('paired-K32 numerics requires the actual fused E4M3 MMA adapter')
     if len(native.classes) != 1:
         raise ValueError('paired-K32 numeric scope requires one uniform native class')
-    original = routed_class_dispatch.dispatch_class_projection
+    kernel_type = type(native.uniform)
+    original = kernel_type.launch
     captured = {}
-    def observe(mode, *args, **kwargs):
-        original(mode, *args, **kwargs)
-        if kwargs['counters'].data_ptr() != native.counters.data_ptr():
+    def observe(kernel, mode, *args, **kwargs):
+        original(kernel, mode, *args, **kwargs)
+        if kernel is not native.uniform:
             return
         if mode not in (0, 2) or mode in captured:
             raise ValueError('numeric forward must launch each routed role once')
         captured[mode] = kwargs['out'].detach().clone()
-    # Observe the opaque operator's actual dispatch seam, only for this owner.
-    # Restore it before profiling and independent reference execution.
-    routed_class_dispatch.dispatch_class_projection = observe
+    # Observe the loaded uniform binding used by the actual production owner.
+    # Restore its launch before profiling and independent reference execution.
+    kernel_type.launch = observe
     try:
         first = fn(x, ids, weights)
         first_stages = captured.copy()
@@ -158,7 +158,7 @@ def numeric_cell(fn, store, x, ids, weights, output_dir, *, kernel_profile, inde
             if not torch.equal(first_stages[mode].view(torch.int16), second_stages[mode].view(torch.int16)):
                 raise ValueError('repeated intermediate bits differ')
     finally:
-        routed_class_dispatch.dispatch_class_projection = original
+        kernel_type.launch = original
     routes = first_stages[2].reshape(x.shape[0], ids.shape[1], native.down.rows).float()
     reduced = torch.zeros_like(routes[:, 0])
     for route in range(ids.shape[1]):
