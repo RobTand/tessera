@@ -1,11 +1,11 @@
-"""Actual served-wire coverage; Torch-free hosts skip only numerical contracts."""
+"""Explicit research reader checks, separate from native WINDOW L14 serving."""
 import pytest
 
 torch = pytest.importorskip("torch")
 
 from tessera.alphabet import grid_for_name
 from tessera.compact_prep import parse_compact_wire
-from tessera.export import encode_linear, served_recipe
+from tessera.export import TCQ_RECIPE, encode_linear, wire_recipe
 from tessera.structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
 
 
@@ -19,7 +19,7 @@ def test_actual_wire_codes_and_scales(q, structure):
     from tessera.stock import materialize_stock
     from tessera.planes import PlaneKind
     grid = grid_for_name("E2M1x2")
-    recipe = served_recipe(grid, q, structure)
+    recipe = wire_recipe(grid, q)
     source = torch.linspace(-0.2, 0.2, 32 * 256).reshape(32, 256).to(torch.bfloat16)
     encoded = encode_linear(source, grid=grid, q256=q, body=recipe.body,
                             span=recipe.span, scale_plane=recipe.scale_plane,
@@ -47,7 +47,7 @@ def test_adapter_import_does_not_import_shared_sdk():
 
 
 @pytest.mark.parametrize("window_bits", [14, 16])
-def test_geometry_reader_refuses_research_windows_outside_served_twelve_bits(window_bits):
+def test_legacy_diagnostic_reader_refuses_windows_other_than_twelve_bits(window_bits):
     from tessera.compact_prep import prepare_a4_wire_compact
     from tessera.errors import GrammarError
     from tessera.manifest import BodyKind, ScalePlaneKind
@@ -67,7 +67,7 @@ def test_actual_row_cut_keeps_incoming_history(structure):
     from tessera.stock import materialize_stock
     from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
     grid = grid_for_name("E2M1x2")
-    recipe = served_recipe(grid, 895, structure)
+    recipe = wire_recipe(grid, 895)
     source = (torch.randn(64, 256, generator=torch.Generator().manual_seed(13)) * 0.04).to(torch.bfloat16)
     encoded = encode_linear(source, grid=grid, q256=895, body=recipe.body,
         span=recipe.span, scale_plane=recipe.scale_plane, window_bits=recipe.window_bits,
@@ -94,7 +94,7 @@ def test_actual_serialized_profiles_require_equal_current_expert_label_tables(mo
     from tessera.unit_artifact import parse_unit_artifact
     monkeypatch.setenv("PRISMAQUANT_DEV_MODE", mode)
     grid = grid_for_name("E2M1x2")
-    recipe = served_recipe(grid, 895, STRUCTURE_ROUTED_MOE)
+    recipe = TCQ_RECIPE
     source = (torch.randn(64, 256, generator=torch.Generator().manual_seed(27)) * 0.04).to(torch.bfloat16)
     units = []
     for code in (ConvCode(memory=3), ConvCode(memory=3, generators=(0o5, 0o7))):

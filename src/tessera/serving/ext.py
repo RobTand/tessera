@@ -43,6 +43,8 @@ from ..kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED
 __all__ = [
     "NATIVE_EXTENSIONS",
     "ROUTED_FUSED_E4M3_MODULE_NAME",
+    "ROUTED_FUSED_E2M1_MODULE_NAME",
+    "ROUTED_FUSED_E2M1_LANE_REQUIRES",
     "ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES",
     "ROUTED_FUSED_VALUE_LANE_REQUIRES",
     "ROUTED_FUSED_MMA_E4M3_MODULE_NAME",
@@ -220,6 +222,7 @@ ROUTED_FUSED_VALUE_MODULE_NAME = "tessera_routed_fused_value"
 #: Named so that no other entry's glob matches its file
 #: (``tessera_routed_fused_e4m3*`` would).
 ROUTED_FUSED_MMA_E4M3_MODULE_NAME = "tessera_routed_fused_mma_e4m3"
+ROUTED_FUSED_E2M1_MODULE_NAME = "tessera_routed_fused_e2m1"
 ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
 
 #: What a routed stack's wire must be for the fused lane to read it.  Since
@@ -276,6 +279,15 @@ ROUTED_FUSED_VALUE_LANE_REQUIRES = {
     **ROUTED_FUSED_LANE_REQUIRES,
     "column_rates": list(range(1, 15)),
     "column_rates_routed_moe": [1, 2, 3, 4, 5, 6, 7, 8],
+}
+
+#: The native block-scaled FP4 library reads paired WINDOW LUT16, L14.
+#: Both dense and routed paths consume carried starts and rates 1..8.
+ROUTED_FUSED_E2M1_LANE_REQUIRES = {
+    **ROUTED_FUSED_LANE_REQUIRES,
+    "plane": "lut16",
+    "grid_arities": [2],
+    "start_state": True,
 }
 
 #: The native code this package can load INTO A SERVING PROCESS, as the
@@ -404,6 +416,20 @@ NATIVE_EXTENSIONS = [
                          "decoder": "native_window_moe_compact_folded"},
             "streamed": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "native_window_moe_compact_folded"},
+        },
+    },
+    {
+        "module_name_prefix": ROUTED_FUSED_E2M1_MODULE_NAME,
+        "filename_glob": ROUTED_FUSED_E2M1_MODULE_NAME + "*.so",
+        "match": MATCH_BASENAME_FNMATCH,
+        "source": ROUTED_FUSED_SOURCE,
+        "loaded_by": "tessera.serving.nvfp4_moe_route",
+        "routes": ["TESSERA_NVFP4"],
+        "lane": {"decoder": "native_routed_fused_window_e2m1",
+                 "requires": ROUTED_FUSED_E2M1_LANE_REQUIRES},
+        "when_unavailable": {
+            "resident": {"status": FALLBACK_REFUSED},
+            "streamed": {"status": FALLBACK_REFUSED},
         },
     },
 ]
