@@ -191,3 +191,66 @@ class FragmentStack:
                        self.expert_hist0, self.rate, self.kperm, self.table, self.wscale, x_zero_row, a_scale,
                        offsets, sorted_routes, rw, item_off, e0, e1, out, part, arrive, dbuf, self.zeros,
                        self.ks, top_k, geom.k_parts, a_row_mode, mul_weight, limit, hint, geom.grid)
+
+
+class RegDirectClassKernel:
+    """The ``routed_class_dispatch.RoutedClassKernel`` binding of this kernel.
+
+    ``parameters["regdirect"]`` maps mode (0 gate/up, 2 down) to one :class:`FragmentStack`
+    that holds every expert of the layer in storage order, so a span's absolute
+    ``start``/``end`` index it directly.  The binding owns the K-part scratch, by absolute
+    work unit, sized at :meth:`reserve` for ``max_tokens``; a launch never allocates it.
+    The claim counter is unused: work units are striped over a fixed grid.
+    """
+
+    def __init__(self, experts: int, top_k: int, device):
+        self.experts, self.top_k = experts, top_k
+        self.device = torch.device(device)
+        self.sms = torch.cuda.get_device_properties(self.device).multi_processor_count
+        self._scratch = {}
+        self._max_tokens = 0
+
+    def geometry(self, mode: int, tokens: int, stack: FragmentStack) -> Geometry:
+        return geometry(mode, tokens, self.top_k, stack.rows, self.experts, stack.ks, self.sms)
+
+    def reserve(self, parameters: dict, max_tokens: int) -> None:
+        """Allocate, per mode, the largest scratch any token count up to ``max_tokens`` needs
+        (call at load).  Each launch indexes its own absolute units inside it, and the arrival
+        counters return to zero after every use, so one pair serves every geometry."""
+        routes = max_tokens * self.top_k
+        for mode, stack in parameters["regdirect"].items():
+            part = arrive = 0
+            for m in range(1, max_tokens + 1):
+                p, a = (t.numel() for t in scratch(self.geometry(mode, m, stack), self.experts, routes, "meta"))
+                part, arrive = max(part, p), max(arrive, a)
+            self._scratch[mode] = (torch.empty(part, dtype=torch.float32, device=self.device),
+                                   torch.zeros(arrive, dtype=torch.int32, device=self.device))
+        self._max_tokens = max(self._max_tokens, max_tokens)
+
+    def work_shape(self, mode, tokens, index, parameters):
+        g = self.geometry(mode, tokens, parameters["regdirect"][mode])
+        return g.superblock, g.units_per_item
+
+    def prepare_input(self, x, a_scale, rows, family, device):
+        from .errors import GrammarError
+        from .routed_fused import quantized_routed_input
+        if family == "value":
+            raise GrammarError("the register-direct kernel takes E4M3 activations, not the value family")
+        xq, scale = quantized_routed_input(x, a_scale, rows, family, device)
+        return with_zero_row(xq), scale
+
+    def launch(self, mode, x, a_scale, *, index, start, end, prefix, counter, routing, parameters, bm,
+               work_units, empty_scale, a_row_mode, mul_weight, limit, out):
+        from .errors import GrammarError
+        stack = parameters["regdirect"][mode]
+        g = self.geometry(mode, routing.tokens, stack)
+        if (g.superblock, g.units_per_item) != (bm, work_units):
+            raise GrammarError(f"launch shape ({bm}, {work_units}) differs from work_shape "
+                               f"({g.superblock}, {g.units_per_item})")
+        if routing.tokens > self._max_tokens:
+            raise GrammarError(f"{routing.tokens} tokens exceed the reserved {self._max_tokens}; "
+                               "call reserve() at load")
+        part, arrive = self._scratch[mode]
+        stack.launch(g, x, a_scale, routing.offsets, routing.flat_sorted, routing.rw_sorted if mul_weight else None,
+                     prefix, start, end, out, part, arrive, top_k=routing.top_k, a_row_mode=a_row_mode,
+                     mul_weight=mul_weight, limit=limit)
