@@ -769,6 +769,31 @@ def prepare_comparison_cell(row):
     row["serialized_scope"] = "Full source containers before rank-local TP cuts"
 
 
+def load_t8_comparison(path):
+    baseline = json.loads(Path(path).read_text())
+    cells = baseline.get("cells")
+    if not isinstance(cells, list):
+        raise ValueError("T8 comparison input has no cell list")
+    if cells:
+        return baseline
+    plans = baseline.get("byte_plan")
+    if not isinstance(plans, list) or not plans:
+        raise ValueError("T8 comparison has neither measured cells nor a classified byte plan")
+    for plan in plans:
+        if plan.get("exact_match") is not False:
+            raise ValueError("An exact-match T8 plan needs actual measured cells")
+        status = plan.get("status")
+        if status == "unattainable_scalar_floor":
+            if plan.get("t8_plane_lower_bound", 0) <= plan.get("target_bytes", 0):
+                raise ValueError("The T8 scalar floor does not exceed its actual target budget")
+        elif status == "no_exact_match_found":
+            if not plan.get("measured"):
+                raise ValueError("The unresolved T8 byte search has no actual observations")
+        else:
+            raise ValueError("An empty T8 cell list needs classified unmatched byte plans")
+    return baseline
+
+
 def attach_t8_comparison(row, baseline):
     plans = [p for p in baseline.get("byte_plan", []) if p.get("case_id") == row["case_id"]
              and p.get("t4_q256") == row["q256"]]
@@ -807,7 +832,7 @@ def run_gpu(args):
     report = dict(schema=SCHEMA, mode=args.mode, **source_stamp(args), cells=[], skips=[],
                   requested_population=requested_keys(args), resources=native_resources())
     patterns = ["random"] if args.mode == "timing" else ["onehot", "random"]
-    baseline = json.loads(Path(args.compare_json).read_text()) if args.compare_json else None
+    baseline = load_t8_comparison(args.compare_json) if args.compare_json else None
     for q in args.q256:
         blobs, frames = {}, {}
         if args.part in ("routed", "all"):
@@ -941,9 +966,7 @@ def mode_dry_run(args):
             weight = read_weight(spec, small=True)
             reads.append(dict(spec=spec, shape=list(weight.shape), sha256=tensor_digest(weight)))
     if args.compare_json:
-        baseline = json.loads(Path(args.compare_json).read_text())
-        if not baseline.get("cells"):
-            raise ValueError("T8 comparison input has no cells")
+        load_t8_comparison(args.compare_json)
     return dict(schema=SCHEMA, mode="dry-run", target_mode=args.mode,
                 **source_stamp(args), cells=cells, skips=[], input_reads=reads,
                 requested_population=[f"q{q}" for q in args.q256],

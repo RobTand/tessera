@@ -313,3 +313,31 @@ def test_component_weight_bytes_are_not_the_total_resident_context():
     qual.prepare_comparison_cell(row)
     assert row["wire_bytes"] == 22 and row["total_serialized_bytes"] == 37
     assert row["weight_bytes_scope"] == ["gate", "up"]
+
+
+def test_preflight_accepts_classified_empty_t8_receipt(tmp_path, monkeypatch):
+    packet = tmp_path / "t8.json"
+    packet.write_text(json.dumps({"cells": [], "byte_plan": [dict(exact_match=False,
+        status="unattainable_scalar_floor", target_bytes=10, t8_plane_lower_bound=11)]}))
+    args = qual.build_parser().parse_args(["--mode", "timing", "--out", str(tmp_path / "cpu.json"),
+                                         "--compare-json", str(packet), "--dry-run"])
+    # This control isolates receipt parsing from the independently tested
+    # encoded-byte and geometry loops. It exercises the real preflight owner.
+    args.q256 = []
+    monkeypatch.setattr(qual, "validate_rank_local_geometry", lambda _args: [])
+    monkeypatch.setattr(qual, "source_stamp", lambda _args: {})
+    result = qual.mode_dry_run(args)
+    assert result["gpu_exercised"] is False
+
+
+@pytest.mark.parametrize("plan", [
+    {"exact_match": True, "status": "exact_match"},
+    {"exact_match": False, "status": "unattainable_scalar_floor",
+     "target_bytes": 10, "t8_plane_lower_bound": 10},
+    {"exact_match": False, "status": "no_exact_match_found", "measured": []},
+])
+def test_empty_t8_receipt_needs_actual_exclusion_evidence(tmp_path, plan):
+    packet = tmp_path / "t8.json"
+    packet.write_text(json.dumps({"cells": [], "byte_plan": [plan]}))
+    with pytest.raises(ValueError):
+        qual.load_t8_comparison(packet)
