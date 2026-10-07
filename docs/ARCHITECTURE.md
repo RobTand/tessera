@@ -193,7 +193,8 @@ text receipt prints it, so a reader of this shape is seen instead of silently
 unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
 when this was added (115 modules, 168 sites, most taking the directory as a
 parameter or calling the standard library's `glob.glob(pattern)`) and fails if
-it rises. Selector infrastructure only: no wire, recipe
+it rises. The count was 114 modules and 167 sites on 2026-10-07 and the ceiling
+now holds there (#1014). Selector infrastructure only: no wire, recipe
 table, serving lane, plugin contract, numerical path, residency or performance
 default moves.
 
