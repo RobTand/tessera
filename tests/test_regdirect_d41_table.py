@@ -76,3 +76,12 @@ def test_quality_rows_come_from_the_table_then_each_rung_quality_file_once(tmp_p
     wrong.write_text(json.dumps({"schema": "other", "rungs": {}}))
     with pytest.raises(ValueError, match="tessera.rung_quality.v1"):
         d41_table.quality_sources(str(table), [str(wrong)])
+
+
+def test_a_published_table_is_never_overwritten(tmp_path):
+    out = tmp_path / "regdirect-v0001.json"
+    d41_table.publish({"table_version": 1}, str(out))
+    first = out.read_bytes()
+    with pytest.raises(ValueError, match="already exists"):
+        d41_table.publish({"table_version": 1, "changed": True}, str(out))
+    assert out.read_bytes() == first
