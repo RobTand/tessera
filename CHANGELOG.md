@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — finish the T16 API callers
+
+Remove the obsolete family keyword from the independent FP8 stock call.
+Make E4M3 decode-once use its existing bundle family without the removed
+arithmetic field. The numerical rules and family refusal remain unchanged.
+CPU smoke covers the caller contract. GPU verification remains separate.
+
 ## 2026-10-07 — remove a redundant BF16 coverage assertion
 
 Keep the direct BF16 cell withdrawal check. Remove the empty-loop assertion

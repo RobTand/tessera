@@ -13,6 +13,8 @@ aliases. The new BF16 decoder suffix is `_bf16` for dense, compact routed
 and fused routed launches. The selected research owner returns raw values
 and row scales; its Torch path applies the same stage boundaries. A plain
 BF16 stock checkpoint remains a derived control, not a Tessera compute path.
+The E4M3 decode-once helper uses the existing bundle family. It does not
+read an arithmetic selector.
 
 Contract v59 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.

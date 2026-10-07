@@ -460,7 +460,7 @@ def test_router_weight_on_input_matches_actual_stock_placement():
     w2 = torch.stack([r["down"]["weight"] for r in reference]).cuda().contiguous()
     s2 = torch.stack([r["down"]["weight_scale"] for r in reference]).cuda().contiguous()
     stock = _stock_modular_reference(
-        x, w1, w2, weights, ids, family="TESSERA_FP8", clamp=None,
+        x, w1, w2, weights, ids, clamp=None,
         experts=EXPERTS, apply_router_weight_on_input=True,
         w1_scale=s1, w2_scale=s2, moe_config=method.moe)
     diff = (native.float() - stock.float()).abs()
