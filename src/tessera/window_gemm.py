@@ -197,7 +197,7 @@ def _window_gemm_kernel(
 
 @triton.jit
 def _scratch_indices(row_offset, rows, cols, columns):
-    return (row_offset + rows[None, :]) * cols + columns[:, None]
+    return (row_offset + rows[None, :].to(tl.int64)) * cols + columns[:, None]
 
 
 @triton.jit
