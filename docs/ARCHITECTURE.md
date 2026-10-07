@@ -16,8 +16,10 @@ BF16 stock checkpoint remains a derived control, not a Tessera compute path.
 
 Contract v59 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.
-The new BF16 pairs have no served census. Loader sharding remains a capability,
-not a TP2 serve claim. The changed T16 D41 classes need new measurements
+The new BF16 pairs have no served census.
+All four BF16 pairs stay in `scheme.EXPERIMENTAL_LAUNCHES`. A census can
+observe the candidate view; the cell validator uses the attested view.
+Loader sharding remains a capability, not a TP2 serve claim. The changed T16 D41 classes need new measurements
 on the merged build before the next allocation uses them. Active measurement
 paths remain unchanged until their owners release them. E4M3 and E2M1 math
 and their historical receipts remain unchanged.

@@ -91,7 +91,7 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
     block = contract["lane_eligibility"]
     cells = {(cell["family"], cell["regime"]) for cell in block["cells"]}
     # Contract v59 withdraws every ``TESSERA_BF16_K1`` cell while the family
-    # stays published: its route still makes attested launches, but no cell
+    # stays published: its route still has candidate launches, but no cell
     # names it, so the join holds for the families that publish cells and
     # the withdrawn family is named rather than filtered.  Both halves are
     # asserted, so a family cannot fall out of the join by going quiet.
@@ -102,7 +102,7 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
     assert withdrawn == {"TESSERA_BF16_K1"}, (
         f"the families that publish no cell are not exactly the withdrawn one: {sorted(withdrawn)}")
     launchable = {family for family in families
-                  if any(launch_pairs(_FAMILY_TO_ROUTE[family], structure=structure)
+                  if any(launch_pairs(_FAMILY_TO_ROUTE[family], structure=structure, include_experimental=True)
                          for structure in STRUCTURES)}
     assert launchable, "no family makes an attested launch; the join is vacuous"
     assert "TESSERA_BF16_K1" in launchable, (

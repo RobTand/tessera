@@ -693,3 +693,8 @@ def test_t16_cutover_withdraws_the_bf16_cells_and_their_attestation(contract):
                 if u["unit"] == "TESSERA_BF16_K1")
     assert unit["max_world_size"] == 1
     assert "world_size_receipt" not in unit
+    from tessera.serving.scheme import STRUCTURES, TESSERA_BF16, launch_pairs
+
+    for structure in STRUCTURES:
+        assert not launch_pairs(TESSERA_BF16, structure=structure)
+        assert launch_pairs(TESSERA_BF16, structure=structure, include_experimental=True)

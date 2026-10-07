@@ -815,8 +815,14 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: prefill lane, ``(DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)``
 #: (tessera#931), default-off.  It leaves when a served census of a T-8
 #: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
+#: Contract v59 replaces the folded BF16 arithmetic. All four new BF16
+#: pairs remain experimental until a served census qualifies each pair.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
+    (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_BF16),
+    (FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16),
+    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16),
+    (ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16),
 })
 
 #: Launches a compiled (``torch.compile``) forward cannot make: their owner
