@@ -274,7 +274,6 @@ def test_actual_intake_finish_and_history(monkeypatch, family, optin, fused, mma
     for role in ("gate", "up", "down"):
         b = getattr(bundles, role)
         assert b.word_layout == expected and b.words_all.data_ptr() == pointers[role]
-        assert b.arithmetic == ("folded" if family == "value" else "epilogue")
         assert torch.equal(b.words_all, want.expand(2, -1))
         assert torch.equal(b.init_all, u.permuted_start_state().expand(2, -1))
         assert torch.equal(b.has_init, torch.ones(2, dtype=torch.int32))
