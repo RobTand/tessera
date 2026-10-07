@@ -989,7 +989,7 @@ The T-8 load-time lane remains unchanged. Defaults, serving pins and seals remai
 The opt-in flag is `TESSERA_BF16_DECODE_ONCE=1`. The operator must also set an explicit `TESSERA_BF16_DECODE_ONCE_MIN_M`.
 The route accepts resident modules only and refuses a compiled forward at load.
 Graph replay requires external serialization with all same-shape scratch users. No concurrent graph qualification exists.
-The offline capture consumer accepts both BF16 pairs.
+The offline capture consumer accepts the BF16 decode-once pair.
 It sums admissible pair counts within each M before the maximum across M groups.
 A module still counts once when its pair changes between groups. Names and unnamed-module checks remain unchanged.
 
