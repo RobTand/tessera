@@ -11,8 +11,10 @@ from collections import defaultdict
 from collections.abc import Mapping
 import json
 from math import lcm, prod
+import sys
 from pathlib import Path
 
+from .manifest import WINDOW_BITS_MAX
 from .serving_parts import (
     dense_resident_bytes_resident_mode,
     routed_fused_unit_bytes,
@@ -141,6 +143,14 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
     numeric = ("arity", "memory", "half", "lut_entries") if kind == "dense_a4" else ("window_bits", "tile_rows")
     for key in numeric:
         _integer(storage.get(key), field + "." + key, "invalid_storage", 1)
+    if kind == "dense_a4":
+        # Each native trellis table entry occupies one int32.
+        address_bits = (sys.maxsize // DTYPE_BYTES["int32"]).bit_length()
+        if storage["memory"] + 1 >= address_bits:
+            _refuse("invalid_storage", field + ".memory", f"{field}.memory exceeds the addressable table size")
+    elif storage["window_bits"] > WINDOW_BITS_MAX:
+        _refuse("invalid_storage", field + ".window_bits",
+                f"{field}.window_bits exceeds the wire limit {WINDOW_BITS_MAX}")
     if kind != "dense_a4" and storage.get("family") not in ("TESSERA_BF16", "TESSERA_FP8"):
         _refuse("invalid_storage", field + ".family", f"{field}.family has no window byte accountant")
     if kind == "routed_window" and type(storage.get("fused")) is not bool:

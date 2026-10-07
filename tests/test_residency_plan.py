@@ -196,3 +196,25 @@ def test_cli_fit_and_capacity_refusal(planner, tmp_path):
         report = json.loads(result.stdout)
         assert report["ranks"][0]["peak_bytes"] == 64
         assert report["fits"] is (exit_code == 0)
+
+
+@pytest.mark.parametrize("kind", ["dense_window", "dense_a4"])
+def test_oversized_native_table_refuses_by_name(planner, kind):
+    from tessera.manifest import WINDOW_BITS_MAX
+    storage = ({"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
+                "window_bits": WINDOW_BITS_MAX + 1, "tile_rows": 64}
+               if kind == "dense_window" else
+               {"kind": kind, "rates": [2] * 32, "arity": 2,
+                "memory": 10**100, "half": 16, "lut_entries": 16})
+    with pytest.raises(planner.ResidencyRefusal) as caught:
+        planner.plan_residency(spec(x=([32, 32], "bfloat16")),
+                              plan(allocation("x", storage=storage)))
+    assert caught.value.report["reasons"][0]["code"] == "invalid_storage"
+
+
+def test_import_needs_no_tensor_runtime(planner):
+    code = "import sys; import tessera.residency_plan; assert 'torch' not in sys.modules"
+    result = subprocess.run([sys.executable, "-c", code], env={**os.environ, "PYTHONPATH": "src"},
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
