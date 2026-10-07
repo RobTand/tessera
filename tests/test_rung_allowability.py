@@ -505,3 +505,53 @@ class RegisterDirect(unittest.TestCase):
         self.assertEqual((decision["status"], decision["reason"]), ("wait", "kernel_not_serving_qualified"))
         t["kernel_build"]["metadata"]["serving_qualified"] = True
         self.assertEqual(admit_rung(t, format=t["format"], kernel_build_id=t["kernel_build"]["id"], rung=768)["status"], "allow")
+
+
+def _without_descriptions(node):
+    if isinstance(node, dict):
+        return {k: _without_descriptions(v) for k, v in node.items() if k != "description"}
+    if isinstance(node, list):
+        return [_without_descriptions(v) for v in node]
+    return node
+
+
+def _dominated(t, low, high):
+    """Mark rung ``low`` excluded by ``high``, with ``high`` faster in every cell it shares."""
+    rows = {r["rung"]: r for r in t["rungs"]}
+    for m in rows[high]["measurements"]:
+        m["kernel_time_us"] = 1.0
+        m["pass_times_us"] = [1.0, 1.0]
+    row = rows[low]
+    row.update(excluded=True, dominating_rung=high)
+    row["dominance_evidence"] = [{"cell_id": m["cell_id"], "lower_time_us": m["kernel_time_us"], "higher_time_us": 1.0,
+                                  "comparison_id": "paired"} for m in row["measurements"]]
+    return t
+
+
+class RegisterDirectReview(unittest.TestCase):
+    """Review rev-1007-091801-de68 of PR 1027."""
+
+    def test_published_schema_files_match_the_python_schemas_and_accept_register_direct(self):
+        from pathlib import Path
+        from tessera import rung_allowability as ra
+        root = Path(__file__).resolve().parents[1] / "docs" / "schema"
+        for version, schema in (("v2", ra.TABLE_SCHEMA_V2), ("v3", ra.TABLE_SCHEMA_V3)):
+            published = json.loads((root / f"allowable-rung-table.{version}.schema.json").read_text())
+            self.assertEqual(_without_descriptions(published), _without_descriptions(schema), version)
+        published = json.loads((root / "allowable-rung-table.v2.schema.json").read_text())
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        ra._structure(t, published)
+
+    def test_unscoped_admission_waits_for_a_rung_a_declared_shape_does_not_measure(self):
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        t["kernel_build"]["metadata"]["serving_qualified"] = True
+        args = dict(format=t["format"], kernel_build_id=t["kernel_build"]["id"])
+        self.assertEqual(admit_rung(t, rung=768, **args)["status"], "allow")
+        self.assertEqual(admit_rung(t, rung=770, **args)["status"], "wait")
+
+    def test_per_shape_dominance_needs_the_higher_rung_to_carry_every_lower_cell(self):
+        base = dict(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        validate_table(_dominated(fixture_register_direct(**base), 770, 772))        # same cells
+        validate_table(_dominated(fixture_register_direct(**base), 782, 784))        # higher carries more
+        with self.assertRaises(ValueError):                                          # higher lacks down
+            validate_table(_dominated(fixture_register_direct(**base), 768, 770))
