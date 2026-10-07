@@ -5,6 +5,7 @@ The runtime test compares the hashes for resident and streamed execution.
 """
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
