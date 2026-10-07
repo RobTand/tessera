@@ -227,6 +227,17 @@ def forward(mode: int, payload, geom: Geometry, x_zero_row: torch.Tensor, a_scal
                    ks, top_k, geom.k_parts, a_row_mode, mul_weight, limit, hint, geom.grid)
 
 
+def _geometry_tokens(top_k: int, experts: int, max_tokens: int) -> list:
+    """Token counts that reach every geometry up to ``max_tokens``: :func:`geometry` reads M only
+    through ``min(experts, M * top_k)`` (the K parts) and the route-tile thresholds."""
+    cut = {1, max_tokens}
+    cut.update(range(1, min(max_tokens, -(-experts // top_k)) + 1))
+    for limit in (SUPERBLOCK_DECODE * experts, 64 * experts):     # route_tiles changes past these routes
+        m = limit // top_k
+        cut.update(v for v in (m, m + 1) if 1 <= v <= max_tokens)
+    return sorted(cut)
+
+
 def reserve_scratch(mode: int, rows: int, ks: int, experts: int, top_k: int, max_tokens: int, sms: int,
                     device) -> tuple[torch.Tensor, torch.Tensor]:
     """The largest K-part scratch and arrival counters any token count up to ``max_tokens`` needs.
@@ -234,7 +245,7 @@ def reserve_scratch(mode: int, rows: int, ks: int, experts: int, top_k: int, max
     every use, so one pair serves every geometry of the mode."""
     routes = max_tokens * top_k
     part = arrive = 0
-    for m in range(1, max_tokens + 1):
+    for m in _geometry_tokens(top_k, experts, max_tokens):
         g = geometry(mode, m, top_k, rows, experts, ks, sms)
         p, a = (t.numel() for t in scratch(g, experts, routes, "meta"))
         part, arrive = max(part, p), max(arrive, a)
@@ -414,7 +425,8 @@ def build_layer(gate, up, down, classes, device, *, top_k: int, max_tokens: int)
         for e in range(a, b):
             rungs[e] = (int(q["w13"][0]), int(q["w13"][1]), int(q["w2"][0]))
     tables = tuple(compose_table8(b).to(device) for b in (gate, up, down))
-    stacks = {mode: FragmentStack(**planes) for mode, planes in layer_stacks(gate, up, down, tables, rungs).items()}
+    # The device transcode: bit-identical to layer_stacks (tests/test_regdirect_transcode_cuda.py), ~260x faster.
+    stacks = {mode: FragmentStack(**planes) for mode, planes in transcode_stacks(gate, up, down, tables, rungs).items()}
     kernel = RegDirectClassKernel(n, top_k, device)
     return {"regdirect": {mode: kernel.payload(mode, st, max_tokens) for mode, st in stacks.items()}}, kernel
 
