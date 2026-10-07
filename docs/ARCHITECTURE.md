@@ -7787,7 +7787,7 @@ Each entry is closed and validated by `contract._validate_stock_kernel_overrides
 
 | Field | Value |
 |---|---|
-| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts); `model_method` (v56) names `method` (the stock model method rebound, by dotted path) and `kernels` (the stock kernel sequence the replacement computes, `+`-joined in launch order). |
+| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts); `model_method` (v58) names `method` (the stock model method rebound, by dotted path) and `kernels` (the stock kernel sequence the replacement computes, `+`-joined in launch order). |
 | `enabled_by` | The `TESSERA_*` flag that installs it. One flag per entry. |
 | `default` | `off`, the only value. An unset flag installs nothing, so a serve that did not ask is the stock serve. |
 | `loaded_by` | The `tessera.serving` module that installs it. |
