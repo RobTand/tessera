@@ -378,5 +378,106 @@ class SerializedScopeParity(unittest.TestCase):
         self.assertIn("glm53-tp2", owner)
 
 
+def _needs_harvest_deps():
+    try:
+        import torch  # noqa: F401
+        import jsonschema  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+NEEDS_HARVEST = _needs_harvest_deps()
+HARVEST_FIXTURE = os.path.join(HERE, "fixtures", "d41_structure_spec_harvest")
+HARVEST_SPEC = os.path.join(HARVEST_FIXTURE, "glm53_tp2_spec.json")
+REPO_ROOT = os.path.normpath(os.path.join(HERE, ".."))
+
+
+class HarvestWithFlag(unittest.TestCase):
+    """A full harvest with --structure-spec on a committed fixture.
+
+    The fixture carries two rungs over the four GLM TP2 shapes with stamped
+    rows, columns and model fields, plus a quality file. Both tests run the
+    real CLI in a subprocess and need torch and jsonschema; without them
+    they skip instead of failing.
+    """
+
+    def _run_harvest(self, out, *extra):
+        import shutil
+        import tempfile
+
+        if not NEEDS_HARVEST:
+            self.skipTest("harvest needs torch and jsonschema")
+        target = tempfile.mkdtemp(prefix="d41-harvest-")
+        self.addCleanup(shutil.rmtree, target, True)
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.path.join(REPO_ROOT, "src") + (
+            ":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+        )
+        cmd = [
+            sys.executable,
+            os.path.join(SPEED, "rung_allowability_table.py"),
+            "--root", HARVEST_FIXTURE,
+            "--schema", os.path.join(REPO_ROOT, "docs", "schema",
+                                     "allowable-rung-table.v2.schema.json"),
+            "--index-schema", os.path.join(REPO_ROOT, "docs", "schema",
+                                           "index.v2.schema.json"),
+            "--out", target,
+            "--version", "9001",
+            "--format", "TESSERA_E4M3_K1",
+        ] + list(extra)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              env=env, timeout=600)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr[-2000:])
+        table = json.load(open(os.path.join(target, "table.json")))
+        validation = json.load(open(os.path.join(target, "validation.json")))
+        return table, validation
+
+    def test_flag_and_default_tables_match_serialized(self):
+        default, _ = self._run_harvest(None)
+        flagged, _ = self._run_harvest(None, "--structure-spec", HARVEST_SPEC)
+        self.assertEqual(len(default["rungs"]), len(flagged["rungs"]))
+        self.assertEqual(default["rungs"], flagged["rungs"])
+        self.assertEqual(default["scope"]["required_cells"],
+                         flagged["scope"]["required_cells"])
+        self.assertEqual(default["scope"]["shapes"], flagged["scope"]["shapes"])
+        self.assertNotIn("structure_spec", default["scope"])
+        record = flagged["scope"]["structure_spec"]
+        self.assertEqual(record["spec_id"], "glm53-tp2")
+        self.assertEqual((record["experts"], record["top_k"],
+                          record["hidden"], record["inter"]),
+                         (288, 8, 4096, 1024))
+        self.assertNotEqual(default["scope"]["shape_owner"],
+                            flagged["scope"]["shape_owner"])
+
+    def test_full_harvest_with_flag(self):
+        table, validation = self._run_harvest(
+            None, "--structure-spec", HARVEST_SPEC)
+        self.assertEqual(validation["status"],
+                         "schema_and_semantic_validation_passed")
+        self.assertEqual(len(table["scope"]["required_cells"]), 20)
+        self.assertEqual(len(table["rungs"]), 385)
+
+    def test_altered_dims_spec_skips_cells(self):
+        import shutil
+        import tempfile
+
+        payload = json.load(open(HARVEST_SPEC))
+        payload["shapes"][0]["rows"] = 768
+        tmp = tempfile.mkdtemp(prefix="d41-spec-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        altered = os.path.join(tmp, "altered.json")
+        json.dump(payload, open(altered, "w"))
+        table, validation = self._run_harvest(
+            None, "--structure-spec", altered)
+        self.assertEqual(validation["status"],
+                         "schema_and_semantic_validation_passed")
+        seen = {m["cell_id"] for row in table["rungs"]
+                for m in row["measurements"]}
+        self.assertTrue(seen)
+        self.assertFalse(any(cell.startswith("routed:gate_up")
+                             for cell in seen))
+
+
 if __name__ == "__main__":
     unittest.main()
