@@ -428,8 +428,8 @@ NATIVE_EXTENSIONS = [
         "lane": {"decoder": "native_routed_fused_window_e2m1",
                  "requires": ROUTED_FUSED_E2M1_LANE_REQUIRES},
         "when_unavailable": {
-            "resident": {"status": FALLBACK_REFUSED},
-            "streamed": {"status": FALLBACK_REFUSED},
+            "resident": {"status": FALLBACK_REFUSED, "decoder": None},
+            "streamed": {"status": FALLBACK_REFUSED, "decoder": None},
         },
     },
 ]

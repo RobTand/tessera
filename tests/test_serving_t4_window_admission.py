@@ -45,7 +45,8 @@ def test_actual_tcq_container_is_not_a_serving_compatibility_path():
     from tessera.manifest import BodyKind, ScalePlaneKind
 
     exported, _unit, _forests = encode_linear_planes(
-        torch.zeros(32, 256), grid=tuple_grid(E2M1_GRID, 2), q256=896,
+        torch.linspace(-0.2, 0.2, 32 * 256).reshape(32, 256),
+        grid=tuple_grid(E2M1_GRID, 2), q256=896,
         body=BodyKind.TCQ, span=2, scale_plane=ScalePlaneKind.LUT,
         name="weight", verify=False)
     blob = pack_fused([("weight", 32, exported.blob)])
@@ -54,9 +55,11 @@ def test_actual_tcq_container_is_not_a_serving_compatibility_path():
 
 
 def test_corrupt_actual_body_is_refused_before_hardware_preparation():
+    from tessera.errors import SchemaError
+
     blob = bytearray(window_blob(896, rows=32, cols=256))
     blob[-1] ^= 1
-    with pytest.raises((ValueError, RuntimeError)):
+    with pytest.raises(SchemaError, match="payload digest"):
         parse_compact_wire(bytes(blob), device="cpu")
 
 

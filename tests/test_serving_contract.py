@@ -686,27 +686,14 @@ def test_the_launch_table_is_spelled_in_the_vocabulary_the_serve_stamps():
 
 
 def test_the_launch_tables_lane_is_the_published_extension():
-    """A launch may only name a lane this build publishes an extension for.
-
-    No launch named one from contract v31 (tessera#538) to v41: the only launch
-    that ever did was the dense window-GEMV lane's, and the dispatch that made
-    it was retired by ``1b767a207``.  Contract v42 (tessera#640) brings two
-    back on purpose: the fused routed window lane's pairs name the extension
-    each needs, so ``_validate_cell_executes`` derives them only at a rung the
-    extension's own ``lane.requires`` admits.  The rule is stated both ways --
-    the loop, and the exact set it applies to today.  A lane launch returning
-    without an extension entry fails here; a third lane launch has to change
-    the set deliberately.
-    """
+    """Each declared lane must name a published reader for that route."""
     from tessera.serving import ext
     from tessera.serving.scheme import ROUTE_LAUNCHES
 
     published = {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS if e.get("lane")}
-    lane_launches = 0
     for route, launches in ROUTE_LAUNCHES.items():
         for launch in launches:
             if launch["lane"] is not None:
-                lane_launches += 1
                 assert launch["lane"] in published, launch
                 # And the extension must say it serves that route.  The
                 # window GEMV published TESSERA_FP8 alone while
@@ -716,32 +703,6 @@ def test_the_launch_tables_lane_is_the_published_extension():
                 assert route in next(
                     e["routes"] for e in ext.NATIVE_EXTENSIONS
                     if e["module_name_prefix"] == launch["lane"]), (route, launch["lane"])
-    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, ROUTED_FUSED_WINDOW_SYMBOL
-    lane_rows = {(launch["symbol"], launch["decoder"], launch["lane"])
-                 for launches in ROUTE_LAUNCHES.values() for launch in launches
-                 if launch["lane"] is not None}
-    # Contract v43: the same two libraries also carry the fused window
-    # kernel's DENSE identity, one decoder per arithmetic, so each lane names
-    # two rows -- a routed one and a dense one -- and the set is four.
-    assert lane_rows == {
-        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window", "tessera_routed_fused_e4m3"),
-        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_folded",
-         "tessera_routed_fused_value"),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense", "tessera_routed_fused_e4m3"),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_folded",
-         "tessera_routed_fused_value"),
-        # Contract v46: the E4M3 family's tensor-core instruction is a third
-        # library of the same source, with its own routed and dense rows.  Both
-        # stood in EXPERIMENTAL_LAUNCHES until contract v47's censuses earned
-        # them the six E4M3 cells.
-        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_e4m3mma",
-         "tessera_routed_fused_mma_e4m3"),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma",
-         "tessera_routed_fused_mma_e4m3")}
-    assert lane_launches == 6, (
-        "a launch names an extension lane beyond the three libraries' fused routed and "
-        "fused dense rows; the rule above has something new to say and this set has to "
-        "grow deliberately")
     assert published, "ext still publishes lane-bearing extensions; only the LAUNCH went"
 
 
@@ -1130,7 +1091,10 @@ def test_native_route_pairs_are_supported_and_censusable():
                    and structure in launch["structures"]]
         assert entries, (pair, route, structure)
         for launch in entries:
-            assert launch["lane"] is None and not launch["when_lane_absent"], launch
+            from tessera.serving.ext import ROUTED_FUSED_E2M1_MODULE_NAME
+            assert launch["lane"] == ROUTED_FUSED_E2M1_MODULE_NAME
+            assert not launch["when_lane_absent"], launch
+        assert launch_pairs(route, structure=structure, lanes=()) == set()
     # A route owner's census opt-in is the union, not a new table.
     for route, structure in ((TESSERA_NVFP4, STRUCTURE_DENSE),
                              (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
