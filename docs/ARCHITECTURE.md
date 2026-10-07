@@ -1,5 +1,22 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for the producer correction in issue #1018.
+The canonical `fleet.rung_allowability.v3` interface keeps the historical census.
+`performant_rungs` and `admit_rung` use the actual dense or routed structure and kernel build.
+R896 joins the measured menu for T8 and T16 under the D41 half-bit decision.
+`rung_speed` uses the recorded per-cell cost, not a pure-rung cost.
+Queries wait when actual shape, recipe, activation, or token-count evidence is absent.
+Present pending cells wait before class reconstruction. Failed and unsupported cells retain their states.
+Both producer paths apply source-specific reader findings to correctness holds and preserve prior flags and observations.
+Class inheritance selects safe donors before it selects anchors. Held or refused donors never supply times.
+Class-derived times never change measurement status or numerical and serving qualification.
+`geometry_class_identity` retains family, arity, recipe, build, path, shape, activation, and token count.
+`rung_quality` derives quality from whole-anchor chords, not per-rung sample gates.
+The existing producer stages immutable versions through `index.v3-candidate.json`.
+This correction leaves the active index and the campaign blocker clock unchanged.
+Issue #1018 stays open. Historical version one and version two semantics remain explicit.
+No decoder, kernel, format, runtime pin, consumer policy, or serving route changes.
+
 Re-stamped 2026-10-06 for issue #1018: the geometry entry accepts explicit
 dense shapes (`name:rows:columns`) so the missing real shared-expert and
 dense layer zero-to-two projections can use the existing harness and its
@@ -10,13 +27,12 @@ Full-source shared roles are 2048 by 4096 and 4096 by 2048; dense roles are
 12288 by 4096 and 4096 by 12288. Tensor parallel size two splits the gate/up
 output rows and down input columns; gate/up role timings are not a fused
 module, collective or served proof. No format, native route or ship gate moves.
-The latest CEO/Rob menu ruling supersedes earlier fractional sampling plans:
-T8 uses R768/R1024; routed T16 uses whole-bit R256 through R2048, dense T16
-whole-bit R256 through R3584; T4 has historical native timings but no new
-performance admission. Quality uses whole-anchor chords, not noisy per-rung
-sample gates. This bounded measurement entry does not implement a table or
-allocator cutover, a half-bit decoder, routed rates above eight, per-expert
-production serving, or a new pricing campaign.
+D41 retains the whole-bit menu and half-bit rungs at their measured costs.
+This producer correction restores R896 for T8 and T16 only where actual scoped measurements exist.
+Routed T16 keeps whole-bit R256 through R2048. Dense T16 keeps whole-bit R256 through R3584.
+T4 keeps its historical native times but waits for performance admission.
+Quality uses whole-anchor chords, not per-rung sample gates.
+This work starts no graphics processor campaign and makes no serving or speed qualification claim.
 
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
 `--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
