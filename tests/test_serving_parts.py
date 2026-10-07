@@ -576,9 +576,13 @@ def test_explicit_plan_checks_declared_group_rungs(tmp_path):
     source, paths, _plan = _moe_plan_parts(tmp_path)
     path = paths[0] / "tessera_part_config.json"
     config = json.loads(path.read_text())
-    next(iter(config["quantization_config"]["config_groups"].values()))["scheme"]["groups"]["w13"]["q256"] = 896
+    scheme = next(iter(config["quantization_config"]["config_groups"].values()))["scheme"]
+    scheme["groups"]["w13"]["q256"] = 896
+    scheme["expert_classes"][0]["q256"]["w13"] = [896, 896]
     path.write_text(json.dumps(config))
-    with pytest.raises(ValueError, match="plan"):
+    _change(paths[0], lambda manifest: next(iter(manifest["modules"].values()))[
+        "expert_classes"][0]["q256"].update(w13=[896, 896]))
+    with pytest.raises(ValueError, match="declared unit rung differs from plan"):
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
 
 
