@@ -37,6 +37,16 @@ CPU export/read and source approval do not qualify GPU serving or quality.
 No serving pin, allowable-rung/contract row or seal moves, and ongoing
 measurement source/artifact pins are not replaced.
 
+## 2026-10-07 — issue 1018: producer policy correction
+
+Both table producer paths preserve applicable reader correctness findings as holds.
+Partial timing cells wait before class reconstruction and retain explicit failure states.
+Class inheritance filters held and refused donors before it selects timing anchors.
+The producer restores measured R896 scope under the D41 half-bit decision.
+R896 uses its recorded per-cell cost and receives no pure-rung speed credit.
+The correction leaves the active index, consumer policy, and campaign blocker clock unchanged.
+Issue 1018 stays open. This source change claims no graphics processor or serving qualification.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four

@@ -145,6 +145,43 @@ class GeometryHarvest(unittest.TestCase):
         import bench_rates, rung_allowability_table
         cls.rates,cls.harvest=bench_rates,rung_allowability_table
 
+    def test_increment_reader_findings_preserve_correctness_holds(self):
+        import tempfile
+        from pathlib import Path
+        from test_rung_performant_policy import v3_fixture
+        table = v3_fixture()
+        table['evidence'] = {}
+        table['kernel_build']['metadata'] = {'observed_signature': {'kernel_sha': 'reader-source'}}
+        table['rungs'][1]['anomaly_flags'] = ['prior_hold']
+        table['rungs'][1]['quality']['anomaly_flags'] = ['prior_hold']
+        prior = {'kind': 'reader_correctness_finding', 'blocking': True, 'finding': {'anomaly_flag': 'prior_hold'}}
+        table['rungs'][1]['observations'].append(prior)
+        finding = {'format': table['format'], 'kernel_sha': 'reader-source', 'anomaly_flag': 'reader_wrong'}
+        findings = [finding, dict(finding, kernel_sha='other-source', anomaly_flag='other_source'),
+                    dict(finding, format='TESSERA_BF16_K1', anomaly_flag='other_family')]
+        repo = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'input.json').write_text(json.dumps(table))
+            (root / 'findings.json').write_text(json.dumps(findings))
+            command = [sys.executable, str(repo / 'experiments/t8r_speed/rung_allowability_table.py'),
+                       '--input-table', str(root / 'input.json'), '--reader-findings', str(root / 'findings.json'),
+                       '--root', str(root), '--out', str(root / 'out'), '--version', '2',
+                       '--schema', str(repo / 'docs/schema/allowable-rung-table.v3.schema.json'),
+                       '--index-schema', str(repo / 'docs/schema/index.v2.schema.json')]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+            actual = json.loads((root / 'out/table.json').read_text())
+        decision = admit_rung(actual, format=table['format'], kernel_build_id='build', rung=768, cell_ids=['dense:o:M1'])
+        self.assertEqual(decision['status'], 'hold')
+        self.assertEqual(actual['rungs'][0]['anomaly_flags'], ['reader_wrong'])
+        self.assertEqual(actual['rungs'][1]['anomaly_flags'], ['prior_hold', 'reader_wrong'])
+        self.assertIn(prior, actual['rungs'][1]['observations'])
+        for row in actual['rungs']:
+            self.assertEqual(row['quality']['anomaly_flags'], row['anomaly_flags'])
+            self.assertIn({'kind': 'reader_correctness_finding', 'blocking': True, 'exclusion_basis': False,
+                           'finding': finding}, row['observations'])
+
     def test_bf16_true_step_and_wide_boundaries(self):
         for q in (256,257,2048,2049,3584,3585,3840,3841,4095,4096):
             rate,fraction=self.rates.parse_case(f'q{q}','value')
