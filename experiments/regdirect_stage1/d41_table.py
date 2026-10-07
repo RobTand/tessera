@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
-import hashlib
 import json
 import re
 from datetime import datetime, timezone
@@ -34,7 +33,6 @@ MS = (1, 16, 2048, 4096)
 RUNG_MIN, RUNG_MAX = 256 * min(rr.SERVED_RATES), 256 * max(rr.SERVED_RATES)   # the code rates the kernel serves
 STEP = 2
 SHAPE_STEPS = {"down": 16}                                        # one 64-column unit k-step of K=1024
-SOURCE = "src/tessera/serving/csrc/regdirect_routed.cu"
 
 
 def recipe():
@@ -108,7 +106,7 @@ def main():
     ap.add_argument("--out", required=True)
     a = ap.parse_args()
 
-    source_sha = hashlib.sha256(open(SOURCE, "rb").read()).hexdigest()   # run from the checkout root
+    source_sha = rr.kernel_source_sha256()
     comp = json.load(open(a.compile))
     compile_receipt_matches(comp, source_sha)
     regs = {template(k["kernel"]): k for k in comp["kernels"]}

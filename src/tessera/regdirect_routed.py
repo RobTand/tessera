@@ -135,7 +135,7 @@ def _load(name: str, source: str):
     ensure_toolchain_on_path(torch)
     if detect_backend(torch) != "cuda":
         raise RuntimeError("the register-direct routed kernel is CUDA (mma.sync, cp.async)")
-    src = os.path.join(os.path.dirname(__file__), "serving", "csrc", source)
+    src = _source(source)
     token = platform_token(torch=torch)
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-routed-fused")
     build = os.path.join(root, f"{name}_{token}") + GUARDED_BUILD_SUFFIX
@@ -145,6 +145,18 @@ def _load(name: str, source: str):
     with jit_build_lock(build):
         return load(name=name, sources=[src], build_directory=build,
                     extra_cuda_cflags=flags, verbose=bool(os.environ.get("TESSERA_ROUTED_FUSED_VERBOSE")))
+
+
+def _source(name: str) -> str:
+    return os.path.join(os.path.dirname(__file__), "serving", "csrc", name)
+
+
+def kernel_source_sha256() -> str:
+    """The identity of the kernel source this process builds: the key a compile receipt, a timing
+    run and a profiler run must each carry to be cited for the same kernel."""
+    import hashlib
+    with open(_source("regdirect_routed.cu"), "rb") as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
 
 
 def _ext():
