@@ -313,6 +313,11 @@ The offline Step4 consumer reads the same current execution registry.
 It checks actual operations and module populations, not served qualification cells.
 Historical R5 replay uses the qualification registry. It does not rewrite archived operations.
 
+The D41 class benchmark replaces its preparation owner with the retained native owner before timing.
+`resident_bytes` counts that owner and the production inverse by backing allocation.
+`preparation_storage_bytes` names the load owner and its original inverse separately.
+Preparation and production storage overlap; their values must not be added.
+
 The D30 class harness checks the owned process group after launcher exit.
 It sends SIGTERM, waits up to five seconds, and sends SIGKILL if group members remain.
 Its final cleanup uses the same path after a memory read fails.

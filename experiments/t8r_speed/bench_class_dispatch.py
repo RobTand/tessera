@@ -352,7 +352,10 @@ def timed_samples(invocation, timer, args):
 def measure(args, report, name, rates, tokens, timer, order, arm, usage, power, clock):
     packed, own_meta, own_inverse = packed_constants(rates, experts=EXPERTS, hidden=HIDDEN, inter=INTER,
                                                      device=torch.device("cuda"), seed=args.seed)
+    preparation_storage_bytes = packed.resident_bytes() + own_inverse.untyped_storage().nbytes()
     adapter = packed.adapter()
+    packed = packed.native_owner()
+    del own_inverse
     from class_dispatch_inputs import metadata
     route_meta = metadata(SCHEDULES[name], EXPERTS)
     inverse = torch.tensor(inverse_expert_ids(route_meta["expert_ids"]), dtype=torch.int32, device=adapter.device)
@@ -361,7 +364,9 @@ def measure(args, report, name, rates, tokens, timer, order, arm, usage, power, 
     group = report.data["groups"][f"{name}:M{tokens}"]
     if arm == "production":
         group["geometry"] = class_geometry(adapter, tokens, usage)
-        group["resident_bytes"] = packed.resident_bytes() + inverse.numel() * inverse.element_size()
+        group["resident_bytes"] = packed.resident_bytes() + inverse.untyped_storage().nbytes()
+        group["preparation_storage_bytes"] = preparation_storage_bytes
+        group["preparation_storage_scope"] = "Load owner before retirement, including its inverse; overlaps production storage."
     for kind in args.projections.split(","):
         invocation = Invocation(adapter, inverse, x, down_x, generations, kind, pure=arm != "production")
         # Class issue order remains production's fixed order. F/R is arm order.
@@ -404,7 +409,7 @@ def measure(args, report, name, rates, tokens, timer, order, arm, usage, power, 
             torch.cuda.synchronize()
             torch.cuda.profiler.stop()
         del graph, invocation
-    del adapter, packed, x, down_x, own_inverse
+    del adapter, packed, x, down_x
     torch.cuda.synchronize()
     torch.cuda.empty_cache()
 

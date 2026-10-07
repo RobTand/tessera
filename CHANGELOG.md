@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — report retained class storage
+
+The D41 class benchmark retires load-only planes and the unused inverse before timing.
+`resident_bytes` now counts the production native owner and its inverse.
+`preparation_storage_bytes` records preparation storage separately. The two values overlap.
+
 ## 2026-10-07 — stop class workloads after launcher exit
 
 The D30 guard now checks the owned process group, not only the launcher.
