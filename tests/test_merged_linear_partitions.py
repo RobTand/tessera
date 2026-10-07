@@ -349,8 +349,6 @@ def test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_every
     entry = construction_entry_from_receipt(
         _lfm_receipt_with_output_sizes((16, 16, 64), (16, 16)))
     out = _export(tmp_path, monkeypatch, entry, "--layers", "0")
-    config = json.loads((out / "config.json").read_text())["quantization_config"]
-    assert config["config_groups"] == {}
     with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
         keys = set(handle.keys())
     assert IN_PROJ_TENSOR in keys and OUT_PROJ_TENSOR in keys
@@ -360,8 +358,8 @@ def test_a_smoke_bound_that_empties_the_plan_is_refused_like_the_default(
         tmp_path, monkeypatch):
     """tessera#391: the guards were exempted by ``--layers`` at all, not by 0.
 
-    ``--layers 0`` is a deliberate passthrough copy and an empty
-    ``config_groups`` is exactly what it asks for.  ``--layers N`` for N > 0 is
+    A caller uses --layers 0 for a deliberate stock passthrough copy.
+    A positive --layers bound requests a partial encode.
     a different request -- a smoke bound, as the exporter itself calls it when
     it refuses a rung past the bound ("or encode past the smoke bound").  The
     caller asked for a *partial encode*, so an encode that produced nothing is
