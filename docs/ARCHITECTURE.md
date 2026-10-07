@@ -5401,6 +5401,12 @@ numerical references, required populations, raw timings, and graph checks.
 The current mainloop still decodes weights per 64-route superblock; this
 cutover does not claim decode-once speed or the projected twofold FP4 gain.
 
+The graph helper copies each eager output before warmup, capture and replay.
+The reference snapshot must remain independent of any persistent output buffer.
+The prior 192 mode-0 graph claims remain withdrawn.
+New graph receipts compare independent eager snapshots.
+GPU-exclusive timing rows do not establish quiet-host or measurement-class qualification.
+
 The step-4 preflight builds the required E2M1 extension and checks its ABI before it starts an engine.
 It records the actual library path and SHA256.
 The dispatch qualifier admits the native WINDOW dense and routed entry points, not the retired TCQ pairs.

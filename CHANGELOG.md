@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-07 — independent eager snapshot for T4 graph evidence
+
+The graph helper copies the eager result before warmup, capture and replay.
+Persistent output buffers cannot change this reference snapshot.
+The CUDA regression uses a stateful buffer to expose the old false equality.
+The 192 prior mode-0 graph claims remain withdrawn.
+New graph receipts compare independent eager snapshots.
+GPU-exclusive timing rows are diagnostics, not quiet-host or measurement-class qualification.
+
+
 ## 2026-10-07 — real vLLM hash test setup
 
 The hash tests use a fresh interpreter, so another test's fake package cannot supply the runtime.
