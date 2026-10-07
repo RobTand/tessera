@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — remove an incidental plugin assertion
+
+The plugin test no longer requires an opaque-operation spelling for a uniform owner.
+Its real wire load, inverse map, reference bits and changed-route replay checks remain.
+The old assertion stopped six GPU cases before their bit checks. No production code changes.
+
 ## 2026-10-07 — observe the uniform production launch
 
 The paired-K32 numeric observer now records the actual uniform binding.

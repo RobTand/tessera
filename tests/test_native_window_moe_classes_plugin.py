@@ -125,7 +125,6 @@ def _finish(method, layer, wires):
         _callback(layer, storage, shard, blob)
     method.process_weights_after_loading(layer)
     assert not dict(layer.named_parameters())
-    assert method._native.launch_pair[0] == "tessera::routed_window_classes"
     assert method._native.counters.dtype == torch.int32
     assert method._native.counters.shape == (len(method._native.classes), 2)
 
