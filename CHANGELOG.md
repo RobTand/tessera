@@ -1,17 +1,12 @@
 # Changelog
 
-## 2026-10-07 — T-16 routed cells: whole bits 1 through 7
+## 2026-10-07 — T-16 routed cells: served-census pin restored
 
-Contract v59 widens the four TESSERA_BF16_K1 routed cells to whole bits 1 through 7.
-Each cell censuses q256 256, 512, 768, 1024, 1280, 1536, 1792 with run tables [1] through [7].
-R1024 stands on its served census.
-All seven carry production-kernel sweep route rows with no exclusion.
-CPU weight-space rows cover 256, 512, 768, 1280, 1536, and 1792.
-R1024 is absent from the 480 published quality batches.
-The rows are screens only, never served KL.
-Bit 8 is withheld on the rate-8 down anomaly: 13 to 18 percent spread at M 1 to 512, rerun PB 2d5b871f pending.
-No prototype speed is cited for any production claim.
-The cells stay eager-only at grade route only with no served KL claim.
+Contract v59 restores the four TESSERA_BF16_K1 routed cells to R1024 with run table [4].
+Independent review refused widening on sweep rows, prototype speed, and quality screens without served receipts.
+It refused bit 8 on the rate-8 down anomaly.
+No rung joins these cells without a served receipt.
+The sweep results stay as research evidence.
 The served re-census stays open.
 This source change claims no graphics processor qualification.
 
