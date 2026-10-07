@@ -305,7 +305,7 @@ class MeasurementMatchesSpec(unittest.TestCase):
         self.spec = parsed["shapes"][0]
         self.record = dict(parsed["meta"])
         self.meta = dict(parsed["meta"])
-        self.group = {"rows": self.spec[2], "cols": self.spec[3]}
+        self.group = {"rows": self.spec[2], "cols": self.spec[3], "mode": self.spec[4]}
 
     def _kept(self, meta=None, group=None):
         return tab.measured_at_spec(meta or self.meta, group or self.group, self.spec, self.record)
@@ -320,6 +320,26 @@ class MeasurementMatchesSpec(unittest.TestCase):
         for field in ("experts", "top_k", "hidden", "inter"):
             with self.subTest(field=field):
                 self.assertFalse(self._kept(meta=dict(self.meta, **{field: self.meta[field] + 1})))
+
+    def test_a_measurement_at_another_mode_is_skipped(self):
+        # A routed group takes its shape name from its mode: mode 0 is gate_up, anything else is down.
+        # Mode 0 evidence must not enter a table whose spec declares mode 2 for that name.
+        other = 2 if self.spec[4] == 0 else 0
+        self.assertFalse(self._kept(group=dict(self.group, mode=other)))
+
+    def test_a_group_that_records_no_mode_counts_as_mode_two(self):
+        # measurement() reads a missing mode as 2, so the comparison reads it the same way.
+        no_mode = {k: v for k, v in self.group.items() if k != "mode"}
+        spec = (self.spec[0], self.spec[1], self.spec[2], self.spec[3], 2)
+        self.assertTrue(tab.measured_at_spec(self.meta, no_mode, spec, self.record))
+        spec = (self.spec[0], self.spec[1], self.spec[2], self.spec[3], 0)
+        self.assertFalse(tab.measured_at_spec(self.meta, no_mode, spec, self.record))
+
+    def test_a_non_integer_mode_is_skipped(self):
+        for value in (True, False, 0.0, 2.0, "2"):
+            with self.subTest(mode=value):
+                spec = (self.spec[0], self.spec[1], self.spec[2], self.spec[3], 2 if value in (2.0, "2", True) else 0)
+                self.assertFalse(tab.measured_at_spec(self.meta, dict(self.group, mode=value), spec, self.record))
 
     def test_a_measurement_that_does_not_record_a_field_is_skipped(self):
         for field in ("rows", "cols"):
