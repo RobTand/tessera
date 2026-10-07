@@ -916,34 +916,18 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
 
 
 def unrouted_modules(src_config, modules):
-    """Which of these vLLM modules the pinned runtime will NOT route to a plugin.
+    """Return modules that the active construction receipt does not offer.
 
-    THE PRODUCER MAY NOT KEEP THIS ROSTER.  ``LinearBase.__init__`` takes
-    ``UnquantizedLinearMethod()`` in the ``quant_config is None`` branch
-    *without calling* ``get_quant_method`` (vLLM 0.28,
-    ``model_executor/layers/linear.py:258``), so a projection a model builds
-    with ``quant_config=None`` is invisible to every quantization plugin --
-    ours cannot refuse it, warn about it, or even see the prefix.  A wire
-    written there deletes the ``<module>.weight`` the runtime wants and puts
-    bytes in its place that no loader maps: not a slow route, no route, and no
-    refusal either.
-
-    The runtime-attestation rule says what a runtime DOES is derived from a
-    machine-readable table that runtime publishes.  The table is
-    ``runtime_contract.json``'s ``construction`` block (contract v11), whose
-    rows are generated from the census receipts under
-    ``docs/measurements/construction/`` -- and the census itself
-    (``tools/tessera_construction_census.py``) OBSERVES the answer by building
-    the model the way the loader does with a probe quant config that records
-    every prefix it is offered.  Nothing here reads source, and nothing here
-    keeps a list.
+    The runtime publishes one active receipt for each architecture. The
+    exporter maps checkpoint names and reads that receipt. It does not
+    keep a second module roster. An explicit selected constructor can
+    supply the quant config where the stock constructor omits it.
 
     Returns ``{checkpoint module: (verdict, vllm module pattern)}`` for every
     module that is not ``offered``:
 
-    * ``never_offered`` -- the runtime builds this module with
-      ``quant_config=None``.  On GLM-5.3-Flash that is every attention
-      projection, the whole KDA layer, the indexer and the vision tower.
+    * ``never_offered`` -- the receipt observed no quant config call for
+      this module, including the declared selected construction scope.
     * ``absent`` -- the runtime builds no module of this name at all.  It is
       what a fused role named at the wrong seam looks like: the checkpoint has
       ``self_attn.{q,k,v}_proj`` on a KDA layer and vLLM builds ONE
