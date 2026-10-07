@@ -8,6 +8,8 @@ Serving exports, cached-unit records and control prices use the same recipe.
 Research defaults and explicit TCQ encodes stay unchanged.
 CPU tests replay the actual serialized bytes and check plane and full-file charges.
 The byte audit includes all pure classes and both structures.
+The shared rate guard checks expert strides and gate/up strides before encode.
+The down projection can use a separate rate when all experts agree.
 This change does not assert measured route eligibility or quality.
 
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer

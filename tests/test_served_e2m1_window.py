@@ -192,3 +192,35 @@ def test_fused_routed_launch_price_counts_actual_native_table_tensors():
     ratio = torch.full((2,), float(parsed.unit.scale_global), dtype=torch.float32)
     actual = sum(t.numel() * t.element_size() for t in (runs, desc, ratio))
     assert 2 * routed_fused_unit_bytes(14, 256, family="TESSERA_NVFP4") == actual
+
+
+def _expert_rate_record():
+    from tessera.export_serving import EXPERT_PROJECTIONS, PROJECTION_GROUP
+    units = [{"tensor": f"experts.{expert}.{projection}.weight",
+              "expert": expert, "projection": projection,
+              "group": PROJECTION_GROUP[projection]}
+             for expert in range(2) for projection in EXPERT_PROJECTIONS]
+    return {"stack": "experts", "family": "TESSERA_NVFP4", "grid": GRID,
+            "q256": 896, "experts": 2, "units": units}
+
+
+def test_native_rate_plan_preserves_an_independent_down_rate():
+    from tessera.export_serving import assign_expert_unit_rungs, expert_unit_q256
+    record = _expert_rate_record()
+    assign_expert_unit_rungs(record, {f"experts.{expert}.down_proj": 512 for expert in range(2)})
+    for unit in record["units"]:
+        q256 = expert_unit_q256(record, unit)
+        assert q256 == (512 if unit["projection"] == "down_proj" else 896)
+        encoded = _encode(q256, STRUCTURE_ROUTED_MOE)
+        assert set(parse(encoded.blob).manifest.rates) == {q256 // 128}
+        assert torch.equal(decode_window_bytes(encoded.blob), read_unit_artifact(encoded.blob))
+
+
+@pytest.mark.parametrize("assignments", [
+    {"experts.0.down_proj": 512},
+    {"experts.0.up_proj": 512, "experts.1.up_proj": 512},
+], ids=["unequal-expert-strides", "unequal-gate-up-strides"])
+def test_native_rate_plan_refuses_invalid_strides_before_encode(assignments):
+    from tessera.export_serving import assign_expert_unit_rungs
+    with pytest.raises(SystemExit):
+        assign_expert_unit_rungs(_expert_rate_record(), assignments)
