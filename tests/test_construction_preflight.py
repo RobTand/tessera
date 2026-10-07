@@ -24,7 +24,7 @@ def config_dir(tmp_path):
 def test_preflight_keeps_global_and_local_kda_roles(config_dir):
     result = census.preflight(str(config_dir), "declared-image")
     assert result["construction_performed"] is False
-    assert result["construction_performed"] is False
+    assert result["status"] == "preflight-only"
     assert result["model_construction_performed"] is False
     assert result["cpu_linear_construction_performed"] is False
     assert result["cuda_initialized"] is False
