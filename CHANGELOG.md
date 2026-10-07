@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-07 — mandatory routed expert-class cutover
+
+Routed exports always write class-ordered storage, a slot-to-global expert map
+and complete class profiles, including identity metadata for uniform layers.
+Plans and source provenance retain original-global coordinates; wire names
+and scheme rung matrices use storage coordinates. Native geometry and fused
+gate/up schedules are refused before encoding, including requested fit-TP cuts.
+
+E4M3 and folded BF16 WINDOW loading and execution use one native class path,
+with one device inverse, zero-copy class views, two load-time streams/events
+and device-derived changing-route counter starts for captured replay. Remove
+the old stock/materializing WINDOW fallback and feature selection; the EP map
+remains untouched. Residency prices retained storage and selected table dtype,
+including the inverse and per-class counters. Add actual framework consumer
+proof and a production dynamic-routing D41 entry with honest pure comparators.
+
+CPU export/read and source approval do not qualify GPU serving or quality.
+No serving pin, allowable-rung/contract row or seal moves, and ongoing
+measurement source/artifact pins are not replaced.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four

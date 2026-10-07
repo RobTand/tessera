@@ -147,9 +147,12 @@ def test_actual_native_owner_matches_exported_accounting(monkeypatch, family, ch
         empty=torch.empty(0, dtype=torch.float32), kernel=kernel))
     lane = FAMILY_OF[family]
     layouts, cuts, metadata = _stack_layouts(rungs, tp_size=tp_size)
-    axes = {group: WindowUnitAxis(2, roles, family=lane) for group, roles in MOE_GROUP_PROJECTIONS.items()}
-    for (group, projection, expert), cut in cuts.items():
-        unit = _unit(lane, cut["rows"], cut["rates"])
+    units = {key: _unit(lane, cut["rows"], cut["rates"]) for key, cut in cuts.items()}
+    axes = {group: WindowUnitAxis(2, roles, family=lane, word_runs={
+        role: [(units[group, role, expert].rep.words.numel(),
+                units[group, role, expert].rep.runs.shape[0]) for expert in range(2)]
+        for role in roles}) for group, roles in MOE_GROUP_PROJECTIONS.items()}
+    for (group, projection, expert), unit in units.items():
         axes[group].put(projection, expert, unit)
     soa = {group: axis.finish() for group, axis in axes.items()}
 
