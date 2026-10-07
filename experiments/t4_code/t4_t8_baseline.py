@@ -39,10 +39,10 @@ def t8_bounds():
 
 def encode_t8(weight, rate, structure):
     from tessera.alphabet import E4M3_GRID
-    from tessera.export import encode_linear, served_recipe
+    from tessera.export import served_recipe
     recipe = served_recipe(E4M3_GRID, rate, structure)
-    return bytes(encode_linear(weight, grid=E4M3_GRID, q256=rate,
-                               **q.recipe_kwargs(recipe)).blob)
+    return q.encode_artifact_bytes(weight, grid=E4M3_GRID, q256=rate,
+                                   **q.recipe_kwargs(recipe))
 
 
 def shapes(args):
@@ -156,8 +156,10 @@ def plan_cases(args, t4_q256):
         if minimum > budget:
             choice = select_actual_rate(budget, minimum, legal, None, None)
         else:
-            base = frames(low)
-            overhead = {p: len(base[p]) - t8_plane_bytes(low, *weights[p].shape) for p in parts}
+            # The highest legal rate gives the smallest traceback workspace.
+            # These actual bytes supply only the fixed-overhead prediction.
+            base = frames(high)
+            overhead = {p: len(base[p]) - t8_plane_bytes(high, *weights[p].shape) for p in parts}
             predictions = {rate: sum(t8_plane_bytes(rate, *weights[p].shape) + overhead[p]
                                      for p in parts) * copies for rate in legal}
             choice = select_actual_rate(budget, minimum, legal,

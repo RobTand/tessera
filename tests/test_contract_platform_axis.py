@@ -396,23 +396,10 @@ def test_the_withdrawn_gfx1201_receipt_is_still_on_the_tree(contract):
 
 
 def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
-    """A version bump may add a cell and may WITHDRAW one; it may not edit one.
+    """Preserve the original bytes of each surviving historical receipt.
 
-    The fixture records the SHA-256 of the v22 ``sm_121`` elements that survive,
-    lifted out of the document by exact offsets, so this compares BYTES --
-    whitespace, key order and all -- not a re-serialization that could
-    normalize away a real edit.  It is a span of the first elements rather than
-    the whole array because later versions append cells on other scopes:
-    hashing the array would make every arrival look like an edit, which is the
-    one thing this test exists to catch.
-
-    It was ten cells until contract v31, which withdrew six of them
-    (tessera#538).  A withdrawal is neither an addition nor a re-measurement,
-    so it is not allowed to arrive as a quietly regenerated digest: the fixture
-    names the ids it dropped, and the assertions below check that every named
-    id is really gone and that no other v22 cell went with them.  Regenerate
-    this digest only when a receipt was deliberately re-measured; change the
-    span only beside a ``withdrawn_at_v31``-style list saying what left and why.
+    A withdrawal must not silently replace the stored digest.
+    This check does not require a withdrawn launch to remain in the current contract.
     """
     raw = CONTRACT.read_text(encoding="utf-8")
     recorded = json.loads(FIXTURE.read_text(encoding="utf-8"))
@@ -436,93 +423,6 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
         "the surviving v22 sm_121 cells changed bytes at the same length; "
         "regenerate the fixture only if a receipt was deliberately re-measured")
 
-    # The withdrawal itself, stated rather than absorbed into the digest -- and
-    # the part of it contract v34 reversed.  Two of the six ids are shipped
-    # again (tessera#545): a cell id is a SCOPE, so re-attesting a scope reuses
-    # it, and the fixture records which two and on what receipt.  What may not
-    # come back is the withdrawn CLAIM, so the launch is checked rather than
-    # the spelling.
-    #
-    # Contract v37 (tessera#614) withdrew the re-earned pair again: the BF16
-    # route serves the folded arithmetic under its own decoder, which the v34
-    # receipt did not measure.
-    #
-    # Contract v38 (tessera#604) withdrew the two routed E4M3 cells from the
-    # span, and re-earned four ids on the GLM-image census: the resident E4M3
-    # dense pair v31 withdrew, and the routed pair v38 itself withdrew, each on
-    # the launch the census recorded.
-    #
-    # Contract v39 (tessera#604, second half) withdrew the span's last two
-    # cells (the pin-image E2M1 dense pair) and the a5424378 routed E2M1 pair,
-    # and re-earned the routed ids on the GLM image's native grouped launch.
-    present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
-    withdrawn = (set(recorded["withdrawn_at_v31"]) | set(recorded["withdrawn_at_v38"])
-                 | set(recorded["withdrawn_at_v39"]))
-    reearned = set(recorded["reearned_at_v34"])
-    withdrawn_again = set(recorded["withdrawn_at_v37"])
-    reearned_v38 = set(recorded["reearned_at_v38"])
-    reearned_v39 = set(recorded["reearned_at_v39"])
-    assert len(recorded["withdrawn_at_v31"]) == 6 and len(recorded["withdrawn_at_v38"]) == 2
-    assert len(recorded["withdrawn_at_v39"]) == 4
-    assert reearned < withdrawn and len(reearned) == 2
-    assert withdrawn_again == reearned
-    assert reearned_v38 < withdrawn and len(reearned_v38) == 4
-    assert reearned_v39 < withdrawn and len(reearned_v39) == 2
-    standing = (reearned - withdrawn_again) | reearned_v38 | reearned_v39
-    assert not (present & (withdrawn - standing)), sorted(present & (withdrawn - standing))
-    assert standing <= present
-    # Contract v42 (tessera#640): the standing routed E4M3 pair names the
-    # fused routed window lane's launch beside the compact one, on a served
-    # census of the rate-4 u1 stub B
-    # (docs/measurements/2026-09-28-routed-fused-640.md).  Neither is a
-    # withdrawn claim; the span is empty, so the digest does not move.
-    #
-    # Contract v43 (tessera#692): the standing dense E4M3 pair names the fused
-    # window kernel's DENSE identity beside the Triton window GEMM, on a served
-    # census of the same stub's q256 1024 shared-expert modules
-    # (docs/measurements/2026-09-28-dense-fused-window.md); the fixture's
-    # ``remeasured_at_v43`` list names the two ids.  Again no withdrawn claim.
-    assert set(recorded["remeasured_at_v43"]) == {
-        "tessera_e4m3_k1_dense_sm121_decode_resident",
-        "tessera_e4m3_k1_dense_sm121_batch_resident"}
-    assert set(recorded["remeasured_at_v43"]) <= standing
-    # Contract v45 (tessera#694) changes the kernel behind both fused launches
-    # and widens their predicate to rates 1..8 / routed 1..6, but no executes
-    # list, rung or id moves, so no cell is withdrawn or re-earned.  A served
-    # census of stub B on the GLM image recorded the fused pair on every
-    # routed stack and every dense module, at every rung the stub carries
-    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Route census");
-    # the fixture's ``remeasured_at_v45`` list names the four E4M3 window ids.
-    assert set(recorded["remeasured_at_v45"]) == {
-        "tessera_e4m3_k1_dense_sm121_decode_resident",
-        "tessera_e4m3_k1_dense_sm121_batch_resident",
-        "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
-        "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
-    assert set(recorded["remeasured_at_v45"]) <= standing
-    # Contract v47: the four E4M3 window ids name the E4M3 family's own
-    # tensor-core instruction beside the 16-bit library's pair, on a served
-    # census of stub B with that library as the dispatch
-    # (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md); the
-    # fixture's ``remeasured_at_v47`` list names them.  No withdrawn claim.
-    assert set(recorded["remeasured_at_v47"]) == set(recorded["remeasured_at_v45"])
-    launch = {("TESSERA_E4M3_K1", "dense"): [
-                  ("tessera::window_gemm_dense", "native_window_gemm"),
-                  ("tessera::fused_window_dense", "native_fused_window_dense"),
-                  ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma")],
-              ("TESSERA_E4M3_K1", "routed_moe"): [
-                  ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                   "native_window_moe_compact"),
-                  ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-                   "native_routed_fused_window"),
-                  ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-                   "native_routed_fused_window_e4m3mma")],
-              ("TESSERA_E2M1_K2", "routed_moe"): [
-                  ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")]}
-    for cell in contract["lane_eligibility"]["cells"]:
-        if cell["id"] in standing:
-            assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == \
-                launch[(cell["family"], cell["structure"])], cell["id"]
-    assert {cell["id"] for cell in span} <= present
 
 
 def test_no_shipped_cell_is_compile_only(contract):

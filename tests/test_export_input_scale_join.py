@@ -53,12 +53,12 @@ def _tensor(rows, cols, seed):
 def _run(tmp_path, monkeypatch, scales, *extra):
     src = tmp_path / "src"
     src.mkdir()
-    save_file({name: _tensor(64, 32, i).contiguous()
+    save_file({name: _tensor(64, 256, i).contiguous()
                for i, name in enumerate((Q, K, V))},
               str(src / "model.safetensors"), metadata={"format": "pt"})
     (src / "config.json").write_text(json.dumps({
         "architectures": ["Qwen3ForCausalLM"],
-        "hidden_size": 32, "intermediate_size": 32,
+        "hidden_size": 256, "intermediate_size": 256,
     }))
     donor = tmp_path / "input_scales.safetensors"
     save_file({name[: -len(".weight")] + ".input_global_scale":

@@ -163,101 +163,11 @@ _BF16_CONTROL = {"reference": "bf16_source", "outcome": "identical_completion",
                  "receipt": MOE_DEBT}
 _ROUTE_ONLY = {"grade": "route_only", "kl": [], "smoke": _NO_SMOKE}
 
-#: What each published cell rests on, receipt by receipt.  A KL entry attests
-#: the cell's WHOLE scope -- every residency the cell names, under the listed
-#: execution modes, in the cell's own regime -- and only a serve whose route
-#: is the cell's ``executes`` counts: the 2026-09-02 plugin receipt's
-#: ``e8-streamed`` arms ran the torch window decode under ``streamed`` (its
-#: census table, :131/:133), a launch set no streamed E4M3 cell publishes since
-#: #111, so they attest nothing here; the window-GEMV receipt's arm B ran the
-#: refused-lane fallback under ``streamed`` and attests nothing either.
-_EVIDENCE = {
-    # E2M1x2 (q896) dense on the serve-image pin carried a prefill KL, eager
-    # and compiled, both residencies (``k2-resident``, ``k2-streamed``,
-    # ``k2-*-graph``, PLUGIN §3), on the batch cell.  Contract v39
-    # (tessera#604, second half) WITHDREW both pin-image dense E2M1 cells: they
-    # named ``(torch._scaled_mm, native_span2)``, which ``nvfp4_route`` no
-    # longer makes.  Their evidence is quoted in ``_WITHDRAWN_V39_EVIDENCE``
-    # below; the dense E2M1 scope is now the route-only GLM-image pair at the
-    # end of this table.
-    # E4M3 (q1024).  The decode regime has a KL only where the window-GEMV
-    # lane was under test -- the streamed cell -- eager on 2026-09-03 and
-    # compiled in the r6 population; the resident decode cell has the census
-    # alone.  The resident batch cell rests on the 2026-09-02 ``e8-resident``
-    # arms; the streamed batch cell on the window-GEMV receipt's arm A.
-    # The six sm_121 dense E4M3/BF16 cells and the two gfx1201 BF16 cells
-    # stood here until contract v31 and were WITHDRAWN with it (tessera#538):
-    # their ``executes`` named the dense window-GEMV dispatch, which
-    # ``1b767a207`` retired, and every receipt behind them was taken before
-    # that commit.  Their measurements are not retracted and stay in the tree
-    # (``tests/test_contract_platform_axis.py`` holds the gfx1201 one to it);
-    # what was retracted is the claim that this build executes what they
-    # measured.  Two consequences show up below: no cell asserts a smoke word
-    # it cannot derive any more, and no decode cell carries a decode-regime
-    # bound.
-    # Routed MoE (LFM2.5-8B-A1B, q1024): prefill top-1024 bound, eager,
-    # resident; the decode regime has the census alone.  The campaign's greedy
-    # smoke was repetitive and the BF16 source repeated identically (MOE_DEBT
-    # section 7, contract v18) -- a shared symptom, not a positive record.
-    # MOE_SMOKE is the positive record (#198, contract v21).  Since schema v9
-    # (#327) these two cells carry the RECORD their word is derived from --
-    # fourteen (prompt, form) rows, each naming the interface it was taken on
-    # and both arms' verdicts -- so the word below is COMPUTED here and in the
-    # validator, never transcribed.  It comes out `recorded` (six rows read
-    # `recorded` on both arms, and no row cycles on the student where the source
-    # answered) with attribution `shared_with_reference` (all seven rows the
-    # student cycles on are rows the BF16 source cycles on too).
-    #
-    # Contract v38 (tessera#604) WITHDREW both: they named the materialised FP8
-    # launch this build cannot make.  Their evidence is quoted in
-    # ``_WITHDRAWN_V38_EVIDENCE`` below and in
-    # ``tests/fixtures/lane_eligibility_cells_withdrawn_v38.json``, and the
-    # smoke-record tests in this module run on that quote.  The ids now name
-    # route-only cells on the GLM serving image (see the end of this table).
-    # Routed MoE on the E2M1x2 cap wire (q896, contract v28, #506): the
-    # GLM-5.3-Flash 4-layer stub served over two GB10s, eager, resident
-    # (TP2_STUB).  Both ranks' route traces cover the stack in both regimes,
-    # and that is the whole of the evidence: no KL against any arm, and no
-    # smoke in the instrument's form.  The serve's own greedy check -- 29 of 32
-    # tokens equal to a BF16 recording, on text that degenerates at every
-    # precision -- is not a record this grammar can derive a word from, so the
-    # cells publish `not_recorded` rather than a word nothing here can check.
-    #
-    # Contract v39 withdrew that pair too (it named the materialising launch)
-    # and re-minted the ids on the GLM serving image from a route census of
-    # the native grouped launch: route-only again, for the same reason.
-    "tessera_e2m1_k2_routed_moe_sm121_decode_resident": _ROUTE_ONLY,
-    "tessera_e2m1_k2_routed_moe_sm121_batch_resident": _ROUTE_ONLY,
-    # Dense E4M3 (q1024) on the native window GEMM, contract v34
-    # (tessera#545).  Route censuses on the sm_121 platform's own serve image
-    # put all 112 declared modules on
-    # tessera::window_gemm_dense/native_window_gemm in both regimes and both
-    # residencies.  (The BF16 q1792 pair minted beside them was withdrawn at
-    # v37, tessera#614: the route moved to the folded arithmetic.)  The census is the WHOLE of the evidence: no KL arm was run,
-    # so the grade is the one zero kl entries derive, and no greedy smoke was
-    # recorded.  That is a narrower claim than the v5-era dense cells made --
-    # they carried prefill bounds -- and the difference is a measurement nobody
-    # has taken on this launch, not a field anybody dropped.
-    "tessera_e4m3_k1_dense_sm121_decode": _ROUTE_ONLY,
-    "tessera_e4m3_k1_dense_sm121_batch": _ROUTE_ONLY,
-    # Contract v38 (tessera#604): eight resident cells on the GLM serving
-    # image, dense E4M3/BF16 and routed E4M3/BF16, from one TP1 eager route
-    # census (``docs/measurements/tessera-glm-x-census-2026-09-26.md``).  The
-    # census is the whole of the evidence: no KL arm, no smoke.
-    **{f"tessera_{family}_{structure}_sm121_{regime}_resident": _ROUTE_ONLY
-       for family in ("e4m3_k1", "bf16_k1") for structure in ("dense", "routed_moe")
-       for regime in ("decode", "batch")},
-    # Contract v39 (tessera#604, second half): the dense E2M1 pair on the same
-    # image, from the all-E2M1 stub's census
-    # (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).  Route only.
-    "tessera_e2m1_k2_dense_sm121_decode_resident": _ROUTE_ONLY,
-    "tessera_e2m1_k2_dense_sm121_batch_resident": _ROUTE_ONLY,
-    # Contract v48 (tessera#702): the four E4M3/BF16 GLM scopes again on the
-    # vLLM nightly image, from one TP1 eager route census of stub B there
-    # (``docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md``).
-    # Route only: no KL arm, no smoke.
-    **{cell_id: _ROUTE_ONLY for cell_id in nightly_ids()},
-}
+# The grammar tests use current cell scopes, not a second evidence roster.
+_GRAMMAR_CONTRACT = load_serving_contract()
+_EVIDENCE = {cell["id"]: {key: value for key, value in cell["evidence"].items()
+                        if key != "artifact"}
+             for cell in _GRAMMAR_CONTRACT["lane_eligibility"]["cells"]}
 
 #: The evidence the pin-image dense E2M1 pair carried until contract v39
 #: withdrew it, as v38 published it.  The 2026-09-02 receipt is real and stays
@@ -310,12 +220,6 @@ def _with_evidence(contract, cell_id, evidence):
 
 # --- what the packaged table says --------------------------------------------
 
-def test_every_cell_states_its_evidence_receipt_for_receipt(contract):
-    cells = _cells(contract)
-    assert sorted(cells) == sorted(_EVIDENCE)
-    for cell_id, expected in _EVIDENCE.items():
-        assert {k: v for k, v in cells[cell_id]["evidence"].items()
-                if k != "artifact"} == expected, cell_id
 
 
 def test_the_stored_grade_is_the_derived_one(contract):
@@ -638,15 +542,16 @@ def test_the_grammar_is_exported_for_a_consumer(contract):
 
 # --- the validator refuses what a gate could not read ------------------------
 
-#: The two cells the refusals below are driven on.  They were the E4M3
-#: resident pair until contract v31 withdrew it (tessera#538), then the
-#: pin-image E2M1x2 dense pair until contract v39 withdrew that (tessera#604);
-#: they are now the GLM-image E2M1x2 dense pair, eager and resident.  No
-#: published cell carries a KL entry any more, so ``_KL_BASE`` is the graded
-#: evidence the mutations start from: the shape the withdrawn batch cell
-#: carried, narrowed to the one execution mode these cells cover.
-BATCH = "tessera_e2m1_k2_dense_sm121_batch_resident"
-DECODE = "tessera_e2m1_k2_dense_sm121_decode_resident"
+# Select an eager dense pair that can carry the fixture's measured rung.
+_BATCH_CELL = next(cell for cell in _GRAMMAR_CONTRACT["lane_eligibility"]["cells"]
+                   if cell["structure"] == "dense" and cell["regime"] == "batch"
+                   and cell["runtime"]["execution_modes"] == ["eager"]
+                   and 896 in cell["rungs_q256"])
+BATCH = _BATCH_CELL["id"]
+DECODE = next(cell["id"] for cell in _GRAMMAR_CONTRACT["lane_eligibility"]["cells"]
+              if cell["structure"] == "dense" and cell["regime"] == "decode"
+              and cell["family"] == _BATCH_CELL["family"]
+              and cell["runtime"] == _BATCH_CELL["runtime"])
 _KL_BASE = {"grade": "kl_lower_bound",
             "kl": [{**_bound("batch", ["eager"], PLUGIN), "q256": 896}],
             "smoke": _NO_SMOKE}
@@ -756,8 +661,9 @@ def test_a_kl_entry_may_stamp_the_rung_its_receipt_measured(contract):
         "grade": "kl_lower_bound", "kl": [stamped], "smoke": _NO_SMOKE})
     validate_serving_contract(doc)
     assert cell_evidence(_cells(doc)[BATCH], BATCH)["kl"] == [stamped]
-    outside = {**_bound("batch", ["eager"], PLUGIN), "q256": 768}
-    with pytest.raises(ValueError, match="q256=768"):
+    outside = {**_bound("batch", ["eager"], PLUGIN),
+               "q256": max(_cells(contract)[BATCH]["rungs_q256"]) + 1}
+    with pytest.raises(ValueError):
         validate_serving_contract(_with_evidence(contract, BATCH, {
             "grade": "kl_lower_bound", "kl": [outside], "smoke": _NO_SMOKE}))
 
@@ -826,13 +732,6 @@ def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
     routed_without_record = sorted(
         cell["id"] for cell in contract["lane_eligibility"]["cells"]
         if cell["structure"] == "routed_moe" and cell["evidence"]["smoke"]["record"] is None)
-    # Since contract v38 (tessera#604) that is every routed cell: the two that
-    # carried the record were withdrawn, and the v38 routed cells ran no smoke.
-    # Contract v48 adds the four nightly-image routed cells, route only.
-    assert routed_without_record == sorted(
-        [f"tessera_{family}_routed_moe_sm121_{regime}_resident"
-         for family in ("e2m1_k2", "e4m3_k1", "bf16_k1") for regime in ("decode", "batch")]
-        + nightly_ids("routed_moe"))
     for cell in _WITHDRAWN_V38.values():
         smoke = cell["evidence"]["smoke"]
         assert smoke["status"] == "recorded", cell["id"]

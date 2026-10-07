@@ -1,28 +1,9 @@
-"""The producer may not write a wire the serving plugin cannot read (#41).
+"""The serving exporter must refuse bytes that the plugin cannot read.
 
-THE DEFECT THIS PINS.  ``export.wire_recipe`` writes the WINDOW body over
-LUT16 for every ``E2M1x2`` unit below the coset trellis's cap -- the shipping
-default under q256 896 -- and the packaged ``runtime_contract.json`` publishes
-``E2M1x2`` as the single point 896.  So a legal low-rate unit encoded fine,
-was written into a checkpoint, and was refused at LOAD, hours later, on the
-operator instead of at export on the exporter.  The producer's output range
-was wider than the consumer's input range and nothing compared the two.
-
-THE INVARIANT.  For every ``(grid, q256)`` the serving exporter accepts, the
-resulting scheme must be one ``tessera.serving.scheme.validate_tessera_scheme``
-accepts -- the very function the plugin runs at load.  That is not a tautology:
-they are different code paths, and on the pre-#41 tree it fails for real on
-``E2M1`` at every rung -- and on ``BF16`` at every rung until the 16-bit route
-(#9) gave that grid a decoder -- both of which the old body/plane proxy waved
-through.
-
-WHY IT ENUMERATES.  A hand-written list of rungs would have gone stale the day
-the window body became the sub-cap default -- which is exactly the day the
-defect appeared.  The rungs come from ``export.recipe_table``/``rung_ceiling``
-(every recipe the wire can emit, per grid) and the grids from
-``control.GRID_NAMES`` (the exporter's own ``--grid`` vocabulary), so a new
-grid or a moved recipe boundary is a failing test rather than a checkpoint that
-refuses at load.
+These tests compare writer admission with the plugin's scheme validator.
+The tests derive rate boundaries from encoder recipes and published reader ranges.
+The served E2M1x2 recipe uses WINDOW L14 at every admitted rate.
+Explicit research TCQ retains its own smaller payload cap.
 """
 from __future__ import annotations
 
@@ -38,7 +19,7 @@ from tessera.alphabet import PayloadGrid
 from tessera.control import GRID_NAMES, grid_for_name
 from tessera.errors import GrammarError
 from tessera.export import (
-    encode_linear_planes, recipe_table, rung_ceiling, tcq_cap_q256, wire_recipe)
+    encode_linear_planes, recipe_table, rung_ceiling, served_recipe, tcq_cap_q256, wire_recipe)
 from tessera.fused import pack_fused
 from tessera.manifest import BodyKind
 from tessera.serving.contract import reader_accepts, reader_rate_grid
@@ -234,25 +215,24 @@ def test_the_published_range_is_inside_what_the_encoder_can_build(name):
     if found is None:
         pytest.skip(f"{name} publishes no reader range")
     _family, low, high, _step = found
-    weight = torch.randn(64, 64, generator=torch.Generator().manual_seed(1)).float()
+    weight = torch.randn(64, 256, generator=torch.Generator().manual_seed(1)).float()
     for q256 in {low, high}:
+        recipe = served_recipe(grid, q256)
         exported, _unit, _forests = encode_linear_planes(
-            weight, grid=grid, q256=q256, name=f"{name}@{q256}", verify=False)
-        assert exported.rows == 64
+            weight, grid=grid, q256=q256, name=f"{name}@{q256}", verify=False,
+            body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+            window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+            window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
+        assert exported.rows == weight.shape[0]
 
 
-def test_the_rungs_above_the_e2m1x2_cap_are_the_encoders_refusal_not_a_gap():
-    """``wire_recipe`` returns a recipe above 896; the grammar refuses the rate.
-
-    Recorded because an enumeration of ``wire_recipe`` alone reads 897..1024 as
-    an unserved gap.  It is not: no such wire can be built, so nothing can
-    write one.
-    """
+def test_explicit_e2m1x2_tcq_above_the_native_payload_refuses():
+    """Research TCQ cannot use the WINDOW reader's full-width rate."""
     grid = grid_for_name("E2M1x2")
-    assert wire_recipe(grid, 1024).body is BodyKind.TCQ
     weight = torch.randn(64, 64, generator=torch.Generator().manual_seed(2)).float()
     with pytest.raises(GrammarError):
-        encode_linear_planes(weight, grid=grid, q256=1024, name="above-cap", verify=False)
+        encode_linear_planes(weight, grid=grid, q256=1024, name="above-tcq-cap",
+                             body=BodyKind.TCQ, verify=False)
 
 
 # --------------------------------------------------------------- #41 item 2

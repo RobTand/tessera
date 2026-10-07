@@ -263,7 +263,7 @@ ROUTES: dict[str, dict] = {
         "grid_kind": "the paired E2M1",
         "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
         "tile": "native E2M1x2 window words, LUT16 group-16 scales and per-role global",
-        "columns_multiple": 16,
+        "columns_multiple": 64,
         "activation_contract": NVFP4_ACTIVATION_CONTRACT,
         "gemm_symbol": "tessera.routed_fused_e2m1.dense_forward_quantized",
     },
@@ -311,8 +311,10 @@ def e2m1_shape_reason(rows: int, columns: int, *, structure: str = STRUCTURE_DEN
                        projection: "str | None" = None) -> "str | None":
     """Metadata-only native FP4 shape rule, shared by writer and reader."""
     rows, columns = int(rows), int(columns)
-    if columns < 256 or columns % 64:
-        return f"{columns} columns; the native E2M1 launch needs a multiple of 64 and at least 256"
+    column_multiple = ROUTES[TESSERA_NVFP4]["columns_multiple"]
+    if columns < 256 or columns % column_multiple:
+        return (f"{columns} columns; the native E2M1 launch needs a multiple of "
+                f"{column_multiple} and at least 256")
     if structure == STRUCTURE_DENSE:
         multiple = 32
     elif structure == STRUCTURE_ROUTED_MOE and projection in ("gate_proj", "up_proj", "down_proj"):
@@ -1714,7 +1716,7 @@ def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str
             f"has no {route['short']} tile")
     rows = _as_int(group, "rows", target)
     columns = _as_int(group, "columns", target)
-    if columns % route["columns_multiple"]:
+    if family != TESSERA_NVFP4 and columns % route["columns_multiple"]:
         raise ValueError(
             f"tessera target {target!r}: the {family} mainloop needs "
             f"K % {route['columns_multiple']} == 0, got {columns}")

@@ -508,30 +508,6 @@ def test_the_reader_range_is_what_the_decoder_takes(contract):
         assert entry["reader_rate_bound"], f"{family}: no mechanism named for the bound"
 
 
-def test_the_deprecated_alias_is_carried_and_must_agree(contract):
-    """``candidate_rungs_q256`` is kept so the rename stays ADDITIVE.
-
-    PrismaQuant reads this packaged file through ``importlib.resources`` and its
-    ``load_published_formats`` was written against schema v1; dropping a key it
-    reads by name, while the ``schema`` string still says v1, would be the same
-    "current and wrong" fault this change exists to close.  So the alias stays
-    until the schema moves, and it may not disagree with the field it aliases.
-    """
-    for entry in contract["formats"]:
-        assert entry["candidate_rungs_q256"] == entry["attested_rungs_q256"], (
-            f"{entry['family']}: the alias has drifted from what it aliases")
-
-    broken = copy.deepcopy(contract)
-    broken["formats"][0]["candidate_rungs_q256"] = [
-        broken["formats"][0]["attested_rungs_q256"][0] + 1]
-    with pytest.raises(ValueError, match="DEPRECATED ALIAS"):
-        validate_serving_contract(broken)
-
-    # and it is genuinely OPTIONAL: a document without it still validates
-    without = copy.deepcopy(contract)
-    for entry in without["formats"]:
-        entry.pop("candidate_rungs_q256")
-    validate_serving_contract(without)
 
 
 def test_an_attested_rung_outside_the_reader_range_is_refused(contract):

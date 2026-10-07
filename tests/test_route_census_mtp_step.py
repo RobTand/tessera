@@ -19,9 +19,9 @@ means the draft was not engaged and still refuses; an M1 draft call is
 inconsistent with k = 1 and refuses.  ``decode_regime_served: false`` is
 stamped rather than passed or refused.
 
-The fixture is trimmed from the r5 receipt by
-``tests/fixtures/generate_route_census_mtp_r5.py``.  The replay runs the tool's
-own ``validate_census_observations`` on those records, with no engine or device.
+The fixture is trimmed from the r5 receipt by tests/fixtures/generate_route_census_mtp_r5.py.
+The replay uses the original TCQ cells and the current census phase rules.
+These historical receipts do not attest the production WINDOW owner.
 """
 from __future__ import annotations
 
@@ -75,6 +75,10 @@ def _replay(fixture, *, plan, with_draft=True):
     ranks = fixture["ranks"]
     platform = fixture["platform"]
     draft = fixture["draft"]
+    # Replay against the actual historical TCQ receipts, not current WINDOW admission.
+    current = load_serving_contract()["lane_eligibility"]["cells"]
+    archive = json.loads((ROOT / "tests/fixtures/t4_tcq_cells_historical.json").read_text())
+    cells = [cell for cell in current if cell["family"] != "TESSERA_E2M1_K2"] + archive["cells"]
     return tool.validate_census_observations(
         phases_by_rank={phase: [rank["records"][phase] for rank in ranks]
                         for phase in (PREFILL, GENERATION)},
@@ -85,12 +89,16 @@ def _replay(fixture, *, plan, with_draft=True):
         phase_plan=plan, mode=fixture["serve_mode"], platform=platform,
         runtime_image=fixture["runtime"]["image"],
         execution_mode=fixture["runtime"]["execution_mode"], compiled=False,
-        cells=load_serving_contract()["lane_eligibility"]["cells"],
+        cells=cells,
         contract_for={TESSERA_NVFP4: nvfp4_route.ACTIVATION_CONTRACT,
                       TESSERA_FP8: fp8_route.ACTIVATION_CONTRACT,
                       TESSERA_BF16: bf16_route.ACTIVATION_CONTRACT},
-        expected=lambda family, regime, kind: tool.expected_pairs(
-            family, regime, kind, compiled=False, platform=platform),
+        expected=lambda family, regime, kind: {
+            (launch["symbol"], launch["decoder"])
+            for cell in cells if cell["family"] == PAYLOAD_FAMILY_BY_ROUTE[family]
+            and cell["regime"] == regime
+            and cell["structure"] == ("routed_moe" if kind == "moe" else "dense")
+            for launch in cell["executes"]},
         symbol_for={family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES},
         symbol_base=moe_route.census_symbol_base,
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,

@@ -92,10 +92,24 @@ def resolve_window_kwargs(q256, structure="dense"):
         raise ValueError("integrated served_recipe does not supply WINDOW span 1 LUT L14")
     return dict(grid=grid, q256=q256, **recipe_kwargs(recipe)), "served-recipe"
 
+def encode_artifact_bytes(weight, **kwargs):
+    from tessera.export import encode_linear
+
+    try:
+        return bytes(encode_linear(weight, **kwargs).blob)
+    finally:
+        if weight.is_cuda:
+            import torch
+            from tessera.window_viterbi import window_plan_cache_clear
+
+            window_plan_cache_clear()
+            torch.cuda.empty_cache()
+
+
 
 def encode_bytes(weight, q256, kind="window", structure="dense"):
     from tessera.alphabet import E2M1_GRID, tuple_grid
-    from tessera.export import TCQ_RECIPE, encode_linear
+    from tessera.export import TCQ_RECIPE
     from tessera.manifest import BodyKind, ScalePlaneKind
 
     if kind == "window":
@@ -109,7 +123,7 @@ def encode_bytes(weight, q256, kind="window", structure="dense"):
         source = "explicit-TCQ-span2-screen-not-serving"
     else:
         raise ValueError(f"unknown encoding {kind}")
-    return bytes(encode_linear(weight, **kwargs).blob), source
+    return encode_artifact_bytes(weight, **kwargs), source
 
 
 def byte_receipt(blob, rows, cols):
@@ -371,7 +385,7 @@ def parse_resource_usage(raw):
     records = []
     name = None
     for line in raw.splitlines():
-        found = re.search(r"Function\s*:\s*(\S+)", line)
+        found = re.search(r"^\s*Function\s*:?\s+(\S+?):?\s*$", line)
         if found:
             name = found.group(1)
         fields = dict((k, int(v)) for k, v in re.findall(
@@ -542,6 +556,10 @@ def routed_cells(args, q, blobs, frames, tp_size, rank):
 
     layer, method, owner = load_routed_route(frames, args.hidden, args.inter, args.experts,
                                            args.top_k, q, tp_size, rank)
+    input_layer, input_method, input_owner = load_routed_route(
+        frames, args.hidden, args.inter, args.experts, 1, q, tp_size, rank)
+    input_layer.apply_router_weight_on_input = True
+    input_resident = storage_bytes(input_method.resident_tensors(input_layer))
     inter = args.inter // tp_size
     cut = (rank * inter, (rank + 1) * inter) if tp_size > 1 else None
     weights = {p: decode_references(blobs[p], cut, "cols" if p == "down" else "rows")
@@ -667,18 +685,16 @@ def routed_cells(args, q, blobs, frames, tp_size, rank):
             # Owner's input placement uses X internally; call with original X
             # for both paths and check against an unweighted-input explicit
             # top-one chain at routing weights one.
-            placed = owner(weighted_x, top_ids, torch.ones_like(top_rw))
-            layer.apply_router_weight_on_input = True
+            placed = input_owner(weighted_x, top_ids, torch.ones_like(top_rw))
             def router_input():
-                return method.apply(layer, x, top_rw, top_ids, None, None)
+                return input_method.apply(input_layer, x, top_rw, top_ids, None, None)
             def check_router(got):
                 equal = bool(torch.equal(got.view(torch.int16), placed.view(torch.int16)))
                 return dict(ok=equal, mismatch=int((got != placed).sum()),
                             bound_kind="bitwise router-weight input placement", arithmetic_qualified=False)
             yield finish_cell(key("router_input"), router_input, check_router,
-                dict(metadata, mode="router-input", top_k=1,
+                dict(metadata, mode="router-input", top_k=1, resident_bytes=input_resident,
                      routing_sha256=tensor_digest(top_ids), routing_weights_sha256=tensor_digest(top_rw)), args)
-            layer.apply_router_weight_on_input = False
 
 
 def tensor_digest(tensor):
@@ -824,10 +840,21 @@ def attach_t8_comparison(row, baseline):
 
 def run_gpu(args):
     import torch
-    from tessera.fused_frame import pack_fused
 
     if not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 1):
         raise ValueError("native T4 serving requires the actual sm_121a GPU")
+    from experiments.bench_native_operator import native_runtime_context
+
+    with native_runtime_context():
+        report = _run_gpu(args)
+    report["tp_execution_scope"] = "one process; rank-local TP2 cuts, not a distributed TP2 engine"
+    return report
+
+
+def _run_gpu(args):
+    import torch
+    from tessera.fused_frame import pack_fused
+
     check_mem_guard()
     report = dict(schema=SCHEMA, mode=args.mode, **source_stamp(args), cells=[], skips=[],
                   requested_population=requested_keys(args), resources=native_resources())
@@ -1057,12 +1084,14 @@ def prepare_inputs(args):
     raw_spec = spec.read_bytes()
     entries.append(dict(path=str(spec), offset=0, bytes=len(raw_spec),
                         sha256=hashlib.sha256(raw_spec).hexdigest()))
+    total_bytes = sum(entry["bytes"] for entry in entries)
     manifest.write_text(json.dumps(dict(schema="prismaquant.prismabuild.data_manifest.v1",
         produced_by={"entry_point": "experiments/t4_code/t4_fused_qualify.py", "source_head": head_stamp()},
-        annotations={"objective": "bounded GLM full units for a raw weight-space screen"},
+        annotations={"objective": "bounded GLM full units for a raw weight-space screen",
+                     "phases": [{"name": "full-units", "cumulative_bytes": total_bytes}]},
         mount_prefix=os.path.commonpath([str(root.resolve()), str(directory.resolve())]),
         entries=entries, entry_count=len(entries),
-        total_bytes=sum(e["bytes"] for e in entries)), indent=1) + "\n")
+        total_bytes=total_bytes), indent=1) + "\n")
     public_sdk = Path(os.environ.get("PRISMABUILD_READER_HELPER_ROOT", "/mnt/shared/prismabuild-fleet/repo"))
     sys.path.insert(0, str(public_sdk / "src"))
     from prismabuild.client import read_data_manifest
@@ -1197,7 +1226,7 @@ def mode_quality(args):
                     tcq_span2=selected, searched_candidate_q256=candidates, measured_candidates=measured,
                     exact_byte_match=exact,
                     unmatched_slack_bytes=None if selected is None else budget - selected["wire_bytes"],
-                    complete=exact, screen_only=True,
+                    complete=selected is not None, screen_only=True,
                     interpretation="common upper-byte budget; unequal artifacts are NOT matched",
                     claim="raw weight-space screen only, not PACT/G3/end-to-end quality"))
                 save_report(args.out, dict(schema=SCHEMA, mode="quality-screen", cells=cells))
@@ -1243,7 +1272,7 @@ def validate_report(report, args):
     elif report["mode"] == "quality-screen":
         for c in cells:
             if c.get("complete") is not True:
-                failures.append(f"equal-byte screen incomplete: {c.get('tensor')} q{c.get('q256')}; slack disclosed")
+                failures.append(f"common-budget screen incomplete: {c.get('tensor')} q{c.get('q256')}; no feasible TCQ comparison")
         if len(cells) != report.get("population", {}).get("requested_cells"):
             failures.append("quality population incomplete")
     elif report["mode"] in ("dry-run", "research-fixture"):

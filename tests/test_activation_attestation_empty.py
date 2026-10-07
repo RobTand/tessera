@@ -20,15 +20,14 @@ def test_empty_root_mapping_is_valid_without_a_current_attestation():
         block, platforms=["sm_121"],
         cell_contracts={"sm_121": {"fp8_per_token_dynamic", "bf16_unquantized"}},
         require_image=require_runtime_image)
-
-
-def test_a_historical_claim_cannot_reenter_current_unattested_t4():
-    block = json.loads(ARCHIVE.read_text())
+    block["platforms"] = json.loads(ARCHIVE.read_text())["platforms"]
     with pytest.raises(ValueError, match="no cell on this platform executes"):
         validate_activation_quantizers(
             block, platforms=["sm_121"],
             cell_contracts={"sm_121": {"fp8_per_token_dynamic", "bf16_unquantized"}},
             require_image=require_runtime_image)
+
+
 
 
 @pytest.mark.parametrize("entries", [[], {}, None])

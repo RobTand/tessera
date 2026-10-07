@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-10-07 — native fused T-4 served encoder
+## 2026-10-07 — native fused T-4 served lane
 
 Dense and routed E2M1x2 exports use the named WINDOW L14 recipe over LUT16.
 The pure widths 1..8 cover q128..q1024, including the full-width cap.
@@ -10,6 +10,25 @@ CPU tests replay the actual serialized bytes and check plane and full-file charg
 The byte audit includes all pure classes and both structures.
 The shared rate guard checks expert strides and gate/up strides before encode.
 The down projection can use a separate rate when all experts agree.
+Dense and routed owners share the native fused E2M1 library.
+The dense route quantizes activations once and writes each role into the final output.
+Resident tensor owners expose the actual prepared tables, scale planes and descriptors.
+The current activation container stays empty until a new serving cell has its own evidence.
+The qualification harness checks actual serving paths, numeric references and CUDA graph equality.
+It retains physical byte counts and raw timing samples for later D41 review.
+The real-unit screen uses bounded GLM tensor ranges and explicit research TCQ.
+The native receipt collector uses the route's resident tensor interface.
+The input manifest declares one bounded phase for the selected GLM units.
+The step-4 preflight builds the required native FP4 extension and records its path and digest.
+Its dispatch qualifier uses the current WINDOW entry points.
+Historical TCQ fixtures remain outside the published contract.
+A feasible common-budget screen completes its comparison without an exact byte match.
+The receipt keeps the exact-match flag and the actual byte slack separate.
+The measurement encoder drains retained Viterbi plans after each unit.
+This bounds residency across byte-plan probes without a new encoder default.
+The T8 planner uses a high-rate reference only to estimate fixed serialized overhead.
+Actual encoded bytes still decide the selected rate and every exact-match claim.
+The D41 measurements and the real-unit screen remain pending.
 This change does not assert measured route eligibility or quality.
 
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer

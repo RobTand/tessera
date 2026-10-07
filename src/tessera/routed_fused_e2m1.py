@@ -31,15 +31,10 @@ column rate 1..8 and every adjacent two-run table is instantiated at three
 word stages; the largest launch (gate/up, rate 8) needs 93,648 B of shared
 memory.
 
-Scope: NOT a serving lane yet.  ``ROUTES["TESSERA_NVFP4"]`` admits the TCQ
-span-2 body only, and ``nvfp4_moe_route``/``nvfp4_route`` intake span-2 units,
-so no serving module can hold a window-body E2M1 stack.  This module is
-therefore kept out of the import graph of ``tessera.serving``: the contract's
-``native_extensions`` table lists the libraries a serving process can map
-(``tests/test_serving_native_extensions.py`` holds reachability to that
-table), and publishing this one before a route loads it would claim a load
-path that does not exist.  The entry, the route's launch rows and the census
-cells come with the route change that admits the window body.
+The production NVFP4 routes load this native WINDOW owner for dense and routed units.
+The serving contract publishes its extension and launch identities.
+Old TCQ receipts do not attest this body or owner.
+Full arithmetic qualification remains separate from exact fixtures and conditional random checks.
 """
 
 from __future__ import annotations

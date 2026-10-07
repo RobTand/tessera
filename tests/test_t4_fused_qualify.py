@@ -66,10 +66,10 @@ def test_mandatory_skip_is_a_failure(tmp_path, monkeypatch):
 
 
 @pytest.mark.before_control
-def test_unmatched_quality_screen_cannot_claim_completion(tmp_path, monkeypatch):
+def test_missing_tcq_comparison_cannot_claim_completion(tmp_path, monkeypatch):
     data = report("quality-screen")
     data["cells"] = [{"tensor": "real.weight", "complete": False,
-                      "exact_byte_match": False, "unmatched_slack_bytes": 512}]
+                      "tcq_span2": None, "exact_byte_match": False, "unmatched_slack_bytes": None}]
     assert run_control(tmp_path, monkeypatch, data, "quality-screen") == 1
 
 
@@ -170,14 +170,19 @@ def test_raw_events_keep_acquisition_order(monkeypatch):
     assert got["median_ms"] == 2.0
 
 
-def test_d41_resource_parse_keeps_each_register_record():
-    raw = """Function : native_rate7
+@pytest.mark.parametrize("headers", [
+    ("Function : native_rate7", "Function : native_rate8"),
+    ("Function native_rate7:", "Function native_rate8:"),
+])
+def test_d41_resource_parse_keeps_each_register_record(headers):
+    raw = f"""{headers[0]}
     REG:124 STACK:0 SHARED:1024 LOCAL:16
-    Function : native_rate8
+    {headers[1]}
     REG:132 STACK:8 SHARED:2048 LOCAL:0
     """
     got = qual.parse_resource_usage(raw)
-    assert [(r["REG"], r["LOCAL"]) for r in got] == [(124, 16), (132, 0)]
+    assert [(r["symbol"], r["REG"], r["LOCAL"]) for r in got] == [
+        ("native_rate7", 124, 16), ("native_rate8", 132, 0)]
     with pytest.raises(ValueError, match="no register"):
         qual.parse_resource_usage("a tool printed no resource records")
 
@@ -210,6 +215,30 @@ def test_budget_search_prices_overhead_without_padding():
     assert candidates[0] == 384
 
 
+def test_real_common_budget_screen_completes_without_an_exact_byte_match(tmp_path):
+    from safetensors.torch import save_file
+
+    kinds = ("dense", "gate_proj", "up_proj", "down_proj")
+    weights = {kind: torch.randn(32, 256, generator=torch.Generator().manual_seed(index + 7))
+               for index, kind in enumerate(kinds)}
+    path = tmp_path / "source.safetensors"
+    save_file(weights, str(path))
+    source_spec = tmp_path / "source-spec.json"
+    source_spec.write_text(json.dumps({"units": [
+        {"path": str(path), "tensor": kind, "kind": kind, "shape": [32, 256]}
+        for kind in kinds]}))
+    args = qual.build_parser().parse_args([
+        "--mode", "quality-screen", "--quality-device", "cpu", "--q256", "128",
+        "--source-spec", str(source_spec), "--out", str(tmp_path / "screen.json")])
+    data = qual.mode_quality(args)
+    for cell in data["cells"]:
+        assert cell["tcq_span2"]["wire_bytes"] < cell["budget_bytes"]
+        assert cell["exact_byte_match"] is False
+        assert cell["unmatched_slack_bytes"] == cell["budget_bytes"] - cell["tcq_span2"]["wire_bytes"]
+        assert cell["complete"] is True
+    assert qual.validate_report(data, args) == (True, [])
+
+
 def test_prepare_inputs_declares_exact_ranges(tmp_path):
     from safetensors.torch import save_file
 
@@ -224,8 +253,10 @@ def test_prepare_inputs_declares_exact_ranges(tmp_path):
     result = qual.prepare_inputs(args)
     manifest = json.loads(Path(result["data_manifest"]).read_text())
     unit = result["units"][0]
-    assert manifest["entry_count"] == len(manifest["entries"])
-    assert manifest["total_bytes"] == sum(e["bytes"] for e in manifest["entries"])
+    from prismabuild.storage_tiers import manifest_phase_ranges
+    ranges = manifest_phase_ranges(manifest)
+    assert ranges[0]["start_bytes"] == 0
+    assert ranges[-1]["end_bytes"] == manifest["total_bytes"]
     assert unit["bytes"] == 32 * 256 * 4
     declared = [e for e in manifest["entries"] if e["path"] == unit["path"] and e["offset"] == unit["offset"]]
     assert len(declared) == 1 and declared[0]["bytes"] == unit["bytes"]

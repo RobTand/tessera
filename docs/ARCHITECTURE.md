@@ -4251,19 +4251,18 @@ identity, and patches are restored after observation. Dynamic input and output
 tensor references preserve backings crossing each boundary. For original-wire
 references, native parameters and buffers, including scale storage, are candidate
 owners; tensors also registered outside canonical native modules remain fixed.
-Every Tessera route holds its prepared weights outside registered state (the
-slotted `PreparedDenseNativeModule` on the FP8/BF16 window routes, `A4Unit`s and
-epilogues on the NVFP4 route, `A4UnitStack`s on the NVFP4 MoE route, the compact
-`PackedWindowMoeBundles` on the window MoE route) and declares them through one
-protocol, `tessera.serving.residency`: `quant_method.resident_tensors(layer)`
-yields each tensor by reference, and each prepared object names its own tensors
-through `named_tensors()`. The census walks only that declaration and records the
-tensors under `model:native:<module>.<attribute>.*`, so they resolve to the same
-canonical unit as registered state; a unit no longer depends on the
-one-unit-per-family fallback in `derive_owner_views`. This adds no buffers,
-device movement, or allocation. Shared storage is charged once, because every
-declared view joins its backing allocation; external tensor aliases stay fixed,
-and storage alias conflicts retain the existing refusal. An object a route does
+Every Tessera route declares its unregistered prepared inputs through
+`tessera.serving.residency`. FP8/BF16 dense routes use
+`PreparedDenseNativeModule`. The NVFP4 dense route holds
+`DenseE2M1Role` objects; its routed route holds `FusedRoutedE2M1MoE`.
+Each object exposes `named_tensors()`, and the quant method yields those
+references through `resident_tensors(layer)`. The census uses only this
+declaration. It assigns each backing allocation to the canonical native
+module and charges shared storage once. This observer adds no model buffers,
+device movement, or tensor copy.
+The native operator receipt uses the same route interface.
+It hashes resident tensor contents before and after each measurement.
+Storage alias conflicts retain the existing refusal. An object a route does
 not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
 bytes stay uncharged in the report rather than attributed by guess. Dense export
 footprints now derive native packed storage from each role's verified rates,
@@ -4614,7 +4613,7 @@ research boundary does not promote a runtime cell or qualify a release.
 and that format is the only place its recipe is read. `owner_wire` splits
 `TESSERA_<grid>_K<arity>_R<q256>` and resolves the grid through
 `scheme.route_for_grid`, so `TESSERA_E2M1x2_K2_R896` (A4,
-`TESSERA_NVFP4`/TCQ/LUT), `TESSERA_E4M3_K1_R1024` (A8, `TESSERA_FP8`/WINDOW/
+`TESSERA_NVFP4`/WINDOW/LUT), `TESSERA_E4M3_K1_R1024` (A8, `TESSERA_FP8`/WINDOW/
 CHANNEL) and `TESSERA_BF16_K1_R1024` (A16, `TESSERA_BF16`) are the same code
 path at their own recipe rather than three branches. The sidecar handed to the
 loader is `scheme.validate_tessera_moe_scheme` over that wire, at the MODULE's
@@ -5366,39 +5365,54 @@ cannot compile the extension is the published `when_unavailable` case:
 `adapter()` builds it at construction, and a build failure is logged and
 answered with the compact adapter, so the substitute the table names is the
 one the code makes. The oracle, profile, NCU, census and bench receipts are
-recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
-not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
-path; that gap is measured in the same document.
+recorded in `docs/measurements/2026-09-28-routed-fused-640.md`.
+The E2M1 family now has its own native serving owner, described below.
+Historical span-2 measurements do not qualify that replacement route.
 
-**The E2M1 family (not a serving lane yet, Refs #750).** A fourth library of
-the same source, `tessera_routed_fused_e2m1` (`-DTESSERA_ROUTED_FUSED_FP4=1`,
-built for the architecture-specific `sm_121a` only), runs the Tessera-4 wire
--- the E2M1x2 window body over the LUT16 plane -- on the block-scaled FP4
-instruction `mma.sync ... kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64
-.e2m1.e2m1.f32.ue4m3`. The producers decode each 64-column chunk's tuple codes
-into a packed E2M1 B tile and its LUT16 nibbles into the instruction's UE4M3
-group scales; the activation is the NVFP4 routes' own `scaled_fp4_quant` at the
-layer's static global `gs`, staged unconverted; the epilogue is one fp32
-multiply by `global / gs` before the bf16 boundary. That is the activation
-contract the NVFP4 routes already execute (`e2m1_group16_ue4m3_static`),
-unchanged. An item is 256 output rows (gate/up: 128 of each), so the
-intermediate size must be a multiple of 128 and the hidden size of 256. A
-dense projection's rows need only be a multiple of 32: the last block is
-decoded whole from the wire's padded 1024-row tile and written only below its
-rows, so GLM-5.3's DSA indexer `wk` (128) and `weights_proj` (32) and a TP2
-`lm_head` (77,440) are in. Every
-rate 1..8 and every adjacent two-run table is instantiated at three word
-stages (gate/up at rate 8 needs 93,648 B). The dense identity's K split keeps
-two chunks per item (`routed_fused_e2m1.dense_split_max`, refused by name
-past it), because the producers rewrite an item's descriptor slot two items
-later. Adding the family leaves the three existing libraries' SASS
-instruction-identical. It is NOT in `native_extensions`, `ROUTE_LAUNCHES` or
-any cell: `ROUTES["TESSERA_NVFP4"]` admits the TCQ span-2 body only, so no
-route can hold a window-body E2M1 stack, and `tessera.routed_fused_e2m1` is
-kept out of the import graph of `tessera.serving` (the contract scanner holds
-reachability to the published table). The route change that admits the window
-body adds the entry, the launch rows and the census. Oracle:
-`tests/test_routed_fused_e2m1.py`.
+**Native fused E2M1 serving (Refs #750).** The NVFP4 route admits E2M1x2
+WINDOW L14 over LUT16, with group-16 UE4M3 scales. Dense and routed exports
+use the same served recipe. Pure pair widths 1 through 8 correspond to
+q128 through q1024. The research recipe and explicit TCQ encoding stay
+available, but the production route has no TCQ compatibility path.
+
+The required library is `tessera_routed_fused_e2m1`, built from
+`serving/csrc/routed_fused_window.cu` for sm_121a. It uses the block-scaled
+FP4 instruction `mma.sync.kind::mxf4nvf4.block_scale.scale_vec::4X`
+with E2M1 operands, UE4M3 group scales, and FP32 accumulation.
+Each projection's FP32 epilogue ratio is weight global / activation global.
+The decoder reads the packed WINDOW words directly; no whole-weight stock
+tile or generic FP8/BF16 substitute exists on this route.
+
+Dense intake prepares `DenseE2M1Role` objects. The forward quantizes the
+activation once, then calls `dense_forward_quantized` for each role.
+Each role writes into its own output view and retains its own LUT/global.
+The shared `scheme.e2m1_shape_reason` rule checks whole and rank-local
+geometry before costly preparation. K is a multiple of 64 and at least
+256. Dense rows are a positive multiple of 32. Routed gate/up rows are a
+multiple of 128; down rows are a multiple of 256. Gate/up must share a tile
+stride, but their column permutations can differ. Each projection has one
+expert stride; the down projection can use an independent rate.
+
+The extension and launch rows publish the actual Python entry points.
+Old TCQ cells and current T4 attestations are withdrawn, not transferred.
+Dispatch support does not prove a serving cell, D41 eligibility, performance,
+or end-to-end quality. The shared qualification harness owns independent
+numerical references, required populations, raw timings, and graph checks.
+The current mainloop still decodes weights per 64-route superblock; this
+cutover does not claim decode-once speed or the projected twofold FP4 gain.
+
+The step-4 preflight builds the required E2M1 extension and checks its ABI before it starts an engine.
+It records the actual library path and SHA256.
+The dispatch qualifier admits the native WINDOW dense and routed entry points, not the retired TCQ pairs.
+Historical TCQ fixtures replay original receipts outside the published contract.
+Neither a build proof nor a historical replay attests the current serving owner.
+
+The weight-space screen uses a common upper-byte budget for each unit.
+A feasible TCQ candidate completes that comparison even when its byte count differs.
+The receipt reports the actual byte counts, exact-match flag and remaining byte slack.
+A missing feasible candidate leaves the comparison incomplete.
+The measurement encoder drains the window Viterbi cache after each serialized unit.
+This releases its traceback buffers without a different recipe or a new encoder default.
 
 **The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
 unweighted case of the routed lane, and since v43 the same kernel serves the
@@ -6643,72 +6657,41 @@ family's builder off that table exactly as a Linear is dispatched off
 `ROUTES`. Three families have one. `TESSERA_FP8` is the route above, and
 `TESSERA_BF16` shares it (tessera#609): the same `moe_route` builder on the
 compact lane, with folded arithmetic.
-`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492),
-NATIVE since the A4 serving integration: one E2M1x2 container per expert
-projection is read by the shared compact validator
-(`scheme.parse_compact_tessera_expert_blob`, the same refusals as the
-materialising reader, no weight-plane expansion), cut to the rank by the
-group's plan (rows of `w13`, columns of `w2`), and prepared into
-`kernel_a4`'s bundle per (group, role) on an `A4ExpertAxis` --
-`serving/native_a4.py` -- with the gate/up LUT tables joined by
-`fused.shared_lut_global` under the fused tile's one global.  No stock
-NVFP4 tile is built at load or in a forward and no expanded expert pool is
-resident: the compact planes ride through residency and the fused decode
-happens in the kernel.  The expert intake writes each projection's prepared planes
-**directly into that expert's preallocated axis slot** the moment the wire
-arrives (`A4ExpertAxis.destination`/`set_lut_bytes`/`set_global`), so no
-per-wire output tensor exists and `finish` copies nothing; only the 16-byte
-LUT table and its scalar global wait in `_ExpertIntake.pending` for the mate
-(the fused tile's shared global), which keeps arbitrary wire order legal and
-the join semantics exactly the stock lane's.  That direct destination is what
-removes the per-wire point-plane allocation the ml19 runtime showed pooling
-288 dead 20 MiB blocks.  The loader's parse is bounded and owned by the
-load too: the two mandated SHA-256 passes over a wire overlap (per-plane
-checks on one short-lived worker thread, the whole-region payload digest on
-the caller, payload-digest precedence unchanged), the geometry-keyed
-derivations that are constant across a layer (encoder-profile pair, rate
-schedule, completion depth, shard granularity) are memoised in a
-caller-owned per-layer dict whose keys carry the full rate schedule, and the
-byte-reversed word view is built once per wire for all three packers.  The
-staging is bounded and owned by the
-load: the per-wire packed-plane transfers fill caller-owned reusable buffers
-(`compact_prep._plane_u8`, `kernel_bits._plane_words`; one scratch dict per
-`_ExpertIntake`, never module-global) instead of allocating a fresh device
-tensor per wire, and `A4ExpertAxis` allocates its stacked planes once on the
-first `put` and copies each expert into its own slot, so `finish` copies
-nothing and no per-expert temporaries are retained.  That staging is what
-keeps a load under the runtime's `max_split_size_mb=20` allocator context
-from churning dead CUDA slabs; the measured before/after is
-`docs/measurements/tessera-a4-loader-staging-20260916.md`.  The stock
-modelopt names stay registered as
-ZERO-SIZE anchors whose loader refuses checkpoint bytes, so a stock tensor
-in a Tessera stack is still refused by name while the 4.5-bpp pool is never
-allocated.  `apply` is the native two-stage pipeline: separate grouped
-gate/up calls (per-role tables and globals intact), vLLM's own
-`apply_moe_activation` for the layer's activation, the down grouped call on
-the per-route rows under a second static scale, and the router weights
-applied only in the final combine; shared experts are the runner's and are
-never recomputed here.  The method's protocol is MODULAR BY ITS OWN
-DEFINITION: `is_monolithic` is False, and neither `experts_cls` nor
-`moe_kernel` is owned (the base class delegates `is_monolithic` to a
-selected stock class when one is present, which is exactly the ownership
-this lane refuses); `get_fused_moe_quant_config` carries the model's swiglu
-alphas and no stock tensors.  The static A side is a checkpoint fact: the
-exporter writes `experts.{e}.{proj}.input_global_scale` beside each wire
-(capacity over amax, the dense route's `trellis_input_global_scale`
-quantity, from `--input-scales`), a stack missing any refuses rather than
-quantising at 1.0, and the selected backend's aggregation is preserved
-unchanged -- ONE scalar per layer/projection, the max of the loader's
-reciprocal (the layer's largest calibrated amax) broadcast to every expert,
-from `amax_for_moe_activation_quant` via
-`is_global_sf_supported_for_nvfp4_backend`, per the scale review; the
-per-expert tensors are what a per-expert price describes, and priced ==
-served only when the amax spread is zero.  The executed symbols are the
-native ones (`scheme.A4_GROUPED_GEMM_SYMBOL`,
-`telemetry.DECODER_NATIVE_SPAN2_GROUPED`), published as EXPERIMENTAL pairs
-(`scheme.experimental_launch_pairs`) so a census accepts the candidate while
-`launch_pairs` keeps the cell validator on the attested dispatch -- no
-qualification is promoted by this change.
+`TESSERA_NVFP4` uses `tessera.serving.nvfp4_moe_route` and the native
+E2M1 WINDOW owner. The shared compact validator reads one framed unit per
+expert projection and checks its actual metadata before a rank-local cut.
+Gate/up rows and down columns follow the group's TP plan.
+
+One `WindowUnitAxis` per group stores projection inputs in preallocated
+structure-of-arrays storage. Each prepared unit copies into its expert slot;
+its temporary storage is not retained as a separate expert pool.
+The finalizer builds `FusedRoutedE2M1MoE` and releases the intake owner.
+It retains separate gate, up, and down weight globals. It preserves the
+checkpoint's reciprocal input-scale reduction. The runtime runner retains
+shared experts and TP reduction; the native owner preserves router-weight
+placement and its fixed-order output sum.
+
+The dense and routed owners declare every retained tensor by reference.
+Resident prices include code tables, packed words, scale planes, incoming
+state, run metadata, descriptors, epilogue ratios, and native work counters.
+They do not charge a materialized whole weight or obsolete TCQ tables.
+Historical A4ExpertAxis destination and shared-LUT receipts remain history;
+they do not describe the current WINDOW owner.
+The stock modelopt parameters remain zero-size loader anchors. Their
+loaders reject stock checkpoint bytes instead of allocating an expanded
+expert pool. The calibrated static input scale is required for every
+expert projection. A missing or invalid scale refuses finalization.
+The native owner uses one input scalar for gate/up and one for down, with
+the checkpoint's existing reciprocal reduction and rounding sequence.
+
+The method is modular by its own definition. It does not own a stock MoE
+kernel or experts class. The runner retains its shared-expert behavior.
+The native owner executes fused gate/up, the intermediate activation
+quantization, routed down, and the fixed-order token sum. The actual
+entry point is `tessera.routed_fused_e2m1.FusedRoutedE2M1MoE.__call__`.
+Its trace decoder is `native_routed_fused_window_e2m1`. Those names are
+dispatch facts, not current serving attestations. The row table, graph
+packet, and full-model quality receipts must earn their own qualification.
 
 A builder is a
 dispatch fact and not a served qualification: the
@@ -7679,6 +7662,12 @@ holds a LIST of attestations, one per image it publishes (tessera#555, schema
 v2): the rounding decision belongs to the runtime's compiled operator, and a
 consumer admits an fp4 cell only under the attestation whose image is the one
 executing.
+The required object can have `platforms: {}` when no current activation
+attestation exists. An empty root collection publishes no arithmetic claim.
+Any claimed platform must still have a nonempty image list. Any claimed
+image must still have nonempty contracts. The validator rejects a contract
+that no current cell executes. Historical T4 activation receipt bytes are
+preserved separately; they cannot qualify the replacement WINDOW route.
 
 - The **inputs** are the repository's. `serving/activation_attestation.py`
   constructs them as BF16 bit patterns and `validate_activation_quantizers`
@@ -9150,15 +9139,9 @@ When a build is unavailable the outcome is per extension
 and per residency, and it is a value the route record stamps, never a
 boolean:
 
-- `substituted` -- a *named* substitute decoder ran and the serve is a
-  different numeric object than the native one. The resident NVFP4 route
-  decodes once at load and may substitute `tessera.stock.materialize_stock`;
-  the window GEMV substitutes the torch window decode in both residencies.
-- `refused` -- no serve exists. The retired streamed NVFP4 route decoded
-  inside a traced forward whose data-dependent shapes the substitute could not
-  run, so it refused instead of serving something else; with the A4 retirement
-  the native lane requires its kernels outright (fail closed on an absent
-  backend), which is the same refusal reached earlier.
+- `substituted` -- A named substitute decoder ran. Its arithmetic differs from the native owner.
+  The old resident NVFP4 route allowed a stock substitute; the native WINDOW route does not.
+- `refused` -- No serve exists. The native NVFP4 route requires its extension and fails closed without it.
 
 The decoder that actually ran is the `decoder` field on every route record
 (`telemetry.py`), which is how a fingerprint tells a native serve from a

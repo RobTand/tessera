@@ -624,7 +624,7 @@ def substack_hashes() -> dict:
     return out
 
 def _served_window_cases():
-    """Cover every pure paired class through both served structures."""
+    """Cover each pure paired class with both served recipe selections."""
     from tessera.structure import STRUCTURES
     grid = tuple_grid(E2M1_GRID, 2)
     return [(f"served-{structure}-e2m1x2-{q256}", grid, q256, structure)
