@@ -24,6 +24,10 @@ The payload holds the fragment planes, the zero page, the K-part scratch and the
 The binding plugs into `routed_class_dispatch` unchanged and does not use the claim counter.
 Each expert must spend exactly its class rung. A per-column (Bresenham) mixed rung splits k-steps and is refused by name.
 `kernel_window_gemv.unpack_tile_words` is the inverse of the tile-order repack that the bundles hold.
+The opaque operation `tessera::routed_regdirect_classes` (`serving/regdirect_op.py`) takes every tensor explicitly:
+each mode's nine weight planes, and each mode's two scratch tensors, which `mutates_args` declares.
+Its resource registry entry holds only streams, events and the tensor-free binding. The LUT planes stay loaded:
+they retire only with a serving default switch, after G3 v2, an end-to-end serve and Rob's approval.
 
 ## Register-direct fragment wire (stage 1; not a serving path)
 
