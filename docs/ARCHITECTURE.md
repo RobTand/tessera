@@ -374,6 +374,19 @@ The common execution registry names the current class operation for both WINDOW 
 All class pairs remain experimental and have no served qualification cell.
 Historical compact and fused receipt identities have a separate qualification table.
 Both tables use the same axis filter. A historical receipt cannot qualify a current class operation.
+The offline Step4 consumer reads the same current execution registry.
+It checks actual operations and module populations, not served qualification cells.
+Historical R5 replay uses the qualification registry. It does not rewrite archived operations.
+
+The D41 class benchmark replaces its preparation owner with the retained native owner before timing.
+`resident_bytes` counts that owner and the production inverse by backing allocation.
+`preparation_storage_bytes` names the load owner and its original inverse separately.
+Preparation and production storage overlap; their values must not be added.
+
+The D30 class harness checks the owned process group after launcher exit.
+It sends SIGTERM, waits up to five seconds, and sends SIGKILL if group members remain.
+Its final cleanup uses the same path after a memory read fails.
+Process-group proof does not qualify Docker workload termination. PrismaBuild issue 1599 owns the shared signal relay.
 
 Today the loaded binding is `_LutClassKernel`; it calls the unchanged CUDA
 decoder for each class on the same two streams. Register-direct remains a

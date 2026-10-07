@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-07 — report retained class storage
+
+The D41 class benchmark retires load-only planes and the unused inverse before timing.
+`resident_bytes` now counts the production native owner and its inverse.
+`preparation_storage_bytes` records preparation storage separately. The two values overlap.
+
+## 2026-10-07 — stop class workloads after launcher exit
+
+The D30 guard now checks the owned process group, not only the launcher.
+Surviving group members receive SIGKILL after the bounded SIGTERM grace.
+The guard uses the same stop path after a memory read fails or the launcher exits.
+Process-group proof does not qualify the Docker relay in PrismaBuild issue 1599.
 
 ## 2026-10-07 — routed class execution boundary corrections
 
@@ -9,6 +21,10 @@ The current execution registry owns class identities and census expectations.
 Historical WINDOW qualification records stay separate. The new operations remain unqualified.
 Remove the duplicate custom-op layout argument and preserve byte checks across tensor view shapes.
 Record the generic dispatcher source hash in the D41 report.
+The offline Step4 consumer now reads that registry and filters operations by residency.
+Historical R5 records retain their original operations during receipt replay.
+Each class timing row records its declared admission scope.
+The temporary ordinary GPU-exclusive scope is not quiet-host certification.
 
 ## 2026-10-07 — refuse unsupported native expert bias
 

@@ -52,10 +52,10 @@ safetensors_torch = pytest.importorskip("safetensors.torch")
 
 export = importlib.import_module("tessera.export_serving")
 
-HIDDEN, MOE_INTER, EXPERTS = 128, 64, 4
+HIDDEN, MOE_INTER, EXPERTS = 256, 128, 4
 #: The dims that make GLM-5.3-Flash's packed orientation UNDECIDABLE, scaled
 #: down: ``hidden == 2 * moe_intermediate``, so ``gate_up_proj`` is square.
-AMBIGUOUS_HIDDEN, AMBIGUOUS_INTER = 128, 64
+AMBIGUOUS_HIDDEN, AMBIGUOUS_INTER = 256, 128
 
 
 def _config(hidden=HIDDEN, inter=MOE_INTER):
@@ -271,7 +271,7 @@ def test_packed_orientation_refuses_when_the_dims_cannot_decide():
     config = _config(hidden=AMBIGUOUS_HIDDEN, inter=AMBIGUOUS_INTER)
     name = "model.language_model.layers.1.mlp.experts.gate_up_proj.weight"
     with pytest.raises(SystemExit) as caught:
-        export.packed_expert_orientation(name, (EXPERTS, 128, 128), config)
+        export.packed_expert_orientation(name, (EXPERTS, AMBIGUOUS_HIDDEN, AMBIGUOUS_HIDDEN), config)
     assert "both axis orders fit" in str(caught.value), str(caught.value)
 
 
@@ -283,12 +283,8 @@ def test_packed_orientation_refuses_a_stack_that_fits_neither_way():
     assert "neither axis order fits" in str(caught.value), str(caught.value)
 
 
-#: Decidable dims the E4M3 encoder can also cut: ``2 * 32 != 128``, so a
-#: packed ``gate_up_proj`` orients, and both groups' rows are whole tuples
-#: (``grid.arity * 32 == 32``) with columns a multiple of 16.  ``PACKED_INTER``
-#: below orients too but is 48, which the encoder cannot cut -- fine for the
-#: classification tests that use it, useless for one that must reach the plan.
-DECIDABLE_HIDDEN, DECIDABLE_INTER = 128, 32
+#: These distinct dimensions satisfy native rows and columns.
+DECIDABLE_HIDDEN, DECIDABLE_INTER = 128, 256
 
 #: The two closed conventions, as the shapes each one's ``gate_up_proj`` and
 #: ``down_proj`` must have, and the orientation both of them state.
@@ -667,10 +663,7 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
 # which is how far the inconsistency reached before anything caught it.
 # --------------------------------------------------------------------------
 
-#: An intermediate size that ORIENTS: ``2 * 48 != 128``, so a packed
-#: ``gate_up_proj`` is not square and ``packed_expert_orientation`` decides it
-#: instead of refusing.  These tests are about the plan-time classification, so
-#: the orientation must not be the thing that raises.
+#: These source dimensions select one orientation for classification.
 PACKED_INTER = 48
 
 

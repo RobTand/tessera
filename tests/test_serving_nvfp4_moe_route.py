@@ -1,46 +1,13 @@
-"""The NVFP4 expert route's load and native-apply half (tessera#492).
+"""NVFP4 expert construction and native arithmetic controls.
 
-WHAT THIS FILE CAN COVER AND WHAT IT CANNOT.  Two populations share it.
-
-The CPU stub suite drives the route's protocol surface without vLLM:
-``oracle.nvfp4`` is STUBBED with a kernel that computes the float reference
-from the operands it is handed (a spy that also does the arithmetic), because
-vendoring the runtime into this repository is forbidden (AGENTS.md).  What
-that stub pins is construction and geometry refusals, the census expectation,
-and the native method answering the modular protocol from its own definition
-instead of inheriting a stock kernel's.
-
-The eight device-driven cases marked ``needs_native_prep`` are the native
-lane's own coverage and run for REAL in the pinned image: ``create_weights``
-imports vLLM's own ``FusedMoEMethodBase``, ``apply`` executes the native
-grouped kernels, and the A side is the runtime's registered
-``scaled_fp4_quant``.  They are vLLM-exempt from PrismaBuild like every
-actual vLLM run, and their references are the encoder's own
-``materialize_stock`` tiles and the materializing reader's parsed units --
-never the loader's own path:
-
-* the served stacks' 16-byte scale tables and per-expert globals are the
-  independent ``shared_lut_global`` join (the encoder's materialized pair
-  moved onto one global by ``stock.share_global``), and the joined multiplier
-  is byte-for-byte the raw-table join over independently parsed containers;
-* the per-expert epilogue is the joined multiplier over the one static A-side
-  scalar (the max of the loader's reciprocal, i.e. the min of the checkpoint
-  scales), and the stock divisor read as a multiplier dequants differently;
-* ``apply`` computes the runtime's own quantized arithmetic over those
-  materialized tiles, weights applied only in the final combine, and never
-  consumes the shared experts the runner owns;
-* the load order moves no byte of the served stacks;
-* at TP2 each rank holds its own rows of w13 and columns of w2;
-* the wire/scale loaders and finalize refuse by name.
-
-The load-and-execute receipt on the pinned image, including the CUDA-graph
-capture and the fuller stock oracle, is
-``experiments/native_a4_serve_probe.py``; this file is the regression suite
-that must execute in that same image, not skip.
+The central processor tests use the runtime's base-method and weight-attribute seams.
+They preserve constructor, topology, geometry, and trace-name checks.
+The CUDA tests use the actual runtime and native grouped kernels.
+Their references come from independently parsed containers and materialized stock tiles.
+They compare scale bytes, global multipliers, rank cuts, and routed arithmetic.
 """
 from __future__ import annotations
 
-import enum
 import sys
 import types
 
@@ -121,6 +88,9 @@ def stack():
     scheme = {
         "family": TESSERA_NVFP4, "structure": STRUCTURE_ROUTED_MOE, "grid": "E2M1x2",
         "body": "TCQ", "plane": "LUT", "experts": EXPERTS,
+        "expert_ids": list(range(EXPERTS)),
+        "expert_classes": [{"start": 0, "end": EXPERTS,
+                            "q256": {"w13": [Q256, Q256], "w2": [Q256]}}],
         "groups": {
             "w13": {"rows": 2 * INTER, "columns": HIDDEN, "q256": Q256,
                     "wire_stride": max(len(wires[(e, s)])
@@ -133,27 +103,14 @@ def stack():
     return wires, scheme, reference
 
 
-def _dequant(packed, scale, global_):
-    """Tessera's own reading of a stock tile, with ``global_`` the MULTIPLIER."""
-    from tessera.stock import stock_dequant
-
-    return stock_dequant({"weight_packed": packed, "weight_scale": scale,
-                          "weight_global_scale": torch.tensor([1.0 / float(global_)])})
-
-
 @pytest.fixture
 def nvfp4_runtime(monkeypatch):
-    """vLLM's ``oracle.nvfp4`` seam, as the FP8 route's tests stub theirs."""
+    """The runtime seams for constructor and geometry checks on the central processor."""
     # This seam is explicitly CPU arithmetic even on a CUDA test worker.
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     names = ("vllm", "vllm.model_executor", "vllm.model_executor.layers",
              "vllm.model_executor.layers.fused_moe",
              "vllm.model_executor.layers.fused_moe.fused_moe_method_base",
-             "vllm.model_executor.layers.fused_moe.oracle",
-             "vllm.model_executor.layers.fused_moe.oracle.nvfp4",
-             "vllm.model_executor.layers.quantization",
-             "vllm.model_executor.layers.quantization.utils",
-             "vllm.model_executor.layers.quantization.utils.quant_utils",
              "vllm.model_executor.utils")
     modules = {name: types.ModuleType(name) for name in names}
     for name, module in modules.items():
@@ -168,56 +125,8 @@ def nvfp4_runtime(monkeypatch):
         def is_monolithic(self):
             return False
     base.FusedMoEMethodBase = Base
-    oracle = modules["vllm.model_executor.layers.fused_moe.oracle.nvfp4"]
-    oracle.NvFp4MoeBackend = enum.Enum("NvFp4MoeBackend", ["FLASHINFER_CUTLASS", "MARLIN"])
-    experts_cls = types.SimpleNamespace(is_monolithic=lambda: False)
-    log = {"select": [], "convert": [], "finalized": [], "apply": []}
-
-    def select(**kwargs):
-        log["select"].append(kwargs)
-        return oracle.NvFp4MoeBackend.FLASHINFER_CUTLASS, experts_cls
-    oracle.select_nvfp4_moe_backend = select
-
-    def convert(**kwargs):
-        log["convert"].append(kwargs)
-        return tuple(kwargs[k] for k in ("w13", "w13_scale", "w13_scale_2", "a13_scale",
-                                         "w2", "w2_scale", "w2_scale_2", "a2_scale"))
-    oracle.convert_to_nvfp4_moe_kernel_format = convert
-    oracle.make_nvfp4_moe_quant_config = lambda **kwargs: kwargs
-
-    class Kernel:
-        is_monolithic = False
-
-        def __init__(self, config):
-            self.config = config
-            self.fused_experts = types.SimpleNamespace(
-                process_weights_after_loading=lambda layer: log["finalized"].append(layer))
-
-        def apply(self, x, w13, w2, weights, ids, **kwargs):
-            # The arithmetic the operands imply -- values x block scale x
-            # global -- through Tessera's own stock_dequant, so "global" means
-            # what the runtime means by weight_scale_2.  The A side is NOT
-            # quantised here: that is the kernel's own arithmetic and is
-            # measured in the container probe, not stubbed.
-            out = torch.zeros_like(x)
-            for token in range(x.shape[0]):
-                for choice in range(ids.shape[1]):
-                    e = int(ids[token, choice])
-                    first = _dequant(w13[e], self.config["w13_scale"][e], self.config["w13_scale_2"][e])
-                    second = _dequant(w2[e], self.config["w2_scale"][e], self.config["w2_scale_2"][e])
-                    gate, up = (first @ x[token].float()).chunk(2)
-                    out[token] += weights[token, choice] * (
-                        second @ (torch.nn.functional.silu(gate) * up))
-            log["apply"].append(kwargs)
-            return out
-    oracle.make_nvfp4_moe_kernel = lambda **kwargs: Kernel(kwargs["moe_quant_config"])
-    quant = modules["vllm.model_executor.layers.quantization.utils.quant_utils"]
-    quant.kNvfp4Static, quant.kNvfp4Dynamic = object(), object()
     utils = modules["vllm.model_executor.utils"]
     utils.set_weight_attrs = lambda param, attrs: [setattr(param, k, v) for k, v in attrs.items()]
-    utils.replace_parameter = lambda layer, name, value: setattr(
-        layer, name, torch.nn.Parameter(value, requires_grad=False))
-    return oracle, log, quant
 
 
 def _layer(tp_size=1, tp_rank=0, **moe):
@@ -650,6 +559,10 @@ def test_construction_refusals(stack, nvfp4_runtime):
             _build(scheme, layer)
     from tests.test_serving_moe_route import _stack as fp8_stack
     _w13, _w2, fp8_scheme, _ref = fp8_stack(experts=1, hidden=HIDDEN, inter=32)
+    fp8_scheme.update(expert_ids=[0], expert_classes=[{
+        "start": 0, "end": 1,
+        "q256": {"w13": [fp8_scheme["groups"]["w13"]["q256"]] * 2,
+                 "w2": [fp8_scheme["groups"]["w2"]["q256"]]}}])
     with pytest.raises(ValueError, match="serves TESSERA_NVFP4"):
         _build(fp8_scheme, _layer())
 
@@ -789,11 +702,6 @@ def test_native_method_is_modular_and_owns_no_stock_kernel(stack, nvfp4_runtime)
     assert method.topk_indices_dtype is None
     assert method.mk_can_overlap_shared_experts is False
     assert method.supports_eplb is False
-    # the obsolete monolithic hook is gone from THIS class (the base may
-    # keep its own); the quant-config hook stays abstract-satisfied, without
-    # reading any stock tensor
-    assert "apply_monolithic" not in type(method).__dict__
-    assert "get_fused_moe_quant_config" in type(method).__dict__
 
 
 def test_census_expectation_is_the_shared_launch_table():

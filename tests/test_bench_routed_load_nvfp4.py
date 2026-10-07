@@ -102,6 +102,9 @@ def checkpoint(tmp_path):
     scheme = {
         "family": "TESSERA_NVFP4", "structure": "routed_moe", "grid": "E2M1x2",
         "body": "TCQ", "plane": "LUT", "experts": EXPERTS,
+        "expert_ids": list(range(EXPERTS)),
+        "expert_classes": [{"start": 0, "end": EXPERTS,
+                            "q256": {"w13": [Q256, Q256], "w2": [Q256]}}],
         "groups": {
             "w13": {"q256": Q256, "rows": 2 * INTER, "columns": HIDDEN,
                     "roles": [["gate_proj", INTER], ["up_proj", INTER]],

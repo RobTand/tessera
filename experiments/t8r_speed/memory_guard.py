@@ -1,7 +1,9 @@
 """Run one admitted payload with the D30 physical-memory abort floor.
 
-The payload has its own process group. PrismaBuild still owns container cleanup
-and resource admission. This guard never submits, polls or resubmits PB actions.
+The payload has its own process group. Launcher exit does not end that group.
+PrismaBuild owns container cleanup and resource admission.
+Process-group proof does not qualify Docker termination; PrismaBuild issue 1599 owns its signal relay.
+This guard never submits, polls or resubmits PB actions.
 """
 from __future__ import annotations
 
@@ -23,6 +25,36 @@ def available_bytes():
             if line.startswith('MemAvailable:'):
                 return int(line.split()[1]) * 1024
     raise RuntimeError('D30 guard cannot read MemAvailable')
+
+
+def stop_payload(child):
+    """Stop the owned process group, even after its launcher exits."""
+    events = []
+
+    def alive():
+        child.poll()
+        try:
+            os.killpg(child.pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    def send(sig):
+        try:
+            os.killpg(child.pid, sig)
+        except ProcessLookupError:
+            return
+        events.append({"signal": sig.name, "monotonic": time.monotonic()})
+
+    if alive():
+        send(signal.SIGTERM)
+        deadline = time.monotonic() + TERM_GRACE_SECONDS
+        while alive() and time.monotonic() < deadline:
+            time.sleep(min(.05, max(0, deadline - time.monotonic())))
+        if alive():
+            send(signal.SIGKILL)
+    child.wait(timeout=1)
+    return events
 
 
 def main():
@@ -47,29 +79,18 @@ def main():
             if minimum < FLOOR_BYTES:
                 aborted = True
                 print('D30 abort: MemAvailable is below 2 GiB', flush=True)
-                os.killpg(child.pid, signal.SIGTERM)
-                try:
-                    child.wait(timeout=TERM_GRACE_SECONDS)
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGKILL)
-                    child.wait()
                 break
             try:
                 child.wait(timeout=1)
             except subprocess.TimeoutExpired:
                 pass
     finally:
-        if child.poll() is None:
-            os.killpg(child.pid, signal.SIGTERM)
-            try:
-                child.wait(timeout=TERM_GRACE_SECONDS)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait()
+        stop = stop_payload(child)
         result = {'start_unix': started, 'end_unix': time.time(), 'floor_bytes': FLOOR_BYTES,
                   'minimum_available_bytes': minimum, 'memory_aborted': aborted,
                   'payload_returncode': child.returncode, 'command': command,
-                  'cleanup_owner': 'PrismaBuild owns admitted containers and the resource scope'}
+                  "process_group_signals": stop,
+                  "cleanup_owner": "PrismaBuild owns admitted containers and the resource scope"}
         path.write_text(json.dumps(result, indent=2) + '\n')
         print('D30_MEMORY_RESULT ' + json.dumps(result), flush=True)
     return 1 if aborted else (128 - child.returncode if child.returncode < 0 else child.returncode)
