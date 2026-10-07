@@ -14,7 +14,7 @@ import fnmatch
 import json
 from pathlib import Path
 
-from tessera.serving.scheme import MOE_BUILDERS, ROUTES, ROUTE_LAUNCHES, launch_pairs
+ from tessera.serving.scheme import MOE_BUILDERS, ROUTES, ROUTE_LAUNCHES, route_launches
 
 __all__ = [
     "WINDOW_GEMM_SYMBOL",
@@ -67,15 +67,22 @@ FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
 BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
 NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 
-# The shared metadata owner decides the current operations for each structure.
-DENSE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], tuple(sorted(
-    launch_pairs(family, structure="dense", include_experimental=True)))) for family in ROUTE_LAUNCHES}
+ # The shared metadata owner decides the current operations for each structure.
+ # Order follows ROUTE_LAUNCHES; qualification compares as sets elsewhere.
+ def _current_pairs(family, structure):
+     return tuple(dict.fromkeys(
+         (row["symbol"], row["decoder"]) for row in route_launches(
+             family, structure=structure, include_experimental=True)))
 
-# These symbol names describe historical receipts, not a current fallback.
-COMPACT_WINDOW_MOE_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
-FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
-MOE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], tuple(sorted(
-    launch_pairs(family, structure="routed_moe", include_experimental=True)))) for family in MOE_BUILDERS}
+
+ DENSE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], _current_pairs(
+     family, "dense")) for family in ROUTE_LAUNCHES}
+
+ # These symbol names describe historical receipts, not a current fallback.
+ COMPACT_WINDOW_MOE_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
+ FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+ MOE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], _current_pairs(
+     family, "routed_moe")) for family in MOE_BUILDERS}
 #: kind -> family -> (contract, admissible pairs); both kinds read the same way.
 KIND_LAUNCHES = {
     "dense": DENSE_LAUNCHES,
@@ -246,8 +253,10 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
     if kind == "moe" and mode != "resident":
         raise QualificationRefused("routed MoE has no streamed native launch")
     contract = KIND_LAUNCHES[kind][family][0]
-    pairs = tuple(sorted(launch_pairs(family, structure="routed_moe" if kind == "moe" else "dense",
-                                     mode=mode, include_experimental=True)))
+    pairs = tuple(dict.fromkeys(
+        (row["symbol"], row["decoder"]) for row in route_launches(
+            family, structure="routed_moe" if kind == "moe" else "dense",
+            mode=mode, include_experimental=True)))
     policy = f"{family}:{mode}"
     launches = trace_launches_by_contract(route_trace, contract, policy=policy, kind=kind)
     expected_keys = [_pair_key(symbol, decoder) for symbol, decoder in pairs]
