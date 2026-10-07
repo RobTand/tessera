@@ -39,7 +39,8 @@ The module stays outside `tessera.serving` until serving selects it; the selecti
 ## Register-direct fragment wire (stage 1; not a serving path)
 
 The CPU fragment repack is available in `tessera.fragment_wire` for the register-direct routed build.
-It preserves the disk BODY streams and accepts only R3 and R4.
+It preserves the disk BODY streams and accepts rates R3 to R8.
+The routed CUDA kernel still serves only R3, R4, and their k-step mix.
 Each original 32-column group has one rate.
 The repack sorts these groups by rate and preserves their order within each rate.
 Down pairs successive groups of one rate, so each rate needs an even group count.
@@ -58,14 +59,15 @@ The permutation restores the original column order.
 
 Each k-step has one compact history unit before tile zero.
 It stores lanes 24 through 31 with word stride eight.
-The history contains the last four fields of the incoming column state.
+The history contains the last four fields of the incoming column state, at rows -4 through -1.
+For R4 and higher rates, these fields hold all 14 window bits.
 An explicit TP-cut state takes precedence over the initial state.
 All unit and history offsets include the expert's absolute word base.
 
 The final tile contains zero codes outside the declared rows.
 The reference decode returns native E4M3 bytes, with gate rows before up rows.
 It does not apply row scales.
-The byte audit covers encoded R3 and R4 BODY bits, fragment words, history size, and decoded bytes.
+The byte audit covers encoded R3 to R8 BODY bits, fragment words, history size, and decoded bytes.
 This module does not change the encoder, disk format, or selected serving path.
 
 Re-stamped 2026-10-07 for the producer correction in issue #1018.

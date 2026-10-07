@@ -30,7 +30,7 @@ class FragmentWire:
     ``history_offsets[s]`` and ``unit_offsets[T, s, w]`` use that same base.
     Gate/up uses ``perm[s]`` for its original 32-column group. Down uses
     ``perm[s * 2 + p]`` for group p of unit k-step s.
-    ``rates[s]`` gives the shared rate of that unit k-step.
+    ``rates[s]`` gives the shared code rate, from 3 to 8, of that unit k-step.
 
     A history unit stores only lanes 24..31, at word ``i * 8 + L - 24``.
     A data unit stores all lanes, at word ``i * 32 + L``.
@@ -75,8 +75,8 @@ def _step_rates(rates, cols: int, groups: int) -> list:
     step_rates = []
     for start in range(0, cols, _KSTEP):
         rate = rates[start]
-        if rate not in (3, 4):
-            raise GrammarError(f"rate {rate} is not R3 or R4 at k-step {start // _KSTEP}")
+        if rate not in range(3, 9):
+            raise GrammarError(f"rate {rate} is outside R3 to R8 at k-step {start // _KSTEP}")
         if any(r != rate for r in rates[start:start + _KSTEP]):
             raise GrammarError(f"rate changes inside k-step {start // _KSTEP}")
         step_rates.append(rate)
@@ -102,8 +102,11 @@ def repack_codes(
     start_state: torch.Tensor | None = None,
     word_offset: int = 0,
 ) -> FragmentWire:
-    """The fragment repack of ``codes`` ``[projections, rows, cols]`` (BODY codes, original column
-    order), on the codes' device.  :func:`repack_fragment` is this after its BODY unpack."""
+    """Repack BODY codes ``[projections, rows, cols]`` on their device.
+
+    Codes use original column order and rates from R3 to R8.
+    :func:`repack_fragment` unpacks disk BODY planes before this call.
+    """
     if projection_group not in ("gate_up", "down"):
         raise GrammarError(f"projection_group {projection_group!r} is not gate_up or down")
     groups = 1 if projection_group == "gate_up" else 2
@@ -193,7 +196,7 @@ def repack_fragment(
 
     ``rows`` is the row count of each projection. Gate and up use two planes,
     in that order, with the same per-column ``rates``. Down uses one plane.
-    Each 32-column group must have one rate, either R3 or R4.
+    Each 32-column group must have one rate from R3 to R8.
     The permutation sorts groups by rate and keeps their order within a rate.
     Down pairs successive sorted groups of the same rate. Each rate must
     therefore have an even group count. Down has cols / 64 unit k-steps.
