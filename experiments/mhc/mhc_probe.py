@@ -355,7 +355,7 @@ def classify_mhc_kernel(name: str) -> str | None:
     return None
 
 
-def compare(a: torch.Tensor, b: torch.Tensor) -> dict:
+def _value_compare(a: torch.Tensor, b: torch.Tensor) -> dict:
     d = (a.double() - b.double()).abs()
     return {"equal": bool(torch.equal(a, b)), "elements_differing": int((d > 0).sum()),
             "max_abs": float(d.max()), "max_abs_over_max_ref": float(d.max() / b.double().abs().max().clamp(min=1e-300))}
@@ -648,7 +648,13 @@ def bits_compare(a: torch.Tensor, b: torch.Tensor) -> dict:
     word = torch.int32 if a.dtype == torch.float32 else torch.int16
     ai, bi = a.contiguous().view(word), b.contiguous().view(word)
     return {"bit_equal": bool(torch.equal(ai, bi)), "bits_differing": int((ai != bi).sum()),
-            "value": compare(a, b)}
+            "value": _value_compare(a, b)}
+
+
+def compare(a: torch.Tensor, b: torch.Tensor) -> dict:
+    """Keep value diagnostics, but make the advertised equality gate bitwise."""
+    bits = bits_compare(a, b)
+    return {**bits["value"], "equal": bits["bit_equal"], "bits_differing": bits["bits_differing"]}
 
 
 def load_kda_ptx():
