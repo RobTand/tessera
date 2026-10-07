@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07 — projection audit geometry import
+
+Read TILE_ROWS from tessera.window_geometry in the projection byte audit.
+Keep the byte matrix, pricing rules, and contract v60 unchanged.
+
 ## 2026-10-07 — isolated source-boundary test paths
 
 Keep outside-link fixtures inside each test's private scratch directory.

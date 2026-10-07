@@ -678,7 +678,7 @@ def projection_record(case: ProjectionCase) -> dict:
     from tessera.serving.projection_routes import direct_consumer_resident_bytes, direct_consumer_weight
     from tessera.serving_parts import dense_resident_bytes_resident_mode
     from tessera.unit_artifact import parse_unit_artifact
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     from tessera.decode import replay_table_bytes
 
     source = torch.randn(64, 32, generator=torch.Generator().manual_seed(
