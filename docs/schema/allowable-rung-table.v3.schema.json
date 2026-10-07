@@ -533,7 +533,7 @@
           }
         }
       ],
-      "description": "Unique scalar q256 rung. measured requires all required cells and geometry plus completed CPU quality screen. excluded is ONLY the measured D41 performance proof: a higher supported rung no farther than one grid step has time <= this rung in every relevant cell, with paired comparable evidence. Quality/correctness anomaly flags separately block production until explained; merely slow or missing-census observations do not fabricate performance exclusion. Missing/unmeasured rows wait. Reader admits only measured, supported, non-excluded rows with empty anomaly_flags, alongside existing serving/export gates. Semantic validation also checks uniqueness, full cell coverage, finite times, same format/build/scope, strict higher-rung/one-step relation and every dominance comparison."
+      "description": "Each scalar q256 rung has one row. A measured aggregate row requires every required cell and its actual geometry. Scoped queries admit measured menu cells with no source refusal or correctness hold. Missing scope evidence waits. Class-derived times never establish numerical or serving qualification. Historical quality samples do not control performance admission. Independent export, numerical, byte, and serving gates still apply."
     }
   }
 }

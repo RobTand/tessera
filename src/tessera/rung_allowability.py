@@ -424,17 +424,17 @@ INDEX_SCHEMAS={'fleet.rung_allowability.index.v1':INDEX_SCHEMA,'fleet.rung_allow
 
 
 
-PERFORMANT_POLICY = {"kind": "whole_bit_per_structure", "authority": "Latest Rob/CEO D41 ruling, 2026-10-06",
-                     "qualification_scope": "performance evidence only; export, numerical and serving gates remain independent"}
+PERFORMANT_POLICY = {"kind": "whole_bit_per_structure", "authority": "D41 whole-bit and measured half-bit authority, 2026-10-06",
+                     "qualification_scope": "Performance evidence does not replace independent export, numerical, or serving gates."}
 
 
 def performant_rungs(format, kernel_kind):
     """The owning menu, not a consumer-side copy or an encoder-capacity guess."""
     _require(kernel_kind in ("dense", "routed"), "unknown performance structure")
     if format == "TESSERA_E4M3_K1":
-        return (768, 1024)
+        return (768, 896, 1024)
     if format == "TESSERA_BF16_K1":
-        return tuple(range(256, (3584 if kernel_kind == "dense" else 2048) + 1, 256))
+        return tuple(sorted((*range(256, (3584 if kernel_kind == "dense" else 2048) + 1, 256), 896)))
     if format == "TESSERA_E2M1_K2":
         return ()
     return ()
@@ -526,7 +526,7 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
 
 
 def rung_speed(table, *, rung, cell_id=None, class_identity=None):
-    """Actual timing or explicit class-derived timing, never inherited admission."""
+    """Return actual or safe class-derived times without inherited admission."""
     validate_table(table)
     if not _integer(rung) or not table["scope"]["rung_min"] <= rung <= table["scope"]["rung_max"]:
         return {"status": "wait", "reason": "outside_declared_rate_scope"}
@@ -535,11 +535,17 @@ def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     measurement = next((cell for cell in row['measurements'] if cell['cell_id'] == selected_id), None) if row else None
     if class_identity is not None and selected_id != class_identity.get("cell_id"):
         return {"status": "wait", "reason": "different_requested_cell_scope"}
-    if measurement is not None and class_identity is not None and geometry_class_identity(table, rung, measurement) != class_identity:
-        return {"status": "wait", "reason": "different_geometry_class"}
+    if measurement is not None and measurement['measurement_status'] != 'measured':
+        state = measurement['measurement_status']
+        return {'status': 'wait' if state == 'pending' else state, 'reason': 'missing_actual_measurement' if state == 'pending' else state}
     if row is not None and row["anomaly_flags"]:
         return {"status": "hold", "reason": "recorded_correctness_hold"}
-    if measurement is not None and measurement['measurement_status'] == 'measured':
+    if row is not None and (row["supported"] is False or row["measurement_status"] in ("failed", "unsupported")):
+        state = row["measurement_status"] if row["measurement_status"] in ("failed", "unsupported") else "unsupported"
+        return {"status": state, "reason": "recorded_source_refusal"}
+    if measurement is not None:
+        if class_identity is not None and geometry_class_identity(table, rung, measurement) != class_identity:
+            return {"status": "wait", "reason": "different_geometry_class"}
         return {'status': 'measured', 'rung': rung, 'measurement': measurement,
                 'menu_admitted': rung in performant_rungs(table['format'], measurement['kernel_kind']),
                 'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
@@ -551,10 +557,24 @@ def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     group = next((group for group in table.get('geometry_classes', []) if group['identity'] == class_identity), None)
     if group is None or len(group['observed_rungs']) < 2:
         return {'status': 'wait', 'reason': 'missing_measured_class_spots'}
-    observed = group['observed_rungs']
-    anchors = sorted(set((observed[0], observed[len(observed) // 2], observed[-1])))
     by_rung = {row['rung']: row for row in table['rungs']}
-    cells = [next(cell for cell in by_rung[q]['measurements'] if cell['cell_id'] == selected_id) for q in anchors]
+    eligible, held = {}, False
+    for q in group['observed_rungs']:
+        donor = by_rung[q]
+        if donor['anomaly_flags']:
+            held = True
+            continue
+        if donor['supported'] is False or donor['measurement_status'] in ('failed', 'unsupported'):
+            continue
+        cell = next((cell for cell in donor['measurements'] if cell['cell_id'] == selected_id), None)
+        if cell is not None and cell['measurement_status'] == 'measured':
+            eligible[q] = cell
+    if len(eligible) < 2:
+        return {'status': 'hold' if held else 'wait',
+                'reason': 'recorded_donor_correctness_hold' if held else 'missing_eligible_class_spots'}
+    observed = sorted(eligible)
+    anchors = sorted(set((observed[0], observed[len(observed) // 2], observed[-1])))
+    cells = [eligible[q] for q in anchors]
     times = [cell['kernel_time_us'] for cell in cells]
     return {'status': 'inherited', 'rung': rung, 'kernel_time_us': max(times),
             'observed_range_us': [min(times), max(times)], 'anchors': anchors,

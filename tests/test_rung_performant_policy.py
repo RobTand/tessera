@@ -31,9 +31,9 @@ def decide(table, rung=768, **kwargs):
 
 class PerformantPolicy(unittest.TestCase):
     def test_menu_is_structure_specific(self):
-        self.assertEqual(performant_rungs('TESSERA_E4M3_K1', 'dense'), (768, 1024))
-        self.assertEqual(performant_rungs('TESSERA_BF16_K1', 'routed'), tuple(range(256, 2049, 256)))
-        self.assertEqual(performant_rungs('TESSERA_BF16_K1', 'dense'), tuple(range(256, 3585, 256)))
+        self.assertEqual(performant_rungs('TESSERA_E4M3_K1', 'dense'), (768, 896, 1024))
+        self.assertEqual(performant_rungs('TESSERA_BF16_K1', 'routed'), tuple(sorted((*range(256, 2049, 256), 896))))
+        self.assertEqual(performant_rungs('TESSERA_BF16_K1', 'dense'), tuple(sorted((*range(256, 3585, 256), 896))))
         self.assertEqual(performant_rungs('TESSERA_E2M1_K2', 'routed'), ())
 
     def test_diagnostic_measurement_is_not_admission(self):
@@ -116,3 +116,72 @@ class PerformantPolicy(unittest.TestCase):
         self.assertEqual(decide(table, 770)['status'], 'excluded')
         self.assertEqual(rung_speed(table, rung=1200, class_identity=identity)['status'], 'wait')
         self.assertEqual(rung_speed(table, rung=770, cell_id='other', class_identity=identity)['status'], 'wait')
+
+    def test_present_partial_cell_waits_before_class_reconstruction(self):
+        for state in ('pending', 'failed', 'unsupported'):
+            table = v3_fixture()
+            row = table['rungs'][1]
+            cell = row['measurements'][0]
+            identity = geometry_class_identity(table, row['rung'], cell)
+            row.update(measurement_status=state, supported=None)
+            cell.update(measurement_status=state, kernel_time_us=None, kernel_path=None,
+                        evidence={}, pass_times_us=[])
+            cell['geometry']['decode_width'].pop('run_widths')
+            table['table_status'] = 'partial'
+            table['geometry_classes'] = measured_geometry_classes(table)
+            result = rung_speed(table, rung=row['rung'], class_identity=identity)
+            self.assertEqual(result['status'], 'wait' if state == 'pending' else state)
+            self.assertNotIn('kernel_time_us', result)
+
+    def test_class_donors_never_supply_held_or_refused_times(self):
+        for state in ('hold', 'failed', 'unsupported', 'unsupported_support'):
+            table = v3_fixture()
+            donor = table['rungs'][1]
+            last = copy.deepcopy(donor)
+            last['rung'] = 771
+            last['quality']['scope']['rung'] = 771
+            last['measurements'][0].update(kernel_time_us=8, pass_times_us=[8, 8])
+            missing = copy.deepcopy(last)
+            missing.update(rung=770, measurement_status='pending', supported=None, measurements=[], quality={})
+            table['rungs'] += [missing, last]
+            table['scope']['rung_max'] = 771
+            table['table_status'] = 'partial'
+            if state == 'hold':
+                donor['anomaly_flags'] = donor['quality']['anomaly_flags'] = ['reader_correctness']
+            elif state == 'unsupported_support':
+                donor.update(measurement_status='pending', supported=False)
+            else:
+                donor.update(measurement_status=state, supported=False)
+            table['geometry_classes'] = measured_geometry_classes(table)
+            identity = geometry_class_identity(table, donor['rung'], donor['measurements'][0])
+            result = rung_speed(table, rung=770, class_identity=identity)
+            self.assertIn(result['status'], ('hold', 'wait', 'failed', 'unsupported'))
+            self.assertNotIn('kernel_time_us', result)
+            self.assertNotIn('observed_range_us', result)
+
+    def test_measured_r896_uses_its_actual_scoped_cost(self):
+        table = v3_fixture()
+        row = table['rungs'][1]
+        table['rungs'] = [row]
+        table['scope'].update(rung_min=896, rung_max=896)
+        row['rung'] = row['quality']['scope']['rung'] = 896
+        cell = row['measurements'][0]
+        cell.update(kernel_time_us=12.5, pass_times_us=[12.5, 12.5])
+        for family, value_bits in (('TESSERA_E4M3_K1', 8), ('TESSERA_BF16_K1', 16)):
+            table['format'] = family
+            cell['geometry']['decode_width']['value_bits'] = value_bits
+            table['geometry_classes'] = measured_geometry_classes(table)
+            self.assertEqual(decide(table, 896, cell_ids=[cell['cell_id']])['status'], 'allow')
+            speed = rung_speed(table, rung=896, cell_id=cell['cell_id'])
+            self.assertEqual(speed['status'], 'measured')
+            self.assertEqual(speed['measurement']['kernel_time_us'], 12.5)
+            self.assertTrue(speed['menu_admitted'])
+            self.assertFalse(speed['numerical_qualification_inherited'])
+            self.assertFalse(speed['serving_qualification_inherited'])
+            self.assertEqual(decide(table, 896, cell_ids=['missing'])['status'], 'wait')
+            self.assertEqual(decide(table, 896, recipe={'body': 'tcq'})['status'], 'wait')
+        row.update(measurement_status='pending', supported=None, measurements=[], quality={})
+        table['table_status'] = 'partial'
+        table['geometry_classes'] = []
+        self.assertEqual(decide(table, 896)['status'], 'wait')
+        self.assertEqual(rung_speed(table, rung=896, cell_id=cell['cell_id'])['status'], 'wait')

@@ -213,7 +213,20 @@ def activate_published_index(publication, candidate_name="index.v2-candidate.jso
 
 
 
-def performance_increment(table, raw_inputs, version):
+def apply_reader_findings(row, findings, format_name, kernel_shas):
+    """Keep source-specific correctness findings on both flag sets and observations."""
+    for finding in findings:
+        if finding['format'] != format_name or finding['kernel_sha'] not in kernel_shas:
+            continue
+        flags = sorted(set(row['anomaly_flags']) | {finding['anomaly_flag']})
+        row['anomaly_flags'] = flags
+        row['quality']['anomaly_flags'] = flags
+        observation = {'kind': 'reader_correctness_finding', 'blocking': True, 'exclusion_basis': False, 'finding': finding}
+        if observation not in row['observations']:
+            row['observations'].append(observation)
+
+
+def performance_increment(table, raw_inputs, version, findings=()):
     """Upgrade a newly loaded table, preserve history, append only actual cells."""
     from tessera.rung_allowability import PERFORMANT_POLICY, measured_geometry_classes
     validate_table(table)
@@ -286,6 +299,12 @@ def performance_increment(table, raw_inputs, version):
             row.update(measurement_status='measured', supported=True)
         elif row['measurement_status'] == 'measured':
             row['measurement_status'] = 'pending'
+    source_sha = table['kernel_build'].get('metadata', {}).get('observed_signature', {}).get('kernel_sha')
+    for row in table['rungs']:
+        kernel_shas = {cell['evidence'].get('kernel_source_sha256') for cell in row['measurements']}
+        kernel_shas.add(source_sha)
+        kernel_shas.discard(None)
+        apply_reader_findings(row, findings, table['format'], kernel_shas)
     table.update(schema='fleet.rung_allowability.v3', table_version=version, generated_at=datetime.now(timezone.utc).isoformat(), performant_policy=dict(PERFORMANT_POLICY))
     table['table_status'] = 'complete' if all(row['measurement_status'] != 'pending' for row in table['rungs']) else 'partial'
     table['geometry_classes'] = measured_geometry_classes(table)
@@ -360,13 +379,13 @@ def main():
         report=activate_published_index(args.publish_root, args.candidate_index_name)
         print(json.dumps(report),flush=True)
         return
+    findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
     if args.input_table:
-        table = performance_increment(json.loads(Path(args.input_table).read_text()), args.measurement_input, args.version)
+        table = performance_increment(json.loads(Path(args.input_table).read_text()), args.measurement_input, args.version, findings)
         publish_table(table, args)
         return
     root=Path(args.root)
     format_name=args.format
-    findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
     match=re.fullmatch(r'TESSERA_([A-Z0-9]+)_K(\d+)',format_name)
     if not match:raise ValueError('expected family format name, without a rung suffix')
     base,arity=match[1],int(match[2])
@@ -438,12 +457,7 @@ def main():
         row['measurements']=[candidates[(q,k['cell_id'])][1] for k in required if (q,k['cell_id']) in candidates]
         row['quality']=quality.get('rungs',{}).get(str(q),{'measurement_status':'pending'})
         row['anomaly_flags']=row['quality'].get('anomaly_flags',[])
-        for finding in findings:
-            if finding['format']==format_name and finding['kernel_sha']==meta['kernel_sha']:
-                flags=sorted(set(row['anomaly_flags'])|{finding['anomaly_flag']})
-                row['anomaly_flags']=flags
-                row['quality']['anomaly_flags']=flags
-                row['observations'].append({'kind':'reader_correctness_finding','blocking':True,'exclusion_basis':False,'finding':finding})
+        apply_reader_findings(row, findings, format_name, {meta['kernel_sha']})
         row['lineage']={'quality_files':[str(p) for p in quality_paths],'geometry_files':sorted({m['evidence']['geometry_file'] for m in row['measurements']})}
         if len(row['measurements'])==len(required) and all(m['measurement_status']=='measured' for m in row['measurements']) and row['quality'].get('measurement_status')=='measured':
             row['measurement_status']='measured';row['supported']=True
