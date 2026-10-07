@@ -794,6 +794,53 @@ def test_the_native_route_pairs_are_attested_and_censusable():
             assert {decoder for _, decoder in census} <= telemetry.DECODERS
 
 
+@pytest.mark.parametrize("mode", ["resident", "streamed"])
+def test_dense_launches_match_the_route_residency(mode):
+    pytest.importorskip("torch")
+    from tessera.serving import bf16_route, fp8_route, scheme
+
+    for route, owner in ((scheme.TESSERA_BF16, bf16_route), (scheme.TESSERA_FP8, fp8_route)):
+        expected = set(owner.DENSE_LAUNCHES)
+        if mode == "streamed":
+            expected.remove(owner.DENSE_DECODE_ONCE_LAUNCH)
+        actual = scheme.launch_pairs(route, structure=scheme.STRUCTURE_DENSE,
+                                     mode=mode, include_experimental=True)
+        assert actual == expected, (route, mode, actual - expected, expected - actual)
+
+
+def test_dense_regime_filter_excludes_an_ineligible_launch(monkeypatch):
+    pytest.importorskip("torch")
+    from tessera.serving import bf16_route, scheme
+
+    launches = copy.deepcopy(scheme.ROUTE_LAUNCHES)
+    pair = bf16_route.DENSE_LAUNCH
+    for row in launches[scheme.TESSERA_BF16]:
+        if (row["symbol"], row["decoder"]) == pair:
+            row["regimes"] = ("batch",)
+    monkeypatch.setattr(scheme, "ROUTE_LAUNCHES", launches)
+    for regime in ("decode", "batch"):
+        expected = set(bf16_route.DENSE_LAUNCHES)
+        if regime == "decode":
+            expected.remove(pair)
+        actual = scheme.launch_pairs(scheme.TESSERA_BF16, structure=scheme.STRUCTURE_DENSE,
+                                     regime=regime, mode="resident", include_experimental=True)
+        assert actual == expected, (regime, actual - expected, expected - actual)
+
+
+@pytest.mark.parametrize("experimental", [False, True])
+def test_dense_extension_filter_keeps_only_extension_free_dispatch(experimental):
+    pytest.importorskip("torch")
+    from tessera.serving import bf16_route, fp8_route, scheme
+
+    for route, owner in ((scheme.TESSERA_BF16, bf16_route), (scheme.TESSERA_FP8, fp8_route)):
+        expected = {owner.DENSE_LAUNCH}
+        if experimental:
+            expected.add(owner.DENSE_DECODE_ONCE_LAUNCH)
+        actual = scheme.launch_pairs(route, structure=scheme.STRUCTURE_DENSE, lanes=(),
+                                     mode="resident", include_experimental=experimental)
+        assert actual == expected, (route, experimental, actual - expected, expected - actual)
+
+
 def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
     """The document half of the same rule, on the packaged file.
 

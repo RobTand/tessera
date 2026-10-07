@@ -70,6 +70,24 @@ def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
             assert claim["expected"]["names_checked"] is True
 
 
+def test_bf16_decode_once_capture_counts_one_module_across_m_values():
+    name = "model.layers.0.self_attn.qkv_proj"
+    expected = {"TESSERA_BF16": {"count": 1, "names": [name],
+                "kinds": {"dense": {"count": 1, "names": [name]}}}}
+    routes = trace(
+        entry("TESSERA_BF16", shape="M1:N12576:K4096", names=[name]),
+        entry("TESSERA_BF16", shape="M2048:N12576:K4096", names=[name],
+              symbol="tessera.serving.bf16_prefill.prefill_apply",
+              decoder="native_window_decode_once_bf16_folded"), identity=True)
+    result = qualify_dispatch(routes, mode="resident", expected_modules=expected)
+    observed = result["TESSERA_BF16"]["kinds"]["dense"]["observed"]
+    assert observed["modules"] == 1
+    assert observed["module_names"] == [name]
+    assert set(observed["by_launch"]) == {
+        "tessera::window_gemm_dense / native_window_gemm_folded",
+        "tessera.serving.bf16_prefill.prefill_apply / native_window_decode_once_bf16_folded"}
+
+
 def _two_launch_moe(family="TESSERA_FP8"):
     """One family whose routed stacks split across its two admissible pairs."""
     from experiments.step4_route_qualification import MOE_LAUNCHES
