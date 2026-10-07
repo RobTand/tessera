@@ -120,8 +120,10 @@ def test_the_committed_r768_census_carries_the_admission_evidence():
     assert rung["rung"] == 768
     assert rung["measurement_status"] == "measured" and rung["supported"] is True
     assert rung["anomaly_flags"] == []
-    evidence = rung["observations"][0]["evidence"]
+    evidence = rung["measurements"]
     assert len(evidence) == 20
+    assert {e["measurement_status"] for e in evidence} == {"measured"}
+    assert {e["measurement_build_id"] for e in evidence} == {doc["kernel_build"]["id"]}
     gate_up_m1 = next(e for e in evidence if e["cell_id"] == "routed:gate_up:M1")
     assert gate_up_m1["kernel_time_us"] == pytest.approx(241.96, abs=1.0)
     assert doc["admits"] == {
