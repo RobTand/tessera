@@ -60,23 +60,29 @@ def test_preflight_refuses_shapes_that_a_device_load_cannot_use(config_dir, defe
 
 def test_input_width_variants_do_not_hide_offers_but_missing_offers_do(monkeypatch):
     from types import ModuleType, SimpleNamespace
-    import torch
     from tessera.serving.contract import classify_construction, construction_entry_from_receipt
 
-    class Linear(torch.nn.Linear):
+    class Linear:
         def __init__(self, columns, prefix, offered):
-            super().__init__(columns, 2, bias=False)
             self.prefix = prefix
             self.input_size, self.output_size = columns, 2
             self.quant_method = SimpleNamespace()
             self.quant_config = object() if offered else None
+            self.weight = SimpleNamespace(shape=(2, columns), dtype="metadata-only")
+
+        def named_parameters(self, recurse=False):
+            return [("weight", self.weight)]
+
+    class Model(list):
+        def named_modules(self):
+            return [(str(index), layer) for index, layer in enumerate(self)]
 
     module = ModuleType("vllm.model_executor.layers.linear")
     module.LinearBase = Linear
     monkeypatch.setitem(sys.modules, module.__name__, module)
     baseline = json.loads((ROOT / "docs/measurements/construction/qwen3-0.6b.json").read_text())
     for second_offered in (True, False):
-        model = torch.nn.ModuleList([
+        model = Model([
             Linear(4, "model.layers.0.self_attn.o_proj", True),
             Linear(8, "model.layers.1.self_attn.o_proj", second_offered)])
         asked = [(layer.prefix, type(layer).__name__) for layer in model

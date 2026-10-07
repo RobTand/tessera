@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — Torch-free construction preflight
+
+Read configuration shapes and producer declarations without a Torch import.
+Use metadata-only fixtures for input width and reachability checks.
+The real CPU Linear construction path still requires Torch and vLLM.
+
 ## 2026-10-07 — explicit GLM projection exports
 
 Use one dense owner rule for KDA, MLA inputs, and DSA key and head weights.

@@ -417,7 +417,6 @@ def preflight(model_path: str, runtime_image: str) -> dict:
     """Read actual configuration shapes and producer imports without construction."""
     import hashlib
     from pathlib import Path
-    import torch
     from tessera.serving import dense_ownership, scheme, weights_mapper
 
     path = Path(model_path) / "config.json"
@@ -458,7 +457,8 @@ def preflight(model_path: str, runtime_image: str) -> dict:
                              "global_rows": sum(global_roles), "local_rows": sum(local),
                              "replicated_shard_ids": [4, 5]})
     vision = config.get("vision_config", {})
-    if torch.cuda.is_initialized():
+    torch = sys.modules.get("torch")
+    if torch is not None and torch.cuda.is_initialized():
         raise RuntimeError("The portable preflight must not initialize CUDA")
     return {"schema": "tessera.construction-preflight.v1", "status": "preflight-only",
             "construction_performed": False, "model_construction_performed": False,
