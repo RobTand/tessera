@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-07 — compare uniform production entries
+
+The matched D41 panel calls master and PR production adapters in separate source-isolated processes.
+Both arms use identical weight and input bytes and the existing CUDA-event timer.
+F/R orders pair both production wrappers, with eager and changed-input graph checks.
+The panel reports both arm spreads and uses their larger relative F/R spread as the conditional fast-path boundary.
+Raw old-pure template timings remain diagnostics, not production acceptance evidence.
+
 ## 2026-10-07 — measure uniform class dispatch
 
 The class benchmark accepts uniform schedules derived from its mixed control rungs.
