@@ -1682,6 +1682,7 @@
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "routed_moe",
+    "regime": "batch",
     "rungs_q256": [
      1024
     ],
@@ -2236,6 +2237,7 @@
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "routed_moe",
+    "regime": "decode",
     "rungs_q256": [
      1024
     ],
@@ -2284,6 +2286,7 @@
     "platform": "sm_121",
     "family": "TESSERA_BF16_K1",
     "structure": "routed_moe",
+    "regime": "batch",
     "rungs_q256": [
      1024
     ],
