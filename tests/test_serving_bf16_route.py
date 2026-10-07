@@ -307,7 +307,7 @@ def test_the_route_applies_row_scale_after_the_dot(monkeypatch, mode):
     from tessera import routed_fused as rf
     import fused_bound as fb
 
-    role = layer.tessera_native.roles[0].bundle
+    role = layer.tessera_native.role_bundles[0]
     split = rf.dense_k_split(x.shape[0], role.rows, role.cols,
                             rf._sm_count(torch.cuda.current_device()),
                             tile_words=role.tile_words)

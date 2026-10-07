@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07 — use the public dense bundle view
+
+Make the BF16 epilogue test read the public prepared-bundle view. The test
+keeps its derived numerical bound and no longer reads an obsolete part field.
+
 ## 2026-10-07 — remove a LUT refusal wording pin
 
 Keep the mixed-layout refusal test and its error class. Remove the message
