@@ -24,12 +24,12 @@ A mapped library does not prove that a module used it.
 The dispatch histogram is the proof this qualifier reads.
 The library census remains a recorded observation, not a qualification gate.
 
-it served: within ONE M every module of the contract appears exactly once, so
-the count is the sum within an M group, maximised over the M groups (the
-2026-09-18 capture: 110 per M group where a max over keys returned 28).
-``M*`` marks a record written under ``torch.compile`` tracing and is refused,
-never counted.  Since ``identity_version`` 1 each entry also names the modules
-it counted (``module_names``) and how many it could not name
+MODULE COUNTS. A shape key identifies both M and the module dimensions.
+Each module can appear at several M values.
+Count modules within each M group, then use the largest group count.
+Do not sum the same module across different M values.
+The trace names each module; an unnamed module refuses qualification.
+The observed names must agree with the supplied manifest names.
 (``unnamed_modules``); an unnamed module is refused, and when the caller
 supplies the manifest's names the two sets must agree.
 
