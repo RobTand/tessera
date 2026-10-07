@@ -58,13 +58,18 @@ def is_prefill(m: int, top_k: int, experts: int) -> bool:
     return m * top_k > SUPERBLOCK[False] * experts
 
 
+DECODE_DEPTH = 4       # the decode path's prefetch depth (rd_decode D): the pipeline refill, in k-steps
+
+
 def k_parts(items: int, tiles: int, grid: int, ks: int) -> int:
-    """K parts for the decode path: the smallest P in 1..8 whose work count splits most evenly
-    over ``grid`` CTAs (the kill test's M=1 rule gives P = 3 at 8 experts x 8 tiles x 96 CTAs)."""
+    """K parts for the decode path: the P in 1..8 with the least estimated time per CTA,
+    rounds x (k-steps per part + the pipeline refill of DECODE_DEPTH k-steps).  A part costs a
+    refill and a partial-sum exchange, so P > 1 pays only where it fills idle CTAs (gate/up at
+    M = 1: P = 3; M = 16 and down at M = 1: P = 1)."""
     best, best_cost = 1, None
     for p in range(1, min(8, ks) + 1):
-        n = items * tiles * p
-        cost = -(-n // grid) / (n / grid)          # rounds of work over the ideal
+        rounds = -(-(items * tiles * p) // grid)
+        cost = rounds * (ks / p + DECODE_DEPTH)
         if best_cost is None or cost < best_cost - 1e-9:
             best, best_cost = p, cost
     return best

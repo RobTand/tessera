@@ -300,7 +300,10 @@ def cpu_preflight(args):
             assert ref.shape == (TABLES[mode], rows, ks * GROUPS[mode] * 32)
             rep[f"mode{mode}_{prof}"] = list(ref.shape)
     from tessera import regdirect_routed as rr
-    rep["k_parts_M1"] = rr.k_parts(8, 8, 96, 128)
+    rep["k_parts_gate_up_M1"] = rr.k_parts(8, 8, 96, 128)
+    rep["k_parts_down_M1"] = rr.k_parts(8, 32, 96, 16)
+    rep["k_parts_gate_up_M16"] = rr.k_parts(128, 8, 96, 128)
+    rep["k_parts_down_M16"] = rr.k_parts(128, 32, 96, 16)
     rep["prefill_M16"] = rr.is_prefill(16, TOP_K, EXPERTS)
     rep["prefill_M2048"] = rr.is_prefill(2048, TOP_K, EXPERTS)
     json.dump(rep, open(os.path.join(args.out, "cpu-preflight.json"), "w"), indent=1)

@@ -321,6 +321,26 @@ __device__ __forceinline__ Task task_of(const Params& p, long u, int sb) {
     return k;
 }
 
+// The prefill order: unit u is (expert, tile, superblock), superblock fastest.
+__device__ __forceinline__ Task task_of_tile_major(const Params& p, long u, int sb) {
+    Task k;
+    k.part = 0;
+    int lo = p.e0, hi = p.e1;                 // largest e in [e0, e1) with item_off[e] * NT <= u
+    while (hi - lo > 1) {
+        const int mid = (lo + hi) >> 1;
+        if ((long)p.item_off[mid] * p.NT <= u) lo = mid; else hi = mid;
+    }
+    k.e = lo;
+    const int nsb = p.item_off[k.e + 1] - p.item_off[k.e];
+    const long local = u - (long)p.item_off[k.e] * p.NT;
+    k.T = (int)(local / nsb);
+    const int s = (int)(local % nsb);
+    k.item = p.item_off[k.e] + s;
+    k.r0 = p.offsets[k.e] + s * sb;
+    k.cnt = min(sb, p.offsets[k.e + 1] - k.r0);
+    return k;
+}
+
 // The expert's tables (2 x 16 KB or 16 KB) and k-step permutation into shared memory.
 template <int MODE>
 __device__ __forceinline__ void load_expert(const Params& p, int e, uint8_t* smem_tab, int16_t* smem_kp) {
@@ -341,7 +361,7 @@ __device__ __forceinline__ void rate_of(const Params& p, int e, int& ra, int& rb
 
 template <int MODE, bool DUMP>
 __global__ void __launch_bounds__(THREADS, 2) rd_decode(Params p) {
-    constexpr int D = 4, NG = Mode<MODE>::NG, NTAB = Mode<MODE>::NTAB;
+    constexpr int D = 4, NTAB = Mode<MODE>::NTAB;    // D: regdirect_routed.DECODE_DEPTH
     extern __shared__ __align__(16) uint8_t smem[];
     __shared__ int16_t s_kp[KS_MAX * 2];
     __shared__ int s_last;
@@ -516,15 +536,16 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
     uint8_t* xbase = smem + XS<MODE>::TABB;
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
     const int g = lane >> 2, t = lane & 3;
+    // Work units in (expert, tile, superblock) order, dealt round-robin: the superblocks of one
+    // expert's tile run at the same time on neighbouring CTAs, so the second read of that tile's
+    // wire hits L2 (stage-1 gpu-01: at M = 4096, two 64-route superblocks per expert doubled the time).
     const long U = (long)p.NT;                        // P == 1 on this path
     const long u_lo = (long)p.item_off[p.e0] * U, u_hi = (long)p.item_off[p.e1] * U;
-    const long t0 = u_lo + (long)blockIdx.x * (u_hi - u_lo) / gridDim.x;
-    const long t1 = u_lo + (long)(blockIdx.x + 1) * (u_hi - u_lo) / gridDim.x;
     int cur_e = -1;
     const uint64_t pol_w = l2_policy(p.l2_hint ? 1 : 0);
     const int nch = (p.KS + XKC - 1) / XKC;
-    for (long u = t0; u < t1; ++u) {
-        const Task k = task_of(p, u, 64);
+    for (long u = u_lo + blockIdx.x; u < u_hi; u += gridDim.x) {
+        const Task k = task_of_tile_major(p, u, 64);
         const int n0 = k.T * TILE + warp * BLOCK_ROWS;
         int ra, rb, ksa;
         rate_of(p, k.e, ra, rb, ksa);
