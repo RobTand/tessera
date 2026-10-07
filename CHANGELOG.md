@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — use canonical BF16 serving oracles
+
+Replace the remaining folded dense reference with raw values and separate
+row scales. Reuse the shared FP64 definition and derived bounds. Remove
+obsolete arithmetic-field assertions and restore the missing reader import.
+The retained GEMV bound also uses the shared owner. Product code is unchanged.
+
 ## 2026-10-07 — finish the T16 API callers
 
 Remove the obsolete family keyword from the independent FP8 stock call.

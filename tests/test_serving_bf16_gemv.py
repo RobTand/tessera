@@ -1,16 +1,10 @@
-"""The folded native BF16 dense route and retained window-GEMV references.
+"""The native BF16 epilogue route and retained window-GEMV references.
 
-The serve now prepares one packed native window GEMM for both residencies
-and every M; it folds each weight's row scale before the bf16 dot. The CPU
-eligibility tests describe the retained GEMV module, not the current serve.
-Its precision, host-metadata and graph-capture checks prepare a reference
-holder directly from the wire, preserving the older operator's unfolded
-arithmetic without pretending that the serving route still creates it.
-
-STUBBED: vLLM's ``LinearMethodBase`` and parameters, as in
-``test_serving_bf16_route``.  There is no A-side quantiser to stub -- the A
-side is bf16 as it arrives, which is the whole of this route's activation
-contract.
+The serve prepares packed raw BF16 values and FP32 row scales for both
+residencies. It applies each row scale after the FP32 dot.
+The eligibility tests describe the retained GEMV module, not the serve.
+Its precision and graph checks prepare an independent holder from the wire.
+The tests use vLLM parameter stand-ins. BF16 activations remain unquantized.
 """
 from __future__ import annotations
 
@@ -361,25 +355,23 @@ def _drive(monkeypatch, mode, roles=(("weight", 64),), cols=256, m=4, seed=0,
 
 
 def _fp32_bound(tile_f32, scale, x):
-    """A deterministic fp32 accumulation bound: ``2K * 2^-23 * sum_j |w_ij x_j|``
-    (each of the K partial sums is rounded once, in either order; the factor 2
-    covers the reference's own rounding of the same size).  The kernel's own
-    GEMV tests derive this same bound; it is not a picked tolerance."""
-    K = x.shape[1]
-    mag = (tile_f32 * scale[:, None]).abs().double() @ x.abs().double().t()
-    return (2 * K * 2.0 ** -23) * mag.t() + 1e-30
+    """Use the shared dense bound without the final BF16 conversion."""
+    import fused_bound as fb
+
+    weights = tile_f32.to(x.device).double() * scale.to(x.device).double()[:, None]
+    return fb.dense_bound("value", x.double(), weights, x.shape[1], rounded=False)[1]
 
 
 def _dense_reference(values, scale, x):
-    """The served weight is bf16(value * scale), rounded once before the dot."""
-    folded = (values.float().to(x.device) * scale.float().to(x.device)[:, None]).bfloat16().float()
-    exact = x.float() @ folded.t()
-    bound = _fp32_bound(folded, torch.ones(folded.shape[0], device=x.device), x)
-    return exact, bound + 2.0 ** -8 * exact.abs()
+    """Keep raw values and row scales separate in the FP64 definition."""
+    import fused_bound as fb
+
+    weights = values.to(x.device).double() * scale.to(x.device).double()[:, None]
+    return fb.dense_bound("value", x.double(), weights, x.shape[1])
 
 
 @requires_cuda
-def test_streamed_prepares_folded_native_without_materialized_planes(monkeypatch):
+def test_streamed_keeps_packed_values_and_row_scales(monkeypatch):
     _g, layer, _m, _x, (_values, scale) = _drive(monkeypatch, MODE_STREAMED, q256=1024)
     assert layer.tessera_native is not None
     for name in ("tessera_gemv", "tessera_prepared", "weight_bf16", "wire_bytes"):

@@ -247,7 +247,6 @@ def test_native_loader_shape_produces_rank_local_packed_tiles(wires, rank):
     assert (packed.gate.rows, packed.gate.cols) == (N // 2, H)
     assert (packed.up.rows, packed.up.cols) == (N // 2, H)
     assert (packed.down.rows, packed.down.cols) == (H, N // 2)
-    assert packed.gate.arithmetic == 'epilogue' and packed.down.arithmetic == 'epilogue'
     assert packed.gate.words_all.shape[0] == E and packed.down.words_all.shape[0] == E
     assert packed.gate.scale_all.shape == (E, N // 2)     # rung-local rows
     assert packed.down.scale_all.shape == (E, H)          # whole rows, cut columns
@@ -398,7 +397,6 @@ def test_ordinary_fp8_native_tp2_uses_the_same_rank_local_slices(wires, rank):
     assert layer.tessera_decoder == 'native_window_moe_compact'
     packed = method._packed
     assert (packed.gate.rows, packed.up.rows, packed.down.cols) == (N // 2, N // 2, N // 2)
-    assert packed.gate.arithmetic == 'epilogue'
     ids = torch.tensor([2, 0, 1], dtype=torch.int32, device='cuda')
     _assert_rank_local_scales(packed, _materialised(wires, rank, ids), ids)
     x = (torch.randn(2, H, generator=torch.Generator().manual_seed(9))

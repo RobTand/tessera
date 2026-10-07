@@ -273,6 +273,7 @@ def _drive(monkeypatch, mode, roles=(("weight", 64),), cols=512, m=8, seed=0, q2
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
 def test_the_tile_is_the_reference_values_and_the_scale_is_beside_it(monkeypatch, mode):
     """The reference pair has raw BF16 values and the separate FP32 row scale."""
+    from tessera.serving.scheme import parse_tessera_blob_for_scheme
 
     _got, layer, _m, _x, (values, scale, folded) = _drive(monkeypatch, mode)
     blob, scheme, *_ = _encode_module([("weight", 64)], cols=512)
