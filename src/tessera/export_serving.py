@@ -2725,6 +2725,13 @@ def main():
     # It runs on the MODULE names, not the tensor names, because the module is
     # what the runtime builds and what ``config_groups`` will declare.
     unrouted, census = unrouted_modules(src_config, list(modules) + list(stack_plan))
+    strict_unrouted = [module for module in unrouted
+                       if module in modules and any(member in explicit for member in modules[module])
+                       and (module.endswith((".indexer.wk_weights_proj", ".kv_b_proj"))
+                            or any(MOE_ROUTER.match(member) for member in modules[module]))]
+    if strict_unrouted:
+        raise SystemExit("selected router or direct consumer has no declared runtime route: "
+                         + str(strict_unrouted))
     unrouted_records = [
         {"module": module, "vllm_module_pattern": pattern, "verdict": verdict}
         for module, (verdict, pattern) in sorted(unrouted.items())]
