@@ -923,7 +923,7 @@ def _capability_or_none(torch):
 
 def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                             declared_rungs, record_owners, families_by_route,
-                            runtime_image=None, execution_mode=None):
+                            runtime_image=None, execution_mode=None, kernel_build=None):
     """Check each observed structure against its own cells, using declared owners.
 
     This aggregates existing per-structure checks; it publishes no new cells.
@@ -938,6 +938,8 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                          for records in records_by_phase.values()
                          for record in records.values()})
     runtime = {"image": runtime_image, "execution_mode": execution_mode}
+    if kernel_build is not None:
+        runtime["kernel_build"] = kernel_build
     blocks, problems = {}, []
     for structure in structures:
         phases, verdicts, unsupported_reasons = {}, [], set()
@@ -951,7 +953,7 @@ def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                 {phase: selected}, cells=cells, phase_regimes=phase_regimes,
                 platform=platform, structure=structure, rungs_by_module=rungs,
                 families_by_route=families_by_route,
-                runtime_image=runtime_image, execution_mode=execution_mode,
+                runtime_image=runtime_image, execution_mode=execution_mode, kernel_build=kernel_build,
                 symbol_alias=census_symbol_base if structure == "routed_moe" else None)
             phases.update(block["phases"])
             verdicts.append(block["agrees"])
@@ -1174,7 +1176,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
                                  symbol_for, symbol_base, families_by_route, policy_prefixes,
                                  allow_fallback_decoder=False, expect_modules=None,
                                  required_lanes=(), lane_decoders=None, manifest_lanes=(),
-                                 require_decoder=(), draft=None):
+                                 require_decoder=(), draft=None, kernel_build=None):
     """Every check a census makes on what its forwards recorded, without an engine or device.
 
     ``main`` gathers the observations -- per-rank route records per phase,
@@ -1337,7 +1339,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
         platform=platform,
         declared_rungs=declared_rungs, record_owners=record_owner_world,
         families_by_route=families_by_route,
-        runtime_image=runtime_image, execution_mode=execution_mode)
+        runtime_image=runtime_image, execution_mode=execution_mode, kernel_build=kernel_build)
     problems.extend(agreement_problems)
     draft_receipt = None
     if draft is not None:
@@ -1364,7 +1366,7 @@ def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank
             phase_regimes=phase_regimes, platform=platform,
             declared_rungs=draft_module_rungs, record_owners=draft_phase_owners,
             families_by_route=families_by_route,
-            runtime_image=runtime_image, execution_mode=execution_mode)
+            runtime_image=runtime_image, execution_mode=execution_mode, kernel_build=kernel_build)
         problems.extend(f"draft: {message}" for message in draft_agreement_problems)
         required_draft_decoder = required_draft_native_decoders(
             draft_families, native_decoder=draft["native_decoder"],
@@ -1421,6 +1423,8 @@ def parse_args(argv=None, env=None):
                          "the container itself makes: a host process can export the same "
                          "pair by hand, and the receipt records which mechanism named the "
                          "image")
+    ap.add_argument("--kernel-build", default=(os.environ if env is None else env).get("TESSERA_KERNEL_BUILD"),
+                    help="Use the declared kernel build for cell lookup.")
     ap.add_argument("--expect-modules", type=int, default=None,
                     help="number of Tessera modules the checkpoint declares")
     ap.add_argument("--prompt-tokens", type=int, default=64)
@@ -1881,6 +1885,7 @@ def main() -> int:
         refusals_by_rank=refusals_by_rank, declared=declared, declared_rungs=declared_rungs,
         phase_plan=phase_plan, mode=mode, platform=served_platform,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode,
+        kernel_build=args.kernel_build,
         compiled=args.compiled, cells=load_serving_contract()["lane_eligibility"]["cells"],
         contract_for=contract_for, expected=_expected, symbol_for=symbol_for,
         symbol_base=moe_route.census_symbol_base,
@@ -1980,6 +1985,8 @@ def main() -> int:
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }
+    if args.kernel_build is not None:
+        receipt["runtime"]["kernel_build"] = args.kernel_build
     if draft_receipt is not None:
         receipt["draft"] = draft_receipt
     if args.draft_routes:

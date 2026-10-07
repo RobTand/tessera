@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for issue #1036.
+The repository owns the serving Dockerfile, image job and source patch files under `images/serving`.
+The image job prints its PrismaBuild command unless the operator selects `--submit`.
+The job requests CPUs only. This change starts no image build.
+Cells use kernel build and module kind for portable lookup.
+The compatibility map preserves historical cell identifiers and image-only calls.
+Legacy build names identify recorded toolchain scopes. They do not prove native binary equivalence.
+An explicit build context selects the portable key. The image remains provenance.
+Existing defaults, pins, wire bytes, rungs, evidence and paired-rank checks remain unchanged.
+No new device qualification or performance claim accompanies this change.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
