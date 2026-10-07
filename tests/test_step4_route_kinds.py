@@ -74,17 +74,15 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
     assert moe["observed"]["launches"] == 4
     assert moe["observed"]["module_names"] == ["model.layers.3.mlp.experts", "model.layers.4.mlp.experts"]
     assert set(moe["observed"]["by_launch"]) == {
-        "tessera.native_window_moe.NativeWindowMoE.__call__ / native_window_moe_compact",
-        "tessera.routed_fused.FusedRoutedWindowMoE.__call__ / native_routed_fused_window"}
+        "tessera::routed_window_classes / native_routed_window_classes",
+        "tessera::routed_window_classes / native_routed_window_classes_e4m3mma"}
     assert all(bucket["modules"] == 1 for bucket in moe["observed"]["by_launch"].values())
     # Two pairs observed: no single symbol/decoder is claimed for the kind.
     assert "symbol" not in moe["observed"] and "symbol" not in moe["expected"]
-    # Contract v46 adds the E4M3 instruction library's routed pair to what the
-    # FP8 routed kind admits (experimental; TESSERA_FUSED_E4M3_MMA=e4m3).
+    # The FP8 routed kind admits the two current class operations, both experimental.
     assert [(e["symbol"], e["decoder"]) for e in moe["expected"]["launches"]] == [
-        ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window"),
-        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window_e4m3mma")]
+        ("tessera::routed_window_classes", "native_routed_window_classes"),
+        ("tessera::routed_window_classes", "native_routed_window_classes_e4m3mma")]
     # The dense kind observed one pair, named outright; since contract v43
     # (tessera#692) its expectation admits two -- the Triton window GEMM and
     # the fused kernel's dense identity -- so it lists launches like the routed
@@ -103,14 +101,14 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
 @pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_folded_on_fp8", "count_ignores_second_pair"])
 def test_two_launch_moe_refuses_a_pair_the_family_does_not_admit(corruption):
     expected, routes = _two_launch_moe()
-    fused = [row for row in routes["entries"] if row["decoder"] == "native_routed_fused_window"]
+    fused = [row for row in routes["entries"] if row["decoder"] == "native_routed_window_classes_e4m3mma"]
     if corruption == "fused_on_nvfp4":
         for row in fused:
             row["policy"] = "TESSERA_NVFP4:resident"
             row["contract"] = "e2m1_group16_ue4m3_static"
     elif corruption == "fused_folded_on_fp8":
         for row in fused:
-            row["decoder"] = "native_routed_fused_window_folded"
+            row["decoder"] = "native_routed_window_classes_folded"
     elif corruption == "count_ignores_second_pair":
         expected["TESSERA_FP8"]["kinds"]["moe"]["count"] = 1
         expected["TESSERA_FP8"]["kinds"]["moe"]["names"] = ["model.layers.3.mlp.experts"]
