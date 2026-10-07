@@ -1,16 +1,10 @@
 """The canonical admission home is metadata-only and fail closed on bad evidence."""
 import copy
-import importlib.util
 import json
 import subprocess
 import sys
 import unittest
 from tessera.rung_allowability import admit_rung, validate_index, validate_table
-
-try:
-    _HAS_JSONSCHEMA = importlib.util.find_spec("jsonschema") is not None
-except ImportError:
-    _HAS_JSONSCHEMA = False
 
 
 def fixture():
@@ -151,8 +145,10 @@ class GeometryHarvest(unittest.TestCase):
         import bench_rates, rung_allowability_table
         cls.rates,cls.harvest=bench_rates,rung_allowability_table
 
-    @unittest.skipUnless(_HAS_JSONSCHEMA, "jsonschema is missing in this venv; hosted pure enforces this publish path")
     def test_increment_reader_findings_preserve_correctness_holds(self):
+        import importlib.util
+        if importlib.util.find_spec("torch") is not None and importlib.util.find_spec("jsonschema") is None:
+            self.fail("jsonschema is missing in this venv. Install it before running this test. The pool venv runs this test with CPU torch. PB x86 CPU actions also run it. Hosted pure has no torch and never covers it.")
         import tempfile
         from pathlib import Path
         from test_rung_performant_policy import v3_fixture
