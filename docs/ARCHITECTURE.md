@@ -3,7 +3,7 @@
 Re-stamped 2026-10-07 for issue #1036.
 The repository owns the serving Dockerfile, image job and source patch files under `images/serving`.
 The image job prints its PrismaBuild command unless the operator selects `--submit`.
-The job requests CPUs only. This change starts no image build.
+The job requests central processors only. This change starts no image build.
 Cells use kernel build and module kind for portable lookup.
 The compatibility map preserves historical cell identifiers and image-only calls.
 Legacy build names identify recorded toolchain scopes. They do not prove native binary equivalence.
