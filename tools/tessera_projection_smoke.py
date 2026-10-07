@@ -378,6 +378,55 @@ def _stock_control(item, config, world, rank, original=None, mode="eager"):
         raise AssertionError(f"{row['prefix']}: install changed the stock method")
     return {**compare(got, expected, name=row["prefix"], dtype=expected.dtype, exact=True), "graph": graph}
 
+def _local_ip():
+    """Return the host address other ranks can dial (no packet leaves)."""
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    finally:
+        sock.close()
+
+
+def _tp2_master(world, rank, node_rank):
+    """Share rank 0's reachable rendezvous address with the other rank.
+
+    The actual vLLM image ignores the passed init method when nnodes > 1
+    and dials ParallelConfig master_addr/master_port instead, so both ranks
+    must use rank 0's address. Rank 0 writes it to the shared rendezvous
+    file; rank 1 polls it. Single-node runs keep loopback.
+    """
+    import socket
+    import time
+    nnodes = int(os.environ.get("NNODES", "1"))
+    if world < 2 or nnodes < 2:
+        return os.environ.get("MASTER_ADDR", "127.0.0.1"), int(os.environ.get("MASTER_PORT", str(_free_port())))
+    rendezvous = os.environ.get("TESSERA_TP2_RENDEZVOUS", "")
+    if not rendezvous:
+        raise ValueError("A two-node run needs TESSERA_TP2_RENDEZVOUS on a shared filesystem")
+    if node_rank == 0:
+        host = os.environ.get("MASTER_ADDR", "")
+        if not host or host.startswith("127."):
+            try:
+                host = _local_ip()
+            except OSError:
+                host = socket.gethostbyname(socket.gethostname())
+        port = int(os.environ.get("MASTER_PORT", str(_free_port())))
+        Path(rendezvous).parent.mkdir(parents=True, exist_ok=True)
+        Path(rendezvous).write_text(f"{host} {port}\n")
+        print(f"[tp2] rank {rank}/{world} serves rendezvous {host}:{port}", flush=True)
+        return host, port
+    deadline = time.monotonic() + 300.0
+    while time.monotonic() < deadline:
+        try:
+            host, port = Path(rendezvous).read_text().split()
+            print(f"[tp2] rank {rank}/{world} joins rendezvous {host}:{port}", flush=True)
+            return host, int(port)
+        except (OSError, ValueError):
+            time.sleep(2.0)
+    raise TimeoutError("Timed out waiting for the rank-0 rendezvous file")
+
 
 def run_device(inputs, mode, *, distributed_init_method=None):
     import torch
@@ -391,17 +440,23 @@ def run_device(inputs, mode, *, distributed_init_method=None):
         raise RuntimeError("The device smoke needs real CUDA")
     world, rank = int(os.environ.get("WORLD_SIZE", "1")), int(os.environ.get("RANK", "0"))
     local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    node_rank = int(os.environ.get("NODE_RANK", "0"))
+    print(f"[tp2] rank {rank}/{world} node {node_rank} starts {mode}", flush=True)
     torch.cuda.set_device(0)
+    master_host, master_port = _tp2_master(world, rank, node_rank)
     config = VllmConfig(parallel_config=ParallelConfig(
         tensor_parallel_size=world, nnodes=int(os.environ.get("NNODES", "1")),
-        node_rank=int(os.environ.get("NODE_RANK", "0"))))
-    port = os.environ.get("MASTER_PORT", str(_free_port()))
-    host = os.environ.get("MASTER_ADDR", "127.0.0.1")
+        node_rank=node_rank, master_addr=master_host, master_port=master_port))
+    port = os.environ.get("MASTER_PORT", str(master_port))
+    host = os.environ.get("MASTER_ADDR", master_host)
+    print(f"[tp2] rank {rank}/{world} rendezvous {master_host}:{master_port}", flush=True)
     init_method = distributed_init_method or f"tcp://{host}:{port}"
     with set_current_vllm_config(config, check_compile=False):
         init_distributed_environment(world_size=world, rank=rank, local_rank=local_rank,
                                      distributed_init_method=init_method, backend="gloo")
+        print(f"[tp2] rank {rank}/{world} joined process group", flush=True)
         initialize_model_parallel(world, 1)
+        print(f"[tp2] rank {rank}/{world} joined model parallel", flush=True)
     if world not in (1, 2):
         raise ValueError("The small artifact supports one or two tensor-parallel ranks")
     import vllm
