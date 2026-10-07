@@ -1,0 +1,13 @@
+{
+  "source_config": "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported/config.json",
+  "source_image": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "source_model": "vllm/models/glm5next/common/kda.py:64-86,216-248",
+  "replicated_shard_ids": [4, 5],
+  "text_config": {
+    "hidden_size": 4096,
+    "linear_attn_config": {
+      "num_heads": 64,
+      "head_dim": 128
+    }
+  }
+}
