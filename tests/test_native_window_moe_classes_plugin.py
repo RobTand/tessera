@@ -30,8 +30,8 @@ from tessera.serving.scheme import (expert_role_declarations,
                                     validate_tessera_moe_scheme)
 from tessera.window_gemm_grouped import prepare_grouped_window_gemm
 from _routed_classes_plugin_fixture import (EXPERTS, HIDDEN, INTERMEDIATE,
-                                            ROLES, TOP_K, route_cases, wire_fixture,
-                                            pure_schedule_launch)
+                                            ROLES, TOP_K, route_cases, wire_fixture)
+from test_routed_window_classes_cuda import _pure_launch
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="CPU fixture control only; real vLLM loader/CUDA graph cases did not execute")
@@ -191,8 +191,8 @@ def _bits(actual, expected):
     assert torch.equal(actual.view(torch.int16), expected.view(torch.int16))
 
 
-def _saved_reference(packed, x, ids, weights, *, swiglu_limit):
-    """Use the pure native entry with the actual rank geometry and clamp."""
+def _saved_reference(packed, x, ids, weights):
+    """Use the shared pure native entry at this fixture's actual rank geometry."""
     routed = torch.empty(ids.numel(), packed.down.rows, device=x.device, dtype=torch.bfloat16)
     flat_ids = ids.reshape(-1)
     for desc in packed.expert_classes:
@@ -210,10 +210,10 @@ def _saved_reference(packed, x, ids, weights, *, swiglu_limit):
         routing = pure._routing(local_ids, rw)
         xq, a1 = pure._quantized(xin, None, len(take))
         act = torch.empty(len(take), packed.gate.rows, device=x.device, dtype=torch.bfloat16)
-        pure_schedule_launch(pure, 0, xq, a1, routing, act, weight=False, swiglu_limit=swiglu_limit)
+        _pure_launch(pure, 0, xq, a1, routing, act, weight=False)
         aq, a2 = pure._quantized(act, None, len(take))
         output = torch.empty(len(take), packed.down.rows, device=x.device, dtype=torch.bfloat16)
-        pure_schedule_launch(pure, 2, aq, a2, routing, output, weight=True, swiglu_limit=swiglu_limit)
+        _pure_launch(pure, 2, aq, a2, routing, output, weight=True)
         routed[take] = output
     out = torch.empty_like(x)
     rf._ext(rf.library_for(packed.family)).token_sum(routed, out, ids.shape[1])
@@ -271,13 +271,12 @@ def test_real_plugin_maps_storage_and_replays_changed_global_routes(
     cases = route_cases(scheme, tokens, device="cuda")
     expected = [_saved_reference(definition, x,
                 torch.tensor(want_inverse, dtype=torch.int32, device="cuda").index_select(
-                    0, ids.reshape(-1)).reshape_as(ids), weights, swiglu_limit=layer.swiglu_limit)
+                    0, ids.reshape(-1)).reshape_as(ids), weights)
                 for ids, weights in cases]
     assert all(torch.isfinite(ref).all() for ref in expected)
     assert any(torch.count_nonzero(ref) for ref in expected), "zero output cannot prove expert identity"
     # A missing inverse must produce different bytes, not merely a missing symbol.
-    assert any(not torch.equal(ref, _saved_reference(definition, x, ids, weights,
-               swiglu_limit=layer.swiglu_limit))
+    assert any(not torch.equal(ref, _saved_reference(definition, x, ids, weights))
                for (ids, weights), ref in zip(cases, expected))
     expected = _save_references(tmp_path, f"{family}-{layout}-tp{degree}-rank{rank}-m{tokens}-reverse{int(reverse)}",
                      scheme, cases, expected, degree, rank, method._native.library)
@@ -319,7 +318,7 @@ def test_real_plugin_uniform_identity_is_exact_old_pure_schedule(family, degree,
     x = (torch.randn(16, HIDDEN, generator=torch.Generator().manual_seed(4108)) * 0.125).bfloat16().cuda()
     ids = torch.arange(EXPERTS, dtype=torch.int32, device="cuda").repeat(16, 1)
     weights = torch.linspace(0.125, 0.875, ids.numel(), device="cuda").reshape_as(ids)
-    ref = _saved_reference(definition, x, ids, weights, swiglu_limit=layer.swiglu_limit)
+    ref = _saved_reference(definition, x, ids, weights)
     ref, = _save_references(tmp_path, f"{family}-uniform-tp{degree}-rank{rank}", scheme, [(ids, weights)], [ref],
                             degree, rank, method._native.library)
     _bits(method.apply(layer, x, weights, ids, None, None), ref)
