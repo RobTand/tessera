@@ -125,6 +125,16 @@ def quality_sources(table_path, extra_paths):
     return out
 
 
+def publish(table, out):
+    """Write a table once.  A published version is evidence: a changed table takes a new version
+    (or a new path), and the prior file stays where its readers found it."""
+    try:
+        with open(out, "x") as fh:
+            json.dump(table, fh, indent=1)
+    except FileExistsError:
+        raise ValueError(f"{out} already exists: publish a changed table under a new version") from None
+
+
 def to_bytes(value, unit):
     unit = unit.split("/")[0]                      # NCU states shared memory per block: "byte/block"
     scale = {"byte": 1, "Kbyte": 1000, "KB": 1000, "Kibyte": 1024, "KiB": 1024, "Mbyte": 10**6}[unit]
@@ -254,7 +264,7 @@ def main():
     hold = admit_rung(table, format=FORMAT, kernel_build_id=build_id, rung=RUNG_MIN)
     if hold["reason"] != "kernel_not_serving_qualified":
         raise AssertionError(f"the table must not admit a rung before serving qualification: {hold}")
-    json.dump(table, open(a.out, "w"), indent=1)
+    publish(table, a.out)
     done = sorted(r["rung"] for r in rows_out if r["measurement_status"] == "measured")
     print(json.dumps({"out": a.out, "build": build_id, "measured_rungs": done,
                       "cells_measured": sum(len(v) for v in cells.values())}))
