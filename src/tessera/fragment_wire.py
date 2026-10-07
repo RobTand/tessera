@@ -14,7 +14,7 @@ import torch
 from .errors import GrammarError
 from .wire import unpack_body
 
-__all__ = ["FragmentWire", "repack_fragment", "decode_fragment"]
+__all__ = ["FragmentWire", "repack_codes", "repack_fragment", "decode_fragment"]
 
 _TILE_ROWS = 128
 _KSTEP = 32
@@ -47,23 +47,6 @@ class FragmentWire:
     projection_group: Literal["gate_up", "down"]
 
 
-def _pairs(fields: np.ndarray) -> np.ndarray:
-    # fields[slot, row, column] -> pairs[g, t, slot, j].
-    groups = fields.shape[1] // 2
-    lane_fields = fields.reshape(2, groups, 2, 4, 8).transpose(1, 3, 0, 4, 2)
-    return lane_fields.reshape(groups * 4, 16, 2)
-
-
-def _pack(fields: np.ndarray, rate: int) -> np.ndarray:
-    pairs = _pairs(fields).astype(np.uint16)
-    values = (pairs[:, :, 0] << rate) | pairs[:, :, 1]
-    shifts = np.arange(2 * rate - 1, -1, -1, dtype=np.uint16)
-    bits = ((values[:, :, None] >> shifts) & 1).astype(np.uint8)
-    packed = np.packbits(bits.reshape(values.shape[0], 32 * rate), axis=1, bitorder="big")
-    words = np.frombuffer(packed.tobytes(), dtype=">u4").astype(np.uint32)
-    return words.reshape(values.shape[0], rate).T.copy().reshape(-1).view(np.int32)
-
-
 def _unpack(words: np.ndarray, rate: int, lanes: int) -> np.ndarray:
     lane_words = words.reshape(rate, lanes).T.astype(">u4")
     bits = np.unpackbits(np.frombuffer(lane_words.tobytes(), dtype=np.uint8), bitorder="big")
@@ -73,17 +56,126 @@ def _unpack(words: np.ndarray, rate: int, lanes: int) -> np.ndarray:
     return fields.reshape(lanes // 4, 4, 2, 8, 2).transpose(2, 0, 4, 1, 3).reshape(2, lanes // 2, 32)
 
 
-def _start_state(state: torch.Tensor | None, projections: int, cols: int) -> np.ndarray:
+def _start_state(state: torch.Tensor | None, projections: int, cols: int, device) -> torch.Tensor:
     if state is None:
-        return np.zeros((projections, cols), dtype=np.int64)
-    if state.device.type != "cpu" or state.dtype not in (torch.int16, torch.int32, torch.int64):
-        raise GrammarError("start state needs a CPU integer tensor")
+        return torch.zeros((projections, cols), dtype=torch.int64, device=device)
+    if state.dtype not in (torch.int16, torch.int32, torch.int64):
+        raise GrammarError("start state needs an integer tensor")
     if state.shape != (projections, cols) and not (projections == 1 and state.shape == (cols,)):
         raise GrammarError(f"start state needs shape [{projections}, {cols}]")
-    values = state.reshape(projections, cols).numpy()
-    if np.any(values < 0) or np.any(values >= 1 << _WINDOW):
+    values = state.reshape(projections, cols).to(device=device, dtype=torch.int64)
+    if bool((values < 0).any()) or bool((values >= 1 << _WINDOW).any()):
         raise GrammarError("start state does not fit the 14-bit window")
     return values
+
+
+def _step_rates(rates, cols: int, groups: int) -> list:
+    if len(rates) != cols:
+        raise GrammarError(f"{len(rates)} rates for {cols} fragment columns")
+    step_rates = []
+    for start in range(0, cols, _KSTEP):
+        rate = rates[start]
+        if rate not in (3, 4):
+            raise GrammarError(f"rate {rate} is not R3 or R4 at k-step {start // _KSTEP}")
+        if any(r != rate for r in rates[start:start + _KSTEP]):
+            raise GrammarError(f"rate changes inside k-step {start // _KSTEP}")
+        step_rates.append(rate)
+    return step_rates
+
+
+def _lane_words(fields: torch.Tensor, rate: int) -> torch.Tensor:
+    """int64 fields ``[..., lanes, 32]`` in pair order ``(p, j, row)`` -> int32 words ``[..., R, lanes]``:
+    pair ``q = p * 8 + j`` holds rows ``2g`` then ``2g + 1`` at bit ``q * 2R`` of the MSB-first lane stream."""
+    shifts = torch.arange(rate - 1, -1, -1, device=fields.device)
+    bits = ((fields.unsqueeze(-1) >> shifts) & 1).flatten(-2)                 # [..., lane, 32R]
+    bits = bits.reshape(*bits.shape[:-1], rate, 32)
+    words = (bits << torch.arange(31, -1, -1, device=fields.device)).sum(-1)  # [..., lane, R]
+    words = torch.where(words >= 2**31, words - 2**32, words).to(torch.int32)
+    return words.movedim(-1, -2)
+
+
+def repack_codes(
+    codes: torch.Tensor,
+    rates: tuple[int, ...],
+    *,
+    projection_group: Literal["gate_up", "down"],
+    start_state: torch.Tensor | None = None,
+    word_offset: int = 0,
+) -> FragmentWire:
+    """The fragment repack of ``codes`` ``[projections, rows, cols]`` (BODY codes, original column
+    order), on the codes' device.  :func:`repack_fragment` is this after its BODY unpack."""
+    if projection_group not in ("gate_up", "down"):
+        raise GrammarError(f"projection_group {projection_group!r} is not gate_up or down")
+    groups = 1 if projection_group == "gate_up" else 2
+    projections = 2 if projection_group == "gate_up" else 1
+    if codes.dim() != 3 or codes.shape[0] != projections:
+        raise GrammarError(f"{projection_group} needs {projections} BODY planes")
+    _, rows, cols = codes.shape
+    if rows <= 0 or cols <= 0 or cols % (_KSTEP * groups):
+        raise GrammarError(f"fragment rows must be positive and cols must be a positive multiple of {32 * groups}")
+    if cols // _KSTEP > torch.iinfo(torch.int16).max + 1:
+        raise GrammarError("k-step permutation does not fit int16")
+    if word_offset < 0:
+        raise GrammarError("word_offset must be nonnegative")
+    step_rates = _step_rates(rates, cols, groups)
+    device = codes.device
+    state = _start_state(start_state, projections, cols, device)
+    permutation = sorted(range(len(step_rates)), key=step_rates.__getitem__)
+    originals = torch.tensor(permutation, dtype=torch.int64).reshape(-1, groups)
+    sorted_rates = [step_rates[int(pair[0])] for pair in originals]
+    if any(step_rates[int(original)] != rate
+           for pair, rate in zip(originals, sorted_rates) for original in pair):
+        raise GrammarError("down needs an even 32-column group count at each rate")
+    n_tiles = (rows + _TILE_ROWS - 1) // _TILE_ROWS
+    rows_p = n_tiles * _TILE_ROWS
+    padded = torch.zeros((projections, rows_p, cols), dtype=torch.int64, device=device)
+    padded[:, :rows] = codes.to(torch.int64)
+    lane = torch.arange(_KSTEP, device=device)
+    history, tiles, history_offsets, unit_offsets = [], [], [], []
+    hcursor = 0
+    tcursor = 0
+    slot = 0
+    for rate in sorted(set(sorted_rates)):
+        n = sorted_rates.count(rate)
+        seg = originals[slot:slot + n].to(device)                              # [n, groups]
+        # fields[slot, p, row, column]: gate/up p = projection; down p = group of the pair
+        if projections == 2:
+            cols_idx = (seg[:, 0:1] * _KSTEP + lane).reshape(-1)
+            f = padded[:, :, cols_idx].reshape(2, rows_p, n, _KSTEP).permute(2, 0, 1, 3)
+            st = state[:, cols_idx].reshape(2, n, _KSTEP).permute(1, 0, 2)
+        else:
+            cols_idx = (seg.unsqueeze(-1) * _KSTEP + lane).reshape(-1)
+            f = padded[0][:, cols_idx].reshape(rows_p, n, 2, _KSTEP).permute(1, 2, 0, 3)
+            st = state[0, cols_idx].reshape(n, 2, _KSTEP)
+        # [slot, p, T, warp, g, row, t, j] -> [T, slot, warp, lane (g, t), field (p, j, row)]
+        f = f.reshape(n, 2, n_tiles, 8, 8, 2, 4, 8).permute(2, 0, 3, 4, 6, 1, 7, 5).reshape(n_tiles, n, 8, 32, 32)
+        tiles.append(_lane_words(f, rate).reshape(n_tiles, -1))
+        # history rows -4..-1 = the last four fields of the incoming state, lanes (6, t), (7, t)
+        tail = torch.stack([(st >> (k * rate)) & ((1 << rate) - 1) for k in (3, 2, 1, 0)], 2)   # [n, p, 4, 32]
+        tail = tail.reshape(n, 2, 2, 2, 4, 8).permute(0, 2, 4, 1, 5, 3).reshape(n, 8, 32)
+        history.append(_lane_words(tail, rate).reshape(-1))
+        for s in range(n):
+            history_offsets.append(hcursor + s * 8 * rate)
+        unit_offsets.append((tcursor, n, rate))
+        hcursor += n * 8 * rate
+        tcursor += n * 8 * 32 * rate
+        slot += n
+    history_words, tile_words = hcursor, tcursor
+    words = torch.cat([torch.cat(history), torch.cat(tiles, 1).reshape(-1)])
+    base = word_offset + history_words
+    units = torch.empty((n_tiles, len(sorted_rates), 8), dtype=torch.int64)
+    slot = 0
+    for start, n, rate in unit_offsets:
+        within = start + (torch.arange(n) * 8 * 32 * rate)[:, None] + torch.arange(8)[None, :] * 32 * rate
+        units[:, slot:slot + n] = base + torch.arange(n_tiles)[:, None, None] * tile_words + within
+        slot += n
+    return FragmentWire(
+        words=words, perm=torch.tensor(permutation, dtype=torch.int16),
+        rates=torch.tensor(sorted_rates, dtype=torch.int32),
+        history_offsets=torch.tensor(history_offsets, dtype=torch.int64) + word_offset, unit_offsets=units,
+        expert_offsets=torch.tensor([word_offset, word_offset + words.numel()], dtype=torch.int64),
+        rows=rows, cols=cols, projection_group=projection_group,
+    )
 
 
 def repack_fragment(
@@ -121,77 +213,15 @@ def repack_fragment(
     groups = 1 if projection_group == "gate_up" else 2
     if rows <= 0 or cols <= 0 or cols % (_KSTEP * groups):
         raise GrammarError(f"fragment rows must be positive and cols must be a positive multiple of {32 * groups}")
-    if cols // _KSTEP > torch.iinfo(torch.int16).max + 1:
-        raise GrammarError("k-step permutation does not fit int16")
-    if word_offset < 0:
-        raise GrammarError("word_offset must be nonnegative")
-    if len(rates) != cols:
-        raise GrammarError(f"{len(rates)} rates for {cols} fragment columns")
-    step_rates = []
-    for start in range(0, cols, _KSTEP):
-        rate = rates[start]
-        if rate not in (3, 4):
-            raise GrammarError(f"rate {rate} is not R3 or R4 at k-step {start // _KSTEP}")
-        if any(r != rate for r in rates[start:start + _KSTEP]):
-            raise GrammarError(f"rate changes inside k-step {start // _KSTEP}")
-        step_rates.append(rate)
+    _step_rates(rates, cols, groups)
     projections = 2 if projection_group == "gate_up" else 1
     planes = (body_planes,) if isinstance(body_planes, bytes) else body_planes
     if len(planes) != projections:
         raise GrammarError(f"{projection_group} needs {projections} BODY planes")
-    state = _start_state(start_state if start_state is not None else initial_state, projections, cols)
-    n_tiles = (rows + _TILE_ROWS - 1) // _TILE_ROWS
-    fields = np.zeros((projections, n_tiles * _TILE_ROWS, cols), dtype=np.uint8)
-    for p, plane in enumerate(planes):
-        fields[p, :rows] = unpack_body(plane, rates, rows, device="cpu").numpy()
-    permutation = sorted(range(len(step_rates)), key=step_rates.__getitem__)
-    originals = np.asarray(permutation).reshape(-1, groups)
-    sorted_rates = [step_rates[int(pair[0])] for pair in originals]
-    if any(step_rates[int(original)] != rate
-           for pair, rate in zip(originals, sorted_rates) for original in pair):
-        raise GrammarError("down needs an even 32-column group count at each rate")
-    warps = 8
-    history_words = sum(8 * r for r in sorted_rates)
-    tile_words = sum(warps * 32 * r for r in sorted_rates)
-    words = np.empty(history_words + n_tiles * tile_words, dtype=np.int32)
-    history_offsets = np.empty(len(sorted_rates), dtype=np.int64)
-    unit_offsets = np.empty((n_tiles, len(sorted_rates), warps), dtype=np.int64)
-    cursor = 0
-    for slot, pair in enumerate(originals):
-        rate = sorted_rates[slot]
-        if projections == 2:
-            original = int(pair[0])
-            start = state[:, original * 32:(original + 1) * 32]
-        else:
-            start = np.stack([state[0, int(original) * 32:(int(original) + 1) * 32] for original in pair])
-        shifts = np.arange(3, -1, -1, dtype=np.int64) * rate
-        tail = ((start[:, None, :] >> shifts[None, :, None]) & ((1 << rate) - 1)).astype(np.uint8)
-        history_offsets[slot] = word_offset + cursor
-        size = 8 * rate
-        words[cursor:cursor + size] = _pack(tail, rate)
-        cursor += size
-    for tile in range(n_tiles):
-        for slot, pair in enumerate(originals):
-            rate = sorted_rates[slot]
-            for warp in range(warps):
-                row = tile * 128 + warp * 16
-                if projections == 2:
-                    original = int(pair[0])
-                    block = fields[:, row:row + 16, original * 32:(original + 1) * 32]
-                else:
-                    block = np.stack([fields[0, row:row + 16, int(original) * 32:(int(original) + 1) * 32]
-                                      for original in pair])
-                size = 32 * rate
-                unit_offsets[tile, slot, warp] = word_offset + cursor
-                words[cursor:cursor + size] = _pack(block, rate)
-                cursor += size
-    return FragmentWire(
-        words=torch.from_numpy(words), perm=torch.tensor(permutation, dtype=torch.int16),
-        rates=torch.tensor(sorted_rates, dtype=torch.int32),
-        history_offsets=torch.from_numpy(history_offsets), unit_offsets=torch.from_numpy(unit_offsets),
-        expert_offsets=torch.tensor([word_offset, word_offset + cursor], dtype=torch.int64),
-        rows=rows, cols=cols, projection_group=projection_group,
-    )
+    codes = torch.stack([unpack_body(plane, rates, rows, device="cpu") for plane in planes])
+    return repack_codes(codes, rates, projection_group=projection_group,
+                        start_state=start_state if start_state is not None else initial_state,
+                        word_offset=word_offset)
 
 
 def decode_fragment(fragment: FragmentWire, tables: torch.Tensor) -> torch.Tensor:
