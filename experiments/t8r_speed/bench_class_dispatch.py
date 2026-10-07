@@ -114,6 +114,33 @@ def cpu_preflight(args, report):
     # Exercise imports used only by the GPU legs, without touching CUDA.
     from torch.profiler import ProfilerActivity, profile  # noqa: F401
     from tessera.serving.native_window import _routed_window_classes  # noqa: F401
+    from class_dispatch_inputs import PureControlWorkspace
+    workspace = PureControlWorkspace(torch.device("cpu"))
+    counters = workspace.counters
+    counter_pointer = counters.data_ptr()
+    if counters.dtype != torch.int32 or counters.shape != (2,) or bool(counters.count_nonzero()):
+        raise AssertionError("pure control counters must initialize once as zero int32[2]")
+    workspace_checks = []
+    for mode in (0, 2, 0, 2, 0, 2):
+        counters.fill_(37)
+        projection = 1 if mode == 2 else 0
+        slot, empty = workspace.launch_seat(mode)
+        if workspace.counters is not counters or counters.data_ptr() != counter_pointer:
+            raise AssertionError("pure control replaced its persistent counter workspace")
+        if slot.data_ptr() != counter_pointer + projection * counters.element_size():
+            raise AssertionError("pure control counter seat must alias its persistent projection slot")
+        if slot.shape != (1,) or slot.dtype != torch.int32 or int(slot[0]) != 0:
+            raise AssertionError("pure control must zero the selected counter on every launch")
+        if int(counters[1 - projection]) != 37:
+            raise AssertionError("pure control reset another projection counter")
+        if empty.shape != (0,) or empty.dtype != torch.float32 or empty.device != counters.device:
+            raise AssertionError("old pure launch empty-scale fallback differs")
+        slot.fill_(101)  # Dirty state from a previous launch must reset next time.
+        workspace_checks.append({"mode": mode, "projection": projection, "persistent_storage": True,
+                                 "selected_counter_reset": True, "other_counter_unchanged": True})
+    report.data["meta"]["pure_control_workspace_preflight"] = {"checks": workspace_checks,
+        "scope": "CPU counter allocation, alias lifetime and per-launch initialization only; no GPU result",
+        "empty_scale_fallback": "old adapter new_zeros(0, dtype=float32) on every launch"}
     library = rf.library_for("e4m3")
     if library != "e4m3mma" or rf.PAIRED_K32_BUILD or rf.MMA8_A_RING:
         raise ValueError("this entry uses the current unpaired E4M3 decoder without tuning overrides")

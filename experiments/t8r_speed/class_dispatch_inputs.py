@@ -100,14 +100,27 @@ def activations(tokens, hidden, inter, device, seed, *, top_k=8):
     return x, down
 
 
-def pure_launch(adapter, cls, mode, x, scale, routing, out, *, a_row_mode, mul_weight):
-    """Old pure-template entry. It does not use production class counters or streams."""
+class PureControlWorkspace:
+    """The old adapter owns two counters before any call or graph capture."""
+    def __init__(self, device):
+        self.counters = torch.zeros(2, dtype=torch.int32, device=device)
+
+    def launch_seat(self, mode):
+        # Match the old _launch, including its per-launch empty scale fallback.
+        empty = self.counters.new_zeros(0, dtype=torch.float32)
+        projection = 1 if mode == 2 else 0
+        slot = self.counters[projection:projection + 1]
+        slot.zero_()  # Captured device initialization, not a fresh counter.
+        return slot, empty
+
+
+def pure_launch(adapter, cls, mode, x, scale, routing, out, *, workspace, a_row_mode, mul_weight):
+    """Old pure-template entry with its persistent, in-stream-reset counter seat."""
     down = mode == 2
     b0, b1 = (cls.down, cls.down) if down else (cls.gate, cls.up)
     suffix0, suffix1 = ("down", "down") if down else ("gate", "up")
     bm = rf.superblock_rows(adapter.library, mode, routing.tokens)
-    counter = torch.zeros(1, dtype=torch.int32, device=x.device)
-    empty = torch.empty(0, dtype=torch.float32, device=x.device)
+    counter, empty = workspace.launch_seat(mode)
     rf._ext(adapter.library).routed_fused_forward(
         mode, adapter.fp8, x, scale if scale is not None else empty,
         getattr(cls, "words_" + suffix0), getattr(cls, "words_" + suffix1),
@@ -135,7 +148,8 @@ def stitched_references(adapter, x, down_x, storage_ids, weights):
     down_flat = torch.empty(routes, hidden, dtype=torch.bfloat16, device=x.device)
     full_flat = torch.empty_like(down_flat)
     flat_ids = storage_ids.flatten()
-    for cls in adapter.classes:
+    workspaces = [PureControlWorkspace(x.device) for _ in adapter.classes]
+    for cls, workspace in zip(adapter.classes, workspaces):
         take = torch.where((flat_ids >= cls.start) & (flat_ids < cls.end))[0]
         if take.numel() == 0:
             continue
@@ -144,16 +158,16 @@ def stitched_references(adapter, x, down_x, storage_ids, weights):
         local = rf._routing_tables(local_ids, rw, cls.end - cls.start, x.device, adapter.library)
         xq, scale = adapter._quantized(x[take // top_k], None, take.numel())
         act = torch.empty(take.numel(), inter, dtype=torch.bfloat16, device=x.device)
-        pure_launch(adapter, cls, 0, xq, scale, local, act, a_row_mode=0, mul_weight=False)
+        pure_launch(adapter, cls, 0, xq, scale, local, act, workspace=workspace, a_row_mode=0, mul_weight=False)
         original = torch.empty_like(act)
         original[local.flat_sorted.long()] = act
         gate_flat[take] = original
         qdown, dscale = adapter._quantized(down_x[take], None, take.numel())
         output = torch.empty(take.numel(), hidden, dtype=torch.bfloat16, device=x.device)
-        pure_launch(adapter, cls, 2, qdown, dscale, local, output, a_row_mode=2, mul_weight=True)
+        pure_launch(adapter, cls, 2, qdown, dscale, local, output, workspace=workspace, a_row_mode=2, mul_weight=True)
         down_flat[take] = output
         qa, ascale = adapter._quantized(act, None, take.numel())
-        pure_launch(adapter, cls, 2, qa, ascale, local, output, a_row_mode=1, mul_weight=True)
+        pure_launch(adapter, cls, 2, qa, ascale, local, output, workspace=workspace, a_row_mode=1, mul_weight=True)
         full_flat[take] = output
     full = torch.empty_like(x)
     rf._ext(adapter.library).token_sum(full_flat, full, top_k)
@@ -169,6 +183,7 @@ class Invocation:
         self.x, self.down_x, self.generations, self.kind = x, down_x, generations, kind
         self.ids, self.weights = (t.clone() for t in generations[0])
         self.pure = pure
+        self.pure_workspace = PureControlWorkspace(x.device) if pure else None
         routes = self.ids.numel()
         shape = (routes, down_x.shape[1] if kind == "gate_up" else x.shape[1])
         if kind == "full":
@@ -199,7 +214,7 @@ class Invocation:
             gate_out = self.out
         if self.pure:
             pure_launch(adapter, adapter.classes[0], mode, xq, scale, routing, gate_out,
-                        a_row_mode=row_mode, mul_weight=mode == 2)
+                        workspace=self.pure_workspace, a_row_mode=row_mode, mul_weight=mode == 2)
         else:
             adapter._launch(mode, xq, scale, routing, a_row_mode=row_mode,
                             mul_weight=mode == 2, limit=SWIGLU_LIMIT, out=gate_out)
@@ -207,6 +222,6 @@ class Invocation:
             aq, a2 = adapter._quantized(gate_out, None, self.ids.numel())
             routed = torch.empty(self.ids.numel(), self.x.shape[1], dtype=torch.bfloat16, device=self.x.device)
             pure_launch(adapter, adapter.classes[0], 2, aq, a2, routing, routed,
-                        a_row_mode=1, mul_weight=True)
+                        workspace=self.pure_workspace, a_row_mode=1, mul_weight=True)
             rf._ext(adapter.library).token_sum(routed, self.out, self.ids.shape[1])
         return self.out
