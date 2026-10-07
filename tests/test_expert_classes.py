@@ -32,11 +32,11 @@ def test_producer_sorts_storage_without_renaming_sources():
     from tessera.export_serving import project_expert_plan
 
     stack = "model.layers.1.mlp.experts"
-    shapes = {f"{stack}.{e}.{p}.weight": [32, 32]
+    shapes = {f"{stack}.{e}.{p}.weight": ([128, 512] if p == "down_proj" else [512, 128])
               for e in range(2) for p in ("gate_proj", "up_proj", "down_proj")}
     overrides = {f"{stack}.0.{p}": 1088 for p in ("gate_proj", "up_proj", "down_proj")}
     result = project_expert_plan(
-        shapes, {"hidden_size": 32, "moe_intermediate_size": 32, "n_routed_experts": 2},
+        shapes, {"hidden_size": 128, "moe_intermediate_size": 512, "n_routed_experts": 2},
         {stack: {"grid": "E4M3", "q256": 1024, "unit_q256": overrides}})["stacks"][stack]
     assert result["expert_ids"] == [1, 0]
     assert [unit["expert"] for unit in result["units"]] == [0, 0, 0, 1, 1, 1]
@@ -133,14 +133,17 @@ def test_original_plan_reconciliation_and_storage_mismatch():
 
     stack = "model.layers.1.mlp.experts"
     projections = ("gate_proj", "up_proj", "down_proj")
-    shapes = {f"{stack}.{e}.{p}.weight": [32, 32] for e in range(2) for p in projections}
+    shapes = {f"{stack}.{e}.{p}.weight": ([128, 512] if p == "down_proj" else [512, 128])
+              for e in range(2) for p in projections}
     overrides = {f"{stack}.0.{p}": 1088 for p in projections}
     plan = {stack: {"grid": "E4M3", "q256": 1024, "unit_q256": overrides}}
-    projected = project_expert_plan(shapes, {"hidden_size": 32, "moe_intermediate_size": 32,
+    projected = project_expert_plan(shapes, {"hidden_size": 128, "moe_intermediate_size": 512,
                                            "n_routed_experts": 2}, plan)["stacks"][stack]
     scheme = _scheme()
     scheme.update({field: projected[field] for field in ("expert_ids", "expert_classes")})
     for group in scheme["groups"]:
+        scheme["groups"][group].update({field: projected["groups"][group][field]
+                                         for field in ("rows", "columns", "roles")})
         scheme["groups"][group]["q256"] = expert_group_q256(projected, group)
     roles = [dict(unit, role=unit["projection"], grid="E4M3",
                   q256=overrides.get(unit["tensor"].removesuffix(".weight"), 1024))

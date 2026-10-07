@@ -8,7 +8,11 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 
-_GROUP_ARITIES = {"w13": 2, "w2": 1}
+def _group_arities():
+    # Lazy because scheme delegates metadata validation back to this module.
+    from tessera.serving.scheme import MOE_GROUP_ROLES
+
+    return MOE_GROUP_ROLES
 
 
 def _integer(value, name, target, *, minimum=0):
@@ -31,10 +35,11 @@ def inverse_expert_ids(expert_ids) -> list[int]:
 
 
 def _profile(q256, target):
-    if not isinstance(q256, Mapping) or set(q256) != set(_GROUP_ARITIES):
+    arities = _group_arities()
+    if not isinstance(q256, Mapping) or set(q256) != set(arities):
         raise ValueError(f"{target}: class q256 must declare exactly w13 and w2")
     result = {}
-    for group, arity in _GROUP_ARITIES.items():
+    for group, arity in arities.items():
         row = q256[group]
         if not isinstance(row, (list, tuple)) or len(row) != arity:
             raise ValueError(f"{target}: class q256 {group} must have {arity} projection rung(s)")
@@ -44,18 +49,19 @@ def _profile(q256, target):
 
 
 def _profile_key(profile):
-    return tuple(r for group in _GROUP_ARITIES for r in profile[group])
+    return tuple(r for group in _group_arities() for r in profile[group])
 
 
 def _matrices(group_q256, target):
-    if not isinstance(group_q256, Mapping) or set(group_q256) != set(_GROUP_ARITIES):
+    arities = _group_arities()
+    if not isinstance(group_q256, Mapping) or set(group_q256) != set(arities):
         raise ValueError(f"{target}: group rung matrices must declare exactly w13 and w2")
-    if any(not isinstance(group_q256[group], (list, tuple)) for group in _GROUP_ARITIES):
+    if any(not isinstance(group_q256[group], (list, tuple)) for group in arities):
         raise ValueError(f"{target}: group rung matrices must be expert-major lists")
-    experts = len(group_q256["w13"])
-    if experts < 1 or any(len(group_q256[group]) != experts for group in _GROUP_ARITIES):
+    experts = len(group_q256[next(iter(arities))])
+    if experts < 1 or any(len(group_q256[group]) != experts for group in arities):
         raise ValueError(f"{target}: group rung matrices must cover the same nonempty expert population")
-    return [_profile({group: group_q256[group][e] for group in _GROUP_ARITIES}, target)
+    return [_profile({group: group_q256[group][e] for group in arities}, target)
             for e in range(experts)]
 
 

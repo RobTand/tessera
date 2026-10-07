@@ -1328,7 +1328,7 @@ def packed_expert_stacks(expert_shapes):
 
 def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
                       source_layout: str = MOE_SOURCE_UNPACKED, config: dict,
-                      research_selected: bool = False):
+                      research_selected: bool = False, allow_unserveable: bool = False):
     """Everything about a planned expert stack that must be refused BEFORE the encode.
 
     A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
@@ -1443,7 +1443,10 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     record = {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
               "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
               "source_layout": source_layout, "groups": groups, "units": units}
-    return assign_expert_unit_rungs(record, {})
+    assign_expert_unit_rungs(record, {})
+    check_native_class_geometry(record, research_selected=research_selected,
+                                allow_unserveable=allow_unserveable)
+    return record
 
 
 def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
@@ -1576,9 +1579,57 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
     return units_total, stack_total
 
 
+
+
+def check_native_class_geometry(record, *, fit_tp_size=1, research_selected=False,
+                                allow_unserveable=False, overrides=None):
+    """Refuse encoder-valid shapes the sole native class route cannot serve.
+
+    The routed CUDA owner decides geometry and schedule admission, including
+    the declared tensor-parallel fit. Explicit research-selected decoding is
+    a different owner; --allow-unserveable remains an explicitly stamped screen.
+    """
+    if record["family"] == NVFP4 or research_selected:
+        return
+    from tessera.grammar import bresenham_rate_schedule, root_from_q256
+    from tessera.routed_fused import WINDOW_BITS, fused_routed_unit_shape_refusal
+
+    if type(fit_tp_size) is not int or fit_tp_size < 1:
+        raise SystemExit(f"--fit-tp-size {fit_tp_size!r} is not a tensor-parallel size")
+    for descriptor in record["expert_classes"]:
+        for group, projections in MOE_GROUP_PROJECTIONS.items():
+            geometry = record["groups"][group]
+            for projection, rung in zip(projections, descriptor["q256"][group]):
+                rates = bresenham_rate_schedule(root_from_q256(rung), geometry["columns"], cap=None)
+                layout = {"group": group, "projection": projection, "rows": geometry["rows_each"],
+                          "cols": geometry["columns"], "rates": rates}
+                for tp_size in sorted({1, fit_tp_size}):
+                    for rank in range(tp_size):
+                        try:
+                            cut = routed_unit_rank_cut(layout, tp_size, rank)
+                        except SystemExit as exc:
+                            why = str(exc)
+                        else:
+                            why = fused_routed_unit_shape_refusal(
+                                "value" if record["family"] == BF16 else "e4m3",
+                                projection.removesuffix("_proj"), rows=cut["rows"], cols=cut["cols"],
+                                rates=cut["rates"], window_bits=WINDOW_BITS)
+                        if why is None:
+                            continue
+                        refusal = (f"{record['stack']}: unservable_native_class_geometry: "
+                                   f"class {descriptor['start']}:{descriptor['end']} "
+                                   f"TP{tp_size} rank {rank} {projection}: {why}")
+                        if not allow_unserveable:
+                            raise SystemExit(refusal)
+                        if overrides is not None:
+                            overrides.append({"target": record["stack"], "structure": STRUCTURE_ROUTED_MOE,
+                                              "refusal": refusal})
+
+
+
 def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
                              source_layout: str, config: dict,
-                             research_selected: bool = False):
+                             research_selected: bool = False, allow_unserveable: bool = False):
     """Normalise one explicitly-described packed source to canonical units.
 
     The convention is deliberately not inferred from shape.  Orientation and
@@ -1628,7 +1679,7 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
         }
     record = plan_expert_stack(
         stack, synthetic, grid, q256, source_layout=source_layout, config=config,
-        research_selected=research_selected)
+        research_selected=research_selected, allow_unserveable=allow_unserveable)
     for unit in record["units"]:
         projection = unit["projection"]
         physical_projection = ("gate_up_proj" if projection in
@@ -1726,6 +1777,7 @@ def project_expert_plan(source_shapes: dict, source_config: dict,
                                         choice["q256"], config=source_config,
                                         research_selected=research_selected)
         assign_expert_unit_rungs(planned, choice.get("unit_q256", {}))
+        check_native_class_geometry(planned, research_selected=research_selected)
         result[stack] = dict(planned, grid=grid.name)
     return json.loads(json.dumps({"schema": "tessera.expert_projection.v1", "stacks": result}))
 
@@ -2601,11 +2653,12 @@ def main():
             record = plan_packed_expert_stack(
                 stack, packed_stacks[stack], grid, q256,
                 source_layout=source_layout, config=src_config,
-                research_selected=research_execution is not None)
+                research_selected=research_execution is not None, allow_unserveable=args.allow_unserveable)
         else:
             record = plan_expert_stack(
                 stack, stacks[stack], grid, q256, source_layout=source_layout,
-                config=src_config, research_selected=research_execution is not None)
+                config=src_config, research_selected=research_execution is not None,
+                allow_unserveable=args.allow_unserveable)
         assign_expert_unit_rungs(record, plan_snapshot.entries[stack].get("unit_q256", {}))
         if plan_snapshot.entries[stack].get("unit_q256"):
             for unit in record["units"]:
@@ -2617,6 +2670,9 @@ def main():
                              research_records=research_gate_records)
                 check_lanes(required_lanes, grid, rung, where=unit["tensor"],
                             structure=STRUCTURE_ROUTED_MOE)
+        check_native_class_geometry(
+            record, fit_tp_size=args.fit_tp_size, research_selected=research_execution is not None,
+            allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
