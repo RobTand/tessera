@@ -8,12 +8,11 @@ import pytest
 from experiments.step4_route_qualification import QualificationRefused, qualify_dispatch
 from test_step4_route_qualification import entry, trace
 
-FAMILIES = ("TESSERA_FP8", "TESSERA_BF16", "TESSERA_NVFP4")
-MOE = {
-    "TESSERA_FP8": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-    "TESSERA_BF16": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_folded"),
-    "TESSERA_NVFP4": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),
-}
+from tessera.serving.scheme import MOE_BUILDERS, launch_pairs
+
+FAMILIES = tuple(MOE_BUILDERS)
+MOE = {family: next(iter(launch_pairs(family, structure="routed_moe", lanes=(),
+                                      include_experimental=True))) for family in FAMILIES}
 
 
 def mixed():
@@ -34,31 +33,7 @@ def mixed():
 
 
 def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
-    from tessera.serving import scheme
-    from experiments.step4_route_qualification import (FUSED_WINDOW_DENSE_SYMBOL,
-                                                       FUSED_WINDOW_MOE_SYMBOL, KIND_LAUNCHES)
-
-    # Offline qualification data is tied to the producer's dispatch owner,
-    # including its no-extension-lane invariant; it does not qualify a cell.
-    for kind, table in KIND_LAUNCHES.items():
-        for family, (contract, pairs) in table.items():
-            structure = scheme.STRUCTURE_ROUTED_MOE if kind == "moe" else scheme.STRUCTURE_DENSE
-            rows = scheme.route_launches(family, structure=structure, mode="resident",
-                                        include_experimental=True)
-            assert {(r["symbol"], r["decoder"]) for r in rows} == set(pairs)
-            assert scheme.ROUTES[family]["activation_contract"] == contract
-            # The fused window kernel's two identities (routed at contract
-            # v42, tessera#640; dense at v43) are the launches that name their
-            # extension lane; every other row keeps the no-extension-lane
-            # invariant, and no row is a fallback.
-            for r in rows:
-                assert not r["when_lane_absent"]
-                if r["symbol"] == FUSED_WINDOW_MOE_SYMBOL:
-                    assert r["lane"] is not None and kind == "moe"
-                elif r["symbol"] == FUSED_WINDOW_DENSE_SYMBOL:
-                    assert r["lane"] is not None and kind == "dense"
-                else:
-                    assert r["lane"] is None
+    # This synthetic census exercises the current operations. It promotes no cell.
     expected, routes = mixed()
     result = qualify_dispatch(routes, mode="resident", expected_modules=expected)
     for family in FAMILIES:

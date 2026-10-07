@@ -275,6 +275,9 @@ The common execution registry names the current class operation for both WINDOW 
 All class pairs remain experimental and have no served qualification cell.
 Historical compact and fused receipt identities have a separate qualification table.
 Both tables use the same axis filter. A historical receipt cannot qualify a current class operation.
+The offline Step4 consumer reads the same current execution registry.
+It checks actual operations and module populations, not served qualification cells.
+Historical R5 replay uses the qualification registry. It does not rewrite archived operations.
 
 Today the loaded binding is `_LutClassKernel`; it calls the unchanged CUDA
 decoder for each class on the same two streams. Register-direct remains a

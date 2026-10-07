@@ -1,70 +1,20 @@
-"""Does a full-engine capture's evidence say its native routes ran by module kind?
+"""Check actual route execution against the current registry by module kind.
 
-WHAT THIS QUALIFIES.  A resource capture measures allocation, and two decoders
-of the same bytes do not allocate alike, so a ledger is about a decoder and
-the record has to say which one.  The serve's own ``TESSERA_ROUTE_TRACE``
-histogram (``telemetry._RouteTrace``) keys every served dispatch on
-``(policy, shape, symbol, decoder, contract, kind)``; the qualification reads
-that file and refuses unless every dispatch on every family the artifact
-carries is the ONE launch that family's declared module kind makes. Manifest
-``dense`` (including the legacy absent structure) maps to trace ``dense``;
-``routed_moe`` maps to trace ``moe``. Neither is inferred from module names.
+The metadata owner imports no Torch or vLLM. This check does not qualify a serving cell.
+Current experimental operations can appear when an executor records their actual dispatch.
+Historical receipts use the separate qualification registry, not this execution check.
 
-THE LAUNCHES.  Since ``37e89f576`` (contract v30) and ``1b767a207`` (#538),
-each dense route module owns exactly one launch and stamps it at its one
-``emit_route`` call:
-
-* ``TESSERA_FP8`` and ``TESSERA_BF16`` -- ``fp8_route.DENSE_LAUNCH`` =
-  ``(tessera::window_gemm_dense, native_window_gemm)`` and
-  ``bf16_route.DENSE_LAUNCH`` = ``(tessera::window_gemm_dense,
-  native_window_gemm_folded)``: the compact loader's packed window unit
-  multiplied by ``tessera.window_gemm``'s Triton kernel through
-  ``serving.native_window``, on the epilogue arithmetic for FP8 and the folded
-  one for BF16 (tessera#614).  ``apply`` raises when the module was not
-  prepared rather than falling back to a materialised tile.
-* ``TESSERA_NVFP4`` -- ``(tessera.kernel_a4.a4_span2_gemm, native_span2_gemm)``:
-  the packed span-2 planes decoded in-kernel by ``tessera.kernel_a4``, whose
-  ``require_native_fp4_mma`` refuses a Triton that cannot lower block-scaled
-  FP4 MMA rather than emulating it.
-
-``scheme.ROUTE_LAUNCHES`` publishes these pairs and
-``tests/test_serving_contract.py`` ties each route's ``DENSE_LAUNCH`` to the
-table.  The strings are spelled here as data because this module may not
-import the serving package (it reads finished JSON on any host).
-
-WHAT RETIRED.  The pre-retirement driver proved a ``cpp_extension`` JIT
-(``tessera_nvfp4_*.so``) built before the engine started and bound the
-worker's mapped-library census to those bytes, because ``ext.NATIVE_EXTENSIONS``
-published a silent ``torch_materialize_stock`` substitute for a container
-that could not compile.  On master no dense route loads a ``cpp_extension``:
-``native_window.prepare_dense_native_module`` builds the window unit through
-``compact_prep.prepare_window_compact``, which constructs
-``kernel_window_gemv.WindowGemvUnit`` directly and never calls that module's
-``_ext()``; the only extension the package still builds
-(``tessera_window_gemv``, substitute ``torch_window``) is reached from the
-GEMV lane alone, which no dense dispatch makes.  The library leg therefore has
-no subject; ``mapped_native_libraries`` is kept to RECORD whether that lane's
-library was mapped anyway, and the dispatch leg is the whole proof.
-
-COUNTING MODULES IS NOT A MAX AND NOT A SUM.  ``shape`` carries both the
-call's M and the module's ``N:K``, so one module appears under one key per M
-it served: within ONE M every module of the contract appears exactly once, so
-the count is the sum within an M group, maximised over the M groups (the
-2026-09-18 capture: 110 per M group where a max over keys returned 28).
-``M*`` marks a record written under ``torch.compile`` tracing and is refused,
-never counted.  Since ``identity_version`` 1 each entry also names the modules
-it counted (``module_names``) and how many it could not name
-(``unnamed_modules``); an unnamed module is refused, and when the caller
-supplies the manifest's names the two sets must agree.
-
-A missing or unreadable trace is NOT VERIFIED, and not verified is a refusal,
-never a pass.  Nothing here imports Torch, vLLM or ``tessera``.
+Module counts sum within each M group and take the maximum across M groups.
+The trace must name every expected module. M* records come from tracing, not execution, and remain refused.
+A missing trace, foreign operation or incomplete population remains a refusal.
 """
 from __future__ import annotations
 
 import fnmatch
 import json
 from pathlib import Path
+
+from tessera.serving.scheme import MOE_BUILDERS, ROUTES, ROUTE_LAUNCHES, launch_pairs
 
 __all__ = [
     "WINDOW_GEMM_SYMBOL",
@@ -117,50 +67,15 @@ FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
 BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
 NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 
-#: family -> (activation contract, EVERY (symbol, decoder) pair its dense
-#: route may stamp).  ``fp8_route.DENSE_LAUNCHES``, ``bf16_route.DENSE_LAUNCHES``
-#: and ``nvfp4_route.process_weights_after_loading`` (``tessera_symbol`` /
-#: ``tessera_decoder``) are the owners; ``scheme.ROUTE_LAUNCHES`` publishes
-#: the same pairs and the contract test ties them.  Since contract v43 the two
-#: window families carry two: the Triton window GEMM and the fused window
-#: kernel's dense identity, which ``native_window.prepare_dense_native_module``
-#: picks per module on the module's own wire
-#: (``routed_fused.fused_dense_window_supported``).  A pair outside the tuple
-#: is a foreign launch and refuses the capture.
-DENSE_LAUNCHES = {
-    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (
-        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_E4M3MMA_DECODER),
-        (DECODE_ONCE_DENSE_SYMBOL, NATIVE_WINDOW_DECODE_ONCE_E4M3_DECODER))),
-    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (
-        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER))),
-    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (
-        (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER),)),
-}
+# The shared metadata owner decides the current operations for each structure.
+DENSE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], tuple(sorted(
+    launch_pairs(family, structure="dense", include_experimental=True)))) for family in ROUTE_LAUNCHES}
 
-#: family -> (activation contract, EVERY (symbol, decoder) pair its routed
-#: route may stamp, resident only), as scheme.ROUTE_LAUNCHES publishes them.
-#: Since contract v42 (tessera#640) the two window families carry two: the
-#: compact adapter and the fused routed window lane, which
-#: ``PackedWindowMoeBundles.adapter`` picks per module on the bundle's own
-#: shape (``routed_fused.fused_routed_window_supported``).  A served MoE
-#: family may therefore dispatch on either or both; a pair outside this
-#: tuple is a foreign launch and refuses the capture.
+# These symbol names describe historical receipts, not a current fallback.
 COMPACT_WINDOW_MOE_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
-MOE_LAUNCHES = {
-    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (
-        (COMPACT_WINDOW_MOE_SYMBOL, "native_window_moe_compact"),
-        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window"),
-        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window_e4m3mma"))),
-    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (
-        (COMPACT_WINDOW_MOE_SYMBOL, "native_window_moe_compact_folded"),
-        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window_folded"))),
-    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (
-        ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),)),
-}
+MOE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], tuple(sorted(
+    launch_pairs(family, structure="routed_moe", include_experimental=True)))) for family in MOE_BUILDERS}
 #: kind -> family -> (contract, admissible pairs); both kinds read the same way.
 KIND_LAUNCHES = {
     "dense": DENSE_LAUNCHES,
@@ -330,7 +245,9 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
     count, names = members["count"], members.get("names")
     if kind == "moe" and mode != "resident":
         raise QualificationRefused("routed MoE has no streamed native launch")
-    contract, pairs = KIND_LAUNCHES[kind][family]
+    contract = KIND_LAUNCHES[kind][family][0]
+    pairs = tuple(sorted(launch_pairs(family, structure="routed_moe" if kind == "moe" else "dense",
+                                     mode=mode, include_experimental=True)))
     policy = f"{family}:{mode}"
     launches = trace_launches_by_contract(route_trace, contract, policy=policy, kind=kind)
     expected_keys = [_pair_key(symbol, decoder) for symbol, decoder in pairs]

@@ -9,6 +9,8 @@ The current execution registry owns class identities and census expectations.
 Historical WINDOW qualification records stay separate. The new operations remain unqualified.
 Remove the duplicate custom-op layout argument and preserve byte checks across tensor view shapes.
 Record the generic dispatcher source hash in the D41 report.
+The offline Step4 consumer now reads that registry and filters operations by residency.
+Historical R5 records retain their original operations during receipt replay.
 
 ## 2026-10-07 — refuse unsupported native expert bias
 
