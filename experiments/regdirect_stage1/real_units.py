@@ -39,10 +39,19 @@ class Artifact:
         self._safe_open = safe_open
 
     def blob(self, name) -> bytes:
+        """The projection's unit container: the checkpoint tensor holds a fused frame
+        (``fused_frame.FUSED_MAGIC``) with one member per projection."""
+        from tessera.fused_frame import FUSED_MAGIC, parse_fused
         shard = self.index[name]
         if shard not in self._open:
             self._open[shard] = self._safe_open(os.path.join(self.root, shard), "pt", device="cpu")
-        return self._open[shard].get_tensor(name).contiguous().numpy().tobytes()
+        raw = self._open[shard].get_tensor(name).contiguous().numpy().tobytes()
+        if raw[:len(FUSED_MAGIC)] != FUSED_MAGIC:
+            return raw
+        members = parse_fused(raw)
+        if len(members) != 1:
+            raise ValueError(f"{name}: {len(members)} fused members, expected one projection")
+        return members[0].blob
 
 
 def cut_unit(blob: bytes, rows_cut, cols_cut) -> CutUnit:
