@@ -5,6 +5,9 @@ The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.re
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
 A cell states fragment-order units from `tessera.fragment_wire`: 32 lanes, 8 history lanes and 32 R words per unit.
 It states one rate or two adjacent rates, the k-step width, prefetch depth, superblock routes, K parts and compiler resources.
+The prefetch depth falls with the rate (R5: 3, R6 to R8: 2). A cell's `prefetch_depth` is the shallowest ring of its rates.
+The register-direct producer adds `prefetch_depth_by_rate`, read from the kernel's own `decode_depth`.
+Each timing run and the profiler run carry `kernel_source_sha256`. The producer seals each one against the measured source.
 The decoder is routed only.
 A table scope may give a shape its own rung step in `grid_steps_q256`, as a multiple of the table step.
 k-step rungs step 2 q256 at K=4096 and 16 q256 per TP2 rank of a K=1024 down projection.

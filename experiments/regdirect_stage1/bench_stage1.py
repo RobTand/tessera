@@ -165,8 +165,11 @@ class RegDirect:
             self.stack.launch(geom, xz, a_scale, offsets, order, rw_sorted, item_off, 0, EXPERTS, out, part, arrive,
                               top_k=TOP_K, a_row_mode=a_row_mode, mul_weight=self.mode == 2, limit=SWIGLU_LIMIT,
                               dump=dump)
+        rate = self.st["rate"].cpu()
+        widths = sorted({int(v) for v in torch.cat([rate & 15, (rate >> 4) & 15]).unique()})
+        depth = {str(w): int(rr._ext().decode_depth(w, geom.prefill)) for w in widths}   # the kernel's own constants
         return call, out, {"route_tiles": geom.route_tiles, "superblock": geom.superblock, "k_parts": geom.k_parts,
-                           "grid": geom.grid, "items": int(item_off[-1])}, (offsets, order, item_off)
+                           "grid": geom.grid, "items": int(item_off[-1]), "decode_depth": depth}, (offsets, order, item_off)
 
 
 class Baseline:

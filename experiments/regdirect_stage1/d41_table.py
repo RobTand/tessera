@@ -99,6 +99,15 @@ def require_checked_cells(run, path):
             raise ValueError(f"{path}: timed cell {mode}.{profile}.{m} {state}")
 
 
+def prefetch_depth(cell, widths, path):
+    """The wire prefetch depth per run width, as the run read it from the kernel (it falls with the rate)."""
+    depth = cell["meta"].get("decode_depth") or {}
+    missing = [w for w in widths if str(w) not in depth]
+    if missing:
+        raise ValueError(f"{path}: the cell records no decode depth for rates {missing}")
+    return {str(w): int(depth[str(w)]) for w in widths}
+
+
 def to_bytes(value, unit):
     unit = unit.split("/")[0]                      # NCU states shared memory per block: "byte/block"
     scale = {"byte": 1, "Kbyte": 1000, "KB": 1000, "Kibyte": 1024, "KiB": 1024, "Mbyte": 10**6}[unit]
@@ -155,6 +164,7 @@ def main():
             low, rem = divmod(cell["q256"], 256)          # a k-step rung mixes low and low + 1
             upper = rem * ks // 256
             widths = [low, low + 1] if rem else [low]
+            depths = prefetch_depth(cell, widths, path)   # the schema's one integer is the shallowest ring
             a_t, b_t = cell["pass_medians_cold_us"]
             cells.setdefault(cell["q256"], {})[(shape, M)] = {
                 "cell_id": f"routed:{shape}:M{M}", "kernel_kind": "routed", "shape_id": shape, "M": M,
@@ -170,7 +180,7 @@ def main():
                                           "LOCAL": reg["spill_store_bytes"], "SHARED": sta,
                                           "spill_load_bytes": reg["spill_load_bytes"]},
                     "decode_width": {"window_bits": rec["window_bits"], "value_bits": 8, "run_widths": widths,
-                                     "word_stages": None, "kstep_columns": rr.KSTEP, "prefetch_depth": rr.DECODE_DEPTH,
+                                     "word_stages": None, "kstep_columns": rr.KSTEP, "prefetch_depth": min(depths.values()), "prefetch_depth_by_rate": depths,
                                      "superblock_routes": cell["meta"]["superblock"], "k_parts": cell["meta"]["k_parts"],
                                      "route_tiles": cell["meta"]["route_tiles"], "grid": cell["meta"]["grid"]},
                     "body_kind": "window", "decoder_kind": "register_direct", "decoder_owner": "tessera.regdirect_routed",

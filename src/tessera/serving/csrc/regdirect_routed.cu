@@ -55,6 +55,7 @@ constexpr int TAB = 1 << WIN;
 constexpr int HIST_LANES = 8;                   // a history unit keeps lanes (6, t) and (7, t)
 constexpr int KS_MAX = 128;                     // unit k-steps per expert (K = 4096 gate/up)
 constexpr int XKC = 4;                          // prefill: unit k-steps per staged activation chunk
+constexpr int DECODE_D = 4;                     // decode: unit k-steps of wire prefetch (regdirect_routed.DECODE_DEPTH)
 constexpr uint32_t FULL = 0xffffffffu;
 
 struct Params {
@@ -388,7 +389,7 @@ __device__ __forceinline__ void rate_of(const Params& p, int e, int& ra, int& rb
 
 template <int MODE, bool DUMP>
 __global__ void __launch_bounds__(THREADS, 2) rd_decode(Params p) {
-    constexpr int D = 4, NTAB = Mode<MODE>::NTAB;    // D: regdirect_routed.DECODE_DEPTH
+    constexpr int D = DECODE_D, NTAB = Mode<MODE>::NTAB;
     extern __shared__ __align__(16) uint8_t smem[];
     __shared__ int16_t s_kp[KS_MAX * 2];
     __shared__ int s_last;
@@ -765,6 +766,24 @@ int64_t blocks_per_sm(int64_t mode, int64_t route_tiles, bool dump) {
     return dump ? run<true>(mode, route_tiles, nullptr, 0, 0) : run<false>(mode, route_tiles, nullptr, 0, 0);
 }
 
+template <int R>
+int64_t depth_at(bool prefill) { return prefill ? DecodeDepth<R, XKC>::value : DecodeDepth<R, DECODE_D>::value; }
+
+// The wire prefetch depth, in unit k-steps, of the path that serves rate ``r``: the record a
+// measurement cites, read from the kernel's own constants.
+int64_t decode_depth(int64_t r, bool prefill) {
+    switch (r) {
+        case 3: return depth_at<3>(prefill);
+        case 4: return depth_at<4>(prefill);
+        case 5: return depth_at<5>(prefill);
+        case 6: return depth_at<6>(prefill);
+        case 7: return depth_at<7>(prefill);
+        case 8: return depth_at<8>(prefill);
+    }
+    TORCH_CHECK(false, "the kernel serves rates 3 to 8, got ", r);
+    return 0;
+}
+
 // The register-direct launch.  The routing front end owns the sorted routes,
 // prefixes and the stream; this entry owns the geometry.  ``e0, e1`` bound the
 // experts of the launch (one class, or every class); the work interval is
@@ -832,4 +851,5 @@ void forward(int64_t mode, int64_t route_tiles, bool dump,
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("forward", &forward);
     m.def("blocks_per_sm", &blocks_per_sm);
+    m.def("decode_depth", &decode_depth);
 }
