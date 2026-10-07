@@ -70,19 +70,19 @@ NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 # The shared metadata owner decides the current operations for each structure.
 # Order follows ROUTE_LAUNCHES; qualification compares as sets elsewhere.
 def _current_pairs(family, structure):
-     return tuple(dict.fromkeys(
-         (row["symbol"], row["decoder"]) for row in route_launches(
-             family, structure=structure, include_experimental=True)))
+    return tuple(dict.fromkeys(
+        (row["symbol"], row["decoder"]) for row in route_launches(
+            family, structure=structure, include_experimental=True)))
 
 
- DENSE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], _current_pairs(
-     family, "dense")) for family in ROUTE_LAUNCHES}
+DENSE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], _current_pairs(
+    family, "dense")) for family in ROUTE_LAUNCHES}
 
- # These symbol names describe historical receipts, not a current fallback.
- COMPACT_WINDOW_MOE_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
- FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
- MOE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], _current_pairs(
-     family, "routed_moe")) for family in MOE_BUILDERS}
+# These symbol names describe historical receipts, not a current fallback.
+COMPACT_WINDOW_MOE_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
+FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+MOE_LAUNCHES = {family: (ROUTES[family]["activation_contract"], _current_pairs(
+    family, "routed_moe")) for family in MOE_BUILDERS}
 #: kind -> family -> (contract, admissible pairs); both kinds read the same way.
 KIND_LAUNCHES = {
     "dense": DENSE_LAUNCHES,
