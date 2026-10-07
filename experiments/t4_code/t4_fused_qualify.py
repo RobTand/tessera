@@ -737,10 +737,17 @@ def compare_t8_cell(cell, baseline):
         raise ValueError("T8 comparison requires equal actual serialized bytes, geometry, seeds and routing")
     if baseline.get("format") != "T8" or baseline.get("kind") != cell.get("kind"):
         raise ValueError("T8 comparison has a different format or component")
+    if any(baseline.get(field) is not True for field in ("serving_owner", "eager_ok", "graph_equal")):
+        raise ValueError("T8 comparison requires actual successful serving and graph outcomes")
     result = {}
     for execution in ("eager", "graph"):
         numerator = cell["timing"][execution]["median_ms"]
         denominator = baseline["timing"][execution]["median_ms"]
+        samples = baseline["timing"][execution].get("samples_ms")
+        if not samples or any(not math.isfinite(x) or x < 0 for x in samples):
+            raise ValueError("T8 comparison has no valid ordered raw timing samples")
+        if statistics.median(samples) != denominator:
+            raise ValueError("T8 timing median disagrees with its actual raw samples")
         if not math.isfinite(denominator) or denominator <= 0:
             raise ValueError("T8 comparison has invalid raw timing")
         result[execution] = dict(ratio=numerator / denominator, threshold=1.5,

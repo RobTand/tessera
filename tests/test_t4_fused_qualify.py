@@ -135,7 +135,9 @@ def test_t8_wrong_bytes_or_geometry_is_not_a_pair():
                 input_sha256="a", routing_sha256="b", routing_weights_sha256="c",
                 source_weight_seeds={"gate": 18}, source_weight_sha256={"gate": "d"},
                 weight_bytes_scope=["gate", "up"],
-                timing={"eager": {"median_ms": 3.0}, "graph": {"median_ms": 2.0}})
+                serving_owner=True, eager_ok=True, graph_equal=True,
+                timing={"eager": {"median_ms": 3.0, "samples_ms": [3.0]},
+                        "graph": {"median_ms": 2.0, "samples_ms": [2.0]}})
     baseline = dict(cell, format="T8")
     for field, wrong in (("wire_bytes", 20001), ("experts", 4), ("seed", 8)):
         bad = dict(baseline, **{field: wrong})
@@ -143,6 +145,13 @@ def test_t8_wrong_bytes_or_geometry_is_not_a_pair():
             qual.compare_t8_cell(cell, bad)
     result = qual.compare_t8_cell(cell, baseline)
     assert result["graph"]["ratio"] == 1.0 and result["graph"]["pass_kill"]
+    for field in ("serving_owner", "eager_ok", "graph_equal"):
+        with pytest.raises(ValueError, match="successful serving"):
+            qual.compare_t8_cell(cell, dict(baseline, **{field: False}))
+    bad = copy.deepcopy(baseline)
+    bad["timing"]["graph"]["median_ms"] = 1.0
+    with pytest.raises(ValueError, match="median disagrees"):
+        qual.compare_t8_cell(cell, bad)
 
 
 def test_raw_events_keep_acquisition_order(monkeypatch):
