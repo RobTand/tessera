@@ -9371,4 +9371,7 @@ Only actual get_quant_method calls establish an offered selected route.
 A meta census proves construction, not a loaded forward or CUDA graph execution.
 The current CPU sparse backend cannot construct the full GLM model.
 That refusal does not qualify a GPU route or permit a substitute backend.
+The census records input width variants separately from reachability disagreements.
+An output projection can have different input widths on KDA and MLA layers without a routing disagreement.
+
 Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.

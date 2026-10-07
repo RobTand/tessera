@@ -285,13 +285,14 @@ def census(model, probe) -> dict:
             # its roles against (tessera#377).  Global sizes: the census
             # builds at tp=1.
             "output_sizes": _output_sizes(module),
-            "input_size": int(module.input_size),
+            "input_sizes": set(),
             "output_size": int(module.output_size),
             "replicated_shard_ids": sorted(int(i) for i in getattr(module, "replicated_shard_ids", ())),
             "instances": [],
             "layers": set(),
             "examples": [],
         })
+        row["input_sizes"].add(int(module.input_size))
         match = LAYER_INDEX.search(prefix)
         if match:
             row["layers"].add(int(match.group(0)))
@@ -322,13 +323,13 @@ def census(model, probe) -> dict:
                              ("quant_method", type(module.quant_method).__name__),
                              ("output_sizes", _output_sizes(module)),
                              ("class", type(module).__name__),
-                             ("input_size", int(module.input_size)),
                              ("output_size", int(module.output_size)),
                              ("replicated_shard_ids", sorted(int(i) for i in getattr(module, "replicated_shard_ids", ())))):
             if row[field] != value:
                 row.setdefault("disagreements", {}).setdefault(field, []).append(prefix)
     for row in rows.values():
         row["layers"] = sorted(row["layers"])
+        row["input_sizes"] = sorted(row["input_sizes"])
     # Every prefix the probe WAS asked about that is not a LinearBase -- the
     # MoE modules, the LM head -- so a reader can tell "not a Linear" from
     # "never offered".

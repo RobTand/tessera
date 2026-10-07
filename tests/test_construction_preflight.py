@@ -56,3 +56,35 @@ def test_preflight_refuses_shapes_that_a_device_load_cannot_use(config_dir, defe
     path.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="layer count|hidden size|head count|head dimension"):
         census.preflight(str(config_dir), "declared-image")
+
+
+def test_input_width_variants_do_not_hide_offers_but_missing_offers_do(monkeypatch):
+    from types import ModuleType, SimpleNamespace
+    import torch
+    from tessera.serving.contract import classify_construction, construction_entry_from_receipt
+
+    class Linear(torch.nn.Linear):
+        def __init__(self, columns, prefix, offered):
+            super().__init__(columns, 2, bias=False)
+            self.prefix = prefix
+            self.input_size, self.output_size = columns, 2
+            self.quant_method = SimpleNamespace()
+            self.quant_config = object() if offered else None
+
+    module = ModuleType("vllm.model_executor.layers.linear")
+    module.LinearBase = Linear
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    baseline = json.loads((ROOT / "docs/measurements/construction/qwen3-0.6b.json").read_text())
+    for second_offered in (True, False):
+        model = torch.nn.ModuleList([
+            Linear(4, "model.layers.0.self_attn.o_proj", True),
+            Linear(8, "model.layers.1.self_attn.o_proj", second_offered)])
+        asked = [(layer.prefix, type(layer).__name__) for layer in model
+                 if layer.quant_config is not None]
+        rows = census.census(model, SimpleNamespace(asked=asked, asked_layers={}))
+        entry = construction_entry_from_receipt({**baseline, **rows})
+        expected = "offered" if second_offered else "disagreement"
+        for layer in model:
+            assert classify_construction(entry, layer.prefix)[0] == expected
+        assert rows["linears"][0]["input_sizes"] == [4, 8]
+        assert [item["input_size"] for item in rows["linears"][0]["instances"]] == [4, 8]

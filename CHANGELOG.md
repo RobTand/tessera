@@ -24,6 +24,9 @@ Do not change a serving pin, kernel, or default.
 Remove obsolete empty Tessera configuration assertions from stock passthrough tests.
 Keep the geometry-demotion copy check and the exact BF16 control.
 
+Record input width variants without a false reachability refusal.
+Keep true quant-config and output-partition disagreements as refusals.
+
 ## 2026-10-07 — projection construction and load checks
 
 Add a small-artifact projection smoke tool with a portable CPU dry run.
