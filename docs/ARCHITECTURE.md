@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
+`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
+It includes explicit copies, padded shards, temporary buffers, and rank reserves.
+Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
+They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
+The planner refuses a different declared row tile before byte pricing.
+The planner reports named capacity refusals before load.
+The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
+The README states its input and output contracts.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
@@ -876,10 +887,9 @@ Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
 The selected fused owner retains immutable projection views of the words,
 scale and initial-state planes plus its composed native tables, run pairs,
 descriptors and counters. The resident route replaces its compact preparation
-owner only after native selection succeeds. Caller-held compact bundles and
-views remain intact; a refused or unavailable native lane keeps the complete
-compact fallback. Retired projection views refuse compact execution and
-recomposition. Wire bytes, arithmetic and native dispatch do not change.
+owner only after native selection succeeds. Caller-held compact bundles and views remain intact.
+The required class route refuses an unsupported or unavailable native lane; it has no compact serving fallback.
+Retired projection views refuse compact execution and recomposition. Wire bytes, arithmetic and native dispatch do not change.
 CPU lifetime controls establish ownership, not GPU allocator savings or
 served throughput; the fullserve admission bounds remain unchanged pending
 matched before/after device and host measurements.
@@ -4602,20 +4612,14 @@ absorbed (tessera#557: the manifest prices the tile, the per-row scales, the
 NVFP4 A-side scalar and the load-pinned trellis tables, and the mixed3
 capture re-derived over those figures closes; per-module pricing of the
 shared tables is exact for one NVFP4 unit per trellis). A routed FP8/BF16
-stack is priced as the compact window lane holds it (tessera#624): the
-repacked planes, per-expert tables, permutations and bookkeeping of
-`WindowUnitAxis`, the per-part `run_off` (int64 `[E + 1]`: `finish`'s
-`torch.cumsum` promotes its int32 counts), and the fused lane's composed
-tables (#685) with, since contract v45, each projection's run pair and block
-descriptors (`serving_parts.routed_fused_unit_bytes`) where the stack's wire
-shape admits the lane (`routed_fused.fused_routed_unit_shape_refusal`: one
-rate or two adjacent rates, the gate/up launch within `ROUTED_LANE_RATES` on
-sm_121) -- never a decoded tile, which that lane does not allocate. The figure is the whole stack at TP1; the
-manifest's `totals.per_rank` block (`--fit-tp-size`) prices each rank's cut
-beside the legacy MTP draft embed/head duplicate allowance as its own line
-item (tessera#645). The source-guarded draft lifetime integration above avoids
-that allocation, but CPU evidence alone does not remove the conservative
-fit allowance or qualify a serving image. `cache_capacity` may
+stack uses the required native class route. The exporter prices each unit from its verified manifest geometry and rates.
+Retained storage consists of words, weight scales, init, selected composed tables, run pairs and block descriptors.
+The inverse map costs 4 bytes per expert. Class counters cost 8 bytes per class.
+Raw runs, permutations, offsets and grid planes belong to preparation and have no retained native owner.
+The TP1 total and `totals.per_rank` use the same accountant on each actual rank cut.
+The legacy MTP draft embed/head duplicate remains a separate line item.
+CPU allocation controls do not qualify native wire repack, a serving image or GPU arithmetic.
+The CPU proof does not remove the conservative fit allowance. `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
@@ -5511,10 +5515,9 @@ LANE-BEARING rows since v31: each names the extension it needs, so
 extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`,
 which since v45 reads the cell's structure: a routed cell reaches the lane only
 where every rate of the rung is in `column_rates_routed_moe`, a dense cell
-wherever every rate is in `column_rates`), and the compact rows keep
-`when_lane_absent` False because the compact adapter still runs beside the
-lane -- for the stacks the predicate refuses and for the opt-out. A TP1 eager
-resident route census of the rate-4 u1 stub B on the GLM serving image
+wherever every rate is in `column_rates`). The compact rows and opt-out described here belong to the former dispatcher.
+The required native class route replaces that dispatcher; the census receipts below keep their historical scope.
+A TP1 eager resident route census of the rate-4 u1 stub B on the GLM serving image
 (`experiments/results/glm53_u1_stub_b_fused_tp1_eager_census.json`, replayed
 by `tests/test_glm_u1_census_cells.py`) recorded the fused pair on the q256
 1024 E4M3 and BF16 stacks and the compact pair on the three mixed-rate E4M3
@@ -9494,3 +9497,49 @@ CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
 explicit `enforce_eager=True` requirement. This enables the real native factory
 without fabricating a model configuration, and does not admit compiled or
 captured selected execution.
+
+## Explicit GLM projection owners
+
+The dense owner rule identifies the KDA six-member input, the MLA low-rank input, and the DSA key and head-weight pair.
+The source config identifies KDA layers and standalone MLA queries.
+The construction receipt supplies output partitions; the exporter does not derive them from weight shapes.
+KDA roles four and five keep their full source rows on each tensor parallel rank.
+
+The stock NoPE loader pads only kv_a_proj_with_mqa output rows.
+The exporter preserves its source range and records the added zero rows separately.
+BF16 passthrough keeps every original tensor and bias unchanged.
+An explicit plan can select the router and vision Linear units without a default change.
+The selected vision qkv target keeps the stock prefix.
+
+The direct consumer byte rule belongs to serving.projection_routes.
+The DSA head tail uses its stock FP32 cache.
+The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
+Their decoded buffers increase resident prices; they do not become compressed BMM routes.
+The exporter refuses compressed stock twins for constructors that suppress quantization.
+
+The plugin installs a selective LinearBase constructor hook before model construction.
+The hook supplies TesseraConfig only for an explicit target whose constructor has no quant_config.
+Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
+The KDA shard planner reads replicated_shard_ids from the actual layer.
+It does not infer replication from a shape total.
+
+The direct consumer contract separates the head operation from its unused dense output.
+The indexer head uses FP32 inputs and weights without activation quantization.
+The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
+The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
+
+The constructor census records stock and selected views separately.
+Only actual get_quant_method calls establish an offered selected route.
+A meta census proves construction, not a loaded forward or CUDA graph execution.
+The current CPU sparse backend cannot construct the full GLM model.
+That refusal does not qualify a GPU route or permit a substitute backend.
+The census records input width variants separately from reachability disagreements.
+An output projection can have different input widths on KDA and MLA layers without a routing disagreement.
+The TP2 smoke accepts a Torch rendezvous URL for native gang members on distinct GPU hosts.
+Runtime identities remain observations. Only mode and artifact input mismatches stop the peer arithmetic check.
+The active construction entry names one selected receipt for each architecture. Historical receipts remain unchanged.
+The current GLM entry derives from actual T-8/T-16 constructor calls on the current image.
+The topology specifies two nodes with one rank and one CUDA device per node.
+
+Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.

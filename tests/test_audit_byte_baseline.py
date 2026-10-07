@@ -547,3 +547,19 @@ def test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes(tmp_path, m
                 parse_tessera_expert_blob(blob, wrong, "wrong storage rung")
 
 
+def test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes():
+    module = _load()
+    cases = module._projection_cases()
+    assert {case.condition for case in cases} == {"nope", "head", "mla"}
+    assert {case.grid.name for case in cases} == {"E4M3", "BF16", "E2M1x2"}
+    for case in cases:
+        record = module.projection_record(case)
+        assert record["encoded_rows"] == record["source_rows"] + record["padding_rows"]
+        assert record["container_bytes"] >= record["wire_accounted_bytes"]
+        assert record["resident_bytes"] == record["native_resident_bytes"] + record["direct_buffer_bytes"]
+        assert record["wire_and_direct_buffer_bytes"] == record["wire_accounted_bytes"] + record["direct_buffer_bytes"]
+        if case.condition == "nope":
+            assert record["padding_rows"] == 64 and record["direct_buffer_bytes"] == 0
+        else:
+            assert record["padding_rows"] == 0
+            assert record["direct_buffer_bytes"] == 64 * 32 * (4 if case.condition == "head" else 2)
