@@ -208,7 +208,8 @@ def test_the_override_is_explicit_and_lands_in_the_manifest_record():
     assert EXPORT.check_recipe(grid, 768, where="e2m1.probe",
                                allow_unserveable=True, overrides=stamped) is not None
     assert [(r["grid"], r["q256"], r["target"]) for r in stamped] == [("E2M1", 768, "e2m1.probe")]
-    assert "no route" in stamped[0]["refusal"]
+    assert "holds the paired E2M1 grid" in stamped[0]["refusal"]
+    assert "got 'E2M1'" in stamped[0]["refusal"]
     stamped = []
     assert EXPORT.check_recipe(GRIDS["E2M1x2"], 448, overrides=stamped) is not None
     assert stamped == []
