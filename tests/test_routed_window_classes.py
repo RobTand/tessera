@@ -46,7 +46,9 @@ def projection(rates=(3, 3, 4, 4), *, family="value", cols=128, rows=128):
 def allow_cpu(monkeypatch):
     monkeypatch.setattr(rf, "fused_routed_window_supported", lambda *args: None)
     monkeypatch.setattr(rf, "_ext", lambda library: object())
-    monkeypatch.setattr(rf, "_class_streams", lambda index: ())
+    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device: rf._DispatchResources(
+        (object(), object()), object(), (object(), object()),
+        torch.empty(0, dtype=torch.float32, device=device)))
 
 
 def test_mixed_flat_storage_constructs_without_padding(monkeypatch):
@@ -125,8 +127,18 @@ def test_metadata_and_native_aliases_are_charged_once(monkeypatch):
     adapter = packed.adapter()
     owner = packed.native_owner()
     assert owner.adapter() is adapter
-    from tessera.serving.residency import resident_storage_bytes
-    assert owner.resident_bytes() == resident_storage_bytes(owner.named_tensors())
+    # Count the native planes directly from this fixture geometry. The raw
+    # runs, offsets, permutations, codes, and native tables do not survive.
+    experts, rows, cols = 4, 128, 128
+    words = (2 * (16 * 3 * cols) + 2 * (16 * 4 * cols)) * 4
+    tables = experts * (1 << 14) * 2
+    scales = experts * rows * 4
+    init = experts * cols * 4
+    has_init = experts * 4
+    pairs = experts * 8 * 4
+    descriptors_bytes = experts * (cols // 32) * 12 * 4
+    counters = 2 * 2 * 4
+    assert owner.resident_bytes() == 3 * (words + tables + scales + init + has_init + pairs + descriptors_bytes) + counters
     names = dict(owner.named_tensors())
     assert names["routed_classes.counters"] is adapter.counters
     assert adapter.counters.numel() == 4
@@ -147,22 +159,26 @@ def test_factory_does_not_substitute_compact_on_native_failure(monkeypatch):
 @pytest.mark.parametrize("reverse", [False, True])
 def test_two_stream_events_and_absolute_prefix_reseed(monkeypatch, reverse):
     from contextlib import contextmanager
+    make_resources = rf._make_dispatch_resources
     allow_cpu(monkeypatch)
     adapter = rf.FusedRoutedWindowMoE.from_bundles(*[projection() for _ in range(3)],
         expert_classes=descriptors())
-    trace, launches = [], []
+    trace, launches, created_streams, created_events = [], [], [], []
     active = ["caller"]
     class Stream:
-        def __init__(self, name):
-            self.name = name
+        def __init__(self, name=None, *, device=None):
+            self.name = name if name is not None else f"side{len(created_streams)}"
+            if name is None:
+                created_streams.append(self)
         def wait_event(self, event):
             trace.append(("wait", self.name, event.recorded))
     class Event:
+        def __init__(self):
+            created_events.append(self)
         def record(self, stream):
             self.recorded = stream.name
             trace.append(("record", stream.name))
     caller = Stream("caller")
-    streams = (Stream("side0"), Stream("side1"))
     @contextmanager
     def context(stream):
         prior = active[0]
@@ -170,36 +186,71 @@ def test_two_stream_events_and_absolute_prefix_reseed(monkeypatch, reverse):
         yield
         active[0] = prior
     monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
-    monkeypatch.setattr(torch.cuda, "current_stream", lambda index: caller)
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda device: caller)
+    monkeypatch.setattr(torch.cuda, "Stream", Stream)
     monkeypatch.setattr(torch.cuda, "Event", Event)
     monkeypatch.setattr(torch.cuda, "stream", context)
     monkeypatch.setattr(torch.Tensor, "record_stream", lambda tensor, stream: None)
-    monkeypatch.setattr(rf, "_class_streams", lambda index: streams)
     monkeypatch.setattr(rf, "_sm_count", lambda index: 132)
     class Library:
         def routed_fused_forward(self, *args):
-            launches.append((active[0], args[25].clone(), args[22], args[21].clone(), args[-2]))
+            launches.append((active[0], args[25].clone(), args[22], args[21].clone(), args[-2], args[3]))
     monkeypatch.setattr(rf, "_ext", lambda library: Library())
+    resources = make_resources(torch.device("cpu"))
+    assert len(created_streams) == 2
+    assert len(created_events) == 3
+    assert resources.empty.numel() == 0
+    assert all(hasattr(event, "recorded") for event in created_events)
+    trace.clear()
     ids = torch.tensor([[0, 2], [1, 3]], dtype=torch.int32)
     rw = torch.ones_like(ids, dtype=torch.float32)
     routing = rf._routing_tables(ids, rw, 4, torch.device("cpu"), None)
     out = torch.empty(4, 128, dtype=torch.bfloat16)
     x = torch.empty(2, 128, dtype=torch.bfloat16)
     order = (1, 0) if reverse else (0, 1)
+    def no_resource_creation(*args, **kwargs):
+        raise AssertionError("a projection must reuse its load-time resources")
+    monkeypatch.setattr(torch.cuda, "Stream", no_resource_creation)
+    monkeypatch.setattr(torch.cuda, "Event", no_resource_creation)
+    monkeypatch.setattr(torch, "empty", no_resource_creation)
     for prefix in ([0, 2, 3, 5, 5], [0, 0, 0, 1, 3], [0, 1, 6, 7, 8]):
         routing.item_off.copy_(torch.tensor(prefix, dtype=torch.int32))
         adapter.counters.fill_(-99)
-        rf.dispatch_class_projection(0, x, None, routing, **adapter.operands,
-            issue_order=order, counters=adapter.counters, library="value", piece_major=False,
-            mul_weight=False, limit=float("inf"), a_row_mode=0, out=out)
-        for launch, c in zip(launches[-2:], order):
-            stream, counter, index, offsets, grid = launch
-            assert stream == f"side{c % 2}"
-            assert counter.tolist() == [prefix[2*c] * 2]
-            assert index is routing.flat_sorted
-            assert offsets.tolist() == routing.offsets[2*c:2*c+3].tolist()
-            assert grid == 132
+        for mode, n_blocks in ((0, 2), (2, 1)):
+            rf.dispatch_class_projection(mode, x if mode == 0 else out, None, routing,
+                **adapter.operands, issue_order=order, counters=adapter.counters,
+                library="value", piece_major=False, resources=resources, mul_weight=False,
+                limit=float("inf"), a_row_mode=0 if mode == 0 else 1, out=out)
+            for launch, c in zip(launches[-2:], order):
+                stream, counter, index, offsets, grid, empty = launch
+                assert stream == f"side{c % 2}"
+                assert counter.tolist() == [prefix[2*c] * n_blocks]
+                assert index is routing.flat_sorted
+                assert offsets.tolist() == routing.offsets[2*c:2*c+3].tolist()
+                assert grid == 132
+                assert empty is resources.empty
     assert trace[:3] == [("record", "caller"), ("wait", "side0", "caller"), ("wait", "side1", "caller")]
     assert trace[-4:] == [("record", "side0"), ("wait", "caller", "side0"),
                          ("record", "side1"), ("wait", "caller", "side1")]
+
+
+def test_dispatch_resources_have_one_adapter_owner(monkeypatch):
+    import gc
+    import weakref
+    allow_cpu(monkeypatch)
+    adapters = [rf.FusedRoutedWindowMoE.from_bundles(*[projection() for _ in range(3)],
+                expert_classes=descriptors()) for _ in range(2)]
+    first, second = adapters
+    assert first.dispatch_resources is not second.dispatch_resources
+    assert first.dispatch_resources.ready is not second.dispatch_resources.ready
+    assert not any(a is b for a in first.dispatch_resources.finished for b in second.dispatch_resources.finished)
+    key = first.resource_key
+    assert rf.resolve_dispatch_resources(key) is first.dispatch_resources
+    ref = weakref.ref(first.dispatch_resources)
+    del first, adapters
+    gc.collect()
+    assert ref() is None
+    with pytest.raises(GrammarError, match="owner no longer exists"):
+        rf.resolve_dispatch_resources(key)
+    assert rf.resolve_dispatch_resources(second.resource_key) is second.dispatch_resources
 

@@ -51,6 +51,7 @@ import functools
 import glob as _glob
 import logging
 import os
+import weakref
 
 import torch
 
@@ -1196,26 +1197,61 @@ def initialize_class_counter(counter: torch.Tensor, prefix: torch.Tensor,
     counter.mul_(n_blocks)
 
 
-@functools.lru_cache(maxsize=None)
-def _class_streams(device_index: int):
-    # Fixed two-stream assignment, independent of populations and issue order.
-    return tuple(torch.cuda.Stream(device=device_index) for _ in range(2))
+@dataclasses.dataclass(frozen=True)
+class _DispatchResources:
+    streams: tuple
+    ready: object
+    finished: tuple
+    empty: torch.Tensor
+
+
+# The registry holds no weights or adapters. The adapter owns these resources.
+_dispatch_resources = weakref.WeakValueDictionary()
+
+
+def _make_dispatch_resources(device: torch.device) -> _DispatchResources:
+    resources = _DispatchResources(
+        streams=tuple(torch.cuda.Stream(device=device) for _ in range(2)),
+        ready=torch.cuda.Event(), finished=tuple(torch.cuda.Event() for _ in range(2)),
+        empty=torch.empty(0, dtype=torch.float32, device=device))
+    # CUDA creates event handles at the first record. Create them at load,
+    # before graph capture or a timed forward uses this adapter.
+    caller = torch.cuda.current_stream(device)
+    resources.ready.record(caller)
+    for stream, finished in zip(resources.streams, resources.finished):
+        stream.wait_event(resources.ready)
+        finished.record(stream)
+        caller.wait_event(finished)
+    return resources
+
+
+def _retain_dispatch_resources(resources: _DispatchResources) -> str:
+    key = str(id(resources))
+    _dispatch_resources[key] = resources
+    return key
+
+
+def resolve_dispatch_resources(key: str) -> _DispatchResources:
+    resources = _dispatch_resources.get(key)
+    if resources is None:
+        raise GrammarError("the routed dispatcher resource owner no longer exists")
+    return resources
+
 
 
 def dispatch_class_projection(mode, x, a_scale, routing, *, words, tables, inits,
         has_inits, wscales, runs, bdescs, starts, ends, tile_words, slot_words,
-        issue_order, counters, library, piece_major, mul_weight, limit, a_row_mode, out):
+        issue_order, counters, library, piece_major, resources, mul_weight, limit, a_row_mode, out):
     """Fork/join inside the opaque operation; full route/output views stay shared."""
     index = x.device.index if x.device.index is not None else torch.cuda.current_device()
     caller = torch.cuda.current_stream(index)
-    streams = _class_streams(index)
-    ready = torch.cuda.Event()
-    ready.record(caller)
+    streams = resources.streams
+    resources.ready.record(caller)
     for stream in streams:
-        stream.wait_event(ready)
+        stream.wait_event(resources.ready)
     bm = superblock_rows(library, mode, routing.tokens)
     prefix = routing.superblocks(bm)
-    empty = torch.empty(0, dtype=torch.float32, device=x.device)
+    empty = resources.empty
     lib = _ext(library)
     down = mode == 2
     projection = 1 if down else 0
@@ -1238,8 +1274,7 @@ def dispatch_class_projection(mode, x, a_scale, routing, *, words, tables, inits
                 routing.offsets[starts[c]:ends[c] + 1], routing.flat_sorted, routing.rw_sorted,
                 prefix[starts[c]:ends[c] + 1], slot, routing.top_k, a_row_mode,
                 mul_weight, limit, out, _sm_count(index), bm)
-    for stream in streams:
-        finished = torch.cuda.Event()
+    for stream, finished in zip(streams, resources.finished):
         finished.record(stream)
         caller.wait_event(finished)
     # The caller allocated these ephemeral tensors; side-stream work must not
@@ -1274,6 +1309,8 @@ class FusedRoutedWindowMoE:
     counters: torch.Tensor
     operands: dict
     class_issue_order: tuple
+    dispatch_resources: _DispatchResources
+    resource_key: str
     activation: str = "silu"
 
     @classmethod
@@ -1326,15 +1363,15 @@ class FusedRoutedWindowMoE:
         operands.update(starts=[c.start for c in classes], ends=[c.end for c in classes],
             tile_words=[v for c in classes for v in (c.tile_words_gate_up, c.tile_words_down)],
             slot_words=[v for c in classes for v in (c.slot_words_gate_up, c.slot_words_down)])
-        if down.device.type == "cuda":
-            index = down.device.index if down.device.index is not None else torch.cuda.current_device()
-            _class_streams(index)
+        resources = _make_dispatch_resources(down.device)
+        resource_key = _retain_dispatch_resources(resources)
         return cls(*(_native_view(b, t) for b, t in zip((gate, up, down), tables)),
             family=down.family, arithmetic=down.arithmetic, library=library,
             expert_classes=descriptors, classes=tuple(classes), table_gate=tables[0],
             table_up=tables[1], table_down=tables[2],
             counters=torch.empty((len(classes), 2), dtype=torch.int32, device=down.device),
-            operands=operands, class_issue_order=tuple(range(len(classes))), activation=activation)
+            operands=operands, class_issue_order=tuple(range(len(classes))),
+            dispatch_resources=resources, resource_key=resource_key, activation=activation)
 
     @property
     def piece_major(self) -> bool:
@@ -1365,6 +1402,7 @@ class FusedRoutedWindowMoE:
                 if isinstance(value, torch.Tensor):
                     yield f"routed_classes.class_{i}.{field.name}", value
         yield "routed_classes.counters", self.counters
+        yield "routed_classes.empty_scale", self.dispatch_resources.empty
 
     def resident_bytes(self):
         from .serving.residency import resident_storage_bytes
@@ -1376,7 +1414,7 @@ class FusedRoutedWindowMoE:
     def _launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
         dispatch_class_projection(mode, x, a_scale, routing, **self.operands,
             issue_order=self.class_issue_order, counters=self.counters, library=self.library,
-            piece_major=self.piece_major, mul_weight=mul_weight, limit=limit,
+            piece_major=self.piece_major, resources=self.dispatch_resources, mul_weight=mul_weight, limit=limit,
             a_row_mode=a_row_mode, out=out)
 
     def _quantized(self, x, a_scale, rows):
@@ -1412,7 +1450,7 @@ class FusedRoutedWindowMoE:
             return torch.empty((0, self.down.rows), dtype=torch.bfloat16, device=self.device)
         return _routed_window_classes(x, expert_ids, routing_weights, shared,
             **self.operands, issue_order=list(self.class_issue_order), counters=self.counters,
-            library=self.library, piece_major=self.piece_major,
+            library=self.library, piece_major=self.piece_major, resource_key=self.resource_key,
             input_weight=apply_router_weight_on_input, swiglu_limit=limit if limit is not None else float("inf"))
 
     def gate_up(self, x, expert_ids, routing_weights, a_scale=None, *, preserve=True,

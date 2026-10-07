@@ -112,7 +112,7 @@ def _routed_window_classes(
     inits: List[torch.Tensor], has_inits: List[torch.Tensor], wscales: List[torch.Tensor],
     runs: List[torch.Tensor], bdescs: List[torch.Tensor], starts: List[int], ends: List[int],
     tile_words: List[int], slot_words: List[int], issue_order: List[int], counters: torch.Tensor,
-    library: str, piece_major: bool, input_weight: bool, swiglu_limit: float,
+    library: str, piece_major: bool, resource_key: str, input_weight: bool, swiglu_limit: float,
 ) -> torch.Tensor:
     """One opaque native routed operation, including the two-stream event DAG.
 
@@ -133,7 +133,7 @@ def _routed_window_classes(
     args = dict(words=words, tables=tables, inits=inits, has_inits=has_inits, wscales=wscales,
         runs=runs, bdescs=bdescs, starts=starts, ends=ends, tile_words=tile_words,
         slot_words=slot_words, issue_order=issue_order, counters=counters, library=library,
-        piece_major=piece_major)
+        piece_major=piece_major, resources=rf.resolve_dispatch_resources(resource_key))
     rf.dispatch_class_projection(0, xq, a1, routing, **args, a_row_mode=0,
         mul_weight=False, limit=swiglu_limit, out=act)
     # Join gate/up before quantizing the full sorted-route activation. The
@@ -153,7 +153,7 @@ def _routed_window_classes(
 @_routed_window_classes.register_fake
 def _routed_window_classes_fake(x, expert_ids, routing_weights, shared, words, tables,
         inits, has_inits, wscales, runs, bdescs, starts, ends, tile_words, slot_words,
-        issue_order, counters, library, piece_major, input_weight, swiglu_limit):
+        issue_order, counters, library, piece_major, resource_key, input_weight, swiglu_limit):
     return torch.empty((x.shape[0], wscales[2].shape[1]), dtype=torch.bfloat16, device=x.device)
 
 

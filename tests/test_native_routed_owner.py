@@ -46,6 +46,9 @@ def native_constructor(monkeypatch):
     monkeypatch.setattr(rf, 'fused_routed_window_supported', lambda *args: None)
     monkeypatch.setattr(rf, 'library_for', lambda family: 'e4m3mma')
     monkeypatch.setattr(rf, '_ext', lambda library: object())
+    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device: rf._DispatchResources(
+        (object(), object()), object(), (object(), object()),
+        torch.empty(0, dtype=torch.float32, device=device)))
 
 
 def native_owner(packed):
