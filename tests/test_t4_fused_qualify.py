@@ -1,84 +1,220 @@
-"""Narrow CPU tests for the finite fused T-4 qualification harness.
-
-No CUDA, no compact packer, no full model. Small synthetic weights only.
-"""
+"""Behavior tests for completeness, safety, byte matching, and ordered evidence."""
 from __future__ import annotations
 
+import copy
+import importlib.util
 import json
-import sys
+import math
+import os
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments" / "t4_code"))
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-
-import t4_fused_qualify as qual
-
-
-def test_window_recipe_fields_are_fixed():
-    kw, source = qual.resolve_window_kwargs(896)
-    assert int(kw["q256"]) == 896
-    assert int(kw["window_bits"]) == 14
-    assert int(kw["span"]) == 1
-    assert source in ("served-recipe", "explicit-window-pending-served-recipe")
-    assert str(kw["body"]).endswith("WINDOW")
-    assert str(kw["scale_plane"]).endswith("LUT")
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
+source = Path(os.environ.get("T4_QUALIFY_SOURCE", ROOT / "experiments/t4_code/t4_fused_qualify.py"))
+spec = importlib.util.spec_from_file_location("t4_qualify_under_test", source)
+qual = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(qual)
 
 
-def test_pure_width_map_covers_all_pairs():
-    assert qual.PURE_Q256 == [128, 256, 384, 512, 640, 768, 896, 1024]
-    assert qual.Q_TO_RATE[896] == 7
+def report(mode="correctness"):
+    cell = dict(key="a", serving_owner=True, eager_ok=True, graph_equal=True,
+                numeric={"ok": True}, register_resources=[{"REG": 124}])
+    return dict(mode=mode, head="test-source", requested_population=["a"], cells=[cell],
+                skips=[], resources={"functions": [{"REG": 124}]},
+                population={"cells": 1, "requested_cells": 1})
 
 
-def test_routing_parse_shapes():
-    parsed = qual.parse_routing(16, 2, 2, 7)
-    assert parsed["tokens"] == 16
-    assert parsed["routes"] == 32
-    assert parsed["ids_shape"] == [16, 2]
+def run_control(tmp_path, monkeypatch, data, mode="correctness"):
+    target = "mode_correctness" if mode == "correctness" else "mode_quality"
+    monkeypatch.setattr(qual, target, lambda _args: data)
+    return qual.main(["--mode", mode, "--out", str(tmp_path / "receipt.json"),
+                      "--q256", "896", "--ms", "1"])
 
 
-def test_numeric_oracle_helpers_are_exact():
-    from experiments.t4_code.fused_e2m1_check import compare
-
-    good = compare(torch.ones(1, dtype=torch.bfloat16),
-                   torch.ones(1, dtype=torch.float64),
-                   torch.zeros(1, dtype=torch.float64), True)
-    assert good["ok"]
-    bad = compare(torch.ones(1, dtype=torch.bfloat16),
-                  torch.full((1,), float("inf"), dtype=torch.float64),
-                  torch.zeros(1, dtype=torch.float64), True)
-    assert not bad["ok"]
+@pytest.mark.before_control
+def test_no_observed_cells_cannot_succeed(tmp_path, monkeypatch):
+    data = report()
+    data["cells"] = []
+    assert run_control(tmp_path, monkeypatch, data) == 1
 
 
-def test_fractional_rung_is_refused(tmp_path):
-    with pytest.raises(SystemExit):
-        qual.main(["--mode", "dry-run", "--out", str(tmp_path / "q.json"),
-                   "--q256", "900"])
+@pytest.mark.before_control
+def test_missing_graph_is_a_failure(tmp_path, monkeypatch):
+    data = report()
+    data["cells"][0]["graph_equal"] = None
+    assert run_control(tmp_path, monkeypatch, data) == 1
 
 
-def test_dry_run_reads_real_bytes(tmp_path):
-    out = tmp_path / "dry.json"
-    rc = qual.main(["--mode", "dry-run", "--out", str(out),
-                    "--q256", "128", "1024",
-                    "--ms", "1",
-                    "--projections", "gate", "dense",
-                    "--experts", "2", "--top-k", "1"])
-    assert rc == 0
-    report = json.loads(out.read_text())
-    assert report["mode"] == "dry-run"
-    assert report["population"]["cells"] == 4
-    assert not report["skips"]
-    for cell in report["cells"]:
-        assert cell["wire_bytes"] > 0
-        assert cell["pure"] is True
-        assert cell["cuda_repack"] == "not-called"
-        assert cell["serving_owner"] is False
-        assert cell["decoded_shape"] == [cell["reader_rows"], cell["reader_cols"]]
-        assert len(cell["routing"]) == 1
+@pytest.mark.before_control
+def test_numeric_mismatch_is_a_failure(tmp_path, monkeypatch):
+    data = report()
+    data["cells"][0]["numeric"] = {"ok": False, "mismatch": 1}
+    assert run_control(tmp_path, monkeypatch, data) == 1
 
 
-def test_quality_loader_prefers_small_tiles():
-    assert qual.TABLE_BYTES == 16384
-    assert qual.SCHEMA == "tessera.t4_fused_qualify.v1"
+@pytest.mark.before_control
+def test_mandatory_skip_is_a_failure(tmp_path, monkeypatch):
+    data = report()
+    data["skips"] = [{"reason": "actual route rejected its input"}]
+    assert run_control(tmp_path, monkeypatch, data) == 1
+
+
+@pytest.mark.before_control
+def test_unmatched_quality_screen_cannot_claim_completion(tmp_path, monkeypatch):
+    data = report("quality-screen")
+    data["cells"] = [{"tensor": "real.weight", "complete": False,
+                      "exact_byte_match": False, "unmatched_slack_bytes": 512}]
+    assert run_control(tmp_path, monkeypatch, data, "quality-screen") == 1
+
+
+@pytest.mark.before_control
+def test_unknown_memory_is_not_safe(monkeypatch):
+    monkeypatch.setattr(qual, "mem_available_gib", lambda: None)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        qual.check_mem_guard()
+
+
+def test_guard_exact_boundary_and_below(monkeypatch):
+    monkeypatch.setattr(qual, "mem_available_gib", lambda: 2.0)
+    assert qual.check_mem_guard()["available_gib"] == 2.0
+    monkeypatch.setattr(qual, "mem_available_gib", lambda: math.nextafter(2.0, 0))
+    with pytest.raises(RuntimeError, match="below"):
+        qual.check_mem_guard()
+
+
+def test_correctly_completed_population_succeeds(tmp_path, monkeypatch):
+    assert run_control(tmp_path, monkeypatch, report()) == 0
+    saved = json.loads((tmp_path / "receipt.json").read_text())
+    assert saved["complete"] is True and saved["failures"] == []
+
+
+def test_duplicate_or_omitted_keys_cannot_succeed(tmp_path, monkeypatch):
+    data = report()
+    data["requested_population"] = ["a", "b"]
+    data["cells"].append(copy.deepcopy(data["cells"][0]))
+    assert run_control(tmp_path, monkeypatch, data) == 1
+
+
+def test_false_serving_label_cannot_succeed(tmp_path, monkeypatch):
+    data = report()
+    data["cells"][0]["serving_owner"] = False
+    assert run_control(tmp_path, monkeypatch, data) == 1
+
+
+def test_gamma_domain_refuses_unbounded_contraction():
+    with pytest.raises(ValueError, match="domain"):
+        qual.conditional_gamma(2 ** 23)
+
+
+def test_reference_rejects_a_finite_wrong_output():
+    reference = torch.tensor([1.0], dtype=torch.float64)
+    wrong = torch.tensor([2.0], dtype=torch.bfloat16)
+    exact = qual.compare_projection(wrong, reference, torch.zeros_like(reference), True)
+    random = qual.compare_projection(wrong, reference, torch.zeros_like(reference), False)
+    assert not exact["ok"] and not random["ok"]
+
+
+def test_relative_sse_is_not_relative_l2():
+    source = torch.tensor([1.0, 2.0])
+    decoded = torch.tensor([0.0, 2.0])
+    got = qual.weight_error(source, decoded)
+    assert got["relative_sse"] == .2
+    assert got["relative_l2"] == math.sqrt(.2)
+    assert got["squared_error"] == 1
+
+
+def test_t8_wrong_bytes_or_geometry_is_not_a_pair():
+    cell = dict(kind="mode0", m=16, hidden=4096, inter=1024, experts=288, top_k=8,
+                wire_bytes=20000, tp_size=1, tp_rank=0, seed=7,
+                input_sha256="a", routing_sha256="b",
+                timing={"eager": {"median_ms": 3.0}, "graph": {"median_ms": 2.0}})
+    baseline = dict(cell, format="T8")
+    for field, wrong in (("wire_bytes", 20001), ("experts", 4), ("seed", 8)):
+        bad = dict(baseline, **{field: wrong})
+        with pytest.raises(ValueError, match="equal actual"):
+            qual.compare_t8_cell(cell, bad)
+    result = qual.compare_t8_cell(cell, baseline)
+    assert result["graph"]["ratio"] == 1.0 and result["graph"]["pass_kill"]
+
+
+def test_raw_events_keep_acquisition_order(monkeypatch):
+    samples = iter([3.0, 1.0, 2.0])
+    class Event:
+        def __init__(self, **_kwargs):
+            pass
+        def record(self):
+            pass
+        def elapsed_time(self, _other):
+            return next(samples)
+    monkeypatch.setattr(torch.cuda, "Event", Event)
+    monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
+    got = qual.time_callable(lambda: None, 0, 3)
+    assert got["samples_ms"] == [3.0, 1.0, 2.0]
+    assert got["median_ms"] == 2.0
+
+
+def test_d41_resource_parse_keeps_each_register_record():
+    raw = """Function : native_rate7
+    REG:124 STACK:0 SHARED:1024 LOCAL:16
+    Function : native_rate8
+    REG:132 STACK:8 SHARED:2048 LOCAL:0
+    """
+    got = qual.parse_resource_usage(raw)
+    assert [(r["REG"], r["LOCAL"]) for r in got] == [(124, 16), (132, 0)]
+    with pytest.raises(ValueError, match="no register"):
+        qual.parse_resource_usage("a tool printed no resource records")
+
+
+def test_resource_pair_requires_the_requested_template():
+    data = {"functions": [dict(rate=7, mode=0, dense=False, mixed=False, split=False, REG=124)]}
+    assert qual.measured_registers(data, 896, "mode0")[0]["REG"] == 124
+    with pytest.raises(ValueError, match="missing"):
+        qual.measured_registers(data, 1024, "mode0")
+
+
+def test_small_source_read_uses_real_safetensor_slice(tmp_path):
+    from safetensors.torch import save_file
+
+    weight = torch.arange(128 * 256, dtype=torch.float32).reshape(128, 256)
+    path = tmp_path / "source.safetensors"
+    save_file({"actual.weight": weight}, str(path))
+    metadata = dict(path=str(path), tensor="actual.weight", shape=[128, 256])
+    got = qual.read_weight(metadata, small=True)
+    assert torch.equal(got, weight[:2, :16])
+
+
+def test_budget_search_prices_overhead_without_padding():
+    rows, cols = 128, 256
+    # A known byte-price target. The search must return this exact candidate,
+    # not add zero padding to some cheaper artifact.
+    base = qual.plane_bytes(128, rows, cols, "tcq") + 900
+    budget = qual.plane_bytes(384, rows, cols, "tcq") + 900
+    candidates = qual.budget_candidates(budget, rows, cols, base, 128)
+    assert candidates[0] == 384
+
+
+def test_prepare_inputs_declares_exact_ranges(tmp_path):
+    from safetensors.torch import save_file
+
+    model = tmp_path / "model"
+    model.mkdir()
+    key = "real.dense.weight"
+    save_file({key: torch.arange(32 * 256, dtype=torch.float32).reshape(32, 256)},
+              str(model / "one.safetensors"))
+    (model / "model.safetensors.index.json").write_text(json.dumps({"weight_map": {key: "one.safetensors"}}))
+    args = qual.build_parser().parse_args(["--mode", "prepare-inputs", "--out", str(tmp_path / "prepared"),
+                                         "--model-root", str(model), "--source-keys", key])
+    result = qual.prepare_inputs(args)
+    manifest = json.loads(Path(result["data_manifest"]).read_text())
+    unit = result["units"][0]
+    assert manifest["entry_count"] == len(manifest["entries"])
+    assert manifest["total_bytes"] == sum(e["bytes"] for e in manifest["entries"])
+    assert unit["bytes"] == 32 * 256 * 4
+    declared = [e for e in manifest["entries"] if e["path"] == unit["path"] and e["offset"] == unit["offset"]]
+    assert len(declared) == 1 and declared[0]["bytes"] == unit["bytes"]
