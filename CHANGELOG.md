@@ -3,11 +3,18 @@
 ## 2026-10-07 — T-16 decode-once dense prefill lane
 
 Publish the experimental T-16 dense launch in contract v58.
-The lane decodes the packed wire into shared BF16 scratch for each prefill step, then runs BF16 GEMM.
+Each admitted nonempty step decodes the packed wire into shared BF16 scratch, then runs BF16 GEMM.
 One allocation serves each projection shape and device. Modules keep their packed weights.
 The T-8 load-time lane and folded T-16 arithmetic remain unchanged.
 No default, serving pin, seal or served cell changes.
+
 Remove two tests that pin implementation rosters. Keep the consumer contract checks and numerical runtime tests.
+
+The fixed KDA screen reports KILL: 5.798336 ms at M2048 against 2.678376 ms for the same-wire BF16 control.
+Decode alone takes 3.087368 ms. The shared shape scratch occupies 103022592 bytes. Do not select this prototype for service.
+The targeted GPU proof passes 78 tests with no skips or uncollected modules under strict-cuda.
+The new scratch decoder uses wide addresses; its regression fails before the fix at the int32 boundary.
+See `docs/measurements/2026-10-07-t16-decode-once-prefill.md` for the complete evidence and limits.
 
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
