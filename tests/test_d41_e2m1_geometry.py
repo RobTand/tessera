@@ -200,3 +200,57 @@ def test_old_fixed_allowance_over_bounds_small_magnitudes():
     with pytest.raises(AssertionError):
         adapter.check_packed_fp4_arithmetic(torch.full_like(expected, 1e-6), expected, 1e-4, k=256)
 
+
+@pytest.mark.parametrize("k", [1, 16, 64, 129, 255, 257])
+def test_bound_refuses_lengths_outside_the_actual_packed_reader(k):
+    adapter = _load_geometry_adapter()
+    with pytest.raises(ValueError, match="multiple of 128"):
+        adapter.derive_packed_fp4_arithmetic_bound(1.0, k=k)
+
+
+@pytest.mark.parametrize("steps,epsilon", [
+    (-1, 2.0**-23), (True, 2.0**-23), (0.5, 2.0**-23),
+    (1, 0.0), (1, -2.0**-23), (1, float("nan")),
+    (1, float("inf")), (1, 1.0),
+])
+def test_gamma_refuses_invalid_operation_counts_and_precision(steps, epsilon):
+    adapter = _load_geometry_adapter()
+    with pytest.raises(ValueError):
+        adapter._rounding_gamma(steps, epsilon)
+
+
+def test_actual_bound_api_smoke_retains_precision_and_native_assumptions():
+    import json
+    adapter = _load_geometry_adapter()
+    for k in (128, 256, 1024, 1536, 4096):
+        output = torch.zeros(1, 1, dtype=torch.float32)
+        receipt = adapter.check_packed_fp4_arithmetic(output, output, 1.0, k=k)
+        assert receipt["u_fp32"] == 2.0**-24
+        assert receipt["epsilon_fp32"] == 2.0**-23
+        assert receipt["packed_reader_k_tiles"] == k // 128
+        assert receipt["native_steps"] == 2 * k + 3
+        assert receipt["reference_steps"] == 2 * k + 2
+        assert receipt["arithmetic_qualified"] is False
+        assert receipt["native_arithmetic_qualified"] is False
+        assert receipt["intermediate_domain_established"] is False
+        assert receipt["reference_rounding"].startswith("ASSUMPTION:")
+        assert receipt["magnitude_rounding"].startswith("ASSUMPTION:")
+        print(json.dumps({"actual_bound_api_smoke": receipt}, sort_keys=True))
+
+
+def test_bound_uses_the_last_aligned_gamma_length_and_exact_zero():
+    adapter = _load_geometry_adapter()
+    last = (2**22 - 2) // 128 * 128
+    tolerances, receipt = adapter.derive_packed_fp4_arithmetic_bound(0.0, k=last)
+    assert tolerances == {"atol": 0.0, "rtol": 0.0}
+    assert receipt["native_steps"] * receipt["epsilon_fp32"] < 1
+    with pytest.raises(ValueError, match=r"steps \* epsilon below one"):
+        adapter.derive_packed_fp4_arithmetic_bound(0.0, k=last + 128)
+
+
+def test_subnormal_output_diagnostic_does_not_establish_the_intermediate_domain():
+    adapter = _load_geometry_adapter()
+    subnormal = torch.tensor([[2.0**-149]], dtype=torch.float32)
+    receipt = adapter.check_packed_fp4_arithmetic(subnormal, subnormal, 1.0, k=128)
+    assert receipt["arithmetic_qualified"] is False
+    assert receipt["intermediate_domain_established"] is False

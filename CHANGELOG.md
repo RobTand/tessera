@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-07 — issue 1007: explicit packed T4 arithmetic assumptions
+
+Refactor the bound owner before the contract correction. Preserve its
+conditional allowance and all live measurement thresholds. Refuse illegal
+reader lengths and invalid gamma inputs. The v4 receipt states unit
+roundoff, actual tile counts, and each unproved arithmetic assumption.
+Complete the conditional derivation in the existing serving contract.
+Separate quantization error, fused epilogues, split lengths, and bfloat16
+boundaries. Keep native arithmetic unqualified because PTX does not supply
+the required local-error, reduction-depth, subnormal, or intermediate-domain contract.
+
 ## 2026-10-06 — issue 1005: actual T4 geometry reader coverage
 
 Add a default-off measurement reader for actual mixed-rate span-two TCQ and

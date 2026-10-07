@@ -443,6 +443,10 @@ def run_gpu(args, grid):
 
 def _rounding_gamma(steps, epsilon):
     """Outward-rounded finite gamma_n; no first-order remainder is dropped."""
+    if type(steps) is not int or steps < 0:
+        raise ValueError("the rounding bound needs a non-negative integer operation count")
+    if not math.isfinite(epsilon) or not 0 < epsilon < 1:
+        raise ValueError("the rounding bound needs a finite precision term between zero and one")
     if steps >= 1.0 / epsilon:
         raise ValueError("the rounding bound needs steps * epsilon below one")
     scaled = steps * epsilon
@@ -452,12 +456,12 @@ def _rounding_gamma(steps, epsilon):
 
 
 def dense_packed_fp4_operand_magnitude(rendered_x, weight):
-    """Upper bound on max output sum_k |ax||w| for float32 operands.
+    """Conditional upper magnitude for the actual float32 operands.
 
-    Float32 operands convert exactly to float64. Their products cannot
-    underflow float64. Inflate the positive float64 contraction for all its
-    multiplication/reduction roundings, then round the scalar upward; an
-    ordinary float32 matmul can round this purported upper bound downward.
+    Float32 operands convert exactly to float64. Their products remain
+    normal and finite in float64. ASSUMPTION: the positive GEMM has at most
+    2*K local errors, each at most float64 epsilon times its exact magnitude.
+    Inflate that conditional contraction and round its scalar value upward.
     Grouped gates take the maximum over their actual expert segments.
     """
     if rendered_x.dim() != 2 or weight.dim() != 2:
@@ -489,6 +493,8 @@ def _packed_fp4_bound_inputs(operand_magnitude, k):
     """Validate the scalar contract independently of the diagnostic receipt."""
     if type(k) is not int or k < 1:
         raise ValueError("the derived packed FP4 bound needs the contraction length as a positive integer")
+    if k % 128:
+        raise ValueError("the packed reader contraction length must be a multiple of 128")
     try:
         magnitude = float(operand_magnitude)
     except (TypeError, ValueError) as exc:
@@ -513,51 +519,47 @@ def _packed_fp4_conditional_terms(magnitude, k):
 
 
 def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
-    """Conditional diagnostic envelope, NOT a native arithmetic guarantee.
+    """Return the unchanged conditional allowance and its explicit assumptions.
 
-    PTX specifies at least single-precision accumulation for E2M1 MMA, but
-    leaves order, rounding and subnormal handling unspecified. At least
-    single precision does not imply faithful rounding: PTX supplies no local
-    error bound from which gamma can be derived. Passing this diagnostic,
-    even on a GPU, cannot establish that missing native contract.
+    The complete derivation is in section 17 of the serving contract.
+    Let e = 2^-23 and gamma(n) = n*e/(1-n*e). The diagnostic uses::
 
-    Let e be float32 epsilon and gamma(n) = n*e/(1-n*e). Count up to 2*K
-    multiplication/addition roundings per contraction, CONDITIONAL on such
-    an implementation. The scaled narrow product has at most twelve
-    significant bits and fits float32 exactly; this does not specify how
-    dot_scaled accumulates it. Allow two full-ULP units for each normalization
-    division and one for the native epilogue multiplication. The divisions
-    are reference activation/896 and native weight_global/896, NOT an
-    additional quantizer error. CUDA's __fdividef table permits two ULPs for
-    this divisor, but applying a relative 2*e term also needs a normal finite
-    exact quotient. The divisor alone does not establish that condition.
-    The reference's rendered activation magnitude can be low by 2*e, hence::
+        [gamma(2*K+3) + gamma(2*K+2)] * M_upper / (1-2*e)
 
-        |native - reference| <= [gamma(2*K+3) + gamma(2*K+2)] * M / (1-2*e)
+    ASSUMPTION: each native scaled product and sum obeys the local relative
+    error model, with at most 2*K errors along each output path. PTX does
+    not guarantee either fact. ASSUMPTION: both normal finite divisions
+    have error at most two ULPs. These are activation/896 and weight_global/896.
+    ASSUMPTION: the reference GEMM and magnitude GEMM obey their stated models.
+    ASSUMPTION: reference weight formation is exact and intermediate values
+    obey the relative models, without overflow or subnormal exceptions.
 
-    M is an upper bound on the actual float32 reference sum of absolute
-    products. Stock weight formation is exact when the narrow factors and
-    power-of-two weight global fit float32 without underflow or overflow.
-    Both paths share the BF16 quantizer and return float32: no independent
-    BF16/output-cast term applies. Nonzero reference products, intermediate
-    sums, normalization quotients and epilogue results must be normal and
-    finite, or obey the same relative-error inequalities. Finite outputs
-    alone cannot prove that domain; underflow, flushing and overflow are not
-    covered. Scalar operations round outward; the finite gamma domain is
-    checked rather than discarding higher-order terms.
+    Both paths share one quantizer and return float32. No independent BF16
+    term applies here. The fused WINDOW epilogue has separate BF16 terms.
+    Neither finite outputs nor diagnostic agreement proves these assumptions.
     """
     magnitude = _packed_fp4_bound_inputs(operand_magnitude, k)
     (epsilon, native_steps, reference_steps, native_gamma, reference_gamma,
      coefficient, atol) = _packed_fp4_conditional_terms(magnitude, k)
     return ({"atol": atol, "rtol": 0.0}, {
-        "schema": "tessera.packed_fp4_arithmetic_bound.v3",
+        "schema": "tessera.packed_fp4_arithmetic_bound.v4",
         "status": "conditional_diagnostic_only",
+        "arithmetic_qualified": False,
         "native_arithmetic_qualified": False,
-        "missing_native_contract": "a local error and reduction-depth bound for scaled E2M1 MMA, including subnormal handling; PTX does not specify these",
+        "intermediate_domain_established": False,
+        "missing_native_contract": "PTX supplies no scaled-product error inequality, accumulation depth bound, or subnormal rule for E2M1 MMA.",
         "bound": "[gamma(2*K+3) + gamma(2*K+2)] * max output sum_k |ax||w| / (1-2*epsilon_fp32)",
+        "u_fp32": 2.0**-24,
         "epsilon_fp32": epsilon,
-        "native_rounding": "ASSUMPTION: faithful float32 rounding, at most 2*K multiplication/addition roundings per output path; not guaranteed by PTX",
-        "normalization_rounding": "ASSUMPTION: at most two ULPs for each normal finite reference activation/896 and native weight_global/896 quotient",
+        "packed_reader_k_tiles": k // 128,
+        "native_rounding": "ASSUMPTION: each scaled product and sum has local relative error at most epsilon_fp32. Each output path has at most 2*K errors.",
+        "normalization_rounding": "ASSUMPTION: each activation/896 and weight_global/896 division has at most two ULPs of error. Each exact quotient is normal and finite.",
+        "reference_rounding": "ASSUMPTION: the actual float32 reference GEMM has at most 2*K product and sum errors. Each local relative error is at most epsilon_fp32.",
+        "magnitude_rounding": "ASSUMPTION: the positive float64 GEMM has at most 2*K local errors. Each local relative error is at most epsilon_fp64.",
+        "epilogue_rounding": "ASSUMPTION: the native float32 multiplication has local relative error at most epsilon_fp32. Its exact result is normal and finite.",
+        "weight_formation": "ASSUMPTION: the UE4M3 scales are finite and nonnegative. An exact float32 power-of-two weight global produces exact normal finite reference weights.",
+        "quantization_error": "excluded: both paths use the same represented activation codes, group scales, weight codes, and weight scales",
+        "derivation_owner": "docs/tessera-serving-and-moe-contract.md#17-packed-t4-arithmetic-contract-2026-10-07-issue-1007",
         "native_steps": native_steps,
         "reference_steps": reference_steps,
         "native_gamma": native_gamma,
