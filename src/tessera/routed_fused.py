@@ -461,26 +461,18 @@ def smem_reason(mode: int, slot_words: int, device: torch.device, library: str) 
 
 def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: int,
                                     rates, window_bits: int) -> "str | None":
-    """The wire-shape half of :func:`fused_routed_window_supported`, on one
-    unit's manifest facts alone -- what an exporter can decide before any
-    bundle exists (tessera#624 prices the lane's tables only where the
-    stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
+    """The native shape rule on one verified unit manifest.
 
-    Only what the manifest says is checked here, with the runtime
-    predicate's own helpers: family, window bits, the column count the tiles
-    need, the run table the packer lays out for these rates (one run per
-    distinct rate, sorted by rate) as :func:`run_pair` reads it -- one rate or
-    two ADJACENT rates, each in 1..8 (contract v45, tessera#694) -- the
-    word-stage slot that pair needs against the target platform's opt-in
-    shared memory (``SM121_MAX_DYNAMIC_SMEM``) in the part's own launch (the
-    two-table gate/up launch reaches ``ROUTED_LANE_RATES``, the one-table
-    down launch every rate), and the row multiples the kernel's tiles need.
-    Device, arithmetic, the activation quantizer, the column order and the
-    env toggle are runtime facts the runtime predicate keeps.  A stack is
-    refused whole when any of its parts is, as at runtime, so a GLM stack
-    (one rung for all three parts) is admitted exactly where
-    ``column_rates_routed_moe`` admits its rates.  Returns the refusal, or
-    ``None`` when the shape serves.
+    The exporter applies this rule before it writes a required class stack.
+    Every accepted native unit retains its selected table and launch descriptors.
+    An unsupported unit refuses the complete stack; no compact serving fallback remains.
+    ``part`` names gate, up or down.
+
+    The rule checks family, window bits, columns, one or two adjacent rates,
+    word-stage slots, shared-memory limits and native row multiples.
+    The runtime handles device, arithmetic, activation quantization and column order.
+    The caller selects the native library.
+    Return the refusal, or None for an accepted shape.
     """
     if family not in ("value", "e4m3"):
         return f"family {family!r} is not a window family"
