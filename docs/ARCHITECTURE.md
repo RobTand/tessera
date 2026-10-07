@@ -15,7 +15,7 @@ The image job uses an owned rootless BuildKit container through the published Do
 The builder writes a Docker archive to the explicit shared output directory.
 The producer mounts no host Docker socket. PrismaBuild retains resource ownership.
 The source reader names its repository root. The directory-read ceiling remains unchanged.
-The imported patch files retain the GNU Affero General Public License version three and historical MIT notice.
+The imported patches retain the GNU Affero General Public License version three and the historical license notice.
 The Dockerfile copies both upstream license files into the image.
 The packaged contract declares version 59. This request references issue 1036 and does not close it.
 

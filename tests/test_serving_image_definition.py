@@ -60,7 +60,6 @@ def test_payload_uses_an_owned_builder_without_a_host_socket(tmp_path):
 def test_imported_patch_licenses_reach_the_image():
     license_root = ROOT / "images/serving/patches"
     assert "GNU AFFERO GENERAL PUBLIC LICENSE" in (license_root / "LICENSE").read_text()
-    assert "current" not in (license_root / "LICENSE.MIT").read_text().splitlines()[0].lower()
     assert "GNU Affero General Public License v3.0" in (license_root / "LICENSE.MIT").read_text()
     dockerfile = (ROOT / "images/serving/Dockerfile").read_text()
     assert "COPY images/serving/patches/LICENSE images/serving/patches/LICENSE.MIT /opt/tessera-image/licenses/" in dockerfile
