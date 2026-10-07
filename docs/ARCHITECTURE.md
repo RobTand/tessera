@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-07 for the T16 row-scale epilogue cutover (contract v61).
+Re-stamped 2026-10-07 for the T16 row-scale epilogue cutover (contract v62).
 T16 keeps raw BF16 table values and FP32 row scales separate. The encoder
 and canonical reader define each effective weight as their FP32 product.
 Dense and grouped kernels accumulate the raw-value dot in FP32, then apply
@@ -16,7 +16,7 @@ BF16 stock checkpoint remains a derived control, not a Tessera compute path.
 The E4M3 decode-once helper uses the existing bundle family. It does not
 read an arithmetic selector.
 
-Contract v61 withdraws eight historical folded BF16 cells, their wire/rung
+Contract v62 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.
 The new BF16 pairs have no served census.
 All four BF16 pairs stay in `scheme.EXPERIMENTAL_LAUNCHES`. A census can

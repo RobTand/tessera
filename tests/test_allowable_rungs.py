@@ -97,7 +97,7 @@ def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
 def test_bf16_rungs_are_admitted_by_the_rule_but_covered_by_no_cell(contract):
     """The rule admits each supported BF16 rung.
 
-    Contract v61 withdraws every BF16 cell. A rung has no serving coverage
+    Contract v62 withdraws every BF16 cell. A rung has no serving coverage
     until a cell qualifies its structure and run table.
     """
     row = _row(contract, BF16)

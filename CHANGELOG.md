@@ -71,7 +71,7 @@ The canonical encoder and reader already use the FP32 effective-weight
 product; their profile and wire bytes do not change. The plain BF16
 stock checkpoint remains a derived control.
 
-Contract v61 withdraws eight old BF16 cells, their rung/wire attestations
+Contract v62 withdraws eight old BF16 cells, their rung/wire attestations
 and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
