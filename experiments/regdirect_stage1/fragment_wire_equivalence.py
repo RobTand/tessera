@@ -19,6 +19,7 @@ spec = importlib.util.spec_from_file_location("tessera._fw_old", os.path.join(HE
                                               submodule_search_locations=None)
 old = importlib.util.module_from_spec(spec)
 old.__package__ = "tessera"
+sys.modules[spec.name] = old            # a dataclass resolves its module through sys.modules
 spec.loader.exec_module(old)
 
 cases = []
