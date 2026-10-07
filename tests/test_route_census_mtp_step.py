@@ -147,15 +147,27 @@ def test_a_collapsed_table_names_its_phases_through_the_contract():
 # --- the served records -----------------------------------------------------
 
 def test_the_fixture_reproduces_r5_under_the_contract_table():
-    """Regression: the old one-row expectation refuses exactly what r5 refused."""
+    """The one-row plan still rejects M2 under every current cell.
+
+    The BF16 cell withdrawal removes its cell-specific shape checks.
+    The general shape checks remain. Old folded decoder records also refuse.
+    """
     tool = _tool()
     fixture = _fixture()
     assert fixture["source"]["verdict"] == "REFUSED"
     checked = _replay(fixture, plan=tool.census_phase_plan(None), with_draft=False)
+    from tessera.serving.contract import load_serving_contract
+
+    active_cells = {cell["id"] for cell in load_serving_contract()["lane_eligibility"]["cells"]}
     original = [p for p in fixture["original_problems_for_kept_modules"]
-                if not p.startswith("draft")]
-    assert original and sorted(checked["problems"]) == sorted(original)
-    assert all("shape M2 is a batch-regime forward" in p for p in checked["problems"])
+                if not p.startswith("draft")
+                and ("keyed to cell '" not in p
+                     or any(f"keyed to cell '{cell}'" in p for cell in active_cells))]
+    shape = [p for p in checked["problems"] if "shape M2 is a batch-regime forward" in p]
+    assert original and sorted(shape) == sorted(original)
+    extra = [p for p in checked["problems"] if p not in shape]
+    assert extra, "v59 must refuse the folded BF16 records under the current dispatch"
+    assert all("folded" in p for p in extra), extra
     # ...and the draft side: no observed draft call was one row, so the M1
     # bucket the old census read for the draft's decode phase was empty.
     for row in fixture["draft"]["arms"]["decode_arm"]:
@@ -164,12 +176,35 @@ def test_the_fixture_reproduces_r5_under_the_contract_table():
 
 
 def test_the_r5_records_replay_clean_under_the_k1_plan():
-    """Acceptance: r5's own records, validated with the k=1 plan, refuse nothing."""
+    """Current agreement: r5's records replay with only the BF16 withdrawal refused.
+
+    Contract v59 withdrew the BF16 cells and the folded launches. The folded
+    BF16 body and draft records the fixture kept have no current cell and no
+    current native decode coverage. Everything else -- plan, shapes, sources,
+    the launch the draft's own coverage names -- replays as r5 ran it. The
+    folded decoder below is the receipt's own word for what ran, not a claim
+    about the current dispatch.
+    """
     tool = _tool()
     fixture = _fixture()
     plan = _k1_plan(tool, fixture)
     checked = _replay(fixture, plan=plan)
-    assert checked["problems"] == []
+    problems = checked["problems"]
+    assert problems, "v59 must refuse the folded BF16 records under the current dispatch"
+    names = set()
+    for rank_i, rank in enumerate(fixture["ranks"]):
+        for phase_records in rank["records"].values():
+            for name, record in phase_records.items():
+                if record["policy"].partition(":")[0] == "TESSERA_BF16":
+                    names.add(name)
+                    names.add(f"rank{rank_i}/{name}")
+    for module in fixture["draft"]["source_to_module"].values():
+        names.add(module)
+        for rank_i in range(len(fixture["ranks"])):
+            names.add(f"rank{rank_i}/{module}")
+    for problem in problems:
+        assert ("folded" in problem or "compact_bf16" in problem
+                or any(name in problem for name in names)), problem
     assert plan["decode_regime_served"] is False
     assert checked["histogram"][GENERATION]["regime"] == "batch"
     draft = checked["draft"]

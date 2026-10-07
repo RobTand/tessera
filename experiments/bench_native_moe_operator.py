@@ -99,20 +99,19 @@ def owner_wire(shape):
 def selected_window_decoder(backend, family):
     """The decoder ``moe_route`` stamps for an explicitly selected expert owner.
 
-    Written out here because the panel is the independent statement of what
-    the route must report, and the selected owner's decoder is not in
-    ``scheme.ROUTE_LAUNCHES`` -- no contract cell attests it.  The spelling is
-    ``moe_route.py:943``'s, including the folded-BF16 suffix.
+    The panel independently names the expected selected route. That route
+    has no served cell. The BF16 suffix identifies raw values and separate
+    row scales.
     """
     return (f"research_selected_{backend}_window"
-            + ("_folded_bf16" if family == "TESSERA_BF16" else ""))
+            + ("_bf16" if family == "TESSERA_BF16" else ""))
 
 
 def owner_needs_selected(wire, world):
     """Does this stack need the explicit selected owner, or its own builder?
 
     Only an FP8 stack above one rank.  Compressed BF16 has had a production
-    expert builder since tessera#609 (the compact lane, folded arithmetic), and
+    expert builder since tessera#609 (the compact row-scale epilogue path), and
     the priced owner must be the served one (tessera#613): a checkpoint carries
     no research block, so a BF16 owner is priced on that builder.
     """
@@ -177,7 +176,7 @@ def owner_research_selected(shape, wire, request_block):
     if family == "TESSERA_BF16":
         raise ValueError(
             "a TESSERA_BF16 routed owner is priced on its production builder (the compact "
-            "native lane, folded arithmetic), which is the served owner; drop the "
+            "native lane, FP32 row-scale epilogue), which is the served owner; drop the "
             "research_selected_moe block from this request")
     selected = ResearchSelectedMoeConfig.from_checkpoint(request_block)
     if not ResearchSelectedMoeConfig.applies_to(wire):

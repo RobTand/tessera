@@ -11,8 +11,7 @@ result.  The two-node run is a separate milestone.
 What is checked here:
 * FP8 ordinary route (no research config), TP1;
 * FP8 ordinary route at TP2, rank 0 and rank 1, row-cut w13 and column-cut w2;
-* folded BF16 through its research route (TP2, folded arithmetic), and the
-  production BF16 stack (tessera#609) at TP1 and both TP2 ranks;
+* BF16 through the research route and the production stack at TP1 and both TP2 ranks;
 * actual routing and the nonlinear activation against a stock-arithmetic
   reference built from the same reference tensors the wire decodes to;
 * shared-expert ownership: the method returns ROUTED output only and never
@@ -247,7 +246,7 @@ def bf16_wires_native_data():
                 weight, grid=BF16_GRID, q256=512, name=projection,
                 window_bits=14, verify=False)
             parts[projection] = (pack_fused([(projection, rows, written.blob)]),
-                                 read_unit_artifact(written.blob).to(torch.bfloat16))
+                                 read_unit_artifact(written.blob))
         w13_blobs.append([parts['gate_proj'][0], parts['up_proj'][0]])
         w2_blobs.append([parts['down_proj'][0]])
         expected.append((torch.cat([parts['gate_proj'][1], parts['up_proj'][1]]),
@@ -271,7 +270,7 @@ def bf16_wires_native():
 
 
 @cuda
-def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
+def test_bf16_native_research_route_matches_the_canonical_reference(bf16_wires_native):
     w13_blobs, w2_blobs, scheme, expected = bf16_wires_native
     layer = _native_layer(tp_rank=0, tp_size=2)
     layer.global_num_experts = 2
@@ -287,7 +286,6 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
               [pair[0] for pair in w2_blobs])
     method.process_weights_after_loading(layer)
     assert method._native is not None
-    assert method._native.down.arithmetic == "folded"
 
     lo, hi = 0, INTER // 2
     x = (torch.randn(8, HIDDEN) * 0.5).bfloat16().cuda()
@@ -296,7 +294,7 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
     out = method.apply(layer, x, weights, ids, _SharedSpy(), None)
     assert out.dtype == torch.bfloat16 and out.shape == (8, HIDDEN)
 
-    # folded reference: bf16(values * scale) tiles, exactly decode_folded
+    # The canonical effective weights have no per-weight BF16 conversion.
     ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
     for token in range(8):
         for choice in range(2):
@@ -307,7 +305,8 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
             down = full2[:, lo:hi].float().to(x.device)
             g = gate @ x[token].float()
             u = up @ x[token].float()
-            ref[token] += weights[token, choice] * (down @ (torch.nn.functional.silu(g) * u))
+            act = (torch.nn.functional.silu(g) * u).bfloat16().float()
+            ref[token] += weights[token, choice] * (down @ act)
     ref = ref.bfloat16()
     diff = (out.float() - ref.float()).abs()
     assert float(diff.max()) < 5e-2 + 2e-2 * float(ref.float().abs().max()), \
@@ -316,20 +315,16 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
 
 @cuda
 @pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
-def test_bf16_production_route_is_folded_compact_and_matches_the_reference(
+def test_bf16_production_route_matches_the_canonical_reference(
         bf16_wires_native, tp_rank, tp_size):
-    """The PRODUCTION BF16 expert stack (tessera#609): no research config.
+    """Exercise the production BF16 route at TP1 and both TP2 rank cuts.
 
-    It takes the compact lane at TP1 and at both TP2 ranks, registers no stock
-    expert tile at construction (vLLM builds every layer before loading any),
-    computes the FOLDED arithmetic -- the reference below is
-    ``read_unit_artifact(...).to(bfloat16)``, one bf16 rounding of the decoded
-    ``value * row_scale`` -- and reports the folded decoder, so a census can
-    tell it from the FP8 stack's epilogue launch.
+    The reference uses canonical effective weights with no per-weight BF16
+    conversion. The adapter must publish the BF16 epilogue decoder.
     """
     from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
     from tessera.serving.telemetry import (ATTR_PREFIX,
-                                           DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)
+                                           DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16)
 
     w13_blobs, w2_blobs, scheme, expected = bf16_wires_native
     layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
@@ -345,9 +340,7 @@ def test_bf16_production_route_is_folded_compact_and_matches_the_reference(
     method.process_weights_after_loading(layer)
     assert method._native is not None and method.moe_kernel is None
     assert not dict(layer.named_parameters()), "only packed constants stay resident"
-    for bundle in (method._native.gate, method._native.up, method._native.down):
-        assert bundle.arithmetic == "folded" and bundle.family == "value"
-    assert layer.tessera_decoder == DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+    assert layer.tessera_decoder == DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16
 
     local = INTER // tp_size
     lo, hi = tp_rank * local, (tp_rank + 1) * local
@@ -360,7 +353,7 @@ def test_bf16_production_route_is_folded_compact_and_matches_the_reference(
     out = method.apply(layer, x, weights, ids, shared, None)
     assert shared.calls == 0
     assert out.dtype == torch.bfloat16 and out.shape == (8, HIDDEN)
-    assert getattr(layer, f"{ATTR_PREFIX}decoder") == DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+    assert getattr(layer, f"{ATTR_PREFIX}decoder") == DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16
     assert getattr(layer, f"{ATTR_PREFIX}symbol") == WINDOW_MOE_COMPACT_SYMBOL
 
     ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
@@ -423,9 +416,6 @@ def test_bf16_production_and_research_owners_are_bit_identical(
             max_experts_per_chunk=chunk, decode_backend=backend,
             expected_tensor_parallel_size=tp_size))
     assert production._native is not None and research._native is not None
-    for owner in (production, research):
-        for bundle in (owner._native.gate, owner._native.up, owner._native.down):
-            assert bundle.arithmetic == "folded"
     assert p_layer.tessera_decoder == r_layer.tessera_decoder
     gen = torch.Generator().manual_seed(613 + 10 * tp_size + tp_rank)
     for tokens in (1, 8, 64, 300):

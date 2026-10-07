@@ -34,6 +34,7 @@ def main():
     torch.set_num_threads(1)
     root = Path(__file__).resolve().parents[2]
     sys.path[:0] = [str(root / 'src'), str(root / 'tests')]
+    cache_args = ["-o", f"cache_dir={args.out / 'pytest-cache'}"]
     if args.cpu_preflight:
         # This exact arithmetic witness also checks the input constants.
         value = torch.tensor(1.0, dtype=torch.bfloat16).float()
@@ -43,7 +44,7 @@ def main():
         new = ((value * scale) * route_weight).bfloat16()
         assert float(old) == 0.75 and float(new) == 0.75390625
         collector = Collection()
-        result = pytest.main(['--collect-only', '-q', *targets], plugins=[collector])
+        result = pytest.main(["--collect-only", "-q", *cache_args, *targets], plugins=[collector])
         record = {'phase': 'CPU preflight', 'action': os.environ.get('PRISMABUILD_ACTION_KEY'),
                   'returncode': int(result), 'targets': targets, 'nodeids': collector.nodeids,
                   'old_witness': float(old), 'new_witness': float(new),
@@ -52,7 +53,7 @@ def main():
         return int(result)
     return int(pytest.main(['-n', '2', '--dist', 'worksteal', '--durations=20',
                            '--strict-cuda', '--surface-json', str(args.out / 'surface.json'),
-                           '-q', *targets]))
+                           "-q", *cache_args, *targets]))
 
 
 if __name__ == '__main__':

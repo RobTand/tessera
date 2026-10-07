@@ -23,20 +23,17 @@ BF16 GEMM over it.  This module is the native replacement for that tile:
   life.
 
 FAMILIES.  The BF16 family is bf16 activations in, the bf16 table decoded
-in-register and FOLDED there -- each weight becomes ``bf16(value *
-row_scale)``, one rounding, before the dot (tessera#614) -- fp32 accumulate,
-no epilogue scale, and one bf16 cast.  That is the tile
-``decode.materialize_bf16_folded`` renders and the arithmetic the routed BF16
-stack serves, so the route's dense and routed modules compute one function of
-the wire; it stamps ``native_window_gemm_folded``.  The FP8 family is **not**
+in-register, the fp32 accumulator multiplied by the wire's fp32 row scale
+after the dot, and one bf16 cast.  No weight tile is materialised and no
+scale is folded into a weight.  It stamps ``native_window_gemm_bf16``.  The
+FP8 family is **not**
 only a different epilogue: the activation is per-token dynamic E4M3 quantized
 by vLLM's native op (``fp8_per_token_dynamic`` preserved), the wire decodes to
 E4M3 bytes in-register, the mainloop is the fp8 dot, and the epilogue is
 ``y = a_scale[m] * w_scale[n] * acc`` -- the route quantizes before the call
 (the same bytes the bundle attested) and passes the result plus its scale.
-It stamps ``native_window_gemm``.  Each family's arithmetic is fixed here
-(``NATIVE_WINDOW_ARITHMETIC``), not chosen by a caller: a serve that could
-pick either would publish two functions under one route.
+It stamps ``native_window_gemm``.  The kernel owns the families' arithmetic:
+a serve cannot pick another.
 
 WEIGHTS STAY PACKED.  Nothing here materialises a ``[rows, cols]`` weight
 tensor -- not at load, not at first use, not per forward.  The prepared
@@ -58,12 +55,12 @@ default, and under ``TESSERA_DENSE_MODULE_LAUNCH=1`` on the E4M3 libraries
 once per module, every role and the split's reduction in one launch
 (tessera#750 WP2; ``routed_fused.ENV_DENSE_MODULE``) -- and stamps
 ``native_fused_window_dense`` /
-``native_fused_window_dense_folded``.  The lane is decided ONCE at
+``native_fused_window_dense_bf16``.  The lane is decided ONCE at
 preparation for the whole module -- a module stamps one decoder -- and the
 Triton op above stays the dispatch for every module the predicate refuses,
 for a box whose toolchain cannot build the library (the ``when_unavailable``
 substitution, logged), and for ``TESSERA_DENSE_FUSED=0``.  Both identities
-compute the same function of the wire (the family's published arithmetic and
+compute the same function of the wire (the family's published decoder and
 fp32 operation order); their MMA accumulation orders differ, so agreement is
 held to the reference product's bound, not bitwise
 (``tests/test_dense_fused_window.py``, ``experiments/dense_fused_oracle.py``).
@@ -86,9 +83,9 @@ from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, TESSERA_FP
                      WINDOW_GEMM_SYMBOL)
 from .sharding import AXIS_ROWS, ShardPlan
 from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                        DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
                         DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
-                        DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
-                        DECODER_NATIVE_WINDOW_GEMM, DECODER_NATIVE_WINDOW_GEMM_FOLDED)
+                        DECODER_NATIVE_WINDOW_GEMM, DECODER_NATIVE_WINDOW_GEMM_BF16)
 
 __all__ = [
     "DENSE_FAMILIES",
@@ -96,7 +93,6 @@ __all__ = [
     "FUSED_WINDOW_DENSE_DECODER",
     "LANE_FUSED",
     "LANE_TRITON",
-    "NATIVE_WINDOW_ARITHMETIC",
     "NATIVE_WINDOW_DECODER",
     "NATIVE_WINDOW_FAMILY",
     "PreparedDenseNativeModule",
@@ -109,25 +105,23 @@ DENSE_FAMILIES = (TESSERA_FP8, TESSERA_BF16)
 
 #: The window GEMM's family spelling for each route family.
 NATIVE_WINDOW_FAMILY = {TESSERA_FP8: "e4m3", TESSERA_BF16: "value"}
-#: The weight arithmetic each route family serves (``window_gemm``'s
-#: ``arithmetic``): the FP8 family's row scale is on the fp32 epilogue beside
-#: the per-token A scale; the BF16 family's is folded into each weight
-#: (tessera#614).
-NATIVE_WINDOW_ARITHMETIC = {TESSERA_FP8: "epilogue", TESSERA_BF16: "folded"}
-#: The decoder each arithmetic stamps -- one symbol, two numerical functions.
-NATIVE_WINDOW_DECODER = {"epilogue": DECODER_NATIVE_WINDOW_GEMM,
-                         "folded": DECODER_NATIVE_WINDOW_GEMM_FOLDED}
-#: The fused window kernel's dense identity, per arithmetic (contract v43).
-FUSED_WINDOW_DENSE_DECODER = {"epilogue": DECODER_NATIVE_FUSED_WINDOW_DENSE,
-                              "folded": DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED}
+#: Both route families serve the row scale on the fp32 epilogue: raw table
+#: values through the dot, one output multiply.  The kernel owns that
+#: contract, so there is no arithmetic selector here.
+#: The decoder each family stamps -- one symbol, one decoder per family.
+NATIVE_WINDOW_DECODER = {"e4m3": DECODER_NATIVE_WINDOW_GEMM,
+                         "value": DECODER_NATIVE_WINDOW_GEMM_BF16}
+#: The fused window kernel's dense identity (contract v43), one per family.
+FUSED_WINDOW_DENSE_DECODER = {"e4m3": DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                              "value": DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16}
 #: The dense identity's decoder per ``routed_fused`` library: the E4M3
 #: instruction's library is its own numerical function of the wire (the same
 #: exact products, another fp32 accumulation order), so it stamps its own.
-FUSED_WINDOW_DENSE_LIBRARY_DECODER = {"value": DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+FUSED_WINDOW_DENSE_LIBRARY_DECODER = {"value": DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
                                       "e4m3": DECODER_NATIVE_FUSED_WINDOW_DENSE,
                                       "e4m3mma": DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA}
 #: The two lanes a prepared module may run, and the ``(symbol, decoder)`` each
-#: stamps per arithmetic.  ``lane`` is a module fact decided at preparation.
+#: stamps per family.  ``lane`` is a module fact decided at preparation.
 LANE_TRITON = "triton"
 LANE_FUSED = "fused"
 DENSE_LANES = {
@@ -147,7 +141,7 @@ def _window_gemm_dense(
     init_perm: torch.Tensor, perm: torch.Tensor,
     rows: int, cols: int, window_bits: int, tile_words: int, total_words: int,
     has_init: bool, family_e4m3: bool,
-    block_m: int, block_n: int, block_k: int, folded: bool,
+    block_m: int, block_n: int, block_k: int,
 ) -> torch.Tensor:
     """One role's packed window GEMM, functional and opaque.
 
@@ -158,12 +152,9 @@ def _window_gemm_dense(
     graph inputs and a model unload releases them with the layer: there is no
     registry to keep weights alive.
 
-    The family spelling matches the bundle's: ``e4m3`` takes prequantized fp8
-    ``x`` plus its per-token scale (or bf16, quantized by the native op inside
-    the bundle), ``value`` takes bf16 and returns bf16.  ``folded`` is the
-    bundle's ``arithmetic == "folded"``, an explicit argument like every other
-    static value, so the rebuilt bundle cannot run a different arithmetic
-    than the prepared one.
+    E4M3 takes the prequantized activation and its FP32 token scale. The
+    value family takes BF16 activations. Both return BF16 output after the
+    row scale applies to the FP32 dot.
     """
     from .. import window_gemm as wg
 
@@ -173,8 +164,7 @@ def _window_gemm_dense(
         total_words=int(total_words), rows=int(rows), cols=int(cols),
         window_bits=int(window_bits), family=("e4m3" if family_e4m3 else "value"),
         has_init=bool(has_init), block_m=int(block_m), block_n=int(block_n),
-        block_k=int(block_k), quantizer="native",
-        arithmetic="folded" if folded else "epilogue")
+        block_k=int(block_k), quantizer="native")
     if family_e4m3:
         return bundle(x, a_scale=a_scale)
     return bundle(x)
@@ -184,7 +174,7 @@ def _window_gemm_dense(
 def _window_gemm_dense_fake(
     x, a_scale, words, table, codes, native, scale, runs, init_perm, perm,
     rows, cols, window_bits, tile_words, total_words, has_init, family_e4m3,
-    block_m, block_n, block_k, folded,
+    block_m, block_n, block_k,
 ):
     return torch.empty((x.shape[0], rows), dtype=torch.bfloat16, device=x.device)
 
@@ -197,7 +187,7 @@ def _fused_window_dense(
     has_inits: List[torch.Tensor], wscales: List[torch.Tensor],
     runs: List[torch.Tensor], bdescs: List[torch.Tensor],
     role_rows: List[int], tile_words: List[int], slot_words: List[int],
-    cols: int, family_e4m3: bool, folded: bool,
+    cols: int, family_e4m3: bool,
 ) -> torch.Tensor:
     """A whole module through the fused window kernel's dense case: one node.
 
@@ -211,15 +201,11 @@ def _fused_window_dense(
     ``tile_words`` and ``slot_words`` are each role's run pair, block
     descriptor, tile stride and word-stage slot (tessera#694): the kernel
     reads the wire's rates from them, so they travel with the role like every
-    other frozen input.  ``folded`` is carried for the same reason the Triton
-    op carries it: the family fixes it, and a rebuilt role cannot run a
-    different arithmetic than the prepared one.
+    other frozen input.
     """
     from .. import routed_fused as rf
 
     family = "e4m3" if family_e4m3 else "value"
-    if folded != (family == "value"):
-        raise ValueError("the fused dense identity folds the value family and only it")
     m = int(x.shape[0])
     total = int(sum(role_rows))
     out = torch.empty((m, total), dtype=torch.bfloat16, device=x.device)
@@ -250,7 +236,7 @@ def _fused_window_dense(
 
 @_fused_window_dense.register_fake
 def _fused_window_dense_fake(x, a_scale, words, tables, inits, has_inits, wscales, runs, bdescs,
-                             role_rows, tile_words, slot_words, cols, family_e4m3, folded):
+                             role_rows, tile_words, slot_words, cols, family_e4m3):
     return torch.empty((x.shape[0], int(sum(role_rows))), dtype=torch.bfloat16, device=x.device)
 
 
@@ -264,7 +250,7 @@ class PreparedDenseNativeModule:
     """
 
     __slots__ = ("__roles", "__rows", "__columns", "__device", "__family",
-                 "__arithmetic", "__lane", "__fused", "__lane_reason", "__decoded")
+                 "__lane", "__fused", "__lane_reason", "__decoded")
 
     def __init__(self, roles, *, rows: int, columns: int, device: torch.device,
                  family: str, lane: str = LANE_TRITON, fused_roles=None,
@@ -284,12 +270,6 @@ class PreparedDenseNativeModule:
             raise ValueError("prepared native roles do not stack to the module's rows")
         if any(role.bundle.cols != self.__columns for role in self.__roles):
             raise ValueError("every role of a module shares its input width")
-        arithmetics = {role.bundle.arithmetic for role in self.__roles}
-        if len(arithmetics) != 1:
-            raise ValueError(
-                f"the roles of one module run one weight arithmetic, got {sorted(arithmetics)}; "
-                "the module stamps one decoder")
-        self.__arithmetic = arithmetics.pop()
         if lane not in DENSE_LANES:
             raise ValueError(f"unknown dense lane {lane!r}; one of {sorted(DENSE_LANES)}")
         fused = tuple(fused_roles) if fused_roles is not None else ()
@@ -312,8 +292,6 @@ class PreparedDenseNativeModule:
     @property
     def family(self): return self.__family
     @property
-    def arithmetic(self): return self.__arithmetic
-    @property
     def lane(self):
         """``"fused"`` or ``"triton"``: which launch identity serves this module."""
         return self.__lane
@@ -327,7 +305,7 @@ class PreparedDenseNativeModule:
     def decoder(self):
         if self.__lane == LANE_FUSED:
             return FUSED_WINDOW_DENSE_LIBRARY_DECODER[self.__fused[0].library]
-        return DENSE_LANES[self.__lane][1][self.__arithmetic]
+        return DENSE_LANES[self.__lane][1][self.__family]
     @property
     def launch_pair(self):
         """The ``(symbol, decoder)`` of this module's window lane (every M
@@ -392,8 +370,8 @@ class PreparedDenseNativeModule:
 
         The same expression the reference decoder applies
         (``scale_rows * global`` in fp32), carried here for the route record
-        and the retained reference checks; where it is applied (the fp32
-        epilogue, or folded into each weight) is the bundles' ``arithmetic``.
+        and the retained reference checks.  The served GEMM applies it on the
+        fp32 accumulator after the dot.
         """
         return torch.cat([role.bundle.scale for role in self.__roles]).contiguous()
 
@@ -430,8 +408,7 @@ class PreparedDenseNativeModule:
                 [f.init for f in fused], [f.has_init for f in fused], [f.wscale for f in fused],
                 [f.runs for f in fused], [f.bdesc for f in fused],
                 [int(f.rows) for f in fused], [int(f.tile_words) for f in fused],
-                [int(f.slot_words) for f in fused], int(self.__columns), self.__family == "e4m3",
-                self.__arithmetic == "folded")
+                [int(f.slot_words) for f in fused], int(self.__columns), self.__family == "e4m3")
         parts = []
         for role in self.__roles:
             bundle = role.bundle
@@ -441,7 +418,7 @@ class PreparedDenseNativeModule:
                 int(bundle.rows), int(bundle.cols), int(bundle.window_bits),
                 int(bundle.tile_words), int(bundle.total_words), bool(bundle.has_init),
                 self.__family == "e4m3", int(bundle.block_m), int(bundle.block_n),
-                int(bundle.block_k), self.__arithmetic == "folded"))
+                int(bundle.block_k)))
         return parts[0] if len(parts) == 1 else torch.cat(parts, dim=1)
 
     # -- residency accounting ------------------------------------------------
@@ -562,8 +539,8 @@ def prepare_dense_native_module(
     ``compact_prep.prepare_window_compact`` -- which refuses every cut the
     reference cutter would refuse and derives the row cut's incoming state
     from the packed wire -- and frozen by ``window_gemm.prepare_window_gemm``,
-    which attests the native per-token FP8 quantizer once for the e4m3 family
-    and fixes the family's weight arithmetic (``NATIVE_WINDOW_ARITHMETIC``).
+    which attests the native per-token FP8 quantizer once for the e4m3 family.
+    Both families serve the row scale on the fp32 epilogue.
     No reference decode runs here; the expanded reference preparations remain
     the test oracle.
 
@@ -606,8 +583,7 @@ def prepare_dense_native_module(
                              and unit.initial_state.any()))
         bundle = wg.prepare_window_gemm(
             unit, block_m=block_m, block_n=block_n, block_k=block_k,
-            quantizer="native" if window_family == "e4m3" else None,
-            arithmetic=NATIVE_WINDOW_ARITHMETIC[family])
+            quantizer="native" if window_family == "e4m3" else None)
         roles.append(_NativeRole(name=wire.name or name, rows=int(unit.rows),
                                  bundle=bundle, facts=facts))
         offset += int(unit.rows)

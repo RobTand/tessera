@@ -1,4 +1,4 @@
-"""The eight GLM cells on the vLLM nightly image rest on a committed receipt.
+"""The four GLM E4M3 cells on the vLLM nightly image rest on a committed receipt.
 
 Contract v48 (tessera#702) minted the E4M3/BF16 dense and routed GLM-image
 scopes on the image the GLM-5.3 release serves on: the eugr nightly
@@ -16,12 +16,14 @@ What it pins:
 1. the receipt is the one the cells cite: same checkpoint config as the
    f8dbe1a0 stub-B receipts, the nightly image and toolchain, the NoPE plugin
    off, no attention override, and the serve log naming the image's backend;
-2. every served module joins a nightly cell in both phases, and none does
-   without them (the fail-before);
+2. every served E4M3 module joins a nightly cell in both phases, and the BF16
+   records join none. Contract v59 withdrew the nightly BF16 cells with the
+   folded arithmetic they measured. The folded launches the receipt recorded
+   have no current cell. The fail-before drops the E4M3 cells;
 3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
    for it, with both required lanes engaged, so the nightly cells name the
    launches their twins name;
-4. each nightly cell covers EXACTLY the rungs the receipt carried.
+4. each nightly E4M3 cell covers EXACTLY the rungs the receipt carried.
 
 It pins nothing about CUDA graphs: the cells are eager only (see the
 measurement doc for why no compiled scope is claimed on this image).
@@ -56,8 +58,7 @@ IMAGE = ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
          "5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a")
 VLLM = "0.30.1rc1.dev336+gaf5b4857e.d20260929"
 TORCH = "2.13.0+cu130"
-SCOPES = [(family, structure) for family in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1")
-          for structure in ("dense", "routed_moe")]
+SCOPES = [("TESSERA_E4M3_K1", structure) for structure in ("dense", "routed_moe")]
 
 
 def _tool():
@@ -118,7 +119,7 @@ def test_the_committed_receipt_is_the_one_the_nightly_cells_cite():
     assert f"(v{VLLM})" in log
     assert receipt["decoder_coverage"]["phases"]["decode"]["modules"] == 21
     cells = _nightly_cells(load_serving_contract())
-    assert len(cells) == 8
+    assert len(cells) == 4
     for cell in cells.values():
         assert cell["runtime"] == {"image": IMAGE, "execution_modes": ["eager"],
                                    "vllm": VLLM, "torch": TORCH}, cell["id"]
@@ -127,25 +128,35 @@ def test_the_committed_receipt_is_the_one_the_nightly_cells_cite():
 
 
 def test_every_served_module_joins_a_nightly_cell_in_both_phases():
+    """Current agreement: the E4M3 records join a nightly cell, the BF16 do not."""
     tool = _tool()
-    block, problems = _agreement(tool, load_serving_contract(), _load(RECEIPT))
+    receipt = _load(RECEIPT)
+    want = {}
+    for phase, records in receipt["records"].items():
+        for name, record in records.items():
+            family = PAYLOAD_FAMILY_BY_ROUTE[record["policy"].partition(":")[0]]
+            structure = "routed_moe" if record["kind"] == "moe" else "dense"
+            counts = want.setdefault((structure, phase), {})
+            counts[family] = counts.get(family, 0) + 1
+    block, problems = _agreement(tool, load_serving_contract(), receipt)
     assert problems == []
     assert block["agrees"] is True, json.dumps(block, indent=1)[:2000]
-    seen = 0
+    nightly = _nightly_cells(load_serving_contract())
     for structure, per in block["structures"].items():
-        assert per["agrees"] is True, structure
         for phase, row in per["phases"].items():
-            assert row["unattested"] == 0, (structure, phase, row)
-            assert row["covered_by_cell"] == row["modules"] > 0, (structure, phase, row)
-            assert set(row["cells"]) <= set(_nightly_cells(load_serving_contract())), row
-            seen += row["modules"]
-    assert seen == 42  # 21 modules, two phases
+            counts = want[(structure, phase)]
+            assert row["modules"] == sum(counts.values()), (structure, phase, row)
+            assert row["covered_by_cell"] == counts.get("TESSERA_E4M3_K1", 0), (
+                structure, phase, row)
+            assert row["unattested"] == counts.get("TESSERA_BF16_K1", 0), (
+                structure, phase, row)
+            assert set(row["cells"]) <= set(nightly), row
 
 
 def test_no_module_is_attested_on_the_nightly_without_the_minted_cells():
     """The fail-before, as a mutation of the packaged table: the f8dbe1a0 GLM
-    cells name the same scopes, launches and rungs, and still cover nothing
-    here, because a cell is a receipt from ONE image."""
+    E4M3 cells name the same scopes, launches and rungs, and still cover
+    nothing here, because a cell is a receipt from ONE image."""
     tool = _tool()
     contract = load_serving_contract()
     nightly = _nightly_cells(contract)
@@ -187,9 +198,11 @@ def test_the_nightly_cells_cover_exactly_the_rungs_the_receipt_carried():
             family = PAYLOAD_FAMILY_BY_ROUTE[record["policy"].partition(":")[0]]
             structure = "routed_moe" if record["kind"] == "moe" else "dense"
             carried.setdefault((family, structure), set()).add(rungs[owner])
-    assert sorted(carried) == sorted(SCOPES)
+    assert sorted(k for k in carried if k[0] != "TESSERA_BF16_K1") == sorted(SCOPES)
     cells = _nightly_cells(load_serving_contract())
     assert sorted({(c["family"], c["structure"]) for c in cells.values()}) == sorted(SCOPES)
+    # The BF16 scopes the receipt carried have no current cell (contract v59).
+    assert ("TESSERA_BF16_K1", "dense") in carried and ("TESSERA_BF16_K1", "routed_moe") in carried
     for cell in cells.values():
         assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell["id"]
         assert cell["evidence"]["grade"] == "route_only", cell["id"]
@@ -198,7 +211,7 @@ def test_the_nightly_cells_cover_exactly_the_rungs_the_receipt_carried():
 
 @pytest.mark.parametrize("regime", ["decode", "batch"])
 def test_the_release_rung_is_covered_in_every_scope(regime):
-    """The GLM-5.3 release artifact carries q256 1024 in all four scopes."""
+    """The GLM-5.3 release artifact carries q256 1024 in both E4M3 scopes."""
     for cell in _nightly_cells(load_serving_contract()).values():
         if cell["regime"] == regime:
             assert 1024 in cell["rungs_q256"], cell["id"]

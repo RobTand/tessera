@@ -225,11 +225,9 @@ MOE_SOURCE_LAYOUTS = (
 #: ``TESSERA_BF16`` (tessera#609) is the compressed BF16-alphabet wire with a
 #: per-row scale, served by the same builder as FP8 on the compact native
 #: window lane (``native_window_moe``), which decodes the packed wire in
-#: registers and materialises no expert tile.  Its weight arithmetic is
-#: FOLDED -- one bf16 rounding of ``value * row_scale`` per weight before the
-#: dot -- which matches a consumer that prices the decoded tile rounded once
-#: to bf16, and the launch stamps its own decoder so a cell can name that
-#: variant (``DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED``).  There is no
+#: registers and materialises no expert tile.  The row scale applies on
+#: the fp32 accumulator epilogue, and the launch stamps its own family
+#: decoder (``DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16``).  There is no
 #: materialising fallback: without the compact reader a BF16 stack refuses.
 #: Plain source BF16 passthrough is a different thing and uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
@@ -444,9 +442,9 @@ A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
 #: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
 A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
 #: Window routed experts: ``tessera.native_window_moe``'s adapter call, the
-#: compact MoE lane for both window families.  The FP8 family runs the
-#: epilogue arithmetic and the BF16 family the folded one; the two stamp
-#: different decoders, so one symbol never stands for two arithmetics.
+#: compact MoE lane for both window families.  Both families run the
+#: epilogue arithmetic and stamp their own family decoder, so one
+#: symbol never stands for two families.
 WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: The fused warp-specialised routed window MoE (``tessera.routed_fused``,
 #: tessera#640): gate/up + SwiGLU in one persistent kernel, the down
@@ -454,8 +452,8 @@ WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: per-token reduction.  A NEW identity, not the compact adapter under a new
 #: name: it decodes each weight once per tile and reuses it across routes,
 #: schedules by route count on the device, and its down reduction is
-#: deterministic where the compact adapter's is an fp32 atomic.  Same two
-#: arithmetics, same two decoder spellings as the compact lane, its own.
+#: deterministic where the compact adapter's is an fp32 atomic.  One
+#: epilogue arithmetic, one decoder per family, its own symbol set.
 ROUTED_FUSED_WINDOW_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
 #: The same kernel's DENSE identity (contract v43): the functional custom op
 #: ``serving.native_window`` registers, which launches ``routed_fused_kernel``'s
@@ -479,11 +477,10 @@ MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
 _DECODER_NATIVE_SPAN2 = "native_span2"
 _DECODER_TORCH_STOCK = "torch_materialize_stock"
 _DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
-#: The same dense GEMM on the BF16 family's folded arithmetic (tessera#614):
-#: the value times the row scale rounded to bf16 once per weight, before the
-#: dot, and no epilogue scale.  Its own string because it is a different
-#: numerical function of the wire than ``native_window_gemm``'s epilogue.
-_DECODER_NATIVE_WINDOW_GEMM_FOLDED = "native_window_gemm_folded"
+#: The same dense GEMM on the BF16 family: raw bf16 table values with
+#: the fp32 row scale on the accumulator epilogue.  Its own string
+#: because it serves a distinct family of the same wire.
+_DECODER_NATIVE_WINDOW_GEMM_BF16 = "native_window_gemm_bf16"
 #: The native A4 lanes: the span-2 GEMM decodes the packed planes in-kernel
 #: (dense) and the grouped form does it per selected expert.  Distinct from
 #: ``native_span2`` (the load-time span-2 DECODE) and from ``torch_window``.
@@ -492,22 +489,22 @@ _DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: The compact window MoE adapter: routed experts served from the loader's
 #: packed ``WindowGemvUnit``s with no decoded tile.  The FP8 family keeps the
 #: per-token native A quant and the row scale on the fp32 accumulator; the
-#: BF16 family is FOLDED (one bf16 rounding of ``value * row_scale`` before the
-#: dot) and stamps its own decoder, because it is a different numerical
-#: function of the wire and a cell must be able to name which one it attests.
+#: BF16 family keeps raw bf16 values with the row scale on the same
+#: epilogue and stamps its own decoder, because a cell must name
+#: which family it attests.
 _DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
-_DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
-#: The fused routed window MoE lane (tessera#640), epilogue arithmetic (the
-#: E4M3 family) and folded arithmetic (the BF16 family).  Its own strings for
-#: the reason the compact pair has two: a census must be able to say which
-#: kernel and which arithmetic served a stack, and the fused lane's
-#: deterministic reduction is a different numerical function of the same
-#: wire than the compact adapter's atomic one.
+_DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16 = "native_window_moe_compact_bf16"
+#: The fused routed window MoE lane (tessera#640), one epilogue arithmetic
+#: and one decoder per family.  Its own strings for the reason the
+#: compact pair has two: a census must be able to say which kernel
+#: and which family served a stack, and the fused lane's deterministic
+#: reduction is a different numerical function of the same wire than
+#: the compact adapter's atomic one.
 _DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
-_DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
-#: The fused kernel's dense identity (contract v43), epilogue and folded.
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16 = "native_routed_fused_window_bf16"
+#: The fused kernel's dense identity (contract v43), one decoder per family.
 _DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
-_DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
+_DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16 = "native_fused_window_dense_bf16"
 #: The E4M3 family's fused identities on its own instruction
 #: (``tessera_routed_fused_mma_e4m3``, ``mma.sync.m16n8k32.e4m3``): the same
 #: exact products as the two E4M3 pairs above in another fp32 accumulation
@@ -532,10 +529,10 @@ def _dense_native_window_launch(decoder: str, fused_decoder: str, lane: str) -> 
     ``serving.native_window`` prepares each dense role from the verified wire
     (``tessera.compact_prep.prepare_window_compact``) and runs a packed
     bitstream GEMM through one functional custom op; it serves every M in both
-    residencies.  An E4M3 unit is the fp8 family, on the epilogue arithmetic;
-    a BF16 unit is the value family, on the folded arithmetic (tessera#614).
-    The decoder is what names the arithmetic, so a cell attesting one cannot
-    be read as attesting the other.
+    residencies.  An E4M3 unit is the fp8 family; a BF16 unit is the
+    value family.  Both serve the epilogue arithmetic.  The decoder
+    names the family, so a cell attesting one cannot be read as
+    attesting the other.
 
     TWO LAUNCHES since contract v43.  The Triton GEMM (``WINDOW_GEMM_SYMBOL``)
     needs no extension lane, carries no ``lane`` and is not a
@@ -667,22 +664,23 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     # The dense half: same shape as the FP8 dense half above, and for the same
-    # reason, on the FOLDED weight arithmetic (tessera#614) and therefore its
-    # own decoder.  The expert half (tessera#609) is the compact window MoE
-    # adapter with the same folded arithmetic, resident like every expert
-    # stack.  It has no stock-kernel launch at all: there is no materialising
-    # BF16 expert path to fall back to.  Both halves of the route serve one
-    # arithmetic: the row scale folded into each weight, rounded once.
+    # reason, with the row scale on the fp32 accumulator epilogue and
+    # therefore its own family decoder.  The expert half (tessera#609) is
+    # the compact window MoE adapter with the same epilogue, resident
+    # like every expert stack.  It has no stock-kernel launch at all:
+    # there is no materialising BF16 expert path to fall back to.  Both
+    # halves of the route serve one arithmetic: raw bf16 values with
+    # the fp32 row scale applied after the dot.
     TESSERA_BF16: _dense_native_window_launch(
-        _DECODER_NATIVE_WINDOW_GEMM_FOLDED, _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+        _DECODER_NATIVE_WINDOW_GEMM_BF16, _DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
         "tessera_routed_fused_value") + (
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
-         "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+         "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
-        # The fused lane's folded form (tessera#640); see the FP8 row.
+        # The fused lane's BF16 form (tessera#640); see the FP8 row.
         {"symbol": ROUTED_FUSED_WINDOW_SYMBOL,
-         "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+         "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_value",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),

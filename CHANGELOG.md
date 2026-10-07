@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-10-07 — T16 FP32 row-scale epilogue cutover
+
+Replace folded per-weight BF16 math with raw BF16 values and separate
+FP32 row scales. Dense and grouped kernels apply each row scale after
+the FP32 dot. Routed gate/up, activation and weighted-route boundaries
+retain their BF16 conversions. The token reducer uses a fixed route order.
+The runner owns shared output.
+
+Remove folded materializers, arithmetic selectors and decoder aliases.
+Migrate serving adapters, selected research math and numerical oracles.
+Remove obsolete folded BF16 stock controls. Current numerical oracles
+retain raw values and row scales through each dot.
+The canonical encoder and reader already use the FP32 effective-weight
+product; their profile and wire bytes do not change. The plain BF16
+stock checkpoint remains a derived control.
+
+Contract v59 withdraws eight old BF16 cells, their rung/wire attestations
+and the BF16 TP2 qualification. Historical receipts remain unchanged.
+The new BF16 decoder identities need a new served census. Changed T16
+D41 classes need measurements on the merged build before allocation.
+Preserve external paths through their active measurement lifetimes.
+
 ## 2026-10-07 — issue 1018: producer policy correction
 
 Both table producer paths preserve applicable reader correctness findings as holds.

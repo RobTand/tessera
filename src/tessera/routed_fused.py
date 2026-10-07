@@ -6,8 +6,8 @@ its SwiGLU epilogue, and a second launch of the same kernel serves the down
 projection into a route-sorted buffer that a fixed-order per-token sum
 reduces.  It computes the same functions of the wire as the Triton grouped
 window GEMM behind :class:`tessera.native_window_moe.NativeWindowMoE` -- the
-FOLDED arithmetic for the BF16 (value) family and the epilogue arithmetic for
-the E4M3 family, per-token native A quantisation, the bf16 route boundary
+row scale on the fp32 accumulator after the dot on both families, per-token
+native A quantisation on the E4M3 family, the bf16 route boundary
 before the reduction -- with three differences a reader must know:
 
 * Scheduling is route-count sized: work items are ``(expert, n-block,
@@ -22,13 +22,12 @@ before the reduction -- with three differences a reader must know:
   added in fixed order in fp32.  Two runs are bitwise equal; the legacy
   kernel's fp32 ``atomic_add`` is scheduling-order dependent.
 
-It is a NEW launch identity: ``scheme.ROUTED_FUSED_WINDOW_SYMBOL`` with the
-decoders ``native_routed_fused_window`` (E4M3, epilogue) and
-``native_routed_fused_window_folded`` (BF16, folded), both lane-bearing
-``scheme.ROUTE_LAUNCHES`` rows since contract v42, where the four window routed
-cells name them.  The compact adapter's pairs stay attested and stay the dispatch for every stack
-this lane refuses (:func:`fused_routed_window_supported`) and for
-``TESSERA_ROUTED_FUSED=0``.
+The routed symbols have separate decoder identities for each family.
+E4M3 uses ``native_routed_fused_window`` or its E4M3-MMA variant.
+BF16 uses ``native_routed_fused_window_bf16``. Contract v59 withdraws
+the historical folded BF16 cells. No served cell attests the new BF16
+identity. The compact adapter serves stacks this lane refuses and stacks
+with ``TESSERA_ROUTED_FUSED=0``; its BF16 identity also needs a new census.
 
 THE DENSE CASE (contract v43).  A dense window Linear is the E = 1, top_k = 1,
 unweighted case of the down projection, and the same kernel serves it: one
@@ -41,8 +40,8 @@ fixed-order reduce sums before the one epilogue (:func:`dense_k_split` states
 the model that picks ``S``).  It is
 its own launch identity, ``tessera::fused_window_dense`` (the functional
 custom op in ``serving.native_window``) with the decoders
-``native_fused_window_dense`` (E4M3, epilogue) and
-``native_fused_window_dense_folded`` (BF16, folded), lane-bearing rows on the
+``native_fused_window_dense`` (E4M3) and
+``native_fused_window_dense_bf16`` (BF16), lane-bearing rows on the
 same two extensions.  :func:`fused_dense_window_supported` is the per-role
 predicate; the Triton ``tessera::window_gemm_dense`` stays the dispatch for
 every module it refuses and for ``TESSERA_DENSE_FUSED=0``.
@@ -498,7 +497,7 @@ def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: 
     shared memory (``SM121_MAX_DYNAMIC_SMEM``) in the part's own launch (the
     two-table gate/up launch reaches ``ROUTED_LANE_RATES``, the one-table
     down launch every rate), and the row multiples the kernel's tiles need.
-    Device, arithmetic, the activation quantizer, the column order and the
+    Device, the activation quantizer, the column order and the
     env toggle are runtime facts the runtime predicate keeps.  A stack is
     refused whole when any of its parts is, as at runtime, so a GLM stack
     (one rung for all three parts) is admitted exactly where
@@ -943,8 +942,8 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     The kernel reads the window wire as the packer lays it out: window bits
     14, one or two column-rate runs per expert (the two rates bracketing the
     stack's root, rates 1..8), the packer's column order (low-rate columns
-    ascending, then high-rate ascending), and the family's published
-    arithmetic (folded for value, epilogue for e4m3).  One run table and one
+    ascending, then high-rate ascending), and the row scale on the fp32
+    accumulator after the dot on both families.  One run table and one
     ``tile_words`` per stack: the kernel takes a single tile stride for all
     experts and for both gate and up.  A stack outside that shape keeps the
     compact adapter, and the reason is the string returned here so a log can
@@ -956,15 +955,12 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     fam = down.family
     if fam not in ("value", "e4m3"):
         return f"family {fam!r} is not a window family"
-    want_arith = "folded" if fam == "value" else "epilogue"
     e = int(down.experts)
     for name, b in bundles.items():
         if getattr(b, "perm_all", ...) is None:
             return f"{name} compact planes were retired; use its already-prepared fused owner"
         if b.family != fam:
             return f"{name} family {b.family!r} differs from down's {fam!r}"
-        if b.arithmetic != want_arith:
-            return f"{name} arithmetic {b.arithmetic!r}; the fused lane serves {want_arith!r} for {fam}"
         if b.device.type != "cuda":
             return f"{name} lives on {b.device}; the lane is CUDA"
         if b.window_bits != WINDOW_BITS:
@@ -1142,7 +1138,6 @@ class FusedRoutedWindowMoE:
     up: object
     down: object
     family: str
-    arithmetic: str
     library: str
     table_gate: torch.Tensor
     table_up: torch.Tensor
@@ -1201,7 +1196,7 @@ class FusedRoutedWindowMoE:
                 run_off=None, perm_all=None)
 
         return cls(gate=native_view(gate), up=native_view(up), down=native_view(down),
-                   family=down.family, arithmetic=down.arithmetic,
+                   family=down.family,
                    library=library,
                    table_gate=compose_table(gate, library), table_up=compose_table(up, library),
                    table_down=compose_table(down, library),
@@ -1219,10 +1214,10 @@ class FusedRoutedWindowMoE:
     def launch_pair(self) -> "tuple[str, str]":
         from .serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
         from .serving.telemetry import (DECODER_NATIVE_ROUTED_FUSED_WINDOW,
-                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
-                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
+                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16,
+                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)
 
-        decoder = {"value": DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+        decoder = {"value": DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16,
                    "e4m3": DECODER_NATIVE_ROUTED_FUSED_WINDOW,
                    "e4m3mma": DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA}[self.library]
         return ROUTED_FUSED_WINDOW_SYMBOL, decoder
@@ -1439,8 +1434,8 @@ def fused_dense_window_supported(bundle) -> "str | None":
     Triton dense GEMM runs).  The kernel reads the routed lane's wire shape --
     one or two column-rate runs (the two bracketing the root, at rates up to
     the family's :data:`DENSE_RATE_MAX`: 14 on the value family, 8 on E4M3),
-    window bits 14, the packer's column order, the family's published
-    arithmetic (folded for value, epilogue for e4m3) -- plus the dense tile:
+    window bits 14, the packer's column order, and the row scale on the fp32
+    accumulator after the dot on both families -- plus the dense tile:
     rows a multiple of ``DENSE_ROW_QUANTUM`` (one 128-column B block per item,
     the last one partial when 128 does not divide the rows) and columns a
     multiple of 32 and at least 128.  A role outside it keeps
@@ -1458,9 +1453,6 @@ def fused_dense_window_supported(bundle) -> "str | None":
     fam = bundle.family
     if fam not in ("value", "e4m3"):
         return f"family {fam!r} is not a window family"
-    want_arith = "folded" if fam == "value" else "epilogue"
-    if bundle.arithmetic != want_arith:
-        return f"arithmetic {bundle.arithmetic!r}; the fused identity serves {want_arith!r} for {fam}"
     if bundle.device.type != "cuda":
         return f"the role lives on {bundle.device}; the kernel is CUDA"
     if bundle.window_bits != WINDOW_BITS:

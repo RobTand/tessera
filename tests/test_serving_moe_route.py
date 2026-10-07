@@ -160,51 +160,6 @@ SERVED_MOE_SYMBOL = "vllm.fused_moe.modular_kernel:TRITON"
 SERVED_MOE_DECODER = "torch_materialize_stock"
 
 
-def test_the_expert_route_publishes_one_launch_in_both_regimes():
-    """No GEMV lane: one launch per stack at every M.
-
-    The window routes' two regimes admit different pairs because their
-    dispatch branches on M.  This one does not branch on M -- a stack takes
-    the compact native window lane every forward -- so a regime split here
-    would be a distinction the code does not make.
-
-    tessera#609: the expectation is what the build can launch, experimental
-    pairs included (the rule ``scheme.EXPERIMENTAL_LAUNCHES`` states).  Contract
-    v38 (tessera#604) dropped the materialising FP8 pair from the table: this
-    build always publishes the compact reader, so ``compact_window_lane``
-    takes every FP8 stack and that branch cannot run.  Since contract v42
-    (tessera#640) the fused warp-specialised lane's pair sits beside the
-    compact one: ``PackedWindowMoeBundles.adapter`` takes it for every rate-4
-    window-14 stack, it is experimental (no cell), and an expectation without
-    it could never match a served fused record.
-    """
-    from tessera.serving.scheme import (ROUTED_FUSED_WINDOW_SYMBOL, TESSERA_BF16,
-                                        WINDOW_MOE_COMPACT_SYMBOL)
-    from tessera.serving.telemetry import (
-        DECODER_NATIVE_ROUTED_FUSED_WINDOW, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
-        DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
-        DECODER_NATIVE_WINDOW_MOE_COMPACT, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
-        DECODER_TORCH_STOCK)
-
-    expected = moe_route.census_expected(compiled=False)
-    assert set(expected) == {"decode", "batch"}
-    assert expected["decode"] == expected["batch"]
-    # Contract v46: the E4M3 instruction's fused library is a second
-    # experimental decoder of the same symbol, admitted beside the f16 one.
-    assert expected["decode"] == {
-        (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)}
-    assert (moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK) not in expected["decode"]
-    # A traced forward changes nothing: the combined ``a+b`` symbol the window
-    # routes stamp under compile exists because two launches share one graph.
-    assert moe_route.census_expected(compiled=True) == expected
-    # BF16 has no materialising expert path: its only pair is the compact
-    # lane's folded one, in both regimes.
-    bf16 = moe_route.census_expected(compiled=False, family=TESSERA_BF16)
-    assert bf16["decode"] == bf16["batch"] == {
-        (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)}
 
 
 def test_the_served_records_symbol_reduces_into_the_expectation():

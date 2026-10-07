@@ -26,10 +26,14 @@ instruction.
 
 What it pins:
 
-1. every served module of every receipt, in both phases, joins a cell (the
-   fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
-2. each GLM-image cell covers EXACTLY the rungs the receipts (these and
-   v38's) carried for its family and structure -- a cell widened
+1. every served E2M1 and E4M3 module of every receipt, in both phases, joins
+   a cell, and every BF16 record joins none. Contract v59 withdrew the BF16
+   cells. The T16 epilogue cutover changed the BF16 arithmetic. The folded
+   launches the old receipts recorded have no current cell and no current
+   native decode coverage. The fail-before drops the v39 E2M1 cells, and the
+   all-E2M1 stub is unattested;
+2. each current GLM-image cell covers EXACTLY the rungs the receipts (these
+   and v38's) carried for its family and structure -- a cell widened
    past its receipts, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
@@ -156,8 +160,7 @@ V38 = ("glm53_x_stub_tp1_eager_census.json", "glm53_x_stub_config.json")
 MINTED = sorted(f"tessera_e2m1_k2_{structure}_sm121_{regime}_resident"
                 for structure in ("dense", "routed_moe") for regime in ("decode", "batch"))
 GLM_CELLS = sorted(
-    [f"tessera_{family}_{structure}_sm121_{regime}_resident"
-     for family in ("e4m3_k1", "bf16_k1")
+    [f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident"
      for structure in ("dense", "routed_moe")
      for regime in ("decode", "batch")] + MINTED)
 A4_LAUNCH = {"dense": ("tessera.kernel_a4.a4_span2_gemm", "native_span2_gemm"),
@@ -241,19 +244,33 @@ def test_each_committed_receipt_is_the_one_the_contract_cites(stub):
 
 @pytest.mark.parametrize("stub", sorted(RECEIPTS))
 def test_every_served_module_joins_a_cell_in_both_phases(stub):
+    """Current agreement per stub: E2M1/E4M3 records join, BF16 records do not.
+
+    Contract v59 withdrew the BF16 cells. A stub with BF16 modules leaves
+    exactly those records unattested. The split is derived from the receipt's
+    own policies. A record in the wrong cell still fails here.
+    """
     tool = _tool()
     receipt_path, config_path = _paths(stub)
-    block, problems = _agreement(tool, load_serving_contract(), _load(receipt_path), config_path)
+    receipt = _load(receipt_path)
+    want = {}
+    for phase, records in receipt["records"].items():
+        for name, record in records.items():
+            family = PAYLOAD_FAMILY_BY_ROUTE[record["policy"].partition(":")[0]]
+            structure = "routed_moe" if record["kind"] == "moe" else "dense"
+            counts = want.setdefault((structure, phase), {})
+            counts[family] = counts.get(family, 0) + 1
+    block, problems = _agreement(tool, load_serving_contract(), receipt, config_path)
     assert problems == []
     assert block["agrees"] is True, json.dumps(block, indent=1)[:2000]
-    seen = 0
     for structure, per in block["structures"].items():
-        assert per["agrees"] is True, structure
         for phase, row in per["phases"].items():
-            assert row["unattested"] == 0, (structure, phase, row)
-            assert row["covered_by_cell"] == row["modules"] > 0, (structure, phase, row)
-            seen += row["modules"]
-    assert seen == 42  # 21 modules, two phases
+            counts = want[(structure, phase)]
+            assert row["modules"] == sum(counts.values()), (stub, structure, phase, row)
+            assert row["unattested"] == counts.get("TESSERA_BF16_K1", 0), (
+                stub, structure, phase, row)
+            assert row["covered_by_cell"] == row["modules"] - row["unattested"], (
+                stub, structure, phase, row)
 
 
 def test_the_all_e2m1_stub_is_unattested_without_the_minted_cells():
@@ -291,9 +308,10 @@ def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
 
     The two q256 1024 routed stacks (E4M3 layer 5, BF16 layer 7) recorded the
     fused routed window lane's pair in both phases and the three mixed-rate
-    E4M3 stacks the compact adapter's; the dense modules are unchanged.  The
-    four window routed cells name both launches, and the replay above joins
-    every record to a cell.
+    E4M3 stacks the compact adapter's; the dense modules are unchanged. The
+    E4M3 window routed cells name both launches, and the replay above joins
+    every non-BF16 record to a cell. Contract v59 withdrew the BF16 routed
+    cells, so the folded pair the BF16 stack recorded has no current cell.
     """
     receipt = _load(_paths("b_fused")[0])
     assert receipt["versions"]["tessera"] == "0.1.0"
@@ -306,15 +324,15 @@ def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
     assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
-    for family, decoder in (("e4m3", "native_routed_fused_window"),
-                            ("bf16", "native_routed_fused_window_folded")):
-        for regime in ("decode", "batch"):
-            cell = cells[f"tessera_{family}_k1_routed_moe_sm121_{regime}_resident"]
-            pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
-            assert (fused, decoder) in pairs, cell["id"]
-            # Contract v47 adds the E4M3 instruction's routed pair to the E4M3 cells.
-            assert len(pairs) == (3 if family == "e4m3" else 2), cell["id"]
-            assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell["id"]
+    for regime in ("decode", "batch"):
+        cell = cells["tessera_e4m3_k1_routed_moe_sm121_%s_resident" % regime]
+        pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
+        assert (fused, "native_routed_fused_window") in pairs, cell["id"]
+        # Contract v47 adds the E4M3 instruction's routed pair to the E4M3 cells.
+        assert len(pairs) == 3, cell["id"]
+        assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell["id"]
+    assert [c["id"] for c in cells.values()
+            if c["family"] == "TESSERA_BF16_K1" and c["structure"] == "routed_moe"] == []
 
 
 def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
@@ -324,8 +342,9 @@ def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
     layer-5 shared down and gate/up, the layer-7 shared gate/up) recorded the
     fused window kernel's dense identity in both phases, under the family's
     decoder; every other dense module kept the Triton window GEMM's pair; the
-    routed stacks recorded what the v42 receipt did.  The four GLM-image dense
-    cells name both launches, and the replay above joins every record.
+    routed stacks recorded what the v42 receipt did. The two GLM-image E4M3
+    dense cells name both launches, and the replay above joins every non-BF16
+    record. Contract v59 withdrew the BF16 dense cells.
     """
     receipt = _load(_paths("b_fused_dense")[0])
     tool = _tool()
@@ -352,16 +371,16 @@ def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
     same_stub = _load(_paths("b")[0])
     assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
-    for family, decoder in (("e4m3", "native_fused_window_dense"),
-                            ("bf16", "native_fused_window_dense_folded")):
-        for regime in ("decode", "batch"):
-            cell = cells[f"tessera_{family}_k1_dense_sm121_{regime}_resident"]
-            pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
-            assert (fused_symbol, decoder) in pairs, cell["id"]
-            assert pairs[0][0] == "tessera::window_gemm_dense", cell["id"]
-            # Contract v47 adds the E4M3 instruction's dense pair to the E4M3 cells.
-            assert len(pairs) == (3 if family == "e4m3" else 2), cell["id"]
-            assert 1024 in cell["rungs_q256"], cell["id"]
+    for regime in ("decode", "batch"):
+        cell = cells["tessera_e4m3_k1_dense_sm121_%s_resident" % regime]
+        pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
+        assert (fused_symbol, "native_fused_window_dense") in pairs, cell["id"]
+        assert pairs[0][0] == "tessera::window_gemm_dense", cell["id"]
+        # Contract v47 adds the E4M3 instruction's dense pair to the E4M3 cells.
+        assert len(pairs) == 3, cell["id"]
+        assert 1024 in cell["rungs_q256"], cell["id"]
+    assert [c["id"] for c in cells.values()
+            if c["family"] == "TESSERA_BF16_K1" and c["structure"] == "dense"] == []
 
 
 def test_every_module_ran_the_fused_kernel_at_every_rate_the_stub_carries():
@@ -410,8 +429,9 @@ def test_every_e4m3_module_ran_the_e4m3_instruction_and_the_cells_name_it():
     eight dense modules at 832, 960, 1024 and 1088 -- recorded the library's
     pair for its structure in both phases, and every BF16 module the value
     library's folded pair, exactly as the v45 receipt did.  Both required
-    lanes engaged.  The four GLM-image E4M3 cells name the E4M3-instruction
-    pair for their structure; the BF16 cells do not.
+    lanes engaged. The four GLM-image E4M3 cells name the E4M3-instruction
+    pair for their structure. Contract v59 withdrew the BF16 cells, so no
+    current cell names the folded pair the BF16 modules recorded.
     """
     receipt = _load(_paths("b_e4m3mma")[0])
     tool = _tool()
@@ -447,8 +467,8 @@ def test_every_e4m3_module_ran_the_e4m3_instruction_and_the_cells_name_it():
             e4m3 = cells[f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident"]
             assert want[("TESSERA_FP8", kind)] in {
                 (e["symbol"], e["decoder"]) for e in e4m3["executes"]}, e4m3["id"]
-            bf16 = cells[f"tessera_bf16_k1_{structure}_sm121_{regime}_resident"]
-            assert not any(e["decoder"].endswith("_e4m3mma") for e in bf16["executes"]), bf16["id"]
+    assert [c["id"] for c in cells.values()
+            if c["family"] == "TESSERA_BF16_K1"] == []
 
 
 @pytest.mark.parametrize("stub", sorted(T16_DENSE_RUNGS))
@@ -459,9 +479,10 @@ def test_every_t16_dense_module_ran_the_fused_identity_at_its_run_table(stub):
     identity under the value library's folded decoder in both phases, at the
     rungs the stub's plan names -- one of every run table the stub covers --
     and the routed stacks recorded stub B's pairs (the E4M3-instruction and
-    folded routed launches).  The value lane engaged.  The two GLM-image BF16
-    dense cells carry every one of these rungs, so their derived run tables
-    are the stub's."""
+    folded routed launches). The value lane engaged. The receipts stay
+    committed as history. Contract v59 withdrew the two GLM-image BF16 dense
+    cells v52 minted on them. The folded arithmetic they measured is not what
+    the build executes. No current cell carries these rungs."""
     receipt_path, config_path = _paths(stub)
     receipt = _load(receipt_path)
     tool = _tool()
@@ -488,14 +509,11 @@ def test_every_t16_dense_module_ran_the_fused_identity_at_its_run_table(stub):
     assert engagement["all_required_engaged"] is True
     assert engagement["required_lanes"] == ["tessera_routed_fused_value"]
     contract = load_serving_contract()
+    assert [c["id"] for c in contract["lane_eligibility"]["cells"]
+            if c["family"] == "TESSERA_BF16_K1"] == []
     row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
-    tables = {rung_rates(row, q) for q in T16_DENSE_RUNGS[stub]}
-    assert len(tables) == len(T16_DENSE_RUNGS[stub])  # one rung per run table
-    cells = {c["id"]: c for c in contract["lane_eligibility"]["cells"]}
-    for regime in ("decode", "batch"):
-        cell = cells[f"tessera_bf16_k1_dense_sm121_{regime}_resident"]
-        assert T16_DENSE_RUNGS[stub] <= set(cell["rungs_q256"]), cell["id"]
-        assert tables <= {tuple(t) for t in cell["run_tables"]}, cell["id"]
+    assert row["attested_rungs_q256"] == []
+    assert row["attested_wire"] == []
 
 
 @pytest.mark.parametrize("stub", sorted(T8_DENSE_RUNGS))

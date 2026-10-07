@@ -5,9 +5,10 @@ reader (``scheme.parse_compact_tessera_expert_blob``), both window families
 serve on the compact native window lane (``tessera.native_window_moe``): each
 projection container is validated and packed during its own load callback,
 no expert tile is ever decoded, and the grouped window GEMM decodes the wire
-in registers every forward.  FP8 runs the epilogue arithmetic there and BF16
-the FOLDED one (tessera#609).  The materialising description below is the FP8
-stack's branch on a build without that reader.
+in registers every forward.  Both families run the epilogue arithmetic there:
+raw table values through the dot, the fp32 row scale applied after it.  The
+materialising description below is the FP8 stack's branch on a build without
+that reader.
 
 WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
 assembled into ``w13`` (gate then up, the row order
@@ -69,14 +70,14 @@ validates each whole original wire during its load callback, then invokes
 the existing role slicer and retains only local packed roles; it preserves global expert IDs and
 leaves output reduction to stock vLLM. It is not a qualified runtime cell.
 
-THE BF16 EXPERT ARITHMETIC IS FOLDED (tessera#609): one bf16 rounding of
-``value * row_scale`` per weight before the dot, with no scale in the
-epilogue.  That is what a consumer pricing the decoded tile rounded once to
-bf16 prices, and the production compact lane, the research compact lane and
-the research materialising branch (which folds each selected tile once and
-hands it to stock unquantized Triton MoE) all compute it.  The compact launch
-stamps ``native_window_moe_compact_folded`` so a census and a cell can say
-which arithmetic ran; it is never reported under the FP8 stack's decoder.
+THE BF16 EXPERT ARITHMETIC IS THE EPILOGUE (tessera#609): raw bf16 table
+values through the dot, one fp32 multiply by the row scale after it, one
+bf16 cast before the SwiGLU boundary.  The production compact lane and the
+research compact lane compute it in registers; the research materialising
+branch keeps raw tiles and their fp32 scales paired and multiplies in torch.
+The compact launch stamps ``native_window_moe_compact_bf16`` so a census and
+a cell can say which family ran; it is never reported under the FP8 stack's
+decoder.
 
 WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
 E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
@@ -119,7 +120,7 @@ from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      WINDOW_MOE_COMPACT_SYMBOL,
                      validate_tessera_moe_scheme)
 from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
-                        DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED, DECODER_TORCH_STOCK,
+                        DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16, DECODER_TORCH_STOCK,
                         emit_route, route_shape)
 
 #: Opt-in: re-lay the compact routed window body piece-major (tessera#739).
@@ -186,13 +187,12 @@ _CENSUS_PAYLOAD_FAMILY = {TESSERA_FP8: "TESSERA_E4M3_K1", TESSERA_BF16: "TESSERA
 def native_decoder(family: str) -> str:
     """The decoder the compact window lane stamps for ``family``'s stack.
 
-    One home for the rule that the arithmetic is part of the launch: the FP8
-    stack runs the epilogue contract, the BF16 stack the folded one
-    (``window_gemm_grouped``'s ``arithmetic``), and the two are different
-    functions of their wires, so they are never reported under one name.
+    One home for the rule that the family is part of the launch: both
+    families serve the epilogue contract, and they are never reported under
+    one name.
     """
     if family == TESSERA_BF16:
-        return DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+        return DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16
     return DECODER_NATIVE_WINDOW_MOE_COMPACT
 
 
@@ -227,7 +227,7 @@ def census_expected(*, compiled: bool = False, platform=None,
     combined ``a+b`` symbol those routes stamp under a traced forward exists
     because their dispatch BRANCHES inside the graph, and one launch has
     nothing to combine.  ``family`` selects the stack's family: FP8 (the
-    default) or BF16, whose only launch is the compact lane's folded pair.
+    default) or BF16, whose only launch is the compact lane's epilogue pair.
 
     THE SYMBOL CARRIES A SUFFIX THIS ROUTE DOES NOT CHOOSE.  ``_record`` stamps
     ``vllm.fused_moe.modular_kernel:<backend>`` because which backend ran is a
@@ -240,15 +240,11 @@ def census_expected(*, compiled: bool = False, platform=None,
     kernel roster written in our own prose, which the runtime-attestation rule forbids;
     pinning one would refuse a box whose runtime picked another.
 
-    DERIVATION IS NOT ATTESTATION. The shared ``scheme.ROUTE_LAUNCHES`` table
-    separates this expert structure from the dense FP8 launch set. Reading
-    that table keeps the census and contract derivations together. It does
-    not itself publish a served cell. The packaged contract's routed E4M3
-    (q256 896) and BF16 (q256 1024) resident/eager cells name their exact
-    image, toolchain and sm_121 scope (contract v38); returning the same
-    expected launch for compiled execution does not attest it.  Since v38 the
-    table carries no materialising launch for FP8 either: this build always
-    publishes the compact reader, so that branch cannot run.
+    The route table defines the expected pairs, not their qualification.
+    Contract v59 withdraws the historical folded BF16 cells. The new BF16
+    epilogue pairs have no served census. E4M3 retains its historical cells.
+    A compiled expectation does not attest compiled execution. This build
+    publishes the compact reader and cannot take the materialised FP8 path.
     """
     del compiled  # documented above: one launch has nothing to combine
     if family not in _CENSUS_PAYLOAD_FAMILY:
@@ -267,7 +263,7 @@ def census_expected(*, compiled: bool = False, platform=None,
     # no cell (``census.cell_launch_agreement`` joins records to cells, and
     # ``_validate_cell_executes`` derives a cell's launches from the attested
     # view only).  The BF16 stack (tessera#609) has exactly one launch, the
-    # compact adapter's FOLDED pair, so its expectation is that pair alone.
+    # compact adapter's epilogue pair, so its expectation is that pair alone.
     pairs = {}
     for launch in route_launches(family, structure=STRUCTURE_ROUTED_MOE,
                                  mode=MODE_RESIDENT, include_experimental=True):
@@ -329,11 +325,27 @@ class PreparedTesseraPackedMoeExperts:
             self.__second.row_scale(expert_ids).unsqueeze(-1))
 
 
-class PreparedTesseraFoldedBf16MoeExperts:
-    """Selected stock BF16 tiles matching the joint screen's PWC render."""
+class PreparedTesseraSelectedBf16MoeExperts:
+    """Selected raw BF16 tiles with their separate fp32 row scales.
 
-    def __init__(self, w13_weight, w2_weight):
-        self.w13_weight, self.w2_weight = w13_weight, w2_weight
+    ``w13_weight [S, 2N, K]`` and ``w2_weight [S, K, N]`` are the reference
+    pair's raw bf16 values (``materialize_bf16``'s tile); ``w13_weight_scale``
+    and ``w2_weight_scale`` are the matching fp32 row scales with a trailing
+    singleton dimension.  Nothing is folded: the served arithmetic multiplies
+    each row scale on the fp32 accumulator after its dot.
+    """
+
+    __slots__ = ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale")
+
+    def __init__(self, w13_weight, w2_weight, w13_weight_scale, w2_weight_scale):
+        self.w13_weight = w13_weight
+        self.w2_weight = w2_weight
+        self.w13_weight_scale = w13_weight_scale
+        self.w2_weight_scale = w2_weight_scale
+
+    @property
+    def experts(self) -> int:
+        return int(self.w13_weight.shape[0])
 
 
 class PreparedTesseraPackedBf16MoeExperts:
@@ -346,12 +358,20 @@ class PreparedTesseraPackedBf16MoeExperts:
     def resident_bytes(self) -> int:
         return self.__first.resident_bytes() + self.__second.resident_bytes()
 
-    def decode_folded(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
-        return PreparedTesseraFoldedBf16MoeExperts(
-            self.__first.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
-                                       backend=backend),
-            self.__second.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
-                                        backend=backend))
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        """Selected raw tiles plus their fp32 row scales, in global-ID order.
+
+        ``expert_ids`` selects whole experts; the caller maps its routing ids
+        to these slots.  Chunked like the FP8 ``decode`` so a whole-selection
+        float copy never dominates TP2 prefill memory.
+        """
+        return PreparedTesseraSelectedBf16MoeExperts(
+            self.__first.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                backend=backend),
+            self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                 backend=backend),
+            self.__first.row_scale(expert_ids).unsqueeze(-1),
+            self.__second.row_scale(expert_ids).unsqueeze(-1))
 
 
 def _parsed_experts(blobs, declared_group, target, device):
@@ -470,9 +490,11 @@ def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None
                                             *, tp_rank=0, tp_size=1):
     """Research-only selected BF16 owner over original verified expert wires.
 
-    The selected folded tile matches ``read_unit_artifact(...).to(bfloat16)``,
-    the current PrismaQuant joint screen. It is distinct from Tessera's dense
-    BF16 route, which applies row scale after the GEMM instead.
+    The selected ``decode`` returns raw bf16 tiles with separate fp32 row
+    scales -- the same pair the dense BF16 route serves, scale applied after
+    the dot.  The joint screen's folded PWC render lives only in
+    ``stock.materialize_stock``'s derived plain BF16 cast; no serving path
+    computes it.
     """
     from .bf16_route import PreparedTesseraBf16Module, prepare_tessera_bf16_module
     from .sharding import shard_parsed_roles
@@ -806,7 +828,8 @@ class _RankLocalPackedIntake:
             from ..window_gemm_grouped import prepare_grouped_window_gemm_from_soa
 
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
-            arithmetic = "folded" if self.family == TESSERA_BF16 else "epilogue"
+            # One contract: raw values through the dot, the fp32 row scale on
+            # the accumulator after it.  The kernel owns it; no selector here.
             soa = {g: self.axis[g].finish() for g in MOE_GROUPS}
             self._scratch.clear()  # every role now lives in its packed axis
             names = {g: [str(role['roles'][0][0]) for role in self.roles[g]] for g in MOE_GROUPS}
@@ -823,7 +846,6 @@ class _RankLocalPackedIntake:
                     perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
                     experts=int(self.declared['experts']),
                     window_bits=slot["window_bits"], family=family,
-                    arithmetic=arithmetic,
                     word_layout=str(slot.get("word_layout", "legacy")))
 
             self.axis = {}
@@ -916,9 +938,9 @@ def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
     this rule moves it here.
 
     Both window families take the compact lane at every world size: the
-    shared reader cuts its windows per rank and the wire is TP-agnostic.  FP8
-    runs the epilogue arithmetic there and BF16 the folded one (the bundle's
-    contract, ``_RankLocalPackedIntake.finish``).  Compressed BF16 became a
+    shared reader cuts its windows per rank and the wire is TP-agnostic.  Both
+    run the epilogue arithmetic there (``_RankLocalPackedIntake.finish`` takes
+    the kernel default).  Compressed BF16 became a
     production expert family in tessera#609 (``scheme.MOE_BUILDERS``); before
     that its only admission was an explicit research-selected config, which
     still takes this lane and whose own parallel contract still accepts TP1
@@ -956,6 +978,63 @@ def _require_eager_selected_context(config, prefix):
     if (compilation is None or getattr(compilation,"mode",None) is not CompilationMode.NONE
             or getattr(compilation,"cudagraph_mode",None) is not CUDAGraphMode.NONE):
         raise ValueError(f"{prefix}: standalone research selected experts require explicit eager compilation and no CUDA graphs")
+
+
+def _selected_bf16_apply(x, selected, weights, ids, expert_map, *, layer, prefix):
+    """Torch grouped MoE over raw BF16 tiles with separate fp32 row scales.
+
+    ``selected`` is ``PreparedTesseraSelectedBf16MoeExperts``: raw bf16
+    ``w13_weight [S, 2N, K]`` / ``w2_weight [S, K, N]`` with fp32
+    ``w13_weight_scale [S, 2N, 1]`` / ``w2_weight_scale [S, K, 1]``.  Each
+    dot runs over the exact bf16 values (the bf16->fp32 upcast is exact) and
+    accumulates in fp32; each row scale multiplies its row of the fp32
+    accumulator BEFORE the SwiGLU boundary (w13) or the output (w2).  The
+    stock unquantized kernel carries no per-row weight scale, so this route
+    owns its dot rather than calling it.  Pure torch: runs on CPU and GPU.
+
+    The runner owns the shared-expert output. This method returns only
+    the routed output and does not call the shared-expert coordinator.
+    """
+    from ..native_window_moe import checked_swiglu_limit
+
+    for field in ('swiglu_alpha', 'swiglu_beta'):
+        if getattr(layer, field, None) is not None:
+            raise ValueError(
+                f"{prefix}: {field} is set; the selected BF16 torch path refuses to "
+                "approximate it")
+    try:
+        limit = checked_swiglu_limit(getattr(layer, 'swiglu_limit', None), where=f"{prefix}: ")
+    except GrammarError as exc:
+        raise ValueError(str(exc)) from exc
+    on_input = bool(getattr(layer, 'apply_router_weight_on_input', False))
+    slots = expert_map[ids.long()]
+    x2 = x.reshape(-1, x.shape[-1])
+    wf = weights.reshape(-1, weights.shape[-1]).float()
+    routed = torch.empty((x2.shape[0], wf.shape[1], selected.w2_weight.shape[1]),
+                         dtype=torch.bfloat16, device=x.device)
+    for s in range(selected.experts):
+        rows, routes = torch.where(slots == s)
+        if rows.numel() == 0:
+            continue
+        xs = x2[rows]
+        rw = wf[rows, routes].unsqueeze(-1)
+        if on_input:
+            xs = (xs.float() * rw).to(torch.bfloat16)
+        h = (xs.float() @ selected.w13_weight[s].float().t()) * selected.w13_weight_scale[s].t()
+        gate, up = h.to(torch.bfloat16).float().chunk(2, dim=-1)
+        if limit is not None:
+            gate = torch.clamp(gate, max=limit)
+            up = torch.clamp(up, min=-limit, max=limit)
+        act = (torch.nn.functional.silu(gate) * up).to(torch.bfloat16)
+        y = (act.float() @ selected.w2_weight[s].float().t()) * selected.w2_weight_scale[s].t()
+        if not on_input:
+            y = y * rw
+        routed[rows, routes] = y.to(torch.bfloat16)
+    out = torch.zeros((x2.shape[0], selected.w2_weight.shape[1]),
+                      dtype=torch.float32, device=x.device)
+    for route in range(wf.shape[1]):
+        out += routed[:, route].float()
+    return out.to(x.dtype)
 
 
 def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
@@ -1056,11 +1135,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                             "of this one.")
                     if self.moe.has_bias:
                         raise ValueError(f"{prefix}: research selected BF16 experts do not cover MoE biases")
-                    from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
-                        UnquantizedMoeBackend, select_unquantized_moe_backend)
-                    self.bf16_backend, self.experts_cls = select_unquantized_moe_backend(moe_config=self.moe)
-                    if self.bf16_backend != UnquantizedMoeBackend.TRITON or self.experts_cls.is_monolithic():
-                        raise ValueError(f"{prefix}: research selected BF16 expert mapping covers stock TRITON only")
+                    # The paired-scale Torch path owns its modular protocol.
+                    # It does not select or instantiate a stock backend.
+                    self.experts_cls = None
+                    self.bf16_backend = 'torch'
                 else:
                     self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
                         config=self.moe, weight_key=kFp8StaticChannelSym,
@@ -1096,21 +1174,21 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             ``None`` for a native route.  Attempt mixed514-a5 loaded its
             weights and died there, in warm-up, with the engine never coming up.
             """
-            if self._native_mode:
+            if self._native_mode or (research_selected is not None and family == TESSERA_BF16):
                 return False
             return super().is_monolithic
 
         @property
         def topk_indices_dtype(self) -> "torch.dtype | None":
             """The native route consumes the router's own ids as given."""
-            if self._native_mode:
+            if self._native_mode or (research_selected is not None and family == TESSERA_BF16):
                 return None
             return super().topk_indices_dtype
 
         @property
         def mk_can_overlap_shared_experts(self) -> bool:
             """The runner owns shared experts here; no MK overlap to claim."""
-            if self._native_mode:
+            if self._native_mode or (research_selected is not None and family == TESSERA_BF16):
                 return False
             return super().mk_can_overlap_shared_experts
 
@@ -1358,7 +1436,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     self._native = prepared.prepare()
                 self._research_phase = 'ready'
                 layer.tessera_decoder = (f'research_selected_{research_selected.decode_backend}_window'
-                                         + ('_folded_bf16' if family == TESSERA_BF16 else ''))
+                                         + ('_bf16' if family == TESSERA_BF16 else ''))
                 selected_backend = self.bf16_backend if family == TESSERA_BF16 else self.fp8_backend
                 layer.tessera_backend = str(getattr(selected_backend, 'value', selected_backend))
                 return
@@ -1568,21 +1646,14 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 expert_map.scatter_(0, selected_ids.long(),
                                     torch.arange(selected_ids.numel(), dtype=torch.int32, device=x.device))
             with torch.profiler.record_function('tessera_research_decode_selected_experts'):
-                decode = self._packed.decode_folded if family == TESSERA_BF16 else self._packed.decode
-                selected = decode(selected_ids,
+                selected = self._packed.decode(
+                    selected_ids,
                     max_experts_per_chunk=research_selected.max_experts_per_chunk,
                     backend=research_selected.decode_backend)
             if family == TESSERA_BF16:
-                from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
-                from vllm.model_executor.layers.fused_moe.oracle.unquantized import make_unquantized_moe_kernel
-                quant = FusedMoEQuantConfig.make(
-                    gemm1_alpha=getattr(layer, 'swiglu_alpha', None),
-                    gemm1_beta=getattr(layer, 'swiglu_beta', None),
-                    gemm1_clamp_limit=getattr(layer, 'swiglu_limit', None))
-                kernel = make_unquantized_moe_kernel(
-                    quant_config=quant, moe_config=self.moe,
-                    backend=self.bf16_backend, experts_cls=self.experts_cls,
-                    routing_tables=layer._expert_routing_tables())
+                with torch.profiler.record_function('tessera_research_apply_selected_experts'):
+                    return _selected_bf16_apply(
+                        x, selected, weights, ids, expert_map, layer=layer, prefix=prefix)
             else:
                 quant = make_fp8_moe_quant_config(
                     fp8_backend=self.fp8_backend,

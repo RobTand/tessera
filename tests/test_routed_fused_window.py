@@ -126,10 +126,8 @@ def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cu
 
 
 def _bundles(family, stacks):
-    arithmetic = "folded" if family == "value" else "epilogue"
     gate, up, down = (wgg.prepare_grouped_window_gemm([e.unit for e in s], block_m=32,
-                                                      block_n=64, block_k=64,
-                                                      arithmetic=arithmetic)
+                                                      block_n=64, block_k=64)
                       for s in stacks)
     return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family)
 
@@ -144,7 +142,6 @@ def _axis_bundles(family, stacks):
 
     from tessera.native_window_moe import WindowUnitAxis
 
-    arithmetic = "folded" if family == "value" else "epilogue"
     experts = len(stacks[0])
     parts = {"gate": ("w13", "gate_proj"), "up": ("w13", "up_proj"), "down": ("w2", "down_proj")}
     axes = {"w13": WindowUnitAxis(experts, ("gate_proj", "up_proj"), family=family),
@@ -159,14 +156,13 @@ def _axis_bundles(family, stacks):
     def bundle(name):
         group, part = parts[name]
         slot = soa[group][part]
-        return wgg.prepare_grouped_window_gemm_from_soa(
-            words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
-            native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
-            init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
-            tile_words=slot["tile_words"], total_words=slot["total_words"],
-            run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
-            cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
-            family=family, block_m=32, block_n=64, block_k=64, arithmetic=arithmetic)
+        return wgg.prepare_grouped_window_gemm_from_soa(words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
+        native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
+        init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
+        tile_words=slot["tile_words"], total_words=slot["total_words"],
+        run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
+        cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
+        family=family, block_m=32, block_n=64, block_k=64)
 
     return PackedWindowMoeBundles(gate=bundle("gate"), up=bundle("up"), down=bundle("down"),
                                   family=family)
@@ -501,7 +497,7 @@ def test_support_predicate_refuses_by_name():
 
     def grouped(experts):
         return wgg.prepare_grouped_window_gemm([e.unit for e in experts], block_m=32, block_n=64,
-                                               block_k=64, arithmetic="folded")
+                                               block_k=64)
     # three rates: three runs per expert; the kernel reads the two bracketing the root
     three = grouped([Expert(INTER, HIDDEN, tuple((2, 3, 4)[c % 3] for c in range(HIDDEN)), 700 + i)
                      for i in range(EXPERTS)])
@@ -537,11 +533,6 @@ def test_support_predicate_refuses_by_name():
                       for i in range(EXPERTS)])
     reason = rf.fused_routed_window_supported(uneven, ok.up, ok.down)
     assert reason is not None and "disagree on their run tables" in reason
-    # the epilogue arithmetic on the value family is not the published contract
-    epi = wgg.prepare_grouped_window_gemm([e.unit for e in value[0]], block_m=32, block_n=64,
-                                          block_k=64, arithmetic="epilogue")
-    reason = rf.fused_routed_window_supported(epi, ok.up, ok.down)
-    assert reason is not None and "arithmetic" in reason
     # geometry: an intermediate size the 64-wide half tile cannot cover
     small = _stacks("value", inter=96, hidden=256, cut=False)
     small_b = _bundles("value", small)
@@ -558,7 +549,6 @@ def test_support_predicate_refuses_by_name():
 def test_support_predicate_honours_the_opt_out_and_the_device(monkeypatch):
     class B:  # the fields the predicate reads first
         family = "value"
-        arithmetic = "folded"
         device = torch.device("cpu")
         experts = 1
     monkeypatch.setenv(rf.ENV_TOGGLE, "0")
@@ -703,7 +693,7 @@ def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch
     symbol, decoder = adapter.launch_pair
     assert symbol == ROUTED_FUSED_WINDOW_SYMBOL and decoder in DECODERS
     assert adapter.library == rf.library_for(family)
-    assert decoder == {"value": "native_routed_fused_window_folded",
+    assert decoder == {"value": "native_routed_fused_window_bf16",
                        "e4m3": "native_routed_fused_window",
                        "e4m3mma": "native_routed_fused_window_e4m3mma"}[adapter.library]
     # the tables are the library's: 16-bit, or the E4M3 bytes on the E4M3 instruction
@@ -717,7 +707,7 @@ def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch
     assert isinstance(compact, NativeWindowMoE)
     symbol, decoder = compact.launch_pair
     assert symbol == WINDOW_MOE_COMPACT_SYMBOL and decoder in DECODERS
-    assert decoder == ("native_window_moe_compact_folded" if family == "value"
+    assert decoder == ("native_window_moe_compact_bf16" if family == "value"
                        else "native_window_moe_compact")
     # the mixed-rate stack keeps the compact adapter whatever the toggle says
     monkeypatch.delenv(rf.ENV_TOGGLE)
@@ -994,10 +984,9 @@ def _tp2_rank1_bundles(family, units, build):
     ``WindowUnitAxis`` (``moe_route._RankLocalPackedIntake``'s path)."""
     from tessera.native_window_moe import WindowUnitAxis
 
-    arithmetic = "folded" if family == "value" else "epilogue"
     if build == "prepare":
         gate, up, down = (wgg.prepare_grouped_window_gemm(stack, block_m=32, block_n=64,
-                                                          block_k=64, arithmetic=arithmetic)
+                                                          block_k=64)
                           for stack in units)
         return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family)
     parts = {"gate": ("w13", "gate_proj"), "up": ("w13", "up_proj"), "down": ("w2", "down_proj")}
@@ -1012,14 +1001,13 @@ def _tp2_rank1_bundles(family, units, build):
     def bundle(name):
         group, part = parts[name]
         slot = soa[group][part]
-        return wgg.prepare_grouped_window_gemm_from_soa(
-            words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
-            native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
-            init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
-            tile_words=slot["tile_words"], total_words=slot["total_words"],
-            run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
-            cols=slot["cols"], experts=TP2_EXPERTS, window_bits=slot["window_bits"],
-            family=family, block_m=32, block_n=64, block_k=64, arithmetic=arithmetic)
+        return wgg.prepare_grouped_window_gemm_from_soa(words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
+        native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
+        init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
+        tile_words=slot["tile_words"], total_words=slot["total_words"],
+        run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
+        cols=slot["cols"], experts=TP2_EXPERTS, window_bits=slot["window_bits"],
+        family=family, block_m=32, block_n=64, block_k=64)
 
     return PackedWindowMoeBundles(gate=bundle("gate"), up=bundle("up"), down=bundle("down"),
                                   family=family)

@@ -1,5 +1,16 @@
 # Tessera: serving contract, MoE cell, and export gate
 
+**Status update, 2026-10-07:** contract v59 replaces folded T16 weights with
+raw BF16 values and separate FP32 row scales. Kernels apply each row scale
+after the FP32 dot. The selected research path preserves the BF16 stage
+boundaries and leaves shared output to the runner.
+
+The new BF16 decoder identities have no served cells. Contract v59 withdraws
+the historical BF16 cells, wire/rung attestations and TP2 qualification.
+It does not relabel their receipts. New served censuses and merged-build
+D41 measurements must supply current evidence. The body below remains
+historical; [`ARCHITECTURE.md`](ARCHITECTURE.md) defines the current system.
+
 **Status update, 2026-09-04:** the historical open census/KL item below is now
 superseded for the complete LFM2.5-8B-A1B artifact. The packaged contract
 (v16 when this was written; v17 since #131/#133, where each cell also names

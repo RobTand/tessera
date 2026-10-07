@@ -91,15 +91,15 @@ __all__ = [
     "DECODER_TORCH_WINDOW",
     "DECODER_WINDOW_GEMV",
     "DECODER_NATIVE_WINDOW_GEMM",
-    "DECODER_NATIVE_WINDOW_GEMM_FOLDED",
+    "DECODER_NATIVE_WINDOW_GEMM_BF16",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE",
     "DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA",
     "DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3",
-    "DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED",
+    "DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16",
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
-    "DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED",
+    "DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -159,13 +159,11 @@ DECODER_WINDOW_GEMV = "window_gemv"
 #: distinct value because no other decoder ran, and a census that read
 #: ``torch_window`` here would claim one.
 DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
-#: The same dense GEMM on the BF16 family's FOLDED weight arithmetic: one bf16
-#: rounding of ``value * row_scale`` per weight in registers before the dot,
-#: with no scale in the epilogue (``window_gemm``'s ``arithmetic="folded"``,
-#: tessera#614).  ``native_window_gemm`` stays the epilogue arithmetic -- the
-#: FP8 family's, and the BF16 family's until #614 -- so a cell or a census can
-#: name which numerical function of the wire it attests.
-DECODER_NATIVE_WINDOW_GEMM_FOLDED = "native_window_gemm_folded"
+#: The same dense GEMM on the BF16 family: raw bf16 table values with
+#: the fp32 row scale on the accumulator epilogue.  ``native_window_gemm``
+#: is the FP8 family; this names the BF16 epilogue, so a cell names
+#: which family served a module.
+DECODER_NATIVE_WINDOW_GEMM_BF16 = "native_window_gemm_bf16"
 #: The native A4 lanes (``tessera.kernel_a4``): the span-2 GEMM decodes the
 #: compact loader's packed planes in-kernel -- densely, and per selected expert
 #: in the grouped form.  Distinct from ``native_span2``, which names the
@@ -177,31 +175,24 @@ DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: tile, on the FP8 family's contract (per-token native A quant, row scale on
 #: the fp32 accumulator).
 DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
-#: The same adapter on the BF16 family, whose weight arithmetic is FOLDED: one
-#: bf16 rounding of ``value * row_scale`` per weight in registers before the
-#: dot, with no scale in the epilogue (``window_gemm_grouped``'s
-#: ``arithmetic="folded"``).  A distinct value because it is a distinct
-#: numerical function of the same wire: a census or a cell that read the
-#: epilogue decoder here would attest the arithmetic that did not run.
-DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
+#: The same adapter on the BF16 family, with the fp32 row scale on the
+#: accumulator epilogue.  A distinct value because it serves a distinct
+#: family of the same wire: a census that read the FP8 decoder here
+#: would attest the family that did not run.
+DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16 = "native_window_moe_compact_bf16"
 #: The fused warp-specialised routed window MoE (``tessera.routed_fused``,
 #: tessera#640): routed experts served from the same packed planes by one
 #: persistent kernel that decodes each weight once per tile and reuses it
-#: across routes, with a DETERMINISTIC fixed-order per-token reduction.  The
-#: E4M3 family's epilogue arithmetic stamps the first; the BF16 family's
-#: folded arithmetic the second.  Distinct from the compact pair because a
-#: census must tell which kernel served a stack, and because the reduction
-#: order -- fixed here, scheduling-dependent in the compact adapter's atomic
 #: -- makes the two different numerical functions of the same wire.
 DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
-DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
+DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16 = "native_routed_fused_window_bf16"
 #: The same kernel's dense identity (contract v43): one role of a dense Linear
 #: as the E = 1 case, K split at decode shapes with a fixed-order reduce.  Its
 #: own strings because it is a different launch than the Triton dense GEMM
 #: (a different accumulation order over the same function of the wire) and a
 #: census must be able to say which one served a module.
 DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
-DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
+DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16 = "native_fused_window_dense_bf16"
 #: The E4M3 family's two fused identities on its own tensor-core instruction
 #: (``tessera_routed_fused_mma_e4m3``: ``mma.sync.m16n8k32.e4m3.e4m3.f32`` on
 #: the E4M3 bytes, where the two above widen each byte to f16 for
@@ -217,13 +208,13 @@ DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
-                      DECODER_NATIVE_WINDOW_GEMM_FOLDED,
+                      DECODER_NATIVE_WINDOW_GEMM_BF16,
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
-                      DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW,
-                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
-                      DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16,
+                      DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
                       DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
                       DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3,))

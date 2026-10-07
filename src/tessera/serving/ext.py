@@ -205,7 +205,7 @@ WINDOW_GEMV_LANE = {
 #: takes for a dense module whose wire the SAME predicate below admits and
 #: whose rows are a multiple of the kernel's N tile; it stamps
 #: ``tessera::fused_window_dense`` under ``native_fused_window_dense`` /
-#: ``native_fused_window_dense_folded``.  ``lane.decoder`` stays the routed
+#: ``native_fused_window_dense_bf16``.  ``lane.decoder`` stays the routed
 #: decoder -- the field is one string by schema -- and the dense decoders are
 #: published on the dense routes' launch rows (``scheme.ROUTE_LAUNCHES``),
 #: which is where a cell's ``executes`` is derived from.  ``loaded_by`` stays
@@ -349,8 +349,8 @@ NATIVE_EXTENSIONS = [
     },
     # THE FUSED ROUTED WINDOW LANE (tessera#640): one source, two libraries,
     # one per window family, because ``lane.decoder`` is one string by schema
-    # and the two families stamp two decoders (the E4M3 epilogue arithmetic
-    # and the BF16 folded one).  ``tessera.routed_fused`` builds each with
+    # and the two families stamp two decoders (one epilogue per family).
+    # ``tessera.routed_fused`` builds each with
     # ``-DTESSERA_ROUTED_FUSED_FP8={1,0}``; ``moe_route``'s
     # ``process_weights_after_loading`` reaches it through
     # ``native_window_moe.PackedWindowMoeBundles.adapter``.  Without the
@@ -397,13 +397,13 @@ NATIVE_EXTENSIONS = [
         "source": ROUTED_FUSED_SOURCE,
         "loaded_by": "tessera.serving.moe_route",
         "routes": ["TESSERA_BF16"],
-        "lane": {"decoder": "native_routed_fused_window_folded",
+        "lane": {"decoder": "native_routed_fused_window_bf16",
                  "requires": ROUTED_FUSED_VALUE_LANE_REQUIRES},
         "when_unavailable": {
             "resident": {"status": FALLBACK_SUBSTITUTED,
-                         "decoder": "native_window_moe_compact_folded"},
+                         "decoder": "native_window_moe_compact_bf16"},
             "streamed": {"status": FALLBACK_SUBSTITUTED,
-                         "decoder": "native_window_moe_compact_folded"},
+                         "decoder": "native_window_moe_compact_bf16"},
         },
     },
 ]

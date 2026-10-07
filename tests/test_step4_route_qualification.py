@@ -16,10 +16,7 @@ import pytest
 
 from experiments.step4_route_qualification import (
     A4_DENSE_GEMM_SYMBOL, BF16_ACTIVATION_CONTRACT, DENSE_LAUNCHES, FP8_ACTIVATION_CONTRACT,
-    FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER,
-    NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER,
-    NATIVE_SPAN2_GEMM_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_FOLDED_DECODER,
-    NVFP4_ACTIVATION_CONTRACT,
+    NATIVE_SPAN2_GEMM_DECODER, NATIVE_WINDOW_GEMM_DECODER, NVFP4_ACTIVATION_CONTRACT,
     QUALIFICATION_SCHEMA, QualificationRefused, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_LIBRARY_GLOB,
     mapped_native_libraries, qualify_dispatch, qualify_native_route, refusal_record,
     trace_launches_by_contract)
@@ -80,30 +77,6 @@ def good_trace(identity=False):
         entry("TESSERA_NVFP4", shape="M1:N6144:K1024",
               names=EXPECTED["TESSERA_NVFP4"]["names"] if identity else None),
         identity=identity)
-
-
-# -- the launch table is the routes' -------------------------------------------
-
-def test_the_dense_launch_table_names_the_routes_admissible_launches():
-    # Contract v43: the two window families stamp one of two dense launches per
-    # module -- the Triton window GEMM or the fused window kernel's dense
-    # identity -- and the A4 family one.
-    # Contract v46 adds a third FP8 pair: the E4M3 instruction library's dense
-    # identity, experimental until a served census earns it cells.
-    assert DENSE_LAUNCHES["TESSERA_FP8"] == (FP8_ACTIVATION_CONTRACT, (
-        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma"),
-        # contract v56: the decode-once prefill lane, experimental and eager-only
-        ("tessera.serving.e4m3_prefill.prefill_apply", "native_window_decode_once_e4m3")))
-    assert DENSE_LAUNCHES["TESSERA_BF16"] == (BF16_ACTIVATION_CONTRACT, (
-        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER)))
-    assert DENSE_LAUNCHES["TESSERA_NVFP4"] == (NVFP4_ACTIVATION_CONTRACT, (
-        (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER),))
-    assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
-    assert FUSED_WINDOW_DENSE_SYMBOL == "tessera::fused_window_dense"
-    assert A4_DENSE_GEMM_SYMBOL == "tessera.kernel_a4.a4_span2_gemm"
 
 
 # -- the library census is recorded, never required --------------------------

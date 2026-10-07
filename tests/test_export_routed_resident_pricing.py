@@ -136,14 +136,13 @@ def _runtime_bytes(family: str, units_by_part: dict, experts: int, *,
 
     def bundle(group, part):
         slot = soa[group][part]
-        return prepare_grouped_window_gemm_from_soa(
-            words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
-            native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
-            init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
-            tile_words=slot["tile_words"], total_words=slot["total_words"],
-            run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
-            cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
-            family=family, arithmetic="folded" if family == "value" else "epilogue")
+        return prepare_grouped_window_gemm_from_soa(words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
+        native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
+        init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
+        tile_words=slot["tile_words"], total_words=slot["total_words"],
+        run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
+        cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
+        family=family)
 
     bundles = PackedWindowMoeBundles(gate=bundle("w13", "gate_proj"), up=bundle("w13", "up_proj"),
                                      down=bundle("w2", "down_proj"), family=family)

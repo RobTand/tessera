@@ -27,12 +27,10 @@ this module owns:
   not already carry the weights (vLLM's gemm2 / ``topk_weight_and_reduce``
   placement), summing over ``top_k``.
 
-ARITHMETIC.  The weight-side contract is the grouped bundle's and is explicit
-at preparation: ``"epilogue"`` (dense BF16 row scale on the fp32 accumulator,
-or the FP8 ``acc * a_scale * w_scale`` contract) or ``"folded"`` (the
-BF16 expert contract, one bf16 rounding of ``value * row_scale`` in
-registers before ``tl.dot``).  The adapter inherits it from the bundles; the
-FP8 family has no folded form.
+ARITHMETIC.  The weight-side contract is the grouped bundle's: raw table
+values through the dot, the fp32 row scale applied on the fp32 accumulator
+after it -- for the value family beside no activation scale, for the FP8
+family as ``acc * a_scale * w_scale``.  No selector names another form.
 
 WHAT REMAINS THE OWNER'S.  Routing (top-k ids and weights), shared experts,
 the TP all-reduce and the final scale/dtype presentation are the serving
@@ -84,19 +82,15 @@ class PackedWindowUnits:
         return total
 
     def prepare(self, *, block_m: int = 64, block_n: int = 64, block_k: int = 64,
-                arithmetic: "str | None" = None, activation: str = "silu",
+                activation: str = "silu",
                 quantizer: "str | None" = "native") -> "NativeWindowMoE":
-        """Build the adapter.  The default arithmetic is each family's
-        published contract: folded for the research BF16 wire, epilogue for
-        the FP8 wire.  An explicit value must match the family's served
-        contract; nothing here silently swaps them."""
-        if arithmetic is None:
-            arithmetic = "folded" if self.family == "value" else "epilogue"
+        """Build the adapter.  The kernel owns the families' arithmetic, so
+        this takes no arithmetic argument."""
         up = list(self.up) if self.up else None
         return prepare_native_window_moe(
             list(self.gate), list(self.down), up=up,
             block_m=block_m, block_n=block_n, block_k=block_k,
-            quantizer=quantizer, arithmetic=arithmetic, activation=activation)
+            quantizer=quantizer, activation=activation)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -114,16 +108,16 @@ class NativeWindowMoE:
     def launch_pair(self) -> "tuple[str, str]":
         """``(symbol, decoder)`` this adapter's forward is recorded under.
 
-        The compact lane's symbol with the family's arithmetic-naming decoder
+        The compact lane's symbol with the family's decoder
         (``scheme.ROUTE_LAUNCHES``); the route reads it off the adapter so a
         different adapter behind the same attribute (``tessera.routed_fused``)
         is recorded as itself, never under this name.
         """
         from .serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
         from .serving.telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
-                                        DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)
+                                        DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16)
 
-        decoder = (DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED if self.down.family == "value"
+        decoder = (DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16 if self.down.family == "value"
                    else DECODER_NATIVE_WINDOW_MOE_COMPACT)
         return WINDOW_MOE_COMPACT_SYMBOL, decoder
 
@@ -681,7 +675,8 @@ def native_window_moe_from_bundles(
     """The adapter from already-prepared grouped stacks (the loader path).
 
     ``gate_up`` is the fused ``[2I]`` stack; ``gate``/``up`` are the separate
-    spelling.  Families, weight arithmetic and expert counts must agree.
+    spelling.  Families and expert counts must agree; the kernel owns the
+    weight contract.
     """
     if activation not in SUPPORTED_ACTIVATIONS:
         raise GrammarError(f"activation {activation!r} is not served")
@@ -694,8 +689,6 @@ def native_window_moe_from_bundles(
             continue
         if bundle.family != down.family:
             raise GrammarError(f"{name} family {bundle.family!r} differs from down's {down.family!r}")
-        if bundle.arithmetic != down.arithmetic:
-            raise GrammarError(f"{name} arithmetic {bundle.arithmetic!r} differs from down's")
         if bundle.experts != down.experts:
             raise GrammarError(f"{name} has {bundle.experts} experts, down has {down.experts}")
     if gate_up is not None and gate_up.rows != 2 * down.cols:
@@ -714,17 +707,15 @@ def prepare_native_window_moe(
     block_n: int = 64,
     block_k: int = 64,
     quantizer: "str | None" = "native",
-    arithmetic: str = "epilogue",
     activation: str = "silu",
 ) -> NativeWindowMoE:
     """Prepare both stages once.
 
     ``gate`` is the fused gate/up stack (``rows == 2 * down.cols``) unless
     ``up`` is given, in which case ``gate`` and ``up`` are separate stacks of
-    ``down.cols`` rows each.  ``arithmetic`` is the grouped bundles' explicit
-    weight-side contract (``"epilogue"`` default, ``"folded"`` for the
-    BF16 expert contract); the down stack must agree with the gate/up
-    stacks.  ``activation`` must be in :data:`SUPPORTED_ACTIVATIONS`.
+    ``down.cols`` rows each.  The kernel owns the weight-side contract, so
+    there is no arithmetic argument.  ``activation`` must be in
+    :data:`SUPPORTED_ACTIVATIONS`.
     """
     if activation not in SUPPORTED_ACTIVATIONS:
         raise GrammarError(
@@ -733,29 +724,24 @@ def prepare_native_window_moe(
     if up is None:
         gate_up = prepare_grouped_window_gemm(
             gate, initial_state=initial_state, block_m=block_m, block_n=block_n,
-            block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+            block_k=block_k, quantizer=quantizer)
         gate_bundle = up_bundle = None
     else:
         gate_up = None
         gate_bundle = prepare_grouped_window_gemm(
             gate, initial_state=initial_state, block_m=block_m, block_n=block_n,
-            block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+            block_k=block_k, quantizer=quantizer)
         up_bundle = prepare_grouped_window_gemm(
             up, initial_state=initial_state, block_m=block_m, block_n=block_n,
-            block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+            block_k=block_k, quantizer=quantizer)
     down_bundle = prepare_grouped_window_gemm(
         down, initial_state=initial_state, block_m=block_m, block_n=block_n,
-        block_k=block_k, quantizer=quantizer, arithmetic=arithmetic)
+        block_k=block_k, quantizer=quantizer)
     first = gate_up or gate_bundle
     if first.family != down_bundle.family:
         raise GrammarError(
             f"gate/up family {first.family!r} and down family {down_bundle.family!r} "
-            "must agree; a mixed-family MoE has no single arithmetic contract"
-        )
-    if first.arithmetic != down_bundle.arithmetic:
-        raise GrammarError(
-            "the gate/up and down stacks must share one weight arithmetic "
-            f"({first.arithmetic!r} vs {down_bundle.arithmetic!r})"
+            "must agree; a mixed-family MoE has no single weight contract"
         )
     if first.experts != down_bundle.experts:
         raise GrammarError(

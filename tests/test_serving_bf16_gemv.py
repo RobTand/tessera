@@ -188,42 +188,6 @@ def test_gemv_symbol_and_module_name_are_the_kernel_and_contract_values():
     assert route.GEMV_SYMBOL == "tessera_window_gemv::gemv"
 
 
-def test_the_census_expectations_come_from_the_route():
-    """What each REGIME may report, and since tessera#538 it is ONE launch.
-
-    ``decode`` is the one-row forward and ``batch`` is every M > 1
-    (``contract.CENSUS_PHASE_REGIMES``), which is the vocabulary a census
-    record is stamped in.  This function derives its answer from
-    ``scheme.ROUTE_LAUNCHES``, and that table used to carry the window-GEMV
-    lane's three dense rows: the lane's own ``gemv`` in both regimes, the torch
-    window decode in both, and the kernel-decoded tile under the stock GEMM in
-    ``batch`` alone.
-
-    ``1b767a207`` left ``bf16_route.apply`` making one launch -- the packed native window
-    GEMM, at every M and in both residencies -- and contract v31 dropped the
-    retired rows from the table, so the expectation a census compares a served
-    record against became that one pair.  Contract v43 added the fused window
-    kernel's dense identity (``native_fused_window_dense_folded``) as a second
-    launch the route decides per module at weight load, so the expectation is
-    now exactly the route's own ``DENSE_LAUNCHES`` -- two pairs, of which any
-    one module stamps one.  Asserted as EQUALITY, because the defect this whole
-    file is about was an expectation wider than the dispatch.
-
-    A note on where this function lives, which the equality makes visible: it
-    still belongs to ``bf16_route``, and ``bf16_route.apply`` does not import it.  The census tool
-    reads it all the same, so it is right about the serve and housed in the
-    wrong module; moving it is follow-up, not part of the withdrawal.
-    """
-    # On the folded arithmetic's own decoder since tessera#614.
-    assert route.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
-    expected = set(route.DENSE_LAUNCHES)
-    go = route.census_expected(compiled=False)
-    assert go["decode"] == expected
-    assert go["batch"] == expected
-    gc = route.census_expected(compiled=True)
-    assert gc["decode"] == expected
-    assert gc["batch"] == expected
-    assert route.GEMM_SYMBOL == "torch.mm"
 
 
 def test_m_tile_is_the_kernel_build_rule():

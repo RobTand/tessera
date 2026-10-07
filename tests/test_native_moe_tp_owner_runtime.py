@@ -533,10 +533,10 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
 
     ``TESSERA_NVFP4`` has a routed launch table row (its production expert
     builder serves a world above one); since contract v39 it is the grouped A4
-    GEMM alone.  ``TESSERA_BF16`` has one since
-    tessera#609 -- the compact lane's folded pair, experimental until a cell
-    attests it -- and since tessera#613 this harness prices that production
-    owner, so the folded pair is the only admissible route.  Both statements
+    GEMM alone. ``TESSERA_BF16`` has one since tessera#609 -- the compact
+    lane's BF16 pair, which keeps raw values and applies the FP32 row scale
+    after the dot -- and since tessera#613 this harness prices that production
+    owner, so the BF16 pair is the only admissible route. Both statements
     are the plugin's, read here rather than restated.
     """
     materialising = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
@@ -551,10 +551,10 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
     assert materialising not in a16
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
-    # Contract v41 (tessera#640): the fused lane's folded pair is admissible
+    # Contract v41 (tessera#640): the fused lane's BF16 pair is admissible
     # beside the compact one -- the dispatch takes it for a rate-4 stack.
-    assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_folded"),
-                   (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_folded")}
+    assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_bf16"),
+                   (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_bf16")}
 
 
 def test_an_fp8_owner_never_declares_the_materialising_launch():
@@ -585,7 +585,7 @@ def test_an_fp8_owner_never_declares_the_materialising_launch():
     for world in (1, 2):
         bf16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(world, A16)), world=world)
         assert ("vllm.fused_moe.modular_kernel",
-                "research_selected_triton_window_folded_bf16") not in bf16
+                "research_selected_triton_window_bf16") not in bf16
         assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in bf16
 
 
@@ -804,9 +804,9 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
     (2, A4, "tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),
     (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
     (1, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
-     "native_window_moe_compact_folded"),
+     "native_window_moe_compact_bf16"),
     (2, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
-     "native_window_moe_compact_folded"),
+     "native_window_moe_compact_bf16"),
 ])
 def test_a_glm_owner_panel_validates_at_its_own_family_and_cut(tp, format_name, symbol, decoder):
     panel = _owner_panel(tp, format_name, symbol, decoder)
@@ -818,7 +818,7 @@ def test_a_bf16_panel_on_the_selected_owners_route_is_refused(backend):
     """Since #613 a BF16 owner is priced on its production builder, so a panel
     declaring the selected owner's route is a route this owner does not take."""
     panel = _owner_panel(1, A16, "vllm.fused_moe.modular_kernel:TRITON_REF",
-                         f"research_selected_{backend}_window_folded_bf16")
+                         f"research_selected_{backend}_window_bf16")
     with pytest.raises(ValueError):
         moe.validate_panel(panel)
 

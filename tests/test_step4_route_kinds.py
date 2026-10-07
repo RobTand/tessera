@@ -11,7 +11,7 @@ from test_step4_route_qualification import entry, trace
 FAMILIES = ("TESSERA_FP8", "TESSERA_BF16", "TESSERA_NVFP4")
 MOE = {
     "TESSERA_FP8": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-    "TESSERA_BF16": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_folded"),
+    "TESSERA_BF16": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_bf16"),
     "TESSERA_NVFP4": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),
 }
 
@@ -125,7 +125,7 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
         ("tessera.serving.e4m3_prefill.prefill_apply", "native_window_decode_once_e4m3")]
 
 
-@pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_folded_on_fp8", "count_ignores_second_pair"])
+@pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_bf16_on_fp8", "count_ignores_second_pair"])
 def test_two_launch_moe_refuses_a_pair_the_family_does_not_admit(corruption):
     expected, routes = _two_launch_moe()
     fused = [row for row in routes["entries"] if row["decoder"] == "native_routed_fused_window"]
@@ -133,9 +133,9 @@ def test_two_launch_moe_refuses_a_pair_the_family_does_not_admit(corruption):
         for row in fused:
             row["policy"] = "TESSERA_NVFP4:resident"
             row["contract"] = "e2m1_group16_ue4m3_static"
-    elif corruption == "fused_folded_on_fp8":
+    elif corruption == "fused_bf16_on_fp8":
         for row in fused:
-            row["decoder"] = "native_routed_fused_window_folded"
+            row["decoder"] = "native_routed_fused_window_bf16"
     elif corruption == "count_ignores_second_pair":
         expected["TESSERA_FP8"]["kinds"]["moe"]["count"] = 1
         expected["TESSERA_FP8"]["kinds"]["moe"]["names"] = ["model.layers.3.mlp.experts"]

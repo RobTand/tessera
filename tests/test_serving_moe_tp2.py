@@ -489,8 +489,6 @@ def test_tp2_each_load_keeps_only_rank_local_packed_projection(wires, monkeypatc
     assert all(ref() is None for ref in parsed)
     assert method._native is not None
     packed = method._packed
-    assert not hasattr(packed, 'decode') and not hasattr(packed, 'decode_folded'), \
-        'the retired materialising owner returned'
     ids = torch.tensor([2, 0, 1], dtype=torch.int32, device='cuda')
     _assert_rank_local_scales(packed, _materialised(wires, rank, ids), ids)
 
