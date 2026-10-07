@@ -211,6 +211,7 @@ def build_model(model_path: str, device: str, max_model_len: int, *, quant_confi
     engine_args = EngineArgs(
         model=model_path, load_format="dummy", enforce_eager=True,
         max_model_len=max_model_len, trust_remote_code=True,
+        enable_prefix_caching=False,
         # A census is about module NAMES, and TP would cut them per rank.
         tensor_parallel_size=1,
     )
@@ -282,6 +283,10 @@ def census(model, probe) -> dict:
             # its roles against (tessera#377).  Global sizes: the census
             # builds at tp=1.
             "output_sizes": _output_sizes(module),
+            "input_size": int(module.input_size),
+            "output_size": int(module.output_size),
+            "replicated_shard_ids": sorted(int(i) for i in getattr(module, "replicated_shard_ids", ())),
+            "instances": [],
             "layers": set(),
             "examples": [],
         })
@@ -290,12 +295,27 @@ def census(model, probe) -> dict:
             row["layers"].add(int(match.group(0)))
         if len(row["examples"]) < 2:
             row["examples"].append(prefix)
+        row["instances"].append({
+            "prefix": prefix, "module_name": name,
+            "class": type(module).__name__,
+            "input_size": int(module.input_size),
+            "output_size": int(module.output_size),
+            "output_sizes": _output_sizes(module),
+            "replicated_shard_ids": sorted(int(i) for i in getattr(module, "replicated_shard_ids", ())),
+            "quant_config_is_none": module.quant_config is None,
+            "offered_to_quant_config": prefix in asked,
+            "parameter_shapes": {p: list(v.shape) for p, v in module.named_parameters(recurse=False)},
+        })
         # A pattern whose members disagree is a real fact, not a bug in the
         # census: record the disagreement rather than letting the last one win.
         for field, value in (("quant_config_is_none", module.quant_config is None),
                              ("offered_to_quant_config", prefix in asked),
                              ("quant_method", type(module.quant_method).__name__),
-                             ("output_sizes", _output_sizes(module))):
+                             ("output_sizes", _output_sizes(module)),
+                             ("class", type(module).__name__),
+                             ("input_size", int(module.input_size)),
+                             ("output_size", int(module.output_size)),
+                             ("replicated_shard_ids", sorted(int(i) for i in getattr(module, "replicated_shard_ids", ())))):
             if row[field] != value:
                 row.setdefault("disagreements", {}).setdefault(field, []).append(prefix)
     for row in rows.values():

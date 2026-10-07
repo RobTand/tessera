@@ -22,6 +22,17 @@ Retain the DSA FP32 head cache and the MLA BF16 split matrix.
 Share their activation and decoded weight contracts with PrismaQuant.
 Do not change a serving pin, kernel, or default.
 
+## 2026-10-07 — projection construction and load checks
+
+Add a small-artifact projection smoke tool with a portable CPU dry run.
+The device path loads real wires through stock vLLM projection classes.
+It compares eager and CUDA graph outputs with decoded numeric references.
+The checks include stock BF16 controls, FP32 indexer gates, absorbed MLA BMM,
+router output dtype, vision biases, and replicated KDA roles.
+Device results remain separate from CPU input proof.
+The construction census now retains every instance, input width, parameter shape,
+and replicated shard identifier. It disables unused prefix caching explicitly.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four
