@@ -625,6 +625,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     refuse_a_family_with_no_expert_route(family, prefix)
     if family not in (TESSERA_FP8, TESSERA_BF16):
         raise ValueError(f"{prefix}: the routed class method has no {family} window decoder")
+    if getattr(layer.moe_config, 'has_bias', False):
+        raise ValueError(f"{prefix}: native WINDOW classes do not execute expert bias")
     _bind_module_prefix(layer, prefix)
     from .backend import require_platform_backs
     from .contract import PAYLOAD_FAMILY_BY_ROUTE

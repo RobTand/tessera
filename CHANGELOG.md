@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07 — refuse unsupported native expert bias
+
+The native WINDOW builder now refuses a biased expert configuration before load.
+The decoder executes no expert bias. A constructor regression proves the refusal.
+
 ## 2026-10-07 — mandatory routed expert-class cutover
 
 Routed exports always write class-ordered storage, a slot-to-global expert map

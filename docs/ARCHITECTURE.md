@@ -247,6 +247,7 @@ dispatcher. The loader consumes storage-named wires into the exact rank-local
 flat axis, builds one int32 original-to-storage inverse at load, and remaps
 router ids once per invocation without reordering weights or top-k positions.
 The layer's EP `expert_map` remains EP-owned and is not rewritten.
+The native WINDOW builder refuses expert bias before it binds or loads the layer.
 
 Class projection views alias retained words/scales/initial-state planes.
 Composed tables, run pairs and descriptors are prepared once. Device counters

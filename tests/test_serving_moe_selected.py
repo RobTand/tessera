@@ -324,3 +324,10 @@ def test_model_selected_context_still_requires_explicit_enforce_eager(stub_runti
     config=types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=False))
     monkeypatch.setattr(sys.modules['vllm.config'],'get_current_vllm_config',lambda:config)
     with pytest.raises(ValueError,match='require enforce_eager'):_build(original_wires[2],_layer())
+
+
+def test_native_window_constructor_refuses_expert_bias(original_wires, stub_runtime):
+    layer = _layer()
+    layer.moe_config.has_bias = True
+    with pytest.raises(ValueError, match="bias"):
+        moe_route.build_tessera_moe_method(original_wires[2], 'm', 'resident', layer)
