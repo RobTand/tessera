@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — cover every routed execution entry
+
+The route-kind proof now uses every current admissible entry, including uniform launches.
+It derives the entry set from the registry, not a fixed two-entry list.
+Module counts, observed pairs, module names and foreign-entry refusals remain checked.
+The proof does not promote a serving cell.
+
 ## 2026-10-07 — select the uniform census fixture entry
 
 The uniform census fixture now selects its actual lane-free native entry.

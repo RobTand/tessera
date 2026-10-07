@@ -45,20 +45,19 @@ def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
             assert claim["expected"]["names_checked"] is True
 
 
-def _two_launch_moe(family="TESSERA_FP8"):
-    """One family whose routed stacks split across its two admissible pairs."""
+def _all_launch_moe(family="TESSERA_FP8"):
+    """One routed owner per admissible entry, repeated across two M groups."""
     from experiments.step4_route_qualification import MOE_LAUNCHES
-    (compact_symbol, compact_decoder), (fused_symbol, fused_decoder) = MOE_LAUNCHES[family][1][:2]
+    pairs = MOE_LAUNCHES[family][1]
     dense = "model.layers.0.mlp.down_proj"
-    compact, fused = "model.layers.3.mlp.experts", "model.layers.4.mlp.experts"
-    expected = {family: {"count": 3, "names": sorted([dense, compact, fused]), "kinds": {
+    names = [f"model.layers.{i + 3}.mlp.experts" for i in range(len(pairs))]
+    expected = {family: {"count": 1 + len(names), "names": sorted([dense, *names]), "kinds": {
         "dense": {"count": 1, "names": [dense]},
-        "moe": {"count": 2, "names": sorted([compact, fused])}}}}
+        "moe": {"count": len(names), "names": sorted(names)}}}}
     entries = []
     for m in (1, 512):
         entries.append(entry(family, shape=f"M{m}:N1024:K3072", names=[dense]))
-        for symbol, decoder, name in ((compact_symbol, compact_decoder, compact),
-                                      (fused_symbol, fused_decoder, fused)):
+        for (symbol, decoder), name in zip(pairs, names):
             routed = entry(family, symbol=symbol, decoder=decoder,
                            shape=f"M{m}:N1024:K3072", names=[name])
             routed["kind"] = "moe"
@@ -66,41 +65,29 @@ def _two_launch_moe(family="TESSERA_FP8"):
     return expected, trace(*entries, identity=True)
 
 
-def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per_module():
-    expected, routes = _two_launch_moe()
+def test_all_admissible_routed_launches_qualify_once_per_module():
+    from experiments.step4_route_qualification import DENSE_LAUNCHES, MOE_LAUNCHES
+    expected, routes = _all_launch_moe()
     result = qualify_dispatch(routes, mode="resident", expected_modules=expected)
     moe = result["TESSERA_FP8"]["kinds"]["moe"]
-    assert moe["observed"]["modules"] == 2
-    assert moe["observed"]["launches"] == 4
-    assert moe["observed"]["module_names"] == ["model.layers.3.mlp.experts", "model.layers.4.mlp.experts"]
-    assert set(moe["observed"]["by_launch"]) == {
-        "tessera::routed_window_classes / native_routed_window_classes",
-        "tessera::routed_window_classes / native_routed_window_classes_e4m3mma"}
+    names = expected["TESSERA_FP8"]["kinds"]["moe"]["names"]
+    pairs = MOE_LAUNCHES["TESSERA_FP8"][1]
+    assert moe["observed"]["modules"] == len(names)
+    assert moe["observed"]["launches"] == 2 * len(names)
+    assert moe["observed"]["module_names"] == names
+    assert set(moe["observed"]["by_launch"]) == {f"{symbol} / {decoder}" for symbol, decoder in pairs}
     assert all(bucket["modules"] == 1 for bucket in moe["observed"]["by_launch"].values())
-    # Two pairs observed: no single symbol/decoder is claimed for the kind.
     assert "symbol" not in moe["observed"] and "symbol" not in moe["expected"]
-    # The FP8 routed kind admits the two current class operations, both experimental.
-    assert [(e["symbol"], e["decoder"]) for e in moe["expected"]["launches"]] == [
-        ("tessera::routed_window_classes", "native_routed_window_classes"),
-        ("tessera::routed_window_classes", "native_routed_window_classes_e4m3mma")]
-    # The dense kind observed one pair, named outright; since contract v43
-    # (tessera#692) its expectation admits two -- the Triton window GEMM and
-    # the fused kernel's dense identity -- so it lists launches like the routed
-    # kind above and claims no single symbol.
+    assert {(e["symbol"], e["decoder"]) for e in moe["expected"]["launches"]} == set(pairs)
     dense = result["TESSERA_FP8"]["kinds"]["dense"]
     assert dense["observed"]["symbol"] == "tessera::window_gemm_dense"
     assert "symbol" not in dense["expected"]
-    assert [(e["symbol"], e["decoder"]) for e in dense["expected"]["launches"]] == [
-        ("tessera::window_gemm_dense", "native_window_gemm"),
-        ("tessera::fused_window_dense", "native_fused_window_dense"),
-        ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma"),
-        # contract v56: the decode-once prefill lane
-        ("tessera.serving.e4m3_prefill.prefill_apply", "native_window_decode_once_e4m3")]
+    assert {(e["symbol"], e["decoder"]) for e in dense["expected"]["launches"]} == set(DENSE_LAUNCHES["TESSERA_FP8"][1])
 
 
 @pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_folded_on_fp8", "count_ignores_second_pair"])
 def test_two_launch_moe_refuses_a_pair_the_family_does_not_admit(corruption):
-    expected, routes = _two_launch_moe()
+    expected, routes = _all_launch_moe()
     fused = [row for row in routes["entries"] if row["decoder"] == "native_routed_window_classes_e4m3mma"]
     if corruption == "fused_on_nvfp4":
         for row in fused:
