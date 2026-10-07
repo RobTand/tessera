@@ -1,5 +1,37 @@
 # Tessera plan-to-serve architecture
 
+## Register-direct fragment wire (stage 1; not a serving path)
+
+The CPU fragment repack is available in `tessera.fragment_wire` for the register-direct routed build.
+It preserves the disk BODY streams and accepts only R3 and R4.
+Each original 32-column group has one rate.
+The repack sorts these groups by rate and preserves their order within each rate.
+Down pairs successive groups of one rate, so each rate needs an even group count.
+
+A data unit holds 32 lanes and R words per lane.
+Word i of lane L is at unit word i*32+L.
+Lane L has g=L>>2 and t=L&3.
+Pair q=p*8+j contains the codes of two successive rows at column 8t+j of group p.
+Each pair starts at bit q*2R in the MSB-first lane stream.
+
+Both projection groups use eight 16-row units per 128-row tile.
+For gate/up, p selects the projection and both projections use the same 32 columns.
+For down, p selects one of two 32-column groups in the same 16 rows.
+Gate/up uses one int16 permutation entry per slot; down uses two entries at s*2+p.
+The permutation restores the original column order.
+
+Each k-step has one compact history unit before tile zero.
+It stores lanes 24 through 31 with word stride eight.
+The history contains the last four fields of the incoming column state.
+An explicit TP-cut state takes precedence over the initial state.
+All unit and history offsets include the expert's absolute word base.
+
+The final tile contains zero codes outside the declared rows.
+The reference decode returns native E4M3 bytes, with gate rows before up rows.
+It does not apply row scales.
+The byte audit covers encoded R3 and R4 BODY bits, fragment words, history size, and decoded bytes.
+This module does not change the encoder, disk format, or selected serving path.
+
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
 `--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
 WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
