@@ -499,4 +499,9 @@ def test_served_window_matrix_records_actual_bytes_and_detects_table_changes(mon
                         replace(export_module.E2M1X2_SERVED_RECIPE, window_bits=12))
     changed = module.encode_served_window_case(case)
     assert changed["bytes"] != kept["bytes"]
-    assert changed["decode"] != kept["decode"]
+    # A different table width can preserve decoded values at the cap.
+    # The byte audit must detect the table cost, not require a quality change.
+    from test_served_e2m1_window import decode_window_bytes
+    import torch
+    decoded = torch.frombuffer(bytearray(changed["decode"]), dtype=torch.float32).reshape(32, 32)
+    assert torch.equal(decode_window_bytes(changed["bytes"]), decoded)
