@@ -162,3 +162,46 @@ It reports no skips and no uncollected modules on Torch 2.11.0+cpu, with no CUDA
 Selector correction: the retained PB receipt reports FULL because its unexcluded stamp is not a source path.
 ts-integrator reports a clean-worktree narrowed result with 433 tests. The earlier FULL statement describes that stamped receipt only.
 The integration coordinator still owns one full suite on the merge result. The KILL measurement and GPU numerical evidence remain unchanged.
+
+## Offline capture correction and eligibility proofs
+
+The pool review at `49c07e53` found a stale offline BF16 mirror and missing eligibility controls.
+The mirror now includes the decode-once pair without Torch, vLLM or Tessera imports.
+The contract controls cover residency, regime and dense extension lanes separately.
+
+Each negative probe removes one production condition in its own before tree:
+
+| Missing condition | Action | Observed failure |
+|---|---|---|
+| Offline BF16 pair | `6e7276f492bc86e344af80dbb77051e81d90abdc4a94970b7454d1e8b5b40951` | QualificationRefused names the BF16 decode-once pair. |
+| Residency filter | `c6461e6e451efe1d236cccbf370b8527c56b486dbd74cc92dde8c98c3a5a6030` | AssertionError at test_serving_contract.py:808 exposes the pair in streamed mode. |
+| Regime filter | `06dcf3fd0745260a4d96066cef216fe7e988cc30b723475b79c10536f76edbd6` | AssertionError at test_serving_contract.py:827 exposes the batch-only pair in decode mode. |
+| Dense extension filter | `0184168efb7f6535c3e51a61cca49410642c3ceeb3db9e1bb58aeaa0210cf1f9` | AssertionError at test_serving_contract.py:841 exposes the fused pair with no extension lane. |
+
+These actions exit one on dl380g10. Each has no skips or uncollected modules and reports no CUDA device.
+They are deliberate negative probes, not failed measurements. Their terminal logs exist; their failed actions publish no CAS receipt.
+
+The mixed-M regression then exposed a second defect in the actual capture consumer.
+Action `d4c9b64166041cec39246d386eb083ff25efa45d64e6a756d313994647c6a15a` passes 146 cases and fails that case.
+Its pre-fix line is:
+
+`QualificationRefused: 2 modules dispatched on bf16_unquantized (TESSERA_BF16/dense), the artifact assigns 1`
+
+The parser already grouped counts by M, but the merger summed each pair's independent maximum.
+The corrected merger sums admissible pairs within each M, then takes the largest M group.
+It preserves launch totals, per-pair records, name checks and unnamed-module refusals.
+
+Action `29c74dbee65289a0f6f8623c6a3a036ab6078518fa408783e16bb20a67a6f94c` exits zero and passes all 147 cases.
+Its population is Torch 2.11.0+cpu on dl380g10, with four worksteal workers, zero skips and zero uncollected modules.
+Its skip-reason map is empty. It has no CUDA device and records zero device allocations.
+The surface digest is `995e0d7643141636e287360816309b8b3156b379b43a2e1fd952e35d2965c0a5`.
+
+Direct API smoke `b875600659abe6eb138ddfd109194070ce3cc6d5d78379d33930bf74f4620853` exits zero.
+It reports one named module and two launches across M1 window and M2048 decode-once entries.
+This synthetic metadata control proves the consumer path; it does not qualify a model serve.
+
+Hosted pure passes on source head `46291a86fe1a40be537ab1462beecb0084ce56fa` in run `37574845112`.
+The hosted interpreter has no Torch or CUDA. Its log records the complete skip histogram and 161 uncollected modules.
+The code correction leaves the measured kernel, scratch size and KILL result unchanged.
+The record preserves two failed revisions. The CEO holds custody and keeps the executive engineer as owner.
+

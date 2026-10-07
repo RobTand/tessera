@@ -186,17 +186,12 @@ def _pair_key(symbol, decoder):
 
 
 def _trace_launches(route_trace, contract, *, policy=None, kind=None):
-    """``{"<symbol> / <decoder>": {...}}`` for one activation contract.
+    """Return per-pair capture totals and the raw per-M group counts.
 
-    Each value carries ``symbol``, ``decoder``, ``launches`` (summed over
-    every entry), ``entries``, ``modules`` (the per-M-group maximum described
-    in the module docstring), ``module_names`` (the union, sorted) and
-    ``unnamed_modules`` (the per-M-group maximum).  ``policy``, when given,
-    is the ``<family>:<mode>`` stamp every entry on the contract must carry;
-    another policy on the same contract is refused, because a contract served
-    under a residency the configuration did not name is not the serve the
-    configuration describes. ``kind`` restricts the counted dispatches after
-    policy validation; the caller separately checks the complete kind roster.
+    Each total keeps the symbol, decoder, launch sum and entry count.
+    Module and unnamed-module counts are maxima within each pair.
+    The module name list contains the sorted union of names.
+    Validate each entry's policy before the optional kind filter.
     """
     entries = route_trace.get("entries")
     if entries is None:

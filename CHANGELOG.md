@@ -9,6 +9,8 @@ The T-8 load-time lane and folded T-16 arithmetic remain unchanged.
 No default, serving pin, seal or served cell changes.
 
 Replace the hardcoded launch rosters with dynamic table-to-dispatch and attestation-partition guards. Keep the #538 consistency check.
+The offline capture consumer counts a module once when its launch pair changes between M groups.
+Separate controls prove residency, regime and dense extension eligibility.
 
 The fixed KDA screen reports KILL: 5.798336 ms at M2048 against 2.678376 ms for the same-wire BF16 control.
 Decode alone takes 3.087368 ms. The shared shape scratch occupies 103022592 bytes. Do not select this prototype for service.
