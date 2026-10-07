@@ -41,6 +41,13 @@ def test_bf16_kda_members_have_one_consumer_ignore_and_exact_bytes(tmp_path, mon
                torch.arange(1024).reshape(32, 32).bfloat16() for role in roles}
     down = prefix + "mlp.down_proj.weight"
     tensors[down] = torch.zeros(32, 32, dtype=torch.bfloat16)
+    import copy
+    from tessera.serving.contract import construction_entry
+
+    # This fixture declares a small MLP output partition, not the production model.
+    small_runtime = copy.deepcopy(construction_entry(["Glm5NextForConditionalGeneration"]))
+    small_runtime["output_sizes"]["language_model.model.layers.*.mlp.down_proj"] = [32]
+    monkeypatch.setattr(exporter, "construction_entry", lambda _architectures: small_runtime)
     out = _run(tmp_path, monkeypatch, tensors,
                {name: "PASSTHROUGH" for name in tensors if name != down})
     config = json.loads((out / "config.json").read_text())["quantization_config"]
