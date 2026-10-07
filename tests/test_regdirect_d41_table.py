@@ -59,3 +59,20 @@ def test_the_prefetch_depth_is_the_one_the_run_recorded_for_each_rate():
         d41_table.prefetch_depth({"meta": {}}, [5], "run")
     with pytest.raises(ValueError, match="decode depth"):
         d41_table.prefetch_depth({"meta": {"decode_depth": {"5": 3}}}, [5, 6], "run")
+
+
+def test_quality_rows_come_from_the_table_then_each_rung_quality_file_once(tmp_path):
+    import json
+    table, extra = tmp_path / "table.json", tmp_path / "extra.json"
+    table.write_text(json.dumps({"rungs": [{"rung": 768, "quality": {"measurement_status": "measured"}}]}))
+    extra.write_text(json.dumps({"schema": "tessera.rung_quality.v1",
+                                 "rungs": {"1280": {"measurement_status": "measured"}}}))
+    src = d41_table.quality_sources(str(table), [str(extra)])
+    assert src == {768: ({"measurement_status": "measured"}, str(table)),
+                   1280: ({"measurement_status": "measured"}, str(extra))}
+    with pytest.raises(ValueError, match="rung 1280 already has quality"):
+        d41_table.quality_sources(str(table), [str(extra), str(extra)])
+    wrong = tmp_path / "wrong.json"
+    wrong.write_text(json.dumps({"schema": "other", "rungs": {}}))
+    with pytest.raises(ValueError, match="tessera.rung_quality.v1"):
+        d41_table.quality_sources(str(table), [str(wrong)])
