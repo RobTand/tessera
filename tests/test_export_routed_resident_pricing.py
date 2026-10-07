@@ -309,6 +309,17 @@ def _accepts_fit_flag() -> bool:
     return "--fit-tp-size" in inspect.getsource(export)
 
 
+#: The fixture's miniature MLP rows, as partition lists. The pinned runtime
+#: attests production sizes; the gate pairs roles with them, so the fixture
+#: states its own lists here. Shared experts are 128-wide in this fixture.
+_FIXTURE_OUTPUT_SIZES = {
+    "language_model.model.layers.*.mlp.down_proj": [128],
+    "language_model.model.layers.*.mlp.gate_up_proj": [256, 256],
+    "language_model.model.layers.*.mlp.shared_experts.down_proj": [128],
+    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [128, 128],
+}
+
+
 @pytest.fixture(scope="module")
 def exported(tmp_path_factory):
     """One CPU export of a 2-expert 128x128 E4M3 stack at q256 1024, fit at TP2."""
@@ -327,6 +338,19 @@ def exported(tmp_path_factory):
     # lacks the per-rank block, which is the failure the line-item test names.
     fit = ("--fit-tp-size", str(FIT_TP)) if _accepts_fit_flag() else ()
     with pytest.MonkeyPatch.context() as monkeypatch:
+        import copy
+        from tessera.serving.contract import construction_entry as live_entry
+        real = live_entry
+
+        def _entry(architectures, contract=None):
+            entry = real(architectures) if contract is None else real(architectures, contract)
+            if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
+                return entry
+            entry = copy.deepcopy(entry)
+            entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
+            return entry
+
+        monkeypatch.setattr(export, "construction_entry", _entry)
         out = moe_write._export(root, monkeypatch, tensors, plan, "--device", "cpu",
                                 *fit, config=config)
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
