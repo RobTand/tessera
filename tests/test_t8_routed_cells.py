@@ -115,7 +115,7 @@ def test_the_committed_r768_census_carries_the_admission_evidence():
 
     doc = _census()
     assert doc["table_version"] == 9
-    assert doc["kernel_build"] == "e4m3mma-sm_121-d12fba61b3467f3e"
+    assert doc["kernel_build"]["id"] == "e4m3mma-sm_121-d12fba61b3467f3e"
     rung = doc["rung"]
     assert rung["rung"] == 768
     assert rung["measurement_status"] == "measured" and rung["supported"] is True
