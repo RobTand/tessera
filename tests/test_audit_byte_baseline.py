@@ -436,6 +436,16 @@ def test_resident_matrix_reaches_piece_major_and_pins_wire_and_bijection():
     assert result['r4-two-tiles/piece_major_words'] != result['r4-two-tiles/original_words']
 
 
+def test_resident_fragment_matrix_preserves_served_bytes():
+    module = _load()
+    result = module.fragment_hashes()
+    for group in ("gate_up", "down"):
+        for rate in (3, 4):
+            label = f"fragment-{group}-r{rate}"
+            assert result[label + "/decode"] == result[label + "/reference"]
+            assert result[label + "/body"] == result[label + "/restored_body"]
+
+
 def test_the_batch_matrix_joins_the_exporter_shape(monkeypatch):
     """The joined fresh encode (``--encode-batch``) is a condition neither
     other encode matrix reaches: ``encode_linears_planes`` at B>1 with the

@@ -657,6 +657,55 @@ def resident_hashes() -> dict:
     return {label + "/" + key: hashlib.sha256(value).hexdigest() for key, value in payloads.items()}
 
 
+def fragment_hashes() -> dict:
+    """Preserve encoded BODY bytes and served E4M3 bytes in fragment order."""
+    from tessera.decode import replay_window
+    from tessera.encode import encode_unit
+    from tessera.export import _plan_for
+    from tessera.fragment_wire import decode_fragment, repack_fragment
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+    from tessera.wire import pack_body
+
+    result = {}
+    for rate in (3, 4):
+        recipe = wire_recipe(E4M3_GRID, rate * 256)
+        rates, forests = _plan_for(E4M3_GRID, rate * 256, 256, recipe.body, recipe.channel_sigma)
+        generator = torch.Generator().manual_seed(rate + 731)
+        unit = encode_unit(torch.randn(256, 256, generator=generator) * 0.02, forests, rates,
+                           completion=0, span=recipe.span, scale_plane=recipe.scale_plane,
+                           body=recipe.body, window_bits=recipe.window_bits,
+                           window_seed=recipe.window_seed, window_sigma=recipe.window_sigma,
+                           channel_sigma=recipe.channel_sigma, scale_refit=2)
+        _m, _r, blob = build_unit_artifact(unit, "fragment-audit", forests, rate * 256, ConvCode())
+        parsed = parse_unit_artifact(blob)
+        native = torch.tensor(E4M3_GRID.native, dtype=torch.uint8)
+        table = native[parsed.unit.window_codes.long()]
+        body = pack_body(parsed.unit.body_bits, rates)
+        state = replay_window(parsed.unit.body_bits, 14, rate)
+        for group, count in (("gate_up", 2), ("down", 1)):
+            label = f"fragment-{group}-r{rate}"
+            fragment = repack_fragment((body,) * count, rates, rows=256, cols=256,
+                                       projection_group=group)
+            decoded = decode_fragment(fragment, table.repeat(count, 1))
+            expected = table[state].repeat(count, 1)
+            # The low R state bits are exactly the current BODY code.
+            identity = (torch.arange(1 << 14) & 255).to(torch.uint8).repeat(count, 1)
+            restored = decode_fragment(fragment, identity) & ((1 << rate) - 1)
+            restored_body = b"".join(pack_body(b, rates) for b in restored.reshape(count, 256, 256))
+            steps = 8 if count == 2 else 4
+            expected_words = steps * 8 * rate + 2 * steps * 8 * 32 * rate
+            if fragment.words.numel() != expected_words:
+                raise AssertionError("fragment footprint differs from data plus compact history")
+            payloads = {"body": body * count, "restored_body": restored_body,
+                        "decode": decoded.numpy().tobytes(), "reference": expected.numpy().tobytes(),
+                        "fragment_words": fragment.words.numpy().tobytes(),
+                        "permutation": fragment.perm.numpy().tobytes()}
+            for key, payload in payloads.items():
+                result[label + "/" + key] = hashlib.sha256(payload).hexdigest()
+    return result
+
+
 def decode_hashes() -> dict:
     from tessera.unit_artifact import read_unit_artifact  # late: keeps import cheap
 
@@ -707,6 +756,7 @@ def main() -> int:
         "layout": layout_hashes(),
         "release": release_hashes(),
         "resident": resident_hashes(),
+        "fragment": fragment_hashes(),
         "batch": batch_hashes(),
         "substack": substack_hashes(),
     }
