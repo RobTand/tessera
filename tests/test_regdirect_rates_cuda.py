@@ -61,6 +61,8 @@ def test_the_kernel_decodes_each_rate_bitwise(mode, profile, m):
     stack.launch(g, x, a_scale, offsets, order, rw, item_off, 0, E, out, part, arrive, top_k=TOP_K,
                  a_row_mode=0 if mode == 0 else 1, mul_weight=mode == 2, limit=10.0, dump=dump)
     torch.cuda.synchronize()
-    for e in range(E):
+    routed = [e for e in range(E) if int(counts[e]) > 0]     # the kernel dumps only the experts it runs
+    assert routed, "the routing reaches no expert"
+    for e in routed:
         want = reference_decode(planes, e)
         assert torch.equal(dump[e], want), f"expert {e}: {(dump[e] != want).sum().item()} bytes differ"
