@@ -392,15 +392,21 @@ class BodyAwareGrammar(unittest.TestCase):
 if __name__=='__main__': unittest.main()
 
 
-def _rd_geometry(rate):
+def _rd_widths(q):
+    """The run widths a k-step rung q256 mixes: one whole rate, or the two that bracket it."""
+    low, remainder = divmod(q, 256)
+    return [low, low + 1] if remainder else [low]
+
+
+def _rd_geometry(rates):
     """Actual register-direct facts (eng-regdirect-build stage 1): fragment-order units of
     R words x 32 lanes, a register prefetch ring, the 16 KiB E4M3 table in shared memory."""
-    return {"bits_per_256_weight_tile": {"numerator": 256 * rate, "denominator": 1},
+    return {"bits_per_256_weight_tile": {"numerator": 256 * rates[0], "denominator": 1},
             "alignment": {"kind": "fragment_order", "owner": "tessera.fragment_wire", "lanes": 32,
-                          "history_lanes": 8, "unit_words": [32 * rate], "slot_words": None},
+                          "history_lanes": 8, "unit_words": [32 * r for r in rates], "slot_words": None},
             "shared_memory": {"kind": "used", "requested_bytes": 16384, "available_bytes": 101376, "fits": True},
             "register_pressure": {"compiler": "cuda_ptxas", "REG": 128, "STACK": 0, "LOCAL": 0, "SHARED": 0},
-            "decode_width": {"window_bits": 14, "value_bits": 8, "run_widths": [rate], "word_stages": None,
+            "decode_width": {"window_bits": 14, "value_bits": 8, "run_widths": list(rates), "word_stages": None,
                              "kstep_columns": 32, "prefetch_depth": 4, "superblock_routes": 8, "k_parts": 3},
             "body_kind": "window", "decoder_kind": "register_direct", "decoder_owner": "tessera.regdirect_routed",
             "execution_scope": "register_direct_fragment",
@@ -414,6 +420,7 @@ def fixture_register_direct(steps=None, rungs=(768, 770), shapes=("gate_up",)):
     build = {"id": "regdirect-sm_121", "source_commit": "abc", "library_variant": "regdirect",
              "architecture": "sm_121", "activation_contract": "fp8", "metadata": {"serving_qualified": False}}
     cells = [{"cell_id": f"routed:{s}:M1", "kernel_kind": "routed", "shape_id": s, "M": 1} for s in shapes]
+    dims = {"gate_up": (1024, 4096), "down": (4096, 1024)}
     scope = {"rung_min": rungs[0], "rung_max": rungs[-1], "grid_step_q256": rungs[1] - rungs[0],
              "grid_owner": "tessera.grammar k-step quota", "required_cells": cells}
     if steps is not None:
@@ -427,14 +434,15 @@ def fixture_register_direct(steps=None, rungs=(768, 770), shapes=("gate_up",)):
             if (q - rungs[0]) % step:
                 continue
             measured.append({**cell, "measurement_status": "measured", "kernel_time_us": 100.0 + q - 768,
-                             "kernel_path": "rd_decode<0, false>", "geometry": _rd_geometry(3 if q < 1024 else 4),
-                             "evidence": dict(evidence), "pass_times_us": [100.0 + q - 768] * 2,
+                             "kernel_path": "rd_decode<0, false>", "geometry": _rd_geometry(_rd_widths(q)),
+                             "evidence": dict(evidence, rows=dims[cell["shape_id"]][0], columns=dims[cell["shape_id"]][1]),
+                             "pass_times_us": [100.0 + q - 768] * 2,
                              "measurement_build_id": build["id"]})
         quality = {"measurement_status": "measured", "source_kind": "actual_sampled_expert_weights", "device": "cpu",
                    "anomaly_flags": [], "samples": [{"source_sha256": "actual", "source_squared_norm": 2.0,
                                                     "relative_sse": .1, "exact_bytes": 3}],
                    "scope": {"format": "TESSERA_E4M3_K1", "grid": "E4M3", "arity": 1, "rung": q,
-                             "recipe": _rd_geometry(3)["recipe"], "kernel_kinds": ["routed"],
+                             "recipe": _rd_geometry([3])["recipe"], "kernel_kinds": ["routed"],
                              "owner": "tessera.export.encode_linear"}}
         rows.append({"rung": q, "measurement_status": "measured", "supported": True, "anomaly_flags": [],
                      "observations": [], "excluded": False, "dominating_rung": None, "measurements": measured,
@@ -566,7 +574,9 @@ class RegisterDirectPublishedV3(unittest.TestCase):
         t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
         t["schema"] = "fleet.rung_allowability.v3"
         t["performant_policy"] = {"kind": "whole_bit_per_structure"}
-        t["geometry_classes"] = []
+        # A producer fills the classes from its rows through the owner; the validator requires equality.
+        t["geometry_classes"] = ra.measured_geometry_classes(t)
+        self.assertEqual(len(t["geometry_classes"]), 4)      # pure and mixed, for each of the two shapes
         published = json.loads((Path(__file__).resolve().parents[1] / "docs" / "schema"
                                 / "allowable-rung-table.v3.schema.json").read_text())
         ra._structure(t, published)
