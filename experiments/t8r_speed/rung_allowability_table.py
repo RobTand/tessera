@@ -169,13 +169,13 @@ def merge_index(index, format_name, build_id, version, relative, table):
     return validate_index(index)
 
 
-def activate_published_index(publication):
+def activate_published_index(publication, candidate_name="index.v2-candidate.json"):
     """Select the staged immutable versions; never rerun their harvest."""
     import copy,fcntl,os
     publication=Path(publication)
     with (publication/'.publication.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX)
-        selected=publication/'index.json';candidate_path=publication/'index.v2-candidate.json'
+        selected=publication/"index.json";candidate_path=publication/candidate_name
         current=json.loads(selected.read_text())
         candidate=json.loads(candidate_path.read_text())
         validate_index(current);validate_index(candidate)
@@ -212,6 +212,150 @@ def activate_published_index(publication):
 
 
 
+
+def apply_reader_findings(row, findings, format_name, kernel_shas):
+    """Keep source-specific correctness findings on both flag sets and observations."""
+    for finding in findings:
+        if finding['format'] != format_name or finding['kernel_sha'] not in kernel_shas:
+            continue
+        flags = sorted(set(row['anomaly_flags']) | {finding['anomaly_flag']})
+        row['anomaly_flags'] = flags
+        row['quality']['anomaly_flags'] = flags
+        observation = {'kind': 'reader_correctness_finding', 'blocking': True, 'exclusion_basis': False, 'finding': finding}
+        if observation not in row['observations']:
+            row['observations'].append(observation)
+
+
+def performance_increment(table, raw_inputs, version, findings=()):
+    """Upgrade a newly loaded table, preserve history, append only actual cells."""
+    from tessera.rung_allowability import PERFORMANT_POLICY, measured_geometry_classes
+    validate_table(table)
+    original_schema = table['schema']
+    base, arity_text = table['format'].removeprefix('TESSERA_').rsplit('_K', 1)
+    from tessera.alphabet import tuple_grid
+    grid = grid_for_name(base)
+    if int(arity_text) != 1:
+        grid = tuple_grid(grid, int(arity_text))
+    by_q = {row['rung']: row for row in table['rungs']}
+    for row in table['rungs']:
+        if row['excluded']:
+            row['observations'].append({'kind': 'historical_exclusion', 'dominating_rung': row['dominating_rung'], 'evidence': row['dominance_evidence']})
+        row.update(excluded=False, dominating_rung=None, dominance_evidence=[])
+        if original_schema == 'fleet.rung_allowability.v1':
+            for cell in row['measurements']:
+                if cell['measurement_status'] == 'measured':
+                    head = {'q256': row['rung'], 'kind': cell['kernel_kind'], 'body_kind': 'WINDOW'}
+                    cell['geometry'] = body_geometry(head, {}, cell['geometry'], {'library': table['kernel_build']['library_variant']}, grid)
+    required = {cell['cell_id']: cell for cell in table['scope']['required_cells']}
+    shapes = {(shape['kernel_kind'], shape['shape_id']): shape for shape in table['scope']['shapes']}
+    imported, ignored = 0, []
+    for input_path in raw_inputs:
+        data = json.loads(Path(input_path).read_text())
+        meta = data['meta']
+        if meta.get("format", FORMAT) != table["format"]:
+            ignored.append(str(input_path))
+            continue
+        if not meta.get('end_unix') or not meta.get('pb_action'):
+            raise ValueError('Incomplete actual geometry input')
+        signature = {key: meta.get(key) for key in ('kernel_sha', 'architecture', 'library', 'activation_contract', 'image', 'torch', 'decode_sources')}
+        actual_build = meta['library'] + '-' + meta['architecture'] + '-' + hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()[:16]
+        if actual_build != table['kernel_build']['id']:
+            from tessera.dev_mode import seal_check
+            seal_check('historical geometry build label', table['kernel_build']['id'], actual_build, where=str(input_path))
+        if meta['architecture'] != table['kernel_build']['architecture'] or meta['library'] != table['kernel_build']['library_variant'] or meta['activation_contract'] != table['kernel_build']['activation_contract']:
+            raise ValueError('Actual architecture, decoder variant or activation scope differs; publish a separate scoped table')
+        for head in data['groups'].values():
+            if head.get('kind') != 'dense':
+                continue
+            q = head['q256']
+            if q not in by_q:
+                raise ValueError('Actual measured rung is outside this table census')
+            name, rows, columns = head['shape'], head['rows'], head['cols']
+            shape = {'shape_id': name, 'kernel_kind': 'dense', 'rows': rows, 'columns': columns, 'mode': 2}
+            shape_key = ('dense', name)
+            if shape_key in shapes and shapes[shape_key] != shape:
+                raise ValueError('Same shape identifier has different current dimensions')
+            shapes[shape_key] = shape
+            row = by_q[q]
+            cells = {cell['cell_id']: cell for cell in row['measurements']}
+            for M_text, observed in head['cells'].items():
+                key = {'cell_id': 'dense:' + name + ':M' + M_text, 'kernel_kind': 'dense', 'shape_id': name, 'M': int(M_text)}
+                required[key['cell_id']] = key
+                current = measurement(Path(input_path), data, head, observed, key, table['kernel_build']['id'], columns, rows, grid)
+                current['evidence']['observed_measurement_build_id'] = actual_build
+                # Failed/unsupported cells remain negative evidence, not borrowed timing.
+                if key['cell_id'] in cells:
+                    if cells[key['cell_id']] != current:
+                        row['observations'].append({'kind': 'previous_actual_measurement', 'measurement': cells[key['cell_id']]})
+                cells[key['cell_id']] = current
+                imported += 1
+            row['measurements'] = list(cells.values())
+    table['scope']['required_cells'] = list(required.values())
+    table['scope']['shapes'] = list(shapes.values())
+    for row in table['rungs']:
+        observed = {cell['cell_id']: cell for cell in row['measurements']}
+        complete = set(observed) == set(required) and all(cell['measurement_status'] == 'measured' for cell in observed.values())
+        if complete and row["measurement_status"] not in ("failed", "unsupported") and row["supported"] is not False:
+            row.update(measurement_status='measured', supported=True)
+        elif row['measurement_status'] == 'measured':
+            row['measurement_status'] = 'pending'
+    source_sha = table['kernel_build'].get('metadata', {}).get('observed_signature', {}).get('kernel_sha')
+    for row in table['rungs']:
+        kernel_shas = {cell['evidence'].get('kernel_source_sha256') for cell in row['measurements']}
+        kernel_shas.add(source_sha)
+        kernel_shas.discard(None)
+        apply_reader_findings(row, findings, table['format'], kernel_shas)
+    table.update(schema='fleet.rung_allowability.v3', table_version=version, generated_at=datetime.now(timezone.utc).isoformat(), performant_policy=dict(PERFORMANT_POLICY))
+    table['table_status'] = 'complete' if all(row['measurement_status'] != 'pending' for row in table['rungs']) else 'partial'
+    table['geometry_classes'] = measured_geometry_classes(table)
+    table['evidence']['performance_increment'] = {'input_schema': original_schema, 'actual_cells_imported': imported, 'ignored_other_format_inputs': ignored,
+        'scope': 'Actual per-cell performance evidence, not original-weight numerical, assembled module, tensor-parallel collective or serving qualification. Quality samples remain historical telemetry.'}
+    table['evidence']['summary'] = dict(Counter(row['measurement_status'] for row in table['rungs']))
+    return validate_table(table)
+
+
+
+def publish_table(table, args):
+    """One immutable writer for fresh harvests and class-only metadata increments."""
+    validate_table(table)
+    import jsonschema
+    jsonschema.Draft202012Validator(json.loads(Path(args.schema).read_text()), format_checker=jsonschema.FormatChecker()).validate(table)
+    format_name, build_id = table['format'], table['kernel_build']['id']
+    rows = table['rungs']
+    relative=f'{format_name}/{build_id}/v{args.version:04d}.json'
+    index=json.loads(Path(args.index).read_text()) if args.index else {'schema':'fleet.rung_allowability.index.v1','formats':{}}
+    merge_index(index,format_name,build_id,args.version,relative,table)
+    validate_index(index)
+    jsonschema.Draft202012Validator(json.loads(Path(args.index_schema).read_text())).validate(index)
+    out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
+    with (out/'table.json').open('x') as h:json.dump(table,h,indent=1,allow_nan=False)
+    with (out/'index.json').open('x') as h:json.dump(index,h,indent=2,allow_nan=False)
+    if args.publish_root:
+        import fcntl
+        publication=Path(args.publish_root)
+        publication.mkdir(parents=True,exist_ok=True)
+        with (publication/'.publication.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            selected_path=publication/'index.json'
+            current_path=publication/args.candidate_index_name
+            source_path=current_path if current_path.exists() else selected_path
+            current=json.loads(source_path.read_text()) if source_path.exists() else {'schema':'fleet.rung_allowability.index.v2','formats':{}}
+            merge_index(current,format_name,build_id,args.version,relative,table)
+            destination=publication/relative
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            with destination.open('x') as stream:json.dump(table,stream,indent=1,allow_nan=False)
+            temporary=current_path.with_suffix('.tmp')
+            temporary.write_text(json.dumps(current,indent=2,allow_nan=False))
+            temporary.replace(current_path)
+    report={'status':'schema_and_semantic_validation_passed','table_path':relative,'table_status':table['table_status'],'kernel_build_id':build_id,'summary':dict(Counter(row['measurement_status'] for row in rows)),'excluded':[row['rung'] for row in rows if row['excluded']],'action_key':__import__('os').environ.get('PRISMABUILD_ACTION_KEY')}
+    report['cell_summary']=dict(Counter(m['measurement_status'] for row in rows for m in row['measurements']))
+    report['quality_rungs_measured']=sum(row['quality'].get('measurement_status')=='measured' for row in rows)
+    report['geometry_classes']=len(table.get('geometry_classes', []))
+    (out/'validation.json').write_text(json.dumps(report,indent=2))
+    print(json.dumps(report),flush=True)
+
+
+
 def main():
     ap=argparse.ArgumentParser()
     ap.add_argument('--root',required=True)
@@ -226,15 +370,22 @@ def main():
     ap.add_argument('--catalog',help='family owner catalog with exact recipes and concrete path refusals')
     ap.add_argument('--reader-findings',help='explicit source-specific correctness findings; existing anomaly holds remain canonical')
     ap.add_argument('--quality-root',help='actual producer-scoped quality outputs, without retagging unscoped history')
+    ap.add_argument("--input-table", help="existing immutable table for a scoped performance-policy increment")
+    ap.add_argument("--measurement-input", action="append", default=[], help="completed raw geometry JSON, normalized by this existing producer")
+    ap.add_argument("--candidate-index-name", choices=("index.v2-candidate.json", "index.v3-candidate.json"), default="index.v2-candidate.json")
     args=ap.parse_args()
     if args.activate_index:
         if not args.publish_root:raise ValueError('index activation needs publication root')
-        report=activate_published_index(args.publish_root)
+        report=activate_published_index(args.publish_root, args.candidate_index_name)
         print(json.dumps(report),flush=True)
+        return
+    findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
+    if args.input_table:
+        table = performance_increment(json.loads(Path(args.input_table).read_text()), args.measurement_input, args.version, findings)
+        publish_table(table, args)
         return
     root=Path(args.root)
     format_name=args.format
-    findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
     match=re.fullmatch(r'TESSERA_([A-Z0-9]+)_K(\d+)',format_name)
     if not match:raise ValueError('expected family format name, without a rung suffix')
     base,arity=match[1],int(match[2])
@@ -306,12 +457,7 @@ def main():
         row['measurements']=[candidates[(q,k['cell_id'])][1] for k in required if (q,k['cell_id']) in candidates]
         row['quality']=quality.get('rungs',{}).get(str(q),{'measurement_status':'pending'})
         row['anomaly_flags']=row['quality'].get('anomaly_flags',[])
-        for finding in findings:
-            if finding['format']==format_name and finding['kernel_sha']==meta['kernel_sha']:
-                flags=sorted(set(row['anomaly_flags'])|{finding['anomaly_flag']})
-                row['anomaly_flags']=flags
-                row['quality']['anomaly_flags']=flags
-                row['observations'].append({'kind':'reader_correctness_finding','blocking':True,'exclusion_basis':False,'finding':finding})
+        apply_reader_findings(row, findings, format_name, {meta['kernel_sha']})
         row['lineage']={'quality_files':[str(p) for p in quality_paths],'geometry_files':sorted({m['evidence']['geometry_file'] for m in row['measurements']})}
         if len(row['measurements'])==len(required) and all(m['measurement_status']=='measured' for m in row['measurements']) and row['quality'].get('measurement_status')=='measured':
             row['measurement_status']='measured';row['supported']=True
@@ -353,40 +499,7 @@ def main():
     table['evidence']['compiler_resource_lookup_lineage']={'resource_source':'Actual cuobjdump matched to torch.profiler kernel prefixes, or actual Triton CompiledKernel returned by the measured launch','actual_measured_sources':build['metadata']['actual_source_snapshots'],'no_cross_family_inheritance':True}
     table["evidence"]["source_cohort_scope"]="Source/variant/architecture/activation/image/compiler cohort; exact loaded binary SHA-256 retained in every cell. Different snapshot or binary identities are lineage, not a new seal."
     table["evidence"]["power_series_scope"]="Per-cell NVML samples plus both-Spark Netdata power series; utilization percentages are not used to diagnose saturation."
-    validate_table(table)
-    import jsonschema
-    jsonschema.Draft202012Validator(json.loads(Path(args.schema).read_text()), format_checker=jsonschema.FormatChecker()).validate(table)
-    relative=f'{format_name}/{build_id}/v{args.version:04d}.json'
-    index=json.loads(Path(args.index).read_text()) if args.index else {'schema':'fleet.rung_allowability.index.v1','formats':{}}
-    merge_index(index,format_name,build_id,args.version,relative,table)
-    validate_index(index)
-    jsonschema.Draft202012Validator(json.loads(Path(args.index_schema).read_text())).validate(index)
-    out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
-    with (out/'table.json').open('x') as h:json.dump(table,h,indent=1,allow_nan=False)
-    with (out/'index.json').open('x') as h:json.dump(index,h,indent=2,allow_nan=False)
-    if args.publish_root:
-        import fcntl
-        publication=Path(args.publish_root)
-        publication.mkdir(parents=True,exist_ok=True)
-        with (publication/'.publication.lock').open('a') as lock:
-            fcntl.flock(lock,fcntl.LOCK_EX)
-            selected_path=publication/'index.json'
-            current_path=publication/'index.v2-candidate.json'
-            source_path=current_path if current_path.exists() else selected_path
-            current=json.loads(source_path.read_text()) if source_path.exists() else {'schema':'fleet.rung_allowability.index.v2','formats':{}}
-            merge_index(current,format_name,build_id,args.version,relative,table)
-            destination=publication/relative
-            destination.parent.mkdir(parents=True,exist_ok=True)
-            with destination.open('x') as stream:json.dump(table,stream,indent=1,allow_nan=False)
-            temporary=current_path.with_suffix('.tmp')
-            temporary.write_text(json.dumps(current,indent=2,allow_nan=False))
-            temporary.replace(current_path)
-            index=current
-    report={'status':'schema_and_semantic_validation_passed','table_path':relative,'table_status':table['table_status'],'kernel_build_id':build_id,'summary':table['evidence']['summary'],'excluded':[r['rung'] for r in rows if r['excluded']],'action_key':__import__('os').environ.get('PRISMABUILD_ACTION_KEY')}
-    report['cell_summary']=dict(Counter(m['measurement_status'] for row in rows for m in row['measurements']))
-    report['quality_rungs_measured']=sum(row['quality'].get('measurement_status')=='measured' for row in rows)
-    (out/'validation.json').write_text(json.dumps(report,indent=2))
-    print(json.dumps(report),flush=True)
+    publish_table(table, args)
 
 
 if __name__=='__main__':main()

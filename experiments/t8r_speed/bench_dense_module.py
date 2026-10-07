@@ -10,7 +10,8 @@ The timed call is ``module.apply`` on the route's own per-token FP8 activation
 Modules (TP2 per-rank shapes of GLM-5.3-Flash):
 
 - ``kda_in``: the KDA input module ``in_proj_qkvbfg_a``: q, k, v at 4096 rows,
-  b 32, f_a 64, g_a 64 (12448 rows) over K = 4096.
+  b 32, f_a 128, g_a 128 (12576 rows) over K = 4096 (tessera#1020).
+  Older 12448-row times are partial-shape history.
 - ``o_proj``: KDA ``o_proj``, one 4096-row role over K = 4096 (the N % 128
   control: a shape the N-tail change leaves on the same launch).
 - ``lm_head``: the vocab-parallel LM head, one 77440-row role (154880 / 2)
@@ -19,7 +20,7 @@ Modules (TP2 per-rank shapes of GLM-5.3-Flash):
   to them before the head), so a prefill of 8192 tokens is not one of its
   shapes; time it at decode batch sizes.
 - One role each, for a K-split sweep of one geometry per launch: KDA
-  ``q_proj`` (4096 x 4096), ``b_proj`` (32 x 4096), ``f_a_proj`` (64 x 4096),
+  ``q_proj`` (4096 x 4096), ``b_proj`` (32 x 4096), ``f_a_proj`` (128 x 4096),
   ``f_b_proj`` (4096 x 128); MLA ``q_a_proj`` (1536 x 4096),
   ``kv_a_proj_with_mqa`` (512 x 4096), ``q_b_proj`` (8192 x 1536), read from
   ``--mla-layer``.
@@ -75,12 +76,12 @@ READ_GBPS = 232.2            # GB10 measured read rate (docs/measurements/2026-0
 MMA_E4M3_TFLOPS = 246.5      # sm_121 mma.sync E4M3 peak (same note)
 MODULES = {
     "kda_in": ([("q_proj", 4096), ("k_proj", 4096), ("v_proj", 4096), ("b_proj", 32),
-                ("f_a_proj", 64), ("g_a_proj", 64)], 4096),
+                ("f_a_proj", 128), ("g_a_proj", 128)], 4096),
     "o_proj": ([("o_proj", 4096)], 4096),
     # One role each, so a K-split sweep times one geometry per launch.
     "q_proj": ([("q_proj", 4096)], 4096),
     "b_proj": ([("b_proj", 32)], 4096),
-    "f_a_proj": ([("f_a_proj", 64)], 4096),
+    "f_a_proj": ([("f_a_proj", 128)], 4096),
     "f_b_proj": ([("f_b_proj", 4096)], 128),
     # MLA (a full-attention layer, ``--mla-layer``).
     "q_a_proj": ([("q_a_proj", 1536)], 4096),

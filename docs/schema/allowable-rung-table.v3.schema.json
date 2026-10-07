@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "fleet.rung_allowability.v2",
+  "$id": "fleet.rung_allowability.v3",
   "title": "D41 measured rung allowability table",
   "type": "object",
   "required": [
@@ -11,11 +11,13 @@
     "kernel_build",
     "generated_at",
     "scope",
-    "rungs"
+    "rungs",
+    "performant_policy",
+    "geometry_classes"
   ],
   "properties": {
     "schema": {
-      "const": "fleet.rung_allowability.v2"
+      "const": "fleet.rung_allowability.v3"
     },
     "table_version": {
       "type": "integer",
@@ -126,6 +128,39 @@
     },
     "evidence": {
       "type": "object"
+    },
+    "performant_policy": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "whole_bit_per_structure"
+        }
+      }
+    },
+    "geometry_classes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "identity",
+          "observed_rungs"
+        ],
+        "properties": {
+          "identity": {
+            "type": "object"
+          },
+          "observed_rungs": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -508,7 +543,7 @@
           }
         }
       ],
-      "description": "Unique scalar q256 rung. measured requires all required cells and geometry plus completed CPU quality screen. excluded is ONLY the measured D41 performance proof: a higher supported rung no farther than one grid step has time <= this rung in every relevant cell, with paired comparable evidence. Quality/correctness anomaly flags separately block production until explained; merely slow or missing-census observations do not fabricate performance exclusion. Missing/unmeasured rows wait. Reader admits only measured, supported, non-excluded rows with empty anomaly_flags, alongside existing serving/export gates. Semantic validation also checks uniqueness, full cell coverage, finite times, same format/build/scope, strict higher-rung/one-step relation and every dominance comparison."
+      "description": "Each scalar q256 rung has one row. A measured aggregate row requires every required cell and its actual geometry. Scoped queries admit measured menu cells with no source refusal or correctness hold. Missing scope evidence waits. Class-derived times never establish numerical or serving qualification. Historical quality samples do not control performance admission. Independent export, numerical, byte, and serving gates still apply."
     }
   }
 }
