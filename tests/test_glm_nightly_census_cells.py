@@ -21,7 +21,8 @@ What it pins:
 3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
    for it, with both required lanes engaged, so the nightly cells name the
    launches their twins name;
-4. each nightly cell covers EXACTLY the rungs the receipt carried.
+4. each nightly cell covers EXACTLY the rungs the receipt carried, plus the
+   v59 measured widening on T-16 routed cells only.
 
 It pins nothing about CUDA graphs: the cells are eager only (see the
 measurement doc for why no compiled scope is claimed on this image).
@@ -35,12 +36,19 @@ from pathlib import Path
 
 import pytest
 
+from test_allowable_rungs import BF16_ROUTED_WHOLE_BITS
+
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
     cell_runtime_id_suffix,
     load_serving_contract,
 )
+
+#: Contract v59 widens the T-16 routed cells past their served census on
+#: measured rows alone (no new census); see test_glm_u1_census_cells for the
+#: evidence.  The served re-census at each whole bit is still open.
+WIDENED_PAST_RECEIPT = {("TESSERA_BF16_K1", "routed_moe"): set(BF16_ROUTED_WHOLE_BITS)}
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "experiments" / "results"
@@ -191,7 +199,10 @@ def test_the_nightly_cells_cover_exactly_the_rungs_the_receipt_carried():
     cells = _nightly_cells(load_serving_contract())
     assert sorted({(c["family"], c["structure"]) for c in cells.values()}) == sorted(SCOPES)
     for cell in cells.values():
-        assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell["id"]
+        key = (cell["family"], cell["structure"])
+        allowed = carried[key] | WIDENED_PAST_RECEIPT.get(key, set())
+        assert set(cell["rungs_q256"]) == allowed, cell["id"]
+        assert carried[key] <= set(cell["rungs_q256"]), cell["id"]
         assert cell["evidence"]["grade"] == "route_only", cell["id"]
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell["id"]
 

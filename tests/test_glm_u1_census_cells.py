@@ -29,8 +29,9 @@ What it pins:
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
 2. each GLM-image cell covers EXACTLY the rungs the receipts (these and
-   v38's) carried for its family and structure -- a cell widened
-   past its receipts, or a receipt rung dropped from a cell, fails here;
+   v38's) carried for its family and structure, plus the v59 measured
+   widening on T-16 routed cells only -- a cell widened past receipts AND
+   that widening, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
    the two native A4 launches.
@@ -44,12 +45,22 @@ from pathlib import Path
 
 import pytest
 
+from test_allowable_rungs import BF16_ROUTED_WHOLE_BITS
+
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
     load_serving_contract,
     rung_rates,
 )
+
+#: Contract v59 widens the T-16 routed cells past their served census on
+#: measured rows alone (no new census): the 16 speed-test cells for bits 3,
+#: 4, 6, 8 at 0.99-1.23x T-8, the routed geometry-sweep rows for all eight
+#: whole bits with no exclusion, and the sampled CPU quality rows.  The cells
+#: stay eager-only at grade route_only with no served KL claim, and the
+#: served re-census at each whole bit is still the open follow-up.
+WIDENED_PAST_RECEIPT = {("TESSERA_BF16_K1", "routed_moe"): set(BF16_ROUTED_WHOLE_BITS)}
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "experiments" / "results"
@@ -558,6 +569,9 @@ def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
     for cell_id in GLM_CELLS:
         cell = cells[cell_id]
-        assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell_id
+        key = (cell["family"], cell["structure"])
+        allowed = carried[key] | WIDENED_PAST_RECEIPT.get(key, set())
+        assert set(cell["rungs_q256"]) == allowed, cell_id
+        assert carried[key] <= set(cell["rungs_q256"]), cell_id
         assert cell["evidence"]["grade"] == "route_only", cell_id
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell_id

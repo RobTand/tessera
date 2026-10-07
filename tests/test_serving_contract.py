@@ -646,7 +646,9 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     image; the u1 stub censuses (v39) widened FP8 and added the E2M1x2 wire on
     the grouped A4 launch.  The LFM FP8 pair at q1024 was withdrawn at v38 and
     the materialising E2M1 pair at v39.  v48 (tessera#702) adds FP8 and BF16 on
-    the nightly, on stub B's rungs.  Each pair is resident and eager.
+    the nightly, on stub B's rungs.  v59 widens both BF16 routed pairs to the
+    eight whole-bit rungs on measured rows (speed-test cells, sweep rows,
+    sampled CPU quality).  Each pair is resident and eager.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
@@ -659,11 +661,13 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
         assert cell["runtime"]["execution_modes"] == ["eager"]
     assert len(moe) == 10
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
-        ("TESSERA_BF16_K1", (1024,), _GLM_X_RUNTIME["image"]),
+        ("TESSERA_BF16_K1", (256, 512, 768, 1024, 1280, 1536, 1792, 2048),
+         _GLM_X_RUNTIME["image"]),
         ("TESSERA_E2M1_K2", (896,), _GLM_X_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
-        ("TESSERA_BF16_K1", (1024,), NIGHTLY_RUNTIME["image"]),
+        ("TESSERA_BF16_K1", (256, 512, 768, 1024, 1280, 1536, 1792, 2048),
+         NIGHTLY_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
