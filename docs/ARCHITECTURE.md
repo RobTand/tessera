@@ -17,7 +17,7 @@ The producer mounts no host Docker socket. PrismaBuild retains resource ownershi
 The source reader names its repository root. The directory-read ceiling remains unchanged.
 The imported patches retain the GNU Affero General Public License version three and the historical license notice.
 The Dockerfile copies both upstream license files into the image.
-The packaged contract declares version 60. This request references issue 1036 and does not close it.
+The packaged contract declares the assigned version 61. This request references issue 1036 and does not close it.
 
 Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
 `tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
