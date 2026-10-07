@@ -171,7 +171,7 @@ def _prepare_direct_weight(layer, consumer, roles):
 
 def _install_indexer() -> None:
     module = importlib.import_module("vllm.models.glm5next.common.attention")
-    indexer = module.Glm5NextIndexer
+    indexer = module.Indexer
     original = indexer.forward
     if getattr(original, "_tessera_projection_routes", False):
         return
