@@ -15,7 +15,8 @@ if [[ "${1:-}" == --tests ]]; then
       shift
       command docker run --cidfile "$T16_TEST_OUT/owned.cid" \
         --label "tessera.t16_owner=$T16_OWNER_TOKEN" \
-        --memory 16g --memory-swap 16g --pids-limit 512 "$@"
+        --memory 16g --memory-swap 16g --pids-limit 512 \
+        -e MAX_JOBS=1 -e PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 "$@"
     else
       command docker "$@"
     fi
