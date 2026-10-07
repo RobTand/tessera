@@ -81,14 +81,11 @@ def test_nope_padding_applies_only_to_the_kv_input_member():
         partition_members(module, members, rows, [64, 32], padding_rows={members[1]: 32})
 
 
-def test_replicated_mla_input_keeps_both_source_roles_and_exact_total():
+def test_mla_input_refuses_an_undeclared_total_only_partition():
     from tessera.serving.dense_ownership import partition_members
     module = "model.layers.0.self_attn.fused_qkv_a_proj"
     members = ["model.layers.0.self_attn.q_a_proj.weight",
                "model.layers.0.self_attn.kv_a_proj_with_mqa.weight"]
     rows = dict(zip(members, [32, 32]))
-    parts = partition_members(module, members, rows, [96], padding_rows={members[1]: 32})
-    assert [(part.role, part.source_rows, part.padding_rows) for part in parts] == [
-        ("q_a_proj", 32, 0), ("kv_a_proj_with_mqa", 32, 32)]
-    with pytest.raises(ValueError, match="replicated output"):
-        partition_members(module, members, rows, [64], padding_rows={members[1]: 32})
+    with pytest.raises(ValueError, match="cannot be paired"):
+        partition_members(module, members, rows, [96], padding_rows={members[1]: 32})

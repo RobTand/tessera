@@ -181,13 +181,6 @@ def partition_members(module: str, members: Sequence[str], tensor_rows: Mapping[
     sizes = tuple(int(s) for s in output_sizes)
     if not sizes or any(s <= 0 for s in sizes):
         raise ValueError(f"{module}: attested output partitions must be positive, got {list(sizes)}")
-    if (module.endswith(".self_attn.fused_qkv_a_proj") and len(members) == 2 and len(sizes) == 1):
-        parts = tuple(Member(role_name(tensor), tensor, 0,
-                             int(tensor_rows[tensor]) + int(padding_rows.get(tensor, 0)),
-                             int(padding_rows.get(tensor, 0))) for tensor in members)
-        if sum(part.rows for part in parts) != sizes[0]:
-            raise ValueError(f"{module}: source rows and explicit padding do not match replicated output {sizes[0]}")
-        return parts
     if len(sizes) == len(members):
         out = []
         for tensor, size in zip(members, sizes):
