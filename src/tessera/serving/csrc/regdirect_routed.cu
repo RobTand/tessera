@@ -169,6 +169,12 @@ __device__ __forceinline__ void decode_group(const uint32_t (&o)[R], const uint3
     a[3] = pack4(v1[4], v1[5], v1[6], v1[7]);
 }
 
+// The decode path's prefetch depth per rate: the ring holds depth x R words per lane, and one
+// kernel holds every rate's path, so high rates keep the ring within the R4 budget (D x 4 words)
+// instead of raising the kernel's register count for every rate.
+template <int R, int D>
+constexpr int decode_depth() { return R <= 4 ? D : (R == 5 ? (D < 3 ? D : 3) : (D < 2 ? D : 2)); }
+
 // The T-8 code rates the kernel instantiates (R768 .. R2048): one template per rate.
 template <class F>
 __device__ __forceinline__ void by_rate(int r, F&& f) {
@@ -421,7 +427,7 @@ __global__ void __launch_bounds__(THREADS, 2) rd_decode(Params p) {
         auto run = [&](auto RC, const uint32_t* seg, const uint32_t* hseg, int a, int b, int slot0) {
             constexpr int RR = decltype(RC)::value;
             const SegPtr sp = seg_ptr<RR>(p, seg, tile_words, hseg, k.T, warp, lane, g, t);
-            kseg_reg<RR, MODE, D, DUMP>(p, sp, a, b, slot0, s_kp, xrow, pol_w, pol_x, g, t, k.e, n0, smem, acc);
+            kseg_reg<RR, MODE, decode_depth<RR, D>(), DUMP>(p, sp, a, b, slot0, s_kp, xrow, pol_w, pol_x, g, t, k.e, n0, smem, acc);
         };
         {
             const int a = ks0, b = min(ks1, ksa);
