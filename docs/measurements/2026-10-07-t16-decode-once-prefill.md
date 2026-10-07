@@ -135,3 +135,13 @@ No default, serving pin, seal, encoder profile or allowable-rung table changes.
 The impacted-test selector reports FULL. The targeted receipts do not replace that verdict.
 Per the repository rule, ts-integrator owns one full suite on the merge result.
 The source remains an opt-in coverage prototype. Its KILL result remains the decision input for lane selection.
+
+## Source equivalence audit
+
+Audit action `5041316c2bfcf68b1737e7f24d127be114f682b1b44f2f4c8abff9c74b9807c1` passed on x86 with exit zero.
+It materialized both retained snapshots and checked each snapshot blob against its sealed input digest.
+The published pbsnapshot owner verified each exact action with exit zero and `snapshot: true`.
+It verified `.pbrun-closure.801655af83c45e80.json` for the GPU proof and `.pbrun-closure.dd65b6586bea90bf.json` for the screen.
+Only those verified entries were excluded. No other tracked path, mode or content blob differs from `d6478a3f5bff9986f6cc0478ba9d0515bb1ab59c`.
+`source-equivalence.json` records `effective_source_agree: true` and preserves both raw snapshot identifiers and generated-entry bindings.
+The audit did not rerun a test or measurement. The later report and verifier files do not change the measured kernel source.
