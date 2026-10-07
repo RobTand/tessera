@@ -63,6 +63,10 @@ def register() -> None:
         # Already registered.
         pass
 
+    from .projection_routes import install as install_projection_routes
+
+    install_projection_routes()
+
     # A Tessera GLM-5.3 graph serve resolves eager's operators (tessera#702
     # cause 1). Registered here because vLLM loads plugins before it builds
     # any VllmConfig, and resolves those defaults while building one.

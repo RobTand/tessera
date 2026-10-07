@@ -31,6 +31,7 @@ from tessera import routed_fused, serving_parts  # noqa: E402
 from tessera.routed_fused import WINDOW_BITS  # noqa: E402
 from tessera.serving.scheme import MOE_GROUPS, MOE_GROUP_PROJECTIONS  # noqa: E402
 from window_pack_reference import pack_bitstream  # noqa: E402
+from tessera.window_geometry import TILE_ROWS  # noqa: E402
 
 export = importlib.import_module("tessera.export_serving")
 moe_write = importlib.import_module("test_export_moe_write")
@@ -181,7 +182,7 @@ def test_unit_pricing_is_the_axis_allocation(family, rows, rates, anchor):
     else:
         actual = _reference_bytes(lane, units, experts)
     per_unit = routed_window_unit_resident_bytes(
-        family, rows, len(rates), rates, window_bits=WINDOW_BITS, tile_rows=kg.TILE_ROWS)
+        family, rows, len(rates), rates, window_bits=WINDOW_BITS, tile_rows=TILE_ROWS)
     assert actual == 3 * experts * per_unit + 3 * routed_window_part_resident_bytes(experts)
     # And it is not the decoded tile the exporter used to charge.
     assert per_unit != rows * len(rates) + rows * 4
@@ -308,6 +309,17 @@ def _accepts_fit_flag() -> bool:
     return "--fit-tp-size" in inspect.getsource(export)
 
 
+#: The fixture's miniature MLP rows, as partition lists. The pinned runtime
+#: attests production sizes; the gate pairs roles with them, so the fixture
+#: states its own lists here. Shared experts are 128-wide in this fixture.
+_FIXTURE_OUTPUT_SIZES = {
+    "language_model.model.layers.*.mlp.down_proj": [128],
+    "language_model.model.layers.*.mlp.gate_up_proj": [256, 256],
+    "language_model.model.layers.*.mlp.shared_experts.down_proj": [128],
+    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [128, 128],
+}
+
+
 @pytest.fixture(scope="module")
 def exported(tmp_path_factory):
     """One CPU export of a 2-expert 128x128 E4M3 stack at q256 1024, fit at TP2."""
@@ -326,6 +338,19 @@ def exported(tmp_path_factory):
     # lacks the per-rank block, which is the failure the line-item test names.
     fit = ("--fit-tp-size", str(FIT_TP)) if _accepts_fit_flag() else ()
     with pytest.MonkeyPatch.context() as monkeypatch:
+        import copy
+        from tessera.serving.contract import construction_entry as live_entry
+        real = live_entry
+
+        def _entry(architectures, contract=None):
+            entry = real(architectures) if contract is None else real(architectures, contract)
+            if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
+                return entry
+            entry = copy.deepcopy(entry)
+            entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
+            return entry
+
+        monkeypatch.setattr(export, "construction_entry", _entry)
         out = moe_write._export(root, monkeypatch, tensors, plan, "--device", "cpu",
                                 *fit, config=config)
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
@@ -447,9 +472,9 @@ def test_glm_per_rank_pricing_matches_the_measured_load_bench():
 
     def per_rank(family, rates_of):
         gate_up = 2 * routed_window_unit_resident_bytes(
-            family, inter // tp, hidden, rates_of(hidden), window_bits=14, tile_rows=kg.TILE_ROWS)
+            family, inter // tp, hidden, rates_of(hidden), window_bits=14, tile_rows=TILE_ROWS)
         down = routed_window_unit_resident_bytes(
-            family, hidden, inter // tp, rates_of(inter // tp), window_bits=14, tile_rows=kg.TILE_ROWS)
+            family, hidden, inter // tp, rates_of(inter // tp), window_bits=14, tile_rows=TILE_ROWS)
         return experts * (gate_up + down) + 3 * routed_window_part_resident_bytes(experts)
 
     bf16 = per_rank("TESSERA_BF16", lambda cols: (4,) * cols)

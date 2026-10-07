@@ -51,7 +51,8 @@ import triton
 import triton.language as tl
 
 from .errors import GrammarError
-from .kernel_window_gemv import TILE_ROWS, WindowGemvUnit
+from .kernel_window_gemv import WindowGemvUnit
+from .window_geometry import TILE_ROWS
 
 __all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK"]
 

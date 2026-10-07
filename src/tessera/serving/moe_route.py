@@ -631,7 +631,7 @@ def _mixed_axis_word_runs(declared, plans):
     from ..alphabet import grid_for_name
     from ..compact_prep import WINDOW_GEMM_RATE_MAX
     from ..grammar import bresenham_rate_schedule
-    from ..kernel_window_gemv import TILE_ROWS
+    from ..window_geometry import TILE_ROWS
     from .sharding import AXIS_COLUMNS, AXIS_ROWS
 
     sizes = {}

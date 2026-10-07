@@ -185,7 +185,7 @@ from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, classify_construction, construction_entry,
     format_entry, load_serving_contract, output_partitions)
 from tessera.serving.dense_ownership import (  # noqa: E402
-    FUSED, fused_module as _fused_module, partition_members)
+    FUSED, fused_module as _fused_module, partition_members, source_padding_rows)
 from tessera.serving.scheme import (  # noqa: E402
     MOE_GROUP_PROJECTIONS, MOE_GROUPS,
     MOE_SHARD_PROJECTIONS as SHARD_PROJECTION, STRUCTURE_DENSE,
@@ -254,29 +254,8 @@ ROUTED_EXPERT_2D = re.compile(
     rf"^(?P<moe>.*\.{MOE_OWNER})\.experts\.(?P<expert>\d+)\."
     rf"(?P<proj>{'|'.join(map(re.escape, EXPERT_SOURCE_PROJECTIONS))})\.weight$")
 
-#: The MoE ROUTER.  ``mlp.gate`` is not a projection (a dense MLP has
-#: ``gate_proj``, never ``gate``); it is the little Linear that decides which
-#: experts a token visits, and the runtime gives it no quantized route at all.
-#:
-#: ``GateLinear.__init__`` takes no ``quant_config`` and passes none to
-#: ``ReplicatedLinear`` (``layers/fused_moe/router/gate_linear.py:50-58``), so
-#: it always gets ``UnquantizedLinearMethod`` and this plugin is NEVER asked
-#: about the router.  Encoding it therefore does not produce a slow route or a
-#: wrong route: it deletes ``mlp.gate.weight`` from the checkpoint and puts wire
-#: tensors in its place that no loader has a mapping for, and the router either
-#: fails as an unexpected key or is left with the weight it was born with.
-#: Belt and braces, ``GateLinear.forward`` reads ``self.weight`` directly at all
-#: six of its dispatch tiers and never calls ``quant_method.apply`` (:179-228),
-#: choosing the tier from ``self.weight.dtype`` (:84,:101,:128,:165,:174) -- so
-#: even a method that WAS installed would be dead code.
-#:
-#: That is a route status, not a taste: on the pinned build the runtime has no
-#: path that executes these bytes for this module, which is the one carve-out
-#: principle 9 allows.  Attested against the GLM pin
-#: ``prismaquant/glm53-mia-sm121:487ecf187`` and LFM's exact derived image
-#: ``sha256:337dae6b...``: ``Lfm2MoeSparseMoeBlock`` constructs the same
-#: ``ReplicatedLinear`` at ``<feed_forward>.gate`` and the expert factory at
-#: its sibling ``.experts`` (PrismaBuild action ``e3f322afb4ab...``).
+# Routers stay at source precision unless a plan selects them explicitly.
+# The construction census must offer the selected GateLinear route.
 MOE_ROUTER = re.compile(
     rf"^(?P<moe>.*\.{MOE_OWNER})\.(?:gate|router)\.weight$")
 
@@ -321,6 +300,9 @@ PACKED_EXPERT_ND = re.compile(
 #: in.  Body attention never reaches here: its q/k/v arrive unmerged and the
 #: FUSED table already names ``qkv_proj``.
 MERGED_ALIASES = ((re.compile(r"^(.*\.)qkv\.weight$"), "qkv_proj"),)
+VISION_LINEAR = re.compile(
+    r"^model\.visual\.(?:blocks\.\d+\.(?:attn\.(?:qkv|proj)|mlp\.(?:gate_proj|up_proj|down_proj))"
+    r"|merger\.(?:proj|gate_proj|up_proj|down_proj))\.weight$")
 
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
@@ -934,34 +916,18 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
 
 
 def unrouted_modules(src_config, modules):
-    """Which of these vLLM modules the pinned runtime will NOT route to a plugin.
+    """Return modules that the active construction receipt does not offer.
 
-    THE PRODUCER MAY NOT KEEP THIS ROSTER.  ``LinearBase.__init__`` takes
-    ``UnquantizedLinearMethod()`` in the ``quant_config is None`` branch
-    *without calling* ``get_quant_method`` (vLLM 0.28,
-    ``model_executor/layers/linear.py:258``), so a projection a model builds
-    with ``quant_config=None`` is invisible to every quantization plugin --
-    ours cannot refuse it, warn about it, or even see the prefix.  A wire
-    written there deletes the ``<module>.weight`` the runtime wants and puts
-    bytes in its place that no loader maps: not a slow route, no route, and no
-    refusal either.
-
-    The runtime-attestation rule says what a runtime DOES is derived from a
-    machine-readable table that runtime publishes.  The table is
-    ``runtime_contract.json``'s ``construction`` block (contract v11), whose
-    rows are generated from the census receipts under
-    ``docs/measurements/construction/`` -- and the census itself
-    (``tools/tessera_construction_census.py``) OBSERVES the answer by building
-    the model the way the loader does with a probe quant config that records
-    every prefix it is offered.  Nothing here reads source, and nothing here
-    keeps a list.
+    The runtime publishes one active receipt for each architecture. The
+    exporter maps checkpoint names and reads that receipt. It does not
+    keep a second module roster. An explicit selected constructor can
+    supply the quant config where the stock constructor omits it.
 
     Returns ``{checkpoint module: (verdict, vllm module pattern)}`` for every
     module that is not ``offered``:
 
-    * ``never_offered`` -- the runtime builds this module with
-      ``quant_config=None``.  On GLM-5.3-Flash that is every attention
-      projection, the whole KDA layer, the indexer and the vision tower.
+    * ``never_offered`` -- the receipt observed no quant config call for
+      this module, including the declared selected construction scope.
     * ``absent`` -- the runtime builds no module of this name at all.  It is
       what a fused role named at the wrong seam looks like: the checkpoint has
       ``self_attn.{q,k,v}_proj`` on a KDA layer and vLLM builds ONE
@@ -1056,16 +1022,13 @@ def module_of(tensor_name: str) -> str:
     return tensor_name[: -len(".weight")]
 
 
-def fused_module(tensor_name: str, architecture: str | None = None):
-    """Compatibility entry point for the shared dense-owner rule.
-
-    ``architecture`` is the checkpoint's HF ``architectures[0]``; see
-    ``dense_ownership.SEPARATE_QKV_ARCHITECTURES`` (tessera#706).
-    """
-    return _fused_module(tensor_name, architecture)
+def fused_module(tensor_name: str, architecture: str | None = None, *, config=None, tensor_names=None):
+    """Use the shared member rule for every export declaration."""
+    return _fused_module(tensor_name, architecture, config=config, tensor_names=tensor_names)
 
 
-def ignored_modules(tensor_name: str, shape, architecture: str | None = None) -> tuple[str, ...]:
+def ignored_modules(tensor_name: str, shape, architecture: str | None = None, *,
+                    config=None, tensor_names=None) -> tuple[str, ...]:
     """The vLLM module names ``ignore`` must carry for a tensor written at source precision.
 
     Empty when the tensor is not a Linear weight the plugin can be asked
@@ -1121,16 +1084,17 @@ def ignored_modules(tensor_name: str, shape, architecture: str | None = None) ->
     routed = ROUTED_EXPERT_2D.match(probe)
     if routed:
         return (routed.group("moe") + ".experts",)
-    fused = fused_module(probe, architecture)
+    fused = fused_module(probe, architecture, config=config, tensor_names=tensor_names)
     if fused:
         return (fused[0],)
     names = [module_of(probe)]
-    names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
-                 if (match := pattern.match(probe)))
+    if architecture != "Glm5NextForConditionalGeneration":
+        names.extend(match.group(1) + alias for pattern, alias in MERGED_ALIASES
+                     if (match := pattern.match(probe)))
     return tuple(names)
 
 
-def quantizable(src: Path):
+def quantizable(src: Path, *, selected=()):
     """The body's ``.weight`` tensors, split by WHAT KIND OF LAYER OWNS THEM.
 
     Returns ``(shards, shapes, expert_shapes, routed_shapes)``:
@@ -1165,7 +1129,7 @@ def quantizable(src: Path):
     for shard, names in shards.items():
         with safe_open(str(src / shard), framework="pt") as handle:
             for name in names:
-                if not BODY_LAYER.match(name):
+                if not BODY_LAYER.match(name) and not (name in selected and VISION_LINEAR.match(name)):
                     continue
                 # ``.weight`` is not what makes a tensor a body weight, and
                 # gating on it here is what dropped a whole layout: a
@@ -1550,7 +1514,7 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
     layouts as the write loop recorded them; a TP cut prices each rank's
     rows/columns/rates through :func:`routed_unit_rank_cut`.
     """
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     from tessera.routed_fused import fused_routed_unit_shape_refusal
 
     units_total, parts, refused, fused_total = 0, set(), False, 0
@@ -2455,7 +2419,9 @@ def main():
     # data (``SEPARATE_QKV_ARCHITECTURES``, tessera#706); derived once here
     # and threaded to every ``fused_module``/``ignored_modules`` call below.
     architecture = (list(src_config.get("architectures") or ()) or [None])[0]
-    shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
+    selected_names = set(plan_snapshot.entries) if plan_snapshot is not None else set()
+    shards, shapes, expert_shapes, routed_shapes = quantizable(args.src, selected=selected_names)
+    source_tensor_names = {name for names in shards.values() for name in names}
     if not shapes and not expert_shapes and not routed_shapes:
         raise SystemExit(
             f"no body weight tensors found under {args.src}. BODY_LAYER matches "
@@ -2522,18 +2488,6 @@ def main():
             ".experts sets the common scheme and baseline rung; unit_q256 inside that entry "
             "overrides individual expert projections. Or remove "
             "these entries to pass the stack through as BF16.")
-    planned_routers = sorted(n for n in overrides if MOE_ROUTER.match(n))
-    if planned_routers:
-        raise SystemExit(
-            f"the plan names {len(planned_routers)} MoE ROUTER tensor(s), e.g. "
-            f"{planned_routers[0]}. vLLM builds the router as GateLinear, which takes no "
-            "quant_config at all, so it always gets UnquantizedLinearMethod and this plugin is "
-            "never asked about it: the wire would replace mlp.gate.weight with tensors no loader "
-            "maps, and the routing weight would be missing rather than quantized. (Its forward "
-            "also reads self.weight directly at every dispatch tier and never calls "
-            "quant_method.apply, so even an installed method would be dead code.) The pinned "
-            "runtime has no route for these bytes here. Remove them from the plan to pass the "
-            "router through as BF16.")
     planned_experts = sorted(set(overrides) & set(expert_shapes))
     if planned_experts:
         first = planned_experts[0]
@@ -2649,7 +2603,7 @@ def main():
             "without a twin, or leave them out of the plan.")
 
     packed_passthrough = {name: shape for name, shape in expert_shapes.items()
-                          if next(m for m in ignored_modules(name, shape, architecture)) not in stack_plan}
+                          if next(m for m in ignored_modules(name, shape, architecture, config=src_config)) not in stack_plan}
     if packed_passthrough:
         print(f"  {len(packed_passthrough)} unplanned packed expert tensors stay at source "
               f"precision and are named in ignore; e.g. {sorted(packed_passthrough)[0]}",
@@ -2671,8 +2625,8 @@ def main():
     plan: dict[str, tuple] = {}          # tensor -> (grid, q256, rows, cols)
     passthrough: list[str] = []
     for name, (rows, cols) in shapes.items():
-        layer = body_layer(name)
-        if args.layers is not None and layer >= args.layers:
+        layer = body_layer(name) if BODY_LAYER.match(name) else None
+        if args.layers is not None and (args.layers == 0 or layer is not None and layer >= args.layers):
             if name in explicit:
                 raise SystemExit(
                     f"the plan gives {name} a rung, but --layers {args.layers} stops before "
@@ -2682,7 +2636,7 @@ def main():
             passthrough.append(name); continue
         if name in overrides and overrides[name] is None:
             passthrough.append(name); continue
-        if MOE_ROUTER.match(name):
+        if MOE_ROUTER.match(name) and name not in explicit:
             passthrough.append(name); continue
         grid, q256 = overrides.get(name, (default_grid, args.q256))
         if rows % (grid.arity * 32) or cols % 16:
@@ -2701,7 +2655,7 @@ def main():
     # per role (#37); see ``module_scheme_key``.
     modules: dict[str, list[str]] = {}
     for name in list(plan):
-        fused = fused_module(name, architecture)
+        fused = fused_module(name, architecture, config=src_config, tensor_names=source_tensor_names)
         if fused is None:
             modules[module_of(name)] = [name]
             continue
@@ -2756,6 +2710,13 @@ def main():
     # It runs on the MODULE names, not the tensor names, because the module is
     # what the runtime builds and what ``config_groups`` will declare.
     unrouted, census = unrouted_modules(src_config, list(modules) + list(stack_plan))
+    strict_unrouted = [module for module in unrouted
+                       if module in modules and any(member in explicit for member in modules[module])
+                       and (module.endswith((".indexer.wk_weights_proj", ".kv_b_proj"))
+                            or any(MOE_ROUTER.match(member) for member in modules[module]))]
+    if strict_unrouted:
+        raise SystemExit("selected router or direct consumer has no declared runtime route: "
+                         + str(strict_unrouted))
     unrouted_records = [
         {"module": module, "vllm_module_pattern": pattern, "verdict": verdict}
         for module, (verdict, pattern) in sorted(unrouted.items())]
@@ -2833,6 +2794,7 @@ def main():
     # A census that predates the field attests nothing; the roles are then the
     # tensors, as before, and the manifest says the geometry was not checked.
     partitions: dict[str, tuple] = {}
+    direct_consumer_costs = {}
     geometry_unattested: list[str] = []
     geometry_passthrough: list[str] = []
     for module, members in list(modules.items()):
@@ -2840,7 +2802,8 @@ def main():
         if sizes is None:
             geometry_unattested.append(module)
         try:
-            parts = partition_members(module, members, {m: plan[m][2] for m in members}, sizes)
+            parts = partition_members(module, members, {m: plan[m][2] for m in members}, sizes,
+                                      padding_rows=source_padding_rows(module, members, src_config))
         except ValueError as exc:
             raise SystemExit(
                 f"{exc}. The partition list is the pinned runtime's, read from the construction "
@@ -2865,6 +2828,21 @@ def main():
                 passthrough.append(m)
             continue
         partitions[module] = parts
+        if module.endswith((".indexer.wk_weights_proj", ".kv_b_proj")):
+            try:
+                from tessera.serving.projection_routes import direct_consumer_resident_bytes
+            except ImportError as exc:
+                raise SystemExit(f"{module}: the direct weight consumer needs its runtime adapter") from exc
+            direct_consumer_costs[module] = direct_consumer_resident_bytes(
+                module, family_for(plan[members[0]][0]), sum(part.rows for part in parts),
+                plan[members[0]][3], [(part.role, part.rows) for part in parts])
+    if args.stock_twin is not None and architecture == "Glm5NextForConditionalGeneration":
+        unsupported_twins = [module for module, members in modules.items()
+                             if (".self_attn." in module or ".visual." in module or MOE_ROUTER.match(members[0]))
+                             and family_for(plan[members[0]][0]) != BF16]
+        if unsupported_twins:
+            raise SystemExit(f"the stock consumer has no quantized constructor for {unsupported_twins}; "
+                             "export the Tessera artifact without a compressed stock twin")
     if not plan and not stack_plan and args.layers != 0:
         # The THIRD way ``plan`` empties, and the same refusal as the two
         # above.  The geometry gate runs after both of them, so a module that
@@ -2891,7 +2869,7 @@ def main():
             "config_groups and the plugin refuses that at load. Plan a grid whose tuples divide "
             "these partitions, or pass --layers 0 to write a passthrough copy deliberately.")
     sliced_modules = sorted(module for module, parts in partitions.items()
-                            if any(p.row_offset or p.rows != plan[p.tensor][2] for p in parts))
+                            if any(p.row_offset or p.source_rows != plan[p.tensor][2] for p in parts))
     if sliced_modules and args.stock_twin is not None:
         raise SystemExit(
             f"--stock-twin was given and {len(sliced_modules)} module(s) are merged Linears over "
@@ -2910,6 +2888,9 @@ def main():
     if args.cached_expert_units is not None and not cache_unit_names:
         raise SystemExit("--cached-expert-units requires a nonempty explicit expert stack plan")
     if args.cached_units is not None:
+        padded = sorted(module for module, parts in partitions.items() if any(p.padding_rows for p in parts))
+        if padded:
+            raise SystemExit(f"--cached-units cannot adopt unpadded NoPE source wires: {padded}")
         if sliced_modules:
             raise SystemExit("--cached-units requires whole dense source tensors; "
                              f"row-sliced modules cannot reuse whole original wires: {sliced_modules}")
@@ -3318,7 +3299,7 @@ def main():
                             # per-part ``run_off`` and the fused lane's
                             # tables (#685, v45) are per stack, added once
                             # the stack's shape is known below.
-                            from tessera.kernel_window_gemv import TILE_ROWS
+                            from tessera.window_geometry import TILE_ROWS
                             layout = {
                                 "group": unit["group"], "projection": unit["projection"],
                                 "rows": int(unit_manifest.geometry.rows),
@@ -3384,7 +3365,8 @@ def main():
                     # through and never named, and the plugin refuses exactly
                     # that (#86).  Deriving the name from the tensor just
                     # written is what keeps the two facts one fact.
-                    ignore.extend(ignored_modules(name, tensor.shape, architecture))
+                    ignore.extend(ignored_modules(name, tensor.shape, architecture,
+                                                  config=src_config, tensor_names=source_tensor_names))
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
@@ -3407,9 +3389,11 @@ def main():
                 member = part.tensor
                 member_grid, q256, source_rows, _mc = plan[member]
                 member_recipe = served_recipe(member_grid, q256)
-                whole = part.row_offset == 0 and part.rows == source_rows
-                unit_name = member if whole else f"{member}[{part.row_offset}:{part.row_offset + part.rows}]"
-                weight = weights_cache[member][part.row_offset: part.row_offset + part.rows]
+                whole = part.row_offset == 0 and part.source_rows == source_rows
+                unit_name = member if whole else f"{member}[{part.row_offset}:{part.row_offset + part.source_rows}]"
+                weight = weights_cache[member][part.row_offset: part.row_offset + part.source_rows]
+                if part.padding_rows:
+                    weight = torch.nn.functional.pad(weight, (0, 0, 0, part.padding_rows))
                 # A missing key renders RTN and raises nothing; ``for_unit``
                 # refuses instead, and is the same call the library exporters make.
                 # Keyed by the TENSOR: the input side is one width for every
@@ -3461,6 +3445,7 @@ def main():
                     # the whole tensor for every role before tessera#377, a
                     # row window for a merged Linear over one source tensor.
                     "row_offset": part.row_offset, "source_rows": source_rows,
+                    "padding_rows": part.padding_rows,
                     "grid": member_grid.name, "q256": q256, "family": family,
                     "wire_bytes": exported.exact_bytes, "blob_bytes": len(exported.blob),
                     "wire_bpp": float(exported.bpp), "own_global": float(unit.scale_global),
@@ -3491,7 +3476,7 @@ def main():
             shard_payload[f"{module}.wire_bytes"] = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
             native_roles = None
             if family != NVFP4:
-                from tessera.kernel_window_gemv import TILE_ROWS
+                from tessera.window_geometry import TILE_ROWS
                 native_roles = [{"rows": role_rows, "cols": cols, "rates": unit.rates,
                                  "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
                                 for _name, role_rows, _blob, unit, _forests in roles]
@@ -3551,7 +3536,7 @@ def main():
                     for m in members:
                         # One tensor, under the ORIGINAL name: the twin is an
                         # ordinary BF16 checkpoint, not a compressed one.
-                        twin_payload[m] = stock_tensors[m]["weight"].cpu()
+                        twin_payload[m] = stock_tensors[m]["weight"][:plan[m][2]].cpu().contiguous()
             else:
                 record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
                     family, rows_total, cols, native_roles=native_roles)
@@ -3563,6 +3548,12 @@ def main():
                 twin_modules[family].extend(module_of(m) for m in members)
                 twin_records[module] = {"family": family, "members": [module_of(m) for m in members],
                                         "resident_bytes": sum(stock_bytes(stock_tensors[m]) for m in members)}
+            if module in direct_consumer_costs:
+                extra = direct_consumer_costs[module]
+                record["direct_consumer_resident_bytes"] = extra
+                record["resident_bytes_resident_mode"] += extra["resident_bytes_resident_mode"]
+                record["resident_bytes_stock"] = (sum(r["resident_bytes_stock"] for r in role_records)
+                                                 + extra["resident_bytes_stock"])
             scheme = {
                 # ``structure`` names what kind of vLLM layer this is.  This
                 # loop writes ``dense`` -- one blob per LinearBase.  The other
@@ -3580,8 +3571,9 @@ def main():
             config_groups[f"tessera_{module.replace('.', '_')}"] = {"format": "TESSERA", "targets": [module], "scheme": scheme}
             module_records[module] = record
             for r in role_records:
-                whole = r["row_offset"] == 0 and r["rows"] == r["source_rows"]
-                key = r["tensor"] if whole else f"{r['tensor']}[{r['row_offset']}:{r['row_offset'] + r['rows']}]"
+                source_count = r["rows"] - r.get("padding_rows", 0)
+                whole = r["row_offset"] == 0 and source_count == r["source_rows"]
+                key = r["tensor"] if whole else f"{r['tensor']}[{r['row_offset']}:{r['row_offset'] + source_count}]"
                 units[key] = r
             del pending_modules[module]
         save_serving_shard(shard_payload, args.out / shard)
@@ -3660,7 +3652,8 @@ def main():
     # somehow did not name would be a load-time refusal, so it is a refusal
     # here instead.
     unnamed = sorted(n for n in passthrough
-                     if not set(ignored_modules(n, shapes[n], architecture)) <= set(ignore))
+                     if not set(ignored_modules(n, shapes[n], architecture, config=src_config,
+                                                tensor_names=source_tensor_names)) <= set(ignore))
     if unnamed:
         raise SystemExit(
             f"{len(unnamed)} tensor(s) were planned as passthrough but never named in ignore, "
@@ -3689,9 +3682,11 @@ def main():
                 "config.json.") from exc
     moe_passthrough_modules = {m for source in (expert_shapes, routed_shapes)
                                for name, shape in source.items()
-                               for m in ignored_modules(name, shape, architecture)
+                               for m in ignored_modules(name, shape, architecture, config=src_config,
+                                                        tensor_names=source_tensor_names)
                                if m not in stack_plan}
     config = src_config
+    source_quantization_config = config.get("quantization_config")
     config["quantization_config"] = {
         # The field that selects Tessera's own vLLM plugin (entry point
         # ``tessera = tessera.serving:register``).  No serve flag enables it.
@@ -3720,6 +3715,11 @@ def main():
         **({"research_selected_moe": research_execution.config.as_checkpoint()}
            if research_execution is not None else {}),
     }
+    if not args.partition and not config_groups:
+        if source_quantization_config is None:
+            config.pop("quantization_config", None)
+        else:
+            config["quantization_config"] = source_quantization_config
     tessera_fp4_predicate = vllm_fp4_predicate("tessera", MIXED_PRECISION)
     config_name = "tessera_part_config.json" if args.partition else "config.json"
     (args.out / config_name).write_text(json.dumps(config, indent=2))

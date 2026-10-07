@@ -96,7 +96,33 @@ def _write(tmp_path, tensors, config=None):
     return src
 
 
+_FIXTURE_OUTPUT_SIZES = {
+    "language_model.model.layers.*.mlp.down_proj": [128],
+    "language_model.model.layers.*.mlp.gate_up_proj": [256, 256],
+    "language_model.model.layers.*.mlp.shared_experts.down_proj": [128],
+    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [64, 64],
+}
+
+
+def _declare_fixture_geometry(monkeypatch):
+    """Use the fixture's own partition lists, and nothing else."""
+    import copy
+    from tessera.serving.contract import construction_entry as live_entry
+    real = live_entry
+
+    def _entry(architectures, contract=None):
+        entry = real(architectures) if contract is None else real(architectures, contract)
+        if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
+            return entry
+        entry = copy.deepcopy(entry)
+        entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
+        return entry
+
+    monkeypatch.setattr(export, "construction_entry", _entry)
+
+
 def _export(tmp_path, monkeypatch, tensors, plan, *extra, config=None):
+    _declare_fixture_geometry(monkeypatch)
     src = _write(tmp_path, tensors, config)
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", "1024",
@@ -316,12 +342,20 @@ def _run_selected_exporter(tmp_path, site, repo, out_name="out"):
     out = tmp_path / out_name
     base = _fixture_ancestor(repo)
     driver = tmp_path / "driver.py"
+    sizes = dict(_FIXTURE_OUTPUT_SIZES)
     driver.write_text(
         "import sys\n"
         "from tessera import export_serving as export\n"
         "real = export.authenticate_producer_python\n"
         f"export.authenticate_producer_python = "
         f"lambda *a, **k: real(*a, descends_from={base!r}, **k)\n"
+        # The fixture is a miniature; state its own partition lists here,
+        # inside the subprocess, beside the ancestry binding above.
+        "import copy\n"
+        "from tessera.serving.contract import construction_entry as live_entry\n"
+        f"small = copy.deepcopy(live_entry(['Glm5NextForConditionalGeneration']))\n"
+        f"small['output_sizes'].update({sizes!r})\n"
+        "export.construction_entry = lambda architectures, contract=None: small\n"
         "export.main()\n")
     done = subprocess.run(
         [sys.executable, str(driver), *_selected_export_argv(src, out, plan_path)],

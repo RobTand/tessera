@@ -508,7 +508,7 @@ def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
                                     family="TESSERA_BF16", span=recipe.span,
                                     target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
     assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
-    # With its builder, a BF16 stack reaches the cell check.  Contract v59
+    # With its builder, a BF16 stack reaches the cell check. Contract v61
     # withdraws every BF16 cell, so no rung is admitted: 1024 and 1792 are
     # both refused as unattested, by the structure's name.
     for rung in (1024, 1792):

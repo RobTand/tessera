@@ -914,12 +914,12 @@ def test_a_pattern_named_inside_the_tree_whose_directory_is_an_outside_bridge_st
     # guard declines to follow it, so what it reads cannot be attributed to a file.  Unlike a
     # box path such as /usr/local/cuda-*, this is a named in-tree base and keeps the #338
     # uncertainty (#1010 review).
-    outside = tmp_path.parent / (tmp_path.name + "-outside")
+    outside = tmp_path / "outside"
     outside.mkdir()
     root = tmp_path / "repo"
     root.mkdir()
     (root / "docs").symlink_to(outside, target_is_directory=True)
-    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
+    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path)
     found, unknown, unplaced = _scan_full(
         "import glob\n" + _HERE + "x = glob.glob(str(HERE / 'docs' / '*.md'))\n", root)
     assert outside not in found
@@ -1186,7 +1186,7 @@ def test_a_link_leaving_the_tree_keeps_the_read_unplaced_and_is_never_approached
     root = tmp_path / "repo"
     (root / "docs" / "plain").mkdir(parents=True)
     (root / link).symlink_to(outside, target_is_directory=True)
-    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path.parent)
+    _guard_resolve_to_root(monkeypatch, root, scratch=tmp_path)
     found, unknown, unplaced = _scan_full(source, root)
     assert outside not in found
     assert unplaced and not unknown, (found, unknown, unplaced)

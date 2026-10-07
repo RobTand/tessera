@@ -109,6 +109,13 @@
         },
         "timing_statistic": {
           "type": "string"
+        },
+        "grid_steps_q256": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
         }
       },
       "description": "The scalar q256 domain and exact cell roster are derived from their owners. Initial T-8 scope is R768 through R1152 inclusive, true grid step 1, M 1/16/2048/4096 and 2-3 representative GLM shapes."
@@ -338,7 +345,8 @@
               "enum": [
                 "fused_window",
                 "compact_window",
-                "native_tcq"
+                "native_tcq",
+                "register_direct"
               ]
             },
             "decoder_owner": {
@@ -349,7 +357,8 @@
               "enum": [
                 "raw_packed_window",
                 "compact_packed_window",
-                "native_tcq_decode_gemm"
+                "native_tcq_decode_gemm",
+                "register_direct_fragment"
               ]
             },
             "word_ring": {
@@ -362,6 +371,7 @@
                 "kind": {
                   "enum": [
                     "staged",
+                    "register",
                     "none"
                   ]
                 },

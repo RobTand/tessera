@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-07 for the T16 row-scale epilogue cutover (contract v59).
+Re-stamped 2026-10-07 for the T16 row-scale epilogue cutover (contract v61).
 T16 keeps raw BF16 table values and FP32 row scales separate. The encoder
 and canonical reader define each effective weight as their FP32 product.
 Dense and grouped kernels accumulate the raw-value dot in FP32, then apply
@@ -16,7 +16,7 @@ BF16 stock checkpoint remains a derived control, not a Tessera compute path.
 The E4M3 decode-once helper uses the existing bundle family. It does not
 read an arithmetic selector.
 
-Contract v59 withdraws eight historical folded BF16 cells, their wire/rung
+Contract v61 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.
 The new BF16 pairs have no served census.
 All four BF16 pairs stay in `scheme.EXPERIMENTAL_LAUNCHES`. A census can
@@ -25,6 +25,32 @@ Loader sharding remains a capability, not a TP2 serve claim. The changed T16 D41
 on the merged build before the next allocation uses them. Active measurement
 paths remain unchanged until their owners release them. E4M3 and E2M1 math
 and their historical receipts remain unchanged.
+
+Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
+`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
+It includes explicit copies, padded shards, temporary buffers, and rank reserves.
+Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
+They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
+The planner refuses a different declared row tile before byte pricing.
+The planner reports named capacity refusals before load.
+The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
+The README states its input and output contracts.
+
+Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
+The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
+Its execution scope is `register_direct_fragment` and its word ring is `register`.
+A cell states fragment-order units from `tessera.fragment_wire`: 32 lanes, 8 history lanes and 32 R words per unit.
+It states one rate or two adjacent rates, the k-step width, prefetch depth, superblock routes, K parts and compiler resources.
+The decoder is routed only.
+A table scope may give a shape its own rung step in `grid_steps_q256`, as a multiple of the table step.
+k-step rungs step 2 q256 at K=4096 and 16 q256 per TP2 rank of a K=1024 down projection.
+A rung owes exactly the cells whose shape grid it lies on. Version one tables cannot carry per-shape grids.
+An unscoped `admit_rung` waits at a rung where a declared shape has no measurement (`declared_shape_not_measured_at_rung`).
+A dominance proof needs a measured higher-rung counterpart for every lower cell; otherwise the table is refused.
+The published schema files `docs/schema/allowable-rung-table.v2.schema.json` and `.v3` track the Python schemas, descriptions aside.
+A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
+The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
 
 Re-stamped 2026-10-07 for the producer correction in issue #1018.
 The canonical `fleet.rung_allowability.v3` interface keeps the historical census.
@@ -204,7 +230,8 @@ text receipt prints it, so a reader of this shape is seen instead of silently
 unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
 when this was added (115 modules, 168 sites, most taking the directory as a
 parameter or calling the standard library's `glob.glob(pattern)`) and fails if
-it rises. Selector infrastructure only: no wire, recipe
+it rises. The count was 114 modules and 167 sites on 2026-10-07 and the ceiling
+now holds there (#1014). Selector infrastructure only: no wire, recipe
 table, serving lane, plugin contract, numerical path, residency or performance
 default moves.
 
@@ -9395,3 +9422,49 @@ CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
 explicit `enforce_eager=True` requirement. This enables the real native factory
 without fabricating a model configuration, and does not admit compiled or
 captured selected execution.
+
+## Explicit GLM projection owners
+
+The dense owner rule identifies the KDA six-member input, the MLA low-rank input, and the DSA key and head-weight pair.
+The source config identifies KDA layers and standalone MLA queries.
+The construction receipt supplies output partitions; the exporter does not derive them from weight shapes.
+KDA roles four and five keep their full source rows on each tensor parallel rank.
+
+The stock NoPE loader pads only kv_a_proj_with_mqa output rows.
+The exporter preserves its source range and records the added zero rows separately.
+BF16 passthrough keeps every original tensor and bias unchanged.
+An explicit plan can select the router and vision Linear units without a default change.
+The selected vision qkv target keeps the stock prefix.
+
+The direct consumer byte rule belongs to serving.projection_routes.
+The DSA head tail uses its stock FP32 cache.
+The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
+Their decoded buffers increase resident prices; they do not become compressed BMM routes.
+The exporter refuses compressed stock twins for constructors that suppress quantization.
+
+The plugin installs a selective LinearBase constructor hook before model construction.
+The hook supplies TesseraConfig only for an explicit target whose constructor has no quant_config.
+Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
+The KDA shard planner reads replicated_shard_ids from the actual layer.
+It does not infer replication from a shape total.
+
+The direct consumer contract separates the head operation from its unused dense output.
+The indexer head uses FP32 inputs and weights without activation quantization.
+The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
+The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
+
+The constructor census records stock and selected views separately.
+Only actual get_quant_method calls establish an offered selected route.
+A meta census proves construction, not a loaded forward or CUDA graph execution.
+The current CPU sparse backend cannot construct the full GLM model.
+That refusal does not qualify a GPU route or permit a substitute backend.
+The census records input width variants separately from reachability disagreements.
+An output projection can have different input widths on KDA and MLA layers without a routing disagreement.
+The TP2 smoke accepts a Torch rendezvous URL for native gang members on distinct GPU hosts.
+Runtime identities remain observations. Only mode and artifact input mismatches stop the peer arithmetic check.
+The active construction entry names one selected receipt for each architecture. Historical receipts remain unchanged.
+The current GLM entry derives from actual T-8/T-16 constructor calls on the current image.
+The topology specifies two nodes with one rank and one CUDA device per node.
+
+Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.

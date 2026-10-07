@@ -71,11 +71,94 @@ The canonical encoder and reader already use the FP32 effective-weight
 product; their profile and wire bytes do not change. The plain BF16
 stock checkpoint remains a derived control.
 
-Contract v59 withdraws eight old BF16 cells, their rung/wire attestations
+Contract v61 withdraws eight old BF16 cells, their rung/wire attestations
 and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
 Preserve external paths through their active measurement lifetimes.
+
+## 2026-10-07 — projection audit geometry import
+
+Read TILE_ROWS from tessera.window_geometry in the projection byte audit.
+Keep the byte matrix, pricing rules, and contract v60 unchanged.
+
+## 2026-10-07 — isolated source-boundary test paths
+
+Keep outside-link fixtures inside each test's private scratch directory.
+The scanned repository remains a separate subdirectory and the filesystem boundary guard stays unchanged.
+
+## 2026-10-07 — Torch-free construction preflight
+
+Read configuration shapes and producer declarations without a Torch import.
+Use metadata-only fixtures for input width and reachability checks.
+The real CPU Linear construction path still requires Torch and vLLM.
+
+## 2026-10-07 — explicit GLM projection exports
+
+Use one dense owner rule for KDA, MLA inputs, and DSA key and head weights.
+Read KDA layer identity from the source construction config.
+Keep standalone MLA queries outside the KDA group.
+Read output partitions from the construction receipt.
+Apply the stock NoPE row padding only to the declared key input member.
+Keep original BF16 tensors, vision biases, and the qkv source prefix.
+Select router and vision projections only through explicit plan entries.
+Refuse stock twins that the stock constructor cannot load.
+Price direct consumer buffers through the runtime adapter's shared byte rule.
+Extend the existing byte audit with NoPE padding and direct buffer cases for all three commissioned weight families.
+The audit records the wire price, native resident price, and direct buffer price separately.
+It checks each direct price against the decoded buffer and records both exact sums.
+
+Install selective routes for explicitly declared projection units.
+Keep every unselected BF16 module on its original stock method.
+Read the KDA replication indices from the real layer.
+Retain the DSA FP32 head cache and the MLA BF16 split matrix.
+Share their activation and decoded weight contracts with PrismaQuant.
+Do not change a serving pin, kernel, or default.
+Remove obsolete empty Tessera configuration assertions from stock passthrough tests.
+Keep the geometry-demotion copy check and the exact BF16 control.
+
+Record input width variants without a false reachability refusal.
+Keep true quant-config and output-partition disagreements as refusals.
+
+Use a Torch rendezvous URL for the real two-host TP2 artifact proof.
+Record source and image identities without an identity refusal.
+
+Publish the selected current-image construction receipt as the active GLM entry.
+Retain the previous GLM receipt as unchanged history.
+Declare the actual node count and node rank for native TP2 members.
+
+## 2026-10-07 — projection construction and load checks
+
+Add a small-artifact projection smoke tool with a portable CPU dry run.
+The device path loads real wires through stock vLLM projection classes.
+It compares eager and CUDA graph outputs with decoded FP64 references.
+The dtype and operation-count bounds include the dense cast, bias, and rank reduction.
+Byte views implement the stock and graph checks. No fixed numeric tolerance applies.
+The checks include stock BF16 controls, FP32 indexer gates, absorbed MLA BMM,
+router output dtype, vision biases, and replicated KDA roles.
+Device results remain separate from CPU input proof.
+The construction census now retains every instance, input width, parameter shape,
+and replicated shard identifier. It disables unused prefix caching explicitly.
+The same census entry point provides a portable preflight that reads real config
+shapes and producer imports without model construction. Its output is not a census.
+The constructor check uses real vLLM Linear classes on the supported CPU platform.
+Stock, T-8, and T-16 construction views use fresh processes in one admitted action.
+The selected views retain actual quantization method calls and explicit output partitions.
+The existing action guard accepts an explicit job policy without a new dispatcher.
+It records the measured CPU peak and the unmeasured GPU overhead separately.
+The new policy adds a three-GiB margin and aborts below two GiB.
+It sends SIGTERM, then SIGKILL after ten seconds. PrismaBuild owns scope cleanup.
+The old measurement policy and its callers remain unchanged.
+
+## 2026-10-07 — T-16 routed cells: served-census pin restored
+
+Contract v59 restores the four TESSERA_BF16_K1 routed cells to R1024 with run table [4].
+Independent review refused widening on sweep rows, prototype speed, and quality screens without served receipts.
+It refused bit 8 on the rate-8 down anomaly.
+No rung joins these cells without a served receipt.
+The sweep results stay as research evidence.
+The served re-census stays open.
+This source change claims no graphics processor qualification.
 
 ## 2026-10-07 — issue 1018: producer policy correction
 

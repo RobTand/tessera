@@ -464,3 +464,21 @@ def test_the_batch_matrix_joins_the_exporter_shape(monkeypatch):
             f"per_unit={per_unit}: the exporter's shape is B>1 with per_unit")
         assert digest == _hashlib.sha256(blobs).hexdigest(), (
             f"{label}'s row is not the digest of the blobs the joined call returned")
+
+
+def test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes():
+    module = _load()
+    cases = module._projection_cases()
+    assert {case.condition for case in cases} == {"nope", "head", "mla"}
+    assert {case.grid.name for case in cases} == {"E4M3", "BF16", "E2M1x2"}
+    for case in cases:
+        record = module.projection_record(case)
+        assert record["encoded_rows"] == record["source_rows"] + record["padding_rows"]
+        assert record["container_bytes"] >= record["wire_accounted_bytes"]
+        assert record["resident_bytes"] == record["native_resident_bytes"] + record["direct_buffer_bytes"]
+        assert record["wire_and_direct_buffer_bytes"] == record["wire_accounted_bytes"] + record["direct_buffer_bytes"]
+        if case.condition == "nope":
+            assert record["padding_rows"] == 64 and record["direct_buffer_bytes"] == 0
+        else:
+            assert record["padding_rows"] == 0
+            assert record["direct_buffer_bytes"] == 64 * 32 * (4 if case.condition == "head" else 2)
