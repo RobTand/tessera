@@ -485,6 +485,33 @@ def dense_packed_fp4_operand_magnitude(rendered_x, weight):
     return upper
 
 
+def _packed_fp4_bound_inputs(operand_magnitude, k):
+    """Validate the scalar contract independently of the diagnostic receipt."""
+    if type(k) is not int or k < 1:
+        raise ValueError("the derived packed FP4 bound needs the contraction length as a positive integer")
+    try:
+        magnitude = float(operand_magnitude)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("the derived packed FP4 bound needs a real operand magnitude") from exc
+    if not math.isfinite(magnitude) or magnitude < 0:
+        raise ValueError("the derived packed FP4 bound needs a finite non-negative operand magnitude")
+    return magnitude
+
+
+def _packed_fp4_conditional_terms(magnitude, k):
+    """Compute the existing envelope without native qualification policy."""
+    epsilon = torch.finfo(torch.float32).eps
+    native_steps, reference_steps = 2 * k + 3, 2 * k + 2
+    native_gamma = _rounding_gamma(native_steps, epsilon)
+    reference_gamma = _rounding_gamma(reference_steps, epsilon)
+    combined = math.nextafter(native_gamma + reference_gamma, math.inf)
+    coefficient = math.nextafter(combined / (1.0 - 2.0 * epsilon), math.inf)
+    atol = math.nextafter(coefficient * magnitude, math.inf) if magnitude else 0.0
+    if not math.isfinite(atol):
+        raise ValueError("the derived packed FP4 bound is not finite")
+    return epsilon, native_steps, reference_steps, native_gamma, reference_gamma, coefficient, atol
+
+
 def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
     """Conditional diagnostic envelope, NOT a native arithmetic guarantee.
 
@@ -519,23 +546,9 @@ def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
     covered. Scalar operations round outward; the finite gamma domain is
     checked rather than discarding higher-order terms.
     """
-    if type(k) is not int or k < 1:
-        raise ValueError("the derived packed FP4 bound needs the contraction length as a positive integer")
-    try:
-        magnitude = float(operand_magnitude)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("the derived packed FP4 bound needs a real operand magnitude") from exc
-    if not math.isfinite(magnitude) or magnitude < 0:
-        raise ValueError("the derived packed FP4 bound needs a finite non-negative operand magnitude")
-    epsilon = torch.finfo(torch.float32).eps
-    native_steps, reference_steps = 2 * k + 3, 2 * k + 2
-    native_gamma = _rounding_gamma(native_steps, epsilon)
-    reference_gamma = _rounding_gamma(reference_steps, epsilon)
-    combined = math.nextafter(native_gamma + reference_gamma, math.inf)
-    coefficient = math.nextafter(combined / (1.0 - 2.0 * epsilon), math.inf)
-    atol = math.nextafter(coefficient * magnitude, math.inf) if magnitude else 0.0
-    if not math.isfinite(atol):
-        raise ValueError("the derived packed FP4 bound is not finite")
+    magnitude = _packed_fp4_bound_inputs(operand_magnitude, k)
+    (epsilon, native_steps, reference_steps, native_gamma, reference_gamma,
+     coefficient, atol) = _packed_fp4_conditional_terms(magnitude, k)
     return ({"atol": atol, "rtol": 0.0}, {
         "schema": "tessera.packed_fp4_arithmetic_bound.v3",
         "status": "conditional_diagnostic_only",
