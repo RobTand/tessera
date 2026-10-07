@@ -332,6 +332,11 @@ The D41 class benchmark replaces its preparation owner with the retained native 
 `resident_bytes` counts that owner and the production inverse by backing allocation.
 `preparation_storage_bytes` names the load owner and its original inverse separately.
 Preparation and production storage overlap; their values must not be added.
+The class benchmark derives explicit uniform schedules from the existing mixed control rungs.
+Uniform timing compares production class dispatch directly with the old pure whole-stack path.
+The paired event samples retain both routing generations and both F/R orders.
+Mixed timing keeps its route-count-weighted interpolation of pure controls.
+These rows qualify no rung, serving behavior or kernel default.
 
 The D30 class harness checks the owned process group after launcher exit.
 It sends SIGTERM, waits up to five seconds, and sends SIGKILL if group members remain.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — measure uniform class dispatch
+
+The class benchmark accepts uniform schedules derived from its mixed control rungs.
+It times the production one-class dispatcher against the measured old pure path.
+Uniform results use a direct old-pure comparator. Mixed results retain their declared interpolation.
+The numerical checks keep both routing generations and remove duplicate uniform cases.
+
 ## 2026-10-07 — report retained class storage
 
 The D41 class benchmark retires load-only planes and the unused inverse before timing.
