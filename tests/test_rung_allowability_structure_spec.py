@@ -248,5 +248,135 @@ class CliFlag(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
 
 
+class StrictTypes(unittest.TestCase):
+    def test_bool_rows_refused(self):
+        payload = _glm_payload()
+        payload["shapes"][0]["rows"] = True
+        name = _write_spec(payload)
+        try:
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+    def test_bool_meta_refused(self):
+        payload = _glm_payload()
+        payload["experts"] = True
+        name = _write_spec(payload)
+        try:
+            with self.assertRaisesRegex(ValueError, "positive integer"):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+    def test_bool_ms_refused(self):
+        payload = _glm_payload()
+        payload["ms"] = [1, True]
+        name = _write_spec(payload)
+        try:
+            with self.assertRaisesRegex(ValueError, "positive integers"):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+    def test_float_mode_refused(self):
+        payload = _glm_payload()
+        payload["shapes"][0]["mode"] = 0.0
+        name = _write_spec(payload)
+        try:
+            with self.assertRaisesRegex(ValueError, "mode must be 0"):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+    def test_string_mode_refused(self):
+        payload = _glm_payload()
+        payload["shapes"][1]["mode"] = "2"
+        name = _write_spec(payload)
+        try:
+            with self.assertRaisesRegex(ValueError, "mode must be 0"):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+    def test_top_k_above_experts_refused(self):
+        payload = _glm_payload()
+        payload["experts"] = 8
+        payload["top_k"] = 16
+        name = _write_spec(payload)
+        try:
+            with self.assertRaisesRegex(ValueError, "top_k"):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+
+class FullDimensionMatch(unittest.TestCase):
+    def test_exact_dims_match(self):
+        entry, verified = tab.match_shape(
+            tab.SHAPES, "routed", "gate_up", 1024, 4096, 0
+        )
+        self.assertEqual(entry, ("routed", "gate_up", 1024, 4096, 0))
+        self.assertTrue(verified)
+
+    def test_dense_none_mode_matches(self):
+        entry, verified = tab.match_shape(
+            tab.SHAPES, "dense", "o_proj", 4096, 4096, None
+        )
+        self.assertEqual(entry, ("dense", "o_proj", 4096, 4096, 2))
+        self.assertTrue(verified)
+
+    def test_same_name_new_dims_mismatch(self):
+        entry, verified = tab.match_shape(
+            tab.SHAPES, "routed", "gate_up", 768, 5120, 0
+        )
+        self.assertIsNone(entry)
+        self.assertTrue(verified)
+
+    def test_wrong_mode_mismatch(self):
+        entry, verified = tab.match_shape(
+            tab.SHAPES, "routed", "gate_up", 1024, 4096, 2
+        )
+        self.assertIsNone(entry)
+        self.assertTrue(verified)
+
+    def test_unknown_name_mismatch(self):
+        entry, verified = tab.match_shape(
+            tab.SHAPES, "dense", "o_new", 4096, 4096, 2
+        )
+        self.assertIsNone(entry)
+        self.assertFalse(verified)
+
+    def test_missing_dims_unverified(self):
+        entry, verified = tab.match_shape(
+            tab.SHAPES, "routed", "down", None, None, 2
+        )
+        self.assertEqual(entry, ("routed", "down", 4096, 1024, 2))
+        self.assertFalse(verified)
+
+
+class SerializedScopeParity(unittest.TestCase):
+    def test_flag_and_default_scopes_match(self):
+        parsed = tab.parse_structure_spec(FIXTURE)
+        default = json.dumps(
+            tab.scope_geometry(tab.SHAPES, tab.MS), sort_keys=True
+        )
+        flagged = json.dumps(
+            tab.scope_geometry(parsed["shapes"], parsed["ms"]),
+            sort_keys=True,
+        )
+        self.assertEqual(flagged, default)
+
+    def test_spec_scope_carries_model_fields(self):
+        shapes, ms, owner, record = tab.resolve_sweep_geometry(FIXTURE)
+        self.assertEqual(
+            (record["experts"], record["top_k"], record["hidden"],
+             record["inter"]),
+            (288, 8, 4096, 1024),
+        )
+        self.assertEqual(len(record["sha256"]), 64)
+        self.assertIn("glm53-tp2", owner)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,36 @@ DEFAULT_SHAPE_OWNER="bench_rates TP2 shapes; actual GLM config hidden4096, route
 RECORDED_ROUTING_MIN_M=2048
 
 
+def _strict_int(value):
+    """True only for a real integer, never a bool."""
+    return isinstance(value,int) and not isinstance(value,bool)
+
+
+def match_shape(shapes,kind,name,rows,columns,mode):
+    """Match one measured group to one spec shape on full dimensions.
+
+    Names alone once relabeled old measurements with unmeasured values.
+    Every stamped dimension must agree or the group stays out of the
+    table. Groups without stamped rows or columns keep the name match
+    but report unverified, so the gap stays visible.
+    """
+    named=[s for s in shapes if s[:2]==(kind,name)]
+    if not named:
+        return None,False
+    if rows is None or columns is None:
+        return named[0],False
+    for entry in named:
+        if entry[2]==rows and entry[3]==columns and (mode is None or entry[4]==mode):
+            return entry,True
+    return None,True
+
+
+def scope_geometry(shapes,ms):
+    """Serialized geometry-bearing scope fields for one harvest."""
+    return {"required_cells":roster(shapes,ms),
+            "shapes":[{"shape_id":n,"kernel_kind":k,"rows":r,"columns":c,"mode":mode} for k,n,r,c,mode in shapes]}
+
+
 def parse_structure_spec(path):
     """Read a D41 structure spec file and return its sweep geometry."""
     doc=json.loads(Path(path).read_text())
@@ -44,14 +74,14 @@ def parse_structure_spec(path):
             raise ValueError("each shape needs a non-empty shape_id string")
         rows=entry.get("rows")
         columns=entry.get("columns")
-        if not isinstance(rows,int) or rows<=0 or not isinstance(columns,int) or columns<=0:
+        if not _strict_int(rows) or rows<=0 or not _strict_int(columns) or columns<=0:
             raise ValueError(f"shape {name!r} needs positive integer rows and columns")
         mode=entry.get("mode")
-        if mode not in (0,2):
+        if not _strict_int(mode) or mode not in (0,2):
             raise ValueError(f"shape {name!r} mode must be 0 (gate/up) or 2 (down/dense)")
         shapes.append((kind,name,rows,columns,mode))
     raw_ms=doc.get("ms")
-    if not isinstance(raw_ms,list) or not raw_ms or any(not isinstance(m,int) or m<=0 for m in raw_ms):
+    if not isinstance(raw_ms,list) or not raw_ms or any(not _strict_int(m) or m<=0 for m in raw_ms):
         raise ValueError("structure spec needs a non-empty ms list of positive integers")
     ms=tuple(raw_ms)
     if len(set(ms))!=len(ms):
@@ -59,9 +89,11 @@ def parse_structure_spec(path):
     meta={}
     for key in ("experts","top_k","hidden","inter"):
         value=doc.get(key)
-        if not isinstance(value,int) or value<=0:
+        if not _strict_int(value) or value<=0:
             raise ValueError(f"structure spec needs a positive integer {key}")
         meta[key]=value
+    if meta["top_k"]>meta["experts"]:
+        raise ValueError(f"structure spec top_k {meta['top_k']} exceeds experts {meta['experts']}")
     return {"shapes":tuple(shapes),"ms":ms,"meta":meta,"spec_id":doc.get("spec_id")}
 
 
@@ -489,7 +521,8 @@ def main():
         for ninja in path.parent.glob('home/torch_extensions/*/build.ninja'):
             build['metadata']['flags'].append({'file':str(ninja),'cuda_cflags':[l for l in ninja.read_text().splitlines() if l.startswith('cuda_cflags =')]})
     shapes,ms,shape_owner,spec_record=resolve_sweep_geometry(args.structure_spec)
-    required=roster(shapes,ms)
+    geo=scope_geometry(shapes,ms)
+    required=geo["required_cells"]
     by_rung={q:{'rung':q,'measurement_status':'pending','supported':None,'anomaly_flags':[],'observations':[], 'excluded':False,'dominating_rung':None,'measurements':[],'quality':{},'dominance_evidence':[],'lineage':{}} for q in range(lower,upper+1)}
     for facts in catalog.get('rungs',[]):
         by_rung[facts['q256']]['observations'].append({'kind':'producer_recipe_and_reader_scope','facts':facts,'blocking':False,'exclusion_basis':False})
@@ -516,8 +549,12 @@ def main():
             q=group.get('q256')
             if q not in by_rung or group.get('kind') not in ('routed','dense'):continue
             kind=group["kind"]; name=group.get("shape") if kind=="dense" else ("gate_up" if group["mode"]==0 else "down")
-            spec=next((s for s in shapes if s[:2]==(kind,name)),None)
-            if not spec:continue
+            spec,verified=match_shape(shapes,kind,name,group.get("rows"),group.get("cols"),group.get("mode"))
+            if spec is None:
+                by_rung[q]['observations'].append({'kind':'shape_dimension_mismatch','q256':q,'group_kind':kind,'shape_id':name,'rows':group.get("rows"),'columns':group.get("cols"),'mode':group.get("mode"),'blocking':False,'exclusion_basis':False,'scope':'measured dims differ from every spec shape; the group stays out of the table'})
+                continue
+            if not verified:
+                by_rung[q]['observations'].append({'kind':'unverified_dimensions','q256':q,'group_kind':kind,'shape_id':name,'blocking':False,'exclusion_basis':False,'scope':'group lacks stamped rows or columns; the name match stands but the gap stays visible'})
             for key in required:
                 if key["kernel_kind"]!=kind or key["shape_id"]!=name:continue
                 m=key["M"]
@@ -568,7 +605,7 @@ def main():
             row['observations'].append({'kind':'beyond_1024_slow_lane','issue':690,'url':'https://github.com/RobTand/tessera/issues/690','blocking':False,'exclusion_basis':False,'ratios':ratios,'missing_baseline':not bool(ratios)})
     rows=list(by_rung.values())
     table={"schema":"fleet.rung_allowability.v2","table_version":args.version,"table_status":"complete" if all(r["measurement_status"]!="pending" for r in rows) else "partial","format":format_name,"kernel_build":build,"generated_at":datetime.now(timezone.utc).isoformat(),
-           "scope":{"rung_min":lower,"rung_max":upper,"grid_step_q256":1,"grid_owner":meta.get('grid_owner','prismaquant.tessera_formats.realisable_rungs(step_q256=1)'),"required_cells":required,"shapes":[{"shape_id":n,"kernel_kind":k,"rows":r,"columns":c,"mode":mode} for k,n,r,c,mode in shapes],"timing_statistic":meta["statistic"],"shape_owner":shape_owner},"rungs":rows,"evidence":{"summary":dict(Counter(r["measurement_status"] for r in rows)),"completed_quanta":len(completed),"quality_scope":"fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL","exclusion_review_status":"pending independent review; no defaults promoted"}}
+           "scope":{"rung_min":lower,"rung_max":upper,"grid_step_q256":1,"grid_owner":meta.get('grid_owner','prismaquant.tessera_formats.realisable_rungs(step_q256=1)'),"required_cells":required,"shapes":geo["shapes"],"timing_statistic":meta["statistic"],"shape_owner":shape_owner},"rungs":rows,"evidence":{"summary":dict(Counter(r["measurement_status"] for r in rows)),"completed_quanta":len(completed),"quality_scope":"fixed actual expert 0 layer3 gate/up/down 32x256 sample; unweighted weight-space SSE, not served KL","exclusion_review_status":"pending independent review; no defaults promoted"}}
     if spec_record is not None:
         table["scope"]["structure_spec"]=spec_record
     table['scope']['kernel_execution_scope']=meta.get('kernel_execution_scope',meta.get('execution_scope','rank-local packed fused and actual public compact projections at TP2 dimensions; synthetic packed wires; each cell names its path; serving intake refusals and gates remain independent'))
