@@ -20,6 +20,7 @@ import torch
 
 from tessera import routed_fused as rf
 from tessera.compact_prep import require_compact_cut
+from tessera.errors import GrammarError
 from tessera.fused_frame import parse_fused
 from tessera.native_window_moe import PackedWindowMoeBundles
 from tessera.serving import moe_route
@@ -30,7 +31,7 @@ from tessera.serving.scheme import (expert_role_declarations,
 from tessera.window_gemm_grouped import prepare_grouped_window_gemm
 from _routed_classes_plugin_fixture import (EXPERTS, HIDDEN, INTERMEDIATE,
                                             ROLES, TOP_K, route_cases, wire_fixture)
-from test_routed_window_classes_cuda import _saved_reference
+from test_routed_window_classes_cuda import _pure_launch
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="CPU fixture control only; real vLLM loader/CUDA graph cases did not execute")
@@ -167,6 +168,36 @@ def _bits(actual, expected):
     assert torch.equal(actual.view(torch.int16), expected.view(torch.int16))
 
 
+def _saved_reference(packed, x, ids, weights):
+    """Use the existing pure launch with this fixture's actual rank geometry."""
+    routed = torch.empty(ids.numel(), packed.down.rows, device=x.device, dtype=torch.bfloat16)
+    flat_ids = ids.reshape(-1)
+    for desc in packed.expert_classes:
+        start, end = desc["start"], desc["end"]
+        take = torch.where((flat_ids >= start) & (flat_ids < end))[0]
+        if take.numel() == 0:
+            continue
+        roles = [rf.grouped_class_view(role, start, end)
+                 for role in (packed.gate, packed.up, packed.down)]
+        pure = rf.FusedRoutedWindowMoE.from_bundles(*roles, expert_classes=[
+            {"start": 0, "end": end - start, "q256": desc["q256"]}])
+        local_ids = (flat_ids[take] - start).reshape(-1, 1)
+        rw = weights.reshape(-1)[take].reshape(-1, 1)
+        xin = x[take // ids.shape[1]]
+        routing = pure._routing(local_ids, rw)
+        xq, a1 = pure._quantized(xin, None, len(take))
+        act = torch.empty(len(take), packed.gate.rows, device=x.device, dtype=torch.bfloat16)
+        _pure_launch(pure, 0, xq, a1, routing, act, weight=False)
+        aq, a2 = pure._quantized(act, None, len(take))
+        output = torch.empty(len(take), packed.down.rows, device=x.device, dtype=torch.bfloat16)
+        _pure_launch(pure, 2, aq, a2, routing, output, weight=True)
+        routed[take] = output
+    out = torch.empty_like(x)
+    rf._ext(rf.library_for(packed.family)).token_sum(routed, out, ids.shape[1])
+    return out.clone()
+
+
+
 def _save_references(tmp_path, name, scheme, cases, expected, degree, rank, library):
     root = Path(os.environ.get("TERMINAL_NATIVE_IDENTITY_DIR", str(tmp_path)))
     root = root.parent / "plugin-proof" if "TERMINAL_NATIVE_IDENTITY_DIR" in os.environ else root
@@ -294,5 +325,5 @@ def test_real_plugin_load_refuses_projection_errors(family, defect):
         for (storage, shard), blob in wires.items():
             if (storage, shard) != (0, "w3"):
                 _callback(layer, storage, shard, blob)
-        with pytest.raises(ValueError, match="length|loaded|positive|missing"):
+        with pytest.raises(GrammarError, match="wire length 0"):
             method.process_weights_after_loading(layer)
