@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-07 — issue 1007: targeted native four-bit arithmetic probes
+
+Add exact native probes for products, scale order, alignment width,
+rounding, subnormal values, and the intermediate domain. Retain rational
+references and expected alternative models beside every native output.
+Add a named-device refusal and an atom-derived diagnostic bound.
+Keep arithmetic qualification false before both required reviews.
+Preserve the conditional source, thresholds, original failures, and measurement paths.
+
 ## 2026-10-07 — issue 1007: explicit packed T4 arithmetic assumptions
 
 Refactor the bound owner before the contract correction. Preserve its

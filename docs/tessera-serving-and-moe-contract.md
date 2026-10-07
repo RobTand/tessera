@@ -1773,3 +1773,179 @@ No historical receipt covers this correction's new source head.
 No source identity difference adds a refusal under development mode.
 The existing code, scale, shape, finite-value, and discrepancy refusals stay intact.
 
+### 17.7 Targeted native implementation attestation
+
+Owner: kernels. Date: 2026-10-07. Arithmetic qualification remains false.
+The sole implementation record is `kernels-t4-fp4-mma-attestation-sol-20261007`.
+The conditional source remains frozen at `3fc62f102871e8a050d0e2eb5ef53c3c2f5745da`.
+The original failed-revision count and blocker clock remain unchanged.
+
+#### Method and retained evidence
+
+The method follows Fasi, Higham, Mikaitis and Pranesh, PeerJ Computer Science 7:e330, 2021.
+Source: https://pmc.ncbi.nlm.nih.gov/articles/PMC7959640/ .
+Use their targeted characterization method, not their older-device conclusions.
+The suite uses no random samples and no fitted allowance.
+Each test selects inputs that separate explicit arithmetic alternatives.
+The implementation can refuse an unsupported model without calling the device defective.
+
+The native instruction is:
+
+`mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64.row.col.f32.e2m1.e2m1.f32.ue4m3`.
+
+The probe uses the existing real fragment layout, with lane `4*g+t`:
+
+- A register r, nibble i: row `g+8*(r&1)`, column `8*t+32*(r>>1)+i`.
+- B register r, nibble i: column `g`, reduction index `8*t+32*r+i`.
+- D register j: row `g+8*(j>>1)`, column `2*t+(j&1)`.
+- A scale byte b: lane `(g,0)` names row g and group b.
+- A scale byte b: lane `(g,1)` names row g+8 and group b.
+- B scale byte b: lane `(g,0)` names column g and group b.
+
+The suite retains these files beside each action:
+
+- `inputs.bin`: every operand code, scale byte, and incoming accumulator bit.
+- `inputs.json`: the exact binary layout, case names, and byte digest.
+- `outputs.bin`: every native output bit, before any negative control.
+- `references.json`: exact rational sums, output bits, and alternative model outputs.
+- `negative-references.json`: the altered output and its exact failed inequality.
+- `fp4_arithmetic_probe.cu`, `context.json`, and `probe.sass`: source, flags, compiler, device context, and native code.
+- `memory-guard.json`: memory samples and the owned process-group termination record.
+- `attestation.json`: each required result, refusal, model candidates, and qualification state.
+
+The independent interpreter uses exact rational arithmetic and explicit binary rounding.
+Its processor controls compare values with the host IEEE conversion and exact tie cases.
+A processor interpreter failure supplies no native device verdict.
+A layout failure supplies no arithmetic verdict.
+A failed measured inequality refuses the device by name.
+
+#### Six targeted properties
+
+| Property | Targeted inputs | Tested premise |
+|---|---|---|
+| Product exactness | All signed E2M1 pairs; all finite A scale bytes against scale corners | No product narrows below its exact FP32 representation. |
+| Scale order | Four distinct scale groups and small group sums below the alignment quantum | Group scales enter before the common accumulation, or through an equivalent exact group calculation. |
+| Alignment width | Signed cancellation with exponent gaps from ten through forty | The cancellation cutoff supports the 36-bit alignment model. |
+| Rounding mode | Signed sums, odd/even significands, ties, and above-half-spacing increments | The observed two-term rounding class belongs to the stated alternatives. |
+| Subnormal handling | E2M1 half values, UE4M3 subnormal bytes, and FP32 accumulator subnormals | The measured input and output values remain present. |
+| Intermediate domain | Maximum products, full atoms, seven carry bits, and cancellation permutations | The supported model has no narrow intermediate overflow or premature normalization. |
+
+Product scaling and exact group scaling can be observationally equivalent.
+The suite does not infer a physical circuit order when the represented results agree.
+The report retains each compatible model instead of inventing a unique circuit.
+An empty candidate set means that the current implementation model is unsupported.
+It does not establish a defective GPU.
+
+#### Explicit implementation inequalities
+
+Let `epsilon=2^-23`, and let `p_k=a_k*b_k*sA_g*sB_g` for group `g=floor(k/16)`.
+The contract uses these inequalities:
+
+`|native_product(p_k)-p_k| = 0`.
+
+`q=2^(E-35) <= 2^-35*max_i |x_i|`, where E is the largest summand exponent.
+
+`|aligned(x_i)-x_i| < q` for a nonzero discarded part.
+
+`|normalized(z)-z| <= epsilon*|z|` within the finite normal domain.
+
+`|native_atom(C,p)-[C+sum_(k=0)^63 p_k]| <= (65*2^-35+2^-23)*S`.
+
+Here `S=|C|+sum_k |p_k|`.
+An atom has at most 65 aligned summands and one final normalization.
+The coefficients count 65 alignments and one FP32 normalization.
+They are not fitted multipliers.
+The truncation model does not enlarge any aligned summand's magnitude.
+Thus the exact aligned sum has magnitude at most S.
+The 65 alignment errors contribute less than `65*2^-35*S`.
+The final normalization contributes at most `epsilon*S`.
+Their sum gives the atom inequality, including cancellation and exact zero.
+
+Exact group formation does not require another error term.
+Each raw E2M1 product is a multiple of one quarter and has magnitude at most 36.
+A sixteen-product raw group has magnitude at most 576.
+Its integer numerator needs at most twelve bits.
+Two UE4M3 significands contribute at most eight further bits.
+The scaled group therefore fits exactly within FP32's 24-bit precision.
+The group-first model aligns at most five summands, which the 65-summand bound also covers.
+
+The targeted results test each premise and retain its alternative outputs.
+They do not prove every hardware input or every future compiler build.
+Required reviewers decide whether the measured model supports the stated implementation domain.
+No source approval or processor pass alone supplies that acceptance.
+
+#### Reduction-length derivation
+
+Let `L=K/64`, `M=sum_(k=0)^(K-1) |p_k|`, and `eta=65*2^-35+2^-23`.
+The initial accumulator is zero.
+Let `E_j` bound the error after j native atoms.
+The atom inequality gives:
+
+`E_j <= (1+eta)*E_(j-1)+eta*M`, with `E_0=0`.
+
+The finite geometric sum gives:
+
+`|native_dot-exact_dot| <= [(1+eta)^L-1]*M`.
+
+The API evaluates that expression with exact rational arithmetic.
+It rounds the reported absolute bound outward to binary64.
+It does not fit a multiplier to observed errors.
+The bound depends on the attested contract, FP32 precision, and actual reduction length.
+The source performs K/64 native atoms, not one error per abstract source dot call.
+
+#### Domain and actual boundaries
+
+The domain has E2M1 codes 0 through 15 and finite unsigned UE4M3 bytes 0 through 126.
+It requires a zero initial accumulator and a positive K divisible by 64.
+Every nonzero scaled product is a multiple of `2^-20`.
+Its magnitude is at most `36*448^2`.
+A native sum from zero remains on that lattice under the supported alignment model.
+Thus a nonzero raw accumulator cannot become an FP32 subnormal.
+Subnormal accumulator probes remain useful controls, but the derived dot domain does not need that extension.
+
+The domain guard requires `(1+eta)^L*M <= FP32_MAX`.
+This bound excludes overflow on each prefix, not only at the final output.
+Signs and cancellation do not relax that guard.
+The implementation supports exact zero without an artificial absolute floor.
+Signed-zero bit semantics are not part of the value inequality.
+NaN scales, nonfinite values, and arbitrary initial accumulators are unsupported.
+
+The raw instruction has no normalization division and returns FP32 directly.
+Its normalization term and separate output-conversion term are therefore zero.
+The optional represented output scale adds only the actual scalar multiplication term:
+
+`E_scaled <= |r|*E_native + 2^-24*|r|*(M+E_native) + 2^-150`.
+
+The optional bfloat16 conversion adds only its actual boundary term:
+
+`E_bf16 <= E_input + 2^-8*(M_input+E_input) + 2^-134`.
+
+The small absolute terms are half the minimum subnormal spacing, not empirical allowances.
+These scalar boundaries use their explicit round-to-nearest contract.
+They are separate from the characterized matrix instruction.
+No activation quantization term belongs to arithmetic on equal represented operands.
+No division term applies when a caller supplies an already represented scale.
+A caller that computes a scale or changes the reference must account for those actual operations separately.
+
+This attestation does not cover an uncharacterized library reference GEMM.
+It does not qualify a complete fused network path with SwiGLU, router weights, split sums, or token sums.
+Section 17.5 retains those distinct boundaries and reduction lengths.
+The existing packed comparison remains a conditional diagnostic.
+Its allowance and every live measurement path remain unchanged.
+
+#### Fail-closed qualification and failure-first controls
+
+`require_probe_contract` requires all six measured properties and the layout controls.
+`require_t4_device_qualification` also requires kernels parent review and independent review.
+Every emitted report keeps `arithmetic_qualified: false` before those reviews.
+A required failed probe refuses T4 on the named device.
+A meaningful negative control changes an exact native product output before analysis.
+The original captured output remains unchanged in `outputs.bin`.
+The altered result must fail the same product inequality and device gate.
+The record distinguishes that injected failure from a failed device probe.
+
+PrismaBuild executes the same entry point on the processor before a changed GPU invocation.
+Each action retains fresh disk admission, declared resources, the memory guard, and completion custody.
+Short GPU actions use ordinary exclusive admission at priority zero.
+They request no quiet-host or measurement-class certificate.
+The report adds no seal, source-identity refusal, serving default, pin, artifact change, or row admission.

@@ -50,6 +50,18 @@ The positive float64 magnitude contraction also has an explicit conditional mode
 Finite diagnostics cannot replace these missing facts. Byte-exact code and
 scale checks remain independent. No serving default, threshold, pin, or row changes.
 
+Re-stamped 2026-10-07 for the targeted native four-bit arithmetic probes.
+`experiments/t4_code/fp4_arithmetic_attest.py` issues the actual block-scaled
+E2M1 instruction through a standalone CUDA probe. It retains exact input
+bytes, output bits, rational references, alternative models, source, and compiler context.
+`tessera.fp4_arithmetic` owns the device refusal and the atom-derived diagnostic bound.
+The six required properties and the operand-layout controls must pass.
+The device gate also requires kernels parent review and independent review.
+All emitted reports keep `arithmetic_qualified` false before those reviews.
+The probe suite does not change serving defaults, pins, row admission,
+the conditional reader allowance, or any live measurement path.
+Section 17.7 of the serving contract gives the model, derivation, and limitations.
+
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
 lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
