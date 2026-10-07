@@ -196,6 +196,11 @@ def _window_gemm_kernel(
 
 
 @triton.jit
+def _scratch_indices(row_offset, rows, cols, columns):
+    return (row_offset + rows[None, :]) * cols + columns[:, None]
+
+
+@triton.jit
 def _window_bf16_decode_kernel(
     words_ptr, table_ptr, codes_ptr, native_ptr, scale_ptr, runs_ptr,
     init_ptr, perm_ptr, out_ptr,
@@ -223,7 +228,7 @@ def _window_bf16_decode_kernel(
             words_ptr, table_ptr, codes_ptr, native_ptr, init_ptr,
             kglob, live_k, g, t, rows_v, rate, base, tile_words, total_words,
             L, TILE, BN, HAS_INIT, False, True, wscale)
-        tl.store(out_ptr + (row_offset + offs_n[None, :]) * cols + original_k[:, None],
+        tl.store(out_ptr + _scratch_indices(row_offset, offs_n, cols, original_k),
                  val, mask=live_k[:, None] & live_n[None, :])
 
 

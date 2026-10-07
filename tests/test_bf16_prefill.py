@@ -10,6 +10,10 @@ from pathlib import Path
 
 import pytest
 import torch
+import triton
+import triton.language as tl
+
+from tessera.window_gemm import _scratch_indices
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -24,6 +28,27 @@ COLS = 64
 def _api():
     # A missing public implementation must fail, not skip, on the pre-fix tree.
     return importlib.import_module("tessera.serving.bf16_prefill")
+
+
+@triton.jit(do_not_specialize=["row_offset", "cols"])
+def _scratch_index_probe(out, row_offset, cols):
+    rows = tl.arange(0, 2)
+    columns = tl.arange(0, 2)
+    indices = _scratch_indices(row_offset, rows, cols, columns)
+    tl.store(out + columns[:, None] * 2 + rows[None, :], indices)
+
+
+@cuda
+def test_scratch_addresses_do_not_wrap_at_the_int32_limit():
+    cols = 4096
+    first = torch.iinfo(torch.int32).max + 1
+    row_offset = first // cols
+    got = torch.empty(2, 2, dtype=torch.int64, device="cuda")
+    _scratch_index_probe[(1,)](got, row_offset, cols)
+    expected = torch.tensor([[first, first + cols],
+                             [first + 1, first + cols + 1]],
+                            dtype=torch.int64, device="cuda")
+    assert torch.equal(got, expected), f"scratch addresses wrap: {got.tolist()}"
 
 
 @pytest.fixture(scope="module")
