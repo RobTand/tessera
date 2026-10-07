@@ -76,6 +76,25 @@ BF16_ROUTED = "tessera_bf16_k1_routed_moe_sm121_batch_resident"
 BF16_DENSE = "tessera_bf16_k1_dense_sm121_batch_resident"
 
 
+def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
+    """Contract v51: Tessera-16's rule attests every one-run rate 1..14 and
+    every adjacent pair, the rates the value library's dense launch reads,
+    over 256..3584.  The range stops where the wire does: above rate 14 the
+    exporter widens the window table to the rate, so 3585 would be cut on
+    another wire (and rates 15 and 16 are excluded by geometry)."""
+    row = _row(contract, BF16)
+    rule = row["allowable_rungs"]
+    assert rule["rule"] == "window_rate_set" and rule["code_arity"] == 1
+    assert rule["range_q256"] == [256, 3584] and rule["step_q256"] == 1
+    tables = [tuple(t) for t in rule["run_tables"]]
+    assert tables == sorted({(r,) for r in range(1, 15)} | {(r, r + 1) for r in range(1, 14)})
+    assert rule["excluded_run_tables"] == [] and rule["excluded_q256"] == []
+    assert [q for q in range(256, 4097) if rung_allowable(row, q)] == list(range(256, 3585))
+    assert rung_rates(row, 3584) == (14,) and rung_rates(row, 3585) == (14, 15)
+    for item in row["attested_wire"]:
+        assert {k: v for k, v in item.items() if k != "q256"} == rule["wire"]
+
+
 def _bf16_routed_cells(contract):
     """Every T-16 routed_moe cell: the base decode/batch pair and the two
     runtime-suffixed twins.  Derived from the contract, never a roster."""
