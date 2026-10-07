@@ -24,6 +24,7 @@ __all__ = [
     "require_execution_mode",
     "require_pure_q256",
     "require_routed_geometry",
+    "require_routed_shape_agreement",
     "require_routed_rates",
     "require_served_recipe",
     "require_structure",
@@ -109,7 +110,7 @@ def require_served_recipe(recipe: Any) -> Any:
         raise ValueError(
             f"t4_admission: served recipe body is {_field_name(body)!r}, not 'WINDOW'"
         )
-    if int(span) != 1:
+    if type(span) is not int or span != 1:
         raise ValueError(
             f"t4_admission: served recipe span is {span!r}, not 1"
         )
@@ -117,7 +118,7 @@ def require_served_recipe(recipe: Any) -> Any:
         raise ValueError(
             f"t4_admission: served recipe plane is {_field_name(plane)!r}, not 'LUT'"
         )
-    if int(window_bits) != 14:
+    if type(window_bits) is not int or window_bits != 14:
         raise ValueError(
             f"t4_admission: served recipe window_bits is {window_bits!r}, not 14"
         )
@@ -128,14 +129,12 @@ def require_dense_geometry(rows: Any, cols: Any, projection: Any = None) -> None
     """Refuse a dense shape no native E2M1 launch serves."""
     from .serving.scheme import e2m1_shape_reason
 
-    try:
-        rows_i, cols_i = int(rows), int(cols)
-    except (TypeError, ValueError) as exc:
+    if type(rows) is not int or type(cols) is not int:
         raise ValueError(
             f"t4_admission: dense shape must be integers, got {rows!r}x{cols!r}"
-        ) from exc
+        )
     reason = e2m1_shape_reason(
-        rows_i, cols_i, structure=STRUCTURE_DENSE, projection=projection
+        rows, cols, structure=STRUCTURE_DENSE, projection=projection
     )
     if reason is not None:
         raise ValueError(f"t4_admission: dense geometry refused: {reason}")
@@ -150,15 +149,13 @@ def require_routed_geometry(rows: Any, cols: Any, projection: Any) -> None:
             f"t4_admission: unknown routed projection {projection!r}; "
             "admit gate_proj, up_proj, or down_proj"
         )
-    try:
-        rows_i, cols_i = int(rows), int(cols)
-    except (TypeError, ValueError) as exc:
+    if type(rows) is not int or type(cols) is not int:
         raise ValueError(
             f"t4_admission: routed shape must be integers, got {rows!r}x{cols!r}"
-        ) from exc
+        )
     reason = e2m1_shape_reason(
-        rows_i,
-        cols_i,
+        rows,
+        cols,
         structure=STRUCTURE_ROUTED_MOE,
         projection=projection,
     )
@@ -169,21 +166,23 @@ def require_routed_geometry(rows: Any, cols: Any, projection: Any) -> None:
 def require_routed_rates(rungs: Any) -> list:
     """Return the normalized rate matrix when the lane reads it.
 
-    Each row holds one expert in down, gate/up, or gate/up/down order.
+    Each row holds one expert as gate, up, down in that order. This
+    admission covers complete stacks only: a row with fewer or more
+    than three rungs refuses, even where the lane reads subsets.
     Every rung must name one pure T-4 class. Experts must agree and
     gate and up must share one stride. Anything else refuses by name.
     """
     if not isinstance(rungs, (list, tuple)) or not rungs:
         raise ValueError("t4_admission: routed rates must be a non-empty matrix")
     matrix = []
-    width = None
     for row in rungs:
         if not isinstance(row, (list, tuple)) or not row:
             raise ValueError("t4_admission: routed rates rows must be non-empty lists")
-        if width is None:
-            width = len(row)
-        elif len(row) != width:
-            raise ValueError("t4_admission: routed rates rows disagree in width")
+        if len(row) != 3:
+            raise ValueError(
+                f"t4_admission: routed rates need exactly three projections "
+                f"per expert, got {len(row)}"
+            )
         clean = []
         for rung in row:
             if type(rung) is not int or rung not in T4_PURE_Q256:
@@ -199,6 +198,47 @@ def require_routed_rates(rungs: Any) -> list:
     if reason is not None:
         raise ValueError(f"t4_admission: routed rates refused: {reason}")
     return matrix
+
+
+def require_routed_shape_agreement(shapes: Any) -> dict:
+    """Return normalized shapes when gate, up, and down agree.
+
+    One GEMM input feeds gate and up, so gate and up share rows and
+    columns. Down inverts them: gate rows meet down columns and gate
+    columns meet down rows. A triple that disagrees refuses by name.
+    """
+    if not isinstance(shapes, Mapping):
+        raise ValueError("t4_admission: routed scope needs a shapes mapping")
+    triple = {}
+    for projection in ("gate_proj", "up_proj", "down_proj"):
+        if projection not in shapes:
+            raise ValueError(
+                f"t4_admission: routed scope lacks {projection} shape"
+            )
+        shape = shapes[projection]
+        if (
+            not isinstance(shape, (list, tuple))
+            or len(shape) != 2
+            or type(shape[0]) is not int
+            or type(shape[1]) is not int
+        ):
+            raise ValueError(
+                f"t4_admission: {projection} shape must be two integers, "
+                f"got {shape!r}"
+            )
+        triple[projection] = (shape[0], shape[1])
+    gate, up, down = triple["gate_proj"], triple["up_proj"], triple["down_proj"]
+    if gate[0] != up[0] or gate[0] != down[1]:
+        raise ValueError(
+            f"t4_admission: routed rows disagree: gate {gate[0]}, "
+            f"up {up[0]}, down cols {down[1]}"
+        )
+    if gate[1] != up[1] or gate[1] != down[0]:
+        raise ValueError(
+            f"t4_admission: routed columns disagree: gate {gate[1]}, "
+            f"up {up[1]}, down rows {down[0]}"
+        )
+    return triple
 
 
 def t4_census_expected(structure: str, regime: Any = None) -> set:
@@ -316,15 +356,11 @@ def build_preflight(scope: Mapping) -> dict:
     elif structure == STRUCTURE_ROUTED_MOE:
         matrix = require_routed_rates(scope.get("rungs"))
         checks.append(f"rungs:{len(matrix)}x{len(matrix[0])}")
-        shapes = scope.get("shapes")
-        if not isinstance(shapes, Mapping):
-            raise ValueError("t4_admission: routed scope needs a shapes mapping")
+        triple = require_routed_shape_agreement(scope.get("shapes"))
+        gate, up, down = triple["gate_proj"], triple["up_proj"], triple["down_proj"]
+        checks.append(f"agreement:gate{gate[0]}x{gate[1]}=up{up[0]}x{up[1]}~down{down[0]}x{down[1]}")
         for projection in ("gate_proj", "up_proj", "down_proj"):
-            if projection not in shapes:
-                raise ValueError(
-                    f"t4_admission: routed scope lacks {projection} shape"
-                )
-            rows, cols = shapes[projection]
+            rows, cols = triple[projection]
             require_routed_geometry(rows, cols, projection)
             checks.append(f"geometry:{projection}:{rows}x{cols}")
         if "recipe" in scope and scope["recipe"] is not None:

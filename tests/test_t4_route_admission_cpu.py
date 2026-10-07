@@ -21,6 +21,7 @@ from tessera.t4_route_admission import (
     require_pure_q256,
     require_routed_geometry,
     require_routed_rates,
+    require_routed_shape_agreement,
     require_served_recipe,
     require_structure,
     t4_cell_agreement,
@@ -250,9 +251,9 @@ def _routed_scope(q256, mode):
         "execution_mode": mode,
         "rungs": [[q256, q256, q256]],
         "shapes": {
-            "gate_proj": (128, 256),
-            "up_proj": (128, 256),
-            "down_proj": (256, 256),
+            "gate_proj": (2048, 4096),
+            "up_proj": (2048, 4096),
+            "down_proj": (4096, 2048),
         },
         "recipe": _recipe(),
         "symbol": ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
@@ -311,3 +312,108 @@ def test_preflight_refuses_unknown_mode():
     scope = _dense_scope(896, "compiled")
     with pytest.raises(ValueError, match="t4_admission: unknown execution mode"):
         build_preflight(scope)
+
+
+@pytest.mark.parametrize("rows,cols", [(32.5, 256), (32.0, 256), ("32", 256), (True, 256)])
+def test_dense_geometries_refuse_fractional(rows, cols):
+    with pytest.raises(ValueError, match="t4_admission: dense shape must be integers"):
+        require_dense_geometry(rows, cols)
+
+
+@pytest.mark.parametrize(
+    "rows,cols,projection",
+    [(128.5, 256, "gate_proj"), (128, 256.0, "up_proj"), ("256", 256, "down_proj")],
+)
+def test_routed_geometries_refuse_fractional(rows, cols, projection):
+    with pytest.raises(ValueError, match="t4_admission: routed shape must be integers"):
+        require_routed_geometry(rows, cols, projection)
+
+
+@pytest.mark.parametrize("span", [1.0, True, "1"])
+def test_served_recipe_refuses_fractional_span(span):
+    with pytest.raises(ValueError, match="t4_admission: served recipe span"):
+        require_served_recipe(_recipe(span=span))
+
+
+@pytest.mark.parametrize("window_bits", [14.0, "14"])
+def test_served_recipe_refuses_fractional_width(window_bits):
+    with pytest.raises(ValueError, match="t4_admission: served recipe window_bits"):
+        require_served_recipe(_recipe(window_bits=window_bits))
+
+
+@pytest.mark.parametrize("rungs", [[[896]], [[896, 896]], [[896] * 4]])
+def test_routed_rates_refuse_non_triple(rungs):
+    with pytest.raises(ValueError, match="t4_admission: routed rates need exactly three"):
+        require_routed_rates(rungs)
+
+
+def test_preflight_refuses_routed_row_disagreement():
+    scope = _routed_scope(896, "eager")
+    scope["shapes"]["up_proj"] = (1024, 4096)
+    with pytest.raises(ValueError, match="t4_admission: routed rows disagree"):
+        build_preflight(scope)
+
+
+def test_preflight_refuses_routed_column_disagreement():
+    scope = _routed_scope(896, "eager")
+    scope["shapes"]["down_proj"] = (2048, 2048)
+    with pytest.raises(ValueError, match="t4_admission: routed columns disagree"):
+        build_preflight(scope)
+
+
+def test_preflight_refuses_routed_fractional_shape():
+    scope = _routed_scope(896, "graph")
+    scope["shapes"]["gate_proj"] = (2048.0, 4096)
+    with pytest.raises(ValueError, match="t4_admission: gate_proj shape must be two integers"):
+        build_preflight(scope)
+
+
+def _agree_shapes():
+    return {
+        "gate_proj": (2048, 4096),
+        "up_proj": (2048, 4096),
+        "down_proj": (4096, 2048),
+    }
+
+
+def test_routed_agreement_passes():
+    assert require_routed_shape_agreement(_agree_shapes()) == _agree_shapes()
+
+
+@pytest.mark.parametrize(
+    "shapes,match",
+    [
+        (
+            {"gate_proj": (2048, 4096), "up_proj": (1024, 4096), "down_proj": (4096, 2048)},
+            "t4_admission: routed rows disagree",
+        ),
+        (
+            {"gate_proj": (2048, 4096), "up_proj": (2048, 4096), "down_proj": (2048, 2048)},
+            "t4_admission: routed columns disagree",
+        ),
+    ],
+)
+def test_routed_agreement_refuses_split(shapes, match):
+    with pytest.raises(ValueError, match=match):
+        require_routed_shape_agreement(shapes)
+
+
+@pytest.mark.parametrize(
+    "shapes,match",
+    [
+        (None, "t4_admission: routed scope needs"),
+        ({"gate_proj": (2048, 4096)}, "t4_admission: routed scope lacks"),
+        (
+            {"gate_proj": (2048.0, 4096), "up_proj": (2048, 4096), "down_proj": (4096, 2048)},
+            "t4_admission: gate_proj shape must be two integers",
+        ),
+        (
+            {"gate_proj": (2048,), "up_proj": (2048, 4096), "down_proj": (4096, 2048)},
+            "t4_admission: gate_proj shape must be two integers",
+        ),
+    ],
+)
+def test_routed_agreement_refuses_shape(shapes, match):
+    with pytest.raises(ValueError, match=match):
+        require_routed_shape_agreement(shapes)
+
