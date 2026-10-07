@@ -417,3 +417,95 @@ def build_layer(gate, up, down, classes, device, *, top_k: int, max_tokens: int)
     stacks = {mode: FragmentStack(**planes) for mode, planes in layer_stacks(gate, up, down, tables, rungs).items()}
     kernel = RegDirectClassKernel(n, top_k, device)
     return {"regdirect": {mode: kernel.payload(mode, st, max_tokens) for mode, st in stacks.items()}}, kernel
+
+
+def _transcode_ext():
+    """Tile-order words -> fragment words on the device (``serving/csrc/regdirect_transcode.cu``)."""
+    return _load("tessera_regdirect_transcode", "regdirect_transcode.cu")
+
+
+def _bundle_columns(bundle):
+    """Per expert and ORIGINAL column: the chunk word offset in a 512-row tile, the rate and the
+    start state (0 when none), all ``[E, cols]`` on the bundle's device, from runs/perm/init."""
+    e_n, cols = int(bundle.experts), int(bundle.cols)
+    dev = bundle.words_all.device
+    runs = bundle.runs_all.reshape(-1, 4).to(dev).long()
+    run_off = bundle.run_off.to(dev).long()
+    expert = torch.searchsorted(run_off[1:], torch.arange(runs.shape[0], device=dev), right=True)
+    rate, col0, n, word0 = runs.unbind(1)
+    within = torch.arange(int(n.sum()), device=dev) - torch.repeat_interleave(torch.cumsum(n, 0) - n, n)
+    pcol = torch.repeat_interleave(col0, n) + within                     # permuted column
+    e_of = torch.repeat_interleave(expert, n)
+    base = torch.repeat_interleave(word0, n) + within * 16 * torch.repeat_interleave(rate, n)
+    perm = bundle.perm_all.to(dev).long()
+    orig = perm[e_of, pcol]
+    colbase = torch.empty(e_n, cols, dtype=torch.int64, device=dev)
+    colrate = torch.empty(e_n, cols, dtype=torch.int64, device=dev)
+    colbase[e_of, orig] = base
+    colrate[e_of, orig] = torch.repeat_interleave(rate, n)
+    start = torch.zeros(e_n, cols, dtype=torch.int64, device=dev)
+    start.scatter_(1, perm, bundle.init_all.to(dev).long())                 # init_perm[j] = init[perm[j]]
+    start *= (bundle.has_init.to(dev).long() != 0).unsqueeze(1)
+    return colbase.to(torch.int32), colrate, start.to(torch.int32)
+
+
+def transcode_stacks(gate, up, down, tables, rungs: "dict | None" = None) -> dict:
+    """:func:`layer_stacks` on the device: one transcode launch per projection group instead of a
+    per-expert repack.  Same planes, bit for bit; the same refusals."""
+    from .errors import GrammarError
+    for b, t in zip((gate, up, down), tables):
+        if b.family != "e4m3" or b.arithmetic != "epilogue" or int(b.window_bits) != 14:
+            raise GrammarError(f"the register-direct kernel serves the e4m3 family at a 14-bit window with "
+                               f"the row-scale epilogue, got {b.family}/{b.arithmetic}/L={b.window_bits}")
+        if t.dtype != torch.uint8 or tuple(t.shape) != (int(b.experts), 1 << 14):
+            raise GrammarError("the register-direct kernel reads compose_table8's uint8 [E, 2^14] byte table")
+    ext = _transcode_ext()
+    out = {}
+    for mode, bundles in ((0, (gate, up)), (2, (down, down))):
+        ng = GROUPS[mode]
+        info = [_bundle_columns(b) for b in bundles[: 2 if mode == 0 else 1]]
+        colrate = info[0][1]
+        e_n, cols = colrate.shape
+        rows = int(bundles[0].rows)
+        groups = colrate.reshape(e_n, cols // KSTEP, KSTEP)
+        if not bool((groups == groups[:, :, :1]).all()):
+            raise GrammarError("a 32-column k-step holds two rates; the fragment wire needs one rate per k-step")
+        if mode == 0 and not torch.equal(colrate, info[1][1]):
+            raise GrammarError("gate and up differ in rate; one k-step carries both")
+        if rungs is not None:
+            for which in ((0, 1) if mode == 0 else (2,)):
+                want = torch.tensor([rungs[e][which] for e in range(e_n)], device=colrate.device)
+                bad = (colrate.sum(1) * 256 != want * cols).nonzero()
+                if bad.numel():
+                    raise GrammarError(f"expert {int(bad[0])}: rates spend another rung than its class declares")
+        grate = groups[:, :, 0]
+        sorted_rate, order = torch.sort(grate, dim=1, stable=True)
+        if ng == 2 and not bool((sorted_rate.reshape(e_n, -1, 2)[:, :, 0] == sorted_rate.reshape(e_n, -1, 2)[:, :, 1]).all()):
+            raise GrammarError("down needs an even 32-column group count at each rate")
+        slot_rate = sorted_rate[:, ::ng]
+        ks = slot_rate.shape[1]
+        ra, rb = slot_rate[:, 0], slot_rate[:, -1]
+        if not bool(((rb - ra) <= 1).all()) or not bool(torch.isin(slot_rate, torch.tensor(STAGE1_RATES, device=ra.device)).all()):
+            raise GrammarError(f"stage 1 serves rates {STAGE1_RATES}, one or two adjacent per expert")
+        ksa = torch.where(ra == rb, torch.full_like(ra, ks), (slot_rate == ra.unsqueeze(1)).sum(1))
+        prof = (ra | (rb << 4) | (ksa << 8)).to(torch.int32)
+        nt = -(-rows // TILE)
+        wire_n = nt * (ksa * 256 * ra + (ks - ksa) * 256 * rb)
+        hist_n = ksa * 8 * ra + (ks - ksa) * 8 * rb
+        wire0 = torch.cumsum(wire_n, 0) - wire_n
+        hist0 = torch.cumsum(hist_n, 0) - hist_n
+        wire = torch.empty(int(wire_n.sum()), dtype=torch.int32, device=ra.device)
+        hist = torch.empty(int(hist_n.sum()), dtype=torch.int32, device=ra.device)
+        both = info if mode == 0 else info * 2
+        ext.transcode([b.words_all.reshape(-1) for b in bundles],
+                      [b.word_off.to(ra.device).long() for b in bundles],
+                      [b.tile_words.to(ra.device).int() for b in bundles],
+                      [i[0] for i in both], [i[2] for i in both], order.to(torch.int16).contiguous(), prof,
+                      wire0.long(), hist0.long(), wire, hist, rows, ks, ng)
+        tabs = (tables[0], tables[1]) if mode == 0 else (tables[2],)
+        scales = (gate.scale_all, up.scale_all) if mode == 0 else (down.scale_all,)
+        out[mode] = dict(mode=mode, wire=wire, expert_word0=wire0.long(), hist=hist, expert_hist0=hist0.long(),
+                         rate=prof, kperm=order.to(torch.int16).contiguous(),
+                         table=torch.stack(tabs, 1).contiguous(), wscale=torch.stack(scales, 1).float().contiguous(),
+                         ks=ks)
+    return out

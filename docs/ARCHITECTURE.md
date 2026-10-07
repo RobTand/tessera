@@ -27,6 +27,9 @@ The payload holds the fragment planes, the zero page, the K-part scratch and the
 The binding plugs into `routed_class_dispatch` unchanged and does not use the claim counter.
 Each expert must spend exactly its class rung. A per-column (Bresenham) mixed rung splits k-steps and is refused by name.
 `kernel_window_gemv.unpack_tile_words` is the inverse of the tile-order repack that the bundles hold.
+`transcode_stacks` builds the same planes on the device: `serving/csrc/regdirect_transcode.cu` reads each lane's fields
+straight from the tile-order words and writes the fragment units and history units in one launch per projection group.
+It is a pure bit permutation; its test is bitwise equality with `layer_stacks`. The decoder source stays separate.
 The opaque operation `tessera::routed_regdirect_classes` (`tessera/regdirect_op.py`) takes every tensor explicitly:
 each mode's nine weight planes, and each mode's two scratch tensors, which `mutates_args` declares.
 Its resource registry entry holds only streams, events and the tensor-free binding. The LUT planes stay loaded:
