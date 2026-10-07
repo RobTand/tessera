@@ -663,10 +663,7 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
 # which is how far the inconsistency reached before anything caught it.
 # --------------------------------------------------------------------------
 
-#: An intermediate size that ORIENTS: ``2 * 48 != 128``, so a packed
-#: ``gate_up_proj`` is not square and ``packed_expert_orientation`` decides it
-#: instead of refusing.  These tests are about the plan-time classification, so
-#: the orientation must not be the thing that raises.
+#: These source dimensions select one orientation for classification.
 PACKED_INTER = 48
 
 

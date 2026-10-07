@@ -722,8 +722,6 @@ def test_a_stack_at_a_rung_only_the_dense_route_reads_is_refused_before_any_enco
     names, before the first expert is encoded (this test never needs a GPU
     for that reason).
     """
-    from tessera.serving.contract import load_serving_contract
-
     routed = export.attested_cells("TESSERA_E4M3_K1", "routed_moe")
     assert routed and all(1536 not in cell["rungs_q256"] for cell in routed)
     with pytest.raises(SystemExit) as caught:
