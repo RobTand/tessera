@@ -30,8 +30,6 @@ Count modules within each M group, then use the largest group count.
 Do not sum the same module across different M values.
 The trace names each module; an unnamed module refuses qualification.
 The observed names must agree with the supplied manifest names.
-(``unnamed_modules``); an unnamed module is refused, and when the caller
-supplies the manifest's names the two sets must agree.
 
 A missing or unreadable trace is NOT VERIFIED, and not verified is a refusal,
 never a pass.  Nothing here imports Torch, vLLM or ``tessera``.
