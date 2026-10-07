@@ -1,0 +1,539 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "fleet.rung_allowability.v3",
+  "title": "D41 measured rung allowability table",
+  "type": "object",
+  "required": [
+    "schema",
+    "table_version",
+    "table_status",
+    "format",
+    "kernel_build",
+    "generated_at",
+    "scope",
+    "rungs",
+    "performant_policy",
+    "geometry_classes"
+  ],
+  "properties": {
+    "schema": {
+      "const": "fleet.rung_allowability.v3"
+    },
+    "table_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "table_status": {
+      "enum": [
+        "partial",
+        "complete"
+      ]
+    },
+    "format": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "kernel_build": {
+      "type": "object",
+      "required": [
+        "id",
+        "source_commit",
+        "library_variant",
+        "architecture",
+        "activation_contract"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+$"
+        },
+        "source_commit": {
+          "type": "string"
+        },
+        "library_variant": {
+          "type": "string"
+        },
+        "architecture": {
+          "type": "string"
+        },
+        "activation_contract": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        }
+      },
+      "description": "Observed kernel/build and execution context, not a new run-identity seal. A decode-path change republishes a table with affected rows pending until remeasured. Unaffected rows may retain explicit measurement lineage."
+    },
+    "scope": {
+      "type": "object",
+      "required": [
+        "rung_min",
+        "rung_max",
+        "grid_step_q256",
+        "grid_owner",
+        "required_cells"
+      ],
+      "properties": {
+        "rung_min": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "rung_max": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_step_q256": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "grid_owner": {
+          "type": "string"
+        },
+        "required_cells": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/cell_key"
+          }
+        },
+        "shapes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "timing_statistic": {
+          "type": "string"
+        }
+      },
+      "description": "The scalar q256 domain and exact cell roster are derived from their owners. Initial T-8 scope is R768 through R1152 inclusive, true grid step 1, M 1/16/2048/4096 and 2-3 representative GLM shapes."
+    },
+    "rungs": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/rung"
+      }
+    },
+    "evidence": {
+      "type": "object"
+    },
+    "performant_policy": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "const": "whole_bit_per_structure"
+        }
+      }
+    },
+    "geometry_classes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "identity",
+          "observed_rungs"
+        ],
+        "properties": {
+          "identity": {
+            "type": "object"
+          },
+          "observed_rungs": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "status": {
+      "enum": [
+        "pending",
+        "measured",
+        "unsupported",
+        "failed"
+      ]
+    },
+    "cell_key": {
+      "type": "object",
+      "required": [
+        "cell_id",
+        "kernel_kind",
+        "shape_id",
+        "M"
+      ],
+      "properties": {
+        "cell_id": {
+          "type": "string"
+        },
+        "kernel_kind": {
+          "enum": [
+            "routed",
+            "dense"
+          ]
+        },
+        "shape_id": {
+          "type": "string"
+        },
+        "M": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "required": [
+        "bits_per_256_weight_tile",
+        "alignment",
+        "shared_memory",
+        "register_pressure",
+        "decode_width"
+      ],
+      "properties": {
+        "bits_per_256_weight_tile": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "numerator",
+                "denominator"
+              ],
+              "properties": {
+                "numerator": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "denominator": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            }
+          ]
+        },
+        "alignment": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "shared_memory": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "register_pressure": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "decode_width": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "raw": {
+          "type": "object"
+        }
+      },
+      "description": "Actual accountant/launch/compiler fields, per cell when shape or M changes them. Store exact rational tile bits; shared memory records requested/available bytes and fit; registers record compiler resources/spills; decode width records window/value bits, run widths and word stages. Null means missing evidence, never zero-cost evidence."
+    },
+    "measurement": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/cell_key"
+        }
+      ],
+      "type": "object",
+      "required": [
+        "measurement_status",
+        "kernel_time_us",
+        "kernel_path",
+        "geometry",
+        "evidence"
+      ],
+      "properties": {
+        "measurement_status": {
+          "$ref": "#/$defs/status"
+        },
+        "kernel_time_us": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "kernel_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/geometry"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "type": "object",
+          "required": [
+            "bits_per_256_weight_tile",
+            "alignment",
+            "shared_memory",
+            "register_pressure",
+            "decode_width",
+            "body_kind",
+            "decoder_kind",
+            "decoder_owner",
+            "execution_scope",
+            "word_ring"
+          ],
+          "properties": {
+            "bits_per_256_weight_tile": {
+              "type": "object"
+            },
+            "alignment": {
+              "type": "object"
+            },
+            "shared_memory": {
+              "type": "object"
+            },
+            "register_pressure": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "decode_width": {
+              "type": "object"
+            },
+            "body_kind": {
+              "enum": [
+                "window",
+                "tcq"
+              ]
+            },
+            "decoder_kind": {
+              "enum": [
+                "fused_window",
+                "compact_window",
+                "native_tcq"
+              ]
+            },
+            "decoder_owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "execution_scope": {
+              "enum": [
+                "raw_packed_window",
+                "compact_packed_window",
+                "native_tcq_decode_gemm"
+              ]
+            },
+            "word_ring": {
+              "type": "object",
+              "required": [
+                "kind",
+                "owner"
+              ],
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "staged",
+                    "none"
+                  ]
+                },
+                "owner": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "body_kind": {
+                    "const": "window"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "decode_width": {
+                    "required": [
+                      "window_bits"
+                    ],
+                    "properties": {
+                      "window_bits": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "body_kind": {
+                    "const": "tcq"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "decode_width": {
+                    "required": [
+                      "window_bits",
+                      "memory",
+                      "span",
+                      "history_lookup_bits",
+                      "label_lut_entries"
+                    ],
+                    "properties": {
+                      "window_bits": {
+                        "const": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "evidence": {
+          "type": "object"
+        },
+        "pass_times_us": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "measurement_build_id": {
+          "type": "string"
+        }
+      }
+    },
+    "rung": {
+      "type": "object",
+      "required": [
+        "rung",
+        "measurement_status",
+        "supported",
+        "anomaly_flags",
+        "observations",
+        "excluded",
+        "dominating_rung",
+        "measurements",
+        "quality",
+        "dominance_evidence"
+      ],
+      "properties": {
+        "rung": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "measurement_status": {
+          "$ref": "#/$defs/status"
+        },
+        "supported": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "anomaly_flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "excluded": {
+          "type": "boolean"
+        },
+        "dominating_rung": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/measurement"
+          }
+        },
+        "quality": {
+          "type": "object"
+        },
+        "dominance_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "lineage": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "excluded": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "measurement_status": {
+                "const": "measured"
+              },
+              "dominating_rung": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ],
+      "description": "Unique scalar q256 rung. measured requires all required cells and geometry plus completed CPU quality screen. excluded is ONLY the measured D41 performance proof: a higher supported rung no farther than one grid step has time <= this rung in every relevant cell, with paired comparable evidence. Quality/correctness anomaly flags separately block production until explained; merely slow or missing-census observations do not fabricate performance exclusion. Missing/unmeasured rows wait. Reader admits only measured, supported, non-excluded rows with empty anomaly_flags, alongside existing serving/export gates. Semantic validation also checks uniqueness, full cell coverage, finite times, same format/build/scope, strict higher-rung/one-step relation and every dominance comparison."
+    }
+  }
+}

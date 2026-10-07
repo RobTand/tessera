@@ -1,5 +1,24 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for the canonical D41 policy continuation in issue #1018:
+new `fleet.rung_allowability.v3` tables retain their full historical census
+but the owning `performant_rungs`/`admit_rung` API admits only the current
+performant menu per actual dense or routed structure and kernel build.
+`scope_cell_ids` resolves actual declared dimensions and token counts;
+explicit cell queries wait on missing evidence without falsely marking
+an incomplete aggregate row measured. Recipe and activation scope remain
+independent filters. `geometry_class_identity` retains actual family, arity,
+recipe/window, build, path, shape, activation and token count. `rung_speed`
+separates actual measurements from explicit class-derived timing, which
+never changes row status or transfers numerical/serving qualification.
+`rung_quality` is a derived whole-anchor chord, not a per-rung sample gate.
+Half-bit diagnostic measurements do not enter the menu automatically.
+The existing body-v2 producer normalizes completed real-shape cells and
+stages immutable v3 versions via `index.v3-candidate.json`; source/consumer
+review and the existing explicit activation operation precede any shared
+selected-index change. Historical v1/v2 semantics remain explicit. No
+decoder, per-expert serving route, kernel, format or runtime pin changes.
+
 Re-stamped 2026-10-06 for issue #1018: the geometry entry accepts explicit
 dense shapes (`name:rows:columns`) so the missing real shared-expert and
 dense layer zero-to-two projections can use the existing harness and its

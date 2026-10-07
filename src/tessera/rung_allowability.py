@@ -239,8 +239,9 @@ def validate_table(table):
             quality = row["quality"]
             if table['schema']=='fleet.rung_allowability.v2':
                 _quality_scope_v2(quality,measurements,table['format'],q)
-            _require(quality.get("measurement_status") == "measured" and quality.get("source_kind") == "actual_sampled_expert_weights" and quality.get("device") == "cpu" and quality.get("samples"), "CPU quality incomplete")
-            for sample in quality["samples"]:
+            if table["schema"] != "fleet.rung_allowability.v3":
+                _require(quality.get("measurement_status") == "measured" and quality.get("source_kind") == "actual_sampled_expert_weights" and quality.get("device") == "cpu" and quality.get("samples"), "CPU quality incomplete")
+            for sample in quality.get("samples", []):
                 _require(_number(sample.get("relative_sse")) and _number(sample.get("source_squared_norm")) and sample["source_squared_norm"] > 0 and _integer(sample.get("exact_bytes")) and sample["exact_bytes"] > 0 and _text(sample.get("source_sha256")), "quality sample evidence")
         else:
             _require(not row["excluded"], "unmeasured rung excluded")
@@ -280,10 +281,18 @@ def validate_table(table):
             for field in ("comparison_id", "paired_seed_contract", "timing_statistic", "timer"):
                 _require(_text(low["evidence"].get(field)) and low["evidence"].get(field) == high["evidence"].get(field), "unpaired dominance: " + field)
             _require(e.get("comparison_id") == low["evidence"]["comparison_id"], "dominance lineage")
+    if table["schema"] == "fleet.rung_allowability.v3":
+        _require(table["geometry_classes"] == measured_geometry_classes(table), "class identity or observed timing scope differs")
+        shapes = {(shape["kernel_kind"], shape["shape_id"]): (shape["rows"], shape["columns"]) for shape in scope.get("shapes", [])}
+        for row in rows:
+            for measurement in row["measurements"]:
+                if measurement["measurement_status"] == "measured":
+                    evidence = measurement["evidence"]
+                    _require(shapes.get((measurement["kernel_kind"], measurement["shape_id"])) == (evidence.get("rows"), evidence.get("columns")), "measurement differs from declared shape")
     return table
 
 
-def admit_rung(table, *, format, kernel_build_id, rung, scope=None):
+def admit_rung(table, *, format, kernel_build_id, rung, scope=None, cell_ids=None, activation_contract=None, recipe=None):
     """Return a structured decision. Invalid evidence raises ValueError, not allow."""
     if table is None:
         return {"status": "wait", "reason": "missing_table", "rung": rung}
@@ -293,6 +302,10 @@ def admit_rung(table, *, format, kernel_build_id, rung, scope=None):
     if scope is not None and any(table["scope"].get(k) != v for k, v in scope.items()):
         return {"status": "wait", "reason": "unmeasured_scope", "rung": rung}
     row = next((r for r in table["rungs"] if r["rung"] == rung), None)
+    if table["schema"] == "fleet.rung_allowability.v3":
+        return _admit_performance_scope(table, row, rung, cell_ids, activation_contract, recipe)
+    if cell_ids is not None or activation_contract is not None or recipe is not None:
+        return {"status": "wait", "reason": "scoped_policy_requires_v3_table", "rung": rung}
     if row is None or row["measurement_status"] == "pending":
         status, reason = "wait", "missing_measurement"
     elif row["measurement_status"] in ("unsupported", "failed"):
@@ -408,4 +421,170 @@ _version_schema=INDEX_SCHEMA_V2['properties']['formats']['additionalProperties']
 _version_schema['properties']['table_schema']={'enum':['fleet.rung_allowability.v1','fleet.rung_allowability.v2']}
 TABLE_SCHEMAS={'fleet.rung_allowability.v1':TABLE_SCHEMA,'fleet.rung_allowability.v2':TABLE_SCHEMA_V2}
 INDEX_SCHEMAS={'fleet.rung_allowability.index.v1':INDEX_SCHEMA,'fleet.rung_allowability.index.v2':INDEX_SCHEMA_V2}
+
+
+
+PERFORMANT_POLICY = {"kind": "whole_bit_per_structure", "authority": "Latest Rob/CEO D41 ruling, 2026-10-06",
+                     "qualification_scope": "performance evidence only; export, numerical and serving gates remain independent"}
+
+
+def performant_rungs(format, kernel_kind):
+    """The owning menu, not a consumer-side copy or an encoder-capacity guess."""
+    _require(kernel_kind in ("dense", "routed"), "unknown performance structure")
+    if format == "TESSERA_E4M3_K1":
+        return (768, 1024)
+    if format == "TESSERA_BF16_K1":
+        return tuple(range(256, (3584 if kernel_kind == "dense" else 2048) + 1, 256))
+    if format == "TESSERA_E2M1_K2":
+        return ()
+    return ()
+
+
+def scope_cell_ids(table, *, kernel_kind, rows, columns, M, routing=None):
+    """Resolve actual declared shapes. A routed shape never stands in for dense."""
+    validate_table(table)
+    _require(kernel_kind in ("dense", "routed") and all(_integer(value) and value > 0 for value in (rows, columns, M)), "invalid requested shape/M scope")
+    matches = {shape['shape_id'] for shape in table['scope'].get('shapes', [])
+               if shape['kernel_kind'] == kernel_kind and shape['rows'] == rows and shape['columns'] == columns}
+    return tuple(cell['cell_id'] for cell in table['scope']['required_cells']
+                 if cell['kernel_kind'] == kernel_kind and cell['shape_id'] in matches and cell['M'] == M
+                 and (routing is None or cell.get('routing', 'balanced' if kernel_kind == 'routed' else 'none') == routing))
+
+
+def geometry_class_identity(table, rung, measurement):
+    """Classify the actual decoder. Tuple arity is symbol rate, not scalar rate."""
+    match = re.fullmatch(r'TESSERA_([A-Z0-9]+)_K(\d+)', table['format'])
+    _require(match is not None, 'class family')
+    arity = int(match[2])
+    low, remainder = divmod(rung * arity, 256)
+    geometry = measurement['geometry']
+    decode = geometry['decode_width']
+    widths = [low, low + 1] if remainder else [low]
+    _require(decode.get('arity', 1) == arity and sorted(set(decode['run_widths'])) == widths, 'class actual rate/arity')
+    _require(decode.get("value_bits") == {"BF16": 16, "E4M3": 8, "E2M1": 4}.get(match[1]), "class payload width differs from family")
+    evidence = measurement['evidence']
+    _require(all(_integer(evidence.get(key)) and evidence[key] > 0 for key in ('rows', 'columns')), 'class actual shape')
+    _require(isinstance(geometry.get('recipe'), dict), 'class actual recipe')
+    return {'format': table['format'], 'arity': arity, 'kind': 'mixed' if remainder else 'pure', 'run_widths': widths,
+            'kernel_build_id': table['kernel_build']['id'], 'activation_contract': table['kernel_build']['activation_contract'],
+            'cell_id': measurement['cell_id'], 'kernel_kind': measurement['kernel_kind'], 'M': measurement['M'],
+            'shape': [evidence['rows'], evidence['columns']], 'routing': evidence.get('routing'),
+            "mode": evidence.get("mode"), "epilogue": evidence.get("epilogue"),
+            "input_distribution": evidence.get("input_distribution"),
+            "alignment": {key: value for key, value in geometry["alignment"].items() if key not in ("tile_words", "plane_shapes", "plane_bytes")},
+            'recipe': geometry['recipe'], 'decoder_kind': geometry['decoder_kind'], 'decoder_owner': geometry['decoder_owner'],
+            'execution_scope': geometry['execution_scope'], 'kernel_path': measurement['kernel_path'],
+            'decode_width': decode, 'shared_memory': geometry['shared_memory'], 'register_pressure': geometry['register_pressure']}
+
+
+def measured_geometry_classes(table):
+    groups = {}
+    for row in table['rungs']:
+        for measurement in row['measurements']:
+            if measurement['measurement_status'] != 'measured':
+                continue
+            identity = geometry_class_identity(table, row['rung'], measurement)
+            key = json.dumps(identity, sort_keys=True, separators=(',', ':'))
+            group = groups.setdefault(key, {'identity': identity, 'observed_rungs': []})
+            group['observed_rungs'].append(row['rung'])
+    return [groups[key] for key in sorted(groups)]
+
+
+def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, recipe):
+    required = {cell['cell_id']: cell for cell in table['scope']['required_cells']}
+    selected = tuple(required) if cell_ids is None else tuple(cell_ids)
+    if not selected or any(cell_id not in required for cell_id in selected):
+        return {'status': 'wait', 'reason': 'unmeasured_shape_or_M_scope', 'rung': rung}
+    if activation_contract is not None and table['kernel_build']['activation_contract'] != activation_contract:
+        return {'status': 'wait', 'reason': 'unmeasured_activation_scope', 'rung': rung}
+    cells = {measurement['cell_id']: measurement for measurement in row['measurements']} if row is not None else {}
+    results = []
+    for cell_id in selected:
+        kind = required[cell_id]['kernel_kind']
+        if rung not in performant_rungs(table['format'], kind):
+            status = 'wait' if table['format'] == 'TESSERA_E2M1_K2' else 'excluded'
+            results.append({'cell_id': cell_id, 'status': status, 'reason': 'performance_admission_not_established' if status == 'wait' else 'outside_performant_menu'})
+            continue
+        measurement = cells.get(cell_id)
+        if measurement is None or measurement['measurement_status'] == 'pending':
+            results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'missing_actual_measurement'})
+        elif measurement['measurement_status'] != 'measured':
+            results.append({'cell_id': cell_id, 'status': measurement['measurement_status'], 'reason': measurement['measurement_status']})
+        elif row["supported"] is False or row["measurement_status"] in ("failed", "unsupported"):
+            state = row["measurement_status"] if row["measurement_status"] in ("failed", "unsupported") else "unsupported"
+            results.append({"cell_id": cell_id, "status": state, "reason": "recorded_source_refusal"})
+        elif recipe is not None and measurement['geometry'].get('recipe') != recipe:
+            results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'unmeasured_recipe_scope'})
+        elif row['anomaly_flags']:
+            results.append({'cell_id': cell_id, 'status': 'hold', 'reason': 'recorded_correctness_hold'})
+        else:
+            results.append({'cell_id': cell_id, 'status': 'allow', 'reason': 'measured_performant_scope'})
+    status = next((state for state in ('failed', 'unsupported', 'hold', 'excluded', 'wait') if any(result['status'] == state for result in results)), 'allow')
+    return {'status': status, 'reason': 'per_cell_performance_policy', 'rung': rung, 'cells': results,
+            'table_version': table['table_version'], 'kernel_build_id': table['kernel_build']['id'],
+            'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+
+
+def rung_speed(table, *, rung, cell_id=None, class_identity=None):
+    """Actual timing or explicit class-derived timing, never inherited admission."""
+    validate_table(table)
+    if not _integer(rung) or not table["scope"]["rung_min"] <= rung <= table["scope"]["rung_max"]:
+        return {"status": "wait", "reason": "outside_declared_rate_scope"}
+    row = next((row for row in table['rungs'] if row['rung'] == rung), None)
+    selected_id = cell_id if cell_id is not None else (class_identity or {}).get('cell_id')
+    measurement = next((cell for cell in row['measurements'] if cell['cell_id'] == selected_id), None) if row else None
+    if class_identity is not None and selected_id != class_identity.get("cell_id"):
+        return {"status": "wait", "reason": "different_requested_cell_scope"}
+    if measurement is not None and class_identity is not None and geometry_class_identity(table, rung, measurement) != class_identity:
+        return {"status": "wait", "reason": "different_geometry_class"}
+    if row is not None and row["anomaly_flags"]:
+        return {"status": "hold", "reason": "recorded_correctness_hold"}
+    if measurement is not None and measurement['measurement_status'] == 'measured':
+        return {'status': 'measured', 'rung': rung, 'measurement': measurement,
+                'menu_admitted': rung in performant_rungs(table['format'], measurement['kernel_kind']),
+                'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+    if class_identity is None:
+        return {'status': 'wait', 'reason': 'missing_actual_measurement'}
+    low, remainder = divmod(rung * class_identity.get('arity', 0), 256)
+    if not remainder or class_identity.get('run_widths') != [low, low + 1]:
+        return {'status': 'wait', 'reason': 'different_geometry_class'}
+    group = next((group for group in table.get('geometry_classes', []) if group['identity'] == class_identity), None)
+    if group is None or len(group['observed_rungs']) < 2:
+        return {'status': 'wait', 'reason': 'missing_measured_class_spots'}
+    observed = group['observed_rungs']
+    anchors = sorted(set((observed[0], observed[len(observed) // 2], observed[-1])))
+    by_rung = {row['rung']: row for row in table['rungs']}
+    cells = [next(cell for cell in by_rung[q]['measurements'] if cell['cell_id'] == selected_id) for q in anchors]
+    times = [cell['kernel_time_us'] for cell in cells]
+    return {'status': 'inherited', 'rung': rung, 'kernel_time_us': max(times),
+            'observed_range_us': [min(times), max(times)], 'anchors': anchors,
+            'action_keys': [cell['evidence'].get('action_key') for cell in cells], 'menu_admitted': False,
+            'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+
+
+
+TABLE_SCHEMA_V3 = _copy.deepcopy(TABLE_SCHEMA_V2)
+TABLE_SCHEMA_V3['$id'] = 'fleet.rung_allowability.v3'
+TABLE_SCHEMA_V3['properties']['schema'] = {'const': 'fleet.rung_allowability.v3'}
+TABLE_SCHEMA_V3['required'] += ['performant_policy', 'geometry_classes']
+TABLE_SCHEMA_V3['properties']['performant_policy'] = {'type': 'object', 'required': ['kind'], 'properties': {'kind': {'const': 'whole_bit_per_structure'}}}
+TABLE_SCHEMA_V3['properties']['geometry_classes'] = {'type': 'array', 'items': {'type': 'object', 'required': ['identity', 'observed_rungs'], 'properties': {'identity': {'type': 'object'}, 'observed_rungs': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1}}}}}
+TABLE_SCHEMAS['fleet.rung_allowability.v3'] = TABLE_SCHEMA_V3
+_version_schema['properties']['table_schema']['enum'].append('fleet.rung_allowability.v3')
+
+
+
+def rung_quality(rung, *, lower_rung, upper_rung, lower_value, upper_value):
+    """Interpolate one scalar-bit interval; derived values are never measurements.
+
+    Callers supply comparable actual unit/family/calibration anchors. Pair-grid
+    overhead may shift integer-byte-rate anchors, so no q modulo is assumed.
+    """
+    _require(all(_integer(value) for value in (rung, lower_rung, upper_rung)) and
+             upper_rung - lower_rung == 256 and lower_rung <= rung <= upper_rung, 'quality anchor interval')
+    _require(_number(lower_value) and _number(upper_value), 'quality anchor value')
+    fraction = (rung - lower_rung) / 256
+    return {'status': 'derived', 'value': lower_value + fraction * (upper_value - lower_value),
+            'anchors': [lower_rung, upper_rung], 'fraction': fraction,
+            'numerical_qualification_inherited': False}
 
