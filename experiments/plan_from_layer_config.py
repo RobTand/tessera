@@ -116,7 +116,7 @@ from _accounting_source import accountant  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from export_tessera_serving import (  # noqa: E402
-    MOE_ROUTER, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, family_for,
+    MOE_ROUTER, VISION_LINEAR, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, family_for,
     fused_module, module_scheme_key,
     packed_expert_stacks, project_expert_plan, quantizable,
 )
@@ -327,7 +327,9 @@ def role_of(qname: str) -> str:
     return qname.rsplit(".", 1)[-1]
 
 
-def layer_of(qname: str) -> int:
+def layer_of(qname: str) -> int | None:
+    if VISION_LINEAR.fullmatch(qname + ".weight"):
+        return None
     return body_layer(qname + ".weight")
 
 
