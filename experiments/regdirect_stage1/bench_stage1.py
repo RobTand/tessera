@@ -38,9 +38,34 @@ PROFILES = {"R1024": (4, 4, None), "R768": (3, 3, None), "R896": (4, 3, "half")}
 REAL = {"stack": None}       # --real-stack PATH-PREFIX: the "real" profile loads PREFIX-mode{0,2}.pt (real_stack.py)
 
 
+def upper_steps(name, ks):
+    """D41 mixed classes: ``U<u>`` holds u R4 unit k-steps, ``Utop<u>`` holds ks - u, and
+    ``F<a>_<b>`` holds the fraction a/b of them (it must be integral); the rest are R3."""
+    if name.startswith("Utop"):
+        return ks - int(name[4:])
+    if name.startswith("U"):
+        return int(name[1:])
+    if name.startswith("F"):
+        a, b = (int(v) for v in name[1:].split("_"))
+        if (ks * a) % b:
+            raise ValueError(f"{name}: {a}/{b} of {ks} unit k-steps is not integral")
+        return ks * a // b
+    raise KeyError(name)
+
+
+def profile_rung(name, ks):
+    """The q256 the profile spends per weight (gate/up and down each against their own K)."""
+    if name in PROFILES or name == "real":
+        return {"R1024": 1024, "R768": 768, "R896": 896, "real": 1024}[name]
+    return 768 + 256 * upper_steps(name, ks) // ks
+
+
 def profiles_for(name, ks):
-    ra, rb, ksa = PROFILES[name]
-    return [(ra, rb, ks if ksa is None else ks // 2)] * EXPERTS
+    if name in PROFILES:
+        ra, rb, ksa = PROFILES[name]
+        return [(ra, rb, ks if ksa is None else ks // 2)] * EXPERTS
+    u = upper_steps(name, ks)
+    return [(4, 3, u)] * EXPERTS
 
 
 def balanced_routing(m, dev):
@@ -135,7 +160,12 @@ class Baseline:
         rows, cols = SHAPES[mode]
         # "real": today's kernel has no fragment repack of the disk unit here; it runs its own
         # synthetic wire at the real layer's rate (pure R4, R1024).
-        r_lo, n_hi = {"R1024": (4, 0), "real": (4, 0), "R768": (3, 0), "R896": (3, cols // 2)}[profile]
+        fixed = {"R1024": (4, 0), "real": (4, 0), "R768": (3, 0), "R896": (3, cols // 2)}
+        if profile in fixed:
+            r_lo, n_hi = fixed[profile]
+        else:                       # the same number of R4 columns as the register-direct class
+            ks = cols // (GROUPS[mode] * 32)
+            r_lo, n_hi = 3, upper_steps(profile, ks) * GROUPS[mode] * 32
         mma8 = rf.library_mma8(self.library)
         seed = zlib.crc32(f"paired:{mode}".encode())
         self.projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, dev, mma8)
@@ -312,6 +342,14 @@ def cpu_preflight(args):
         for mode in (0, 2):
             st = torch.load(f"{args.real_stack}-mode{mode}.pt")
             rep[f"real_mode{mode}_expert0"] = list(reference_decode(st, 0).shape)
+    for name in args.profiles.split(","):
+        for mode in (0, 2):
+            ks = SHAPES[mode][1] // (GROUPS[mode] * 32)
+            if name != "real":
+                prof = profiles_for(name, ks)[0]
+                rr_rate = (prof[0] * prof[2] + prof[1] * (ks - prof[2])) * 256 // ks
+                assert rr_rate == profile_rung(name, ks), (name, mode, prof)
+            rep[f"profile_{name}_mode{mode}"] = profile_rung(name, ks)
     from tessera import regdirect_routed as rr
     rep["k_parts_gate_up_M1"] = rr.k_parts(8, 8, 96, 128)
     rep["k_parts_down_M1"] = rr.k_parts(8, 32, 96, 16)
@@ -427,6 +465,8 @@ def main():
         cold = (statistics.median(samples[k]["Fcold"]) + statistics.median(samples[k]["Rcold"])) / 2
         warm = (statistics.median(samples[k]["Fwarm"]) + statistics.median(samples[k]["Rwarm"])) / 2
         out_cells[f"{arm}.mode{md}.{pf}.M{m}"] = {
+            "q256": profile_rung(pf, SHAPES[md][1] // (GROUPS[md] * 32)), "pass_medians_cold_us": [
+                statistics.median(samples[k]["Fcold"]) * 1e3, statistics.median(samples[k]["Rcold"]) * 1e3],
             "cold_us": cold * 1e3, "warm_us": warm * 1e3, "cold_GBps": meta["wire_bytes"] / (cold * 1e-3) / 1e9,
             "cold_pct_236": meta["wire_bytes"] / (cold * 1e-3) / GB10_BW * 100, "samples": samples[k], "meta": meta,
             "torch_profiler": kernel_profile(built[k][0])}
