@@ -21,6 +21,8 @@ Read the KDA replication indices from the real layer.
 Retain the DSA FP32 head cache and the MLA BF16 split matrix.
 Share their activation and decoded weight contracts with PrismaQuant.
 Do not change a serving pin, kernel, or default.
+Remove obsolete empty Tessera configuration assertions from stock passthrough tests.
+Keep the geometry-demotion copy check and the exact BF16 control.
 
 ## 2026-10-07 — projection construction and load checks
 
