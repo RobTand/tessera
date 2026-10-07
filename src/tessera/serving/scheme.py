@@ -99,6 +99,7 @@ __all__ = [
     "FUSED_WINDOW_DENSE_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
     "DECODE_ONCE_DENSE_SYMBOL",
+    "BF16_DECODE_ONCE_DENSE_SYMBOL",
     "EAGER_ONLY_LAUNCHES",
     "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
@@ -469,6 +470,8 @@ FUSED_WINDOW_DENSE_SYMBOL = "tessera::fused_window_dense"
 #: served by ``torch._scaled_mm`` row-wise for M at or above
 #: ``e4m3_prefill.MIN_M``.  Below that M the module's window lane runs.
 DECODE_ONCE_DENSE_SYMBOL = "tessera.serving.e4m3_prefill.prefill_apply"
+#: The T-16 lane decodes into BF16 scratch on each call, then runs BF16 GEMM.
+BF16_DECODE_ONCE_DENSE_SYMBOL = "tessera.serving.bf16_prefill.prefill_apply"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -515,6 +518,7 @@ _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA = "native_routed_fused_window_e4m3mma"
 _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
+_DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED = "native_window_decode_once_bf16_folded"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -676,6 +680,10 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     TESSERA_BF16: _dense_native_window_launch(
         _DECODER_NATIVE_WINDOW_GEMM_FOLDED, _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
         "tessera_routed_fused_value") + (
+        {"symbol": BF16_DECODE_ONCE_DENSE_SYMBOL,
+         "decoder": _DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
          "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
@@ -817,17 +825,19 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: prefill lane, ``(DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)``
 #: (tessera#931), default-off.  It leaves when a served census of a T-8
 #: projection artifact with ``TESSERA_E4M3_DECODE_ONCE=1`` records it.
+#: The T-16 per-call lane also requires a served census before cell promotion.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
+    (BF16_DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED),
 })
 
-#: Launches a compiled (``torch.compile``) forward cannot make: their owner
-#: refuses them at load when vLLM's compilation mode is not NONE.  A census of a compiled serve therefore does
-#: not expect them (``fp8_gemv.census_expected(compiled=True)``).  Since
-#: contract v56: the decode-once dense prefill lane, whose M branch is host
-#: Python (``native_window.PreparedDenseNativeModule.apply``).
+#: The route refuses these lanes at load when vLLM compiles the forward.
+#: CUDA graph capture can record the concrete M branch.
+#: A compiled census does not expect these launches.
+#: Both dense decode-once lanes use host dispatch in PreparedDenseNativeModule.apply.
 EAGER_ONLY_LAUNCHES: frozenset = frozenset({
     (DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3),
+    (BF16_DECODE_ONCE_DENSE_SYMBOL, _DECODER_NATIVE_WINDOW_DECODE_ONCE_BF16_FOLDED),
 })
 
 

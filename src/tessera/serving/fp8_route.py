@@ -73,13 +73,9 @@ ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 RESIDENT_ATTRIBUTES = ("tessera_native",)
 GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
 
-#: THE dense launches this route makes, owned where the dispatch is.  ``apply``
-#: below stamps the prepared module's own ``launch_pair`` at its one
-#: ``emit_route`` call and ``process_weights_after_loading`` refuses a module
-#: whose pair is not in this tuple, so the route cannot stamp a launch these
-#: constants do not name, and ``tests/test_serving_contract.py`` asserts
-#: ``scheme.ROUTE_LAUNCHES``' dense entry for ``TESSERA_FP8`` is exactly this
-#: set.
+#: The route owns its dense launch pairs.
+#: The load path refuses a module with an unsupported window launch.
+#: The forward records the launch that serves each request.
 #:
 #: That tie is the one #538 was missing.  Until it existed the launch table was
 #: checked against ``fp8_gemv.census_expected`` -- a second table, in a module

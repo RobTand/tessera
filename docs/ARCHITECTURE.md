@@ -975,6 +975,18 @@ the functional reference; no-grad calls keep the optimized CPU path. No
 recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
 serving, and no new throughput claim is made.
 
+Contract v58 publishes the opt-in T-16 decode-once dense prefill launch.
+Its identity is `(tessera.serving.bf16_prefill.prefill_apply, native_window_decode_once_bf16_folded)`.
+The launch remains experimental and eager-only. It has no served cell or promotion receipt.
+The design decodes each prefill step into shared BF16 scratch, then runs BF16 GEMM.
+One buffer serves each projection shape and device. Modules keep their packed weights.
+The lane preserves the folded weight arithmetic: `bf16(fp32(value * row_scale))` before the GEMM.
+`named_tensors` exposes the shared allocation. A resource observer charges each backing allocation once.
+The T-8 load-time lane remains unchanged. Defaults, serving pins and seals remain unchanged.
+The KDA measurement covers 12576 rows by 4096 columns at M=16, 2048 and 4096.
+Its fixed M=2048 thresholds are GO at a BF16 ratio of at most 1.15, and KILL above 1.5.
+The interval is inconclusive. A kernel measurement does not establish served KL or whole-model throughput.
+
 Re-stamped 2026-10-05 for the default-off decode-once E4M3 dense prefill lane
 (contract v56, Refs #931). Under `TESSERA_E4M3_DECODE_ONCE=1`,
 `fp8_route.process_weights_after_loading` decodes each RESIDENT dense module

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-07 — T-16 decode-once dense prefill lane
+
+Publish the experimental T-16 dense launch in contract v58.
+The lane decodes the packed wire into shared BF16 scratch for each prefill step, then runs BF16 GEMM.
+One allocation serves each projection shape and device. Modules keep their packed weights.
+The T-8 load-time lane and folded T-16 arithmetic remain unchanged.
+No default, serving pin, seal or served cell changes.
+Remove two tests that pin implementation rosters. Keep the consumer contract checks and numerical runtime tests.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four
