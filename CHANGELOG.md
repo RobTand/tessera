@@ -11,6 +11,9 @@ Keep original BF16 tensors, vision biases, and the qkv source prefix.
 Select router and vision projections only through explicit plan entries.
 Refuse stock twins that the stock constructor cannot load.
 Price direct consumer buffers through the runtime adapter's shared byte rule.
+Extend the existing byte audit with NoPE padding and direct buffer cases for all three commissioned weight families.
+The audit records the wire price, native resident price, and direct buffer price separately.
+It checks each direct price against the decoded buffer and records both exact sums.
 
 Install selective routes for explicitly declared projection units.
 Keep every unselected BF16 module on its original stock method.

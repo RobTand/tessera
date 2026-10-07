@@ -657,6 +657,88 @@ def resident_hashes() -> dict:
     return {label + "/" + key: hashlib.sha256(value).hexdigest() for key, value in payloads.items()}
 
 
+class ProjectionCase(NamedTuple):
+    label: str
+    grid: PayloadGrid
+    q256: int
+    condition: str
+
+
+def _projection_cases():
+    return [ProjectionCase(f"projection-{grid.name}-{condition}", grid, rung, condition)
+            for grid, rung in ((E4M3_GRID, 1024), (BF16_GRID, 1792), (tuple_grid(E2M1_GRID, 2), 896))
+            for condition in ("nope", "head", "mla")]
+
+
+def projection_record(case: ProjectionCase) -> dict:
+    """Audit padding and direct buffers with the existing wire and resident owners."""
+    from tessera.export import encode_linear_planes
+    from tessera.export_serving import family_for
+    from tessera.serving.dense_ownership import partition_members, source_padding_rows
+    from tessera.serving.projection_routes import direct_consumer_resident_bytes, direct_consumer_weight
+    from tessera.serving_parts import dense_resident_bytes_resident_mode
+    from tessera.unit_artifact import parse_unit_artifact
+    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.decode import replay_table_bytes
+
+    source = torch.randn(64, 32, generator=torch.Generator().manual_seed(
+        zlib.crc32(case.label.encode()) & 0xFFFF)).bfloat16()
+    original = source.clone()
+    prefix = "model.layers.0.self_attn."
+    padding = 0
+    if case.condition == "nope":
+        owner = prefix + "fused_qkv_a_proj"
+        members = [prefix + "q_a_proj.weight", prefix + "kv_a_proj_with_mqa.weight"]
+        config = {"mla_use_nope": True, "qk_rope_head_dim": 64}
+        pads = source_padding_rows(owner, members, config)
+        parts = partition_members(owner, members, dict.fromkeys(members, 64), [64, 128], padding_rows=pads)
+        padding = parts[1].padding_rows
+        role = parts[1].role
+    elif case.condition == "head":
+        owner, role = prefix + "indexer.wk_weights_proj", "weights_proj"
+    else:
+        owner, role = prefix + "kv_b_proj", "kv_b_proj"
+    weight = torch.nn.functional.pad(source, (0, 0, 0, padding)) if padding else source
+    exported, unit, forests = encode_linear_planes(weight.float(), grid=case.grid, q256=case.q256,
+                                                  name=case.label)
+    parsed = parse_unit_artifact(exported.blob)
+    wire = int(parsed.manifest.terminals[0].exact_bytes)
+    if wire != exported.exact_bytes:
+        raise AssertionError("the wire accountant disagrees with the encoded region")
+    family = family_for(case.grid)
+    if family == "TESSERA_NVFP4":
+        layouts = [{"rows": exported.rows, "cols": exported.columns, "rates": unit.rates,
+                    "arity": parsed.grid.arity, "memory": parsed.code.memory, "half": unit.half,
+                    "lut_entries": int(unit.scale_lut.numel())}]
+        tables = sum(replay_table_bytes(forests[rate], parsed.code) for rate in set(unit.rates))
+    else:
+        layouts = [{"rows": exported.rows, "cols": exported.columns, "rates": unit.rates,
+                    "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}]
+        tables = 0
+    native = dense_resident_bytes_resident_mode(family, exported.rows, exported.columns,
+        native_roles=layouts, trellis_table_bytes=tables)
+    direct = 0
+    if case.condition != "nope":
+        costs = direct_consumer_resident_bytes(owner, family, exported.rows, exported.columns,
+                                               [(role, exported.rows)])
+        cache = direct_consumer_weight(exported.blob, owner, role, family)
+        direct = cache.numel() * cache.element_size()
+        if direct != costs["resident_bytes_resident_mode"] or direct != costs["resident_bytes_stock"]:
+            raise AssertionError("the direct byte rule disagrees with the retained buffer")
+    if not torch.equal(source, original):
+        raise AssertionError("the audit changed its source tensor")
+    return {"source_rows": int(source.shape[0]), "padding_rows": padding, "encoded_rows": exported.rows,
+            "wire_accounted_bytes": wire, "container_bytes": len(exported.blob),
+            "native_resident_bytes": native, "direct_buffer_bytes": direct,
+            "resident_bytes": native + direct, "wire_and_direct_buffer_bytes": wire + direct,
+            "blob_sha256": hashlib.sha256(exported.blob).hexdigest()}
+
+
+def projection_hashes() -> dict:
+    return {case.label: projection_record(case) for case in _projection_cases()}
+
+
+
 def decode_hashes() -> dict:
     from tessera.unit_artifact import read_unit_artifact  # late: keeps import cheap
 
@@ -709,6 +791,7 @@ def main() -> int:
         "resident": resident_hashes(),
         "batch": batch_hashes(),
         "substack": substack_hashes(),
+        "projection": projection_hashes(),
     }
     if not a.encode_only:
         report["decode"] = decode_hashes()
@@ -729,6 +812,7 @@ def main() -> int:
               f"{len(report['resident'])} resident rows, "
               f"{len(report.get('batch', {}))} batch rows, "
               f"{len(report['substack'])} sub-stack rows, "
+              f"{len(report['projection'])} projection rows, "
               f"{len(report.get('decode', {}))} decodes")
     else:
         print(text)
