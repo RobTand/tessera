@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT))
 
-from tools.tessera_construction_census import _free_port
+from tools.tessera_construction_census import _checkpoint_name, _free_port
 
 # These are bounded test shapes, not a serving construction contract.
 CASES = (
@@ -27,7 +27,7 @@ CASES = (
     ("language_model.model.layers.0.self_attn.f_b_proj", "column", 128, (("f_b_proj", 256),)),
     ("language_model.model.layers.0.self_attn.g_b_proj", "column", 128, (("g_b_proj", 256),)),
     ("language_model.model.layers.0.self_attn.o_proj", "row", 256, (("o_proj", 256),)),
-    ("language_model.model.layers.1.self_attn.fused_qkv_a_proj", "replicated", 256,
+    ("language_model.model.layers.1.self_attn.fused_qkv_a_proj", "mla_input", 256,
      (("q_a_proj", 256), ("kv_a_proj_with_mqa", 256))),
     ("language_model.model.layers.1.self_attn.q_b_proj", "column", 256, (("q_b_proj", 256),)),
     ("language_model.model.layers.2.self_attn.q_proj", "column", 256, (("q_proj", 256),)),
@@ -171,11 +171,12 @@ def _constructor(row):
     from vllm.model_executor.layers import linear
     from vllm.model_executor.layers.fused_moe.router.gate_linear import GateLinear
     from vllm.models.glm5next.common.kda import _Glm5NextMergedColumnParallelLinear
+    from vllm.model_executor.models.deepseek_v2 import DeepSeekV2FusedQkvAProjLinear
     return {"column": linear.ColumnParallelLinear, "mla": linear.ColumnParallelLinear,
             "row": linear.RowParallelLinear, "replicated": linear.ReplicatedLinear,
             "merged": linear.MergedColumnParallelLinear, "indexer": linear.MergedColumnParallelLinear,
             "qkv": linear.QKVParallelLinear, "router": GateLinear,
-            "kda": _Glm5NextMergedColumnParallelLinear}[row["kind"]]
+            "kda": _Glm5NextMergedColumnParallelLinear, "mla_input": DeepSeekV2FusedQkvAProjLinear}[row["kind"]]
 
 
 def _construct(row, world, rank):
@@ -185,6 +186,10 @@ def _construct(row, world, rank):
     kw = {"bias": row["prefix"].startswith("visual."), "params_dtype": torch.bfloat16,
           "quant_config": None, "prefix": row["prefix"]}
     kind = row["kind"]
+    if kind == "mla_input":
+        from tools.tessera_construction_census import _set_default_torch_dtype
+        with _set_default_torch_dtype()(torch.bfloat16):
+            return cls(columns, sizes, quant_config=None, prefix=row["prefix"])
     if kind == "router":
         kw["out_dtype"] = torch.float32
     if kind == "kda":
@@ -358,11 +363,8 @@ def run_device(inputs, mode):
             from vllm.models.glm5next.common.model import Glm5NextForConditionalGeneration
             from tessera.serving.weights_mapper import module_name_mapper
             mapper = module_name_mapper(Glm5NextForConditionalGeneration.hf_to_vllm_mapper)
-            candidates = [old + row["prefix"][len(new):]
-                          for old, new in mapper.orig_to_new_prefix.items() if row["prefix"].startswith(new)]
-            if len(candidates) != 1 or mapper.apply_list(candidates) != [row["prefix"]]:
-                raise ValueError(f"{row['prefix']}: the runtime mapper has no unique checkpoint target")
-            quant = TesseraConfig({"smoke": {"targets": candidates, "scheme": scheme}}, (), {"tp_agnostic": True})
+            checkpoint = _checkpoint_name(row["prefix"], mapper)
+            quant = TesseraConfig({"smoke": {"targets": [checkpoint], "scheme": scheme}}, (), {"tp_agnostic": True})
             quant.apply_vllm_mapper(mapper)
             config.quant_config = quant
             with set_current_vllm_config(config, check_compile=False), torch.device("cuda"):

@@ -34,6 +34,9 @@ The construction census now retains every instance, input width, parameter shape
 and replicated shard identifier. It disables unused prefix caching explicitly.
 The same census entry point provides a portable preflight that reads real config
 shapes and producer imports without model construction. Its output is not a census.
+The constructor check uses real vLLM Linear classes on the supported CPU platform.
+Stock, T-8, and T-16 construction views use fresh processes in one admitted action.
+The selected views retain actual quantization method calls and explicit output partitions.
 
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
