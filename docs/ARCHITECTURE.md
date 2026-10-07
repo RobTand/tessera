@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-07 for the offline residency planner (#1037), against base `3fa7768`.
+`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
+It includes explicit copies, padded shards, temporary buffers, and rank reserves.
+Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+The planner reports named capacity refusals before load.
+The command changes no live loader, first-ship measurement, default, pin, or wire.
+The README states its input and output contracts.
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
