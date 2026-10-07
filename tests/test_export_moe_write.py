@@ -1012,6 +1012,9 @@ def test_explicit_unservable_geometry_screen_is_stamped(tmp_path, monkeypatch):
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
     refusals = manifest["serving_gate"]["unserveable_overrides"]
     assert any("unservable_native_class_geometry" in row["refusal"] for row in refusals)
+    from tessera.routed_fused import library_for
+
+    assert manifest["modules"][STACK]["native_library"] == library_for("e4m3")
 
 
 
