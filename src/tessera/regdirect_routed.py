@@ -118,8 +118,9 @@ def with_zero_row(x: torch.Tensor) -> torch.Tensor:
 
 
 @functools.lru_cache(maxsize=None)
-def _ext():
-    """Build and load the kernel on this process's platform.  Not a serving path (stage 1)."""
+def _load(name: str, source: str):
+    """Build and load one of this module's CUDA extensions on this process's platform.
+    Not a serving path (stage 1)."""
     from torch.utils.cpp_extension import load
 
     from tessera.serving.backend import (
@@ -134,16 +135,21 @@ def _ext():
     ensure_toolchain_on_path(torch)
     if detect_backend(torch) != "cuda":
         raise RuntimeError("the register-direct routed kernel is CUDA (mma.sync, cp.async)")
-    src = os.path.join(os.path.dirname(__file__), "serving", "csrc", "regdirect_routed.cu")
+    src = os.path.join(os.path.dirname(__file__), "serving", "csrc", source)
     token = platform_token(torch=torch)
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-routed-fused")
-    build = os.path.join(root, f"tessera_regdirect_routed_{token}") + GUARDED_BUILD_SUFFIX
+    build = os.path.join(root, f"{name}_{token}") + GUARDED_BUILD_SUFFIX
     os.makedirs(build, exist_ok=True)
     pin_build_arch(token, torch)
     flags = ["-O3", "-lineinfo", "-std=c++17", *offload_flags(token)]
     with jit_build_lock(build):
-        return load(name="tessera_regdirect_routed", sources=[src], build_directory=build,
+        return load(name=name, sources=[src], build_directory=build,
                     extra_cuda_cflags=flags, verbose=bool(os.environ.get("TESSERA_ROUTED_FUSED_VERBOSE")))
+
+
+def _ext():
+    """The register-direct routed kernel."""
+    return _load("tessera_regdirect_routed", "regdirect_routed.cu")
 
 
 @dataclasses.dataclass
