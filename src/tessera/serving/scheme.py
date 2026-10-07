@@ -189,11 +189,9 @@ MOE_GROUP_PROJECTIONS = {
     for group, shards in MOE_GROUP_SHARDS.items()
 }
 
-#: The checkpoint layouts the exporter can prove it interpreted.  This is
-#: provenance rather than a runtime layout: all three are normalised to the
-#: same canonical per-expert gate/up/down wires before vLLM sees them.  Old
-#: schemes predate the field and can only have come from the original
-#: per-expert writer, so their closed-world default is ``unpacked_per_expert``.
+#: The checkpoint layouts the exporter proves it interpreted. Source selectors
+#: remain original-global; the required expert map and classes describe storage.
+#: The canonical per-expert source layout is the grammar default.
 MOE_SOURCE_UNPACKED = "unpacked_per_expert"
 MOE_SOURCE_OUT_FIRST_CHUNKED = "out_first_chunked"
 MOE_SOURCE_IN_FIRST_INTERLEAVED = "in_first_interleaved"
@@ -209,10 +207,9 @@ MOE_SOURCE_LAYOUTS = (
 #: absent from it is refused by name rather than served through another
 #: family's decode.
 #:
-#: ``TESSERA_FP8``, ``TESSERA_NVFP4`` and ``TESSERA_BF16`` are here. The FP8
-#: builder serves E4M3 window wires on the compact native window lane where
-#: the shared compact reader is published, and otherwise decodes them into
-#: vLLM's per-channel FP8 fused-MoE parameter set; the
+#: FP8 E4M3 and BF16 WINDOW wires share one native expert-class dispatcher.
+#: The reader retains compressed rank-local planes; no stock-tile fallback is
+#: selected by format, metadata, research mode or a feature flag.
 #: NVFP4 builder (tessera#492) decodes E2M1x2 trellis wires into the stock
 #: modelopt NVFP4 fused-MoE parameter set (packed nibbles, group-16 ue4m3
 #: block scales, one per-expert global, a static per-expert input scale) and
@@ -223,14 +220,10 @@ MOE_SOURCE_LAYOUTS = (
 #: ``(family, structure)`` cells the packaged contract attests is
 #: ``lane_eligibility``'s to say, and ``attested_cells`` reads it.
 #: ``TESSERA_BF16`` (tessera#609) is the compressed BF16-alphabet wire with a
-#: per-row scale, served by the same builder as FP8 on the compact native
-#: window lane (``native_window_moe``), which decodes the packed wire in
-#: registers and materialises no expert tile.  Its weight arithmetic is
-#: FOLDED -- one bf16 rounding of ``value * row_scale`` per weight before the
-#: dot -- which matches a consumer that prices the decoded tile rounded once
-#: to bf16, and the launch stamps its own decoder so a cell can name that
-#: variant (``DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED``).  There is no
-#: materialising fallback: without the compact reader a BF16 stack refuses.
+#: per-row scale, served by the same native WINDOW builder as FP8. Its weight
+#: arithmetic is FOLDED: one bf16 rounding of value * row_scale per weight
+#: before the dot. The actual native class launch stamps its decoder variant.
+#: A published builder is not a served qualification.
 #: Plain source BF16 passthrough is a different thing and uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
@@ -908,13 +901,14 @@ def experimental_launch_pairs(route: str, **narrow) -> set:
 
 
 def moe_census_symbol_base(symbol: str) -> str:
-    """A routed launch entry point without the runtime-selected backend suffix.
+    """Remove only the modular vLLM operation's runtime backend suffix.
 
-    Keep exact symbols in receipts. Only comparison removes the suffix; its
-    dependency-free home lets receipt replay run without importing torch or
-    the runtime route implementation.
+    Qualified Torch operation names contain ``::`` and compare exactly.
+    Keep exact symbols in receipts; this normalization is for comparison.
     """
-    return str(symbol).split(":", 1)[0]
+    name = str(symbol)
+    prefix = MOE_GEMM_SYMBOL + ":"
+    return MOE_GEMM_SYMBOL if name.startswith(prefix) and ":" not in name[len(prefix):] else name
 
 
 _BODIES = ("TCQ", "WINDOW")
@@ -1951,8 +1945,20 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
             f"tessera target {target!r}: w13 takes {declared_groups['w13']['columns']} input "
             f"columns and w2 stacks {declared_groups['w2']['rows']} rows; both are the model's "
             "hidden size, so they are one number")
+    from tessera.expert_classes import normalize_expert_metadata, validate_gate_up_schedule
+
+    matrices = {name: group.get("expert_role_q256", [group["role_q256"]] * experts)
+                for name, group in declared_groups.items()}
+    metadata = normalize_expert_metadata(
+        scheme.get("expert_ids"), scheme.get("expert_classes"), matrices, target=target)
+    if family in (TESSERA_FP8, TESSERA_BF16) and shared["body"] == "WINDOW":
+        for descriptor in metadata["expert_classes"]:
+            validate_gate_up_schedule(
+                *descriptor["q256"]["w13"], declared_groups["w13"]["columns"],
+                target=f"{target} class {descriptor['start']}:{descriptor['end']}")
     return {
         "family": family, "structure": STRUCTURE_ROUTED_MOE, "experts": experts,
+        **metadata,
         "source_layout": source_layout,
         "grid": declared_groups["w13"]["grid"], "body": declared_groups["w13"]["body"],
         "plane": declared_groups["w13"]["plane"],
@@ -2156,9 +2162,8 @@ def expert_role_declarations(declared_group: Mapping, *,
     and before any TP cut: a mixed per-unit stack (#967) carries its rungs in
     the group's ``expert_role_q256`` matrix, and the loader asks for expert e's
     row here so each container is checked against its own unit's declaration.
-    The default (``expert=0``) keeps the legacy one-argument call -- the first
-    expert's row, which is what ``role_q256`` alone ever described -- for
-    uniform stacks and pre-#967 callers.
+    Uniform groups resolve the same row for every storage expert. Mixed groups
+    resolve the explicitly indexed storage row before any byte is validated.
     """
     matrix = declared_group.get("expert_role_q256")
     if matrix is not None:

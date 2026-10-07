@@ -249,46 +249,75 @@ quality, ship admission or a serving-pin claim; only a later admitted leg can
 measure those. The independent merged-code 4096 leg need not wait for this selector.
 See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
-Contract v57 (2026-10-05, #967) separates the executed routed stack from
-its plannable unit: one expert projection. A stack plan may carry
-`unit_q256` overrides keyed by canonical projected unit name, without
-`.weight`; the common grid/body/plane and source slicing stay stack facts.
-Every fresh, joined and cached encode selects that unit's rung; cached
-intake still validates its priced receipt and original source slice before
-framing. Unit payloads and containers do not change. A uniform assignment
-normalizes to the original scalar stack plan/scheme. Only genuinely
-across-expert differences use expert-major `groups.<group>.q256` matrices;
-per-projection decode tables, run pairs and TP cuts retain their v45 owners.
-The loader validates each expert/projection against its declared rung,
-preserving full-wire integrity and TP2 rank symmetry. Exact unit BODY/run
-storage is priced per unit, not at the largest rung in a stack. Before the
-shard write, every mixed unit's verified manifest must agree with the
-q256-derived word/run sizes on TP1 and both TP2 ranks. A non-aligned
-importance placement that changes those counts is refused by unit/rank;
-no guessed size, padding or large serialized per-column rate copy is used.
+## Routed expert-class storage and execution
 
-Explicit selected-expert research preparation also supports heterogeneous
-packed windows on CPU: it transfers each window's sole packed owner into
-the existing module axis, with no padded/duplicate weight stack at finish.
-Selection decodes only requested units through the original torch window
-reader, with one temporary tile at a time. Uniform preparation retains its
-batched layout. This reference-only route refuses the uniform-layout Triton
-decoder rather than claiming its qualification; production compact intake
-continues to use the exact flat BODY/run axis above.
+Every routed scheme now requires `expert_ids[storage_slot] = original_global_id`
+and `expert_classes`: sorted nonempty contiguous `[start,end)` partitions of the
+whole expert population, carrying the complete gate/up/down rung profile. The
+map is an integer bijection, with original ids ascending within each class.
+Uniform layers write the identity map and one class. There is no old-artifact
+reader, implicit map, version shim or default-off WINDOW serving path.
 
-**Performance boundary:** the fused lane still requires uniform strides
-and run schedules across each projection's expert axis, with equal gate/up
-tile strides. Divergent expert or gate/up schedules reach the compact-adapter
-cliff. A cross-group-only rung difference can satisfy the existing fused
-predicate; shape eligibility is not served qualification. Both cases are
-expressible/correct in explicit research/export, and production refuses
-non-uniform assignments without that qualification. Serving requires the
-existing explicit `ResearchSelectedMoeConfig` construction. This CPU-only
-change does not
-produce served GPU/performance qualification: that is a separate evidence
-packet before production admission. No cell, default or serving pin moves.
-The packaged `producer_interface.routed_units` is the capability a
-consumer reads; a pre-v57 installation refuses the new request by version.
+`expert_classes.py` owns map/profile normalization and class construction.
+The producer accepts stack plans with `unit_q256` keyed by canonical original
+projection name without `.weight`. It writes class-ordered checkpoint wires
+and storage-indexed group rung matrices. Export-record `tensor`, `source_tensor`,
+`source_slice.expert` and `expert` retain original-global coordinates;
+`storage_expert` and `wire` name emitted storage. Explicit-plan validation maps
+stored declarations back to the original plan. Source tensor slicing and each
+unit payload/container remain unchanged.
+
+Before any encode, native WINDOW geometry is checked by the runtime-owned shape
+predicate on the source and every requested fit-TP rank. Gate/up must have the
+same derived serving schedule and tile geometry; down may differ. Existing
+servable one/two-run schedules are retained. Invalid geometry or gate/up
+pairing is refused by field; only an explicit unservable screen can continue,
+with its refusal recorded. Research inputs cannot bypass native geometry.
+
+E4M3 and folded BF16 WINDOW serving use one `FusedRoutedWindowMoE` class
+dispatcher. The loader consumes storage-named wires into the exact rank-local
+flat axis, builds one int32 original-to-storage inverse at load, and remaps
+router ids once per invocation without reordering weights or top-k positions.
+The layer's EP `expert_map` remains EP-owned and is not rewritten.
+
+Class projection views alias retained words/scales/initial-state planes.
+Composed tables, run pairs and descriptors are prepared once. Device counters
+derive each class's first work item from the live route prefix on every call
+and captured replay, without host route-count reads. Fixed full-SM grids issue
+on two load-time streams; fork/join events and the empty scale seat are also
+load-time resources. Gate/up joins precede activation quantization, and down
+joins precede the fixed-order token reduction. The opaque operation is
+`tessera::routed_window_classes`; its resource registry retains no weights.
+
+`routed_class_dispatch.py` owns only the stream DAG and live work intervals.
+A load-time kernel binding supplies superblock rows, work units per
+superblock, activation operands and the native launch. The factor includes
+output tiles and K parts; the dispatcher never derives it from a kernel tile
+constant. The launch receives full device prefix/route vectors and absolute
+expert bounds. Its claim counter is optional. Kernel payloads may describe
+one or several classes, including per-expert rates and absolute word offsets.
+Packing permutations, persistent K-part scratch, sentinel activation rows,
+grid and shared memory belong to kernel code.
+
+Today the loaded binding is `_LutClassKernel`; it calls the unchanged CUDA
+decoder for each class on the same two streams. Register-direct remains a
+separate build. It can supply M+1 activation buffers with a zero final row
+and scratch indexed by absolute work unit. A later single-launch dispatcher
+can replace this dispatcher only after its speed matches or exceeds it.
+
+Successful native-owner retirement drops preparation-only offset/rate/code
+metadata. Residency charges actual distinct backing storage: selected table
+dtype, retained rank-local planes, run pairs/descriptors, 4 bytes per expert
+for the inverse and 8 bytes per class for counters. Source approval and CPU
+export/read/accounting checks are not GPU serving or quality qualification.
+Uniform eager/captured bit parity, changed-routing replay and full-plugin
+loading are device proof obligations. No serving pin, allowable-rung/contract
+row or seal is promoted here; live measurement source/artifact pins stay fixed.
+
+Standalone CPU stock/selected decoders remain reference controls, not a plugin
+fallback. The production D41 harness calls this class dispatcher and includes
+an inverse/opaque-operator companion. Heterogeneous timing comparators are
+explicit pure-control interpolations, never claimed mixed single launches.
 
 Re-stamped 2026-10-05 for D32 dev-mode run-identity seals in the managed
 window (Rob: sealing off until further notice). Dev mode is ON unless

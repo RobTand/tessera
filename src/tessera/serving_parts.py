@@ -497,57 +497,33 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
 
 def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
                                       *, window_bits: int, tile_rows: int) -> int:
-    """One expert projection's slot in the compact routed lane (tessera#624).
+    """Retained native words, weight scales, init and has_init for one unit.
 
-    The runtime's compact window lane (``serving.moe_route`` with
-    ``compact_window_lane`` true, every TESSERA_FP8/TESSERA_BF16 stack) never
-    allocates a decoded tile: ``native_window_moe.WindowUnitAxis._alloc``
-    holds, per part and per expert, the repacked BODY words (rows padded to
-    the 512-row tile, ``sum(rates)`` bits per padded row), one ``[rate, col0,
-    n, word0]`` int32 run per distinct rate, the fp32 row scales, the int32
-    column permutation and initial-state register (``cols`` each), the
-    family's state table (bf16 ``2^L`` values for the value family; uint8
-    ``2^L`` codes plus the 256-byte native grid for e4m3), and four int32
-    per-expert scalars (``tile_words``, ``total_words``, ``has_init`` and
-    ``finish``'s ``word_off``).  This prices exactly those tensors from the
-    unit's own verified manifest (rates, window bits, geometry); the
-    per-part ``run_off`` is :func:`routed_window_part_resident_bytes` and
-    the fused lane's tables :func:`routed_fused_unit_bytes`.
-
-    Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
-    (w13) or columns and their rate slice (w2) through the same function.
+    Packed words use the existing padded-tile layout. Raw run tables,
+    permutations, offsets, grid codes and native-grid planes are load-time
+    inputs only and are retired by the sole class dispatcher. Its composed
+    table and launch descriptors are priced by routed_fused_unit_bytes.
+    Tensor-parallel cuts price the rank-local rows or columns as before.
     """
     if family not in ("TESSERA_BF16", "TESSERA_FP8"):
-        raise ValueError(f"no compact routed accounting for family {family!r}")
+        raise ValueError(f"no native routed accounting for family {family!r}")
     rows, cols, bits, tile = int(rows), int(cols), int(window_bits), int(tile_rows)
     rates = tuple(int(rate) for rate in rates)
     if rows <= 0 or cols <= 0 or len(rates) != cols or tile <= 0 or tile % 8:
-        raise ValueError("invalid compact routed unit geometry")
+        raise ValueError("invalid native routed unit geometry")
     if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
-        raise ValueError("invalid compact routed window layout")
+        raise ValueError("invalid native routed window layout")
     padded = -(-rows // tile) * tile
     words = padded * sum(rates) // 8
-    tables = (1 << bits) * 2 if family == "TESSERA_BF16" else (1 << bits) + 256
-    runs = len(set(rates)) * 16
-    per_expert_scalars = 4 * 4  # tile_words, total_words, has_init, word_off (int32)
-    return words + tables + rows * 4 + runs + cols * 8 + per_expert_scalars
+    return words + rows * 4 + cols * 4 + 4  # weight scales, init, has_init
 
 
-def routed_window_part_resident_bytes(experts: int) -> int:
-    """The per-part ``run_off`` the axis adds at ``finish``: ``[E + 1]``
-    int64, since ``torch.cumsum`` promotes the int32 run counts it sums
-    (``WindowUnitAxis.finish`` and ``prepare_grouped_window_gemm`` alike)."""
-    if int(experts) <= 0:
-        raise ValueError("a routed stack needs at least one expert")
-    return 8 * (int(experts) + 1)
+def routed_fused_table_bytes(window_bits: int, *, library: str) -> int:
+    """The selected native library's composed table, charged once per unit."""
+    from .routed_fused import library_mma8
 
-
-def routed_fused_table_bytes(window_bits: int) -> int:
-    """One composed 16-bit lookup table the fused routed lane (tessera#685)
-    holds per expert projection beside the bundle's planes, as the runtime's
-    ``FusedRoutedWindowMoE.resident_bytes`` publishes it (both families; the
-    value family's table is a view the self-report still counts)."""
-    return 2 * (1 << int(window_bits))
+    element_bytes = 1 if library_mma8(library) else 2
+    return element_bytes * (1 << int(window_bits))
 
 
 #: The dense loader's column-rate bound (tessera#750 item 4: every rate a
@@ -567,7 +543,7 @@ ROUTED_FUSED_BLOCK_COLS = 32
 ROUTED_FUSED_BDESC_INTS = 12
 
 
-def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
+def routed_fused_unit_bytes(window_bits: int, cols: int, *, library: str) -> int:
     """What the fused routed lane holds per expert projection beside the
     bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
     the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
@@ -578,7 +554,7 @@ def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
     if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
         raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
                          f"blocks; {cols} columns are not")
-    return (routed_fused_table_bytes(window_bits) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
+    return (routed_fused_table_bytes(window_bits, library=library) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
             + 4 * ROUTED_FUSED_BDESC_INTS * (cols // ROUTED_FUSED_BLOCK_COLS))
 
 
@@ -614,7 +590,7 @@ def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_byte
 
     Every item is one named line whose sum is ``total_bytes``; a reader adding
     a budget adds an item rather than folding it into another.  Only the
-    compact routed stacks and the MTP draft duplicate are priced here; dense
+    native routed stacks and the MTP draft duplicate are priced here; dense
     modules and passthrough tensors are not, and the note says so.
     """
     tp_size = int(tp_size)
@@ -630,8 +606,8 @@ def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_byte
         "ranks": ranks,
         "mtp_draft_layers": int(mtp_layers),
         "note": ("routed_moe_resident_mode_bytes is each rank's cut of every routed stack "
-                 "(packed planes, tables, per-expert bookkeeping and the fused lane's "
-                 "composed tables where its shape admits the stack); "
+                 "(native packed words, scales, init, selected composed tables, launch "
+                 "descriptors, the expert inverse and class counters); "
                  "mtp_draft_embed_head_duplicate_bytes is the MTP draft's own rank-local "
                  "embed_tokens + lm_head (0 when the config declares no draft layers). "
                  "Dense modules and passthrough tensors are not priced per rank here."),
@@ -670,7 +646,7 @@ def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: i
             "on_disk_bytes": containers, "on_disk_bpp": containers * 8 / params if params else None,
             "resident_mode_bytes": resident,
             "resident_mode_bpp": resident * 8 / params if params else None,
-            "streamed_mode_note": "the prepared planes (~wire bytes + per-unit tables) plus one transient decoded tile per forward",
+            "streamed_mode_note": "dense streamed working storage is reader-specific; routed native WINDOW classes require resident mode and do not materialize expert tiles",
             "by_family": families, "passthrough_bytes": passthrough_bytes,
             "checkpoint_bytes": checkpoint_bytes}
 
@@ -791,6 +767,12 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             roles = record.get("roles", ())
             declared = validate_tessera_moe_scheme(scheme, f"explicit plan {name}")
             experts = declared["experts"]
+            from .expert_classes import inverse_expert_ids
+
+            inverse = inverse_expert_ids(declared["expert_ids"])
+            if any(record.get(field) != declared[field]
+                   for field in ("expert_ids", "expert_classes")):
+                raise ValueError(f"explicit plan stack {name}: manifest expert metadata differs from config")
             expected_roles = {(expert, projection) for expert in range(experts)
                               for projections in MOE_GROUP_PROJECTIONS.values()
                               for projection in projections}
@@ -814,7 +796,7 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if unknown:
                 raise ValueError(f"explicit plan stack {name}: unknown projected units {unknown[:5]}")
             declared_rungs = {
-                (expert, role["roles"][0][0]): role["q256"]
+                (declared["expert_ids"][expert], role["roles"][0][0]): role["q256"]
                 for expert in range(experts) for group in declared["groups"].values()
                 for role in expert_role_declarations(group, expert=expert)}
             selected_rungs = {by_unit.get(r["tensor"].removesuffix(".weight"), wanted_rung)
@@ -823,6 +805,19 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
             if record.get("q256") != manifest_baseline:
                 raise ValueError(f"explicit plan stack {name}: manifest baseline rung differs from plan")
             for role in roles:
+                original = role["expert"]
+                storage = role.get("storage_expert")
+                if type(storage) is not int or storage != inverse[original]:
+                    raise ValueError(f"explicit plan {name}: storage_expert disagrees with expert_ids")
+                prefix = f"{name}.{original}."
+                tensor = role.get("tensor", "")
+                if not tensor.startswith(prefix) or not tensor.endswith(".weight"):
+                    raise ValueError(f"explicit plan {name}: tensor must retain its original expert id")
+                wire = f"{name}.{storage}.{tensor.removeprefix(prefix).removesuffix('.weight')}.wire"
+                if role.get("wire") != wire:
+                    raise ValueError(f"explicit plan {name}: wire must name its storage expert id")
+                if role.get("source_slice", {}).get("expert", original) != original:
+                    raise ValueError(f"explicit plan {name}: source_slice must retain its original expert id")
                 want = (by_unit.get(role["tensor"].removesuffix(".weight"), wanted_rung)
                         if by_unit else wanted_rung)
                 if role.get("q256") != want:

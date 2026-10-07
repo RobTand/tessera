@@ -361,13 +361,6 @@ def test_the_leaves_of_one_layer_group_into_one_stack(tmp_path):
     assert sorted(stacks[STACK][0]) == sorted(export.EXPERT_PROJECTIONS)
 
 
-def test_the_group_row_order_comes_off_the_runtimes_own_table():
-    """``w13`` is gate then up because ``MOE_GROUP_SHARDS`` says ``w1`` then ``w3``."""
-    assert export.MOE_GROUP_PROJECTIONS["w13"] == ("gate_proj", "up_proj")
-    assert export.MOE_GROUP_PROJECTIONS["w2"] == ("down_proj",)
-    assert export.EXPERT_PROJECTIONS == ("gate_proj", "up_proj", "down_proj")
-
-
 def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monkeypatch):
     """The old refusal said the write half did not exist. It does; the plan is misspelled."""
     with pytest.raises(SystemExit) as caught:
@@ -906,3 +899,135 @@ def test_an_nvfp4_stack_missing_one_input_scale_is_refused_by_key(tmp_path, monk
         _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
                 "--allow-unserveable", config=_nvfp4_config())
     assert "--input-scales" in str(caught.value), str(caught.value)
+
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+def test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes(tmp_path, monkeypatch, mixed):
+    from tessera.export import encode_linear_planes
+    from tessera.fused import pack_fused
+    from tessera.serving_parts import validate_explicit_plan
+
+    generator = torch.Generator().manual_seed(481)
+    projections = ("gate_proj", "up_proj", "down_proj")
+    # A mixed down projection must admit the existing TP2 WINDOW cut:
+    # its 256-column superblock granularity needs 512 source columns.
+    hidden, intermediate = 128, 512
+    tensors = {f"{STACK}.{e}.{p}.weight": torch.randn(
+        hidden if p == "down_proj" else intermediate,
+        intermediate if p == "down_proj" else hidden, generator=generator) * 0.02
+        for e in range(2) for p in projections}
+    config = _config()
+    config["text_config"].update(hidden_size=hidden, moe_intermediate_size=intermediate, n_routed_experts=2)
+    overrides = {f"{STACK}.0.{p}": 1088 for p in projections} if mixed else {}
+    plan = {STACK: {"grid": "E4M3", "q256": 1024, "unit_q256": overrides}}
+    out = _export(tmp_path, monkeypatch, tensors, plan, "--device", "cpu",
+                  "--fit-tp-size", "2", config=config)
+    qconfig = json.loads((out / "config.json").read_text())["quantization_config"]
+    scheme = next(g["scheme"] for g in qconfig["config_groups"].values() if g["targets"] == [STACK])
+    declared = validate_tessera_moe_scheme(scheme, STACK)
+    assert declared["expert_ids"] == ([1, 0] if mixed else [0, 1])
+    assert len(declared["expert_classes"]) == (2 if mixed else 1)
+    manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+    assert manifest["totals"]["per_rank"]["tp_size"] == 2
+    record = manifest["modules"][STACK]
+    assert record["expert_ids"] == declared["expert_ids"]
+    assert record["expert_classes"] == declared["expert_classes"]
+    validate_explicit_plan(plan, manifest["modules"], qconfig["config_groups"], source_tensors=set(tensors))
+    with safetensors_torch.safe_open(str(out / "model.safetensors"), framework="pt") as handle:
+        for role in record["roles"]:
+            original, storage, projection = role["expert"], role["storage_expert"], role["role"]
+            assert declared["expert_ids"][storage] == original
+            assert role["tensor"] == role["source_tensor"] == f"{STACK}.{original}.{projection}.weight"
+            assert role["source_slice"]["expert"] == original
+            blob = handle.get_tensor(role["wire"]).numpy().tobytes()
+            group = declared["groups"][role["group"]]
+            declaration = next(d for d in expert_role_declarations(group, expert=storage)
+                               if d["roles"][0][0] == projection)
+            assert len(parse_tessera_expert_blob(blob, declaration, role["wire"])) == 1
+            from tessera.compact_prep import parse_compact_expert
+            from tessera.routed_fused import fused_routed_unit_shape_refusal
+
+            (wire,) = parse_compact_expert(blob, device="cpu")
+            meta = wire.metadata
+            layout = {"group": role["group"], "projection": projection, "rows": meta.rows,
+                      "cols": meta.columns, "rates": tuple(meta.rates)}
+            for rank in range(2):
+                cut = export.routed_unit_rank_cut(layout, 2, rank)
+                assert fused_routed_unit_shape_refusal(
+                    "e4m3", projection.removesuffix("_proj"), rows=cut["rows"], cols=cut["cols"],
+                    rates=cut["rates"], window_bits=int(meta.manifest.window_bits)) is None
+            reference, _unit, _forests = encode_linear_planes(
+                tensors[role["tensor"]].float().contiguous(), grid=export.grid_for("E4M3"),
+                q256=role["q256"], name=role["tensor"], verify=True)
+            assert blob == pack_fused([(projection, reference.rows, reference.blob)])
+            wrong = dict(declaration, q256=896, role_q256=[896])
+            with pytest.raises(ValueError):
+                parse_tessera_expert_blob(blob, wrong, "wrong storage rung")
+
+
+def test_unservable_gate_up_plan_refuses_before_encoding(tmp_path, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("gate/up schedule refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    overrides = {f"{STACK}.0.gate_proj": 1088}
+    config = _config()
+    config["text_config"]["moe_intermediate_size"] = 128
+    with pytest.raises(SystemExit, match="unservable_gate_up_schedule"):
+        _export(tmp_path, monkeypatch, _checkpoint(inter=128),
+                {STACK: {"grid": "E4M3", "q256": 1024, "unit_q256": overrides}},
+                "--device", "cpu", config=config)
+
+
+
+@pytest.mark.parametrize("hidden,intermediate,fit_tp", [
+    (32, 512, 1), (128, 64, 1), (160, 512, 1), (128, 128, 2),
+])
+def test_native_class_geometry_is_refused_before_encoding(tmp_path, monkeypatch, hidden, intermediate, fit_tp):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("native class geometry refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    tensors = {f"{STACK}.0.{p}.weight": torch.zeros(
+        hidden if p == "down_proj" else intermediate,
+        intermediate if p == "down_proj" else hidden)
+        for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=hidden, moe_intermediate_size=intermediate, n_routed_experts=1)
+    with pytest.raises(SystemExit, match="unservable_native_class_geometry"):
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                "--device", "cpu", "--fit-tp-size", str(fit_tp), config=config)
+
+
+
+def test_explicit_unservable_geometry_screen_is_stamped(tmp_path, monkeypatch):
+    generator = torch.Generator().manual_seed(917)
+    tensors = {f"{STACK}.0.{p}.weight": torch.randn(32, 32, generator=generator) * 0.02
+               for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=32, moe_intermediate_size=32, n_routed_experts=1)
+    out = _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                  "--device", "cpu", "--allow-unserveable", config=config)
+    manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+    refusals = manifest["serving_gate"]["unserveable_overrides"]
+    assert any("unservable_native_class_geometry" in row["refusal"] for row in refusals)
+    from tessera.routed_fused import library_for
+
+    assert manifest["modules"][STACK]["native_library"] == library_for("e4m3")
+
+
+
+def test_research_selected_cannot_bypass_native_class_geometry(tmp_path, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("research geometry refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    tensors = {f"{STACK}.0.{p}.weight": torch.zeros(32, 32) for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=32, moe_intermediate_size=32, n_routed_experts=1)
+    execution, _block, _text = _research_input(tmp_path)
+    with pytest.raises(SystemExit, match="unservable_native_class_geometry"):
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                "--device", "cpu", "--research-selected-moe-json", str(execution), config=config)
+

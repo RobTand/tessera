@@ -838,3 +838,35 @@ def test_a_packed_stack_is_found_under_a_feed_forward_owner(tmp_path, suffix):
         f"model.language_model.layers.1.feed_forward.experts.gate_up_proj{suffix}"], sorted(packed)
     assert routed == {}, sorted(routed)
     assert not any(".feed_forward.experts." in n for n in shapes), sorted(shapes)
+
+
+
+@pytest.mark.parametrize("layout", ["out_first_chunked", "in_first_interleaved"])
+def test_sorted_storage_keeps_packed_source_slices_global(layout):
+    stack = "model.layers.1.mlp.experts"
+    dimensions = ([4, 1024, 128], [4, 128, 512]) if layout == "out_first_chunked" else ([4, 128, 1024], [4, 512, 128])
+    shapes = {f"{stack}.{p}.weight": shape
+              for p, shape in zip(("gate_up_proj", "down_proj"), dimensions)}
+    assignments = {f"{stack}.{e}.{p}": 1088 for e in (0, 2) for p in export.EXPERT_PROJECTIONS}
+    plan = {stack: {"grid": "E4M3", "q256": 1024, "source_layout": layout, "unit_q256": assignments}}
+    projected = export.project_expert_plan(
+        shapes, {"hidden_size": 128, "moe_intermediate_size": 512, "n_routed_experts": 4}, plan)["stacks"][stack]
+    assert projected["expert_ids"] == [1, 3, 0, 2]
+    source = torch.arange(4 * 1024 * 128).reshape(4, 1024, 128)
+    if layout == "in_first_interleaved":
+        source = source.transpose(1, 2).contiguous()
+    for unit in projected["units"]:
+        original, storage = unit["expert"], unit["storage_expert"]
+        assert projected["expert_ids"][storage] == original
+        assert unit["source_slice"]["expert"] == original
+        if unit["projection"] == "down_proj":
+            continue
+        matrix = export.packed_expert_weight(source, unit)
+        if layout == "out_first_chunked":
+            expected = source[original, :512] if unit["projection"] == "gate_proj" else source[original, 512:]
+        else:
+            parity = 0 if unit["projection"] == "gate_proj" else 1
+            expected = source[original, :, parity::2].T
+        assert torch.equal(matrix, expected)
+        assert unit["wire"] == f"{stack}.{storage}.{unit['projection']}.wire"
+

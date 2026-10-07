@@ -1,32 +1,8 @@
-"""Per-unit routed rungs (tessera#967): the loader/scheme sub-slice.
+"""Storage-ordered per-unit WINDOW declarations and exact CPU wire/axis checks.
 
-One expert PROJECTION is the plannable unit: the sidecar may declare, per
-expert and per role, its own rung.  What is pinned here:
-
-* the scheme spelling -- an expert-major ``[experts][roles]`` q256 matrix on a
-  window-family routed group, normalised to ``expert_role_q256`` with
-  ``role_q256`` keeping the first row for the legacy declaration/cut readers,
-  and no matrix field on a stack-uniform group (uniform schemes normalise
-  exactly as before);
-* per-expert declaration resolution -- ``expert_role_declarations(group,
-  expert=e)`` -- feeding BOTH the materialising and the compact shared parser,
-  so each unit's bytes are validated against ITS OWN rung before any TP cut;
-* bitwise decode parity: every unit of a mixed stack decodes to the same tile
-  the unit exported STANDALONE at a uniform rung, whole (CPU materialising
-  path) and rank-cut (research TP2 packed owners, both ranks);
-* the mixed guard: a production load of a mixed schedule refuses by name
-  instead of silently landing on the compact Triton adapter (the fused lane
-  requires one schedule and stride per stack), while the explicit research
-  route admits it;
-* ``WindowUnitAxis``: heterogeneous per-expert projection layouts in EXACT
-  flat storage from predeclared per-unit word/run sizes -- no padding, no
-  duplicate per-unit weights retained until finish -- with the uniform path's
-  allocation, tensors and invariants unchanged, and the SoA the grouped GEMM
-  validates accepting the mixed flat stack.
-
-The compact INTAKE (CUDA repack kernels) is exercised by the pinned-image
-packet; this file covers everything that runs on CPU, on real encoded wires
-through the real shared parser.
+Required maps/classes are constructed explicitly. Gate/up schedules are coupled
+by the native reader; the standalone CPU decoding below tests per-unit byte
+identity and rank cuts, not CUDA serving or old artifact compatibility.
 """
 from __future__ import annotations
 
@@ -48,16 +24,11 @@ from tessera.serving.scheme import (                             # noqa: E402
 
 HIDDEN, INTER, EXPERTS = 64, 32, 3
 
-#: A deliberately MIXED assignment: rungs differ across experts AND, within
-#: expert 2, across the two w13 roles.  R1024 realises one column rate (4);
-#: R1088 realises the two adjacent rates [4, 5] -- the word/run sizes of both
-#: are exact functions of ``grammar.bresenham_rate_schedule`` over the unit's
-#: source columns and of the rank's TP column slice, which the intake
-#: predeclares.
+# Sorted, fused-compatible profiles. Gate/up share a schedule; down remains its own unit.
 UNIT_RUNGS = {
-    (0, "gate_proj"): 512, (0, "up_proj"): 1024, (0, "down_proj"): 512,
-    (1, "gate_proj"): 1088, (1, "up_proj"): 512, (1, "down_proj"): 1088,
-    (2, "gate_proj"): 512, (2, "up_proj"): 1024, (2, "down_proj"): 512,
+    (0, "gate_proj"): 512, (0, "up_proj"): 512, (0, "down_proj"): 512,
+    (1, "gate_proj"): 512, (1, "up_proj"): 512, (1, "down_proj"): 512,
+    (2, "gate_proj"): 1088, (2, "up_proj"): 1088, (2, "down_proj"): 1088,
 }
 MIXED_W13 = [[UNIT_RUNGS[(e, p)] for p in ("gate_proj", "up_proj")]
              for e in range(EXPERTS)]
@@ -71,6 +42,9 @@ def _moe(q256_w13=RUNG, q256_w2=RUNG, family=TESSERA_FP8, grid="E4M3",
     s = {
         "family": family, "structure": STRUCTURE_ROUTED_MOE,
         "grid": grid, "body": body, "plane": plane, "experts": experts,
+        "expert_ids": list(range(experts)),
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [RUNG, RUNG], "w2": [RUNG]}}],
         "groups": {
             "w13": {"rows": 2 * inter, "columns": hidden, "q256": q256_w13,
                     "wire_stride": 8192,
@@ -80,6 +54,22 @@ def _moe(q256_w13=RUNG, q256_w2=RUNG, family=TESSERA_FP8, grid="E4M3",
                    "roles": [["down_proj", hidden]]},
         },
     }
+    # Explicit fixture construction for valid scalar/vector/matrix profiles.
+    from tessera.expert_classes import build_expert_metadata
+    def rows(q, arity):
+        if isinstance(q, int):
+            return [[q] * arity for _ in range(experts)]
+        if isinstance(q, (list, tuple)) and q and all(isinstance(r, int) for r in q):
+            return [list(q) for _ in range(experts)]
+        return q
+    matrices = {"w13": rows(q256_w13, 2), "w2": rows(q256_w2, 1)}
+    if (all(isinstance(matrix, (list, tuple)) and len(matrix) == experts for matrix in matrices.values())
+            and all(isinstance(row, (list, tuple)) and len(row) == len(s["groups"][group]["roles"])
+                    for group, matrix in matrices.items() for row in matrix)):
+        metadata = build_expert_metadata(matrices)
+        s.update(metadata)
+        for group, matrix in matrices.items():
+            s["groups"][group]["q256"] = S.expert_group_q256([matrix[e] for e in metadata["expert_ids"]])
     s.update(over)
     return s
 
@@ -135,42 +125,6 @@ def _mixed_stack(encode, q256_w13, q256_w2, *, family=TESSERA_FP8, grid="E4M3",
 
 
 # ---------------------------------------------------------------- the spelling
-
-def test_an_expert_role_matrix_normalises_to_per_unit_rungs_and_first_row_legacy_fields():
-    declared = validate_tessera_moe_scheme(_moe(q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
-    w13 = declared["groups"]["w13"]
-    assert w13["expert_role_q256"] == MIXED_W13
-    # The legacy fields keep the FIRST expert's row: the dense-cut readers and
-    # every pre-#967 consumer read exactly what they read before.
-    assert w13["role_q256"] == MIXED_W13[0]
-    assert w13["q256"] == MIXED_W13[0]
-    w2 = declared["groups"]["w2"]
-    assert w2["expert_role_q256"] == MIXED_W2
-    assert w2["role_q256"] == MIXED_W2[0]
-
-
-def test_a_per_role_list_is_uniform_across_experts_and_grows_no_matrix():
-    declared = validate_tessera_moe_scheme(_moe(q256_w13=[RUNG, 512]), "m")
-    w13 = declared["groups"]["w13"]
-    assert w13["role_q256"] == [RUNG, 512]
-    assert w13["q256"] == [RUNG, 512]
-    assert "expert_role_q256" not in w13
-    # A per-role spelling is uniform across the expert axis: every expert's
-    # resolved declarations are that row.
-    for e in range(EXPERTS):
-        assert [d["q256"] for d in expert_role_declarations(w13, expert=e)] \
-            == [RUNG, 512]
-
-
-def test_an_integer_rung_group_normalises_exactly_as_before():
-    declared = validate_tessera_moe_scheme(_moe(), "m")
-    for group in declared["groups"].values():
-        assert group["q256"] == RUNG
-        assert group["role_q256"] == [RUNG] * len(group["roles"])
-        assert "expert_role_q256" not in group
-        for e in range(EXPERTS):
-            assert [d["q256"] for d in expert_role_declarations(group, expert=e)] \
-                == [RUNG] * len(group["roles"])
 
 
 def test_an_expert_matrix_must_cover_every_expert_and_role_exactly():
@@ -329,63 +283,6 @@ def test_a_mixed_fp8_stack_tp2_rank_cuts_match_standalone_uniform_tiles():
                                down["weight_scale"].reshape(-1))
 
 
-def test_compact_intake_with_only_w13_mixed_constructs_both_axes(monkeypatch):
-    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR, raising=False)
-    declared = validate_tessera_moe_scheme(_moe(
-        q256_w13=[[1024, 1024], [1088, 1024], [1024, 1024]]), "one-group")
-    for size in (1, 2):
-        for rank in range(size):
-            intake = moe_route._RankLocalPackedIntake(
-                declared, "one-group", torch.device("cpu"), rank, size, compact=True)
-            assert set(intake.axis) == set(moe_route.MOE_GROUPS)
-            assert intake.axis["w13"]._sizes
-            assert not intake.axis["w2"]._sizes
-            assert intake.resident_bytes() == 0
-
-
-def test_compact_intake_with_only_w2_mixed_constructs_both_axes(monkeypatch):
-    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR, raising=False)
-    declared = validate_tessera_moe_scheme(_moe(
-        q256_w2=[[1024], [1088], [1024]]), "one-group")
-    for size in (1, 2):
-        for rank in range(size):
-            intake = moe_route._RankLocalPackedIntake(
-                declared, "one-group", torch.device("cpu"), rank, size, compact=True)
-            assert set(intake.axis) == set(moe_route.MOE_GROUPS)
-            assert not intake.axis["w13"]._sizes
-            assert intake.axis["w2"]._sizes
-            assert intake.resident_bytes() == 0
-
-
-# ------------------------------------------------------------ the mixed guard
-
-def test_a_production_mixed_stack_refuses_research_only_by_name():
-    declared = validate_tessera_moe_scheme(_moe(q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
-    with pytest.raises(ValueError, match="ResearchSelectedMoeConfig"):
-        moe_route.refuse_unresearched_mixed_rungs(declared, "m")
-    # A per-unit assignment that COMPRESSES to a per-role list (no expert
-    # matrix: every expert's up at R1088, gate/down at R1024) mismatches the
-    # fused gate/up tile stride the same way -- still research-only.
-    per_role = validate_tessera_moe_scheme(_moe(q256_w13=[RUNG, 1088]), "m")
-    assert "expert_role_q256" not in per_role["groups"]["w13"]
-    with pytest.raises(ValueError, match="ResearchSelectedMoeConfig"):
-        moe_route.refuse_unresearched_mixed_rungs(per_role, "m")
-    # A group-level difference (w13 at R1024, w2 at R1088, no matrix
-    # anywhere) is the same non-uniform executed schedule -- still refused.
-    cross_group = validate_tessera_moe_scheme(_moe(q256_w13=RUNG, q256_w2=1088), "m")
-    with pytest.raises(ValueError, match="ResearchSelectedMoeConfig"):
-        moe_route.refuse_unresearched_mixed_rungs(cross_group, "m")
-
-
-def test_a_uniform_stack_and_the_research_route_are_admitted():
-    declared = validate_tessera_moe_scheme(_moe(), "m")
-    moe_route.refuse_unresearched_mixed_rungs(declared, "m")
-    # A per-role list of ONE effective rung is a uniform artifact, unchanged.
-    one_rung = validate_tessera_moe_scheme(_moe(q256_w13=[RUNG, RUNG]), "m")
-    moe_route.refuse_unresearched_mixed_rungs(one_rung, "m")
-    mixed = validate_tessera_moe_scheme(
-        _moe(q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
-    moe_route.refuse_unresearched_mixed_rungs(mixed, "m", research_selected=object())
 
 
 def test_the_intake_derives_exact_flat_sizes_for_r1024_and_r1088_at_both_ranks():
@@ -395,8 +292,8 @@ def test_the_intake_derives_exact_flat_sizes_for_r1024_and_r1088_at_both_ranks()
     # R512 -> rate 2 only; R1024 -> rate 4 only; R1088 -> quota 4.25 over 64
     # columns = 16 columns at rate 5 + 48 at rate 4 -> 4352 words, two runs.
     expected_w13 = {
-        "gate_proj": [(2048, 1), (4352, 2), (2048, 1)],
-        "up_proj": [(4096, 1), (2048, 1), (4096, 1)],
+        "gate_proj": [(2048, 1), (2048, 1), (4352, 2)],
+        "up_proj": [(2048, 1), (2048, 1), (4352, 2)],
     }
     # w2 is column-cut: the rank's slice of the source schedule.  R1088 over
     # 32 columns is 8 columns at rate 5 + 24 at rate 4; each rank's 16-column
@@ -404,7 +301,7 @@ def test_the_intake_derives_exact_flat_sizes_for_r1024_and_r1088_at_both_ranks()
     # (the placement is the grammar's own, and put re-validates it exactly).
     # R512 keeps rate 2, so a rank's half is 512 words, one run.
     expected_w2 = {
-        "down_proj": [(512, 1), (1088, 2), (512, 1)],
+        "down_proj": [(512, 1), (512, 1), (1088, 2)],
     }
     for rank in (0, 1):
         plans = {g: moe_route._packed_group_shard_plan(declared, g, "m", rank, 2)
@@ -416,7 +313,7 @@ def test_the_intake_derives_exact_flat_sizes_for_r1024_and_r1088_at_both_ranks()
     plans = {g: moe_route._packed_group_shard_plan(declared, g, "m", 0, 1)
              for g in moe_route.MOE_GROUPS}
     sizes = moe_route._mixed_axis_word_runs(declared, plans)
-    assert sizes["w2"] == {"down_proj": [(1024, 1), (2176, 2), (1024, 1)]}
+    assert sizes["w2"] == {"down_proj": [(1024, 1), (1024, 1), (2176, 2)]}
     # A uniform group predeclares nothing: the legacy allocation stands.
     uniform = validate_tessera_moe_scheme(_moe(), "m")
     assert moe_route._mixed_axis_word_runs(
@@ -440,8 +337,7 @@ def test_a_mixed_stack_refuses_an_incompatible_piece_major_knob_by_name(monkeypa
     matrix = validate_tessera_moe_scheme(_moe(q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
     with pytest.raises(ValueError, match="piece-major|PIECE_MAJOR"):
         moe_route._RankLocalPackedIntake(matrix, "m", torch.device("cpu"), 0, 1)
-    per_role = validate_tessera_moe_scheme(_moe(q256_w13=[RUNG, 1088]), "m")
-    assert "expert_role_q256" not in per_role["groups"]["w13"]
+    per_role = validate_tessera_moe_scheme(_moe(q256_w2=1088), "m")
     with pytest.raises(ValueError, match="piece-major|PIECE_MAJOR"):
         moe_route._RankLocalPackedIntake(per_role, "m", torch.device("cpu"), 0, 1)
     monkeypatch.setattr(moe_route, "_piece_major_requested", lambda: False)

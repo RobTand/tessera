@@ -35,6 +35,9 @@ def _moe(experts=4, hidden=128, inter=64, **over):
         "family": S.TESSERA_FP8, "structure": S.STRUCTURE_ROUTED_MOE,
         "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL",
         "experts": experts,
+        "expert_ids": list(range(experts)) if type(experts) is int else [],
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [1024, 1024], "w2": [1024]}}],
         "groups": {
             "w13": _group(2 * inter, hidden, [["gate_proj", inter], ["up_proj", inter]]),
             "w2": _group(hidden, inter, [["down_proj", hidden]]),
@@ -173,3 +176,13 @@ def test_the_dense_shape_is_untouched_by_the_moe_shape():
     assert norm["roles"] == [("weight", 256)] and norm["q256"] == 1024
     with pytest.raises(ValueError, match="missing"):
         S.validate_tessera_scheme({k: v for k, v in dense.items() if k != "roles"}, "d")
+
+
+def test_qualified_operation_equality_and_mismatch_are_preserved():
+    actual = S.moe_census_symbol_base("tessera::routed_window_classes")
+    expected = S.moe_census_symbol_base("tessera::routed_window_classes")
+    other = S.moe_census_symbol_base("tessera::window_gemm_dense")
+    assert actual == expected == "tessera::routed_window_classes"
+    assert actual != other
+    assert S.moe_census_symbol_base(S.MOE_GEMM_SYMBOL + ":triton") == S.MOE_GEMM_SYMBOL
+

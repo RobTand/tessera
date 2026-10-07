@@ -90,10 +90,10 @@ re-sharding is a serve flag rather than a re-export.  Encoding per rank would
 make the bytes a function of the machine they were built for, and a unit cut
 for 4 ranks could not be re-cut for 8.  Pricing is the one place the rank
 enters: a routed FP8/BF16 stack's ``resident_bytes_resident_mode`` is what
-the compact window lane holds for the WHOLE stack (its repacked planes,
-tables, permutations and bookkeeping plus the fused lane's composed tables,
-run pairs and block descriptors where the shape admits them; never a decoded
-tile, which that lane does not allocate -- tessera#624), and
+the sole native class dispatcher retains for the WHOLE stack: packed words,
+weight scales, init, selected composed tables, launch descriptors, inverse
+and class counters. Class aliases are counted once; load-only compact planes
+are retired.
 ``totals.per_rank`` (``--fit-tp-size``) prices
 each rank's cut of every routed stack beside the MTP draft's embed/head
 duplicate as its own line item (tessera#645).
@@ -203,7 +203,7 @@ from tessera.serving_parts import (  # noqa: E402
     exporter_code_root, git_hash,
     mtp_draft_embed_head_duplicate_bytes, parse_partition, make_artifact_readable,
     partition_owner, per_rank_fit_items, require_json, routed_fused_unit_bytes,
-    routed_window_part_resident_bytes, routed_window_unit_resident_bytes, sha256_file,
+    routed_window_unit_resident_bytes, sha256_file,
     summarize_modules, validate_explicit_plan, write_serving_manifest)
 from tessera.serving_plan import (  # noqa: E402
     SERVING_PLAN_SCHEMA, family_for, module_scheme_key, validate_serving_plan)
@@ -1328,7 +1328,7 @@ def packed_expert_stacks(expert_shapes):
 
 def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
                       source_layout: str = MOE_SOURCE_UNPACKED, config: dict,
-                      research_selected: bool = False):
+                      allow_unserveable: bool = False):
     """Everything about a planned expert stack that must be refused BEFORE the encode.
 
     A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
@@ -1361,8 +1361,7 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     """
     family = family_for(grid)
     try:
-        if not (research_selected and family == "TESSERA_BF16"):
-            refuse_a_family_with_no_expert_route(family, stack)
+        refuse_a_family_with_no_expert_route(family, stack)
     except ValueError as exc:
         raise SystemExit(
             f"the plan gives the expert stack {stack} grid {grid.name} ({family}): {exc}") from exc
@@ -1440,9 +1439,17 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
                                                "transpose": False},
                               "expert": index, "projection": projection, "group": group,
                               "rows": shape[0], "cols": shape[1]})
-    return {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
-            "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
-            "source_layout": source_layout, "groups": groups, "units": units}
+    record = {"stack": stack, "family": family, "grid": grid, "q256": int(q256),
+              "experts": len(indices), "hidden_size": hidden, "intermediate_size": inter,
+              "source_layout": source_layout, "groups": groups, "units": units}
+    record["native_library"] = None
+    if family != NVFP4:
+        from tessera.routed_fused import library_for
+
+        record["native_library"] = library_for("value" if family == BF16 else "e4m3")
+    assign_expert_unit_rungs(record, {})
+    check_native_class_geometry(record, allow_unserveable=allow_unserveable)
+    return record
 
 
 def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
@@ -1533,64 +1540,86 @@ def require_plannable_unit_layout(layout, q256, target, *, manifest=None):
                     "placement is not plannable. Refusing before the shard write.")
 
 def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
+                                expert_classes, native_library,
                                 tp_size: int = 1, tp_rank: int = 0) -> tuple[int, int]:
-    """``(unit_bytes, stack_bytes)`` one rank retains of a routed stack.
+    """Native retained unit and stack bytes at the explicitly selected library.
 
-    ``unit_bytes`` is the sum over expert projections of what the lane holds
-    per unit; ``stack_bytes`` the terms the lane holds once per stack: for
-    the compact window lane one ``run_off`` per part
-    (:func:`~tessera.serving_parts.routed_window_part_resident_bytes`) and,
-    when every unit's wire shape admits the fused lane and the projection
-    schedules/strides agree across experts (gate/up also share tile_words), its
-    composed table (#685), run pair and block descriptors (contract v45,
-    tessera#694) per unit (:func:`~tessera.serving_parts.
-    routed_fused_unit_bytes`) -- since v45 at every one- or two-rate shape
-    the lane reads, not rate 4 alone.  An NVFP4 stack is the stock tile per
-    unit and nothing per stack.  ``layouts`` are the units' verified wire
-    layouts as the write loop recorded them; a TP cut prices each rank's
-    rows/columns/rates through :func:`routed_unit_rank_cut`.
+    Class views alias the global words, scales, init and composed tables.
+    Raw compact planes and run offsets have no retained owner after cutover.
+    The one inverse and per-class counters are the only stack-wide tensors.
     """
     from tessera.kernel_window_gemv import TILE_ROWS
-    from tessera.routed_fused import fused_routed_unit_shape_refusal
+    from tessera.expert_classes import normalize_expert_classes
 
-    units_total, parts, refused, fused_total = 0, set(), False, 0
-    schedules = {}
+    classes = normalize_expert_classes(expert_classes, experts)
+    units_total, fused_total = 0, 0
     for layout in layouts:
         cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
         if family == NVFP4:
             units_total += cut["rows"] * cut["cols"] // 2 + cut["rows"] * cut["cols"] // 16 + 8
             continue
+        if native_library is None:
+            raise ValueError("native WINDOW residency requires its selected library")
         units_total += routed_window_unit_resident_bytes(
             family, cut["rows"], cut["cols"], cut["rates"],
             window_bits=cut["window_bits"], tile_rows=TILE_ROWS)
-        part = "down" if cut["group"] == "w2" else str(cut["projection"]).removesuffix("_proj")
-        parts.add(part)
-        counts = tuple((rate, cut["rates"].count(rate)) for rate in sorted(set(cut["rates"])))
-        signature = (cut["rows"], cut["cols"], int(cut["window_bits"]), counts)
-        if schedules.setdefault(part, signature) != signature:
-            refused = True
-        window_bits = int(cut["window_bits"])
-        if fused_routed_unit_shape_refusal(
-                "value" if family == BF16 else "e4m3", part, rows=cut["rows"],
-                cols=cut["cols"], rates=cut["rates"], window_bits=window_bits) is not None:
-            refused = True
-        elif not refused:
-            fused_total += routed_fused_unit_bytes(window_bits, cut["cols"])
-    gate, up = schedules.get("gate"), schedules.get("up")
-    if gate is not None and up is not None:
-        if sum(r * n for r, n in gate[-1]) != sum(r * n for r, n in up[-1]):
-            refused = True
+        fused_total += routed_fused_unit_bytes(cut["window_bits"], cut["cols"], library=native_library)
     if family == NVFP4 or not layouts:
         return units_total, 0
-    stack_total = len(parts) * routed_window_part_resident_bytes(experts)
-    if not refused:
-        stack_total += fused_total
-    return units_total, stack_total
+    return units_total, fused_total + 4 * experts + 8 * len(classes)
+
+
+
+
+
+def check_native_class_geometry(record, *, fit_tp_size=1, allow_unserveable=False, overrides=None):
+    """Refuse encoder-valid shapes the sole native class route cannot serve.
+
+    The routed CUDA owner decides geometry and schedule admission, including
+    the declared tensor-parallel fit. Research-selected construction uses
+    that same owner; only --allow-unserveable is an explicitly stamped screen.
+    """
+    if record["family"] == NVFP4:
+        return
+    from tessera.grammar import bresenham_rate_schedule, root_from_q256
+    from tessera.routed_fused import WINDOW_BITS, fused_routed_unit_shape_refusal
+
+    if type(fit_tp_size) is not int or fit_tp_size < 1:
+        raise SystemExit(f"--fit-tp-size {fit_tp_size!r} is not a tensor-parallel size")
+    for descriptor in record["expert_classes"]:
+        for group, projections in MOE_GROUP_PROJECTIONS.items():
+            geometry = record["groups"][group]
+            for projection, rung in zip(projections, descriptor["q256"][group]):
+                rates = bresenham_rate_schedule(root_from_q256(rung), geometry["columns"], cap=None)
+                layout = {"group": group, "projection": projection, "rows": geometry["rows_each"],
+                          "cols": geometry["columns"], "rates": rates}
+                for tp_size in sorted({1, fit_tp_size}):
+                    for rank in range(tp_size):
+                        try:
+                            cut = routed_unit_rank_cut(layout, tp_size, rank)
+                        except SystemExit as exc:
+                            why = str(exc)
+                        else:
+                            why = fused_routed_unit_shape_refusal(
+                                "value" if record["family"] == BF16 else "e4m3",
+                                projection.removesuffix("_proj"), rows=cut["rows"], cols=cut["cols"],
+                                rates=cut["rates"], window_bits=WINDOW_BITS)
+                        if why is None:
+                            continue
+                        refusal = (f"{record['stack']}: unservable_native_class_geometry: "
+                                   f"class {descriptor['start']}:{descriptor['end']} "
+                                   f"TP{tp_size} rank {rank} {projection}: {why}")
+                        if not allow_unserveable:
+                            raise SystemExit(refusal)
+                        if overrides is not None:
+                            overrides.append({"target": record["stack"], "structure": STRUCTURE_ROUTED_MOE,
+                                              "refusal": refusal})
+
 
 
 def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
                              source_layout: str, config: dict,
-                             research_selected: bool = False):
+                             allow_unserveable: bool = False):
     """Normalise one explicitly-described packed source to canonical units.
 
     The convention is deliberately not inferred from shape.  Orientation and
@@ -1640,7 +1669,7 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
         }
     record = plan_expert_stack(
         stack, synthetic, grid, q256, source_layout=source_layout, config=config,
-        research_selected=research_selected)
+        allow_unserveable=allow_unserveable)
     for unit in record["units"]:
         projection = unit["projection"]
         physical_projection = ("gate_up_proj" if projection in
@@ -1692,7 +1721,7 @@ def packed_expert_weight(source: torch.Tensor, unit: dict) -> torch.Tensor:
 
 
 def project_expert_plan(source_shapes: dict, source_config: dict,
-                        stack_plan: dict, *, research_selected: bool = False) -> dict:
+                        stack_plan: dict) -> dict:
     """JSON producer view of source slices and the groups the exporter writes.
 
     Header shapes and explicit stack choices go through the same planners as
@@ -1728,16 +1757,15 @@ def project_expert_plan(source_shapes: dict, source_config: dict,
         if stack in packed_stacks:
             planned = plan_packed_expert_stack(
                 stack, packed_stacks[stack], grid, choice["q256"],
-                source_layout=choice.get("source_layout"), config=source_config,
-                research_selected=research_selected)
+                source_layout=choice.get("source_layout"), config=source_config)
         else:
             layout = choice.get("source_layout", MOE_SOURCE_UNPACKED)
             if layout != MOE_SOURCE_UNPACKED:
                 raise SystemExit(f"{stack}: unpacked source requires source_layout={MOE_SOURCE_UNPACKED}")
             planned = plan_expert_stack(stack, unpacked_stacks[stack], grid,
-                                        choice["q256"], config=source_config,
-                                        research_selected=research_selected)
+                                        choice["q256"], config=source_config)
         assign_expert_unit_rungs(planned, choice.get("unit_q256", {}))
+        check_native_class_geometry(planned)
         result[stack] = dict(planned, grid=grid.name)
     return json.loads(json.dumps({"schema": "tessera.expert_projection.v1", "stacks": result}))
 
@@ -1838,6 +1866,27 @@ def assign_expert_unit_rungs(record, assignments):
                 "E4M3/BF16 loader; mixed NVFP4 expert schedules are not supported")
         record["unit_q256"] = {name: rung for name, rung in sorted(effective.items())
                                if rung != record["q256"]}
+    from tessera.expert_classes import build_expert_metadata, inverse_expert_ids, validate_gate_up_schedule
+
+    by_unit = {(u["expert"], u["projection"]): expert_unit_q256(record, u)
+               for u in record["units"]}
+    matrices = {group: [[by_unit[e, role] for role in roles]
+                        for e in range(record["experts"])]
+                for group, roles in MOE_GROUP_PROJECTIONS.items()}
+    try:
+        if record["family"] != NVFP4:
+            for expert, row in enumerate(matrices["w13"]):
+                validate_gate_up_schedule(*row, record["groups"]["w13"]["columns"],
+                                          target=f"{record['stack']} expert {expert}")
+        record.update(build_expert_metadata(matrices, target=record["stack"]))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    inverse = inverse_expert_ids(record["expert_ids"])
+    for unit in record["units"]:
+        unit["storage_expert"] = inverse[unit["expert"]]
+        prefix = f"{record['stack']}.{unit['expert']}."
+        projection = unit["tensor"].removeprefix(prefix).removesuffix(".weight")
+        unit["wire"] = f"{record['stack']}.{unit['storage_expert']}.{projection}.wire"
     return record
 
 
@@ -1846,7 +1895,7 @@ def expert_group_q256(record, group):
     roles = MOE_GROUP_PROJECTIONS[group]
     by_slot = {(u["expert"], u["projection"]): expert_unit_q256(record, u)
                for u in record["units"] if u["group"] == group}
-    matrix = [[by_slot[e, role] for role in roles] for e in range(record["experts"])]
+    matrix = [[by_slot[e, role] for role in roles] for e in record["expert_ids"]]
     from tessera.serving.scheme import expert_group_q256 as spell_group_q256
     return spell_group_q256(matrix)
 
@@ -2592,11 +2641,12 @@ def main():
             record = plan_packed_expert_stack(
                 stack, packed_stacks[stack], grid, q256,
                 source_layout=source_layout, config=src_config,
-                research_selected=research_execution is not None)
+                allow_unserveable=args.allow_unserveable)
         else:
             record = plan_expert_stack(
                 stack, stacks[stack], grid, q256, source_layout=source_layout,
-                config=src_config, research_selected=research_execution is not None)
+                config=src_config,
+                allow_unserveable=args.allow_unserveable)
         assign_expert_unit_rungs(record, plan_snapshot.entries[stack].get("unit_q256", {}))
         if plan_snapshot.entries[stack].get("unit_q256"):
             for unit in record["units"]:
@@ -2608,15 +2658,9 @@ def main():
                              research_records=research_gate_records)
                 check_lanes(required_lanes, grid, rung, where=unit["tensor"],
                             structure=STRUCTURE_ROUTED_MOE)
-        if "unit_q256" in record:
-            cliff = (f"{stack}: per-unit routed schedules have no served qualification; "
-                     "divergent expert schedules or gate/up strides require the compact adapter. "
-                     "Mixed schedules are research-only until served GPU/performance "
-                     "qualification; no cell, default or serving pin is promoted.")
-            if required_lanes or (research_execution is None and not args.allow_unserveable):
-                raise SystemExit(cliff + " Use explicit research export (--allow-unserveable).")
-            gate_overrides.append({"target": stack, "structure": STRUCTURE_ROUTED_MOE,
-                                   "refusal": cliff})
+        check_native_class_geometry(
+            record, fit_tp_size=args.fit_tp_size,
+            allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
@@ -3125,6 +3169,8 @@ def main():
     # manifest's ``serving_gate`` block carries the refusal beside it.
     moe_records = {stack: {"family": record["family"], "grid": record["grid"].name,
                            "q256": record["q256"], "experts": record["experts"],
+                           "expert_ids": record["expert_ids"],
+                           "expert_classes": record["expert_classes"],
                            "attested_by": [
                                cell["id"] for cell in attested_cells(
                                    PAYLOAD_FAMILY_BY_ROUTE[record["family"]],
@@ -3132,7 +3178,7 @@ def main():
                                if cell_covers_rung(
                                    cell, int(record["q256"]),
                                    format_entry(PAYLOAD_FAMILY_BY_ROUTE[record["family"]]))],
-                           "source_layout": record["source_layout"],
+                           "source_layout": record["source_layout"], "native_library": record["native_library"],
                            "hidden_size": record["hidden_size"],
                            "intermediate_size": record["intermediate_size"],
                            "roles": [], "container_bytes": 0, "wire_bytes": 0,
@@ -3307,17 +3353,11 @@ def main():
                                 "group": unit["group"], "projection": unit["projection"],
                                 "rows": exported.rows, "cols": exported.columns})
                         else:
-                            # THE COMPACT WINDOW LANE'S OWN TENSORS (tessera#624).
-                            # ``serving.moe_route`` serves every FP8/BF16
-                            # routed stack through ``compact_window_lane``,
-                            # which never allocates a decoded tile: what a
-                            # rank retains is the repacked planes, the
-                            # per-expert tables and bookkeeping, priced from
-                            # this unit's verified manifest by the same
-                            # arithmetic as ``WindowUnitAxis._alloc``.  The
-                            # per-part ``run_off`` and the fused lane's
-                            # tables (#685, v45) are per stack, added once
-                            # the stack's shape is known below.
+                            # Native retained unit planes: words, weight scales,
+                            # init and has_init. The class dispatcher retires
+                            # raw runs, offsets, permutations and grid planes.
+                            # Selected composed tables and launch descriptors
+                            # are charged once at stack finish below.
                             from tessera.kernel_window_gemv import TILE_ROWS
                             layout = {
                                 "group": unit["group"], "projection": unit["projection"],
@@ -3341,9 +3381,9 @@ def main():
                                         tile_rows=TILE_ROWS))
                             except ValueError as exc:
                                 raise SystemExit(
-                                    f"{unit['tensor']}: cannot price the compact routed lane "
-                                    f"from its wire ({exc}); a routed stack the compact lane "
-                                    "cannot read has no resident-mode figure") from exc
+                                    f"{unit['tensor']}: cannot price native retained planes "
+                                    f"from its wire ({exc}); the native class owner "
+                                    "requires a valid window layout") from exc
                             stack_record["unit_layouts"].append(layout)
                         stack_record["roles"].append({
                             **expert_scale,
@@ -3352,6 +3392,7 @@ def main():
                             "source_layout": unit["source_layout"],
                             "source_slice": unit["source_slice"],
                             "role": unit["projection"], "expert": unit["expert"],
+                            "storage_expert": unit["storage_expert"], "wire": unit["wire"],
                             "group": unit["group"], "rows": exported.rows,
                             "cols": exported.columns, "grid": unit_grid.name,
                             "q256": unit_q256, "family": stack_spec["family"],
@@ -3628,6 +3669,7 @@ def main():
         scheme = {
             "family": spec["family"], "structure": STRUCTURE_ROUTED_MOE,
             "source_layout": spec["source_layout"],
+            "expert_ids": spec["expert_ids"], "expert_classes": spec["expert_classes"],
             "grid": spec["grid"].name, "body": recipe.body.name,
             "plane": recipe.scale_plane.name, "experts": spec["experts"], "groups": groups,
         }
@@ -3642,12 +3684,12 @@ def main():
         stack_record.pop("group_blob_bytes")
         routed_layouts[stack] = stack_record.pop("unit_layouts")
         if spec["family"] != NVFP4:
-            # The stack-level terms of the compact lane (tessera#624): one
-            # ``run_off`` per part at ``finish`` and, where the whole stack's
-            # wire shape admits the fused lane, its composed tables (#685),
-            # run pairs and block descriptors (contract v45).
+            # Selected composed tables and launch descriptors are aliases
+            # across class views, charged once per unit. The inverse and
+            # class counters are the only stack-wide persistent tensors.
             stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
-                spec["family"], spec["experts"], routed_layouts[stack])[1]
+                spec["family"], spec["experts"], routed_layouts[stack],
+                expert_classes=spec["expert_classes"], native_library=spec["native_library"])[1]
         stack_record["roles"].sort(key=lambda r: (r["expert"], r["group"], r["role"]))
         module_records[stack] = stack_record
         for role in stack_record["roles"]:
@@ -3750,6 +3792,8 @@ def main():
     routed_by_rank = [
         sum(sum(routed_stack_resident_bytes(
             stack_plan[stack]["family"], stack_plan[stack]["experts"], layouts,
+            expert_classes=stack_plan[stack]["expert_classes"],
+            native_library=stack_plan[stack]["native_library"],
             tp_size=fit_tp, tp_rank=rank)) for stack, layouts in routed_layouts.items())
         for rank in range(fit_tp)]
     mtp_layers = int(src_config.get("text_config", src_config).get("num_nextn_predict_layers") or 0)
