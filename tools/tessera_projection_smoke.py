@@ -377,6 +377,11 @@ def run_device(inputs, mode):
                 _load(layer, "bias", item["bias"].cuda())
             layer.quant_method.process_weights_after_loading(layer)
             layer.update_param_tp_status()
+            from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL
+            expected_decoder = (telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA
+                                if family == "TESSERA_FP8" else telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
+            if tuple(layer.tessera_native.launch_pair) != (FUSED_WINDOW_DENSE_SYMBOL, expected_decoder):
+                raise AssertionError(f"{row['prefix']}: the requested native dense path was not prepared")
             x = item["input"].cuda()
             weight = _dense_weight(item["parsed"][label], family).cuda()
             if family == "TESSERA_FP8":
