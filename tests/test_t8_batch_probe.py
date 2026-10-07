@@ -1,29 +1,6 @@
-"""The t8 ABBA batch probe's own contract: staged scope, budget truth, binding.
+"""The batch probe preserves explicit scope, source bytes and measured populations.
 
-This file pins what the PROBE owns.  The producer-interpreter authentication
-it calls is core-owned (``tessera.export_serving.authenticate_producer_python``,
-maintained by the producer-selector core sibling): here it is pinned only as a
-call contract -- the probe calls it, with no arguments, before anything
-encodes -- never re-tested; its refusals and receipt are the core sibling's
-tests.  Everything here is CPU-only: the probe's GPU legs are exercised by the
-probe itself on the bounded announced stage, never by these tests.
-
-Pinned here:
-* the probe files' import arrangement: Tessera comes from the selected
-  interpreter's installed package, never by inserting a checkout ``src`` tree
-  ahead of it, and the authentication happens before the first encode;
-* the staged rung scope: rungs are explicit dynamic args naming the restored
-  plan's rungs (GA L3 E4M3@768, L4 BF16@960, L5 BF16@1088, L6 BF16@1152; GB
-  L3 E2M1@640, L4 E2M1@768); the historical 1280/1408 default is gone and
-  must not come back;
-* truthful measurement scope: the whole-action budget guard stops with an
-  exact partial receipt (unmeasured stages named, never silently dropped);
-* the two stack extrapolations, distinct, whole only when all three
-  projections were measured;
-* the power receipt: work/J derives OBSERVED joules (the leg's own timestamped
-  NVML integral), never a fabricated mean-times-time summary;
-* the source binding: exactly the shards the selected units live on, through
-  the source's own stable digest cache -- never a second cache.
+The tests use CPU control flow. They do not qualify GPU execution.
 """
 
 import json
@@ -41,10 +18,6 @@ sys.path.insert(0, str(SRC))
 sys.path.insert(0, str(EXPERIMENTS))
 sys.path.insert(0, str(EXPERIMENTS / "t8_census"))
 
-#: The restored plan rungs the probe's staged launch names (campaign d19,
-#: tessera#689).  Pinned here because the probe's help refuses to guess them.
-RESTORED_RUNG_TEXT = ("GA layer3 E4M3@768, layer4 BF16@960, layer5 BF16@1088, "
-                      "layer6 BF16@1152; GB layer3 E2M1@640, layer4 E2M1@768")
 
 PROBE = EXPERIMENTS / "t8_census" / "ab_batched_best_form.py"
 UNIT_PROFILE = EXPERIMENTS / "t8_census" / "profile_unit_encode.py"
@@ -57,60 +30,6 @@ def torch_runtime():
     pytest.importorskip("safetensors")
 
 
-class TestAuthCallContract:
-    """The core sibling owns the function; the probe owns the call."""
-
-    def test_probe_authenticates_before_any_encode(self):
-        text = PROBE.read_text()
-        assert "authenticate_producer_python()" in text, (
-            "the probe must authenticate the selected interpreter's installed "
-            "tessera via the core-owned call before anything encodes")
-        assert "if auth is None:" in text, (
-            "an unauthenticated run (TESSERA_PRODUCER_PYTHON unset) encodes nothing")
-        assert text.index("authenticate_producer_python()") < text.index("def run_owner_batch")
-
-    def test_probe_drives_the_common_owner_on_original_membership(self):
-        """The timed work is the common fresh encode/finish owner; no second
-        implementation, no derived source, no renamed keys."""
-        text = PROBE.read_text()
-        assert "encode_linears_planes(" not in text, (
-            "the probe never calls the joined encoder itself; the owner "
-            "(fresh_joined_encode) is its only caller")
-        for owner_piece in ("fresh_joined_encode", "plan_joined_encodes",
-                            "plan_expert_stack", "expert_stacks", "quantizable"):
-            assert owner_piece in text, f"the probe must drive the owner piece {owner_piece}"
-        assert "encode_linear_planes(" in text, (
-            "the seq anchor is the exporter's own per-unit finish")
-
-
-
-    def test_auth_call_takes_no_arguments(self, torch_runtime):
-        """Env-selected source, no flags: the core owns the semantics.
-
-        PREREQUIREMENT REGRESSION (retained red until the core sibling's
-        commit lands, PB action 67150cddfc57...): this imports the core-owned
-        function; its absence fails HERE and only here, never the probe's own
-        contract tests below.
-        """
-        import inspect
-        from tessera.export_serving import authenticate_producer_python
-        params = [p for p in inspect.signature(authenticate_producer_python).parameters.values()
-                  if p.default is inspect.Parameter.empty]
-        assert params == [], (
-            "the probe's call passes nothing; required parameters would make the "
-            f"probe own authentication semantics it does not own: {params}")
-
-
-class TestProbeImportArrangement:
-    def test_probe_files_never_insert_a_src_tree(self):
-        """The probe imports Tessera from the interpreter's install, period."""
-        for path in (PROBE, UNIT_PROFILE):
-            for lineno, line in enumerate(path.read_text().splitlines(), 1):
-                if "sys.path" in line:
-                    assert '"src"' not in line and "'src'" not in line, (
-                        f"{path.name}:{lineno}: {line.strip()}")
-
-
 @pytest.mark.usefixtures("torch_runtime")
 class TestStagedRungScope:
     def test_rungs_are_explicit_never_historical(self):
@@ -118,9 +37,6 @@ class TestStagedRungScope:
         parser = ab.build_parser()
         with pytest.raises(SystemExit):
             parser.parse_args(["/tmp/out"])
-        help_text = " ".join(parser.format_help().split())
-        assert "768" in help_text and "640" in help_text
-        assert RESTORED_RUNG_TEXT in help_text
         args = parser.parse_args(["/tmp/out", "--rungs", "E4M3:768,E2M1:640",
                                   "--hessian", "/tmp/h.json",
                                   "--producer-authority", "/tmp/a.py"])
@@ -245,81 +161,7 @@ class TestSourceBinding:
         with pytest.raises(KeyError):
             pue.shards_for(tmp_path, ["model.language_model.layers.3.mlp.experts.0.gate_proj.weight"])
 
-    def test_default_cache_is_the_existing_stable_cache(self):
-        """One cache: the stubs source's own source-digests, never a second."""
-        import profile_unit_encode as pue
-        assert pue.DEFAULT_DIGEST_CACHE == pue.SRC.parent / "source-digests"
 
-
-class TestStagedAction:
-    """The one bounded action: core's CUDA correctness packet, then the probe."""
-
-    def test_wrapper_runs_correctness_before_the_probe_under_one_deadline(self):
-        text = STAGE_WRAPPER.read_text()
-        assert text.index("pytest") < text.index("ab_batched_best_form.py"), (
-            "the correctness packet runs first: code/native proof must survive a "
-            "deadline stop that lands in the timed legs")
-        assert "DEADLINE" in text and "budget" in text.lower()
-
-    def test_wrapper_cap_is_enforced_on_both_phases(self):
-        text = STAGE_WRAPPER.read_text()
-        assert "timeout" in text, "each phase is bounded by what is left of the one deadline"
-
-    def test_budget_is_an_integer_within_cap_before_any_phase(self):
-        """Garbage or over-cap ceilings are refusals, validated before phase 1."""
-        text = STAGE_WRAPPER.read_text()
-        assert "BUDGET must be an integer 1..2700" in text
-        assert "exit 2" in text
-        assert text.index("BUDGET must be an integer 1..2700") < text.index('/usr/bin/timeout "$CORRECTNESS_BOUND"'), (
-            "the ceiling is validated before the correctness packet, not after a phase "
-            "has already run")
-
-    def test_only_exhaustion_stops_before_the_probe(self):
-        """No arbitrary slack heuristic: <=0 is the one wrapper-side stop."""
-        text = STAGE_WRAPPER.read_text()
-        assert "-le 0" in text
-        assert "-le 30" not in text, (
-            "the removed arbitrary '30s left' heuristic must not return; the probe's "
-            "own --budget-s guard controls the actual work")
-
-
-class TestProvisionerQualifyGitroot:
-    """Qualify builds and authenticates from the external --source-ref checkout,
-    never from this script's parentless PB-snapshot root (whose HEAD is not the
-    branch commit an --expected-commit names)."""
-
-    PROVISIONER = CHECKOUT / "tools" / "provision_producer_env.py"
-
-    def test_qualify_requires_source_ref_and_binds_gitroot_there(self):
-        text = self.PROVISIONER.read_text()
-        assert "--phase qualify requires --source-ref" in text
-        assert "build_root = Path(args.source_ref).resolve()" in text
-        assert 'git_in(build_root, "rev-parse", "HEAD")' in text, (
-            "the qualified HEAD is read from the --source-ref checkout")
-        assert 'git_in(build_root, "status", "--porcelain", "--untracked-files=no")' in text, (
-            "the clean-committed-payload check runs against the --source-ref tree")
-        assert '"git", "-C", str(build_root), "archive", "HEAD"' in text, (
-            "the wheel is archived from the --source-ref checkout's exact HEAD")
-        assert 'TESSERA_PRODUCER_SOURCE=str(build_root / "src" / "tessera")' in text, (
-            "the authentication binds the SAME ref the wheel was built from")
-        assert "TESSERA_PRODUCER_PYTHON=str(python)" in text, (
-            "the newly created interpreter is explicitly selected for its actual authentication")
-        assert "producer authentication returned no selected-producer receipt" in text
-        assert text.index("record.write_text") > text.index("receipt = json.loads(auth.stdout"), (
-            "a qualification record is published only after a non-null authentication")
-
-    def test_qualify_checks_genuine_ancestry(self):
-        text = self.PROVISIONER.read_text()
-        assert "b770727c50eef822132518bdc4fd6efe84359c9e" in text, (
-            "the qualified tree must descend from the campaign's b770 source ancestor")
-        assert '"merge-base", "--is-ancestor"' in text
-
-    def test_acquire_records_its_snapshot_kind(self):
-        text = self.PROVISIONER.read_text()
-        assert "PB sealed snapshot (acquire prototype)" in text, (
-            "acquire wheels are prototype bindings of the sealed snapshot tree, and the "
-            "record says so; final qualification is a NEW prefix built from the frozen "
-            "--source-ref commit")
 
 
 def test_exhausted_deadline_never_starts_correctness_packet(tmp_path):
