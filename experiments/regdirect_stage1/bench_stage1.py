@@ -38,6 +38,11 @@ PROFILES = {"R1024": (4, 4, None), "R768": (3, 3, None), "R896": (4, 3, "half")}
 REAL = {"stack": None}       # --real-stack PATH-PREFIX: the "real" profile loads PREFIX-mode{0,2}.pt (real_stack.py)
 
 
+def _kernel_source_sha256():
+    from tessera import regdirect_routed as rr
+    return rr.kernel_source_sha256()
+
+
 def upper_steps(name, ks):
     """D41 mixed classes: ``U<u>`` holds u R4 unit k-steps, ``Utop<u>`` holds ks - u, and
     ``F<a>_<b>`` holds the fraction a/b of them (it must be integral); the rest are R3."""
@@ -410,6 +415,7 @@ def main():
     result = {"meta": {"device": torch.cuda.get_device_name(), "sms": sms, "torch": torch.__version__,
                        "host": os.environ.get("HOST_NAME"), "pb_action": os.environ.get("PB_ACTION_KEY"),
                        "head": os.environ.get("TESSERA_HEAD"), "start_unix": time.time(),
+                       "kernel_source_sha256": _kernel_source_sha256(),
                        "statistic": "mean of forward and reverse pass medians; cold = L2 flushed before each sample"}}
     path = os.path.join(args.out, "ncu-run.json" if args.ncu else "stage1.json")
 
@@ -467,6 +473,7 @@ def main():
             call(); call(); torch.cuda.synchronize()
             cudart.cudaProfilerStart(); call(); torch.cuda.synchronize(); cudart.cudaProfilerStop()
             log(f"ncu {key}")
+        save()                                   # the profiler run's own source identity (d41_table --ncu-run)
         return 0
 
     graphs = {k: graph_of(v[0]) for k, v in built.items()}

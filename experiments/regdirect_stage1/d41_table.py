@@ -2,13 +2,13 @@
 
 Reads the stage-1 class runs (``bench_stage1.py``: one ``stage1.json`` per run), the x86
 ptxas resources (``compile.py``), an Nsight Compute LaunchStats pass on the same kernel
-source (shared memory per launch) and the published E4M3 table whose CPU quality rows this
+source (shared memory per launch; its ncu-run.json carries the source identity) and the published E4M3 table whose CPU quality rows this
 table cites by lineage.  It writes one ``fleet.rung_allowability.v2`` table with
 ``serving_qualified`` false: ``admit_rung`` waits on it, and PACT reads it only as a
 labelled speed scenario.  Rows whose cells are not all measured stay pending.
 
   python d41_table.py --runs A/stage1.json B/stage1.json --compile C/compile.json \
-      --ncu N/ncu.csv --quality V0009.json --source-commit SHA --out T.json
+      --ncu N/ncu.csv --ncu-run N/ncu-run.json --quality V0009.json --source-commit SHA --out T.json
 """
 from __future__ import annotations
 
@@ -74,6 +74,16 @@ def compile_receipt_matches(comp, source_sha) -> bool:
                       refusal=ValueError("the compile receipt is not of the measured kernel source"))
 
 
+def require_run_source(run, path, source_sha) -> bool:
+    """A timing or profiler run is cited for the kernel source it ran: a D32 seal, as for the compile receipt."""
+    from tessera.dev_mode import seal_check
+    recorded = run["meta"].get("kernel_source_sha256")
+    if recorded is None:
+        raise ValueError(f"{path}: the run records no kernel source identity")
+    return seal_check("kernel source", recorded, source_sha, where=f"d41_table run {path}",
+                      refusal=ValueError(f"{path}: the run is not of the measured kernel source"))
+
+
 def require_checked_cells(run, path):
     """Every timed register-direct cell needs a passing correctness check at its own (mode, profile, M)."""
     if run.get("stopped"):
@@ -100,6 +110,7 @@ def main():
     ap.add_argument("--runs", nargs="+", required=True)
     ap.add_argument("--compile", required=True)
     ap.add_argument("--ncu", required=True)
+    ap.add_argument("--ncu-run", required=True, help="the profiler run's ncu-run.json (its kernel source identity)")
     ap.add_argument("--quality", required=True, help="a published E4M3 D41 table; its CPU quality rows are cited")
     ap.add_argument("--source-commit", required=True)
     ap.add_argument("--version", type=int, default=1)
@@ -110,6 +121,7 @@ def main():
     comp = json.load(open(a.compile))
     compile_receipt_matches(comp, source_sha)
     regs = {template(k["kernel"]): k for k in comp["kernels"]}
+    require_run_source(json.load(open(a.ncu_run)), a.ncu_run, source_sha)
     launch = ncu_launch(a.ncu)
     build_id = f"regdirect-e4m3-sm_121-{source_sha[:16]}"
     rec = recipe()
@@ -118,6 +130,7 @@ def main():
     for path in a.runs:
         run = json.load(open(path))
         meta = run["meta"]
+        require_run_source(run, path, source_sha)
         require_checked_cells(run, path)
         runs.append({"path": path, "action_key": meta["pb_action"], "host": meta["host"], "snapshot": meta["head"],
                      "checks_passed": len(run.get("check", []))})
