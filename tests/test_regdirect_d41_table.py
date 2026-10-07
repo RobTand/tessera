@@ -1,4 +1,4 @@
-"""The register-direct D41 table producer: correctness coverage and the D32 source seal.
+"""The register-direct D41 table producer: correctness coverage, the D32 source seals and the rate range.
 
 Review rev-1007-125515-85fd of PR 1029: a timed cell needs a passing correctness check at the
 same (mode, profile, M); the compile receipt's source identity is a seal (``seal_check``).
@@ -36,3 +36,26 @@ def test_the_compile_receipt_source_is_a_seal(monkeypatch):
         d41_table.compile_receipt_matches({"source_sha256": "a"}, "b")
     monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "1")
     assert d41_table.compile_receipt_matches({"source_sha256": "a"}, "b") is False
+
+
+def test_the_rung_range_spans_the_rates_the_kernel_serves():
+    from tessera import regdirect_routed as rr
+    assert (d41_table.RUNG_MIN, d41_table.RUNG_MAX) == (256 * min(rr.SERVED_RATES), 256 * max(rr.SERVED_RATES))
+
+
+def test_each_timing_run_is_of_the_measured_kernel_source(monkeypatch):
+    monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    assert d41_table.require_run_source({"meta": {"kernel_source_sha256": "a"}}, "run", "a")
+    with pytest.raises(ValueError, match="measured kernel source"):
+        d41_table.require_run_source({"meta": {"kernel_source_sha256": "a"}}, "run", "b")
+    with pytest.raises(ValueError, match="records no kernel source"):
+        d41_table.require_run_source({"meta": {}}, "run", "a")
+
+
+def test_the_prefetch_depth_is_the_one_the_run_recorded_for_each_rate():
+    cell = {"meta": {"decode_depth": {"5": 3, "6": 2}}}
+    assert d41_table.prefetch_depth(cell, [5, 6], "run") == {"5": 3, "6": 2}
+    with pytest.raises(ValueError, match="decode depth"):
+        d41_table.prefetch_depth({"meta": {}}, [5], "run")
+    with pytest.raises(ValueError, match="decode depth"):
+        d41_table.prefetch_depth({"meta": {"decode_depth": {"5": 3}}}, [5, 6], "run")
