@@ -254,3 +254,101 @@ class RegDirectClassKernel:
         stack.launch(g, x, a_scale, routing.offsets, routing.flat_sorted, routing.rw_sorted if mul_weight else None,
                      prefix, start, end, out, part, arrive, top_k=routing.top_k, a_row_mode=a_row_mode,
                      mul_weight=mul_weight, limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# the layer build: fragment-order stacks from the class build's construction planes
+# ---------------------------------------------------------------------------
+def fragment_stack(mode: int, experts) -> dict:
+    """The :class:`FragmentStack` planes of one projection mode.
+
+    ``experts`` yields, per expert in storage order, ``(codes [P, rows, cols], rates,
+    start [P, cols] | None, table uint8 [P, 2^14], scale fp32 [P, rows])``: P = 2 (gate, up) for
+    mode 0, 1 (down) for mode 2, codes in original column order.  Each is repacked with
+    :func:`tessera.fragment_wire.repack_codes` on the codes' device."""
+    from .fragment_wire import repack_codes
+    group = "gate_up" if mode == 0 else "down"
+    wire, hist, w0, h0, rate, kperm, table, wscale = [], [], [], [], [], [], [], []
+    wo = ho = 0
+    for codes, rates, start, tab, scale in experts:
+        fw = repack_codes(codes, tuple(rates), projection_group=group, start_state=start)
+        h = int(fw.unit_offsets[0, 0, 0] - fw.expert_offsets[0])
+        slot_rates = fw.rates.tolist()
+        ra, rb = slot_rates[0], slot_rates[-1]
+        rate.append(pack_rate(ra, rb, slot_rates.count(ra) if ra != rb else len(slot_rates)))
+        wire.append(fw.words[h:]); hist.append(fw.words[:h])
+        w0.append(wo); h0.append(ho)
+        wo += wire[-1].numel(); ho += h
+        kperm.append(fw.perm.to(codes.device)); table.append(tab); wscale.append(scale.float())
+    device = wire[0].device
+    return dict(mode=mode, wire=torch.cat(wire), expert_word0=torch.tensor(w0, dtype=torch.int64, device=device),
+                hist=torch.cat(hist), expert_hist0=torch.tensor(h0, dtype=torch.int64, device=device),
+                rate=torch.tensor(rate, dtype=torch.int32, device=device), kperm=torch.stack(kperm).contiguous(),
+                table=torch.stack(table).contiguous(), wscale=torch.stack(wscale).contiguous(),
+                ks=kperm[0].numel() // GROUPS[mode])
+
+
+def _bundle_expert(bundle, e: int):
+    """Expert ``e`` of a routed construction bundle (``window_gemm_grouped.PreparedGroupedWindowGemm``):
+    BODY codes ``[rows, cols]``, per-column rates and the start state (or None), original column order."""
+    from .kernel_window_gemv import TILE_ROWS, Repacked, unpack_tile_words
+    words = bundle.words_all
+    total = int(bundle.total_words[e])
+    words = words[e, :total] if words.dim() == 2 else words.narrow(0, int(bundle.word_off[e]), total)
+    runs = bundle.runs_all[int(bundle.run_off[e]):int(bundle.run_off[e + 1])].reshape(-1, 4)
+    perm = bundle.perm_all[e].long()
+    n_tiles = -(-int(bundle.rows) // TILE_ROWS)
+    rep = Repacked(words=words, tile_words=int(bundle.tile_words[e]), n_tiles=n_tiles, rows=int(bundle.rows),
+                   cols=int(bundle.cols), rows_p=n_tiles * TILE_ROWS, perm=perm, runs=runs, rates=(),
+                   word_layout=str(bundle.word_layout))
+    codes = unpack_tile_words(rep)
+    permuted = torch.empty(int(bundle.cols), dtype=torch.int64)
+    for r, col0, n, _ in runs.tolist():
+        permuted[col0:col0 + n] = r
+    rates = torch.empty_like(permuted)
+    rates[perm.cpu()] = permuted
+    start = None
+    if int(bundle.has_init[e]):
+        start = torch.empty(int(bundle.cols), dtype=torch.int64, device=codes.device)
+        start[perm] = bundle.init_all[e].to(torch.int64)                       # init_perm[j] = init[perm[j]]
+    return codes, tuple(rates.tolist()), start
+
+
+def layer_stacks(gate, up, down, tables) -> dict:
+    """``{0: gate/up planes, 2: down planes}`` from the class build's full-layer bundles and their
+    composed tables (``routed_fused.compose_table8``: uint8 ``[E, 2^14]``, the E4M3 instruction's)."""
+    from .errors import GrammarError
+    for b, t in zip((gate, up, down), tables):
+        if b.family != "e4m3" or b.arithmetic != "epilogue" or int(b.window_bits) != 14:
+            raise GrammarError(f"the register-direct kernel serves the e4m3 family at a 14-bit window with "
+                               f"the row-scale epilogue, got {b.family}/{b.arithmetic}/L={b.window_bits}")
+        if t.dtype != torch.uint8 or tuple(t.shape) != (int(b.experts), 1 << 14):
+            raise GrammarError("the register-direct kernel reads compose_table8's uint8 [E, 2^14] byte table")
+    n = int(down.experts)
+
+    def gate_up():
+        for e in range(n):
+            (cg, rg, sg), (cu, ru, su) = _bundle_expert(gate, e), _bundle_expert(up, e)
+            if rg != ru:
+                raise GrammarError(f"expert {e}: gate and up differ in rate; one k-step carries both")
+            start = None if sg is None and su is None else torch.stack(
+                [s if s is not None else torch.zeros_like(cg[0], dtype=torch.int64) for s in (sg, su)])
+            yield (torch.stack([cg, cu]), rg, start, torch.stack([tables[0][e], tables[1][e]]),
+                   torch.stack([gate.scale_all[e], up.scale_all[e]]))
+
+    def down_():
+        for e in range(n):
+            c, r, s = _bundle_expert(down, e)
+            yield c.unsqueeze(0), r, None if s is None else s.unsqueeze(0), tables[2][e].unsqueeze(0), down.scale_all[e].unsqueeze(0)
+
+    return {0: fragment_stack(0, gate_up()), 2: fragment_stack(2, down_())}
+
+
+def build_layer(gate, up, down, tables, *, top_k: int, max_tokens: int):
+    """``(parameters, kernel)`` for ``routed_class_dispatch``: the fragment stacks of one routed layer
+    and its :class:`RegDirectClassKernel`, scratch reserved for ``max_tokens``."""
+    stacks = {mode: FragmentStack(**planes) for mode, planes in layer_stacks(gate, up, down, tables).items()}
+    parameters = {"regdirect": stacks}
+    kernel = RegDirectClassKernel(int(down.experts), top_k, down.words_all.device)
+    kernel.reserve(parameters, max_tokens)
+    return parameters, kernel
