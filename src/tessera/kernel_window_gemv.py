@@ -100,6 +100,7 @@ __all__ = [
     "default_plan",
     "WindowGemvUnit",
     "repack_window_body",
+    "unpack_tile_words",
     "plan_items",
     "lane_refusal_for_parsed",
     "prepare_from_parsed",
@@ -645,6 +646,34 @@ def repack_window_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> Rep
         perm=perm, runs=torch.tensor(runs, dtype=torch.int32, device=device).reshape(-1, 4),
         rates=tuple(int(r) for r in rates),
     )
+
+
+def unpack_tile_words(rep: Repacked) -> torch.Tensor:
+    """The inverse of the tile-order repack: int32 codes ``[rows, cols]`` in original column order.
+
+    Reads the layout itself, for every rate a 14-bit window holds: in each 512-row tile, the
+    columns of one rate run are contiguous, and a column's chunk is ``16 * R`` words of its
+    MSB-first stream (first bit = bit 31 of the first word).  A piece-major body is first
+    regrouped back to column-major.  It runs on the words' device.
+    """
+    words = rep.words
+    cols, n_tiles = int(rep.cols), int(rep.n_tiles)
+    if rep.word_layout == WORD_LAYOUT_PIECE_MAJOR:
+        words = words.reshape(n_tiles, PIECES_PER_TILE, cols, -1).permute(0, 2, 1, 3).reshape(-1)
+    elif rep.word_layout != WORD_LAYOUT_LEGACY:
+        raise GrammarError(f"unknown word layout {rep.word_layout!r}")
+    tiles = words.reshape(n_tiles, int(rep.tile_words)).to(torch.int64) & 0xFFFFFFFF
+    shifts = torch.arange(31, -1, -1, device=words.device)
+    permuted = torch.empty(n_tiles * TILE_ROWS, cols, dtype=torch.int32, device=words.device)
+    for rate, col0, n, word0 in rep.runs.reshape(-1, 4).tolist():
+        seg = tiles[:, word0:word0 + n * 16 * rate].reshape(n_tiles, n, 16 * rate)
+        bits = ((seg.unsqueeze(-1) >> shifts) & 1).reshape(n_tiles, n, TILE_ROWS, rate)
+        weight = 1 << torch.arange(rate - 1, -1, -1, device=words.device)
+        codes = (bits * weight).sum(-1).to(torch.int32)                       # [tiles, n, 512]
+        permuted[:, col0:col0 + n] = codes.permute(0, 2, 1).reshape(n_tiles * TILE_ROWS, n)
+    out = torch.empty_like(permuted)
+    out[:, rep.perm.long()] = permuted                                         # perm: permuted -> original
+    return out[: int(rep.rows)].contiguous()
 
 
 @dataclasses.dataclass(frozen=True)
