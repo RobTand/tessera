@@ -14,7 +14,7 @@ import fnmatch
 import json
 from pathlib import Path
 
- from tessera.serving.scheme import MOE_BUILDERS, ROUTES, ROUTE_LAUNCHES, route_launches
+from tessera.serving.scheme import MOE_BUILDERS, ROUTES, ROUTE_LAUNCHES, route_launches
 
 __all__ = [
     "WINDOW_GEMM_SYMBOL",
