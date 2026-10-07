@@ -25,7 +25,7 @@ E, TOP_K, HIDDEN, INTER, LIMIT = 6, 2, 512, 256, 10.0
 
 
 def _layer(device, max_tokens):
-    from tessera.serving import regdirect_op
+    from tessera import regdirect_op
     from tessera.serving.native_ops import require_native_fp8_quant
     # A serve attests the activation quantizer at load (it registers vLLM's operators); so does this test.
     require_native_fp8_quant("tests/test_regdirect_op_cuda.py")

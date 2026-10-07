@@ -11,6 +11,10 @@ The flow is the LUT class operation's (``serving.native_window._routed_window_cl
 gate/up with the SwiGLU epilogue at sorted route positions, the activation quantizer, down with
 the route weight at flat route ids, then the LUT library's ``token_sum``.  Today's LUT class
 kernel stays the default; this operation is selected nowhere until G3 v2 and an end-to-end serve.
+
+It lives outside ``tessera.serving`` on purpose: nothing in a serving process can reach its native
+library yet.  The serving call sites that select it must also declare ``tessera_regdirect_routed``
+in ``runtime_contract.json``'s ``native_extensions`` (``test_serving_native_extensions``).
 """
 from __future__ import annotations
 
@@ -35,9 +39,9 @@ def routed_regdirect_classes(
     ``*_planes``: wire, expert_word0, hist, expert_hist0, rate, kperm, table, wscale, zeros.
     ``*_scratch``: part (fp32 K-part partials), arrive (int32 self-resetting counters).
     """
-    from .. import regdirect_routed as rr
-    from .. import routed_class_dispatch
-    from .. import routed_fused as rf
+    from . import regdirect_routed as rr
+    from . import routed_class_dispatch
+    from . import routed_fused as rf
 
     tokens = expert_ids.shape[0]
     resources = rf.resolve_dispatch_resources(resource_key)
@@ -72,7 +76,7 @@ def routed_regdirect_classes(
 def _routed_regdirect_classes_fake(x, expert_ids, routing_weights, shared, gate_up_planes, down_planes,
                                    gate_up_scratch, down_scratch, starts, ends, issue_order, resource_key,
                                    input_weight, swiglu_limit):
-    from .. import regdirect_routed as rr
+    from . import regdirect_routed as rr
     hidden = down_planes[rr.PAYLOAD_FIELDS.index("wscale")].shape[2]
     return torch.empty((x.shape[0], hidden), dtype=torch.bfloat16, device=x.device)
 
@@ -81,7 +85,7 @@ def bind(parameters: dict, kernel, device) -> tuple:
     """The operation's argument groups for one layer from :func:`regdirect_routed.build_layer`:
     ``(gate_up_planes, down_planes, gate_up_scratch, down_scratch, resources, resource_key)``.
     The caller keeps ``resources`` alive (the registry holds it weakly) for the layer's life."""
-    from .. import routed_fused as rf
+    from . import routed_fused as rf
     payload = parameters["regdirect"]
     resources = rf._make_dispatch_resources(torch.device(device), kernel)
     return (list(payload[0][:-2]), list(payload[2][:-2]), list(payload[0][-2:]), list(payload[2][-2:]),
