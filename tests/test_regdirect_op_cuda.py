@@ -26,6 +26,9 @@ E, TOP_K, HIDDEN, INTER, LIMIT = 6, 2, 512, 256, 10.0
 
 def _layer(device, max_tokens):
     from tessera.serving import regdirect_op
+    from tessera.serving.native_ops import require_native_fp8_quant
+    # A serve attests the activation quantizer at load (it registers vLLM's operators); so does this test.
+    require_native_fp8_quant("tests/test_regdirect_op_cuda.py")
     stacks = {0: rr.FragmentStack(**make_stack(0, E, INTER, HIDDEN // 32, [(4, 3, 8), (3, 3, 16), (4, 4, 16)] * 2, 11, device)),
               2: rr.FragmentStack(**make_stack(2, E, HIDDEN, INTER // 64, [(4, 3, 2), (3, 3, 4), (4, 4, 4)] * 2, 12, device))}
     kernel = rr.RegDirectClassKernel(E, TOP_K, device)
