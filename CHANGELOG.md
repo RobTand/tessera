@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07 — remove a LUT refusal wording pin
+
+Keep the mixed-layout refusal test and its error class. Remove the message
+fragment assertion. The layout check and its diagnostic remain unchanged.
+
 ## 2026-10-07 — use canonical BF16 serving oracles
 
 Replace the remaining folded dense reference with raw values and separate
