@@ -440,7 +440,7 @@ def test_resident_fragment_matrix_preserves_served_bytes():
     module = _load()
     result = module.fragment_hashes()
     for group in ("gate_up", "down"):
-        for rate in (3, 4):
+        for rate in range(3, 9):
             label = f"fragment-{group}-r{rate}"
             assert result[label + "/decode"] == result[label + "/reference"]
             assert result[label + "/body"] == result[label + "/restored_body"]
