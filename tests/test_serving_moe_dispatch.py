@@ -274,7 +274,13 @@ def _install_vllm_stubs():
     _module("vllm.model_executor.layers")
     _module("vllm.model_executor.layers.quantization")
     linear = _module("vllm.model_executor.layers.linear")
-    linear.LinearBase = type("LinearBase", (), {})
+    class LinearBase:
+        def __init__(self, input_size=0, output_size=0, quant_config=None, prefix=""):
+            self.input_size = input_size
+            self.output_size = output_size
+            self.quant_config = quant_config
+            self.prefix = prefix
+    linear.LinearBase = LinearBase
     linear.UnquantizedLinearMethod = type("UnquantizedLinearMethod", (), {})
     linear.LinearMethodBase = type("LinearMethodBase", (), {})
     linear.register_weight_loader_v2_supported_method = lambda cls: cls

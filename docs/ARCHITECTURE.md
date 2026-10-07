@@ -9353,3 +9353,22 @@ The DSA head tail uses its stock FP32 cache.
 The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
 Their decoded buffers increase resident prices; they do not become compressed BMM routes.
 The exporter refuses compressed stock twins for constructors that suppress quantization.
+
+The plugin installs a selective LinearBase constructor hook before model construction.
+The hook supplies TesseraConfig only for an explicit target whose constructor has no quant_config.
+Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
+The KDA shard planner reads replicated_shard_ids from the actual layer.
+It does not infer replication from a shape total.
+
+The direct consumer contract separates the head operation from its unused dense output.
+The indexer head uses FP32 inputs and weights without activation quantization.
+The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
+The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
+
+The constructor census records stock and selected views separately.
+Only actual get_quant_method calls establish an offered selected route.
+A meta census proves construction, not a loaded forward or CUDA graph execution.
+The current CPU sparse backend cannot construct the full GLM model.
+That refusal does not qualify a GPU route or permit a substitute backend.
+Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.

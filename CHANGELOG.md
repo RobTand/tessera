@@ -12,6 +12,13 @@ Select router and vision projections only through explicit plan entries.
 Refuse stock twins that the stock constructor cannot load.
 Price direct consumer buffers through the runtime adapter's shared byte rule.
 
+Install selective routes for explicitly declared projection units.
+Keep every unselected BF16 module on its original stock method.
+Read the KDA replication indices from the real layer.
+Retain the DSA FP32 head cache and the MLA BF16 split matrix.
+Share their activation and decoded weight contracts with PrismaQuant.
+Do not change a serving pin, kernel, or default.
+
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 
 Add the #688 acceptance consumer for the third acceptance line: the four
