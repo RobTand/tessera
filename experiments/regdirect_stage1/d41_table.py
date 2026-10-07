@@ -48,7 +48,8 @@ def template(name):
     m = re.search(r"(rd_(?:decode|prefill)<[^>]*>)", name)
     if m is None:
         raise ValueError(f"not a register-direct kernel: {name}")
-    return m.group(1)
+    # ptxas and torch print bool template arguments as true/false; Nsight Compute prints 1/0.
+    return m.group(1).replace("true", "1").replace("false", "0")
 
 
 def ncu_launch(path):

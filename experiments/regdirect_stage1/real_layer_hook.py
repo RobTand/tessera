@@ -82,7 +82,7 @@ def main():
     from tessera import regdirect_routed as rr
     from tessera import routed_class_dispatch as rcd
     from tessera.routed_fused import _routing_tables
-    device = torch.device("cuda")
+    device = torch.device("cuda", torch.cuda.current_device())   # an indexed device: tensors report cuda:N
     t0 = time.time()
     gate, up, down = bundles(Artifact(a.artifact), a.layer, a.rank, a.experts, device)
     half = a.experts // 2
