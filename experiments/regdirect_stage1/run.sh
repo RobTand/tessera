@@ -3,6 +3,7 @@
 # (--cpu-preflight) on the CPU interpreter.
 #   run.sh <checkout> <out_dir> [bench args...]
 # BENCH_NCU=1 wraps the process in Nsight Compute (both kernels, one call per cell).
+# EXTRA_RO=<dir> mounts that directory read-only at the same path (the real_stack.py planes).
 # D30: a host watchdog kills the container if MemAvailable falls below 2 GiB.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
@@ -18,6 +19,7 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD image=$IMAGE start=$(date -u +%FT%T
 grep MemAvailable /proc/meminfo
 COMMAND=(python3 /work/experiments/regdirect_stage1/bench_stage1.py)
 MOUNTS=()
+[[ -n "${EXTRA_RO:-}" ]] && MOUNTS+=(--mount "type=bind,src=$EXTRA_RO,dst=$EXTRA_RO,readonly")
 if [[ "${BENCH_NCU:-0}" == 1 ]]; then
   NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }

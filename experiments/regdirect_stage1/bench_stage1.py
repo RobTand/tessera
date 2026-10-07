@@ -35,6 +35,7 @@ TOP_K, EXPERTS, HIDDEN, INTER, SWIGLU_LIMIT = 8, 288, 4096, 1024, 10.0
 GB10_BW = 236.4e9
 SHAPES = {0: (INTER, HIDDEN), 2: (HIDDEN, INTER)}     # (rows N, input K) per expert
 PROFILES = {"R1024": (4, 4, None), "R768": (3, 3, None), "R896": (4, 3, "half")}
+REAL = {"stack": None}       # --real-stack PATH-PREFIX: the "real" profile loads PREFIX-mode{0,2}.pt (real_stack.py)
 
 
 def profiles_for(name, ks):
@@ -88,7 +89,13 @@ class RegDirect:
         self.rr, self.mode, self.profile, self.dev, self.sms = rr, mode, profile, dev, sms
         rows, k = SHAPES[mode]
         ks = k // (GROUPS[mode] * 32)
-        st = make_stack(mode, EXPERTS, rows, ks, profiles_for(profile, ks), zlib.crc32(f"rd:{mode}:{profile}".encode()), dev)
+        if profile == "real":
+            st = {key: (v.to(dev) if torch.is_tensor(v) else v)
+                  for key, v in torch.load(f"{REAL['stack']}-mode{mode}.pt").items()}
+            if st["ks"] != ks or st["wscale"].shape[2] != rows or st["table"].shape[0] != EXPERTS:
+                raise ValueError(f"real stack mode {mode} does not hold the GLM-5.3 TP2 shapes")
+        else:
+            st = make_stack(mode, EXPERTS, rows, ks, profiles_for(profile, ks), zlib.crc32(f"rd:{mode}:{profile}".encode()), dev)
         self.st = st
         self.stack = rr.FragmentStack(**st)
         self.bytes_per_expert = (st["wire"].numel() + st["hist"].numel()) * 4 // EXPERTS
@@ -126,7 +133,9 @@ class Baseline:
         self.library = rf.library_for("e4m3")
         self.lib = rf._ext(self.library)
         rows, cols = SHAPES[mode]
-        r_lo, n_hi = {"R1024": (4, 0), "R768": (3, 0), "R896": (3, cols // 2)}[profile]
+        # "real": today's kernel has no fragment repack of the disk unit here; it runs its own
+        # synthetic wire at the real layer's rate (pure R4, R1024).
+        r_lo, n_hi = {"R1024": (4, 0), "real": (4, 0), "R768": (3, 0), "R896": (3, cols // 2)}[profile]
         mma8 = rf.library_mma8(self.library)
         seed = zlib.crc32(f"paired:{mode}".encode())
         self.projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, dev, mma8)
@@ -299,6 +308,10 @@ def cpu_preflight(args):
             ref = reference_decode(st, 1)
             assert ref.shape == (TABLES[mode], rows, ks * GROUPS[mode] * 32)
             rep[f"mode{mode}_{prof}"] = list(ref.shape)
+    if args.real_stack:
+        for mode in (0, 2):
+            st = torch.load(f"{args.real_stack}-mode{mode}.pt")
+            rep[f"real_mode{mode}_expert0"] = list(reference_decode(st, 0).shape)
     from tessera import regdirect_routed as rr
     rep["k_parts_gate_up_M1"] = rr.k_parts(8, 8, 96, 128)
     rep["k_parts_down_M1"] = rr.k_parts(8, 32, 96, 16)
@@ -323,7 +336,9 @@ def main():
     ap.add_argument("--cpu-preflight", action="store_true")
     ap.add_argument("--ncu", action="store_true")
     ap.add_argument("--skip-check", action="store_true")
+    ap.add_argument("--real-stack", help="path prefix of the real_stack.py planes, for the profile 'real'")
     args = ap.parse_args()
+    REAL["stack"] = args.real_stack
     os.makedirs(args.out, exist_ok=True)
     if args.cpu_preflight:
         return cpu_preflight(args)
