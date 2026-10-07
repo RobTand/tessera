@@ -315,6 +315,30 @@ def _staged_check(stacks, bundles, x, ids, rw, family, what, *, limit=None,
     return gu, act, dn, out
 
 
+@cuda
+@pytest.mark.parametrize("q256", [768, 1024, 1536, 2048])
+def test_value_down_applies_row_scale_before_router_weight_without_weight_rounding(q256):
+    """A midpoint row scale distinguishes epilogue scaling from a folded weight."""
+    hidden, inter = 128, 256
+    stacks = _stacks("value", hidden=hidden, inter=inter, experts=1,
+                     q256=q256, cut=False)
+    row_scale = 1.0 + 2.0 ** -8
+    for stack in stacks:
+        expert = stack[0]
+        expert.values.fill_(1.0)
+        expert.unit.table.fill_(1.0)
+        expert.scale.fill_(row_scale)
+    fused = _fused(_bundles("value", stacks))
+    x = torch.eye(inter, device="cuda", dtype=torch.bfloat16)
+    ids = torch.zeros(inter, 1, device="cuda", dtype=torch.int32)
+    weights = torch.full((inter, 1), 0.75, device="cuda", dtype=torch.float32)
+    output = fused.down_routes(x, ids, weights, route_input=True, round_routes=True)
+    expected = torch.full_like(output, 0.75390625)
+    assert torch.equal(output.view(torch.int16), expected.view(torch.int16)), (
+        f"T16 R{q256}: row scale must apply after the dot and before the router weight; "
+        f"got {float(output[0, 0])}, expected 0.75390625")
+
+
 # --- parity ------------------------------------------------------------------
 
 @cuda
