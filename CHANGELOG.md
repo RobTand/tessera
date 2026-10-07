@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — remove an incidental architecture-paragraph assertion
+
+The offline planner tests no longer require an issue citation in the first architecture paragraph.
+That wording assertion caused the hosted pure failure after the current pricing description changed.
+Rank byte counts, capacity refusals, both table widths and standard-library-only CLI checks remain.
+No production code or native price changes.
+
 ## 2026-10-07 — repair native prices in the offline planner
 
 The planner no longer imports the retired routed-part helper or offers a compact price branch.
