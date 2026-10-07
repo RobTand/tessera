@@ -202,7 +202,7 @@ def test_an_excluded_run_table_leaves_its_census_rungs_covered_and_nothing_else(
     _rederive(table)
     validate_serving_contract(table)
     row, cell = _row(table), _cell(table, ROUTED)
-    assert cell["run_tables"] == [[3, 4], [4]]
+    assert cell["run_tables"] == [[3], [3, 4], [4]]
     assert cell_covers_rung(cell, 1088, row)
     assert not cell_covers_rung(cell, 1100, row) and not rung_allowable(row, 1100)
 
