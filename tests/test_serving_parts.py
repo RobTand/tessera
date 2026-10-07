@@ -287,14 +287,13 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     source.mkdir()
     generator = torch.Generator().manual_seed(5)
     stacks = [f"model.language_model.layers.{layer}.mlp.experts" for layer in range(2)]
-    tensors = {f"{stack}.0.{projection}.weight": torch.randn(32, 32, generator=generator) * 0.02
+    tensors = {f"{stack}.0.{projection}.weight": torch.randn(128, 128, generator=generator) * 0.02
                for stack in stacks for projection in exporter.EXPERT_PROJECTIONS}
     tensors["lm_head.weight"] = torch.randn(32, 32, generator=generator)
     safetensors.save_file(tensors, str(source / "model.safetensors"))
     (source / "config.json").write_text(json.dumps({"architectures": ["Glm5NextForConditionalGeneration"],
-        "text_config": {"hidden_size": 32, "moe_intermediate_size": 32, "n_routed_experts": 1}}))
+        "text_config": {"hidden_size": 128, "moe_intermediate_size": 128, "n_routed_experts": 1}}))
     plan = tmp_path / "plan.json"
-    # q256 896: the routed E4M3 cells' rung (contract v38).
     plan.write_text(json.dumps({stack: {"grid": "E4M3", "q256": 896} for stack in stacks}))
     common = ["--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--plan-json", str(plan)]
     paths = []
