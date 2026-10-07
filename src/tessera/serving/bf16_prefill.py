@@ -91,14 +91,17 @@ def prepare_bf16_prefill(module) -> Bf16Prefill:
     bundles = module.role_bundles
     if module.family != "value" or module.arithmetic != "folded":
         raise ValueError("BF16 prefill requires the folded value family")
-    if not bundles or module.device.type != "cuda":
+    requested = torch.device(module.device)
+    if not bundles or requested.type != "cuda":
         raise ValueError("BF16 prefill requires packed CUDA role bundles")
+    device = bundles[0].device
+    if device.type != "cuda" or (requested.index is not None and requested != device):
+        raise ValueError("BF16 prefill role bundles do not match the module device")
     if (sum(bundle.rows for bundle in bundles) != module.rows
-            or any(bundle.cols != module.columns or bundle.device != module.device
+            or any(bundle.cols != module.columns or bundle.device != device
                    or bundle.family != "value" or bundle.arithmetic != "folded"
                    for bundle in bundles)):
         raise ValueError("BF16 prefill role bundles do not match the module")
-    device = bundles[0].device
     key = (str(device), module.rows, module.columns)
     with torch.cuda.device(device):
         if torch.cuda.is_current_stream_capturing():
