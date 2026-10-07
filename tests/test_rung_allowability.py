@@ -555,3 +555,19 @@ class RegisterDirectReview(unittest.TestCase):
         validate_table(_dominated(fixture_register_direct(**base), 782, 784))        # higher carries more
         with self.assertRaises(ValueError):                                          # higher lacks down
             validate_table(_dominated(fixture_register_direct(**base), 768, 770))
+
+
+class RegisterDirectPublishedV3(unittest.TestCase):
+    """Review rev-1007-091801-de68: a register-direct record validates against each published schema."""
+
+    def test_a_register_direct_record_validates_against_the_v3_schema_file(self):
+        from pathlib import Path
+        from tessera import rung_allowability as ra
+        t = fixture_register_direct(steps={"down": 16}, rungs=tuple(range(768, 786, 2)), shapes=("gate_up", "down"))
+        t["schema"] = "fleet.rung_allowability.v3"
+        t["performant_policy"] = {"kind": "whole_bit_per_structure"}
+        t["geometry_classes"] = []
+        published = json.loads((Path(__file__).resolve().parents[1] / "docs" / "schema"
+                                / "allowable-rung-table.v3.schema.json").read_text())
+        ra._structure(t, published)
+        self.assertIs(validate_table(t), t)
