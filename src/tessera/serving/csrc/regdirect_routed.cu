@@ -169,7 +169,7 @@ __device__ __forceinline__ void decode_group(const uint32_t (&o)[R], const uint3
     a[3] = pack4(v1[4], v1[5], v1[6], v1[7]);
 }
 
-// The decode path's prefetch depth per rate: the ring holds depth x R words per lane, and one
+// The wire prefetch depth per rate (decode and prefill rings): the ring holds depth x R words per lane, and one
 // kernel holds every rate's path, so high rates keep the ring within the R4 budget (D x 4 words)
 // instead of raising the kernel's register count for every rate.
 template <int R, int D>
@@ -672,12 +672,12 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
             constexpr int RR = decltype(RC)::value;
             const SegPtr sp = seg_ptr<RR>(p, seg, tile_words, hseg, T128, w128, lane, g, t);
             if constexpr (SPLIT) {
-                if (pr == 0) kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP, 0>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
+                if (pr == 0) kseg_xs<RR, MODE, RT, SPLIT, DecodeDepth<RR, XKC>::value, DUMP, 0>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
                                                                        smem, rt_live, s_kp, acc);
-                else kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP, 1>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
+                else kseg_xs<RR, MODE, RT, SPLIT, DecodeDepth<RR, XKC>::value, DUMP, 1>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
                                                                smem, rt_live, s_kp, acc);
             } else {
-                kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP, -1>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
+                kseg_xs<RR, MODE, RT, SPLIT, DecodeDepth<RR, XKC>::value, DUMP, -1>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0,
                                                            smem, rt_live, s_kp, acc);
             }
         };
