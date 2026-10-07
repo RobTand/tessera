@@ -248,5 +248,107 @@ class CliFlag(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
 
 
+class StrictSpec(unittest.TestCase):
+    """A spec value that is not what it looks like must refuse by name (#1038 review)."""
+
+    def _refuses(self, mutate):
+        payload = _glm_payload()
+        mutate(payload)
+        name = _write_spec(payload)
+        try:
+            with self.assertRaises(ValueError):
+                tab.parse_structure_spec(name)
+        finally:
+            os.unlink(name)
+
+    def test_a_boolean_is_not_a_dimension(self):
+        for field in ("rows", "columns"):
+            with self.subTest(field=field):
+                self._refuses(lambda p, f=field: p["shapes"][0].__setitem__(f, True))
+        for field in ("experts", "top_k", "hidden", "inter"):
+            with self.subTest(field=field):
+                self._refuses(lambda p, f=field: p.__setitem__(f, True))
+        with self.subTest(field="ms"):
+            self._refuses(lambda p: p["ms"].__setitem__(0, True))
+
+    def test_a_float_is_not_an_integer_field(self):
+        with self.subTest(field="rows"):
+            self._refuses(lambda p: p["shapes"][0].__setitem__("rows", 1024.0))
+        with self.subTest(field="mode"):
+            self._refuses(lambda p: p["shapes"][0].__setitem__("mode", 0.0))
+        with self.subTest(field="ms"):
+            self._refuses(lambda p: p["ms"].__setitem__(0, 1.0))
+        with self.subTest(field="experts"):
+            self._refuses(lambda p: p.__setitem__("experts", 288.0))
+
+    def test_false_is_not_mode_zero(self):
+        self._refuses(lambda p: p["shapes"][0].__setitem__("mode", False))
+
+    def test_top_k_above_experts_refuses(self):
+        self._refuses(lambda p: p.__setitem__("top_k", p["experts"] + 1))
+
+    def test_top_k_equal_to_experts_is_valid(self):
+        payload = _glm_payload()
+        payload["top_k"] = payload["experts"]
+        name = _write_spec(payload)
+        try:
+            self.assertEqual(tab.parse_structure_spec(name)["meta"]["top_k"], payload["experts"])
+        finally:
+            os.unlink(name)
+
+
+class MeasurementMatchesSpec(unittest.TestCase):
+    """An old measurement joins a spec's table only when it was taken at that spec's geometry."""
+
+    def setUp(self):
+        parsed = tab.parse_structure_spec(FIXTURE)
+        self.spec = parsed["shapes"][0]
+        self.record = dict(parsed["meta"])
+        self.meta = dict(parsed["meta"])
+        self.group = {"rows": self.spec[2], "cols": self.spec[3], "mode": self.spec[4]}
+
+    def _kept(self, meta=None, group=None):
+        return tab.measured_at_spec(meta or self.meta, group or self.group, self.spec, self.record)
+
+    def test_a_measurement_at_the_spec_geometry_is_kept(self):
+        self.assertTrue(self._kept())
+
+    def test_a_different_dimension_or_model_field_is_skipped(self):
+        for field, value in (("rows", 2048), ("cols", 2048)):
+            with self.subTest(field=field):
+                self.assertFalse(self._kept(group=dict(self.group, **{field: value})))
+        for field in ("experts", "top_k", "hidden", "inter"):
+            with self.subTest(field=field):
+                self.assertFalse(self._kept(meta=dict(self.meta, **{field: self.meta[field] + 1})))
+
+    def test_a_measurement_at_another_mode_is_skipped(self):
+        # A routed group takes its shape name from its mode: mode 0 is gate_up, anything else is down.
+        # Mode 0 evidence must not enter a table whose spec declares mode 2 for that name.
+        other = 2 if self.spec[4] == 0 else 0
+        self.assertFalse(self._kept(group=dict(self.group, mode=other)))
+
+    def test_a_group_that_records_no_mode_counts_as_mode_two(self):
+        # measurement() reads a missing mode as 2, so the comparison reads it the same way.
+        no_mode = {k: v for k, v in self.group.items() if k != "mode"}
+        spec = (self.spec[0], self.spec[1], self.spec[2], self.spec[3], 2)
+        self.assertTrue(tab.measured_at_spec(self.meta, no_mode, spec, self.record))
+        spec = (self.spec[0], self.spec[1], self.spec[2], self.spec[3], 0)
+        self.assertFalse(tab.measured_at_spec(self.meta, no_mode, spec, self.record))
+
+    def test_a_non_integer_mode_is_skipped(self):
+        for value in (True, False, 0.0, 2.0, "2"):
+            with self.subTest(mode=value):
+                spec = (self.spec[0], self.spec[1], self.spec[2], self.spec[3], 2 if value in (2.0, "2", True) else 0)
+                self.assertFalse(tab.measured_at_spec(self.meta, dict(self.group, mode=value), spec, self.record))
+
+    def test_a_measurement_that_does_not_record_a_field_is_skipped(self):
+        for field in ("rows", "cols"):
+            with self.subTest(field=field):
+                self.assertFalse(self._kept(group={k: v for k, v in self.group.items() if k != field}))
+        for field in ("experts", "top_k", "hidden", "inter"):
+            with self.subTest(field=field):
+                self.assertFalse(self._kept(meta={k: v for k, v in self.meta.items() if k != field}))
+
+
 if __name__ == "__main__":
     unittest.main()
