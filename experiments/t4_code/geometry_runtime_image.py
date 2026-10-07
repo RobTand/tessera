@@ -23,6 +23,11 @@ def measurement_image(image, *, inspector=docker_inspector, contract=None):
         record["identity_refusal"] = record["reason"]
         record["refused"] = False
         record["reason"] = "development_identity_stamp"
+    elif record.get("dev_uncertified"):
+        # resolve already stamped a default-pin mismatch (D32) and continued: it is the one owner
+        # of that stamp, so report it in this record's shape instead of stamping it twice.
+        record["identity_refusal"] = record["reason"]
+        record["reason"] = "development_identity_stamp"
     return record
 
 
