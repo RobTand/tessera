@@ -197,6 +197,9 @@ def _moe_scheme(experts=4, hidden=128, inter=64, family=TESSERA_FP8, grid="E4M3"
     """A routed-MoE scheme at the shape ``validate_tessera_moe_scheme`` reads."""
     return {"family": family, "structure": "routed_moe", "grid": grid, "body": body,
             "plane": plane, "experts": experts,
+            "expert_ids": list(range(experts)),
+            "expert_classes": [{"start": 0, "end": experts,
+                                "q256": {"w13": [q256, q256], "w2": [q256]}}],
             "groups": {
                 "w13": {"rows": 2 * inter, "columns": hidden, "q256": q256,
                         "wire_stride": 4096,

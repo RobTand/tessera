@@ -351,8 +351,6 @@ def build_routed(store, module):
     declared = validate_tessera_moe_scheme(scheme, module)
     dev = torch.device("cuda")
     intake = _RankLocalPackedIntake(declared, module, dev, TP_RANK, TP_SIZE)
-    if not intake.compact:
-        raise RuntimeError("compact routed lane not published in this build")
     w13_len = torch.zeros(EXPERTS, 2, dtype=torch.long)
     w2_len = torch.zeros(EXPERTS, dtype=torch.long)
     wire_total = 0

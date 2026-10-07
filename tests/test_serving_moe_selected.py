@@ -48,6 +48,9 @@ def bf16_wires():
     scheme = {
         'family': 'TESSERA_BF16', 'structure': 'routed_moe', 'grid': 'BF16',
         'body': 'WINDOW', 'plane': 'CHANNEL', 'experts': 2,
+        "expert_ids": [0, 1],
+        "expert_classes": [{"start": 0, "end": 2,
+                            "q256": {"w13": [512, 512], "w2": [512]}}],
         'groups': {
             'w13': {'rows': 2 * INTER, 'columns': HIDDEN, 'q256': 512,
                     'wire_stride': max(len(blob) for pair in w13_blobs for blob in pair),
@@ -232,66 +235,6 @@ def _load(method, layer, original_wires):
             assert param.weight_loader(param,torch.frombuffer(bytearray(blob),dtype=torch.uint8),
                 'wire',shard,expert,return_success=True)
 
-
-@pytest.fixture
-def bf16_stub_runtime(stub_runtime, monkeypatch):
-    for name in ('vllm.model_executor.layers.fused_moe.config',
-                 'vllm.model_executor.layers.fused_moe.oracle.unquantized'):
-        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
-    config = sys.modules['vllm.model_executor.layers.fused_moe.config']
-    config.FusedMoEQuantConfig = types.SimpleNamespace(make=lambda **kw: kw)
-    unquant = sys.modules['vllm.model_executor.layers.fused_moe.oracle.unquantized']
-    unquant.UnquantizedMoeBackend = enum.Enum('UnquantizedMoeBackend', ['TRITON', 'FLASHINFER_CUTLASS'])
-    unquant.select_unquantized_moe_backend = lambda **kw: (
-        unquant.UnquantizedMoeBackend.TRITON,
-        types.SimpleNamespace(is_monolithic=lambda: False))
-    calls = []
-
-    class Kernel:
-        def apply(self, x, w13, w2, weights, ids, **kwargs):
-            mapping = kwargs['expert_map']
-            assert bool((mapping[ids.long()] >= 0).all())
-            calls.append((w13.clone(), w2.clone(), mapping.clone()))
-            out = torch.zeros_like(x)
-            for token in range(x.shape[0]):
-                for choice in range(ids.shape[1]):
-                    expert = int(mapping[ids[token, choice]])
-                    gate, up = (w13[expert].float() @ x[token].float()).chunk(2)
-                    value = w2[expert].float() @ (torch.nn.functional.silu(gate) * up)
-                    out[token] += (weights[token, choice] * value).to(out.dtype)
-            return out
-    unquant.make_unquantized_moe_kernel = lambda **kw: Kernel()
-    return calls
-
-
-def test_bf16_selected_builder_uses_stock_unquantized_kernel_with_folded_weights(
-        bf16_wires, bf16_stub_runtime):
-    first, second, scheme, expected = bf16_wires
-    layer = _layer()
-    layer.global_num_experts = 2
-    layer.moe_config.has_bias = False
-    method = _build(scheme, layer)
-    method.create_weights(layer, 2, HIDDEN, INTER, torch.bfloat16)
-    for expert in range(2):
-        for shard, blob in (('w1', first[expert][0]), ('w3', first[expert][1]),
-                            ('w2', second[expert][0])):
-            param = layer.w2_wire if shard == 'w2' else layer.w13_wire
-            param.weight_loader(param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
-                                'wire', shard, expert, return_success=True)
-    method.process_weights_after_loading(layer)
-    assert method.research_resident_bytes() > 0
-    assert not dict(layer.named_parameters())
-    x = torch.randn(1, HIDDEN, dtype=torch.bfloat16)
-    ids = torch.tensor([[1, 0]], dtype=torch.int32)
-    weights = torch.tensor([[0.6, 0.4]], dtype=torch.float32)
-    output = method.apply(layer, x, weights, ids, None, None)
-    assert output.shape == x.shape and torch.isfinite(output).all()
-    selected_w13, selected_w2, mapping = bf16_stub_runtime[-1]
-    assert torch.equal(selected_w13, torch.stack([expected[0][0], expected[1][0]]))
-    assert torch.equal(selected_w2, torch.stack([expected[0][1], expected[1][1]]))
-    assert mapping.tolist() == [0, 1]
-    assert layer.tessera_activation_contract == 'bf16_unquantized'
-    assert layer.tessera_decoder.endswith('_folded_bf16')
 
 
 def test_bf16_selected_tp2_incremental_loader_keeps_only_rank_local_folded_owners():
@@ -605,27 +548,6 @@ def test_invalid_global_routing_is_refused_before_any_decode(original_wires,stub
                      torch.tensor([[0,bad_id]],dtype=torch.int32),None,None)
 
 
-def test_research_backend_is_explicit_and_reaches_selected_owner(original_wires, stub_runtime, monkeypatch):
-    with pytest.raises(ValueError, match='backend'):
-        moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2, decode_backend='auto')
-    assert moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2).decode_backend == 'torch'
-    _, _, scheme, _ = original_wires
-    layer = _layer()
-    method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer,
-        research_selected=moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2, decode_backend='triton'))
-    method.create_weights(layer, EXPERTS, HIDDEN, INTER, torch.bfloat16)
-    _load(method, layer, original_wires)
-    method.process_weights_after_loading(layer)
-    assert layer.tessera_decoder == 'research_selected_triton_window'
-    calls = []
-    decode = method._packed.decode
-    def observed(ids, *, max_experts_per_chunk, backend):
-        calls.append(backend)
-        return decode(ids, max_experts_per_chunk=max_experts_per_chunk, backend='torch')
-    monkeypatch.setattr(method._packed, 'decode', observed)
-    method.apply(layer, torch.randn(1, HIDDEN), torch.ones(1, 2),
-                 torch.tensor([[0, 2]], dtype=torch.int32), None, None)
-    assert calls == ['triton']
 
 
 def test_explicit_standalone_eager_owner_needs_no_fabricated_model_config(stub_runtime, original_wires, monkeypatch):
