@@ -75,11 +75,11 @@ def _run(kernel, resources, parameters, mode, x, a_scale, routing, out, *, class
 @pytest.mark.parametrize("m", [1, 150, 400])        # route tiles 1 (decode), 8 and 16
 def test_class_dispatch_equals_one_launch(mode, m):
     device = torch.device("cuda")
-    parameters = {"regdirect": _stacks(device)}
+    stacks = _stacks(device)
     kernel = rr.RegDirectClassKernel(E, TOP_K, device)
-    kernel.reserve(parameters, 400)
+    parameters = {"regdirect": {m: kernel.payload(m, st, 400) for m, st in stacks.items()}}
     resources = _Resources(kernel, device)
-    stack = parameters["regdirect"][mode]
+    stack = stacks[mode]
     ids, w = _ids(m, 5 + m, device)
     routing = _routing(kernel, parameters, ids, w)
     x, a_scale = _inputs(m, mode, 7 + m, device)
@@ -97,11 +97,11 @@ def test_class_dispatch_equals_one_launch(mode, m):
 @pytest.mark.parametrize("m", [1, 16])
 def test_graph_replay_follows_new_routing(mode, m):
     device = torch.device("cuda")
-    parameters = {"regdirect": _stacks(device)}
+    stacks = _stacks(device)
     kernel = rr.RegDirectClassKernel(E, TOP_K, device)
-    kernel.reserve(parameters, 64)
+    parameters = {"regdirect": {m: kernel.payload(m, st, 64) for m, st in stacks.items()}}
     resources = _Resources(kernel, device)
-    stack = parameters["regdirect"][mode]
+    stack = stacks[mode]
     ids, w = _ids(m, 21, device)
     routing = _routing(kernel, parameters, ids, w)
     x, a_scale = _inputs(m, mode, 22, device)

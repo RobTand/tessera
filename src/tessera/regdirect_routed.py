@@ -177,6 +177,10 @@ class FragmentStack:
     def k(self) -> int:
         return self.ks * GROUPS[self.mode] * KSTEP
 
+    def planes(self) -> tuple:
+        """The weight planes in :data:`PAYLOAD_FIELDS` order (without the scratch)."""
+        return tuple(getattr(self, name) for name in PAYLOAD_FIELDS[:-2])
+
     def launch(self, geom: Geometry, x_zero_row: torch.Tensor, a_scale: torch.Tensor, offsets: torch.Tensor,
                sorted_routes: torch.Tensor, route_weight: torch.Tensor | None, item_off: torch.Tensor,
                e0: int, e1: int, out: torch.Tensor, part: torch.Tensor, arrive: torch.Tensor, *, top_k: int,
@@ -184,48 +188,76 @@ class FragmentStack:
                dump: torch.Tensor | None = None) -> None:
         """One launch over experts [e0, e1) on the current stream.  ``item_off`` must count
         superblocks of ``geom.superblock`` routes; ``x_zero_row`` is :func:`with_zero_row`."""
-        hint = geom.prefill if l2_hint is None else l2_hint      # activation reuse exists at prefill only
-        rw = route_weight if route_weight is not None else torch.empty(0, dtype=torch.float32, device=out.device)
-        dbuf = dump if dump is not None else torch.empty(1, dtype=torch.uint8, device=out.device)
-        _ext().forward(self.mode, geom.route_tiles, dump is not None, self.wire, self.expert_word0, self.hist,
-                       self.expert_hist0, self.rate, self.kperm, self.table, self.wscale, x_zero_row, a_scale,
-                       offsets, sorted_routes, rw, item_off, e0, e1, out, part, arrive, dbuf, self.zeros,
-                       self.ks, top_k, geom.k_parts, a_row_mode, mul_weight, limit, hint, geom.grid)
+        forward(self.mode, self.planes() + (part, arrive), geom, x_zero_row, a_scale, offsets, sorted_routes,
+                route_weight, item_off, e0, e1, out, top_k=top_k, a_row_mode=a_row_mode, mul_weight=mul_weight,
+                limit=limit, l2_hint=l2_hint, dump=dump)
+
+
+#: The tensor payload of one projection mode, the opaque operation's argument list: the
+#: fragment planes (``zeros`` is the kernel's zero page), then the K-part scratch (``part``)
+#: and the self-resetting arrival counters (``arrive``) sized by :func:`reserve_scratch`.
+PAYLOAD_FIELDS = ("wire", "expert_word0", "hist", "expert_hist0", "rate", "kperm", "table", "wscale", "zeros",
+                  "part", "arrive")
+
+
+def payload_rows_ks(mode: int, payload) -> tuple[int, int, int]:
+    """(experts, rows, unit k-steps) of a payload, read off its own planes."""
+    kperm, wscale = payload[PAYLOAD_FIELDS.index("kperm")], payload[PAYLOAD_FIELDS.index("wscale")]
+    return int(wscale.shape[0]), int(wscale.shape[2]), int(kperm.shape[1]) // GROUPS[mode]
+
+
+def forward(mode: int, payload, geom: Geometry, x_zero_row: torch.Tensor, a_scale: torch.Tensor,
+            offsets: torch.Tensor, sorted_routes: torch.Tensor, route_weight: torch.Tensor | None,
+            item_off: torch.Tensor, e0: int, e1: int, out: torch.Tensor, *, top_k: int, a_row_mode: int,
+            mul_weight: bool, limit: float, l2_hint: bool | None = None, dump: torch.Tensor | None = None) -> None:
+    """One launch from a :data:`PAYLOAD_FIELDS` tensor payload, over experts [e0, e1)."""
+    wire, w0, hist, h0, rate, kperm, table, wscale, zeros, part, arrive = payload
+    _, _, ks = payload_rows_ks(mode, payload)
+    hint = geom.prefill if l2_hint is None else l2_hint      # activation reuse exists at prefill only
+    rw = route_weight if route_weight is not None else torch.empty(0, dtype=torch.float32, device=out.device)
+    dbuf = dump if dump is not None else torch.empty(1, dtype=torch.uint8, device=out.device)
+    _ext().forward(mode, geom.route_tiles, dump is not None, wire, w0, hist, h0, rate, kperm, table, wscale,
+                   x_zero_row, a_scale, offsets, sorted_routes, rw, item_off, e0, e1, out, part, arrive, dbuf, zeros,
+                   ks, top_k, geom.k_parts, a_row_mode, mul_weight, limit, hint, geom.grid)
+
+
+def reserve_scratch(mode: int, rows: int, ks: int, experts: int, top_k: int, max_tokens: int, sms: int,
+                    device) -> tuple[torch.Tensor, torch.Tensor]:
+    """The largest K-part scratch and arrival counters any token count up to ``max_tokens`` needs.
+    Each launch indexes its own absolute units inside them, and the counters return to zero after
+    every use, so one pair serves every geometry of the mode."""
+    routes = max_tokens * top_k
+    part = arrive = 0
+    for m in range(1, max_tokens + 1):
+        g = geometry(mode, m, top_k, rows, experts, ks, sms)
+        p, a = (t.numel() for t in scratch(g, experts, routes, "meta"))
+        part, arrive = max(part, p), max(arrive, a)
+    return (torch.empty(part, dtype=torch.float32, device=device),
+            torch.zeros(arrive, dtype=torch.int32, device=device))
 
 
 class RegDirectClassKernel:
     """The ``routed_class_dispatch.RoutedClassKernel`` binding of this kernel.
 
-    ``parameters["regdirect"]`` maps mode (0 gate/up, 2 down) to one :class:`FragmentStack`
-    that holds every expert of the layer in storage order, so a span's absolute
-    ``start``/``end`` index it directly.  The binding owns the K-part scratch, by absolute
-    work unit, sized at :meth:`reserve` for ``max_tokens``; a launch never allocates it.
-    The claim counter is unused: work units are striped over a fixed grid.
+    ``parameters["regdirect"]`` maps mode (0 gate/up, 2 down) to one :data:`PAYLOAD_FIELDS`
+    tensor payload holding every expert of the layer in storage order, so a span's absolute
+    ``start``/``end`` index it directly.  The binding holds no tensor: the planes and the K-part
+    scratch (by absolute work unit) are the caller's payload.  The claim counter is unused:
+    work units are striped over a fixed grid.
     """
 
     def __init__(self, experts: int, top_k: int, device):
         self.experts, self.top_k = experts, top_k
-        self.device = torch.device(device)
-        self.sms = torch.cuda.get_device_properties(self.device).multi_processor_count
-        self._scratch = {}
-        self._max_tokens = 0
+        self.sms = torch.cuda.get_device_properties(torch.device(device)).multi_processor_count
 
-    def geometry(self, mode: int, tokens: int, stack: FragmentStack) -> Geometry:
-        return geometry(mode, tokens, self.top_k, stack.rows, self.experts, stack.ks, self.sms)
+    def geometry(self, mode: int, tokens: int, payload) -> Geometry:
+        _, rows, ks = payload_rows_ks(mode, payload)
+        return geometry(mode, tokens, self.top_k, rows, self.experts, ks, self.sms)
 
-    def reserve(self, parameters: dict, max_tokens: int) -> None:
-        """Allocate, per mode, the largest scratch any token count up to ``max_tokens`` needs
-        (call at load).  Each launch indexes its own absolute units inside it, and the arrival
-        counters return to zero after every use, so one pair serves every geometry."""
-        routes = max_tokens * self.top_k
-        for mode, stack in parameters["regdirect"].items():
-            part = arrive = 0
-            for m in range(1, max_tokens + 1):
-                p, a = (t.numel() for t in scratch(self.geometry(mode, m, stack), self.experts, routes, "meta"))
-                part, arrive = max(part, p), max(arrive, a)
-            self._scratch[mode] = (torch.empty(part, dtype=torch.float32, device=self.device),
-                                   torch.zeros(arrive, dtype=torch.int32, device=self.device))
-        self._max_tokens = max(self._max_tokens, max_tokens)
+    def payload(self, mode: int, stack: FragmentStack, max_tokens: int) -> tuple:
+        """``stack``'s planes with the scratch :func:`reserve_scratch` sizes for ``max_tokens``."""
+        return stack.planes() + reserve_scratch(mode, stack.rows, stack.ks, self.experts, self.top_k,
+                                                max_tokens, self.sms, stack.wire.device)
 
     def work_shape(self, mode, tokens, index, parameters):
         g = self.geometry(mode, tokens, parameters["regdirect"][mode])
@@ -242,18 +274,18 @@ class RegDirectClassKernel:
     def launch(self, mode, x, a_scale, *, index, start, end, prefix, counter, routing, parameters, bm,
                work_units, empty_scale, a_row_mode, mul_weight, limit, out):
         from .errors import GrammarError
-        stack = parameters["regdirect"][mode]
-        g = self.geometry(mode, routing.tokens, stack)
+        payload = parameters["regdirect"][mode]
+        g = self.geometry(mode, routing.tokens, payload)
         if (g.superblock, g.units_per_item) != (bm, work_units):
             raise GrammarError(f"launch shape ({bm}, {work_units}) differs from work_shape "
                                f"({g.superblock}, {g.units_per_item})")
-        if routing.tokens > self._max_tokens:
-            raise GrammarError(f"{routing.tokens} tokens exceed the reserved {self._max_tokens}; "
-                               "call reserve() at load")
-        part, arrive = self._scratch[mode]
-        stack.launch(g, x, a_scale, routing.offsets, routing.flat_sorted, routing.rw_sorted if mul_weight else None,
-                     prefix, start, end, out, part, arrive, top_k=routing.top_k, a_row_mode=a_row_mode,
-                     mul_weight=mul_weight, limit=limit)
+        need = scratch(g, self.experts, routing.routes, "meta")
+        if need[0].numel() > payload[-2].numel() or need[1].numel() > payload[-1].numel():
+            raise GrammarError(f"{routing.tokens} tokens exceed the payload's reserved scratch; "
+                               "reserve it for the serving max_tokens at load")
+        forward(mode, payload, g, x, a_scale, routing.offsets, routing.flat_sorted,
+                routing.rw_sorted if mul_weight else None, prefix, start, end, out, top_k=routing.top_k,
+                a_row_mode=a_row_mode, mul_weight=mul_weight, limit=limit)
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +346,10 @@ def _bundle_expert(bundle, e: int):
     return codes, tuple(rates.tolist()), start
 
 
-def layer_stacks(gate, up, down, tables) -> dict:
+def layer_stacks(gate, up, down, tables, rungs: "dict | None" = None) -> dict:
     """``{0: gate/up planes, 2: down planes}`` from the class build's full-layer bundles and their
-    composed tables (``routed_fused.compose_table8``: uint8 ``[E, 2^14]``, the E4M3 instruction's)."""
+    composed tables (``routed_fused.compose_table8``: uint8 ``[E, 2^14]``, the E4M3 instruction's).
+    ``rungs[e]`` = (gate, up, down) q256: each expert's rates must spend exactly that rung."""
     from .errors import GrammarError
     for b, t in zip((gate, up, down), tables):
         if b.family != "e4m3" or b.arithmetic != "epilogue" or int(b.window_bits) != 14:
@@ -326,11 +359,18 @@ def layer_stacks(gate, up, down, tables) -> dict:
             raise GrammarError("the register-direct kernel reads compose_table8's uint8 [E, 2^14] byte table")
     n = int(down.experts)
 
+    def spend(e, which, rates):
+        if rungs is not None and sum(rates) * 256 != rungs[e][which] * len(rates):
+            raise GrammarError(f"expert {e}: rates spend {sum(rates) * 256 / len(rates):g} q256, "
+                               f"its class declares {rungs[e][which]}")
+
     def gate_up():
         for e in range(n):
             (cg, rg, sg), (cu, ru, su) = _bundle_expert(gate, e), _bundle_expert(up, e)
             if rg != ru:
                 raise GrammarError(f"expert {e}: gate and up differ in rate; one k-step carries both")
+            spend(e, 0, rg)
+            spend(e, 1, ru)
             start = None if sg is None and su is None else torch.stack(
                 [s if s is not None else torch.zeros_like(cg[0], dtype=torch.int64) for s in (sg, su)])
             yield (torch.stack([cg, cu]), rg, start, torch.stack([tables[0][e], tables[1][e]]),
@@ -339,16 +379,35 @@ def layer_stacks(gate, up, down, tables) -> dict:
     def down_():
         for e in range(n):
             c, r, s = _bundle_expert(down, e)
+            spend(e, 2, r)
             yield c.unsqueeze(0), r, None if s is None else s.unsqueeze(0), tables[2][e].unsqueeze(0), down.scale_all[e].unsqueeze(0)
 
     return {0: fragment_stack(0, gate_up()), 2: fragment_stack(2, down_())}
 
 
-def build_layer(gate, up, down, tables, *, top_k: int, max_tokens: int):
-    """``(parameters, kernel)`` for ``routed_class_dispatch``: the fragment stacks of one routed layer
-    and its :class:`RegDirectClassKernel`, scratch reserved for ``max_tokens``."""
-    stacks = {mode: FragmentStack(**planes) for mode, planes in layer_stacks(gate, up, down, tables).items()}
-    parameters = {"regdirect": stacks}
-    kernel = RegDirectClassKernel(int(down.experts), top_k, down.words_all.device)
-    kernel.reserve(parameters, max_tokens)
-    return parameters, kernel
+def _field(c, name):
+    return c[name] if isinstance(c, dict) else getattr(c, name)
+
+
+def build_layer(gate, up, down, classes, device, *, top_k: int, max_tokens: int):
+    """``(parameters, kernel)`` for ``routed_class_dispatch``: ``parameters["regdirect"]`` maps
+    modes 0 and 2 to their :data:`PAYLOAD_FIELDS` tensor payloads, scratch reserved for
+    ``max_tokens``; ``kernel`` is the tensor-free :class:`RegDirectClassKernel`.
+
+    ``gate``/``up``/``down`` are the full storage-ordered construction bundles before retirement
+    (TP cut applied); ``classes`` give ``start``, ``end`` and ``q256`` (``w13``: gate, up;
+    ``w2``: down), and every expert's actual rates must spend exactly its class's rung."""
+    from .errors import GrammarError
+    from .routed_fused import compose_table8
+    n = int(down.experts)
+    spans = sorted((int(_field(c, "start")), int(_field(c, "end")), _field(c, "q256")) for c in classes)
+    if [s[0] for s in spans] != [0] + [s[1] for s in spans[:-1]] or spans[-1][1] != n:
+        raise GrammarError(f"classes {[(a, b) for a, b, _ in spans]} do not tile the {n} experts in order")
+    rungs = {}
+    for a, b, q in spans:
+        for e in range(a, b):
+            rungs[e] = (int(q["w13"][0]), int(q["w13"][1]), int(q["w2"][0]))
+    tables = tuple(compose_table8(b).to(device) for b in (gate, up, down))
+    stacks = {mode: FragmentStack(**planes) for mode, planes in layer_stacks(gate, up, down, tables, rungs).items()}
+    kernel = RegDirectClassKernel(n, top_k, device)
+    return {"regdirect": {mode: kernel.payload(mode, st, max_tokens) for mode, st in stacks.items()}}, kernel
