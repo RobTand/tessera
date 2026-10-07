@@ -18,11 +18,11 @@ def _builder():
 
 def test_job_uses_the_repository_dockerfile_and_no_gpu():
     manifest = json.loads((ROOT / "images/serving/glm53-sm121.json").read_text())
-    job = _builder().build_job(ROOT, manifest, "example/serving:test")
+    job = _builder().build_job(manifest, "example/serving:test", "/mnt/shared/image-proof-output")
     assert job["gpu"] is False and job["submitted"] is False
     assert "--gpu" not in job["command"]
     assert job["command"][job["command"].index("--tag") + 1] == "aarch64"
-    assert "images/serving/Dockerfile" in job["command"]
+    assert "filename=images/serving/Dockerfile" in job["builder_command"]
     dockerfile = (ROOT / "images/serving/Dockerfile").read_text()
     assert "FROM ${BASE_IMAGE}" in dockerfile
     assert "<<" not in dockerfile
@@ -38,10 +38,32 @@ def test_job_uses_the_repository_dockerfile_and_no_gpu():
 def test_dry_run_does_not_start_a_build():
     result = subprocess.run([sys.executable, str(ROOT / "tools/build_serving_image.py"),
         "--manifest", str(ROOT / "images/serving/glm53-sm121.json"),
-        "--image-tag", "example/serving:test", "--dry-run"], capture_output=True, text=True)
+        "--image-tag", "example/serving:test", "--output-directory", "/mnt/shared/image-proof-output",
+        "--dry-run"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     job = json.loads(result.stdout)
     assert job["submitted"] is False and job["gpu"] is False
+
+
+def test_payload_uses_an_owned_builder_without_a_host_socket(tmp_path):
+    manifest = json.loads((ROOT / "images/serving/glm53-sm121.json").read_text())
+    job = _builder().build_job(manifest, "example/serving:test", tmp_path)
+    payload = job["command"][job["command"].index("--") + 1:]
+    assert payload[:2] == ["python3", "tools/build_serving_image.py"]
+    assert "--inside-action" in payload
+    assert job["builder_command"][:2] == ["docker", "run"]
+    assert not any("docker.sock" in value for value in job["builder_command"])
+    assert manifest["builder_image"] in job["builder_command"]
+    assert "type=docker,name=example/serving:test,dest=/out/serving-image.tar" in job["builder_command"]
+
+
+def test_imported_patch_licenses_reach_the_image():
+    license_root = ROOT / "images/serving/patches"
+    assert "GNU AFFERO GENERAL PUBLIC LICENSE" in (license_root / "LICENSE").read_text()
+    assert "current" not in (license_root / "LICENSE.MIT").read_text().splitlines()[0].lower()
+    assert "GNU Affero General Public License v3.0" in (license_root / "LICENSE.MIT").read_text()
+    dockerfile = (ROOT / "images/serving/Dockerfile").read_text()
+    assert "COPY images/serving/patches/LICENSE images/serving/patches/LICENSE.MIT /opt/tessera-image/licenses/" in dockerfile
 
 
 def _patch_case(tmp_path):

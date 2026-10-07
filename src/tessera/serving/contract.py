@@ -1810,19 +1810,18 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 "(family, structure, platform, regime, plus the residency where the cell "
                 "covers only some). An id that names a launch is a second, "
                 "unparsed spelling of `executes` -- exactly the one that went stale.")
-        build_scope = (cell_kernel_build(cell) if "kernel_build" in cell["runtime"] else runtime_image)
-        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"], build_scope)
+        scope = (cell["platform"], cell["family"], cell["structure"], cell["regime"])
         for mode in modes:
             for execution_mode in execution_modes:
-                key = (scope, mode, execution_mode)
-                clash = _cell_scope.get(key)
-                if clash is not None:
-                    raise ValueError(
-                        f"{where} ({cell['id']!r}) and {clash!r} both cover "
-                        f"{scope} at residency {mode!r} and execution mode {execution_mode!r}. "
-                        "A cell is resolved by these facts plus the rung, so two cells "
-                        "claiming one of them would make the answer depend on table order.")
-                _cell_scope[key] = cell["id"]
+                keys = (("image", runtime_image, scope, mode, execution_mode),
+                        ("build", cell_kernel_build(cell), scope, mode, execution_mode))
+                for key in keys:
+                    clash = _cell_scope.get(key)
+                    if clash is not None:
+                        raise ValueError(
+                            f"{where} ({cell['id']!r}) and {clash!r} both cover "
+                            f"{key}. Overlapping lookup scopes would make the answer depend on table order.")
+                    _cell_scope[key] = cell["id"]
 
     # A PLATFORM'S SERVE IMAGE IS ONE OF ITS OWN (v10, #456).
     #

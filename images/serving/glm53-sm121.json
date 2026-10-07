@@ -10,7 +10,13 @@
   "source": {
     "repository": "https://github.com/MiaAI-Lab/GLM-5.3-Flash-EXL3-2x-DGX-Sparks",
     "commit": "a246263a9891407e0d640db42d111545005dd83f",
-    "path": "Dockerfile"
+    "path": "Dockerfile",
+    "license": "AGPL-3.0-only",
+    "license_files": [
+      "patches/LICENSE",
+      "patches/LICENSE.MIT"
+    ]
   },
-  "qualification": "not_built"
+  "qualification": "not_built",
+  "builder_image": "moby/buildkit@sha256:f8a833b2de9d68e27f0815e4a737abdfaf8a2e4c615650557df11025101557b4"
 }

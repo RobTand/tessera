@@ -82,3 +82,13 @@ def test_same_kernel_scope_cannot_hide_behind_another_image():
     payload["lane_eligibility"]["cells"].append(cell)
     with pytest.raises(ValueError, match="both cover"):
         contract.validate_serving_contract(payload)
+
+
+def test_image_only_scope_cannot_overlap_across_build_names():
+    payload = contract.load_serving_contract()
+    cell = copy.deepcopy(payload["lane_eligibility"]["cells"][0])
+    cell["runtime"]["kernel_build"] = "build-b"
+    cell["id"] += contract.cell_runtime_id_suffix(cell)
+    payload["lane_eligibility"]["cells"].append(cell)
+    with pytest.raises(ValueError, match="both cover"):
+        contract.validate_serving_contract(payload)
