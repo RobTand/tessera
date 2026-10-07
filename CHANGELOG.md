@@ -32,6 +32,8 @@ router output dtype, vision biases, and replicated KDA roles.
 Device results remain separate from CPU input proof.
 The construction census now retains every instance, input width, parameter shape,
 and replicated shard identifier. It disables unused prefix caching explicitly.
+The same census entry point provides a portable preflight that reads real config
+shapes and producer imports without model construction. Its output is not a census.
 
 ## 2026-10-06 — issue 688: #685 baseline-band comparison consumer
 

@@ -398,6 +398,63 @@ def model_stamp(vllm_config, model_path: str) -> dict:
         "first_k_dense_replace": get("first_k_dense_replace"),
     }
 
+def preflight(model_path: str, runtime_image: str) -> dict:
+    """Read actual configuration shapes and producer imports without construction."""
+    import hashlib
+    from pathlib import Path
+    import torch
+    from tessera.serving import dense_ownership, scheme, weights_mapper
+
+    path = Path(model_path) / "config.json"
+    raw = path.read_bytes()
+    config = json.loads(raw)
+    text = config.get("text_config", config)
+    if not config.get("architectures"):
+        raise ValueError("The model config must declare its architecture")
+    layers = text.get("num_hidden_layers")
+    if type(layers) is not int or layers <= 0:
+        raise ValueError("The model config must declare a positive layer count")
+    for field in ("layer_types", "mlp_layer_types", "indexer_types"):
+        if field in text and len(text[field]) != layers:
+            raise ValueError(f"{field} does not match the model layer count")
+    names = ("hidden_size", "intermediate_size", "moe_intermediate_size",
+             "q_lora_rank", "kv_lora_rank", "num_attention_heads",
+             "qk_nope_head_dim", "qk_rope_head_dim", "v_head_dim",
+             "index_n_heads", "index_head_dim", "n_routed_experts")
+    shapes = {name: text[name] for name in names if name in text}
+    if any(type(value) is not int or value < 0 for value in shapes.values()):
+        raise ValueError("The model dimensions must be nonnegative integers")
+    if type(text.get("hidden_size")) is not int or text["hidden_size"] <= 0:
+        raise ValueError("The hidden size must be positive")
+    linear = text.get("linear_attn_config", {})
+    heads = text.get("linear_num_heads", linear.get("num_heads"))
+    head_dim = text.get("linear_head_dim", linear.get("head_dim"))
+    geometry = []
+    if heads is not None or head_dim is not None:
+        if type(heads) is not int or type(head_dim) is not int or heads <= 0 or head_dim <= 0:
+            raise ValueError("The KDA head count and head dimension must be positive")
+        global_roles = [heads * head_dim] * 3 + [heads, head_dim, head_dim]
+        for world in (1, 2):
+            if heads % world:
+                raise ValueError("The KDA head count must divide the requested tensor-parallel size")
+            local = [r if index in (4, 5) else r // world for index, r in enumerate(global_roles)]
+            geometry.append({"tp_size": world, "columns": text["hidden_size"],
+                             "global_output_sizes": global_roles, "local_output_sizes": local,
+                             "global_rows": sum(global_roles), "local_rows": sum(local),
+                             "replicated_shard_ids": [4, 5]})
+    vision = config.get("vision_config", {})
+    if torch.cuda.is_initialized():
+        raise RuntimeError("The portable preflight must not initialize CUDA")
+    return {"schema": "tessera.construction-preflight.v1", "status": "preflight-only",
+            "construction_performed": False, "runtime_image_requested": runtime_image,
+            "config": {"path": str(path), "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()},
+            "architectures": config["architectures"], "num_hidden_layers": layers,
+            "layer_types": text.get("layer_types"), "mlp_layer_types": text.get("mlp_layer_types"),
+            "text_dimensions": shapes, "vision_dimensions": {name: vision[name] for name in
+                ("hidden_size", "intermediate_size", "out_hidden_size", "projection_intermediate_size", "num_heads", "depth") if name in vision},
+            "KDA_geometry": geometry, "producer_imports": [module.__name__ for module in
+                (dense_ownership, scheme, weights_mapper)], "cuda_initialized": False}
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
@@ -407,10 +464,20 @@ def main() -> int:
     ap.add_argument("--device", default="meta",
                     help="construction device; meta allocates nothing (default)")
     ap.add_argument("--max-model-len", type=int, default=512)
+    ap.add_argument("--dry-run", action="store_true",
+                    help="import producer code and read actual shapes; do not construct a model")
     ap.add_argument("--runtime-image", required=True,
                     help="the image this census is scoped to; must equal the reference the "
                          "launcher (experiments/tessera_plugin_run.sh) declared for this container")
     args = ap.parse_args()
+    if args.dry_run:
+        receipt = preflight(args.model, args.runtime_image)
+        with open(args.out, "w") as handle:
+            json.dump(receipt, handle, indent=1)
+        print(json.dumps({"status": receipt["status"], "construction_performed": False,
+                          "num_hidden_layers": receipt["num_hidden_layers"],
+                          "KDA_geometry": receipt["KDA_geometry"]}))
+        return 0
     # Refuse BEFORE constructing the model: a receipt scoped to nothing is
     # not worth the build.
     stamp = runtime_stamp(args.runtime_image)
