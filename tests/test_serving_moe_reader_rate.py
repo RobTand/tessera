@@ -65,6 +65,9 @@ def _nvfp4_moe(q256, experts=4, hidden=128, inter=64, **over):
         "family": S.TESSERA_NVFP4, "structure": S.STRUCTURE_ROUTED_MOE,
         "grid": "E2M1x2", "body": "TCQ", "plane": "LUT",
         "experts": experts,
+        "expert_ids": list(range(experts)),
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [q256, q256], "w2": [q256]}}],
         "groups": {
             "w13": _nvfp4_group(2 * inter, hidden,
                                 [["gate_proj", inter], ["up_proj", inter]], q256),
@@ -82,6 +85,9 @@ def test_every_rung_of_the_trellis_domain_loads(q256):
     publishes the whole trellis domain [128, 896] step 128."""
     norm = S.validate_tessera_scheme(_nvfp4_moe(q256), "m")
     assert norm["structure"] == S.STRUCTURE_ROUTED_MOE and norm["experts"] == 4
+    assert norm["expert_ids"] == [0, 1, 2, 3]
+    assert norm["expert_classes"] == [{"start": 0, "end": 4,
+                                      "q256": {"w13": [q256, q256], "w2": [q256]}}]
     w13, w2 = norm["groups"]["w13"], norm["groups"]["w2"]
     assert w13["q256"] == q256 and w13["role_q256"] == [q256, q256]
     assert w2["q256"] == q256 and w2["role_q256"] == [q256]
