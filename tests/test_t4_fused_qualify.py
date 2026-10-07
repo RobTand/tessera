@@ -132,7 +132,9 @@ def test_relative_sse_is_not_relative_l2():
 def test_t8_wrong_bytes_or_geometry_is_not_a_pair():
     cell = dict(kind="mode0", m=16, hidden=4096, inter=1024, experts=288, top_k=8,
                 wire_bytes=20000, tp_size=1, tp_rank=0, seed=7,
-                input_sha256="a", routing_sha256="b",
+                input_sha256="a", routing_sha256="b", routing_weights_sha256="c",
+                source_weight_seeds={"gate": 18}, source_weight_sha256={"gate": "d"},
+                weight_bytes_scope=["gate", "up"],
                 timing={"eager": {"median_ms": 3.0}, "graph": {"median_ms": 2.0}})
     baseline = dict(cell, format="T8")
     for field, wrong in (("wire_bytes", 20001), ("experts", 4), ("seed", 8)):
@@ -237,3 +239,68 @@ def test_in_run_memory_guard_terminates_only_its_owned_child(tmp_path, monkeypat
     assert stopped[0]["returncode"] < 0
     assert stopped[0]["signals"][0]["signal"] == "SIGTERM"
     assert receipt["returncode"] is None
+
+
+def test_t8_selector_uses_actual_bytes_not_a_prediction():
+    from experiments.t4_code.t4_t8_baseline import select_actual_rate
+    costs = {256: 10, 257: 20, 258: 30}
+    result = select_actual_rate(20, 5, list(costs), costs.__getitem__,
+                               {256: 20, 257: 999, 258: 30})
+    assert result["exact_match"] and result["selected_q256"] == 257
+    assert any(r["actual_serialized_bytes"] == 20 for r in result["measured"])
+
+
+def test_t8_scalar_floor_never_calls_a_fake_cost_producer():
+    from experiments.t4_code.t4_t8_baseline import select_actual_rate
+    def forbidden(_rate):
+        raise AssertionError("A proved scalar floor must not emit a timing candidate")
+    result = select_actual_rate(10, 11, [256], forbidden, {256: 12})
+    assert result["status"] == "unattainable_scalar_floor"
+    assert not result["exact_match"] and result["measured"] == []
+
+
+def test_t8_unmatched_bytes_do_not_receive_padding():
+    from experiments.t4_code.t4_t8_baseline import select_actual_rate
+    costs = {256: 10, 257: 20}
+    result = select_actual_rate(15, 5, list(costs), costs.__getitem__, costs)
+    assert not result["exact_match"] and result["selected_q256"] is None
+    assert {r["actual_serialized_bytes"] for r in result["measured"]} == {10, 20}
+    assert result["status"] == "no_exact_match_found"
+
+
+def test_unattainable_t8_keeps_valid_t4_rows():
+    data = report("timing")
+    cell = data["cells"][0]
+    cell.update(case_id="routed:gate_up", q256=128, wire_bytes=10,
+                timing={"eager": {"samples_ms": [1.0]}, "graph": {"samples_ms": [1.0]}})
+    baseline = {"cells": [], "byte_plan": [dict(case_id="routed:gate_up", t4_q256=128,
+        actual_t4_serialized_bytes=10, exact_match=False, status="unattainable_scalar_floor",
+        t8_plane_lower_bound=11)]}
+    qual.attach_t8_comparison(cell, baseline)
+    args = qual.build_parser().parse_args(["--mode", "timing", "--out", "/tmp/unused.json",
+                                         "--compare-json", "baseline.json"] )
+    complete, failures = qual.validate_report(data, args)
+    assert complete and failures == []
+    assert cell["competitive_status"] == "unattainable_scalar_floor"
+    assert "t8_comparison" not in cell
+
+
+def test_baseline_plan_cannot_emit_an_unmatched_timing_cell():
+    from experiments.t4_code.t4_t8_baseline import validate_baseline
+    args = SimpleNamespace(part="routed", dense_shapes=[], q256=[128],
+                           plan_only=False, ms=[1], tp_cuts=False)
+    plans = [dict(case_id="routed:" + group, group=group, t4_q256=128, exact_match=False,
+                  status="unattainable_scalar_floor", t8_plane_lower_bound=11, target_bytes=10)
+             for group in ("gate_up", "down", "chain")]
+    complete, _ = validate_baseline({"byte_plan": plans, "cells": [], "skips": []}, args)
+    assert complete
+    complete, failures = validate_baseline({"byte_plan": plans, "cells": [{}], "skips": []}, args)
+    assert not complete and failures
+
+
+def test_component_weight_bytes_are_not_the_total_resident_context():
+    row = dict(kind="mode0", projection_serialized_bytes={"gate": 10, "up": 12, "down": 15},
+               total_serialized_bytes=37)
+    qual.prepare_comparison_cell(row)
+    assert row["wire_bytes"] == 22 and row["total_serialized_bytes"] == 37
+    assert row["weight_bytes_scope"] == ["gate", "up"]

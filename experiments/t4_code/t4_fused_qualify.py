@@ -41,7 +41,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 PURE_Q256 = tuple(range(128, 1025, 128))
 ALL_M = (1, 16, 2048, 4096)
-SCHEMA = "tessera.t4_fused_qualify.v2"
+SCHEMA = "tessera.t4_fused_qualify.v3"
 ROLE_NAMES = {"gate": "gate_proj", "up": "up_proj", "down": "down_proj"}
 ROLE_SEEDS = {"gate": 11, "up": 37, "down": 71}
 DENSE_SHAPES = (("index_weights", 32, 4096), ("index_wk", 128, 4096),
@@ -468,11 +468,39 @@ def rank_cases(args):
 
 
 def dense_axes(args, shape, size):
-    # Indexing projections with 32 outputs are replicated, not split into
-    # unsupported 16-row native roles. Other fixtures exercise real row cuts.
-    if size > 1 and shape[1] == 32:
-        return ["replicated"]
-    return ["row", "column"] if args.dense_column_cuts and size > 1 else ["row"]
+    # A replicated fixture is explicit. Its layer still carries its actual
+    # world size. Output height never selects a sharding policy.
+    del shape
+    return list(args.dense_shard_axes) if size > 1 else ["replicated"]
+
+
+def validate_rank_local_geometry(args):
+    from tessera.serving.scheme import e2m1_shape_reason
+    checked = []
+    for size, rank in rank_cases(args):
+        if args.part in ("all", "routed"):
+            local_inter = args.inter // size
+            for part, rows, columns in (("gate_proj", local_inter, args.hidden),
+                                       ("up_proj", local_inter, args.hidden),
+                                       ("down_proj", args.hidden, local_inter)):
+                reason = e2m1_shape_reason(rows, columns, structure="routed_moe", projection=part)
+                if reason:
+                    raise ValueError(f"TP{size} rank{rank} {part}: {reason}")
+                checked.append(dict(projection=part, rows=rows, columns=columns, tp_size=size, tp_rank=rank))
+        if args.part in ("all", "dense"):
+            for shape in args.dense_shapes:
+                tag, rows, columns = shape
+                for axis in dense_axes(args, shape, size):
+                    if (axis == "row" and rows % size) or (axis == "column" and columns % size):
+                        raise ValueError(f"{tag}: requested TP cut has a fractional extent")
+                    local_rows = rows // size if axis == "row" else rows
+                    local_columns = columns // size if axis == "column" else columns
+                    reason = e2m1_shape_reason(local_rows, local_columns, structure="dense")
+                    if reason:
+                        raise ValueError(f"TP{size} rank{rank} {tag} {axis}: {reason}")
+                    checked.append(dict(projection=tag, rows=local_rows, columns=local_columns,
+                                        tp_size=size, tp_rank=rank, axis=axis))
+    return checked
 
 
 def requested_keys(args):
@@ -523,12 +551,18 @@ def routed_cells(args, q, blobs, frames, tp_size, rank):
                 source_kind=("synthetic-distinct-experts" if args.mode != "timing"
                              else "synthetic-one-wire-per-projection-distinct-resident-slots"),
                 hidden=args.hidden, inter=inter, experts=args.experts, top_k=args.top_k,
-                wire_bytes=sum(map(len, (b for part in frames.values() for b in part))),
+                total_serialized_bytes=sum(map(len, (b for part in frames.values() for b in part))),
+                projection_serialized_bytes={p: sum(map(len, b)) for p, b in frames.items()},
                 resident_bytes=resident, serving_owner=True,
                 serving_intake="nvfp4_moe_route create_weights/wire+scale loaders/finalize/apply",
                 tp_size=tp_size, tp_rank=rank,
                 geometry={"gate_up": bundle_geometry(owner, "gate", 0),
                           "down": bundle_geometry(owner, "down", 2)})
+    if args.mode == "timing":
+        base["source_weight_seeds"] = {p: args.seed + ROLE_SEEDS[p] for p in ROLE_NAMES}
+        base["source_weight_sha256"] = {p: tensor_digest(synthetic(*((args.hidden, args.inter) if p == "down"
+                                           else (args.inter, args.hidden)), args.seed + ROLE_SEEDS[p], "cpu"))
+                                       for p in ROLE_NAMES}
     patterns = ["random"] if args.mode == "timing" else ["onehot", "random"]
     for m in args.ms:
         ids, rw = routing(m, args.experts, args.top_k, args.seed + m, "cuda")
@@ -551,7 +585,8 @@ def routed_cells(args, q, blobs, frames, tp_size, rank):
             key = lambda kind: row_key(q, m, kind, f"{args.hidden}x{args.inter}", pattern,
                                         f"TP{tp_size}r{rank}")
             metadata = dict(base, m=m, pattern=pattern,
-                            seed=args.seed + m, input_sha256=tensor_digest(x), routing_sha256=tensor_digest(ids))
+                seed=args.seed + m, input_sha256=tensor_digest(x), routing_sha256=tensor_digest(ids),
+                routing_weights_sha256=tensor_digest(rw))
             fn1 = lambda: owner.gate_up(x, ids, rw)
             yield finish_cell(key("mode1"), fn1,
                 lambda got: compare_projection(got, ref, bound, exact), dict(metadata, mode=1), args)
@@ -641,7 +676,8 @@ def routed_cells(args, q, blobs, frames, tp_size, rank):
                 return dict(ok=equal, mismatch=int((got != placed).sum()),
                             bound_kind="bitwise router-weight input placement", arithmetic_qualified=False)
             yield finish_cell(key("router_input"), router_input, check_router,
-                              dict(metadata, mode="router-input"), args)
+                dict(metadata, mode="router-input", top_k=1,
+                     routing_sha256=tensor_digest(top_ids), routing_weights_sha256=tensor_digest(top_rw)), args)
             layer.apply_router_weight_on_input = False
 
 
@@ -671,7 +707,9 @@ def dense_cells(args, q, blob, shape, tp_size, rank, axis):
     base = dict(accounting, q256=q, rate_class=f"R{q // 128}", projection="dense",
         shape_tag=tag, tp_size=tp_size, tp_rank=rank, cut_axis=axis, cut=cut,
         serving_owner=True, serving_intake="nvfp4_route create_weights/load/finalize/apply",
-        resident_bytes=storage_bytes(method.resident_tensors(layer)), geometry=geometry(role, 2))
+        resident_bytes=storage_bytes(method.resident_tensors(layer)), geometry=geometry(role, 2),
+        source_weight_seeds={"weight": args.seed + rows},
+        source_weight_sha256={"weight": tensor_digest(synthetic(rows, cols, args.seed + rows, "cpu"))})
     patterns = ["random"] if args.mode == "timing" else ["onehot", "random"]
     for m in args.ms:
         for pattern in patterns:
@@ -689,11 +727,12 @@ def dense_cells(args, q, blob, shape, tp_size, rank, axis):
 
 def compare_t8_cell(cell, baseline):
     """A current comparability fact, not a recorded-identity seal."""
-    fields = ["m", "wire_bytes", "tp_size", "tp_rank", "seed", "input_sha256"]
+    fields = ["m", "wire_bytes", "tp_size", "tp_rank", "seed", "input_sha256",
+              "source_weight_seeds", "source_weight_sha256", "weight_bytes_scope"]
     if cell.get("kind") == "dense":
         fields += ["rows", "cols", "cut_axis", "shape_tag"]
     else:
-        fields += ["hidden", "inter", "experts", "top_k", "routing_sha256"]
+        fields += ["hidden", "inter", "experts", "top_k", "routing_sha256", "routing_weights_sha256"]
     if any(cell.get(k) is None or cell.get(k) != baseline.get(k) for k in fields):
         raise ValueError("T8 comparison requires equal actual serialized bytes, geometry, seeds and routing")
     if baseline.get("format") != "T8" or baseline.get("kind") != cell.get("kind"):
@@ -707,6 +746,48 @@ def compare_t8_cell(cell, baseline):
         result[execution] = dict(ratio=numerator / denominator, threshold=1.5,
                                 pass_kill=numerator / denominator <= 1.5)
     return result
+
+
+def prepare_comparison_cell(row):
+    kind = row["kind"]
+    if kind == "dense":
+        row["weight_bytes_scope"] = ["weight"]
+        row["case_id"] = f"dense:{row['shape_tag']}:{row['rows']}x{row['cols']}"
+    else:
+        group = "gate_up" if kind in ("mode0", "mode1") else ("down" if kind == "mode2" else "chain")
+        parts = ["gate", "up"] if group == "gate_up" else (["down"] if group == "down" else list(ROLE_NAMES))
+        row["case_id"] = "routed:" + group
+        row["weight_bytes_scope"] = parts
+        row["wire_bytes"] = sum(row["projection_serialized_bytes"][p] for p in parts)
+    row["serialized_scope"] = "Full source containers before rank-local TP cuts"
+
+
+def attach_t8_comparison(row, baseline):
+    plans = [p for p in baseline.get("byte_plan", []) if p.get("case_id") == row["case_id"]
+             and p.get("t4_q256") == row["q256"]]
+    if len(plans) != 1:
+        row["comparison_error"] = "The T8 producer has no unique actual byte plan for this cell"
+        return
+    plan = plans[0]
+    if plan.get("actual_t4_serialized_bytes") != row["wire_bytes"]:
+        row["comparison_error"] = "The T8 byte plan has a different actual T4 budget"
+        return
+    if not plan.get("exact_match"):
+        row["competitive_status"] = plan["status"]
+        row["comparability_evidence"] = plan
+        return
+    matches = [b for b in baseline.get("cells", []) if b.get("case_id") == row["case_id"]
+        and b.get("kind") == row["kind"] and b.get("m") == row["m"]
+        and b.get("tp_size") == row["tp_size"] and b.get("tp_rank") == row["tp_rank"]
+        and b.get("target_t4_q256") == row["q256"] and b.get("cut_axis") == row.get("cut_axis")]
+    if len(matches) != 1:
+        row["comparison_error"] = "The exact byte plan has no unique measured T8 row"
+        return
+    try:
+        row["t8_comparison"] = compare_t8_cell(row, matches[0])
+        row["competitive_status"] = "measured"
+    except ValueError as exc:
+        row["comparison_error"] = str(exc)
 
 
 def run_gpu(args):
@@ -738,12 +819,9 @@ def run_gpu(args):
                         row["kind"] = row["key"].split("/")[2]
                         row["format"] = "T4"
                         row["register_resources"] = measured_registers(report["resources"], q, row["kind"])
+                        prepare_comparison_cell(row)
                         if baseline:
-                            matches = [r for r in baseline["cells"] if r.get("kind") == row["kind"]
-                                       and r.get("m") == row["m"] and r.get("tp_size") == size and r.get("tp_rank") == rank]
-                            if len(matches) != 1:
-                                raise ValueError("T8 baseline must identify exactly one comparable cell")
-                            row["t8_comparison"] = compare_t8_cell(row, matches[0])
+                            attach_t8_comparison(row, baseline)
                         report["cells"].append(row)
                         save_report(args.out, report)
                 except Exception as exc:
@@ -758,13 +836,9 @@ def run_gpu(args):
                             for row in dense_cells(args, q, blob, shape, size, rank, axis):
                                 row["format"], row["kind"] = "T4", "dense"
                                 row["register_resources"] = measured_registers(report["resources"], q, "dense")
+                                prepare_comparison_cell(row)
                                 if baseline:
-                                    matches = [r for r in baseline["cells"] if r.get("kind") == "dense"
-                                               and r.get("m") == row["m"] and r.get("shape_tag") == row["shape_tag"]
-                                               and r.get("tp_size") == size and r.get("tp_rank") == rank]
-                                    if len(matches) != 1:
-                                        raise ValueError("T8 dense baseline must identify exactly one comparable cell")
-                                    row["t8_comparison"] = compare_t8_cell(row, matches[0])
+                                    attach_t8_comparison(row, baseline)
                                 report["cells"].append(row)
                                 save_report(args.out, report)
                     except Exception as exc:
@@ -773,6 +847,11 @@ def run_gpu(args):
         torch.cuda.empty_cache()
     report["population"] = dict(requested=len(report["requested_population"]),
         observed=len(report["cells"]), skips=len(report["skips"]))
+    report["competitive_coverage"] = {"requested": bool(baseline),
+        "measured": sum(r.get("competitive_status") == "measured" for r in report["cells"]),
+        "unattainable": [r["key"] for r in report["cells"] if r.get("competitive_status") == "unattainable_scalar_floor"],
+        "unresolved": [r["key"] for r in report["cells"] if r.get("competitive_status") == "no_exact_match_found"],
+        "errors": [r["key"] for r in report["cells"] if r.get("comparison_error")]}
     return report
 
 
@@ -785,7 +864,7 @@ def mode_timing(args):
 
 
 def qualify_serving(*, q256=(896,), ms=(1, 16), hidden=512, inter=1280, experts=2,
-                    top_k=2, dense_shapes=(("partial", 32, 256), ("index", 128, 512)),
+                    top_k=2, dense_shapes=(("partial", 64, 512), ("index", 128, 512)),
                     tp_cuts=True, out="/tmp/t4-serving-qualification.json"):
     """The one finite numerical entry point for pytest/manual serving wrappers."""
     args = build_parser().parse_args(["--mode", "correctness", "--out", out])
@@ -808,6 +887,7 @@ def mode_dry_run(args):
     from tessera.fused_frame import pack_fused
 
     torch.set_num_threads(1)
+    checked_geometry = validate_rank_local_geometry(args)
     cells = []
     for q in args.q256:
         # Only a SMALL fixture is encoded/read on CPU; requested production
@@ -831,6 +911,18 @@ def mode_dry_run(args):
             cuda_repack="not-called", serving_owner=False,
             parsed_routing=[dict(m=m, ids_shape=list(routing(m, args.experts, args.top_k,
                                                 args.seed + m, "cpu")[0].shape)) for m in args.ms]))
+    t8_read = None
+    if args.mode == "t8-baseline":
+        from experiments.t4_code.t4_t8_baseline import encode_t8, t8_bounds
+        from tessera.serving import fp8_route, moe_route
+        low, _high, _step = t8_bounds()
+        t8_blob = encode_t8(synthetic(32, 256, args.seed, "cpu"), low, "dense")
+        t8_frame = dense_frame(t8_blob, 32)
+        t8_scheme = dense_scheme(t8_frame, 32, 256, low)
+        t8_scheme.update(family="TESSERA_FP8", grid="E4M3", plane="CHANNEL")
+        parse_compact_blob_for_scheme(t8_frame, t8_scheme, "cpu.small.t8", device="cpu")
+        t8_read = {"wire_bytes": len(t8_frame), "q256": low,
+                   "routes_imported": [fp8_route.__name__, moe_route.__name__], "cuda_repack": "not-called"}
     reads = []
     if args.data_manifest:
         public_sdk = Path(os.environ.get("PRISMABUILD_READER_HELPER_ROOT", "/mnt/shared/prismabuild-fleet/repo"))
@@ -850,7 +942,9 @@ def mode_dry_run(args):
                 requested_population=[f"q{q}" for q in args.q256],
                 population=dict(requested=len(args.q256), observed=len(cells), skips=0),
                 imported_routes=[nvfp4_route.__name__, nvfp4_moe_route.__name__, routed_fused_e2m1.__name__],
+                t8_small_read=t8_read,
                 gpu_exercised=False, cuda_only_repack="not-called",
+                rank_local_geometry=checked_geometry,
                 serving_population_pending=requested_keys(args))
 
 
@@ -1086,6 +1180,9 @@ def mode_quality(args):
 def validate_report(report, args):
     failures = []
     cells = report.get("cells", [])
+    if report["mode"] == "t8-baseline":
+        from experiments.t4_code.t4_t8_baseline import validate_baseline
+        return validate_baseline(report, args)
     if not cells:
         failures.append("no requested cells were observed")
     if report.get("skips"):
@@ -1106,8 +1203,10 @@ def validate_report(report, args):
                 failures.append(f"mandatory independent numeric comparison failed: {c.get('key')}")
             if report["mode"] == "timing" and not c.get("timing", {}).get("graph", {}).get("samples_ms"):
                 failures.append(f"mandatory graph timing missing: {c.get('key')}")
-            if args.compare_json and (set(c.get("t8_comparison", {})) != {"eager", "graph"}
-                                     or not all(v.get("pass_kill") for v in c["t8_comparison"].values())):
+            if c.get("comparison_error"):
+                failures.append(f"T8 paired comparison failed: {c.get('key')}: {c['comparison_error']}")
+            if c.get("competitive_status") == "measured" and not all(
+                    v.get("pass_kill") for v in c["t8_comparison"].values()):
                 failures.append(f"equal-byte T8 kill comparison failed: {c.get('key')}")
         if not report.get("resources", {}).get("functions"):
             failures.append("D41 actual register extraction missing")
@@ -1141,7 +1240,7 @@ def parse_shape(value):
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--mode", required=True,
-        choices=("dry-run", "correctness", "timing", "quality-screen", "research-fixture", "prepare-inputs"))
+        choices=("dry-run", "correctness", "timing", "t8-baseline", "quality-screen", "research-fixture", "prepare-inputs"))
     ap.add_argument("--out", required=True)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--q256", nargs="+", type=int, default=list(PURE_Q256))
@@ -1153,11 +1252,12 @@ def build_parser():
     ap.add_argument("--top-k", type=int, default=2)
     ap.add_argument("--dense-shapes", type=parse_shape, nargs="+", default=list(DENSE_SHAPES))
     ap.add_argument("--tp-cuts", action="store_true")
-    ap.add_argument("--dense-column-cuts", action="store_true")
+    ap.add_argument("--dense-shard-axes", nargs="+", choices=("row", "column", "replicated"), default=["row"])
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--compare-json")
+    ap.add_argument("--plan-only", action="store_true", help="Write actual T4/T8 byte feasibility before timing.")
     ap.add_argument("--source-spec")
     ap.add_argument("--data-manifest")
     ap.add_argument("--quality-device", choices=("cpu", "cuda"), default="cuda")
@@ -1185,6 +1285,10 @@ def validate_args(args):
     for tag, rows, cols in args.dense_shapes:
         if rows <= 0 or cols <= 0:
             raise ValueError(f"invalid dense shape {tag}")
+    if args.compare_json and args.mode != "timing":
+        raise ValueError("T8 timing rows compare with T4 timing, not a different source fixture")
+    if args.plan_only and args.mode != "t8-baseline":
+        raise ValueError("A byte-only plan belongs to the T8 baseline producer")
     if not 1 <= args.seconds <= 1700:
         raise ValueError("finite payload must leave cleanup within the 1800 second quantum")
 
@@ -1205,6 +1309,9 @@ def main(argv=None):
             report = mode_correctness(args)
         elif args.mode == "timing":
             report = mode_timing(args)
+        elif args.mode == "t8-baseline":
+            from experiments.t4_code.t4_t8_baseline import produce
+            report = produce(args)
         elif args.mode == "quality-screen":
             report = mode_quality(args)
         else:
