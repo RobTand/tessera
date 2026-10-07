@@ -92,7 +92,8 @@ _CENSUS_PAYLOAD_FAMILY = {TESSERA_FP8: "TESSERA_E4M3_K1", TESSERA_BF16: "TESSERA
 
 def native_decoder(family: str) -> str:
     """The actual class decoder selected for this routed window family."""
-    from ..routed_fused import library_for, routed_class_launch_pair
+    from ..routed_fused import library_for
+    from .scheme import routed_class_launch_pair
 
     if family not in _CENSUS_PAYLOAD_FAMILY:
         raise KeyError(f"{family!r} has no native WINDOW expert route")
@@ -108,14 +109,16 @@ def _profiler_label(adapter) -> str:
 def census_expected(*, compiled: bool = False, platform=None,
                     family: str = TESSERA_FP8) -> dict:
     """Expected actual execution pair, not a serving-cell qualification."""
-    from ..routed_fused import library_for, routed_class_launch_pair
+    from .scheme import launch_pairs, route_launches
     from .census import platform_expectation
 
     del compiled
     if family not in _CENSUS_PAYLOAD_FAMILY:
         raise KeyError(f"{family!r} has no expert stack on this window route")
-    pair = routed_class_launch_pair(library_for("value" if family == TESSERA_BF16 else "e4m3"))
-    pairs = {"decode": {pair}, "batch": {pair}}
+    launches = route_launches(family, structure="routed_moe", mode="resident", include_experimental=True)
+    regimes = {regime for launch in launches for regime in launch["regimes"]}
+    pairs = {regime: launch_pairs(family, structure="routed_moe", regime=regime,
+                                 mode="resident", include_experimental=True) for regime in regimes}
     return platform_expectation(_CENSUS_PAYLOAD_FAMILY[family], platform, pairs)
 
 

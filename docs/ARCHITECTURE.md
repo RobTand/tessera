@@ -267,6 +267,14 @@ expert bounds. Its claim counter is optional. Kernel payloads may describe
 one or several classes, including per-expert rates and absolute word offsets.
 Packing permutations, persistent K-part scratch, sentinel activation rows,
 grid and shared memory belong to kernel code.
+The route builder reads every requested mode and span width from the bound kernel.
+It builds each device prefix from one count vector before the stream fork.
+The prefix owner has no 64/128 restriction; a BM8 binding needs no routing override.
+
+The common execution registry names the current class operation for both WINDOW families.
+All class pairs remain experimental and have no served qualification cell.
+Historical compact and fused receipt identities have a separate qualification table.
+Both tables use the same axis filter. A historical receipt cannot qualify a current class operation.
 
 Today the loaded binding is `_LutClassKernel`; it calls the unchanged CUDA
 decoder for each class on the same two streams. Register-direct remains a

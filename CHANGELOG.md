@@ -1,5 +1,15 @@
 # Changelog
 
+
+## 2026-10-07 — routed class execution boundary corrections
+
+Build route prefixes for every bound-kernel width from the same device counts.
+The routing front end supports BM8 without a local override.
+The current execution registry owns class identities and census expectations.
+Historical WINDOW qualification records stay separate. The new operations remain unqualified.
+Remove the duplicate custom-op layout argument and preserve byte checks across tensor view shapes.
+Record the generic dispatcher source hash in the D41 report.
+
 ## 2026-10-07 — refuse unsupported native expert bias
 
 The native WINDOW builder now refuses a biased expert configuration before load.

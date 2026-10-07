@@ -427,7 +427,7 @@ def test_native_method_refuses_missing_duplicate_and_wrong_rung():
     layer.w13_wire.weight_loader(
         layer.w13_wire, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
         'wire', 'w1', 0, return_success=True)
-    with pytest.raises(Exception, match="already placed"):
+    with pytest.raises(ValueError):
         layer.w13_wire.weight_loader(
             layer.w13_wire, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
             'wire', 'w1', 0, return_success=True)

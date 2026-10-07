@@ -407,7 +407,7 @@ class FusedRoutedE2M1MoE:
         return sum(t.numel() * t.element_size() for _n, t in self.named_tables())
 
     def _routing(self, expert_ids: torch.Tensor, routing_weights: torch.Tensor) -> _Routing:
-        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, None)
+        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, (BM,))
 
     def _quantized(self, x: torch.Tensor, gs: torch.Tensor):
         from .kernel_a4 import a4_quantize_activation

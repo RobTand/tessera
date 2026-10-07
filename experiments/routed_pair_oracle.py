@@ -130,7 +130,7 @@ def expected_pair(fam, method):
     """Execution pair selected by the native library, independently of telemetry."""
     if fam["family"] == "TESSERA_NVFP4":
         return tuple(fam["pair"])
-    from tessera.routed_fused import routed_class_launch_pair
+    from tessera.serving.scheme import routed_class_launch_pair
     native = method._native
     if type(native).__name__ != FUSED_ADAPTER:
         raise ValueError("WINDOW oracle requires the native expert-class owner")

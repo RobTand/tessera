@@ -91,21 +91,11 @@ __all__ = [
     "prepare_dense_role",
     "superblock_rows",
     "words_by_expert",
-    "routed_class_launch_pair",
 ]
 
 log = logging.getLogger(__name__)
 
 
-def routed_class_launch_pair(library: str) -> tuple[str, str]:
-    """Name the class dispatcher. This identity does not qualify a contract row."""
-    from .serving.telemetry import (DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
-        DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA, DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED)
-
-    return "tessera::routed_window_classes", {
-        "value": DECODER_NATIVE_ROUTED_WINDOW_CLASSES_FOLDED,
-        "e4m3": DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
-        "e4m3mma": DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA}[library]
 
 
 #: ``TESSERA_DENSE_FUSED=0`` keeps the Triton ``tessera::window_gemm_dense``
@@ -1041,24 +1031,20 @@ class _Routing:
     offsets: torch.Tensor      # [E + 1] int32
     flat_sorted: torch.Tensor  # [P] int32
     rw_sorted: torch.Tensor    # [P] fp32
-    item_off: torch.Tensor     # [E + 1] int32: prefix sum of ceil(routes_e / BM)
+    prefixes: dict[int, torch.Tensor]  # Each declared width: [E + 1] int32
     tokens: int
     top_k: int
-    #: The same at ``BM_WIDE``-route superblocks, built only when a launch of
-    #: the step takes that width (:func:`superblock_rows`).
-    item_off_wide: "torch.Tensor | None" = None
 
     @property
     def routes(self) -> int:
         return self.tokens * self.top_k
 
     def superblocks(self, bm: int) -> torch.Tensor:
-        """``item_off`` for ``bm``-route superblocks: [E + 1] int32."""
-        if int(bm) == BM:
-            return self.item_off
-        if int(bm) != BM_WIDE or self.item_off_wide is None:
-            raise GrammarError(f"no {bm}-route superblock offsets for this step")
-        return self.item_off_wide
+        """Return the absolute prefix for a bound-kernel superblock width."""
+        try:
+            return self.prefixes[bm]
+        except KeyError:
+            raise GrammarError(f"no {bm}-route superblock offsets for this step") from None
 
 
 def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
@@ -1069,11 +1055,8 @@ def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
 
 
 def _routing_tables(expert_ids: torch.Tensor, routing_weights: torch.Tensor, experts: int,
-                    device: torch.device, library: "str | None") -> _Routing:
-    """The step's routing in the order the fused launches read it: routes
-    sorted by expert (stable), their weights, and the superblock offsets at
-    each width a launch of ``library`` takes this step (``None``: a library
-    with the one width, ``BM``)."""
+                    device: torch.device, widths: tuple[int, ...]) -> _Routing:
+    """Sort the routes once and derive every declared width from the same counts."""
     if expert_ids.dim() != 2 or routing_weights.shape != expert_ids.shape:
         raise GrammarError("expert_ids and routing_weights must share [T, top_k]")
     if expert_ids.device != device or routing_weights.device != device:
@@ -1089,10 +1072,9 @@ def _routing_tables(expert_ids: torch.Tensor, routing_weights: torch.Tensor, exp
     order = torch.argsort(ids, stable=True)
     flat_sorted = order.to(torch.int32).contiguous()
     rw_sorted = routing_weights.reshape(-1).to(torch.float32)[order].contiguous()
-    wide = library is not None and any(superblock_rows(library, mode, tokens) == BM_WIDE for mode in (0, 2))
+    prefixes = {bm: _item_off(counts, bm) for bm in widths}
     return _Routing(offsets=offsets, flat_sorted=flat_sorted, rw_sorted=rw_sorted,
-                    item_off=_item_off(counts, BM), tokens=tokens, top_k=top_k,
-                    item_off_wide=_item_off(counts, BM_WIDE) if wide else None)
+                    prefixes=prefixes, tokens=tokens, top_k=top_k)
 
 
 @functools.lru_cache(maxsize=None)
@@ -1371,6 +1353,7 @@ class FusedRoutedWindowMoE:
 
     @property
     def launch_pair(self):
+        from .serving.scheme import routed_class_launch_pair
         return routed_class_launch_pair(self.library)
 
     @property
@@ -1400,8 +1383,12 @@ class FusedRoutedWindowMoE:
         from .serving.residency import resident_storage_bytes
         return resident_storage_bytes(self.named_tables())
 
-    def _routing(self, expert_ids, routing_weights):
-        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, self.library)
+    def _routing(self, expert_ids, routing_weights, *, modes=(0, 2)):
+        from .routed_class_dispatch import declared_route_widths
+        tokens = expert_ids.shape[0] if expert_ids.ndim else 0
+        widths = declared_route_widths(self.dispatch_resources.kernel, tokens,
+                                       self.class_issue_order, self.operands, modes)
+        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, widths)
 
     def _launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
         from . import routed_class_dispatch
@@ -1445,14 +1432,14 @@ class FusedRoutedWindowMoE:
             return torch.empty((0, self.down.rows), dtype=torch.bfloat16, device=self.device)
         return _routed_window_classes(x, expert_ids, routing_weights, shared,
             **self.operands, issue_order=list(self.class_issue_order), counters=self.counters,
-            library=self.library, piece_major=self.piece_major, resource_key=self.resource_key,
+            library=self.library, resource_key=self.resource_key,
             input_weight=apply_router_weight_on_input, swiglu_limit=limit if limit is not None else float("inf"))
 
     def gate_up(self, x, expert_ids, routing_weights, a_scale=None, *, preserve=True,
                 apply_router_weight_on_input=False):
         if not preserve or apply_router_weight_on_input:
             raise GrammarError("gate_up is the unweighted route-preserving projection")
-        routing = self._routing(expert_ids, routing_weights)
+        routing = self._routing(expert_ids, routing_weights, modes=(1,))
         x = self._check_x(x, routing.tokens, self.gate.cols)
         out = torch.empty((routing.tokens, routing.top_k, 2*self.down.cols), dtype=torch.bfloat16,
                           device=self.device)
@@ -1465,7 +1452,7 @@ class FusedRoutedWindowMoE:
                     apply_router_weight_on_input=False, round_routes=True):
         if not route_input or not round_routes:
             raise GrammarError("down_routes needs route-indexed input and the bf16 route boundary")
-        routing = self._routing(expert_ids, routing_weights)
+        routing = self._routing(expert_ids, routing_weights, modes=(2,))
         x = self._check_x(x, routing.routes, self.down.cols)
         out = torch.empty((routing.tokens, self.down.rows), dtype=torch.bfloat16, device=self.device)
         if routing.tokens:
