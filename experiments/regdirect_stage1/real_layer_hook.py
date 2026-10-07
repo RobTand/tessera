@@ -93,7 +93,11 @@ def main():
     t_load = time.time() - t0
     parameters, kernel = rr.build_layer(gate, up, down, classes, device, top_k=top_k, max_tokens=2048)
     torch.cuda.synchronize()
-    t_build = time.time() - t0 - t_load
+    t_build = time.time() - t0 - t_load              # the first call: it may compile the CUDA extensions
+    t2 = time.time()
+    parameters, kernel = rr.build_layer(gate, up, down, classes, device, top_k=top_k, max_tokens=2048)
+    torch.cuda.synchronize()
+    t_build_warm = time.time() - t2                  # what each later layer of a serve load pays
     # Step 1a/1d of the 14:22Z plan: the per-layer cost of each path, apart from the loader's own work.
     from tessera.routed_fused import compose_table8
     tables = tuple(compose_table8(b) for b in (gate, up, down))
@@ -110,7 +114,7 @@ def main():
     same = {mode: {k: bool(torch.equal(planes[mode][k], v)) if torch.is_tensor(v) else planes[mode][k] == v
                    for k, v in ref_planes[mode].items()} for mode in (0, 2)}
     rep = {"layer": a.layer, "rank": a.rank, "experts": a.experts, "build_s": round(t_load + t_build, 1),
-           "loader_s": round(t_load, 2), "build_layer_s": round(t_build, 2),
+           "loader_s": round(t_load, 2), "build_layer_s": round(t_build, 2), "build_layer_warm_s": round(t_build_warm, 3),
            "layer_stacks_s": round(timings["layer_stacks"], 3), "transcode_stacks_s": round(timings["transcode_stacks"], 4),
            "transcode_equals_layer_stacks": same, "planes": {}}
     for mode in (0, 2):
