@@ -218,3 +218,22 @@ def test_prepare_inputs_declares_exact_ranges(tmp_path):
     assert unit["bytes"] == 32 * 256 * 4
     declared = [e for e in manifest["entries"] if e["path"] == unit["path"] and e["offset"] == unit["offset"]]
     assert len(declared) == 1 and declared[0]["bytes"] == unit["bytes"]
+
+
+def test_in_run_memory_guard_terminates_only_its_owned_child(tmp_path, monkeypatch):
+    # The deterministic counter crosses the floor AFTER a real child starts.
+    # The existing Envelope must terminate that exact child process group.
+    output = tmp_path / "guard.json"
+    values = iter([9.0, 1.5])
+    monkeypatch.setattr(qual, "mem_available_gib", lambda: next(values))
+    monkeypatch.setattr(sys, "argv", [str(source), "--mode", "research-fixture",
+        "--out", str(output), "--q256", "128", "--seconds", "5"])
+    with pytest.raises(RuntimeError, match="below"):
+        qual.guarded_cli()
+    receipt = json.loads(output.with_suffix(".memory.json").read_text())
+    stopped = receipt["terminations"]
+    assert len(stopped) == 1
+    assert stopped[0]["pid"] > 0
+    assert stopped[0]["returncode"] < 0
+    assert stopped[0]["signals"][0]["signal"] == "SIGTERM"
+    assert receipt["returncode"] is None
