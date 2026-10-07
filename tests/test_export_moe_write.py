@@ -1013,3 +1013,18 @@ def test_explicit_unservable_geometry_screen_is_stamped(tmp_path, monkeypatch):
     refusals = manifest["serving_gate"]["unserveable_overrides"]
     assert any("unservable_native_class_geometry" in row["refusal"] for row in refusals)
 
+
+
+def test_research_selected_cannot_bypass_native_class_geometry(tmp_path, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("research geometry refusal arrived after encoding")
+
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    tensors = {f"{STACK}.0.{p}.weight": torch.zeros(32, 32) for p in export.EXPERT_PROJECTIONS}
+    config = _config()
+    config["text_config"].update(hidden_size=32, moe_intermediate_size=32, n_routed_experts=1)
+    execution, _block, _text = _research_input(tmp_path)
+    with pytest.raises(SystemExit, match="unservable_native_class_geometry"):
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+                "--device", "cpu", "--research-selected-moe-json", str(execution), config=config)
+

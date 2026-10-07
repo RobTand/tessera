@@ -908,13 +908,14 @@ def experimental_launch_pairs(route: str, **narrow) -> set:
 
 
 def moe_census_symbol_base(symbol: str) -> str:
-    """A routed launch entry point without the runtime-selected backend suffix.
+    """Remove only the modular vLLM operation's runtime backend suffix.
 
-    Keep exact symbols in receipts. Only comparison removes the suffix; its
-    dependency-free home lets receipt replay run without importing torch or
-    the runtime route implementation.
+    Qualified Torch operation names contain ``::`` and compare exactly.
+    Keep exact symbols in receipts; this normalization is for comparison.
     """
-    return str(symbol).split(":", 1)[0]
+    name = str(symbol)
+    prefix = MOE_GEMM_SYMBOL + ":"
+    return MOE_GEMM_SYMBOL if name.startswith(prefix) and ":" not in name[len(prefix):] else name
 
 
 _BODIES = ("TCQ", "WINDOW")
