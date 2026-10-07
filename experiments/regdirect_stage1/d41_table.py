@@ -68,6 +68,7 @@ def ncu_launch(path):
 
 
 def to_bytes(value, unit):
+    unit = unit.split("/")[0]                      # NCU states shared memory per block: "byte/block"
     scale = {"byte": 1, "Kbyte": 1000, "KB": 1000, "Kibyte": 1024, "KiB": 1024, "Mbyte": 10**6}[unit]
     return int(round(float(value) * scale))
 
