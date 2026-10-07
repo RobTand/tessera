@@ -148,11 +148,10 @@ def _panel():
         member.update(shape=geometry, source_weight=_record(geometry), rendered_weight=_record(geometry),
             activation={"clip_enabled": False, "input_global_scale": None},
             wire={**record, "record": dict(record)})
-    # The FP8 stack's launch on this build: the compact window MoE adapter
-    # (the materialising pair left the plugin's table at contract v38).
-    route = {"kind": "moe", "policy": "TESSERA_FP8:resident", "decoder": "native_window_moe_compact",
-             "contract": "fp8_per_token_dynamic",
-             "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"}
+    # The fixture names the current binding without a qualification claim.
+    symbol, decoder = next(iter(moe.owner_launch_pairs(moe.owner_wire(shape))))
+    route = {"kind": "moe", "policy": "TESSERA_FP8:resident", "decoder": decoder,
+             "contract": "fp8_per_token_dynamic", "symbol": symbol}
     phases = {}
     routing = _routing()
     for phase, m in (("prefill", 8), ("decode", 1)):
@@ -570,7 +569,6 @@ def test_standalone_raw_producer_preserves_independent_member_and_phase_bindings
     from experiments.measure_glm_native_execution import freeze
     panel=_panel()
     route=panel['phases']['prefill']['expected_route']
-    route.update(decoder='native_window_moe_compact',symbol='tessera.native_window_moe.NativeWindowMoE.__call__')
     source_execution={'schema':'prismaquant.joint_aura.source_execution.v1',
                       'modules':{'':{'experts':'eager'}}}
     inputs={key:copy.deepcopy(panel[key]) for key in ('unit','format','shape','members',

@@ -109,6 +109,12 @@ def declared():
         f"tessera_model_language_model_{LAYER}_mlp_experts"]["scheme"]
     from tessera.serving.scheme import validate_tessera_moe_scheme
 
+    # The test declares identity storage for the retained uniform wire population.
+    # The historical checkpoint file stays unchanged.
+    scheme = {**scheme, "expert_ids": list(range(scheme["experts"])),
+              "expert_classes": [{"start": 0, "end": scheme["experts"],
+                  "q256": {group: [row["q256"]] * len(row["roles"])
+                           for group, row in scheme["groups"].items()}}]}
     return validate_tessera_moe_scheme(scheme, PREFIX)
 
 

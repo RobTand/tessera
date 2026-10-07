@@ -122,3 +122,84 @@ def test_vllm_hashes_the_two_modes_apart():
         declare_compile_identity(serve_mode="resident")
     assert again.compute_hash() == hashes["resident"]
 
+
+
+from tessera.serving.compile_identity import note_traced_dispatch, traced_dispatch
+from tessera.serving.scheme import WINDOW_GEMM_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL
+
+MODULES = ("model.layers.0.mlp.down_proj", "model.layers.0.self_attn.qkv_proj",
+           "model.layers.1.mlp.down_proj")
+
+
+def _declared(mode="streamed"):
+    cfg = _config()
+    declare_compile_identity_in(cfg, serve_mode=mode)
+    return cfg
+
+
+def _identity(cfg):
+    return json.dumps(cfg.additional_config, sort_keys=True)
+
+
+def test_the_two_lane_states_are_two_identities():
+    first = _declared()
+    for name in MODULES:
+        note_traced_dispatch(name, WINDOW_GEMM_SYMBOL)
+    a = _identity(first)
+    reset_for_tests()
+    second = _declared()
+    for name in MODULES:
+        note_traced_dispatch(name, FUSED_WINDOW_DENSE_SYMBOL)
+    assert _identity(second) != a
+
+
+def test_one_lane_state_is_one_identity_however_the_modules_are_ordered():
+    first = _declared()
+    for name in MODULES:
+        note_traced_dispatch(name, WINDOW_GEMM_SYMBOL)
+    a = _identity(first)
+    reset_for_tests()
+    second = _declared()
+    for name in reversed(MODULES):
+        note_traced_dispatch(name, WINDOW_GEMM_SYMBOL)
+    assert _identity(second) == a
+    note_traced_dispatch(MODULES[0], WINDOW_GEMM_SYMBOL)
+    assert _identity(second) == a
+
+
+def test_a_mixed_checkpoint_needs_the_set_not_a_count():
+    first = _declared()
+    note_traced_dispatch(MODULES[0], WINDOW_GEMM_SYMBOL)
+    note_traced_dispatch(MODULES[1], FUSED_WINDOW_DENSE_SYMBOL)
+    a = _identity(first)
+    reset_for_tests()
+    second = _declared()
+    note_traced_dispatch(MODULES[0], FUSED_WINDOW_DENSE_SYMBOL)
+    note_traced_dispatch(MODULES[1], WINDOW_GEMM_SYMBOL)
+    assert _identity(second) != a
+
+
+def test_a_second_config_starts_a_fresh_accumulation():
+    first = _declared()
+    note_traced_dispatch(MODULES[0], WINDOW_GEMM_SYMBOL)
+    a = _identity(first)
+    second = _declared()
+    note_traced_dispatch(MODULES[1], FUSED_WINDOW_DENSE_SYMBOL)
+    assert traced_dispatch() == {MODULES[1]: FUSED_WINDOW_DENSE_SYMBOL}
+    assert _identity(first) == a
+    assert _identity(second) != a
+
+
+def test_vllm_hashes_the_two_lane_states_apart():
+    pytest.importorskip("vllm.config")
+    from vllm.config import VllmConfig, set_current_vllm_config
+    hashes = {}
+    for operation in (WINDOW_GEMM_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL):
+        reset_for_tests()
+        cfg = VllmConfig()
+        with set_current_vllm_config(cfg):
+            declare_compile_identity(serve_mode="streamed")
+        for name in MODULES:
+            note_traced_dispatch(name, operation)
+        hashes[operation] = cfg.compute_hash()
+    assert len(set(hashes.values())) == 2
