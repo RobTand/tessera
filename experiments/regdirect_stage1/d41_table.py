@@ -140,8 +140,9 @@ def main():
             weights = cell["meta"]["touched"] * rows * cols * (2 if md == 0 else 1)
             bits = Fraction(cell["meta"]["wire_bytes"] * 8 * 256, weights)
             ks = cols // (rr.GROUPS[md] * rr.KSTEP)
-            upper = (cell["q256"] - 768) * ks // 256
-            widths = [3] if upper == 0 else [4] if upper == ks else [3, 4]
+            low, rem = divmod(cell["q256"], 256)          # a k-step rung mixes low and low + 1
+            upper = rem * ks // 256
+            widths = [low, low + 1] if rem else [low]
             a_t, b_t = cell["pass_medians_cold_us"]
             cells.setdefault(cell["q256"], {})[(shape, M)] = {
                 "cell_id": f"routed:{shape}:M{M}", "kernel_kind": "routed", "shape_id": shape, "M": M,

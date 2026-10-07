@@ -53,10 +53,23 @@ def upper_steps(name, ks):
     raise KeyError(name)
 
 
+def rate_class(name):
+    """Stage 2 classes: ``P<r>`` is pure rate r; ``H<r>`` puts half the k-steps at r + 1, the rest
+    at r.  Returns (ra, rb, half) or None for the other names."""
+    if len(name) >= 2 and name[0] in "PH" and name[1:].isdigit():
+        r = int(name[1:])
+        return (r, r, False) if name[0] == "P" else (r + 1, r, True)
+    return None
+
+
 def profile_rung(name, ks):
     """The q256 the profile spends per weight (gate/up and down each against their own K)."""
     if name in PROFILES or name == "real":
         return {"R1024": 1024, "R768": 768, "R896": 896, "real": 1024}[name]
+    rc = rate_class(name)
+    if rc is not None:
+        ra, rb, half = rc
+        return 256 * rb + (128 if half else 0)
     return 768 + 256 * upper_steps(name, ks) // ks
 
 
@@ -64,6 +77,10 @@ def profiles_for(name, ks):
     if name in PROFILES:
         ra, rb, ksa = PROFILES[name]
         return [(ra, rb, ks if ksa is None else ks // 2)] * EXPERTS
+    rc = rate_class(name)
+    if rc is not None:
+        ra, rb, half = rc
+        return [(ra, rb, ks // 2 if half else ks)] * EXPERTS
     u = upper_steps(name, ks)
     return [(4, 3, u)] * EXPERTS
 
@@ -163,6 +180,9 @@ class Baseline:
         fixed = {"R1024": (4, 0), "real": (4, 0), "R768": (3, 0), "R896": (3, cols // 2)}
         if profile in fixed:
             r_lo, n_hi = fixed[profile]
+        elif rate_class(profile) is not None:            # P<r>: all columns at r; H<r>: half at r + 1
+            _, rb, half = rate_class(profile)
+            r_lo, n_hi = rb, (cols // 2 if half else 0)
         else:                       # the same number of R4 columns as the register-direct class
             ks = cols // (GROUPS[mode] * 32)
             r_lo, n_hi = 3, upper_steps(profile, ks) * GROUPS[mode] * 32
