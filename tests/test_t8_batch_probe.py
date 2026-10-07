@@ -19,8 +19,6 @@ sys.path.insert(0, str(EXPERIMENTS))
 sys.path.insert(0, str(EXPERIMENTS / "t8_census"))
 
 
-PROBE = EXPERIMENTS / "t8_census" / "ab_batched_best_form.py"
-UNIT_PROFILE = EXPERIMENTS / "t8_census" / "profile_unit_encode.py"
 STAGE_WRAPPER = EXPERIMENTS / "t8_census" / "ab_stage.sh"
 
 
