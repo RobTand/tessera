@@ -116,7 +116,7 @@ def test_no_current_config_declares_nothing():
 
 
 def test_vllm_hashes_the_two_modes_apart():
-    pytest.importorskip("vllm")
+    pytest.importorskip("vllm.config")
     from vllm.config import VllmConfig, set_current_vllm_config
 
     hashes = {}
@@ -239,7 +239,7 @@ def test_a_second_config_starts_a_fresh_accumulation():
 
 
 def test_vllm_hashes_the_two_lane_states_apart():
-    pytest.importorskip("vllm")
+    pytest.importorskip("vllm.config")
     from vllm.config import VllmConfig, set_current_vllm_config
 
     hashes = {}

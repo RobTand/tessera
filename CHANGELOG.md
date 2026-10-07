@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — require the real vLLM configuration module in hash tests
+
+Check the configuration module before tests call its runtime API. A root
+stub module does not prove that the runtime dependency is available.
+The tests still compare actual vLLM hashes when that dependency is present.
+
 ## 2026-10-07 — isolate the external-path test fixture
 
 Create the external directory through the pytest factory. The directory
