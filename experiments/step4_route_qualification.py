@@ -67,9 +67,9 @@ FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
 BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
 NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 
- # The shared metadata owner decides the current operations for each structure.
- # Order follows ROUTE_LAUNCHES; qualification compares as sets elsewhere.
- def _current_pairs(family, structure):
+# The shared metadata owner decides the current operations for each structure.
+# Order follows ROUTE_LAUNCHES; qualification compares as sets elsewhere.
+def _current_pairs(family, structure):
      return tuple(dict.fromkeys(
          (row["symbol"], row["decoder"]) for row in route_launches(
              family, structure=structure, include_experimental=True)))
