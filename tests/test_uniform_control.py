@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 import box_artifacts
+from test_accounting_source import isolated_prismaquant_imports
 
 from tessera.control import (
     BF16,
@@ -537,7 +538,8 @@ def _price_both_ways(tessera_formats, shape):
 
 
 @pytest.mark.parametrize("shape", PQ_SHAPES)
-def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
+def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(
+        shape, isolated_prismaquant_imports):
     """The allocator's byte budget and this control must be one currency.
 
     PrismaQuant prices thousands of rungs per Linear through a closed form
@@ -595,7 +597,8 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
 
 
 @pytest.mark.parametrize("shape", PQ_SHAPES)
-def test_a_prismaquant_that_stopped_charging_the_forest_is_refused(shape, monkeypatch):
+def test_a_prismaquant_that_stopped_charging_the_forest_is_refused(
+        shape, monkeypatch, isolated_prismaquant_imports):
     """Drop the forest charge on the PrismaQuant side; the gate above must bite.
 
     The mutation is the defect, not a hand-built number: ``tessera_formats``

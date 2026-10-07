@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — isolate explicit pricing roots in tests
+
+Reuse the existing package isolation rule for both real pricing roots.
+The affected tests restore the previous module graph after each test.
+Keep the runtime foreign-source refusal and all byte-accounting assertions unchanged.
+
 ## 2026-10-07 — initialize real IR providers in vLLM hash tests
 
 Use the vLLM priority owner before the real configuration hash. It imports
