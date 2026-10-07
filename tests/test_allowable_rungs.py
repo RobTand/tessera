@@ -135,14 +135,14 @@ def test_a_rung_resolves_to_its_run_table():
 
 
 def test_a_cell_covers_its_census_rungs_and_the_allowable_rungs_of_their_run_tables(contract):
-    """The routed E4M3 cell's census rungs are 832..1088; their run tables are
-    [3, 4], [4] and [4, 5], so it covers every rung of 769..1279 and nothing
-    at rate 3 alone (768) or at rate 5 and above."""
+    """The routed E4M3 cell's census rungs are 768..1088; their run tables are
+    [3], [3, 4], [4] and [4, 5], so it covers every rung of 768..1279 and
+    nothing below 768 or at rate 5 and above."""
     row, cell = _row(contract), _cell(contract, ROUTED)
-    assert cell["run_tables"] == [[3, 4], [4], [4, 5]]
+    assert cell["run_tables"] == [[3], [3, 4], [4], [4, 5]]
     covered = [q for q in range(256, 2049) if cell_covers_rung(cell, q, row)]
-    assert covered == list(range(769, 1280))
-    for q in (768, 1280, 1300, 1536, 2048, 256):
+    assert covered == [768] + list(range(769, 1280))
+    for q in (767, 1280, 1300, 1536, 2048, 256):
         assert not cell_covers_rung(cell, q, row), q
     # without its family's row only the census rungs are covered
     assert [q for q in range(256, 2049) if cell_covers_rung(cell, q, None)] == cell["rungs_q256"]
@@ -153,9 +153,9 @@ def test_the_e4m3_dense_cells_cover_every_rung_of_the_rule(contract):
     dense rung of every run table the rule admits, [1]..[8] and the seven
     pairs between them, so the two GLM-image dense resident cells derive all
     fifteen tables and cover the rule's whole range, 256..2048, where v52
-    covered 769..1279.  The routed cells stay at stub B's tables, and the
-    dense cells' nightly-runtime twins, which name a runtime this census did
-    not serve, do not move."""
+    covered 769..1279.  Contract v59 adds table [3] with census rung 768 to
+    the two base routed cells; the runtime twins stay pinned to their image
+    census, as do the dense cells' nightly-runtime twins."""
     row = _row(contract)
     by_id = {c["id"]: c for c in contract["lane_eligibility"]["cells"]}
     for regime in ("decode", "batch"):
@@ -167,7 +167,7 @@ def test_the_e4m3_dense_cells_cover_every_rung_of_the_rule(contract):
                    if c["id"].startswith(f"tessera_e4m3_k1_dense_sm121_{regime}_resident_runtime_")]
         assert twin["run_tables"] == [[3, 4], [4], [4, 5]]
         routed = by_id[f"tessera_e4m3_k1_routed_moe_sm121_{regime}_resident"]
-        assert routed["run_tables"] == [[3, 4], [4], [4, 5]]
+        assert routed["run_tables"] == [[3], [3, 4], [4], [4, 5]]
 
 
 def test_every_cell_publishes_exactly_its_derived_run_tables(contract):
@@ -266,9 +266,9 @@ def test_a_run_table_no_rung_of_the_range_reaches_is_refused(contract):
 
 
 def test_the_routed_export_gate_admits_every_rung_the_cells_cover(contract):
-    """The gate reads ``cell_covers_rung``: a routed E4M3 stack at q256 1100
-    (run table [4, 5], census rung 1088) is admitted, 1300 ([5, 6], no
-    census) and 768 ([3], no census) are refused by the cells' ids."""
+    """The gate reads ``cell_covers_rung``: routed E4M3 stacks at q256 768
+    (run table [3], census rung) through 1279 are admitted; 1300 ([5, 6],
+    no census) stays refused by the cells' ids."""
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, refuse_unserveable_wire
 
     def gate(q):
@@ -276,9 +276,9 @@ def test_the_routed_export_gate_admits_every_rung_the_cells_cover(contract):
                                        span=1, target="stack.probe",
                                        structure=STRUCTURE_ROUTED_MOE, contract=contract)
 
-    for q in (769, 1000, 1100, 1279):
+    for q in (768, 769, 1000, 1100, 1279):
         assert gate(q) == "TESSERA_FP8", q
-    for q in (768, 1300):
+    for q in (767, 1300):
         with pytest.raises(ValueError) as caught:
             gate(q)
         assert ROUTED in str(caught.value) and "run tables" in str(caught.value)
