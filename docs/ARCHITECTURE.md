@@ -1,5 +1,23 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-06 for issue #1018: the geometry entry accepts explicit
+dense shapes (`name:rows:columns`) so the missing real shared-expert and
+dense layer zero-to-two projections can use the existing harness and its
+uncompressed BF16-weight comparator. A BF16 activation label alone is never
+that comparator. The near-eight-bit pure R2048 work retains the real
+configuration read through the existing PrismaBuild residency reader.
+Full-source shared roles are 2048 by 4096 and 4096 by 2048; dense roles are
+12288 by 4096 and 4096 by 12288. Tensor parallel size two splits the gate/up
+output rows and down input columns; gate/up role timings are not a fused
+module, collective or served proof. No format, native route or ship gate moves.
+The latest CEO/Rob menu ruling supersedes earlier fractional sampling plans:
+T8 uses R768/R1024; routed T16 uses whole-bit R256 through R2048, dense T16
+whole-bit R256 through R3584; T4 has historical native timings but no new
+performance admission. Quality uses whole-anchor chords, not noisy per-rung
+sample gates. This bounded measurement entry does not implement a table or
+allocator cutover, a half-bit decoder, routed rates above eight, per-expert
+production serving, or a new pricing campaign.
+
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
 `--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
 WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
@@ -77,7 +95,7 @@ point must pass a fresh CPU PrismaBuild preflight after source/argument
 changes. The existing full 33-output ship gate, quality gates, defaults and
 serving pin do not change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
-Re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
+Historical v1/v2 policy, re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index
 semantics. `validate_index(index)` and `validate_table(table)` return the
 input or raise `ValueError`; `admit_rung(table, *, format, kernel_build_id,

@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-06T18:21:59Z",
+ "generated": "2026-10-06T23:06:23Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5504,7 +5504,7 @@
     "title": "[P1] Complete remaining header and qname owner slice with real consumer proof"
    },
    "2236": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix: the io engine seals on interpreters without CPython build-time fcntl/os names (1896)"
    },
    "2237": {
@@ -5960,7 +5960,7 @@
     "title": "Integration batch 45: #2332 CPU adjoint preflight and #2336 final-vocabulary KL owner reuse (one bundle)"
    },
    "2339": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Bind Stage A produced-output launch context without input residency"
    },
    "234": {
@@ -5972,7 +5972,7 @@
     "title": "[P1] D41: delegate v1/v2 body-aware table intake to canonical producer"
    },
    "2341": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Bind produced-output queue without input residency"
    },
    "2342": {
@@ -6020,7 +6020,7 @@
     "title": "Integration batch 51: consolidate digest test nodes, preserving all 618 outcomes (#2349), on main"
    },
    "2352": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] RTN FP8 helper returns NaN for finite FP16 zero and tiny rows"
    },
    "2353": {
@@ -6028,20 +6028,60 @@
     "title": "[P2] D41 tests need the canonical rung-allowability producer: composed suites on the pinned interpreter fail without it"
    },
    "2354": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fix FP16 NaN in the RTN FP8 helper via an FP32 intermediate roundtrip"
    },
    "2355": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Consolidate the allocator partition and admitted-cost byte SHA consumers"
    },
    "2356": {
-    "state": "OPEN",
-    "title": "Integration batch 55: #2341 produced-output queue binding and #2236 io-engine seal (one bundle)"
+    "state": "CLOSED",
+    "title": "Integration batch 55: #2236 io-engine seal and #2357 allocator byte digests (one bundle, re-cut without #2341)"
+   },
+   "2357": {
+    "state": "CLOSED",
+    "title": "Reuse digests.bytes_sha256hex for the two allocator raw byte digests"
+   },
+   "2358": {
+    "state": "CLOSED",
+    "title": "Integration batch 57: allocator raw byte digests reuse bytes_sha256hex (#2357), stacked on batch 55"
+   },
+   "2359": {
+    "state": "CLOSED",
+    "title": "[P1] Share the two GLM MTP capture pretty-byte publication recipes"
    },
    "236": {
     "state": "CLOSED",
     "title": "[P1] Grouped UCB underprices correlated AURA uncertainty"
+   },
+   "2360": {
+    "state": "CLOSED",
+    "title": "Share the two GLM MTP capture pretty-byte recipes"
+   },
+   "2361": {
+    "state": "CLOSED",
+    "title": "Integration batch 63: share the two GLM MTP capture pretty-byte recipes (#2360), on main"
+   },
+   "2362": {
+    "state": "OPEN",
+    "title": "Cover the paired-trade refusal in measured-runtime allocation (#2290)"
+   },
+   "2363": {
+    "state": "CLOSED",
+    "title": "Integration batch 61: #2341 produced-output queue binding, corrected head 4e8b7f31"
+   },
+   "2364": {
+    "state": "OPEN",
+    "title": "[P1] Join canonical performant rung classes to allocator and PACT"
+   },
+   "2365": {
+    "state": "OPEN",
+    "title": "Integration batch 65: #2362 paired-trade coverage and #2237 multimodal calibration stamps, stacked on batch 63"
+   },
+   "2366": {
+    "state": "OPEN",
+    "title": "Integration batch 66: #2253 authenticated control identity and #2238 joint-plan campaign chain, stacked on batch 65"
    },
    "237": {
     "state": "OPEN",
@@ -9486,12 +9526,44 @@
     "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
    },
    "1010": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Impacted-test selector: module glob.glob(pattern) resolves no directory and glob.iglob is not recognised"
    },
    "1011": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Impacted-test selector does not follow a link reached only through a wildcard directory component"
+   },
+   "1012": {
+    "state": "CLOSED",
+    "title": "Add the #685 baseline comparison consumer for #688 timing panels"
+   },
+   "1013": {
+    "state": "CLOSED",
+    "title": "[P2] Resolve module glob.glob/iglob bases and follow links through wildcard components (#1010, #1011)"
+   },
+   "1014": {
+    "state": "OPEN",
+    "title": "[P3] Triage the listed unnameable-base directory reads and lower the pinned ceiling"
+   },
+   "1015": {
+    "state": "OPEN",
+    "title": "[P2] Isolate vLLM stub state in the compile-identity co-run population"
+   },
+   "1016": {
+    "state": "CLOSED",
+    "title": "bench: express G2 joined geometry and preflight its before profiles"
+   },
+   "1017": {
+    "state": "OPEN",
+    "title": "[P1] Repair issue 875 native qualification pytest runtime"
+   },
+   "1018": {
+    "state": "OPEN",
+    "title": "[P1] Price D41 by measured geometry classes and report exact release-unit coverage"
+   },
+   "1019": {
+    "state": "OPEN",
+    "title": "[P1] Measure missing pure near-eight real dense projection shapes"
    },
    "102": {
     "state": "CLOSED",

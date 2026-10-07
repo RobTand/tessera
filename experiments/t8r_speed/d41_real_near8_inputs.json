@@ -1,0 +1,19 @@
+{
+  "schema": "prismaquant.prismabuild.data_manifest.v1",
+  "mount_prefix": "/mnt/shared",
+  "produced_by": {"tool": "D41 actual config read-set declaration", "source": "GLM release cached source config digest, independently read by sha256sum"},
+  "entries": [
+    {
+      "path": "/mnt/shared/models/GLM-5.3-Flash-BF16/config.json",
+      "offset": 0,
+      "bytes": 5939,
+      "sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943"
+    }
+  ],
+  "entry_count": 1,
+  "total_bytes": 5939,
+  "annotations": {
+    "row_id": "d41-real-near8-source-config",
+    "phases": [{"name": "config", "bytes": 5939, "cumulative_bytes": 5939}]
+  }
+}
