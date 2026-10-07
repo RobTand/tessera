@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — real vLLM hash test setup
+
+The hash tests use a fresh interpreter, so another test's fake package cannot supply the runtime.
+The real interpreter imports the platform IR kernels before it computes a config hash.
+The test keeps all configured provider priorities and checks both mode and dispatch identities.
+
 ## 2026-10-07 — native fused T-4 served lane
 
 Dense and routed E2M1x2 exports use the named WINDOW L14 recipe over LUT16.
