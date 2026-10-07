@@ -29,17 +29,17 @@ What it pins:
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
 2. each GLM-image cell covers EXACTLY the rungs the receipts (these and
-   v38's) carried for its family and structure -- a cell widened
-   past its receipts, or a receipt rung dropped from a cell, fails here,
-   beside the one v59 exception in pin 4;
+   v38's) carried for its family and structure, plus the rungs the
+   committed D41 slice allows -- a cell widened past both, or a receipt
+   rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
    the two native A4 launches.
-4. Contract v59 exception: the two base routed E4M3 cells also carry rung
-   768, which no receipt served. Its evidence is D41 v0009 row 768
-   (measured, supported, 20 of 20 cells), not a served census. The TP2
-   served census at 768 is pending; it will carry the rung and close
-   this exception.
+4. Contract v59 allowance: the committed slice
+   experiments/results/t8_d41_r768_census.json (D41 v0009 row 768,
+   measured, supported, 20 of 20 cells) allows rung 768 for routed E4M3.
+   The test reads the allowance from that file. The TP2 served census at
+   768 is pending; it will carry the rung and close this allowance.
 """
 from __future__ import annotations
 
@@ -552,13 +552,21 @@ def test_every_t8_dense_module_ran_the_e4m3_fused_identity_at_its_run_table(stub
         assert tables <= {tuple(t) for t in cell["run_tables"]}, cell["id"]
         assert fused in {(e["symbol"], e["decoder"]) for e in cell["executes"]}, cell["id"]
 
-#: Contract v59: rung 768 is D41-measured, not receipt-served. The TP2
-#: served census at 768 is pending.
-_V59_D41_RUNG = 768
-_V59_D41_CELLS = frozenset({
-    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
-    "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
-})
+#: Contract v59: rung 768 rests on the committed D41 slice, not on a served
+#: route census. The test reads the allowance from that file, so no rung is
+#: hardcoded here. The TP2 served census at 768 is pending.
+_R768_CENSUS = RESULTS / "t8_d41_r768_census.json"
+
+
+def _d41_allowance():
+    doc = json.loads(_R768_CENSUS.read_text(encoding="utf-8"))
+    rung = doc["rung"]
+    assert rung["rung"] == 768
+    assert rung["measurement_status"] == "measured" and rung["supported"] is True
+    assert rung["anomaly_flags"] == []
+    allow = doc["admits"]
+    assert set(allow["rungs"]) == {768} and allow["run_tables"] == [[3]]
+    return (allow["family"], allow["structure"]), set(allow["rungs"])
 
 
 def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
@@ -570,11 +578,12 @@ def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
         for key, rungs in _carried(tool, _load(receipt_path), config_path).items():
             carried.setdefault(key, set()).update(rungs)
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
+    (allow_key, allow_rungs) = _d41_allowance()
     for cell_id in GLM_CELLS:
         cell = cells[cell_id]
         want = set(carried[(cell["family"], cell["structure"])])
-        if cell_id in _V59_D41_CELLS:
-            want.add(_V59_D41_RUNG)
+        if (cell["family"], cell["structure"]) == allow_key:
+            want |= allow_rungs
         assert set(cell["rungs_q256"]) == want, cell_id
         assert cell["evidence"]["grade"] == "route_only", cell_id
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell_id
