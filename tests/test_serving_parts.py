@@ -472,20 +472,25 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
         owned = [n for n in source_names if n.startswith(stack + ".")]
         modules, groups, ignore = {}, {}, []
         if rank in encoded:
-            names = [n.removesuffix(".weight") + ".wire" for n in owned]
-            if input_scales:
-                names += [n.removesuffix(".weight") + ".input_global_scale" for n in owned]
+            metadata = {"expert_ids": [0], "expert_classes": [{"start": 0, "end": 1,
+                "q256": {"w13": [q256, q256], "w2": [q256]}}]}
             roles = [{"tensor": tensor, "source_tensor": tensor, "expert": 0,
+                      "source_layout": "per_expert",
+                      "source_slice": {"expert": 0, "selector": "whole", "transpose": False},
+                      "storage_expert": 0, "wire": tensor.removesuffix(".weight") + ".wire",
                       "role": role, "group": "w2" if role == "down_proj" else "w13",
                       "grid": grid, "q256": q256, "rows": 32, "cols": 32,
                       **({"input_global_scale": 2.5} if input_scales else {})}
                      for tensor, role in zip(owned, ("gate_proj", "up_proj", "down_proj"))]
+            names = [role["wire"] for role in roles]
+            if input_scales:
+                names += [role["wire"].removesuffix(".wire") + ".input_global_scale" for role in roles]
             modules[stack] = {"structure": "routed_moe", "family": family,
-                "grid": grid, "q256": q256, "experts": 1, "roles": roles,
+                "grid": grid, "q256": q256, "experts": 1, **metadata, "roles": roles,
                 "wire_bytes": 6, "container_bytes": 6, "resident_bytes_resident_mode": 3072}
             groups[f"stack{rank}"] = {"targets": [stack], "format": "TESSERA", "scheme": {
                 "structure": "routed_moe", "family": family, "grid": grid,
-                "body": body, "plane": plane, "experts": 1, "groups": {
+                "body": body, "plane": plane, "experts": 1, **metadata, "groups": {
                     "w13": {"q256": q256, "rows": 64, "columns": 32, "wire_stride": 2,
                             "roles": [["gate_proj", 32], ["up_proj", 32]]},
                     "w2": {"q256": q256, "rows": 32, "columns": 32, "wire_stride": 2,
@@ -587,8 +592,8 @@ def test_explicit_plan_requires_every_source_expert(tmp_path):
     role = record["roles"].pop()
     index_path = paths[0] / "model.safetensors.index.json"
     index = json.loads(index_path.read_text())
-    index["weight_map"].pop(role["tensor"].removesuffix(".weight") + ".wire")
-    index["weight_map"][role["tensor"]] = "model.safetensors"
+    index["weight_map"].pop(role["wire"])
+    index["weight_map"][role["source_tensor"]] = "model.safetensors"
     index_path.write_text(json.dumps(index))
     _tensor_file(paths[0] / "model.safetensors", list(index["weight_map"]))
     manifest["export_partition"]["output_sha256"]["model.safetensors"] = parts.sha256_file(paths[0] / "model.safetensors")
