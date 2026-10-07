@@ -149,8 +149,8 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
         if storage["memory"] + 1 >= address_bits:
             _refuse("invalid_storage", field + ".memory", f"{field}.memory exceeds the addressable table size")
     else:
-        from .kernel_window_gemv import TILE_ROWS
-        from .lane_planes import require_window_geometry
+        from .window_geometry import TILE_ROWS
+        from .window_geometry import require_window_geometry
 
         if storage["tile_rows"] != TILE_ROWS:
             _refuse("invalid_storage", field + ".tile_rows",

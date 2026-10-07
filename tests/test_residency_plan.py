@@ -105,7 +105,7 @@ def test_dtype_bytes_and_scalar_shape(planner, dtype, width):
 
 
 def test_native_dense_uses_rank_local_padding_and_tables(planner):
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "dense_window", "family": "TESSERA_FP8", "rates": [4] * 32,
                "window_bits": 8, "tile_rows": TILE_ROWS}
     placement = plan(allocation("dense", ranks=(0, 1), shard_axis=0, storage=storage),
@@ -118,7 +118,7 @@ def test_native_dense_uses_rank_local_padding_and_tables(planner):
 
 
 def test_native_routed_slices_rates_in_placement_order(planner):
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "routed_window", "family": "TESSERA_FP8", "rates": [3] * 32 + [5] * 32,
                "window_bits": 8, "tile_rows": TILE_ROWS, "fused": True}
     placement = plan(allocation("experts", ranks=(1, 0), shard_axis=2, storage=storage),
@@ -204,7 +204,7 @@ def test_cli_fit_and_capacity_refusal(planner, tmp_path):
 @pytest.mark.parametrize("kind", ["dense_window", "dense_a4"])
 def test_oversized_native_table_refuses_by_name(planner, kind):
     from tessera.manifest import WINDOW_BITS_MAX
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     storage = ({"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
                 "window_bits": WINDOW_BITS_MAX + 1, "tile_rows": TILE_ROWS}
                if kind == "dense_window" else
@@ -241,7 +241,7 @@ def test_native_tile_geometry_refuses_before_pricing(planner, kind, tile_rows):
 
 
 def test_routed_rate_wider_than_window_refuses(planner):
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "routed_window", "family": "TESSERA_FP8", "rates": [5] * 32,
                "window_bits": 4, "tile_rows": TILE_ROWS, "fused": False}
     with pytest.raises(planner.ResidencyRefusal) as caught:
@@ -256,7 +256,7 @@ def test_routed_rate_wider_than_window_refuses(planner):
 
 @pytest.mark.parametrize("rows,expected", [(31, 9224), (512, 13072), (513, 21272)])
 def test_dense_row_padding_matches_loader_tiles(planner, rows, expected):
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "dense_window", "family": "TESSERA_FP8", "rates": [4] * 32,
                "window_bits": 8, "tile_rows": TILE_ROWS}
     report = planner.plan_residency(spec(x=([rows, 32], "bfloat16")),
@@ -265,7 +265,7 @@ def test_dense_row_padding_matches_loader_tiles(planner, rows, expected):
 
 
 def test_dense_loader_padding_refuses_the_old_small_capacity(planner):
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "dense_window", "family": "TESSERA_FP8", "rates": [4] * 32,
                "window_bits": 8, "tile_rows": TILE_ROWS}
     with pytest.raises(planner.ResidencyRefusal) as caught:
@@ -274,4 +274,59 @@ def test_dense_loader_padding_refuses_the_old_small_capacity(planner):
                                    capacities=(2064, 2064)))
     assert [rank["peak_bytes"] for rank in caught.value.report["ranks"]] == [9232, 9232]
     assert [reason["excess_bytes"] for reason in caught.value.report["reasons"]] == [7168, 7168]
+
+
+
+@pytest.mark.parametrize("kind,invalid,expected", [
+    ("dense_window", None, 9232), ("routed_window", None, 18520),
+    ("dense_window", "tile_rows", None), ("routed_window", "rates", None),
+])
+def test_native_plan_and_refusal_use_only_stdlib(planner, kind, invalid, expected):
+    from pathlib import Path
+    storage = {"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
+               "window_bits": 8, "tile_rows": 512}
+    shape = [32, 32] if kind == "dense_window" else [2, 64, 32]
+    if kind == "routed_window":
+        storage["fused"] = False
+    if invalid == "tile_rows":
+        storage["tile_rows"] = 64
+    elif invalid == "rates":
+        storage.update(rates=[5] * 32, window_bits=4)
+    payload = json.dumps([spec(x=(shape, "bfloat16")),
+                          plan(allocation("x", storage=storage), capacities=(100000,))])
+    source = str(Path(__file__).resolve().parents[1] / "src")
+    code = f"""
+import json
+import sys
+sys.path.insert(0, {source!r})
+from tessera.residency_plan import ResidencyRefusal, plan_residency
+structure, placement = json.loads({payload!r})
+try:
+    report = plan_residency(structure, placement)
+except ResidencyRefusal as exc:
+    report = exc.report
+assert 'torch' not in sys.modules
+print(json.dumps(report))
+"""
+    result = subprocess.run([sys.executable, "-I", "-S", "-c", code], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    report = json.loads(result.stdout)
+    if invalid is None:
+        assert report["fits"] is True
+        assert report["ranks"][0]["peak_bytes"] == expected
+    else:
+        assert report["fits"] is False
+        assert report["reasons"][0]["code"] == "invalid_storage"
+        assert report["reasons"][0]["field"].endswith("." + invalid)
+
+
+def test_residency_architecture_reference_uses_current_snapshot():
+    from test_issue_refs import DOCS, REF, _snapshot
+    snapshot = _snapshot()
+    paragraph = (DOCS / "ARCHITECTURE.md").read_text().split("\n\n", 2)[1]
+    citations = REF.findall(paragraph)
+    assert citations
+    missing = [(repo or snapshot["default_repo"], number) for repo, number in citations
+               if number not in snapshot["repos"][repo or snapshot["default_repo"]]]
+    assert not missing, f"residency architecture references absent from snapshot: {missing}"
 

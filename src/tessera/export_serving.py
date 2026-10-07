@@ -1550,7 +1550,7 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
     layouts as the write loop recorded them; a TP cut prices each rank's
     rows/columns/rates through :func:`routed_unit_rank_cut`.
     """
-    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.window_geometry import TILE_ROWS
     from tessera.routed_fused import fused_routed_unit_shape_refusal
 
     units_total, parts, refused, fused_total = 0, set(), False, 0
@@ -3318,7 +3318,7 @@ def main():
                             # per-part ``run_off`` and the fused lane's
                             # tables (#685, v45) are per stack, added once
                             # the stack's shape is known below.
-                            from tessera.kernel_window_gemv import TILE_ROWS
+                            from tessera.window_geometry import TILE_ROWS
                             layout = {
                                 "group": unit["group"], "projection": unit["projection"],
                                 "rows": int(unit_manifest.geometry.rows),
@@ -3491,7 +3491,7 @@ def main():
             shard_payload[f"{module}.wire_bytes"] = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
             native_roles = None
             if family != NVFP4:
-                from tessera.kernel_window_gemv import TILE_ROWS
+                from tessera.window_geometry import TILE_ROWS
                 native_roles = [{"rows": role_rows, "cols": cols, "rates": unit.rates,
                                  "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
                                 for _name, role_rows, _blob, unit, _forests in roles]

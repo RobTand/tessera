@@ -77,12 +77,12 @@ import os
 
 import torch
 
+from . import window_geometry
 from .alphabet import require_hardware_byte_grid
 from .errors import GrammarError
 from .kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED, WINDOW_GEMV_SOURCE
 
 __all__ = [
-    "TILE_ROWS",
     "WINDOW_GEMV_SOURCE",
     "SUPPORTED_RATES",
     "WINDOW_BITS_SUPPORTED",
@@ -112,7 +112,6 @@ __all__ = [
     "reference_states",
 ]
 
-TILE_ROWS = 512
 # SUPPORTED_RATES and WINDOW_BITS_SUPPORTED are IMPORTED (above), not declared
 # here: tessera.kernel_roster reads them off serving/csrc/window_gemv.cu -- the very
 # file _ext() compiles -- so the set this module refuses a unit against is the
@@ -472,7 +471,7 @@ WORD_LAYOUT_PIECE_MAJOR = "piece_major"
 WORD_LAYOUTS = (WORD_LAYOUT_LEGACY, WORD_LAYOUT_PIECE_MAJOR)
 
 #: The 64-row piece count inside a 512-row tile, fixed by the format.
-PIECES_PER_TILE = TILE_ROWS // 64
+PIECES_PER_TILE = window_geometry.TILE_ROWS // 64
 
 
 def piece_major_eligible(rep: "Repacked") -> bool:
@@ -607,8 +606,8 @@ def repack_window_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> Rep
             "the materialised FP8 path serves this unit"
         )
     device = body_bits.device
-    rows_p = -(-rows // TILE_ROWS) * TILE_ROWS
-    n_tiles = rows_p // TILE_ROWS
+    rows_p = -(-rows // window_geometry.TILE_ROWS) * window_geometry.TILE_ROWS
+    n_tiles = rows_p // window_geometry.TILE_ROWS
     body = body_bits.to(torch.int32)
     if rows_p != rows:
         body = torch.cat([body, torch.zeros(rows_p - rows, cols, dtype=torch.int32, device=device)], 0)
@@ -632,7 +631,7 @@ def repack_window_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> Rep
             byte |= grouped[:, i, :] << (present * (cpb - 1 - i))
         byte = byte.to(torch.uint8)                                   # stream bytes, in order
         chunk_bytes = 64 * present                                    # 512 rows * R bits / 8
-        tiles = byte.view(n_tiles, TILE_ROWS // cpb, n).permute(0, 2, 1)   # [G, n, chunk_bytes]
+        tiles = byte.view(n_tiles, window_geometry.TILE_ROWS // cpb, n).permute(0, 2, 1)   # [G, n, chunk_bytes]
         tiles = tiles.reshape(n_tiles, n, chunk_bytes // 4, 4).flip(-1)     # LE words, MSB-first
         per_tile.append(tiles.reshape(n_tiles, n * chunk_bytes))
         runs.append((present, col0, n, word0))
