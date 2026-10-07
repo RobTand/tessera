@@ -49,6 +49,8 @@ DENSE_SHAPES = (("index_weights", 32, 4096), ("index_wk", 128, 4096),
 
 
 def head_stamp():
+    if os.environ.get("TESSERA_HEAD"):
+        return os.environ["TESSERA_HEAD"]
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
 
@@ -789,6 +791,8 @@ def mode_dry_run(args):
     import torch
     from tessera.unit_artifact import parse_unit_artifact, read_unit_artifact
     from tessera.serving.scheme import validate_tessera_scheme, validate_tessera_moe_scheme
+    from tessera.serving import nvfp4_route, nvfp4_moe_route
+    from tessera import routed_fused_e2m1
     from tessera.fused_frame import pack_fused
 
     torch.set_num_threads(1)
@@ -826,6 +830,7 @@ def mode_dry_run(args):
                 **source_stamp(args), cells=cells, skips=[], input_reads=reads,
                 requested_population=[f"q{q}" for q in args.q256],
                 population=dict(requested=len(args.q256), observed=len(cells), skips=0),
+                imported_routes=[nvfp4_route.__name__, nvfp4_moe_route.__name__, routed_fused_e2m1.__name__],
                 gpu_exercised=False, cuda_only_repack="not-called",
                 serving_population_pending=requested_keys(args))
 
