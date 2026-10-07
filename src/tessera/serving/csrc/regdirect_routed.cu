@@ -151,6 +151,11 @@ __device__ __forceinline__ void decode_group(const uint32_t (&o)[R], const uint3
             const int w = q >> 2, b = 3 - (q & 3);     // a pair is one byte, MSB-first
             const uint32_t lo = __byte_perm(o[w], p1[w], b | ((4 + b) << 4));
             c = __byte_perm(lo, pp[w], 0x0010 | ((4 + b) << 8));
+        } else if constexpr (R >= 5) {
+            // A 14-bit window spans at most 3 codes at R >= 5: row 2g reaches back into p1 only.
+            // The 4R-bit context p1 | own fits a register up to R = 8 and covers 14 + R bits.
+            const int off = q * 2 * R;
+            c = (field<R, 2 * R>(p1, off) << (2 * R)) | field<R, 2 * R>(o, off);
         } else {
             const int off = q * 2 * R;
             c = (field<R, 2 * R>(pp, off) << (4 * R)) | (field<R, 2 * R>(p1, off) << (2 * R)) | field<R, 2 * R>(o, off);
@@ -164,6 +169,19 @@ __device__ __forceinline__ void decode_group(const uint32_t (&o)[R], const uint3
     a[3] = pack4(v1[4], v1[5], v1[6], v1[7]);
 }
 
+// The T-8 code rates the kernel instantiates (R768 .. R2048): one template per rate.
+template <class F>
+__device__ __forceinline__ void by_rate(int r, F&& f) {
+    switch (r) {
+        case 3: f(std::integral_constant<int, 3>{}); break;
+        case 4: f(std::integral_constant<int, 4>{}); break;
+        case 5: f(std::integral_constant<int, 5>{}); break;
+        case 6: f(std::integral_constant<int, 6>{}); break;
+        case 7: f(std::integral_constant<int, 7>{}); break;
+        default: f(std::integral_constant<int, 8>{}); break;
+    }
+}
+
 // The history pairs of one unit k-step: pp from lane g - 2 and p1 from lane
 // g - 1, or (g < 2) from the boundary words bb, which hold the previous 16-row
 // block's lane g + 6.
@@ -173,9 +191,13 @@ __device__ __forceinline__ void history(const uint32_t (&o)[R], const uint32_t (
     #pragma unroll
     for (int i = 0; i < R; ++i) {
         const uint32_t up4 = __shfl_up_sync(FULL, o[i], 4);
-        const uint32_t up8 = __shfl_up_sync(FULL, o[i], 8);
         const uint32_t dn4 = __shfl_down_sync(FULL, bb[i], 4);
-        pp[i] = g < 2 ? bb[i] : up8;
+        if constexpr (R < 5) {                      // decode_group reads pp only below R = 5
+            const uint32_t up8 = __shfl_up_sync(FULL, o[i], 8);
+            pp[i] = g < 2 ? bb[i] : up8;
+        } else {
+            pp[i] = 0u;
+        }
         p1[i] = g == 0 ? dn4 : up4;
     }
 }
@@ -187,9 +209,13 @@ __device__ __forceinline__ void history_range(const uint32_t (&o)[R], const uint
     #pragma unroll
     for (int i = W0; i <= W1; ++i) {
         const uint32_t up4 = __shfl_up_sync(FULL, o[i], 4);
-        const uint32_t up8 = __shfl_up_sync(FULL, o[i], 8);
         const uint32_t dn4 = __shfl_down_sync(FULL, bb[i], 4);
-        pp[i] = g < 2 ? bb[i] : up8;
+        if constexpr (R < 5) {                      // decode_group reads pp only below R = 5
+            const uint32_t up8 = __shfl_up_sync(FULL, o[i], 8);
+            pp[i] = g < 2 ? bb[i] : up8;
+        } else {
+            pp[i] = 0u;
+        }
         p1[i] = g == 0 ? dn4 : up4;
     }
 }
@@ -399,15 +425,13 @@ __global__ void __launch_bounds__(THREADS, 2) rd_decode(Params p) {
         };
         {
             const int a = ks0, b = min(ks1, ksa);
-            if (ra == 4) run(std::integral_constant<int, 4>{}, w0, h0, a, b, 0);
-            else run(std::integral_constant<int, 3>{}, w0, h0, a, b, 0);
+            by_rate(ra, [&](auto RC) { run(RC, w0, h0, a, b, 0); });
         }
         if (ksa < p.KS) {
             const int a = max(ks0, ksa) - ksa, b = ks1 - ksa;
             const uint32_t* wB = w0 + tileA;
             const uint32_t* hB = h0 + (long)ksa * ra * HIST_LANES;
-            if (rb == 4) run(std::integral_constant<int, 4>{}, wB, hB, a, b, ksa);
-            else run(std::integral_constant<int, 3>{}, wB, hB, a, b, ksa);
+            by_rate(rb, [&](auto RC) { run(RC, wB, hB, a, b, ksa); });
         }
 
         bool finish = true;
@@ -651,13 +675,11 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
                                                            smem, rt_live, s_kp, acc);
             }
         };
-        if (ra == 4) run(std::integral_constant<int, 4>{}, w0, h0, 0, ksa, 0);
-        else run(std::integral_constant<int, 3>{}, w0, h0, 0, ksa, 0);
+        by_rate(ra, [&](auto RC) { run(RC, w0, h0, 0, ksa, 0); });
         if (ksa < p.KS) {
             const uint32_t* wB = w0 + tileA;
             const uint32_t* hB = h0 + (long)ksa * ra * HIST_LANES;
-            if (rb == 4) run(std::integral_constant<int, 4>{}, wB, hB, 0, p.KS - ksa, ksa);
-            else run(std::integral_constant<int, 3>{}, wB, hB, 0, p.KS - ksa, ksa);
+            by_rate(rb, [&](auto RC) { run(RC, wB, hB, 0, p.KS - ksa, ksa); });
         }
         if constexpr (SPLIT) {
             // up warps hand their accumulators to the gate warp of the same block

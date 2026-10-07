@@ -22,7 +22,7 @@ KSTEP = 32            # columns per pair group per unit k-step
 HIST_LANES = 8        # a history unit keeps lanes (6, t) and (7, t)
 KS_MAX = 128          # unit k-steps per expert
 SUPERBLOCK_DECODE = 8                 # routes per decode superblock (one route tile)
-STAGE1_RATES = (3, 4)                 # T-8 R768 .. R1024 (CEO, 2026-10-07)
+SERVED_RATES = (3, 4, 5, 6, 7, 8)     # T-8 R768 .. R2048: the code rates the kernel instantiates (by_rate)
 MODES = {"gate_up": 0, "down": 2}
 GROUPS = {0: 1, 2: 2}                 # activation column groups per unit k-step
 TABLES = {0: 2, 2: 1}                 # tables (and scale rows) per expert
@@ -30,8 +30,8 @@ TABLES = {0: 2, 2: 1}                 # tables (and scale rows) per expert
 
 def pack_rate(ra: int, rb: int, ksa: int) -> int:
     """One expert's rate profile as the kernel reads it: slots [0, ksa) at ``ra``, then ``rb``."""
-    if ra not in STAGE1_RATES or rb not in STAGE1_RATES:
-        raise ValueError(f"stage 1 serves rates {STAGE1_RATES}, got ({ra}, {rb})")
+    if ra not in SERVED_RATES or rb not in SERVED_RATES:
+        raise ValueError(f"the kernel serves rates {SERVED_RATES}, got ({ra}, {rb})")
     if not 0 <= ksa <= KS_MAX:
         raise ValueError(f"ksa {ksa} outside [0, {KS_MAX}]")
     return ra | (rb << 4) | (ksa << 8)
@@ -497,8 +497,8 @@ def transcode_stacks(gate, up, down, tables, rungs: "dict | None" = None) -> dic
         slot_rate = sorted_rate[:, ::ng]
         ks = slot_rate.shape[1]
         ra, rb = slot_rate[:, 0], slot_rate[:, -1]
-        if not bool(((rb - ra) <= 1).all()) or not bool(torch.isin(slot_rate, torch.tensor(STAGE1_RATES, device=ra.device)).all()):
-            raise GrammarError(f"stage 1 serves rates {STAGE1_RATES}, one or two adjacent per expert")
+        if not bool(((rb - ra) <= 1).all()) or not bool(torch.isin(slot_rate, torch.tensor(SERVED_RATES, device=ra.device)).all()):
+            raise GrammarError(f"the kernel serves rates {SERVED_RATES}, one or two adjacent per expert")
         ksa = torch.where(ra == rb, torch.full_like(ra, ks), (slot_rate == ra.unsqueeze(1)).sum(1))
         prof = (ra | (rb << 4) | (ksa << 8)).to(torch.int32)
         nt = -(-rows // TILE)

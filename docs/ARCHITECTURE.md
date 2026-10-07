@@ -19,7 +19,8 @@ The allocator may not use such a table until the kernel passes G3 v2 and an end-
 
 `tessera.regdirect_routed` owns the register-direct routed T-8 kernel (`serving/csrc/regdirect_routed.cu`).
 Each warp decodes its own MMA A fragment from the fragment wire and never stages decoded weights in shared memory.
-It serves the e4m3 family at a 14-bit window with the row-scale epilogue, at R3, R4 and their k-step mix.
+It serves the e4m3 family at a 14-bit window with the row-scale epilogue, at R3 to R8 (R768 to R2048) and adjacent k-step mixes.
+From R5 the window spans at most three codes, so a pair's context is the previous pair and its own (4R bits); below R5 it adds the pair before.
 Today's LUT class kernel stays the default. This kernel is selected nowhere until it passes G3 v2 and an end-to-end serve.
 `build_layer(gate, up, down, classes, device, *, top_k, max_tokens)` reads the class build's full storage-ordered bundles.
 It returns `parameters["regdirect"]`, one tuple of tensors per mode in `PAYLOAD_FIELDS` order, and a tensor-free `RegDirectClassKernel`.
