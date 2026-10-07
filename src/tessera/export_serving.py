@@ -90,10 +90,10 @@ re-sharding is a serve flag rather than a re-export.  Encoding per rank would
 make the bytes a function of the machine they were built for, and a unit cut
 for 4 ranks could not be re-cut for 8.  Pricing is the one place the rank
 enters: a routed FP8/BF16 stack's ``resident_bytes_resident_mode`` is what
-the compact window lane holds for the WHOLE stack (its repacked planes,
-tables, permutations and bookkeeping plus the fused lane's composed tables,
-run pairs and block descriptors where the shape admits them; never a decoded
-tile, which that lane does not allocate -- tessera#624), and
+the sole native class dispatcher retains for the WHOLE stack: packed words,
+weight scales, init, selected composed tables, launch descriptors, inverse
+and class counters. Class aliases are counted once; load-only compact planes
+are retired.
 ``totals.per_rank`` (``--fit-tp-size``) prices
 each rank's cut of every routed stack beside the MTP draft's embed/head
 duplicate as its own line item (tessera#645).
@@ -3353,17 +3353,11 @@ def main():
                                 "group": unit["group"], "projection": unit["projection"],
                                 "rows": exported.rows, "cols": exported.columns})
                         else:
-                            # THE COMPACT WINDOW LANE'S OWN TENSORS (tessera#624).
-                            # ``serving.moe_route`` serves every FP8/BF16
-                            # routed stack through ``compact_window_lane``,
-                            # which never allocates a decoded tile: what a
-                            # rank retains is the repacked planes, the
-                            # per-expert tables and bookkeeping, priced from
-                            # this unit's verified manifest by the same
-                            # arithmetic as ``WindowUnitAxis._alloc``.  The
-                            # per-part ``run_off`` and the fused lane's
-                            # tables (#685, v45) are per stack, added once
-                            # the stack's shape is known below.
+                            # Native retained unit planes: words, weight scales,
+                            # init and has_init. The class dispatcher retires
+                            # raw runs, offsets, permutations and grid planes.
+                            # Selected composed tables and launch descriptors
+                            # are charged once at stack finish below.
                             from tessera.kernel_window_gemv import TILE_ROWS
                             layout = {
                                 "group": unit["group"], "projection": unit["projection"],
@@ -3387,9 +3381,9 @@ def main():
                                         tile_rows=TILE_ROWS))
                             except ValueError as exc:
                                 raise SystemExit(
-                                    f"{unit['tensor']}: cannot price the compact routed lane "
-                                    f"from its wire ({exc}); a routed stack the compact lane "
-                                    "cannot read has no resident-mode figure") from exc
+                                    f"{unit['tensor']}: cannot price native retained planes "
+                                    f"from its wire ({exc}); the native class owner "
+                                    "requires a valid window layout") from exc
                             stack_record["unit_layouts"].append(layout)
                         stack_record["roles"].append({
                             **expert_scale,
@@ -3690,10 +3684,9 @@ def main():
         stack_record.pop("group_blob_bytes")
         routed_layouts[stack] = stack_record.pop("unit_layouts")
         if spec["family"] != NVFP4:
-            # The stack-level terms of the compact lane (tessera#624): one
-            # ``run_off`` per part at ``finish`` and, where the whole stack's
-            # wire shape admits the fused lane, its composed tables (#685),
-            # run pairs and block descriptors (contract v45).
+            # Selected composed tables and launch descriptors are aliases
+            # across class views, charged once per unit. The inverse and
+            # class counters are the only stack-wide persistent tensors.
             stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
                 spec["family"], spec["experts"], routed_layouts[stack],
                 expert_classes=spec["expert_classes"], native_library=spec["native_library"])[1]
