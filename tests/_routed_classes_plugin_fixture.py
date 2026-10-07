@@ -101,3 +101,28 @@ def route_cases(scheme, tokens, device="cpu"):
         weights = weights.roll(index + 1, dims=1) * (1.0 - index * 0.0625)
         cases.append((ids, weights.to(device)))
     return cases
+
+
+def pure_schedule_launch(adapter, mode, x, scale, routing, out, *, weight, swiglu_limit):
+    """Call the existing pure native entry with an explicit activation clamp."""
+    from tessera import routed_fused as rf
+
+    cls = adapter.classes[0]
+    down = mode == 2
+    b0, b1 = (cls.down, cls.down) if down else (cls.gate, cls.up)
+    w0, w1 = (cls.words_down, cls.words_down) if down else (cls.words_gate, cls.words_up)
+    t0, t1 = (cls.table_down, cls.table_down) if down else (cls.table_gate, cls.table_up)
+    r0, r1 = (cls.runs_down, cls.runs_down) if down else (cls.runs_gate, cls.runs_up)
+    d0, d1 = (cls.bdesc_down, cls.bdesc_down) if down else (cls.bdesc_gate, cls.bdesc_up)
+    bm = rf.superblock_rows(adapter.library, mode, routing.tokens)
+    counter = torch.zeros(1, dtype=torch.int32, device=x.device)
+    empty = torch.empty(0, dtype=torch.float32, device=x.device)
+    rf._ext(adapter.library).routed_fused_forward(
+        mode, adapter.fp8, x, scale if scale is not None else empty,
+        w0, w1, t0, t1, b0.init_all, b1.init_all, b0.has_init, b1.has_init,
+        b0.scale_all, b1.scale_all, r0, r1, d0, d1,
+        cls.tile_words_down if down else cls.tile_words_gate_up,
+        cls.slot_words_down if down else cls.slot_words_gate_up, adapter.piece_major,
+        routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm), counter,
+        routing.top_k, 1 if down else 0, weight, swiglu_limit,
+        out, torch.cuda.get_device_properties(x.device).multi_processor_count, bm)

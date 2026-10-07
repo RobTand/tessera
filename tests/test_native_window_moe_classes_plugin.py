@@ -30,8 +30,8 @@ from tessera.serving.scheme import (expert_role_declarations,
                                     validate_tessera_moe_scheme)
 from tessera.window_gemm_grouped import prepare_grouped_window_gemm
 from _routed_classes_plugin_fixture import (EXPERTS, HIDDEN, INTERMEDIATE,
-                                            ROLES, TOP_K, route_cases, wire_fixture)
-from test_routed_window_classes_cuda import _pure_launch
+                                            ROLES, TOP_K, route_cases, wire_fixture,
+                                            pure_schedule_launch)
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="CPU fixture control only; real vLLM loader/CUDA graph cases did not execute")
@@ -151,25 +151,48 @@ def _independent_packed(scheme, wires, degree, rank):
 
 
 def _assert_loaded_coordinates(actual, expected, degree, rank):
+    library = actual.adapter().library
     for role in ("gate", "up", "down"):
         got, want = getattr(actual, role), getattr(expected, role)
         assert (got.rows, got.cols, got.experts) == (want.rows, want.cols, EXPERTS)
-        for field in ("words_all", "table_all", "codes_all", "native_all", "scale_all",
-                      "runs_all", "init_all", "has_init", "perm_all", "total_words", "tile_words"):
+        for field in ("words_all", "scale_all", "init_all", "has_init"):
             a, b = getattr(got, field), getattr(want, field)
-            # FP8 comparison uses bytes. Floating NaNs are not fixture values.
             assert torch.equal(a.view(torch.uint8), b.view(torch.uint8)), (role, field, degree, rank)
+        # The native table is composed from definition-side codes and alphabet.
+        table = rf.compose_table(want, library)
+        assert torch.equal(got.table_all.view(torch.uint8), table.view(torch.uint8)), (role, "table")
+        # Finalization discards these preparation planes. Do not access their bytes.
+        for field in ("codes_all", "native_all", "runs_all", "word_off", "tile_words",
+                      "total_words", "run_off", "perm_all"):
+            assert getattr(got, field) is None, (role, "unretired", field)
         if role != "down" and rank == 1:
             assert torch.all(got.has_init == 1), "TP2 rank one must carry row-cut WINDOW history"
 
+@pytest.mark.parametrize("family", ["e4m3", "value"])
+def test_cpu_native_owner_coordinate_helper_respects_retired_planes(family, monkeypatch):
+    from test_routed_window_classes_cuda import _packed
+
+    # Only device admission, extension loading and stream creation are absent.
+    # Lookup composition, class descriptors and native-owner retirement are real.
+    monkeypatch.setattr(rf, "fused_routed_window_supported", lambda *args: None)
+    monkeypatch.setattr(rf, "_ext", lambda library: object())
+    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device: rf._DispatchResources(
+        (object(), object()), object(), (object(), object()),
+        torch.empty(0, dtype=torch.float32, device=device)))
+    prepared = _packed(family, three=True, device="cpu")
+    native = prepared.native_owner()
+    definition = _packed(family, three=True, device="cpu")
+    _assert_loaded_coordinates(native, definition, 1, 0)
+    assert native is not prepared
+    print(f"CPU owner lifetime only: {family}, real composed tables and retired metadata; no forward operation")
 
 def _bits(actual, expected):
     assert actual.dtype == expected.dtype == torch.bfloat16
     assert torch.equal(actual.view(torch.int16), expected.view(torch.int16))
 
 
-def _saved_reference(packed, x, ids, weights):
-    """Use the existing pure launch with this fixture's actual rank geometry."""
+def _saved_reference(packed, x, ids, weights, *, swiglu_limit):
+    """Use the pure native entry with the actual rank geometry and clamp."""
     routed = torch.empty(ids.numel(), packed.down.rows, device=x.device, dtype=torch.bfloat16)
     flat_ids = ids.reshape(-1)
     for desc in packed.expert_classes:
@@ -187,10 +210,10 @@ def _saved_reference(packed, x, ids, weights):
         routing = pure._routing(local_ids, rw)
         xq, a1 = pure._quantized(xin, None, len(take))
         act = torch.empty(len(take), packed.gate.rows, device=x.device, dtype=torch.bfloat16)
-        _pure_launch(pure, 0, xq, a1, routing, act, weight=False)
+        pure_schedule_launch(pure, 0, xq, a1, routing, act, weight=False, swiglu_limit=swiglu_limit)
         aq, a2 = pure._quantized(act, None, len(take))
         output = torch.empty(len(take), packed.down.rows, device=x.device, dtype=torch.bfloat16)
-        _pure_launch(pure, 2, aq, a2, routing, output, weight=True)
+        pure_schedule_launch(pure, 2, aq, a2, routing, output, weight=True, swiglu_limit=swiglu_limit)
         routed[take] = output
     out = torch.empty_like(x)
     rf._ext(rf.library_for(packed.family)).token_sum(routed, out, ids.shape[1])
@@ -212,8 +235,10 @@ def _save_references(tmp_path, name, scheme, cases, expected, degree, rank, libr
                                "bf16_bits": ref.view(torch.int16).cpu().tolist()}
                               for (ids, weights), ref in zip(cases, expected)]}
     path.write_text(json.dumps(payload) + "\n")
-    assert json.loads(path.read_text())["references"][0]["bf16_bits"] == payload["references"][0]["bf16_bits"]
     print(f"Saved stitched pure-schedule references: {path}")
+    saved = json.loads(path.read_text())["references"]
+    return [torch.tensor(row["bf16_bits"], dtype=torch.int16, device=expected[0].device)
+            .view(torch.bfloat16) for row in saved]
 
 
 @cuda
@@ -246,14 +271,15 @@ def test_real_plugin_maps_storage_and_replays_changed_global_routes(
     cases = route_cases(scheme, tokens, device="cuda")
     expected = [_saved_reference(definition, x,
                 torch.tensor(want_inverse, dtype=torch.int32, device="cuda").index_select(
-                    0, ids.reshape(-1)).reshape_as(ids), weights)
+                    0, ids.reshape(-1)).reshape_as(ids), weights, swiglu_limit=layer.swiglu_limit)
                 for ids, weights in cases]
     assert all(torch.isfinite(ref).all() for ref in expected)
     assert any(torch.count_nonzero(ref) for ref in expected), "zero output cannot prove expert identity"
     # A missing inverse must produce different bytes, not merely a missing symbol.
-    assert any(not torch.equal(ref, _saved_reference(definition, x, ids, weights))
+    assert any(not torch.equal(ref, _saved_reference(definition, x, ids, weights,
+               swiglu_limit=layer.swiglu_limit))
                for (ids, weights), ref in zip(cases, expected))
-    _save_references(tmp_path, f"{family}-{layout}-tp{degree}-rank{rank}-m{tokens}-reverse{int(reverse)}",
+    expected = _save_references(tmp_path, f"{family}-{layout}-tp{degree}-rank{rank}-m{tokens}-reverse{int(reverse)}",
                      scheme, cases, expected, degree, rank, method._native.library)
     for (ids, weights), ref in zip(cases, expected):
         saved_ids, saved_weights = ids.clone(), weights.clone()
@@ -293,9 +319,9 @@ def test_real_plugin_uniform_identity_is_exact_old_pure_schedule(family, degree,
     x = (torch.randn(16, HIDDEN, generator=torch.Generator().manual_seed(4108)) * 0.125).bfloat16().cuda()
     ids = torch.arange(EXPERTS, dtype=torch.int32, device="cuda").repeat(16, 1)
     weights = torch.linspace(0.125, 0.875, ids.numel(), device="cuda").reshape_as(ids)
-    ref = _saved_reference(definition, x, ids, weights)
-    _save_references(tmp_path, f"{family}-uniform-tp{degree}-rank{rank}", scheme, [(ids, weights)], [ref],
-                     degree, rank, method._native.library)
+    ref = _saved_reference(definition, x, ids, weights, swiglu_limit=layer.swiglu_limit)
+    ref, = _save_references(tmp_path, f"{family}-uniform-tp{degree}-rank{rank}", scheme, [(ids, weights)], [ref],
+                            degree, rank, method._native.library)
     _bits(method.apply(layer, x, weights, ids, None, None), ref)
     torch.cuda.synchronize()
     graph = torch.cuda.CUDAGraph()
