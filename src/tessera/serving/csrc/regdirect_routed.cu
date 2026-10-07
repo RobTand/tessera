@@ -450,7 +450,10 @@ template <int MODE, int RT, bool SPLIT> struct PF {
     static constexpr int NACC = (MODE == 0 && !SPLIT) ? 2 : 1;      // accumulator sets per warp
     static constexpr int BLOCKS = SPLIT ? 4 : WARPS;                // 16-row blocks per task
     static constexpr int ROWS = BLOCKS * BLOCK_ROWS;
-    static constexpr int ROW = XKC * NG * KSTEP + 16;               // bytes per staged row (padded)
+    // Bytes per staged row: the data plus 32 B, so the row stride is 8 words mod 32.  A lane
+    // (g, t) reads 8 bytes at row g, word 2t: bank 8g + 2t, which no two lanes of a half-warp
+    // share (a 16 B pad gave 4g + 2t: 2-way conflicts; NCU gpu-ncu-01, 450 M conflicts at M=4096).
+    static constexpr int ROW = XKC * NG * KSTEP + 32;
     static constexpr int TABB = Mode<MODE>::NTAB * TAB;
     static constexpr int XBYTES = 2 * SB * ROW;
     static constexpr int SMEM = TABB + XBYTES;
