@@ -17,8 +17,6 @@ the rule's refusals by name.  Torch-free.
 from __future__ import annotations
 
 import copy
-import json
-from pathlib import Path
 
 import pytest
 
@@ -26,28 +24,8 @@ from tessera.serving.contract import (ALLOWABLE_RULES, cell_covers_rung, derived
                                       format_entry, load_serving_contract, rung_allowable,
                                       rung_rates, validate_serving_contract)
 
-ROOT = Path(__file__).resolve().parents[1]
-#: The committed per-rung production basis for the v59 T-16 routed widening.
-#: Tests read this file, never a hardcoded roster, so a rung joins the cells
-#: only with its sweep route rows and quality rows named here.
-SWEEP_ADMISSION = ROOT / "experiments" / "results" / "t16_routed_sweep_admission.json"
-
 E4M3 = "TESSERA_E4M3_K1"
 ROUTED = "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
-
-
-def _sweep_admission():
-    return json.loads(SWEEP_ADMISSION.read_text(encoding="utf-8"))
-
-
-def _admitted_rungs():
-    doc = _sweep_admission()
-    return sorted(int(q) for q, row in doc["rungs"].items() if row["status"] == "admitted")
-
-
-def _withheld_rungs():
-    doc = _sweep_admission()
-    return sorted(int(q) for q, row in doc["rungs"].items() if row["status"] == "withheld")
 
 
 @pytest.fixture(scope="module")
@@ -98,25 +76,6 @@ BF16_ROUTED = "tessera_bf16_k1_routed_moe_sm121_batch_resident"
 BF16_DENSE = "tessera_bf16_k1_dense_sm121_batch_resident"
 
 
-def test_the_sweep_admission_file_names_bits_1_to_7_and_withholds_bit_8():
-    """The committed per-rung basis is well formed: seven admitted whole-bit
-    rungs with sweep route rows and quality rows named per rung, and bit 8
-    withheld on the rate-8 down anomaly (13-18 percent spread at M 1-512,
-    rerun PB 2d5b871f pending).  Census tests read this file, never a roster
-    from this module, so a rung joins the cells only with evidence named
-    here."""
-    doc = _sweep_admission()
-    assert doc["schema"] == "tessera.t16-routed-sweep-admission.v1"
-    assert _admitted_rungs() == [256, 512, 768, 1024, 1280, 1536, 1792]
-    assert _withheld_rungs() == [2048]
-    for q in _admitted_rungs():
-        row = doc["rungs"][str(q)]
-        assert row["route"] and row["quality"], q
-        assert "prototype" not in row["route"] and "speed" not in row["route"], q
-    withheld = doc["rungs"]["2048"]
-    assert "2d5b871f" in withheld["anomaly"], withheld
-
-
 def _bf16_routed_cells(contract):
     """Every T-16 routed_moe cell: the base decode/batch pair and the two
     runtime-suffixed twins.  Derived from the contract, never a roster."""
@@ -130,13 +89,13 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
     """The rule is family-wide; coverage is per cell.  The value library's
     dense launch reads 1..14 and its routed launches 1..8, so a routed_moe
     cell's run tables stay at or below [8], and a rung the rule admits is
-    covered only by a cell of a structure whose evidence reached its table.
+    covered only by a cell of a structure whose census reached its table.
     Contract v52's dense census brings the dense cells' tables to every table
-    the rule admits, so they cover the rule's whole range, 256..3584.
-    Contract v59 widens the four routed cells to whole-bit tables [1]..[7]
-    on the sweep-admission file's seven admitted rungs; bit 8 stays out on
-    the rate-8 down anomaly.  Fail-before on the v58 contract: run_tables
-    [[4]] against [[1]]..[[7]]."""
+    the rule admits, so they cover the rule's whole range, 256..3584; the
+    routed cells stay at stub B's [4], the one served-census rung.
+    Contract v59 restores this pin after review: no rung joins the routed
+    cells without a served receipt.  Fail-before on the widened contract:
+    run_tables [[1]]..[[7]] against [[4]]."""
     row = _row(contract, BF16)
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
@@ -150,42 +109,36 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
         rates = {r for t in cell.get("run_tables", ()) for r in t}
         assert rates <= (routed_rates if cell["structure"] == "routed_moe" else dense_rates), \
             cell["id"]
-    admitted = _admitted_rungs()
     routed, dense = _cell(contract, BF16_ROUTED), _cell(contract, BF16_DENSE)
-    assert routed["run_tables"] == [[b] for b in range(1, 8)]
-    assert routed["rungs_q256"] == admitted
+    assert routed["run_tables"] == [[4]]
+    assert routed["rungs_q256"] == [1024]
     assert dense["run_tables"] == row["allowable_rungs"]["run_tables"]
-    assert [q for q in range(256, 3585)
-            if cell_covers_rung(routed, q, row)] == admitted
+    assert [q for q in range(256, 3585) if cell_covers_rung(routed, q, row)] == [1024]
     assert [q for q in range(256, 4097)
             if cell_covers_rung(dense, q, row)] == list(range(256, 3585))
 
 
-def test_bf16_routed_cells_admit_the_evidence_file_rungs_on_every_cell(contract):
-    """Each of the four T-16 routed cells censuses the file's admitted rungs:
-    geometry-plus-quality admission, seven whole bits, no served census except
-    R1024, no prototype speed cited.  Fail-before on the v58 contract: rungs
-    [1024] against the seven admitted."""
+def test_bf16_routed_cells_census_only_the_served_rung_on_every_cell(contract):
+    """Each of the four T-16 routed cells censuses exactly R1024, the one
+    rung with a served receipt.  Fail-before on the widened contract: seven
+    rungs against [1024]."""
     row = _row(contract, BF16)
-    admitted = _admitted_rungs()
     for cell in _bf16_routed_cells(contract):
-        assert cell["rungs_q256"] == admitted, cell["id"]
-        assert cell["run_tables"] == [[b] for b in range(1, 8)], cell["id"]
-        for q in admitted:
-            assert cell_covers_rung(cell, q, row), (cell["id"], q)
+        assert cell["rungs_q256"] == [1024], cell["id"]
+        assert cell["run_tables"] == [[4]], cell["id"]
+        assert cell_covers_rung(cell, 1024, row), cell["id"]
 
 
-def test_bf16_routed_cells_refuse_every_rung_without_evidence(contract):
-    """No T-16 routed cell covers a rung the file does not admit: half-bit
-    and other fractional rungs (their pair tables stay off the cells), bit 8
-    (withheld on the rate-8 down anomaly until rerun PB 2d5b871f lands),
-    higher bits and rungs outside the wire range.  Fail-before on the v59
-    eight-bit contract: R2048 covered against refused."""
+def test_bf16_routed_cells_refuse_every_unserved_rung(contract):
+    """No T-16 routed cell covers a rung without a served receipt: the other
+    whole bits, half-bit and fractional rungs, higher bits and rungs outside
+    the wire range.  Fail-before on the widened contract: R256 covered
+    against refused."""
     row = _row(contract, BF16)
-    unmeasured = [255, 257, 640, 896, 1152, 2048, 2049, 2304, 3584, 3585]
-    assert _withheld_rungs() == [2048]
+    unserved = [255, 256, 257, 512, 640, 768, 896, 1152, 1280, 1536, 1792,
+                2048, 2049, 2304, 3584, 3585]
     for cell in _bf16_routed_cells(contract):
-        for q in unmeasured:
+        for q in unserved:
             assert not cell_covers_rung(cell, q, row), (cell["id"], q)
 
 

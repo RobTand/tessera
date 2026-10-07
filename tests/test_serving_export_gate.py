@@ -500,39 +500,26 @@ def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
     from tessera.serving.contract import load_serving_contract
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
 
-    recipe = wire_recipe(GRIDS["BF16"], 2304)
+    recipe = wire_recipe(GRIDS["BF16"], 1792)
     with monkeypatch.context() as patched:
         patched.delitem(scheme_module.MOE_BUILDERS, "TESSERA_BF16")
         with pytest.raises(ValueError) as caught:
-            refuse_unserveable_wire("BF16", 2304, recipe.body.name, recipe.scale_plane.name,
+            refuse_unserveable_wire("BF16", 1792, recipe.body.name, recipe.scale_plane.name,
                                     family="TESSERA_BF16", span=recipe.span,
                                     target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
     assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
     # With its builder, a BF16 stack reaches the cell check.  Since contract
-    # v59 the routed_moe cells census whole bits 1..7, so 1024 and 1792 are
-    # admitted.  Bit 8 is refused on the rate-8 down anomaly (13-18 percent
-    # spread at M 1-512, rerun PB 2d5b871f pending), and 2304 (bit 9, off
-    # the routed launch) is refused.  Fail-before on the eight-bit contract:
-    # 2048 admitted against refused.
+    # v38 (tessera#604) a routed_moe cell names BF16 at q256 1024, so 1024 is
+    # admitted and 1792 is refused against that cell's rungs.  v59 restores
+    # this pin after review: no rung joins without a served receipt.
+    # Fail-before on the widened contract: 1792 admitted against refused.
     at_1024 = wire_recipe(GRIDS["BF16"], 1024)
     assert refuse_unserveable_wire("BF16", 1024, at_1024.body.name, at_1024.scale_plane.name,
                                    family="TESSERA_BF16", span=at_1024.span,
                                    target="bf16.stack",
                                    structure=STRUCTURE_ROUTED_MOE) == "TESSERA_BF16"
-    at_1792 = wire_recipe(GRIDS["BF16"], 1792)
-    assert refuse_unserveable_wire("BF16", 1792, at_1792.body.name, at_1792.scale_plane.name,
-                                   family="TESSERA_BF16", span=at_1792.span,
-                                   target="bf16.stack",
-                                   structure=STRUCTURE_ROUTED_MOE) == "TESSERA_BF16"
-    at_2048 = wire_recipe(GRIDS["BF16"], 2048)
     with pytest.raises(ValueError) as caught:
-        refuse_unserveable_wire("BF16", 2048, at_2048.body.name, at_2048.scale_plane.name,
-                                family="TESSERA_BF16", span=at_2048.span,
-                                target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
-    assert "tessera_bf16_k1_routed_moe_sm121_decode_resident" in str(caught.value), \
-        str(caught.value)
-    with pytest.raises(ValueError) as caught:
-        refuse_unserveable_wire("BF16", 2304, recipe.body.name, recipe.scale_plane.name,
+        refuse_unserveable_wire("BF16", 1792, recipe.body.name, recipe.scale_plane.name,
                                 family="TESSERA_BF16", span=recipe.span,
                                 target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
     assert "tessera_bf16_k1_routed_moe_sm121_decode_resident" in str(caught.value), \

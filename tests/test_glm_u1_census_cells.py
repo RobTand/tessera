@@ -29,10 +29,8 @@ What it pins:
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
 2. each GLM-image cell covers EXACTLY the rungs the receipts (these and
-   v38's) carried for its family and structure, plus the sweep-evidenced
-   rungs the committed admission file names for T-16 routed cells only --
-   a cell widened past receipts AND that file, or a receipt rung dropped
-   from a cell, fails here;
+   v38's) carried for its family and structure -- a cell widened
+   past its receipts, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
    the two native A4 launches.
@@ -55,19 +53,6 @@ from tessera.serving.contract import (
 
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "experiments" / "results"
-#: The committed per-rung production basis for the v59 T-16 routed widening.
-#: This test reads the file itself, so an admitted rung always names its
-#: sweep route rows and quality rows here; the served receipts stay the floor.
-SWEEP_ADMISSION = RESULTS / "t16_routed_sweep_admission.json"
-
-
-def _evidenced_rungs():
-    """Receipt-external rungs with committed production evidence, by scope."""
-    doc = json.loads(SWEEP_ADMISSION.read_text(encoding="utf-8"))
-    admitted = {int(q) for q, row in doc["rungs"].items() if row["status"] == "admitted"}
-    return {("TESSERA_BF16_K1", "routed_moe"): admitted}
-
-
 TOOL = ROOT / "tools" / "tessera_route_census.py"
 IMAGE = ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
          "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5")
@@ -570,13 +555,9 @@ def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
     for receipt_path, config_path in sources:
         for key, rungs in _carried(tool, _load(receipt_path), config_path).items():
             carried.setdefault(key, set()).update(rungs)
-    evidenced = _evidenced_rungs()
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
     for cell_id in GLM_CELLS:
         cell = cells[cell_id]
-        key = (cell["family"], cell["structure"])
-        allowed = carried[key] | evidenced.get(key, set())
-        assert set(cell["rungs_q256"]) == allowed, cell_id
-        assert carried[key] <= set(cell["rungs_q256"]), cell_id
+        assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell_id
         assert cell["evidence"]["grade"] == "route_only", cell_id
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell_id

@@ -160,11 +160,9 @@ _GLM_X_CELLS = (
      "fp8_per_token_dynamic",
      ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"),
       (_FUSED_MOE, "native_routed_fused_window_e4m3mma"))),
-    # Contract v59: the BF16 routed cells census whole bits 1..7 on the
-    # sweep-admission file (geometry-plus-quality; bit 8 withheld on the
-    # rate-8 down anomaly).  The served re-census stays open.
-    ("TESSERA_BF16_K1", "routed_moe", [256, 512, 768, 1024, 1280, 1536, 1792],
-     "bf16_unquantized",
+    # Contract v59 restores the served-census pin after review: the BF16
+    # routed cells census only R1024 until new served receipts support more.
+    ("TESSERA_BF16_K1", "routed_moe", [1024], "bf16_unquantized",
      ((_COMPACT_MOE, "native_window_moe_compact_folded"),
       (_FUSED_MOE, "native_routed_fused_window_folded"))),
     ("TESSERA_E2M1_K2", "dense", [896], "e2m1_group16_ue4m3_static",
@@ -646,10 +644,9 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     image; the u1 stub censuses (v39) widened FP8 and added the E2M1x2 wire on
     the grouped A4 launch.  The LFM FP8 pair at q1024 was withdrawn at v38 and
     the materialising E2M1 pair at v39.  v48 (tessera#702) adds FP8 and BF16 on
-    the nightly, on stub B's rungs.  v59 widens both BF16 routed pairs to
-    whole bits 1..7 on sweep route rows plus quality rows (bit 8 withheld
-    on the rate-8 down anomaly; no prototype speed cited).  Each pair is
-    resident and eager.
+    the nightly, on stub B's rungs.  v59 restores the served-census pin
+    after review: both BF16 routed pairs census only R1024 until new
+    served receipts support more.  Each pair is resident and eager.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
@@ -662,13 +659,11 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
         assert cell["runtime"]["execution_modes"] == ["eager"]
     assert len(moe) == 10
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
-        ("TESSERA_BF16_K1", (256, 512, 768, 1024, 1280, 1536, 1792),
-         _GLM_X_RUNTIME["image"]),
+        ("TESSERA_BF16_K1", (1024,), _GLM_X_RUNTIME["image"]),
         ("TESSERA_E2M1_K2", (896,), _GLM_X_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
-        ("TESSERA_BF16_K1", (256, 512, 768, 1024, 1280, 1536, 1792),
-         NIGHTLY_RUNTIME["image"]),
+        ("TESSERA_BF16_K1", (1024,), NIGHTLY_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (896, 928, 1024, 1088), NIGHTLY_RUNTIME["image"])])
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
