@@ -1190,11 +1190,45 @@ class _WindowClass:
     slot_words_down: int
 
 
-def initialize_class_counter(counter: torch.Tensor, prefix: torch.Tensor,
-                             start: int, n_blocks: int) -> None:
-    """A captured device copy/multiply, recomputed from this replay's prefix."""
-    counter.copy_(prefix[start:start + 1])
-    counter.mul_(n_blocks)
+@dataclasses.dataclass(frozen=True)
+class _LutClassKernel:
+    """Today's native LUT binding; routing orchestration owns no launch details."""
+    library: str
+    module: object
+
+    def work_shape(self, mode, tokens, index, parameters):
+        down = mode == 2
+        projection = 3 * index + (2 if down else 0)
+        bm = superblock_rows(self.library, mode, tokens)
+        units = parameters["wscales"][projection].shape[1] // (BN if down else HALF)
+        return bm, units
+
+    def prepare_input(self, x, a_scale, rows, family, device):
+        # This decoder needs no sentinel. A register-direct binding supplies
+        # its own M+1 zero-row operand and persistent K-part scratch.
+        return quantized_routed_input(x, a_scale, rows, family, device)
+
+    def launch(self, mode, x, a_scale, *, index, start, end, prefix, counter,
+               routing, parameters, bm, work_units, empty_scale, a_row_mode,
+               mul_weight, limit, out):
+        if counter is None:
+            raise GrammarError("the LUT class kernel requires a claim counter")
+        down = mode == 2
+        projection = 1 if down else 0
+        p0 = 3 * index + (2 if down else 0)
+        p1 = p0 if down else p0 + 1
+        p = parameters
+        device = x.device.index if x.device.index is not None else torch.cuda.current_device()
+        self.module.routed_fused_forward(mode, self.library != "value", x,
+            a_scale if a_scale is not None else empty_scale,
+            p["words"][p0], p["words"][p1], p["tables"][p0], p["tables"][p1],
+            p["inits"][p0], p["inits"][p1], p["has_inits"][p0], p["has_inits"][p1],
+            p["wscales"][p0], p["wscales"][p1], p["runs"][p0], p["runs"][p1],
+            p["bdescs"][p0], p["bdescs"][p1],
+            p["tile_words"][2 * index + projection], p["slot_words"][2 * index + projection],
+            p["piece_major"], routing.offsets[start:end + 1], routing.flat_sorted, routing.rw_sorted,
+            prefix[start:end + 1], counter, routing.top_k, a_row_mode, mul_weight, limit,
+            out, _sm_count(device), bm)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1203,17 +1237,18 @@ class _DispatchResources:
     ready: object
     finished: tuple
     empty: torch.Tensor
+    kernel: object
 
 
 # The registry holds no weights or adapters. The adapter owns these resources.
 _dispatch_resources = weakref.WeakValueDictionary()
 
 
-def _make_dispatch_resources(device: torch.device) -> _DispatchResources:
+def _make_dispatch_resources(device: torch.device, kernel) -> _DispatchResources:
     resources = _DispatchResources(
         streams=tuple(torch.cuda.Stream(device=device) for _ in range(2)),
         ready=torch.cuda.Event(), finished=tuple(torch.cuda.Event() for _ in range(2)),
-        empty=torch.empty(0, dtype=torch.float32, device=device))
+        empty=torch.empty(0, dtype=torch.float32, device=device), kernel=kernel)
     # CUDA creates event handles at the first record. Create them at load,
     # before graph capture or a timed forward uses this adapter.
     caller = torch.cuda.current_stream(device)
@@ -1239,50 +1274,6 @@ def resolve_dispatch_resources(key: str) -> _DispatchResources:
 
 
 
-def dispatch_class_projection(mode, x, a_scale, routing, *, words, tables, inits,
-        has_inits, wscales, runs, bdescs, starts, ends, tile_words, slot_words,
-        issue_order, counters, library, piece_major, resources, mul_weight, limit, a_row_mode, out):
-    """Fork/join inside the opaque operation; full route/output views stay shared."""
-    index = x.device.index if x.device.index is not None else torch.cuda.current_device()
-    caller = torch.cuda.current_stream(index)
-    streams = resources.streams
-    resources.ready.record(caller)
-    for stream in streams:
-        stream.wait_event(resources.ready)
-    bm = superblock_rows(library, mode, routing.tokens)
-    prefix = routing.superblocks(bm)
-    empty = resources.empty
-    lib = _ext(library)
-    down = mode == 2
-    projection = 1 if down else 0
-    for c in issue_order:
-        with torch.cuda.stream(streams[c % 2]):
-            p0 = 3 * c + (2 if down else 0)
-            p1 = p0 if down else p0 + 1
-            slot = counters[c, projection:projection + 1]
-            n_blocks = wscales[p0].shape[1] // (BN if down else HALF)
-            initialize_class_counter(slot, prefix, starts[c], n_blocks)
-            # E is class-local, but item numbers and route offsets are absolute.
-            # The kernel's upper bound is prefix[end] * n_blocks; the seeded
-            # counter starts at prefix[start] * n_blocks, including empty classes.
-            lib.routed_fused_forward(mode, library != "value", x,
-                a_scale if a_scale is not None else empty,
-                words[p0], words[p1], tables[p0], tables[p1],
-                inits[p0], inits[p1], has_inits[p0], has_inits[p1],
-                wscales[p0], wscales[p1], runs[p0], runs[p1], bdescs[p0], bdescs[p1],
-                tile_words[2*c + projection], slot_words[2*c + projection], piece_major,
-                routing.offsets[starts[c]:ends[c] + 1], routing.flat_sorted, routing.rw_sorted,
-                prefix[starts[c]:ends[c] + 1], slot, routing.top_k, a_row_mode,
-                mul_weight, limit, out, _sm_count(index), bm)
-    for stream, finished in zip(streams, resources.finished):
-        finished.record(stream)
-        caller.wait_event(finished)
-    # The caller allocated these ephemeral tensors; side-stream work must not
-    # outlive their caching-allocator ownership (also outside graph capture).
-    for tensor in (x, a_scale, routing.offsets, routing.flat_sorted, routing.rw_sorted, prefix, out, empty):
-        if tensor is not None:
-            for stream in streams:
-                tensor.record_stream(stream)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1338,7 +1329,7 @@ class FusedRoutedWindowMoE:
                 _profile_schedule(b, q, role)
             views.append((desc, g, u, d))
         # Build at load. There is no compact substitute or late-forward build.
-        _ext(library)
+        module = _ext(library)
         tables = tuple(compose_table(b, library) for b in (gate, up, down))
         classes = []
         for desc, g, u, d in views:
@@ -1362,8 +1353,9 @@ class FusedRoutedWindowMoE:
             operands[name] = [getattr(b, field) for c in classes for b in (c.gate, c.up, c.down)]
         operands.update(starts=[c.start for c in classes], ends=[c.end for c in classes],
             tile_words=[v for c in classes for v in (c.tile_words_gate_up, c.tile_words_down)],
-            slot_words=[v for c in classes for v in (c.slot_words_gate_up, c.slot_words_down)])
-        resources = _make_dispatch_resources(down.device)
+            slot_words=[v for c in classes for v in (c.slot_words_gate_up, c.slot_words_down)],
+            piece_major=down.word_layout != "legacy")
+        resources = _make_dispatch_resources(down.device, _LutClassKernel(library, module))
         resource_key = _retain_dispatch_resources(resources)
         return cls(*(_native_view(b, t) for b, t in zip((gate, up, down), tables)),
             family=down.family, arithmetic=down.arithmetic, library=library,
@@ -1412,13 +1404,16 @@ class FusedRoutedWindowMoE:
         return _routing_tables(expert_ids, routing_weights, self.experts, self.device, self.library)
 
     def _launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
-        dispatch_class_projection(mode, x, a_scale, routing, **self.operands,
-            issue_order=self.class_issue_order, counters=self.counters, library=self.library,
-            piece_major=self.piece_major, resources=self.dispatch_resources, mul_weight=mul_weight, limit=limit,
+        from . import routed_class_dispatch
+        routed_class_dispatch.dispatch_class_projection(mode, x, a_scale, routing,
+            parameters=self.operands,
+            starts=self.operands["starts"], ends=self.operands["ends"],
+            issue_order=self.class_issue_order, counters=self.counters,
+            resources=self.dispatch_resources, mul_weight=mul_weight, limit=limit,
             a_row_mode=a_row_mode, out=out)
 
     def _quantized(self, x, a_scale, rows):
-        return quantized_routed_input(x, a_scale, rows, self.family, self.device)
+        return self.dispatch_resources.kernel.prepare_input(x, a_scale, rows, self.family, self.device)
 
     def _check_x(self, x, rows, cols):
         if x.dim() != 2 or tuple(x.shape) != (rows, cols) or x.device != self.device:

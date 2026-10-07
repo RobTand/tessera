@@ -46,9 +46,9 @@ def projection(rates=(3, 3, 4, 4), *, family="value", cols=128, rows=128):
 def allow_cpu(monkeypatch):
     monkeypatch.setattr(rf, "fused_routed_window_supported", lambda *args: None)
     monkeypatch.setattr(rf, "_ext", lambda library: object())
-    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device: rf._DispatchResources(
+    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device, kernel: rf._DispatchResources(
         (object(), object()), object(), (object(), object()),
-        torch.empty(0, dtype=torch.float32, device=device)))
+        torch.empty(0, dtype=torch.float32, device=device), kernel))
 
 
 def test_mixed_flat_storage_constructs_without_padding(monkeypatch):
@@ -113,10 +113,11 @@ def test_declared_profile_must_match_stored_schedule(monkeypatch):
 def test_counter_start_reads_current_device_prefix_without_rebasing_routes():
     counter = torch.empty(1, dtype=torch.int32)
     prefix = torch.tensor([0, 2, 3, 5, 5], dtype=torch.int32)
-    rf.initialize_class_counter(counter, prefix, 2, 9)
+    from tessera.routed_class_dispatch import initialize_class_counter
+    initialize_class_counter(counter, prefix, 2, 9)
     assert counter.tolist() == [27]
     prefix[2] = 7
-    rf.initialize_class_counter(counter, prefix, 2, 9)
+    initialize_class_counter(counter, prefix, 2, 9)
     assert counter.tolist() == [63]
 
 
@@ -196,7 +197,7 @@ def test_two_stream_events_and_absolute_prefix_reseed(monkeypatch, reverse):
         def routed_fused_forward(self, *args):
             launches.append((active[0], args[25].clone(), args[22], args[21].clone(), args[-2], args[3]))
     monkeypatch.setattr(rf, "_ext", lambda library: Library())
-    resources = make_resources(torch.device("cpu"))
+    resources = make_resources(torch.device("cpu"), rf._LutClassKernel("value", Library()))
     assert len(created_streams) == 2
     assert len(created_events) == 3
     assert resources.empty.numel() == 0
@@ -217,10 +218,12 @@ def test_two_stream_events_and_absolute_prefix_reseed(monkeypatch, reverse):
         routing.item_off.copy_(torch.tensor(prefix, dtype=torch.int32))
         adapter.counters.fill_(-99)
         for mode, n_blocks in ((0, 2), (2, 1)):
-            rf.dispatch_class_projection(mode, x if mode == 0 else out, None, routing,
-                **adapter.operands, issue_order=order, counters=adapter.counters,
-                library="value", piece_major=False, resources=resources, mul_weight=False,
-                limit=float("inf"), a_row_mode=0 if mode == 0 else 1, out=out)
+            from tessera.routed_class_dispatch import dispatch_class_projection
+            dispatch_class_projection(mode, x if mode == 0 else out, None, routing,
+                parameters=adapter.operands, starts=adapter.operands["starts"],
+                ends=adapter.operands["ends"], issue_order=order, counters=adapter.counters,
+                resources=resources, mul_weight=False, limit=float("inf"),
+                a_row_mode=0 if mode == 0 else 1, out=out)
             for launch, c in zip(launches[-2:], order):
                 stream, counter, index, offsets, grid, empty = launch
                 assert stream == f"side{c % 2}"

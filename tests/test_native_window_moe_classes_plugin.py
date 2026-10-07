@@ -176,9 +176,9 @@ def test_cpu_native_owner_coordinate_helper_respects_retired_planes(family, monk
     # Lookup composition, class descriptors and native-owner retirement are real.
     monkeypatch.setattr(rf, "fused_routed_window_supported", lambda *args: None)
     monkeypatch.setattr(rf, "_ext", lambda library: object())
-    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device: rf._DispatchResources(
+    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device, kernel: rf._DispatchResources(
         (object(), object()), object(), (object(), object()),
-        torch.empty(0, dtype=torch.float32, device=device)))
+        torch.empty(0, dtype=torch.float32, device=device), kernel))
     prepared = _packed(family, three=True, device="cpu")
     native = prepared.native_owner()
     definition = _packed(family, three=True, device="cpu")

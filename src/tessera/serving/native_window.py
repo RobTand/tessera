@@ -121,6 +121,7 @@ def _routed_window_classes(
     entire sorted activation and flat output buffers. No weights are repacked.
     """
     from .. import routed_fused as rf
+    from .. import routed_class_dispatch
 
     family = "value" if library == "value" else "e4m3"
     tokens, top_k = expert_ids.shape
@@ -128,19 +129,20 @@ def _routed_window_classes(
     if input_weight:
         x = x * routing_weights.reshape(-1, 1).to(x.dtype)
     routing = rf._routing_tables(expert_ids, routing_weights, ends[-1], x.device, library)
-    xq, a1 = rf.quantized_routed_input(x, None, tokens, family, x.device)
+    resources = rf.resolve_dispatch_resources(resource_key)
+    xq, a1 = resources.kernel.prepare_input(x, None, tokens, family, x.device)
     act = torch.empty((routing.routes, inter), dtype=torch.bfloat16, device=x.device)
-    args = dict(words=words, tables=tables, inits=inits, has_inits=has_inits, wscales=wscales,
-        runs=runs, bdescs=bdescs, starts=starts, ends=ends, tile_words=tile_words,
-        slot_words=slot_words, issue_order=issue_order, counters=counters, library=library,
-        piece_major=piece_major, resources=rf.resolve_dispatch_resources(resource_key))
-    rf.dispatch_class_projection(0, xq, a1, routing, **args, a_row_mode=0,
+    parameters = dict(words=words, tables=tables, inits=inits, has_inits=has_inits, wscales=wscales,
+        runs=runs, bdescs=bdescs, tile_words=tile_words, slot_words=slot_words, piece_major=piece_major)
+    args = dict(parameters=parameters, starts=starts, ends=ends, issue_order=issue_order,
+                counters=counters, resources=resources)
+    routed_class_dispatch.dispatch_class_projection(0, xq, a1, routing, **args, a_row_mode=0,
         mul_weight=False, limit=swiglu_limit, out=act)
     # Join gate/up before quantizing the full sorted-route activation. The
     # quantizer and all arithmetic/route boundaries are the existing ones.
-    aq, a2 = rf.quantized_routed_input(act, None, routing.routes, family, x.device)
+    aq, a2 = resources.kernel.prepare_input(act, None, routing.routes, family, x.device)
     routed = torch.empty((routing.routes, hidden), dtype=torch.bfloat16, device=x.device)
-    rf.dispatch_class_projection(2, aq, a2, routing, **args, a_row_mode=1,
+    routed_class_dispatch.dispatch_class_projection(2, aq, a2, routing, **args, a_row_mode=1,
         mul_weight=not input_weight, limit=float("inf"), out=routed)
     out = torch.empty((tokens, hidden), dtype=torch.bfloat16, device=x.device)
     if shared is None:

@@ -142,9 +142,9 @@ def test_actual_native_owner_matches_exported_accounting(monkeypatch, family, ch
     monkeypatch.setenv(routed_fused.ENV_E4M3_MMA, choice)
     monkeypatch.setattr(routed_fused, "fused_routed_window_supported", lambda *_args: None)
     monkeypatch.setattr(routed_fused, "_ext", lambda _library: SimpleNamespace())
-    monkeypatch.setattr(routed_fused, "_make_dispatch_resources", lambda _device: routed_fused._DispatchResources(
+    monkeypatch.setattr(routed_fused, "_make_dispatch_resources", lambda _device, kernel: routed_fused._DispatchResources(
         streams=(object(), object()), ready=object(), finished=(object(), object()),
-        empty=torch.empty(0, dtype=torch.float32)))
+        empty=torch.empty(0, dtype=torch.float32), kernel=kernel))
     lane = FAMILY_OF[family]
     layouts, cuts, metadata = _stack_layouts(rungs, tp_size=tp_size)
     axes = {group: WindowUnitAxis(2, roles, family=lane) for group, roles in MOE_GROUP_PROJECTIONS.items()}
