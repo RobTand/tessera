@@ -13,9 +13,9 @@ import torch
 import triton
 import triton.language as tl
 
-from tessera.window_gemm import _scratch_indices
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from tessera.window_gemm import _scratch_indices
 
 import fused_bound as fb
 from test_dense_fused_window import _encode_module, _module, _role, _sched
