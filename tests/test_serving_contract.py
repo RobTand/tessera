@@ -160,7 +160,11 @@ _GLM_X_CELLS = (
      "fp8_per_token_dynamic",
      ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"),
       (_FUSED_MOE, "native_routed_fused_window_e4m3mma"))),
-    ("TESSERA_BF16_K1", "routed_moe", [1024], "bf16_unquantized",
+    # Contract v59: the BF16 routed cells census the eight whole-bit rungs,
+    # one per bit 1..8 (the T-16 routed widening; the census receipts are the
+    # geometry sweep, the 16 speed-test cells and the sampled CPU quality).
+    ("TESSERA_BF16_K1", "routed_moe", [256, 512, 768, 1024, 1280, 1536, 1792, 2048],
+     "bf16_unquantized",
      ((_COMPACT_MOE, "native_window_moe_compact_folded"),
       (_FUSED_MOE, "native_routed_fused_window_folded"))),
     ("TESSERA_E2M1_K2", "dense", [896], "e2m1_group16_ue4m3_static",

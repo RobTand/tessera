@@ -75,6 +75,10 @@ BF16 = "TESSERA_BF16_K1"
 BF16_ROUTED = "tessera_bf16_k1_routed_moe_sm121_batch_resident"
 BF16_DENSE = "tessera_bf16_k1_dense_sm121_batch_resident"
 
+#: The eight whole-bit rungs the widened T-16 routed cells census
+#: (contract v59): one rung per whole bit, 1 through 8.
+BF16_ROUTED_WHOLE_BITS = [256, 512, 768, 1024, 1280, 1536, 1792, 2048]
+
 
 def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
     """Contract v51: Tessera-16's rule attests every one-run rate 1..14 and
@@ -95,6 +99,15 @@ def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
         assert {k: v for k, v in item.items() if k != "q256"} == rule["wire"]
 
 
+def _bf16_routed_cells(contract):
+    """Every T-16 routed_moe cell: the base decode/batch pair and the two
+    runtime-suffixed twins.  Derived from the contract, never a roster."""
+    cells = [c for c in contract["lane_eligibility"]["cells"]
+             if c["family"] == BF16 and c["structure"] == "routed_moe"]
+    assert len(cells) == 4
+    return cells
+
+
 def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(contract):
     """The rule is family-wide; coverage is per cell.  The value library's
     dense launch reads 1..14 and its routed launches 1..8, so a routed_moe
@@ -103,7 +116,9 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
     Contract v52's dense census (the t16d1 and t16d2 stubs, one rung of every
     table [1]..[14] and each pair between them) brings the dense cells' tables
     to every table the rule admits, so they cover the rule's whole range,
-    256..3584; the routed cells stay at stub B's [4]."""
+    256..3584.  Contract v59 widens the four routed cells to the eight
+    whole-bit tables [1]..[8], one census rung per bit, so they cover exactly
+    the eight measured whole-bit rungs."""
     row = _row(contract, BF16)
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
@@ -118,11 +133,39 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
         assert rates <= (routed_rates if cell["structure"] == "routed_moe" else dense_rates), \
             cell["id"]
     routed, dense = _cell(contract, BF16_ROUTED), _cell(contract, BF16_DENSE)
-    assert routed["run_tables"] == [[4]]
+    assert routed["run_tables"] == [[b] for b in range(1, 9)]
+    assert routed["rungs_q256"] == BF16_ROUTED_WHOLE_BITS
     assert dense["run_tables"] == row["allowable_rungs"]["run_tables"]
-    assert [q for q in range(256, 3585) if cell_covers_rung(routed, q, row)] == [1024]
+    assert [q for q in range(256, 3585)
+            if cell_covers_rung(routed, q, row)] == BF16_ROUTED_WHOLE_BITS
     assert [q for q in range(256, 4097)
             if cell_covers_rung(dense, q, row)] == list(range(256, 3585))
+
+
+def test_bf16_routed_cells_admit_the_measured_whole_bits_on_every_cell(contract):
+    """Each of the four T-16 routed cells censuses the same eight whole-bit
+    rungs.  Bits 3, 4, 6 and 8 carry the 16 speed-test cells at 0.99-1.23x T-8
+    (``exec/eng-t16-speed-test/report.md``); all eight carry geometry-sweep
+    routed rows with no exclusion
+    (``docs/measurements/2026-09-30-t16-run-tables.md``) and sampled CPU
+    quality rows (record ``kernels-d41-t16-geometry-sweep-20261006``)."""
+    row = _row(contract, BF16)
+    for cell in _bf16_routed_cells(contract):
+        assert cell["rungs_q256"] == BF16_ROUTED_WHOLE_BITS, cell["id"]
+        assert cell["run_tables"] == [[b] for b in range(1, 9)], cell["id"]
+        for q in BF16_ROUTED_WHOLE_BITS:
+            assert cell_covers_rung(cell, q, row), (cell["id"], q)
+
+
+def test_bf16_routed_cells_refuse_every_unmeasured_rung(contract):
+    """No T-16 routed cell covers a rung without a census: half-bit and other
+    fractional rungs (their pair tables stay off the cells), rungs above bit 8
+    (the routed launch reads 1..8) and rungs outside the wire range."""
+    row = _row(contract, BF16)
+    unmeasured = [255, 257, 640, 896, 1152, 2049, 2304, 3584, 3585]
+    for cell in _bf16_routed_cells(contract):
+        for q in unmeasured:
+            assert not cell_covers_rung(cell, q, row), (cell["id"], q)
 
 
 def test_a_rung_resolves_to_its_run_table():
