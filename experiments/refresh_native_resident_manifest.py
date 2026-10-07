@@ -15,7 +15,7 @@ import subprocess
 
 from safetensors import safe_open
 from tessera.fused import parse_fused
-from tessera.kernel_window_gemv import TILE_ROWS
+from tessera.window_geometry import TILE_ROWS
 from tessera.serving_parts import (dense_resident_bytes_resident_mode, summarize_modules,
                                    write_serving_manifest)
 from tessera.unit_artifact import parse_unit_metadata
