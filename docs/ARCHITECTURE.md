@@ -12,6 +12,19 @@ A rung owes exactly the cells whose shape grid it lies on. Version one tables ca
 A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
 The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
 
+## Register-direct routed kernel (stage 1; not selected)
+
+`tessera.regdirect_routed` owns the register-direct routed T-8 kernel (`serving/csrc/regdirect_routed.cu`).
+Each warp decodes its own MMA A fragment from the fragment wire and never stages decoded weights in shared memory.
+It serves the e4m3 family at a 14-bit window with the row-scale epilogue, at R3, R4 and their k-step mix.
+Today's LUT class kernel stays the default. This kernel is selected nowhere until it passes G3 v2 and an end-to-end serve.
+`build_layer(gate, up, down, classes, device, *, top_k, max_tokens)` reads the class build's full storage-ordered bundles.
+It returns `parameters["regdirect"]`, one tuple of tensors per mode in `PAYLOAD_FIELDS` order, and a tensor-free `RegDirectClassKernel`.
+The payload holds the fragment planes, the zero page, the K-part scratch and the arrival counters, sized for `max_tokens`.
+The binding plugs into `routed_class_dispatch` unchanged and does not use the claim counter.
+Each expert must spend exactly its class rung. A per-column (Bresenham) mixed rung splits k-steps and is refused by name.
+`kernel_window_gemv.unpack_tile_words` is the inverse of the tile-order repack that the bundles hold.
+
 ## Register-direct fragment wire (stage 1; not a serving path)
 
 The CPU fragment repack is available in `tessera.fragment_wire` for the register-direct routed build.
