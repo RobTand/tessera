@@ -8,7 +8,8 @@ table cites by lineage.  It writes one ``fleet.rung_allowability.v2`` table with
 labelled speed scenario.  Rows whose cells are not all measured stay pending.
 
   python d41_table.py --runs A/stage1.json B/stage1.json --compile C/compile.json \
-      --ncu N/ncu.csv --ncu-run N/ncu-run.json --quality V0009.json --source-commit SHA --out T.json
+      --ncu N/ncu.csv --ncu-run N/ncu-run.json --quality V0009.json [--quality-extra Q.json ...] \
+      --source-commit SHA --out T.json
 """
 from __future__ import annotations
 
@@ -108,6 +109,22 @@ def prefetch_depth(cell, widths, path):
     return {str(w): int(depth[str(w)]) for w in widths}
 
 
+def quality_sources(table_path, extra_paths):
+    """``{rung: (quality, source path)}``: the published table's CPU quality rows, then the rows of
+    each ``tessera.rung_quality.v1`` file.  A rung takes its quality from one source only."""
+    out = {r["rung"]: (r["quality"], table_path) for r in json.load(open(table_path))["rungs"]}
+    for path in extra_paths:
+        doc = json.load(open(path))
+        if doc.get("schema") != "tessera.rung_quality.v1":
+            raise ValueError(f"{path}: not a tessera.rung_quality.v1 file")
+        for key, quality in doc["rungs"].items():
+            rung = int(key)
+            if rung in out:
+                raise ValueError(f"{path}: rung {rung} already has quality from {out[rung][1]}")
+            out[rung] = (quality, path)
+    return out
+
+
 def to_bytes(value, unit):
     unit = unit.split("/")[0]                      # NCU states shared memory per block: "byte/block"
     scale = {"byte": 1, "Kbyte": 1000, "KB": 1000, "Kibyte": 1024, "KiB": 1024, "Mbyte": 10**6}[unit]
@@ -121,6 +138,8 @@ def main():
     ap.add_argument("--ncu", required=True)
     ap.add_argument("--ncu-run", required=True, help="the profiler run's ncu-run.json (its kernel source identity)")
     ap.add_argument("--quality", required=True, help="a published E4M3 D41 table; its CPU quality rows are cited")
+    ap.add_argument("--quality-extra", nargs="*", default=[],
+                    help="tessera.rung_quality.v1 files for rungs the published table does not hold")
     ap.add_argument("--source-commit", required=True)
     ap.add_argument("--version", type=int, default=1)
     ap.add_argument("--out", required=True)
@@ -193,20 +212,20 @@ def main():
                              "timing_statistic": meta["statistic"], "timer": "CUDA graph replay, cold L2", "admission": ADMISSION,
                              "todays_kernel_same_run_us": base["cold_us"]}}
 
-    quality_src = {r["rung"]: r for r in json.load(open(a.quality))["rungs"]}
+    quality_src = quality_sources(a.quality, a.quality_extra)
     keys = [(s, M) for s, _, _ in SHAPES.values() for M in MS]
     rows_out = []
     for q in range(RUNG_MIN, RUNG_MAX + 1, STEP):
         need = [(s, M) for s, M in keys if (q - RUNG_MIN) % SHAPE_STEPS.get(s, STEP) == 0]
         have = cells.get(q, {})
-        src = quality_src.get(q, {}).get("quality", {})
+        src, src_path = quality_src.get(q, ({}, None))
         measured = all(k in have for k in need) and src.get("measurement_status") == "measured"
         quality = {}
         if measured:
             quality = copy.deepcopy(src)
             quality["scope"] = {"format": FORMAT, "grid": "E4M3", "arity": 1, "rung": q, "recipe": rec,
                                 "kernel_kinds": ["routed"], "owner": "tessera.export.encode_linear"}
-            quality["lineage"] = {"table": a.quality, "note": "CPU weight-space quality of the Bresenham placement at "
+            quality["lineage"] = {"table": src_path, "note": "CPU weight-space quality of the Bresenham placement at "
                                   "this rung; k-step placement quality is the separate weight-space screen"}
             quality.setdefault("anomaly_flags", [])
         rows_out.append({"rung": q, "measurement_status": "measured" if measured else "pending",
