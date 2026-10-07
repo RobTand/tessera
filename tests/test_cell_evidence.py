@@ -243,9 +243,10 @@ _EVIDENCE = {
     # Contract v38 (tessera#604): eight resident cells on the GLM serving
     # image, dense E4M3/BF16 and routed E4M3/BF16, from one TP1 eager route
     # census (``docs/measurements/tessera-glm-x-census-2026-09-26.md``).  The
-    # census is the whole of the evidence: no KL arm, no smoke.
-    **{f"tessera_{family}_{structure}_sm121_{regime}_resident": _ROUTE_ONLY
-       for family in ("e4m3_k1", "bf16_k1") for structure in ("dense", "routed_moe")
+    # census is the whole of the evidence: no KL arm, no smoke.  Contract v59
+    # withdraws the BF16 half, so only the E4M3 cells stand here.
+    **{f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident": _ROUTE_ONLY
+       for structure in ("dense", "routed_moe")
        for regime in ("decode", "batch")},
     # Contract v39 (tessera#604, second half): the dense E2M1 pair on the same
     # image, from the all-E2M1 stub's census
@@ -255,8 +256,8 @@ _EVIDENCE = {
     # Contract v48 (tessera#702): the four E4M3/BF16 GLM scopes again on the
     # vLLM nightly image, from one TP1 eager route census of stub B there
     # (``docs/measurements/2026-09-30-glm-nightly-cells-and-graph-equivalence.md``).
-    # Route only: no KL arm, no smoke.
-    **{cell_id: _ROUTE_ONLY for cell_id in nightly_ids()},
+    # Route only: no KL arm, no smoke.  Contract v59 withdraws the BF16 half.
+    **{cell_id: _ROUTE_ONLY for cell_id in nightly_ids() if "_bf16_" not in cell_id},
 }
 
 #: The evidence the pin-image dense E2M1 pair carried until contract v39
@@ -829,10 +830,12 @@ def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
     # Since contract v38 (tessera#604) that is every routed cell: the two that
     # carried the record were withdrawn, and the v38 routed cells ran no smoke.
     # Contract v48 adds the four nightly-image routed cells, route only.
+    # Contract v59 withdraws the BF16 cells on both images, so only the
+    # E2M1 and E4M3 routed cells stand here.
     assert routed_without_record == sorted(
         [f"tessera_{family}_routed_moe_sm121_{regime}_resident"
-         for family in ("e2m1_k2", "e4m3_k1", "bf16_k1") for regime in ("decode", "batch")]
-        + nightly_ids("routed_moe"))
+         for family in ("e2m1_k2", "e4m3_k1") for regime in ("decode", "batch")]
+        + [cell_id for cell_id in nightly_ids("routed_moe") if "_bf16_" not in cell_id])
     for cell in _WITHDRAWN_V38.values():
         smoke = cell["evidence"]["smoke"]
         assert smoke["status"] == "recorded", cell["id"]

@@ -90,22 +90,26 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
     contract = load_serving_contract()
     block = contract["lane_eligibility"]
     cells = {(cell["family"], cell["regime"]) for cell in block["cells"]}
-    # A family whose route makes NO attested launch cannot have a cell: the
-    # validator derives ``executes`` from the launch table and refuses a cell
-    # that would be empty.  ``TESSERA_BF16_K1`` is in that state since contract
-    # v31 (tessera#538) -- its dense route's one launch is experimental -- so
-    # requiring a cell of it would require publishing one nothing can derive.
-    # The families are partitioned rather than filtered, and both halves are
+    # Contract v59 withdraws every ``TESSERA_BF16_K1`` cell while the family
+    # stays published: its route still makes attested launches, but no cell
+    # names it, so the join holds for the families that publish cells and
+    # the withdrawn family is named rather than filtered.  Both halves are
     # asserted, so a family cannot fall out of the join by going quiet.
     families = {entry["family"] for entry in contract["formats"]}
     assert families, "no family is published; the join below would be vacuous"
+    withdrawn = {family for family in families
+                 if not [c for c in block["cells"] if c["family"] == family]}
+    assert withdrawn == {"TESSERA_BF16_K1"}, (
+        f"the families that publish no cell are not exactly the withdrawn one: {sorted(withdrawn)}")
     launchable = {family for family in families
                   if any(launch_pairs(_FAMILY_TO_ROUTE[family], structure=structure)
                          for structure in STRUCTURES)}
     assert launchable, "no family makes an attested launch; the join is vacuous"
+    assert "TESSERA_BF16_K1" in launchable, (
+        "the withdrawn family stopped launching; the partition below would misread it as quiet")
     missing = sorted(
         (family, phase, CENSUS_PHASE_REGIMES[phase])
-        for family in launchable
+        for family in launchable - withdrawn
         for phase in CENSUS_PHASE_REGIMES
         if (family, CENSUS_PHASE_REGIMES[phase]) not in cells
     )
@@ -113,9 +117,9 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
         "the census drives a phase whose regime has no cell for these families: "
         f"{missing}; a per-(family, regime) expectation would be vacuous there"
     )
-    for family in families - launchable:
+    for family in withdrawn:
         assert not [c for c in block["cells"] if c["family"] == family], (
-            f"{family} publishes a cell while its route makes no attested launch")
+            f"{family} publishes a cell while the join above does not cover it")
 
 
 #: The two ranks' route traces from the two-rank GLM-5.3-Flash 4-layer stub
