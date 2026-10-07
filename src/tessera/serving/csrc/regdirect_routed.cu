@@ -257,7 +257,8 @@ __device__ __forceinline__ void kseg_reg(const Params& p, const SegPtr& sp, int 
                 }
             }
             mma16832_e4m3(acc[0], a[0], xs[0].x, xs[0].y);
-            mma16832_e4m3(acc[1], a[1], xs[NG - 1].x, xs[NG - 1].y);
+            // MODE 2: both column groups add into one output (the prefill path's order too)
+            mma16832_e4m3(acc[MODE == 0 ? 1 : 0], a[1], xs[NG - 1].x, xs[NG - 1].y);
         }
     }
 }
@@ -292,7 +293,7 @@ __device__ __forceinline__ void epilogue(const Params& p, int e, int r0, int cnt
                 const float act = __fmul_rn(gf / (1.0f + expf(-gf)), uf);
                 packed |= (uint32_t)bf16_bits_rn(act) << (16 * r);
             } else {
-                float y = __fmul_rn(__fmul_rn(__fadd_rn(a0[2 * r + h], a1[2 * r + h]), a_s), r ? s01 : s00);
+                float y = __fmul_rn(__fmul_rn(a0[2 * r + h], a_s), r ? s01 : s00);   // both groups are in a0
                 if (p.mul_weight) y = __fmul_rn(y, p.rw[pos]);
                 packed |= (uint32_t)bf16_bits_rn(y) << (16 * r);
             }
@@ -317,26 +318,6 @@ __device__ __forceinline__ Task task_of(const Params& p, long u, int sb) {
     }
     k.e = lo;
     k.r0 = p.offsets[k.e] + (k.item - p.item_off[k.e]) * sb;
-    k.cnt = min(sb, p.offsets[k.e + 1] - k.r0);
-    return k;
-}
-
-// The prefill order: unit u is (expert, tile, superblock), superblock fastest.
-__device__ __forceinline__ Task task_of_tile_major(const Params& p, long u, int sb) {
-    Task k;
-    k.part = 0;
-    int lo = p.e0, hi = p.e1;                 // largest e in [e0, e1) with item_off[e] * NT <= u
-    while (hi - lo > 1) {
-        const int mid = (lo + hi) >> 1;
-        if ((long)p.item_off[mid] * p.NT <= u) lo = mid; else hi = mid;
-    }
-    k.e = lo;
-    const int nsb = p.item_off[k.e + 1] - p.item_off[k.e];
-    const long local = u - (long)p.item_off[k.e] * p.NT;
-    k.T = (int)(local / nsb);
-    const int s = (int)(local % nsb);
-    k.item = p.item_off[k.e] + s;
-    k.r0 = p.offsets[k.e] + s * sb;
     k.cnt = min(sb, p.offsets[k.e + 1] - k.r0);
     return k;
 }
@@ -457,24 +438,35 @@ __global__ void __launch_bounds__(THREADS, 2) rd_decode(Params p) {
 }
 
 // --------------------------------------------------------------- prefill path
-// 64-route superblocks; the CTA stages each XKC-k-step chunk of its routes'
+// 8 * RT-route superblocks; the CTA stages each XKC-k-step chunk of its routes'
 // activation rows in shared memory once (cp.async, one barrier per chunk).
-template <int MODE> struct XS {
+// SPLIT (gate/up at RT = 16): each warp owns one projection of one 16-row block,
+// so it holds RT x 4 accumulators; a task is 64 rows; gate and up meet in shared
+// memory after the K walk.  MODE 2 adds both column groups into one set.
+template <int MODE, int RT, bool SPLIT> struct PF {
+    static_assert(!SPLIT || MODE == 0, "only gate/up splits by projection");
     static constexpr int NG = Mode<MODE>::NG;
-    static constexpr int ROW = XKC * NG * KSTEP + 16;            // bytes per staged row (padded)
+    static constexpr int SB = 8 * RT;                               // routes per superblock
+    static constexpr int NACC = (MODE == 0 && !SPLIT) ? 2 : 1;      // accumulator sets per warp
+    static constexpr int BLOCKS = SPLIT ? 4 : WARPS;                // 16-row blocks per task
+    static constexpr int ROWS = BLOCKS * BLOCK_ROWS;
+    static constexpr int ROW = XKC * NG * KSTEP + 16;               // bytes per staged row (padded)
     static constexpr int TABB = Mode<MODE>::NTAB * TAB;
-    static constexpr int SMEM = TABB + 2 * 64 * ROW;
+    static constexpr int XBYTES = 2 * SB * ROW;
+    static constexpr int SMEM = TABB + XBYTES;
+    static_assert(!SPLIT || 4 * RT * 4 * 32 * 4 <= XBYTES, "the up exchange fits the staging buffers");
 };
 
 // Walks unit k-steps [s0, s1) of one rate segment with a depth-D wire ring.
 // ``enter(slot)`` runs on every live slot in order: at a chunk start it waits
 // for the chunk, syncs the CTA and stages the next chunk; it returns the staged
 // chunk.  Every warp of the CTA walks the same slots, so the barrier is uniform.
-template <int R, int MODE, int D, bool DUMP, class Enter>
+template <int R, int MODE, int RT, bool SPLIT, int D, bool DUMP, class Enter>
 __device__ __forceinline__ void kseg_xs(const Params& p, const SegPtr& sp, int s0, int s1, int slot0, Enter&& enter,
-                                        uint64_t pol_w, int g, int t, int e, int n0, const uint8_t* tab, int rt_live,
-                                        const int16_t* kp, float (&acc)[2][8][4]) {
-    constexpr int NG = Mode<MODE>::NG;
+                                        uint64_t pol_w, int g, int t, int e, int n0, int pr, const uint8_t* tab,
+                                        int rt_live, const int16_t* kp, float (&acc)[PF<MODE, RT, SPLIT>::NACC][RT][4]) {
+    using G = PF<MODE, RT, SPLIT>;
+    constexpr int NG = G::NG;
     if (s0 >= s1) return;
     uint32_t wb[D][R], bb[D][R];
     auto load = [&](int d, int s) {
@@ -498,58 +490,92 @@ __device__ __forceinline__ void kseg_xs(const Params& p, const SegPtr& sp, int s
             if (!live) continue;
             const int S = slot0 + s + d;
             const uint8_t* xc = enter(S);
-            uint32_t a[2][4];
-            decode_group<R, 0>(o, p1, pp, tab, a[0]);
-            decode_group<R, 1>(o, p1, pp, tab + (MODE == 0 ? TAB : 0), a[1]);
-            if constexpr (DUMP) {
-                #pragma unroll
-                for (int pg = 0; pg < 2; ++pg) {
-                    const int proj = MODE == 0 ? pg : 0;
-                    const int cg = kp[S * NG + (MODE == 0 ? 0 : pg)];
-                    uint8_t* row0 = p.dump + (((long)e * Mode<MODE>::NTAB + proj) * p.N + n0 + 2 * g) * p.Kx + cg * KSTEP + 8 * t;
-                    *reinterpret_cast<uint2*>(row0) = make_uint2(a[pg][0], a[pg][2]);
-                    *reinterpret_cast<uint2*>(row0 + p.Kx) = make_uint2(a[pg][1], a[pg][3]);
-                }
-            }
             const uint8_t* xk = xc + (S % XKC) * NG * KSTEP + 8 * t;
-            #pragma unroll
-            for (int rt = 0; rt < 8; ++rt) {
-                if (rt < rt_live) {
-                    const uint8_t* xr = xk + (rt * 8 + g) * XS<MODE>::ROW;
-                    const uint2 b0 = *reinterpret_cast<const uint2*>(xr);
-                    const uint2 b1 = *reinterpret_cast<const uint2*>(xr + (NG - 1) * KSTEP);
-                    mma16832_e4m3(acc[0][rt], a[0], b0.x, b0.y);
-                    mma16832_e4m3(acc[1][rt], a[1], b1.x, b1.y);
+            if constexpr (SPLIT) {
+                uint32_t a[4];
+                if (pr == 0) decode_group<R, 0>(o, p1, pp, tab, a);
+                else decode_group<R, 1>(o, p1, pp, tab + TAB, a);
+                if constexpr (DUMP) {
+                    const int cg = kp[S];
+                    uint8_t* row0 = p.dump + (((long)e * 2 + pr) * p.N + n0 + 2 * g) * p.Kx + cg * KSTEP + 8 * t;
+                    *reinterpret_cast<uint2*>(row0) = make_uint2(a[0], a[2]);
+                    *reinterpret_cast<uint2*>(row0 + p.Kx) = make_uint2(a[1], a[3]);
+                }
+                #pragma unroll
+                for (int rt = 0; rt < RT; ++rt) {
+                    if (rt < rt_live) {
+                        const uint2 b0 = *reinterpret_cast<const uint2*>(xk + (rt * 8 + g) * G::ROW);
+                        mma16832_e4m3(acc[0][rt], a, b0.x, b0.y);
+                    }
+                }
+            } else {
+                uint32_t a[2][4];
+                decode_group<R, 0>(o, p1, pp, tab, a[0]);
+                decode_group<R, 1>(o, p1, pp, tab + (MODE == 0 ? TAB : 0), a[1]);
+                if constexpr (DUMP) {
+                    #pragma unroll
+                    for (int pg = 0; pg < 2; ++pg) {
+                        const int proj = MODE == 0 ? pg : 0;
+                        const int cg = kp[S * NG + (MODE == 0 ? 0 : pg)];
+                        uint8_t* row0 = p.dump + (((long)e * Mode<MODE>::NTAB + proj) * p.N + n0 + 2 * g) * p.Kx + cg * KSTEP + 8 * t;
+                        *reinterpret_cast<uint2*>(row0) = make_uint2(a[pg][0], a[pg][2]);
+                        *reinterpret_cast<uint2*>(row0 + p.Kx) = make_uint2(a[pg][1], a[pg][3]);
+                    }
+                }
+                #pragma unroll
+                for (int rt = 0; rt < RT; ++rt) {
+                    if (rt < rt_live) {
+                        const uint8_t* xr = xk + (rt * 8 + g) * G::ROW;
+                        const uint2 b0 = *reinterpret_cast<const uint2*>(xr);
+                        const uint2 b1 = *reinterpret_cast<const uint2*>(xr + (NG - 1) * KSTEP);
+                        mma16832_e4m3(acc[0][rt], a[0], b0.x, b0.y);
+                        mma16832_e4m3(acc[G::NACC - 1][rt], a[1], b1.x, b1.y);
+                    }
                 }
             }
         }
     }
 }
 
-template <int MODE, bool DUMP>
+template <int MODE, int RT, bool SPLIT, bool DUMP>
 __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
-    constexpr int NG = Mode<MODE>::NG;
+    using G = PF<MODE, RT, SPLIT>;
+    constexpr int NG = G::NG;
     constexpr int CPR = XKC * NG * 2;                 // 16-byte copies per staged row
-    constexpr int COPIES = 64 * CPR / THREADS;        // per thread per chunk
+    constexpr int COPIES = G::SB * CPR / THREADS;     // per thread per chunk
+    static_assert(G::SB * CPR % THREADS == 0, "copies split evenly");
     extern __shared__ __align__(16) uint8_t smem[];
     __shared__ int16_t s_kp[KS_MAX * 2];
-    uint8_t* xbase = smem + XS<MODE>::TABB;
+    uint8_t* xbase = smem + G::TABB;
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
     const int g = lane >> 2, t = lane & 3;
-    // Work units in (expert, tile, superblock) order, dealt round-robin: the superblocks of one
-    // expert's tile run at the same time on neighbouring CTAs, so the second read of that tile's
-    // wire hits L2 (stage-1 gpu-01: at M = 4096, two 64-route superblocks per expert doubled the time).
-    const long U = (long)p.NT;                        // P == 1 on this path
-    const long u_lo = (long)p.item_off[p.e0] * U, u_hi = (long)p.item_off[p.e1] * U;
+    const int blk = SPLIT ? warp >> 1 : warp, pr = SPLIT ? warp & 1 : 0;   // warp-uniform role
+    const int NTT = p.N / G::ROWS;                    // task tiles per item; P == 1 on this path
+    const long u_lo = (long)p.item_off[p.e0] * NTT, u_hi = (long)p.item_off[p.e1] * NTT;
+    const long t0 = u_lo + (long)blockIdx.x * (u_hi - u_lo) / gridDim.x;
+    const long t1 = u_lo + (long)(blockIdx.x + 1) * (u_hi - u_lo) / gridDim.x;
     int cur_e = -1;
     const uint64_t pol_w = l2_policy(p.l2_hint ? 1 : 0);
     const int nch = (p.KS + XKC - 1) / XKC;
-    for (long u = u_lo + blockIdx.x; u < u_hi; u += gridDim.x) {
-        const Task k = task_of_tile_major(p, u, 64);
-        const int n0 = k.T * TILE + warp * BLOCK_ROWS;
+    for (long u = t0; u < t1; ++u) {
+        Task k;                                       // (item, task tile), task tile fastest
+        {
+            k.T = (int)(u % NTT);
+            k.item = (int)(u / NTT);
+            int lo = p.e0, hi = p.e1;
+            while (hi - lo > 1) {
+                const int mid = (lo + hi) >> 1;
+                if (p.item_off[mid] <= k.item) lo = mid; else hi = mid;
+            }
+            k.e = lo;
+            k.part = 0;
+            k.r0 = p.offsets[k.e] + (k.item - p.item_off[k.e]) * G::SB;
+            k.cnt = min(G::SB, p.offsets[k.e + 1] - k.r0);
+        }
+        const int row0 = k.T * G::ROWS + blk * BLOCK_ROWS;    // this warp's 16 rows
+        const int T128 = row0 / TILE, w128 = (row0 % TILE) / BLOCK_ROWS;
         int ra, rb, ksa;
         rate_of(p, k.e, ra, rb, ksa);
-        // the rows this thread copies: copy c is (row, k-step in chunk, group, half)
         int xrow[COPIES];
         #pragma unroll
         for (int c = 0; c < COPIES; ++c) {
@@ -564,7 +590,7 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
         if (k.e != cur_e) { load_expert<MODE>(p, k.e, smem, s_kp); cur_e = k.e; }
         __syncthreads();                       // s_kp is visible before the first gather
         auto stage = [&](int c) {
-            uint8_t* b = xbase + (c & 1) * 64 * XS<MODE>::ROW;
+            uint8_t* b = xbase + (c & 1) * G::SB * G::ROW;
             #pragma unroll
             for (int q = 0; q < COPIES; ++q) {
                 const int idx = threadIdx.x + q * THREADS;
@@ -572,12 +598,12 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
                 const int d = rem / (NG * 2), pg = (rem / 2) % NG, h = rem & 1;
                 const int s = min(c * XKC + d, p.KS - 1);
                 const int cg = s_kp[s * NG + pg];
-                cp_async16(b + i * XS<MODE>::ROW + (d * NG + pg) * KSTEP + h * 16, p.x + xrow[q] + cg * KSTEP + h * 16);
+                cp_async16(b + i * G::ROW + (d * NG + pg) * KSTEP + h * 16, p.x + xrow[q] + cg * KSTEP + h * 16);
             }
             cp_async_commit();
         };
         stage(0);
-        float acc[2][8][4] = {};
+        float acc[G::NACC][RT][4] = {};
         const uint32_t* w0 = p.wire + p.expert_word0[k.e];
         const uint32_t* h0 = p.hist + p.expert_hist0[k.e];
         const long tileA = (long)ksa * WARPS * ra * 32, tileB = (long)(p.KS - ksa) * WARPS * rb * 32;
@@ -589,12 +615,13 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
                 __syncthreads();               // chunk c visible; chunk c - 1 no longer read
                 if (c + 1 < nch) stage(c + 1);
             }
-            return xbase + (c & 1) * 64 * XS<MODE>::ROW;
+            return xbase + (c & 1) * G::SB * G::ROW;
         };
         auto run = [&](auto RC, const uint32_t* seg, const uint32_t* hseg, int a, int b, int slot0) {
             constexpr int RR = decltype(RC)::value;
-            const SegPtr sp = seg_ptr<RR>(p, seg, tile_words, hseg, k.T, warp, lane, g, t);
-            kseg_xs<RR, MODE, XKC, DUMP>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, n0, smem, rt_live, s_kp, acc);
+            const SegPtr sp = seg_ptr<RR>(p, seg, tile_words, hseg, T128, w128, lane, g, t);
+            kseg_xs<RR, MODE, RT, SPLIT, XKC, DUMP>(p, sp, a, b, slot0, enter, pol_w, g, t, k.e, row0, pr, smem,
+                                                    rt_live, s_kp, acc);
         };
         if (ra == 4) run(std::integral_constant<int, 4>{}, w0, h0, 0, ksa, 0);
         else run(std::integral_constant<int, 3>{}, w0, h0, 0, ksa, 0);
@@ -604,9 +631,34 @@ __global__ void __launch_bounds__(THREADS, 1) rd_prefill(Params p) {
             if (rb == 4) run(std::integral_constant<int, 4>{}, wB, hB, 0, p.KS - ksa, ksa);
             else run(std::integral_constant<int, 3>{}, wB, hB, 0, p.KS - ksa, ksa);
         }
-        #pragma unroll
-        for (int rt = 0; rt < 8; ++rt)
-            if (rt < rt_live) epilogue<MODE>(p, k.e, k.r0, k.cnt, n0, g, t, rt, acc[0][rt], acc[1][rt]);
+        if constexpr (SPLIT) {
+            // up warps hand their accumulators to the gate warp of the same block
+            cp_async_wait_all();
+            __syncthreads();                   // no warp reads the staging buffers any more
+            float* xw = reinterpret_cast<float*>(xbase) + blk * RT * 4 * 32;
+            if (pr == 1) {
+                #pragma unroll
+                for (int rt = 0; rt < RT; ++rt)
+                    #pragma unroll
+                    for (int c = 0; c < 4; ++c) xw[(rt * 4 + c) * 32 + lane] = acc[0][rt][c];
+            }
+            __syncthreads();
+            if (pr == 0) {
+                #pragma unroll
+                for (int rt = 0; rt < RT; ++rt) {
+                    if (rt < rt_live) {
+                        float up[4];
+                        #pragma unroll
+                        for (int c = 0; c < 4; ++c) up[c] = xw[(rt * 4 + c) * 32 + lane];
+                        epilogue<MODE>(p, k.e, k.r0, k.cnt, row0, g, t, rt, acc[0][rt], up);
+                    }
+                }
+            }
+        } else {
+            #pragma unroll
+            for (int rt = 0; rt < RT; ++rt)
+                if (rt < rt_live) epilogue<MODE>(p, k.e, k.r0, k.cnt, row0, g, t, rt, acc[0][rt], acc[G::NACC - 1][rt]);
+        }
     }
 }
 
@@ -615,40 +667,53 @@ void launch_decode(const Params& p, int grid, cudaStream_t st) {
     rd_decode<MODE, DUMP><<<grid, THREADS, Mode<MODE>::NTAB * TAB, st>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
-template <int MODE, bool DUMP>
+template <int MODE, int RT, bool SPLIT, bool DUMP>
 void launch_prefill(const Params& p, int grid, cudaStream_t st) {
-    auto k = rd_prefill<MODE, DUMP>;
-    C10_CUDA_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, XS<MODE>::SMEM));
-    k<<<grid, THREADS, XS<MODE>::SMEM, st>>>(p);
+    auto k = rd_prefill<MODE, RT, SPLIT, DUMP>;
+    C10_CUDA_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, PF<MODE, RT, SPLIT>::SMEM));
+    k<<<grid, THREADS, PF<MODE, RT, SPLIT>::SMEM, st>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
-template <int MODE, bool DUMP>
-int occupancy(bool prefill) {
+template <int MODE, int RT, bool SPLIT, bool DUMP>
+int occupancy_prefill() {
+    auto k = rd_prefill<MODE, RT, SPLIT, DUMP>;
+    C10_CUDA_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, PF<MODE, RT, SPLIT>::SMEM));
     int n = 0;
-    if (prefill) {
-        auto k = rd_prefill<MODE, DUMP>;
-        C10_CUDA_CHECK(cudaFuncSetAttribute(k, cudaFuncAttributeMaxDynamicSharedMemorySize, XS<MODE>::SMEM));
-        C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&n, k, THREADS, XS<MODE>::SMEM));
-    } else {
-        C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&n, rd_decode<MODE, DUMP>, THREADS,
-                                                                     Mode<MODE>::NTAB * TAB));
-    }
+    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&n, k, THREADS, PF<MODE, RT, SPLIT>::SMEM));
     return n;
+}
+template <int MODE, bool DUMP>
+int occupancy_decode() {
+    int n = 0;
+    C10_CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&n, rd_decode<MODE, DUMP>, THREADS, Mode<MODE>::NTAB * TAB));
+    return n;
+}
+
+// One dispatch for both entries: route tiles RT (1 = the decode path, 8 or 16 = prefill).
+// Gate/up at RT = 16 is the SPLIT variant.  ``p == nullptr`` returns the occupancy.
+template <bool DUMP>
+int run(int64_t mode, int64_t rt, const Params* p, int grid, cudaStream_t st) {
+    const bool L = p != nullptr;
+#define RD_DEC(M_) if (mode == M_ && rt == 1) { if (L) { launch_decode<M_, DUMP>(*p, grid, st); return 0; } return occupancy_decode<M_, DUMP>(); }
+#define RD_PF(M_, RT_, S_) if (mode == M_ && rt == RT_) { if (L) { launch_prefill<M_, RT_, S_, DUMP>(*p, grid, st); return 0; } return occupancy_prefill<M_, RT_, S_, DUMP>(); }
+    RD_DEC(0) RD_DEC(2) RD_PF(0, 8, false) RD_PF(0, 16, true) RD_PF(2, 8, false) RD_PF(2, 16, false)
+#undef RD_DEC
+#undef RD_PF
+    TORCH_CHECK(false, "no instantiation for mode ", mode, " route tiles ", rt);
+    return 0;
 }
 
 }  // namespace
 
-int64_t blocks_per_sm(int64_t mode, bool prefill, bool dump) {
-    TORCH_CHECK(mode == 0 || mode == 2, "mode is 0 (gate/up) or 2 (down)");
-    if (mode == 0) return dump ? occupancy<0, true>(prefill) : occupancy<0, false>(prefill);
-    return dump ? occupancy<2, true>(prefill) : occupancy<2, false>(prefill);
+int64_t blocks_per_sm(int64_t mode, int64_t route_tiles, bool dump) {
+    return dump ? run<true>(mode, route_tiles, nullptr, 0, 0) : run<false>(mode, route_tiles, nullptr, 0, 0);
 }
 
 // The register-direct launch.  The routing front end owns the sorted routes,
 // prefixes and the stream; this entry owns the geometry.  ``e0, e1`` bound the
 // experts of the launch (one class, or every class); the work interval is
 // [item_off[e0], item_off[e1]) x NT x P.
-void forward(int64_t mode, bool prefill, bool dump,
+void forward(int64_t mode, int64_t route_tiles, bool dump,
              torch::Tensor wire, torch::Tensor expert_word0, torch::Tensor hist, torch::Tensor expert_hist0,
              torch::Tensor rate, torch::Tensor kperm, torch::Tensor table, torch::Tensor wscale,
              torch::Tensor x, torch::Tensor a_scale, torch::Tensor offsets, torch::Tensor sorted,
@@ -672,7 +737,7 @@ void forward(int64_t mode, bool prefill, bool dump,
     TORCH_CHECK(x.element_size() == 1 && x.is_contiguous(), "x: e4m3 [rows + 1, K], the last row zero");
     TORCH_CHECK(x.numel() < (1L << 31), "x: 32-bit offsets");
     TORCH_CHECK(out.dtype() == torch::kBFloat16 && out.size(1) == N, "out [routes, N] bf16");
-    TORCH_CHECK(!prefill || P == 1, "the prefill path has no K parts");
+    TORCH_CHECK(route_tiles == 1 || P == 1, "the prefill path has no K parts");
     TORCH_CHECK(P >= 1 && P <= KS, "P");
     TORCH_CHECK(0 <= e0 && e0 <= e1 && e1 <= E, "expert range");
     TORCH_CHECK(!dump || dump_buf.numel() == (long)E * ntab * N * Kx, "dump [E, NTAB, N, K]");
@@ -705,13 +770,7 @@ void forward(int64_t mode, bool prefill, bool dump,
     p.limit = std::isfinite(limit) ? (float)limit : std::numeric_limits<float>::infinity();
     TORCH_CHECK(!p.mul_weight || p.rw, "route weights required");
     auto st = at::cuda::getCurrentCUDAStream();
-    if (prefill) {
-        if (mode == 0) { if (dump) launch_prefill<0, true>(p, (int)grid, st); else launch_prefill<0, false>(p, (int)grid, st); }
-        else { if (dump) launch_prefill<2, true>(p, (int)grid, st); else launch_prefill<2, false>(p, (int)grid, st); }
-    } else {
-        if (mode == 0) { if (dump) launch_decode<0, true>(p, (int)grid, st); else launch_decode<0, false>(p, (int)grid, st); }
-        else { if (dump) launch_decode<2, true>(p, (int)grid, st); else launch_decode<2, false>(p, (int)grid, st); }
-    }
+    if (dump) run<true>(mode, route_tiles, &p, (int)grid, st); else run<false>(mode, route_tiles, &p, (int)grid, st);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

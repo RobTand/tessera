@@ -104,14 +104,14 @@ class RegDirect:
         xz = rr.with_zero_row(x)
         a_row_mode = 0 if self.mode == 0 else 1
         if dump is not None:
-            geom = rr.Geometry(geom.prefill, geom.superblock, geom.k_parts, geom.tiles,
-                               self.sms * rr._ext().blocks_per_sm(self.mode, geom.prefill, True))
+            geom = rr.Geometry(geom.route_tiles, geom.superblock, geom.k_parts, geom.tiles,
+                               self.sms * rr._ext().blocks_per_sm(self.mode, geom.route_tiles, True))
 
         def call():
             self.stack.launch(geom, xz, a_scale, offsets, order, rw_sorted, item_off, 0, EXPERTS, out, part, arrive,
                               top_k=TOP_K, a_row_mode=a_row_mode, mul_weight=self.mode == 2, limit=SWIGLU_LIMIT,
                               dump=dump)
-        return call, out, {"prefill": geom.prefill, "superblock": geom.superblock, "k_parts": geom.k_parts,
+        return call, out, {"route_tiles": geom.route_tiles, "superblock": geom.superblock, "k_parts": geom.k_parts,
                            "grid": geom.grid, "items": int(item_off[-1])}, (offsets, order, item_off)
 
 
@@ -304,8 +304,7 @@ def cpu_preflight(args):
     rep["k_parts_down_M1"] = rr.k_parts(8, 32, 96, 16)
     rep["k_parts_gate_up_M16"] = rr.k_parts(128, 8, 96, 128)
     rep["k_parts_down_M16"] = rr.k_parts(128, 32, 96, 16)
-    rep["prefill_M16"] = rr.is_prefill(16, TOP_K, EXPERTS)
-    rep["prefill_M2048"] = rr.is_prefill(2048, TOP_K, EXPERTS)
+    rep["route_tiles"] = {m: rr.route_tiles(m, TOP_K, EXPERTS) for m in (1, 16, 2048, 4096)}
     json.dump(rep, open(os.path.join(args.out, "cpu-preflight.json"), "w"), indent=1)
     print(json.dumps(rep, indent=1))
     print("CPU preflight passed; no GPU results", flush=True)
@@ -318,7 +317,7 @@ def main():
     ap.add_argument("--modes", default="0,2")
     ap.add_argument("--profiles", default="R1024,R768,R896")
     ap.add_argument("--ms", default="1,16,2048,4096")
-    ap.add_argument("--check-ms", default="1,2048")
+    ap.add_argument("--check-ms", default="1,2048,4096")
     ap.add_argument("--warmup", type=int, default=5)
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--cpu-preflight", action="store_true")

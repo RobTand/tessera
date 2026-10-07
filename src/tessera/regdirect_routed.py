@@ -21,7 +21,7 @@ TILE = 128            # rows per task
 KSTEP = 32            # columns per pair group per unit k-step
 HIST_LANES = 8        # a history unit keeps lanes (6, t) and (7, t)
 KS_MAX = 128          # unit k-steps per expert
-SUPERBLOCK = {False: 8, True: 64}     # routes per superblock: decode, prefill
+SUPERBLOCK_DECODE = 8                 # routes per decode superblock (one route tile)
 STAGE1_RATES = (3, 4)                 # T-8 R768 .. R1024 (CEO, 2026-10-07)
 MODES = {"gate_up": 0, "down": 2}
 GROUPS = {0: 1, 2: 2}                 # activation column groups per unit k-step
@@ -40,11 +40,15 @@ def pack_rate(ra: int, rb: int, ksa: int) -> int:
 @dataclasses.dataclass(frozen=True)
 class Geometry:
     """The launch geometry the kernel owns (the front-end contract's kernel side)."""
-    prefill: bool
-    superblock: int          # routes per superblock item
+    route_tiles: int         # 1: the decode path; 8 or 16: prefill (gate/up at 16 splits by projection)
+    superblock: int          # routes per superblock item (8 x route tiles)
     k_parts: int             # P
-    tiles: int               # NT: 128-row tiles of the projection
+    tiles: int               # task tiles per item
     grid: int
+
+    @property
+    def prefill(self) -> bool:
+        return self.route_tiles > 1
 
     @property
     def units_per_item(self) -> int:
@@ -52,10 +56,19 @@ class Geometry:
         return self.tiles * self.k_parts
 
 
+def route_tiles(m: int, top_k: int, experts: int) -> int:
+    """The decode path (1) until an expert averages more routes than one decode superblock
+    holds (8); then 64-route superblocks (8); above 64 routes per expert, 128 (16), so each
+    expert's wire is read once (stage-1 gpu-01: at M = 4096 two 64-route superblocks per
+    expert doubled the time)."""
+    routes = m * top_k
+    if routes <= SUPERBLOCK_DECODE * experts:
+        return 1
+    return 8 if routes <= 64 * experts else 16
+
+
 def is_prefill(m: int, top_k: int, experts: int) -> bool:
-    """The prefill path (64-route superblocks, staged activations) once an expert averages more
-    routes than one decode superblock holds; below that, the decode path's 8-route items."""
-    return m * top_k > SUPERBLOCK[False] * experts
+    return route_tiles(m, top_k, experts) > 1
 
 
 DECODE_DEPTH = 4       # the decode path's prefetch depth (rd_decode D): the pipeline refill, in k-steps
@@ -76,12 +89,13 @@ def k_parts(items: int, tiles: int, grid: int, ks: int) -> int:
 
 
 def geometry(mode: int, m: int, top_k: int, rows: int, experts: int, ks: int, sms: int) -> Geometry:
-    prefill = is_prefill(m, top_k, experts)
-    tiles = rows // TILE
-    grid = sms * _ext().blocks_per_sm(mode, prefill, False)
+    rt = route_tiles(m, top_k, experts)
+    task_rows = 64 if (mode == 0 and rt == 16) else TILE      # the split gate/up variant
+    tiles = rows // task_rows
+    grid = sms * _ext().blocks_per_sm(mode, rt, False)
     items = min(experts, m * top_k)              # the balanced estimate; the device sees the real count
-    parts = 1 if prefill else k_parts(items, tiles, grid, ks)
-    return Geometry(prefill, SUPERBLOCK[prefill], parts, tiles, grid)
+    parts = 1 if rt > 1 else k_parts(items, tiles, grid, ks)
+    return Geometry(rt, 8 * rt, parts, tiles, grid)
 
 
 def scratch(geom: Geometry, experts: int, routes: int, device) -> tuple[torch.Tensor, torch.Tensor]:
@@ -173,7 +187,7 @@ class FragmentStack:
         hint = geom.prefill if l2_hint is None else l2_hint      # activation reuse exists at prefill only
         rw = route_weight if route_weight is not None else torch.empty(0, dtype=torch.float32, device=out.device)
         dbuf = dump if dump is not None else torch.empty(1, dtype=torch.uint8, device=out.device)
-        _ext().forward(self.mode, geom.prefill, dump is not None, self.wire, self.expert_word0, self.hist,
+        _ext().forward(self.mode, geom.route_tiles, dump is not None, self.wire, self.expert_word0, self.hist,
                        self.expert_hist0, self.rate, self.kperm, self.table, self.wscale, x_zero_row, a_scale,
                        offsets, sorted_routes, rw, item_off, e0, e1, out, part, arrive, dbuf, self.zeros,
                        self.ks, top_k, geom.k_parts, a_row_mode, mul_weight, limit, hint, geom.grid)
