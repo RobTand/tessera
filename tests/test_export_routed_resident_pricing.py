@@ -175,7 +175,7 @@ def test_unit_pricing_refuses_malformed_fields():
 def test_default_e4m3_mma_table_price_is_one_byte(monkeypatch):
     monkeypatch.setenv(routed_fused.ENV_E4M3_MMA, "e4m3")
     library = routed_fused.library_for("e4m3")
-    assert serving_parts.routed_fused_table_bytes(WINDOW_BITS, library=library) == 1 << WINDOW_BITS
+    assert serving_parts.routed_fused_table_bytes(WINDOW_BITS, element_bytes=1 if routed_fused.library_mma8(library) else 2) == 1 << WINDOW_BITS
 
 
 @pytest.mark.parametrize("family,choice,element_bytes", [
@@ -188,9 +188,9 @@ def test_fused_unit_pricing_uses_selected_table_and_descriptor_geometry(monkeypa
         (runs, _) = routed_fused.run_pair(torch.tensor([[4, 0, columns, 0]], dtype=torch.int32), columns)
         expected = ((1 << WINDOW_BITS) * element_bytes + runs.numel() * runs.element_size()
                     + (columns // routed_fused.BK) * routed_fused.BDESC_INTS * 4)
-        assert serving_parts.routed_fused_unit_bytes(WINDOW_BITS, columns, library=library) == expected
+        assert serving_parts.routed_fused_unit_bytes(WINDOW_BITS, columns, table_element_bytes=1 if routed_fused.library_mma8(library) else 2) == expected
     with pytest.raises(ValueError, match="column"):
-        serving_parts.routed_fused_unit_bytes(WINDOW_BITS, 100, library=library)
+        serving_parts.routed_fused_unit_bytes(WINDOW_BITS, 100, table_element_bytes=1 if routed_fused.library_mma8(library) else 2)
 
 
 def _stack_layouts(rungs, *, tp_size=1, tp_rank=0):
@@ -351,10 +351,10 @@ def test_fused_unit_pricing_is_the_lane_tables():
     assert serving_parts.ROUTED_FUSED_BDESC_INTS == routed_fused.BDESC_INTS
     runs, _ok = routed_fused.run_pair(torch.tensor([[4, 0, 128, 0]], dtype=torch.int32), 128)
     assert runs.numel() == serving_parts.ROUTED_FUSED_RUN_PAIR_INTS
-    assert routed_fused_unit_bytes(WINDOW_BITS, 128, library=library) == 2 * (1 << WINDOW_BITS) + 4 * 8 + 4 * 12 * 4
-    assert routed_fused_unit_bytes(WINDOW_BITS, 4096, library=library) == 2 * (1 << WINDOW_BITS) + 32 + 48 * 128
+    assert routed_fused_unit_bytes(WINDOW_BITS, 128, table_element_bytes=1 if routed_fused.library_mma8(library) else 2) == 2 * (1 << WINDOW_BITS) + 4 * 8 + 4 * 12 * 4
+    assert routed_fused_unit_bytes(WINDOW_BITS, 4096, table_element_bytes=1 if routed_fused.library_mma8(library) else 2) == 2 * (1 << WINDOW_BITS) + 32 + 48 * 128
     with pytest.raises(ValueError, match="column"):
-        routed_fused_unit_bytes(WINDOW_BITS, 100, library=library)
+        routed_fused_unit_bytes(WINDOW_BITS, 100, table_element_bytes=1 if routed_fused.library_mma8(library) else 2)
 
 
 def test_dense_pricing_follows_the_dense_loaders_rate_bound():
@@ -393,7 +393,7 @@ def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables(monkeypatch):
         library = routed_fused.library_for(FAMILY_OF[family])
         priced = export.routed_stack_resident_bytes(
             family, EXPERTS, layouts, expert_classes=metadata["expert_classes"], native_library=library)
-        tables = sum(routed_fused_unit_bytes(WINDOW_BITS, layout["cols"], library=library) for layout in layouts)
+        tables = sum(routed_fused_unit_bytes(WINDOW_BITS, layout["cols"], table_element_bytes=1 if routed_fused.library_mma8(library) else 2) for layout in layouts)
         assert priced[1] == tables + 4 * EXPERTS + 8 * len(metadata["expert_classes"])
     record = {"family": family, "stack": STACK, "expert_classes": metadata["expert_classes"],
               "groups": {"w13": {"rows_each": INTER, "columns": HIDDEN},

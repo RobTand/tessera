@@ -1517,17 +1517,22 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
 
     classes = normalize_expert_classes(expert_classes, experts)
     units_total, fused_total = 0, 0
+    table_element_bytes = None
     for layout in layouts:
         cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
         if family == NVFP4:
             units_total += cut["rows"] * cut["cols"] // 2 + cut["rows"] * cut["cols"] // 16 + 8
             continue
-        if native_library is None:
-            raise ValueError("native WINDOW residency requires its selected library")
+        if table_element_bytes is None:
+            if native_library is None:
+                raise ValueError("native WINDOW residency requires its selected library")
+            from tessera.routed_fused import library_mma8
+            table_element_bytes = 1 if library_mma8(native_library) else 2
         units_total += routed_window_unit_resident_bytes(
             family, cut["rows"], cut["cols"], cut["rates"],
             window_bits=cut["window_bits"], tile_rows=TILE_ROWS)
-        fused_total += routed_fused_unit_bytes(cut["window_bits"], cut["cols"], library=native_library)
+        fused_total += routed_fused_unit_bytes(
+            cut["window_bits"], cut["cols"], table_element_bytes=table_element_bytes)
     if family == NVFP4 or not layouts:
         return units_total, 0
     return units_total, fused_total + 4 * experts + 8 * len(classes)

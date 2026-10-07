@@ -518,11 +518,10 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
     return words + rows * 4 + cols * 4 + 4  # weight scales, init, has_init
 
 
-def routed_fused_table_bytes(window_bits: int, *, library: str) -> int:
-    """The selected native library's composed table, charged once per unit."""
-    from .routed_fused import library_mma8
-
-    element_bytes = 1 if library_mma8(library) else 2
+def routed_fused_table_bytes(window_bits: int, *, element_bytes: int) -> int:
+    """Price the selected native table without a tensor-runtime dependency."""
+    if type(element_bytes) is not int or element_bytes not in (1, 2):
+        raise ValueError("native routed table element_bytes must be 1 or 2")
     return element_bytes * (1 << int(window_bits))
 
 
@@ -543,7 +542,7 @@ ROUTED_FUSED_BLOCK_COLS = 32
 ROUTED_FUSED_BDESC_INTS = 12
 
 
-def routed_fused_unit_bytes(window_bits: int, cols: int, *, library: str) -> int:
+def routed_fused_unit_bytes(window_bits: int, cols: int, *, table_element_bytes: int) -> int:
     """What the fused routed lane holds per expert projection beside the
     bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
     the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
@@ -554,7 +553,7 @@ def routed_fused_unit_bytes(window_bits: int, cols: int, *, library: str) -> int
     if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
         raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
                          f"blocks; {cols} columns are not")
-    return (routed_fused_table_bytes(window_bits, library=library) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
+    return (routed_fused_table_bytes(window_bits, element_bytes=table_element_bytes) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
             + 4 * ROUTED_FUSED_BDESC_INTS * (cols // ROUTED_FUSED_BLOCK_COLS))
 
 

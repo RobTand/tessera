@@ -261,7 +261,9 @@ Both layouts use the compact loader row tile size. The planner refuses a differe
 The planner also applies the loader window-width and rate checks before byte calculation.
 Native layout checks read shared metadata. They do not load weights or allocate device tensors.
 The native planner path uses only the standard library. The loader and planner read the same geometry owner.
-The routed layout also declares `fused` as a Boolean. This value includes or excludes fused tables and descriptors.
+A routed layout also declares `table_dtype` for its selected native table. The byte accountant prices that explicit entry width.
+It always includes native run pairs and block descriptors. It does not retain raw grids, permutations or run offsets.
+Declare each stack inverse and class-counter tensor as a separate inventory allocation, once per stack.
 The `dense_a4` kind requires `rates`, `arity`, `memory`, `half`, and `lut_entries`. It uses the native four-bit dense accountant.
 Native layouts obey the existing window-width bound and the process address limit.
 These counts describe prepared tensor storage. They do not qualify a kernel or predict an undeclared runtime allocation.

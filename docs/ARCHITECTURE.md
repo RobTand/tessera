@@ -1,9 +1,13 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
+Re-stamped 2026-10-07 for native routed prices in the offline planner.
 `tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
 It includes explicit copies, padded shards, temporary buffers, and rank reserves.
 Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+A routed projection declares its native `table_dtype` and includes composed tables, run pairs and block descriptors.
+Raw grid, permutation and offset planes have no retained native charge.
+Stack inverse maps and class counters use separate inventory allocations, once per stack.
+The byte accountant reads scalar entry widths and needs no tensor runtime.
 Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
 They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
 The planner refuses a different declared row tile before byte pricing.

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-07 — repair native prices in the offline planner
+
+The planner no longer imports the retired routed-part helper or offers a compact price branch.
+A routed projection declares `table_dtype`; selected table storage and launch descriptors are always included.
+The pure byte accountant accepts the table entry width. The exporter derives that width from its selected native library.
+The planner keeps its standard-library-only path. Stack inverse maps and class counters remain explicit inventory allocations.
+The import failed before this correction. Both table widths, exact-fit rank prices and tensor-free CLI paths now have checks.
+No native kernel, wire format, runtime contract entry or serving default changes.
+
 ## 2026-10-07 — reconcile native pricing with the current master
 
 The exporter reads `TILE_ROWS` from `window_geometry` and prices each verified unit manifest.

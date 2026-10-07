@@ -18,7 +18,7 @@ from .errors import GrammarError
 from .serving_parts import (
     dense_resident_bytes_resident_mode,
     routed_fused_unit_bytes,
-    routed_window_part_resident_bytes,
+
     routed_window_unit_resident_bytes,
 )
 
@@ -130,7 +130,7 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
     allowed |= ({"arity", "memory", "half", "lut_entries"} if kind == "dense_a4"
                 else {"family", "window_bits", "tile_rows"})
     if kind == "routed_window":
-        allowed.add("fused")
+        allowed.add("table_dtype")
     _fields(storage, allowed, field)
     expected_ndim = 3 if kind == "routed_window" else 2
     if len(global_shape) != expected_ndim:
@@ -162,8 +162,11 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
             _refuse("invalid_storage", field + key, f"{field}{key}: {exc}")
     if kind != "dense_a4" and storage.get("family") not in ("TESSERA_BF16", "TESSERA_FP8"):
         _refuse("invalid_storage", field + ".family", f"{field}.family has no window byte accountant")
-    if kind == "routed_window" and type(storage.get("fused")) is not bool:
-        _refuse("invalid_storage", field + ".fused", f"{field}.fused must be a Boolean")
+    if kind == "routed_window":
+        dtype = storage.get("table_dtype")
+        if not isinstance(dtype, str) or dtype not in DTYPE_BYTES:
+            _refuse("invalid_storage", field + ".table_dtype",
+                    f"{field}.table_dtype must name a supported data type")
     return storage
 
 
@@ -186,9 +189,9 @@ def _storage_bytes(shape: tuple, width: int, allocation: Mapping, storage, offse
         experts = shape[0]
         unit = routed_window_unit_resident_bytes(storage["family"], rows, cols, rates,
                                                 window_bits=storage["window_bits"], tile_rows=storage["tile_rows"])
-        if storage["fused"]:
-            unit += routed_fused_unit_bytes(storage["window_bits"], cols)
-        return experts * unit + routed_window_part_resident_bytes(experts)
+        unit += routed_fused_unit_bytes(
+            storage["window_bits"], cols, table_element_bytes=DTYPE_BYTES[storage["table_dtype"]])
+        return experts * unit
     except ValueError as exc:
         _refuse("invalid_storage", field, f"{field}: {exc}")
 
