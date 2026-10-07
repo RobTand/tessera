@@ -114,6 +114,12 @@ def test_no_current_config_declares_nothing():
     # vLLM absent: ImportError; vLLM present but no set_current_vllm_config: None
     assert declare_compile_identity(serve_mode="resident") is None
 
+def _runtime_hash(config):
+    """Use the same IR provider setup as the initialized vLLM worker."""
+    with config.kernel_config.ir_op_priority.set_priority():
+        return config.compute_hash()
+
+
 
 def test_vllm_hashes_the_two_modes_apart():
     pytest.importorskip("vllm.config")
@@ -126,12 +132,12 @@ def test_vllm_hashes_the_two_modes_apart():
             rec = declare_compile_identity(serve_mode=mode)
         assert rec is cfg.additional_config[TESSERA_KEY]
         assert rec["serve_mode"] == mode
-        hashes[mode] = cfg.compute_hash()
+        hashes[mode] = _runtime_hash(cfg)
     assert hashes["resident"] != hashes["streamed"]
     again = VllmConfig()
     with set_current_vllm_config(again):
         declare_compile_identity(serve_mode="resident")
-    assert again.compute_hash() == hashes["resident"]
+    assert _runtime_hash(again) == hashes["resident"]
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +256,7 @@ def test_vllm_hashes_the_two_lane_states_apart():
             declare_compile_identity(serve_mode="streamed")
         for name in MODULES:                       # at weight load: no current config
             note_traced_dispatch(name, lane)
-        hashes[lane] = cfg.compute_hash()
+        hashes[lane] = _runtime_hash(cfg)
     assert hashes[GEMV_OP] != hashes[GEMM_OP]
     reset_for_tests()
     again = VllmConfig()
@@ -258,4 +264,4 @@ def test_vllm_hashes_the_two_lane_states_apart():
         declare_compile_identity(serve_mode="streamed")
     for name in MODULES:
         note_traced_dispatch(name, GEMV_OP)
-    assert again.compute_hash() == hashes[GEMV_OP]
+    assert _runtime_hash(again) == hashes[GEMV_OP]

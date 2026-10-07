@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-07 — initialize real IR providers in vLLM hash tests
+
+Use the vLLM priority owner before the real configuration hash. It imports
+the platform kernels and restores the prior context after each check.
+The tests keep actual provider UUIDs and do not mock registry entries.
+
 ## 2026-10-07 — use the public dense bundle view
 
 Make the BF16 epilogue test read the public prepared-bundle view. The test
