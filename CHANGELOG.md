@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-07 — isolated source-boundary test paths
+
+Keep outside-link fixtures inside each test's private scratch directory.
+The scanned repository remains a separate subdirectory and the filesystem boundary guard stays unchanged.
+
 ## 2026-10-07 — Torch-free construction preflight
 
 Read configuration shapes and producer declarations without a Torch import.
