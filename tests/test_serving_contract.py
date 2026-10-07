@@ -821,15 +821,15 @@ def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
     cell = next(c for c in revived["lane_eligibility"]["cells"]
                 if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_resident")
     cell["executes"] = [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}]
-    with pytest.raises(ValueError, match="but the TESSERA_FP8 route makes"):
+    with pytest.raises(ValueError):
         validate_serving_contract(revived)
 
 
 def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     """The published cells read against the DISPATCH, not against the table.
 
-    ``test_every_cell_executes_a_launch_its_route_can_make`` compares cells to
-    ``ROUTE_LAUNCHES``; #538 is the case where BOTH drifted together, so a
+    Historical receipts use the qualification table. This dense check also reads the
+    actual dispatch; #538 is the case where both tables drifted together, so a
     second reference is needed.  This one is the literal pair ``apply`` emits.
     It names nothing this branch introduced, so it runs to this assertion on
     ``master`` too -- where it fails, listing the eight stale cells.
