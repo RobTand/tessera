@@ -16,9 +16,9 @@ def _builder():
     return module
 
 
-def test_job_uses_the_repository_dockerfile_and_no_gpu():
+def test_job_uses_the_repository_dockerfile_and_no_gpu(tmp_path):
     manifest = json.loads((ROOT / "images/serving/glm53-sm121.json").read_text())
-    job = _builder().build_job(manifest, "example/serving:test", "/mnt/shared/image-proof-output")
+    job = _builder().build_job(manifest, "example/serving:test", tmp_path / "image-output")
     assert job["gpu"] is False and job["submitted"] is False
     assert "--gpu" not in job["command"]
     assert job["command"][job["command"].index("--tag") + 1] == "aarch64"
@@ -35,10 +35,10 @@ def test_job_uses_the_repository_dockerfile_and_no_gpu():
                 and isinstance(node.func, ast.Name) and node.func.id == "replace_once"]) == 8
 
 
-def test_dry_run_does_not_start_a_build():
+def test_dry_run_does_not_start_a_build(tmp_path):
     result = subprocess.run([sys.executable, str(ROOT / "tools/build_serving_image.py"),
         "--manifest", str(ROOT / "images/serving/glm53-sm121.json"),
-        "--image-tag", "example/serving:test", "--output-directory", "/mnt/shared/image-proof-output",
+        "--image-tag", "example/serving:test", "--output-directory", str(tmp_path / "image-output"),
         "--dry-run"], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
     job = json.loads(result.stdout)
