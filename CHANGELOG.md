@@ -1,14 +1,18 @@
 # Changelog
 
-## 2026-10-07 — T-16 routed cells: whole bits 1 through 8
+## 2026-10-07 — T-16 routed cells: whole bits 1 through 7
 
-Contract v59 widens the four TESSERA_BF16_K1 routed cells to whole bits 1 through 8.
-Each cell censuses q256 256, 512, 768, 1024, 1280, 1536, 1792, 2048 with run tables [1] through [8].
-Bits 3, 4, 6, and 8 carry the 16 speed-test cells at 0.99 to 1.23x T-8.
-All eight bits carry routed geometry-sweep rows with no exclusion and sampled CPU quality rows.
-Fractional rungs and bits 9 through 14 stay refused on routed cells.
+Contract v59 widens the four TESSERA_BF16_K1 routed cells to whole bits 1 through 7.
+Each cell censuses q256 256, 512, 768, 1024, 1280, 1536, 1792 with run tables [1] through [7].
+R1024 stands on its served census.
+All seven carry production-kernel sweep route rows with no exclusion.
+CPU weight-space rows cover 256, 512, 768, 1280, 1536, and 1792.
+R1024 is absent from the 480 published quality batches.
+The rows are screens only, never served KL.
+Bit 8 is withheld on the rate-8 down anomaly: 13 to 18 percent spread at M 1 to 512, rerun PB 2d5b871f pending.
+No prototype speed is cited for any production claim.
 The cells stay eager-only at grade route only with no served KL claim.
-The served re-census at each whole bit stays open.
+The served re-census stays open.
 This source change claims no graphics processor qualification.
 
 ## 2026-10-07 — issue 1018: producer policy correction

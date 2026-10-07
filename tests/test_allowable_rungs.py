@@ -112,9 +112,9 @@ def test_the_sweep_admission_file_names_bits_1_to_7_and_withholds_bit_8():
     for q in _admitted_rungs():
         row = doc["rungs"][str(q)]
         assert row["route"] and row["quality"], q
+        assert "prototype" not in row["route"] and "speed" not in row["route"], q
     withheld = doc["rungs"]["2048"]
     assert "2d5b871f" in withheld["anomaly"], withheld
-    assert "prototype" not in json.dumps(doc), "production claims cite no prototype"
 
 
 def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(contract):
