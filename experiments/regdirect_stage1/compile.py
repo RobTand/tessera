@@ -1,4 +1,4 @@
-"""x86 compile-only gate for serving/csrc/regdirect_routed.cu (sm_121, -Xptxas -v): registers and spills.
+"""x86 compile-only gate for a serving/csrc source (default regdirect_routed.cu; sm_121, -Xptxas -v): registers and spills.
 
 Uses the CUDA 13 nvcc already unpacked on dl380g10 (read-only) inside an Ubuntu 24.04
 container, as experiments/t8r_speed/compile_aligned.py did on the eng-rung-aligned-test
@@ -22,6 +22,7 @@ import torch
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--source", default="regdirect_routed.cu", help="a file under src/tessera/serving/csrc")
     ap.add_argument("--toolkit", type=Path, default=Path("/tmp/eng-rung-aligned-toolkit"))
     ap.add_argument("--container-image",
                     default="ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517")
@@ -30,7 +31,7 @@ def main():
     nvcc = args.toolkit / "nvidia" / "cu13" / "bin" / "nvcc"      # the unpacked CUDA 13 wheel's layout
     if not nvcc.is_file():
         raise SystemExit(f"no nvcc at {nvcc}")
-    src = Path(__file__).resolve().parents[2] / "src/tessera/serving/csrc/regdirect_routed.cu"
+    src = Path(__file__).resolve().parents[2] / "src/tessera/serving/csrc" / args.source
     inc = Path(torch.__file__).parent / "include"
     cuda_inc = nvcc.parent.parent / "include"
     work = Path("/tmp") / f"regdirect-routed-compile-{os.environ.get('PRISMABUILD_ACTION_KEY', os.getpid())}"
