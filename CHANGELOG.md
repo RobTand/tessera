@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-07 — select the uniform census fixture entry
+
+The uniform census fixture now selects its actual lane-free native entry.
+It does not require a one-entry route registry.
+The routed and mixed census tests retain their population and qualification checks.
+Production code, artifact bytes and qualification cells stay unchanged.
+
 ## 2026-10-07 — use direct uniform native launches
 
 The uniform native owner binds one complete stack at load and uses the old direct CUDA launch.
