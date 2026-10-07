@@ -3702,6 +3702,7 @@ def main():
                                                         tensor_names=source_tensor_names)
                                if m not in stack_plan}
     config = src_config
+    source_quantization_config = config.get("quantization_config")
     config["quantization_config"] = {
         # The field that selects Tessera's own vLLM plugin (entry point
         # ``tessera = tessera.serving:register``).  No serve flag enables it.
@@ -3730,6 +3731,11 @@ def main():
         **({"research_selected_moe": research_execution.config.as_checkpoint()}
            if research_execution is not None else {}),
     }
+    if not args.partition and not config_groups:
+        if source_quantization_config is None:
+            config.pop("quantization_config", None)
+        else:
+            config["quantization_config"] = source_quantization_config
     tessera_fp4_predicate = vllm_fp4_predicate("tessera", MIXED_PRECISION)
     config_name = "tessera_part_config.json" if args.partition else "config.json"
     (args.out / config_name).write_text(json.dumps(config, indent=2))
