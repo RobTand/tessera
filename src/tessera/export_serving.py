@@ -1815,14 +1815,20 @@ def assign_expert_unit_rungs(record, assignments):
         if module_scheme_key(record["grid"], rung, STRUCTURE_ROUTED_MOE) != base:
             raise SystemExit(f"{name}: selected rung changes the stack grid/body/plane")
     effective = {name: assignments.get(name, record["q256"]) for name in names}
+    if record["family"] == NVFP4:
+        from tessera.serving.scheme import e2m1_expert_rate_reason
+        by_slot = {(unit["expert"], unit["projection"]):
+                   effective[unit["tensor"].removesuffix(".weight")]
+                   for unit in record["units"]}
+        matrix = [[by_slot[expert, projection] for projection in EXPERT_PROJECTIONS]
+                  for expert in range(record["experts"])]
+        reason = e2m1_expert_rate_reason(matrix)
+        if reason is not None:
+            raise SystemExit(f"{record['stack']}: {reason}")
     if len(set(effective.values())) == 1:
         record["q256"] = next(iter(effective.values()))
         record.pop("unit_q256", None)
     else:
-        if record["family"] == NVFP4:
-            raise SystemExit(
-                f"{record['stack']}: per-unit routed rungs require the WINDOW "
-                "E4M3/BF16 loader; mixed NVFP4 expert schedules are not supported")
         record["unit_q256"] = {name: rung for name, rung in sorted(effective.items())
                                if rung != record["q256"]}
     return record
@@ -2605,7 +2611,7 @@ def main():
                              research_records=research_gate_records)
                 check_lanes(required_lanes, grid, rung, where=unit["tensor"],
                             structure=STRUCTURE_ROUTED_MOE)
-        if "unit_q256" in record:
+        if "unit_q256" in record and record["family"] != NVFP4:
             cliff = (f"{stack}: per-unit routed schedules have no served qualification; "
                      "divergent expert schedules or gate/up strides require the compact adapter. "
                      "Mixed schedules are research-only until served GPU/performance "
