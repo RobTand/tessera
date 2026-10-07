@@ -423,6 +423,7 @@ def fixture_register_direct(steps=None, rungs=(768, 770), shapes=("gate_up",)):
     dims = {"gate_up": (1024, 4096), "down": (4096, 1024)}
     scope = {"rung_min": rungs[0], "rung_max": rungs[-1], "grid_step_q256": rungs[1] - rungs[0],
              "grid_owner": "tessera.grammar k-step quota", "required_cells": cells}
+    scope["shapes"] = [{"shape_id": s, "kernel_kind": "routed", "rows": dims[s][0], "columns": dims[s][1]} for s in shapes]
     if steps is not None:
         scope["grid_steps_q256"] = steps
     rows = []
