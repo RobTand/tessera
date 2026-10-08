@@ -6,6 +6,10 @@ The byte audit retains both the fragment checks and the projection checks.
 The CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
 The retained graphics processor evidence does not establish serving qualification.
 
+Re-stamped 2026-10-08 for the graph witness contract (issue #1062).
+
+--compiled names Torch compilation only. Mode NONE keeps CUDA graphs but disables the Torch trace. Its records keep capture shapes. Replay runs no Python. The census refuses that combination before any load. Real compiled records still carry M star. Phase cover still requires current logical rows. No default, pin, gate or admission changes.
+
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
 
 The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.

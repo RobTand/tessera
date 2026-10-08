@@ -1066,6 +1066,23 @@ def compilation_kwargs(args):
     return {"compilation_config": args.compilation_config}
 
 
+def torch_compile_disabled_by_config(config):
+    """True when the named compilation_config disables the Torch trace.
+
+    Mode NONE keeps CUDA graphs but runs no Torch trace. Records keep
+    concrete capture shapes. Replay runs no Python. Such records cannot
+    meet the shape-polymorphic check.
+    """
+    if not isinstance(config, dict):
+        return False
+    mode = config.get("mode")
+    if isinstance(mode, str):
+        return mode.upper() == "NONE"
+    if isinstance(mode, int) and not isinstance(mode, bool):
+        return mode == 0
+    return False
+
+
 def engine_backend_kwargs(args):
     """The engine's backend choices, assembled where a test can read it.
 
@@ -1452,17 +1469,21 @@ def parse_args(argv=None, env=None):
                     help="pass vLLM's scheduler token cap unchanged; 0 leaves its default. "
                          "A bounded GLM census can reproduce the served batch/memory scope")
     ap.add_argument("--compiled", action="store_true",
-                    help="load with enforce_eager=False (vLLM's default compiled forward + CUDA "
-                         "graphs) instead of eager; the route records then carry M='*' because "
-                         "the record is written from the trace, and a route that cannot be traced "
-                         "fails here with its own traceback instead of an engine-start refusal")
+                    help="load with enforce_eager=False instead of eager. "
+                         "With Torch compilation the route records carry M star. "
+                         "The record comes from the trace. "
+                         "A route that cannot pass the trace fails here. "
+                         "With compilation mode NONE the records stay concrete. "
+                         "That combination is refused.")
     ap.add_argument("--compilation-config", type=_json_object, default=None, metavar="JSON",
-                    help="a JSON object passed unchanged to vLLM as compilation_config; requires "
-                         "--compiled. Without it a compiled GLM-5.3 census stops at engine start "
-                         "(glm53_nope refuses VLLM_COMPILE with any graph mode but "
-                         "FULL_DECODE_ONLY). Recorded in the receipt beside "
-                         "runtime.execution_mode. Compiled records attest routes only: shapes "
-                         "are not attested")
+                    help="a JSON object passed unchanged to vLLM as compilation_config. "
+                         "It requires --compiled. "
+                         "Without it a compiled GLM-5.3 census stops at engine start. "
+                         "The receipt records it beside runtime execution mode. "
+                         "Compiled records attest routes only. Shapes stay unattested. "
+                         "Mode NONE is refused with --compiled. "
+                         "It keeps CUDA graphs but disables the Torch trace. "
+                         "Its records keep capture shapes. Replay runs no Python.")
     ap.add_argument("--allow-fallback-decoder", action="store_true",
                     help="accept a module decoded by the pure-torch fallback instead of the "
                          "native span-2 kernel; without it a fallback serve REFUSES, because a "
@@ -1584,6 +1605,11 @@ def parse_args(argv=None, env=None):
         ap.error(f"--runtime-image {args.runtime_image}: {exc}")
     if args.compilation_config is not None and not args.compiled:
         ap.error("--compilation-config requires --compiled (an eager engine has no compilation)")
+    if args.compiled and torch_compile_disabled_by_config(args.compilation_config):
+        ap.error("--compilation-config mode NONE disables Torch compilation (CUDA graphs only). "
+                 "Concrete capture shapes remain. Graph replay runs no Python. "
+                 "The latest record cannot attest current logical rows. "
+                 "Remove --compiled for this config. Name a Torch-compile mode instead.")
     args.execution_mode = "compiled" if args.compiled else "eager"
     return args
 

@@ -299,3 +299,12 @@ def test_a_compiled_census_keeps_its_symbolic_records():
     records = {phase: {_MODULE: _record("*")} for phase in CENSUS_PHASE_REGIMES}
     assert tool.phase_shape_problems(
         records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True) == []
+
+
+def test_a_compiled_census_refuses_concrete_capture_shapes():
+    """Graph-only capture keeps M64 in both phases (issue #1062)."""
+    tool = _tool()
+    records = _records(64, 64)
+    problems = tool.phase_shape_problems(
+        records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True)
+    assert problems and "shape-polymorphic" in problems[0], problems
