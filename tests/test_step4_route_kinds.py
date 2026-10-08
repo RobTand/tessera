@@ -8,11 +8,12 @@ import pytest
 from experiments.step4_route_qualification import QualificationRefused, qualify_dispatch
 from test_step4_route_qualification import entry, trace
 
-from tessera.serving.scheme import MOE_BUILDERS, launch_pairs
+from experiments.step4_route_qualification import MOE_LAUNCHES
+from tessera.serving.scheme import MOE_BUILDERS
 
 FAMILIES = tuple(MOE_BUILDERS)
-MOE = {family: next(iter(launch_pairs(family, structure="routed_moe", lanes=(),
-                                      include_experimental=True))) for family in FAMILIES}
+# Use one admitted routed launch per family, as entry() does for dense.
+MOE = {family: MOE_LAUNCHES[family][1][0] for family in FAMILIES}
 
 
 def mixed():

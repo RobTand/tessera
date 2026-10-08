@@ -164,7 +164,7 @@ def test_native_unit_price_counts_retained_planes_only(family, rows, rates):
 
 
 def test_unit_pricing_refuses_malformed_fields():
-    for kwargs in ({"window_bits": 0}, {"cols": 3}, {"family": "TESSERA_NVFP4"}):
+    for kwargs in ({"window_bits": 0}, {"cols": 3}, {"family": "unknown"}):
         arguments = dict(family="TESSERA_FP8", rows=128, cols=128, rates=(4,) * 128,
                          window_bits=WINDOW_BITS, tile_rows=TILE_ROWS)
         arguments.update(kwargs)
