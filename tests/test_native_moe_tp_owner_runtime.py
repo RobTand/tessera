@@ -25,8 +25,10 @@ torch = pytest.importorskip("torch")
 from experiments import bench_native_moe_operator as moe
 from experiments import bench_native_operator as dense
 
-#: The routed NVFP4 stack's one launch since contract v39 (tessera#604).
-A4_GROUPED = ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")
+# A native panel uses the plugin's actual routed owner, not a retired ABI.
+from tessera.serving.scheme import launch_pairs, TESSERA_NVFP4, STRUCTURE_ROUTED_MOE
+A4_GROUPED = next(iter(launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
+                                    mode="resident", include_experimental=True)))
 
 GLM_UNIT = "model.language_model.layers.3.mlp.experts"
 A4 = "TESSERA_E2M1x2_K2_R896"
@@ -528,33 +530,6 @@ def test_binding_reads_the_live_group_and_refuses_a_mismatch():
         moe.bind_owner_rank({**world, "rank": 1, "world_size": 2})
 
 
-def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
-    """The panel's admissible route is the plugin's, per family and per world.
-
-    ``TESSERA_NVFP4`` has a routed launch table row (its production expert
-    builder serves a world above one); since contract v39 it is the grouped A4
-    GEMM alone.  ``TESSERA_BF16`` has one since
-    tessera#609 -- the compact lane's folded pair, experimental until a cell
-    attests it -- and since tessera#613 this harness prices that production
-    owner, so the folded pair is the only admissible route.  Both statements
-    are the plugin's, read here rather than restated.
-    """
-    materialising = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
-    # Contract v39 (tessera#604): the NVFP4 expert stack's one launch is the
-    # grouped A4 GEMM at every world; the materialising pair left the table.
-    for world in (1, 2):
-        a4 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(world, A4)), world=world)
-        assert a4 == {A4_GROUPED}, world
-        assert materialising not in a4
-    # The backend suffix a served record carries is not a second route.
-    assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materialising[0]
-    a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
-    assert materialising not in a16
-    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
-    # Contract v41 (tessera#640): the fused lane's folded pair is admissible
-    # beside the compact one -- the dispatch takes it for a rate-4 stack.
-    assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_folded"),
-                   (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_folded")}
 
 
 def test_an_fp8_owner_never_declares_the_materialising_launch():
@@ -801,7 +776,7 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
 
 @pytest.mark.parametrize("tp,format_name,symbol,decoder", [
     (1, A8, "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-    (2, A4, "tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),
+    (2, A4, A4_GROUPED[0], A4_GROUPED[1]),
     (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
     (1, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
      "native_window_moe_compact_folded"),

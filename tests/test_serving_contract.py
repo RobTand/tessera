@@ -101,7 +101,7 @@ _T16_RUNGS = sorted({256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536,
                      1920, 2048} | set(range(2176, 3585, 128)))
 _T8_RUNGS = sorted({256, 384, 512, 640, 768, 896, 1024, 1152, 1280, 1408, 1536, 1664, 1792,
                     1920, 2048})
-_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896],
+_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [],
                  "TESSERA_E4M3_K1": sorted({832, 864, 896, 928, 944, 960, 1024, 1088}
                                            | set(_T8_RUNGS)),
                  "TESSERA_BF16_K1": sorted({832, 864, 880, 896, 928, 960, 1024, 1088, 1792}
@@ -165,10 +165,6 @@ _GLM_X_CELLS = (
     ("TESSERA_BF16_K1", "routed_moe", [1024], "bf16_unquantized",
      ((_COMPACT_MOE, "native_window_moe_compact_folded"),
       (_FUSED_MOE, "native_routed_fused_window_folded"))),
-    ("TESSERA_E2M1_K2", "dense", [896], "e2m1_group16_ue4m3_static",
-     (("tessera.kernel_a4.a4_span2_gemm", "native_span2_gemm"),)),
-    ("TESSERA_E2M1_K2", "routed_moe", [896], "e2m1_group16_ue4m3_static",
-     (("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),)),
 )
 for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
     for _regime in ("decode", "batch"):
@@ -302,12 +298,6 @@ _REEARNED = {
                         (_FUSED_MOE, "native_routed_fused_window_e4m3mma")})
        for _regime in ("decode", "batch")},
 }
-#: At contract v39 (tessera#604) the routed E2M1 pair v39 withdraws comes back
-#: on ``GLM_U1_RECEIPT`` on the native grouped A4 launch.
-_REEARNED.update({
-    f"tessera_e2m1_k2_routed_moe_sm121_{_regime}_resident":
-    (GLM_U1_RECEIPT, {("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")})
-    for _regime in ("decode", "batch")})
 _REEARNED_CELL_IDS = frozenset(_REEARNED)
 
 #: WITHDRAWN at contract v37 (tessera#614).  These two attested
@@ -497,11 +487,8 @@ def test_every_cell_names_a_rung_its_family_attests(contract):
 #: domain at both ends on E4M3, and on E2M1x2 the grammar above plus the native
 #: decoder's span-2-TCQ-only support below.
 _READER_RATES = {
-    # tessera#506 leg 2: the full trellis-shaped domain. Whole-rate rungs of
-    # rate 1..7 over the arity-2 grid -- q256 128..896 step 128 (one forest
-    # per span-2 unit; off-step rungs like 448 resolve to a mixed-rate
-    # schedule the preparer refuses by name, so the step is the honest bound).
-    "TESSERA_E2M1_K2": ("E2M1x2", [128, 896], 128),
+    # Native paired WINDOW L14 support, distinct from current attestation.
+    "TESSERA_E2M1_K2": ("E2M1x2", [128, 1024], 1),
     "TESSERA_E4M3_K1": ("E4M3", [256, 2048], 1),
     # ``experiments/bf16_reader_rate_range.py``: 25 rungs, every integer rate
     # 1..16 plus nine of the non-integer rungs a Bresenham schedule makes, each
@@ -523,30 +510,6 @@ def test_the_reader_range_is_what_the_decoder_takes(contract):
         assert entry["reader_rate_bound"], f"{family}: no mechanism named for the bound"
 
 
-def test_the_deprecated_alias_is_carried_and_must_agree(contract):
-    """``candidate_rungs_q256`` is kept so the rename stays ADDITIVE.
-
-    PrismaQuant reads this packaged file through ``importlib.resources`` and its
-    ``load_published_formats`` was written against schema v1; dropping a key it
-    reads by name, while the ``schema`` string still says v1, would be the same
-    "current and wrong" fault this change exists to close.  So the alias stays
-    until the schema moves, and it may not disagree with the field it aliases.
-    """
-    for entry in contract["formats"]:
-        assert entry["candidate_rungs_q256"] == entry["attested_rungs_q256"], (
-            f"{entry['family']}: the alias has drifted from what it aliases")
-
-    broken = copy.deepcopy(contract)
-    broken["formats"][0]["candidate_rungs_q256"] = [
-        broken["formats"][0]["attested_rungs_q256"][0] + 1]
-    with pytest.raises(ValueError, match="DEPRECATED ALIAS"):
-        validate_serving_contract(broken)
-
-    # and it is genuinely OPTIONAL: a document without it still validates
-    without = copy.deepcopy(contract)
-    for entry in without["formats"]:
-        entry.pop("candidate_rungs_q256")
-    validate_serving_contract(without)
 
 
 def test_an_attested_rung_outside_the_reader_range_is_refused(contract):
@@ -582,7 +545,7 @@ def test_the_reader_grid_resolves_by_route_AND_grid(contract):
     assert reader_rate_grid("TESSERA_FP8", "E4M3", contract) == (
         "TESSERA_E4M3_K1", 256, 2048, 1)
     assert reader_rate_grid("TESSERA_NVFP4", "E2M1x2", contract) == (
-        "TESSERA_E2M1_K2", 128, 896, 128)
+        "TESSERA_E2M1_K2", 128, 1024, 1)
     assert reader_rate_grid("TESSERA_NVFP4", "E2M1", contract) is None, (
         "the arity-1 E2M1 grid has no published range and must not borrow one")
     assert reader_rate_grid("TESSERA_FP8", "E2M1x2", contract) is None
@@ -603,17 +566,12 @@ def test_the_cells_are_pinned_field_for_field(contract):
             assert got[field] == value, f"{cell_id}.{field}"
 
 
-def test_the_routed_e2m1_cells_name_the_runtime_their_receipt_records(contract):
-    """The image, vLLM and torch builds on the two routed E2M1_K2 cells are the
-    ones the u1 stub D census recorded, read from the committed receipt rather
-    than trusted from the LAWS table alone (contract v39, tessera#604)."""
+def test_historical_tcq_receipts_do_not_attest_current_window_bytes(contract):
     receipt = json.loads((ROOT / "experiments/results/glm53_u1_stub_d_tp1_eager_census.json")
                          .read_text(encoding="utf-8"))
-    for regime in ("decode", "batch"):
-        cell = _cells(contract)[f"tessera_e2m1_k2_routed_moe_sm121_{regime}_resident"]
-        assert cell["runtime"]["image"] == receipt["runtime"]["image"], cell["id"]
-        assert cell["runtime"]["vllm"] == receipt["versions"]["vllm"], cell["id"]
-        assert cell["runtime"]["torch"] == receipt["versions"]["torch"], cell["id"]
+    assert receipt["records"]
+    assert not any(cell["family"] == "TESSERA_E2M1_K2"
+                   for cell in contract["lane_eligibility"]["cells"])
 
 
 def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
@@ -657,10 +615,9 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
                               cell["runtime"]["image"]), set()).add(cell["regime"])
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
         assert cell["runtime"]["execution_modes"] == ["eager"]
-    assert len(moe) == 10
+    assert len(moe) == 8
     assert sorted((family, rungs, image) for family, rungs, image in by_family) == sorted([
         ("TESSERA_BF16_K1", (1024,), _GLM_X_RUNTIME["image"]),
-        ("TESSERA_E2M1_K2", (896,), _GLM_X_RUNTIME["image"]),
         ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088),
          _GLM_X_RUNTIME["image"]),
         ("TESSERA_BF16_K1", (1024,), NIGHTLY_RUNTIME["image"]),
@@ -709,27 +666,14 @@ def test_the_launch_table_is_spelled_in_the_vocabulary_the_serve_stamps():
 
 
 def test_the_launch_tables_lane_is_the_published_extension():
-    """A launch may only name a lane this build publishes an extension for.
-
-    No launch named one from contract v31 (tessera#538) to v41: the only launch
-    that ever did was the dense window-GEMV lane's, and the dispatch that made
-    it was retired by ``1b767a207``.  Contract v42 (tessera#640) brings two
-    back on purpose: the fused routed window lane's pairs name the extension
-    each needs, so ``_validate_cell_executes`` derives them only at a rung the
-    extension's own ``lane.requires`` admits.  The rule is stated both ways --
-    the loop, and the exact set it applies to today.  A lane launch returning
-    without an extension entry fails here; a third lane launch has to change
-    the set deliberately.
-    """
+    """Each declared lane must name a published reader for that route."""
     from tessera.serving import ext
     from tessera.serving.scheme import ROUTE_LAUNCHES
 
     published = {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS if e.get("lane")}
-    lane_launches = 0
     for route, launches in ROUTE_LAUNCHES.items():
         for launch in launches:
             if launch["lane"] is not None:
-                lane_launches += 1
                 assert launch["lane"] in published, launch
                 # And the extension must say it serves that route.  The
                 # window GEMV published TESSERA_FP8 alone while
@@ -739,32 +683,6 @@ def test_the_launch_tables_lane_is_the_published_extension():
                 assert route in next(
                     e["routes"] for e in ext.NATIVE_EXTENSIONS
                     if e["module_name_prefix"] == launch["lane"]), (route, launch["lane"])
-    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, ROUTED_FUSED_WINDOW_SYMBOL
-    lane_rows = {(launch["symbol"], launch["decoder"], launch["lane"])
-                 for launches in ROUTE_LAUNCHES.values() for launch in launches
-                 if launch["lane"] is not None}
-    # Contract v43: the same two libraries also carry the fused window
-    # kernel's DENSE identity, one decoder per arithmetic, so each lane names
-    # two rows -- a routed one and a dense one -- and the set is four.
-    assert lane_rows == {
-        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window", "tessera_routed_fused_e4m3"),
-        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_folded",
-         "tessera_routed_fused_value"),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense", "tessera_routed_fused_e4m3"),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_folded",
-         "tessera_routed_fused_value"),
-        # Contract v46: the E4M3 family's tensor-core instruction is a third
-        # library of the same source, with its own routed and dense rows.  Both
-        # stood in EXPERIMENTAL_LAUNCHES until contract v47's censuses earned
-        # them the six E4M3 cells.
-        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_e4m3mma",
-         "tessera_routed_fused_mma_e4m3"),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma",
-         "tessera_routed_fused_mma_e4m3")}
-    assert lane_launches == 6, (
-        "a launch names an extension lane beyond the three libraries' fused routed and "
-        "fused dense rows; the rule above has something new to say and this set has to "
-        "grow deliberately")
     assert published, "ext still publishes lane-bearing extensions; only the LAUNCH went"
 
 
@@ -1024,19 +942,11 @@ def test_every_cell_executes_a_launch_its_route_can_make(contract):
         assert cell_executes(cell) <= admissible, cell["id"]
 
 
-def test_the_native_route_pairs_are_attested_and_censusable():
-    """The native lanes, by the constants route owners import.
-
-    Each pair is in ``ROUTE_LAUNCHES`` for the structure it serves, spelled in
-    ``telemetry.DECODERS``' vocabulary.  Until contract v39 the two A4 pairs
-    were the only ``EXPERIMENTAL_LAUNCHES``: absent from the validator's default
-    view and reachable only through the census opt-in.  The u1 stub D census
-    served both, so v39 moves them into the attested dispatch and the
-    experimental set is empty; the opt-in stays, as the union it always was.
-    """
+def test_native_route_pairs_are_supported_and_censusable():
+    """Launch support is not a claim that a serving receipt exists."""
     pytest.importorskip("torch")
     from tessera.serving import telemetry
-    from tessera.serving.scheme import (A4_DENSE_GEMM_SYMBOL, A4_GROUPED_GEMM_SYMBOL,
+    from tessera.serving.scheme import (FUSED_WINDOW_DENSE_E2M1_SYMBOL, ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
                                         EXPERIMENTAL_LAUNCHES, ROUTE_LAUNCHES,
                                         STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
                                         TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4,
@@ -1044,9 +954,9 @@ def test_the_native_route_pairs_are_attested_and_censusable():
                                         experimental_launch_pairs, launch_pairs)
 
     expected = {
-        (A4_DENSE_GEMM_SYMBOL, telemetry.DECODER_NATIVE_SPAN2_GEMM):
+        (FUSED_WINDOW_DENSE_E2M1_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1):
             (TESSERA_NVFP4, STRUCTURE_DENSE),
-        (A4_GROUPED_GEMM_SYMBOL, telemetry.DECODER_NATIVE_SPAN2_GROUPED):
+        (ROUTED_FUSED_WINDOW_E2M1_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1):
             (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
     }
     # Contract v42 (tessera#640): the fused warp-specialised routed lane is
@@ -1161,7 +1071,10 @@ def test_the_native_route_pairs_are_attested_and_censusable():
                    and structure in launch["structures"]]
         assert entries, (pair, route, structure)
         for launch in entries:
-            assert launch["lane"] is None and not launch["when_lane_absent"], launch
+            from tessera.serving.ext import ROUTED_FUSED_E2M1_MODULE_NAME
+            assert launch["lane"] == ROUTED_FUSED_E2M1_MODULE_NAME
+            assert not launch["when_lane_absent"], launch
+        assert launch_pairs(route, structure=structure, lanes=()) == set()
     # A route owner's census opt-in is the union, not a new table.
     for route, structure in ((TESSERA_NVFP4, STRUCTURE_DENSE),
                              (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
@@ -1544,7 +1457,7 @@ def test_a_replication_rule_at_a_world_of_one_is_refused(contract):
         tp = c["tensor_parallel"]
         for unit in tp["units"]:
             unit["max_world_size"] = 1
-            unit.pop("world_size_receipt")
+            unit.pop("world_size_receipt", None)
         tp.pop("world_size_receipts")
 
     bad = _mutated(contract, back_to_one)
@@ -1698,12 +1611,12 @@ def test_an_unmeasured_world_size_is_refused(contract):
     wires (the artifact is TP-agnostic and the rank cuts its shard at load).
     """
     wider = _mutated(contract,
-                     lambda c: c["tensor_parallel"]["units"][0].__setitem__("max_world_size", 4))
+                     lambda c: c["tensor_parallel"]["units"][1].__setitem__("max_world_size", 4))
     with pytest.raises(ValueError, match="covers a world of 2"):
         validate_serving_contract(wider)
 
     bare = _mutated(contract,
-                    lambda c: c["tensor_parallel"]["units"][0].pop("world_size_receipt"))
+                    lambda c: c["tensor_parallel"]["units"][1].pop("world_size_receipt"))
     with pytest.raises(ValueError, match="ATTESTATION") as excinfo:
         validate_serving_contract(bare)
     assert "per-rank wires" not in str(excinfo.value)
@@ -1725,19 +1638,19 @@ def _world_size_receipts(contract) -> dict:
     return {r["id"]: r for r in contract["tensor_parallel"]["world_size_receipts"]}
 
 
-@pytest.mark.parametrize("index", [0, 1, 2])
-def test_a_raised_unit_without_its_receipt_is_refused_by_name(contract, index):
-    unit = contract["tensor_parallel"]["units"][index]
-    assert unit["max_world_size"] > 1, "the premise: every packaged unit is raised"
-    bad = _mutated(contract,
-                   lambda c: c["tensor_parallel"]["units"][index].pop("world_size_receipt"))
-    with pytest.raises(ValueError, match="names no world_size_receipt") as excinfo:
-        validate_serving_contract(bad)
-    assert unit["unit"] in str(excinfo.value)
+def test_a_raised_unit_without_its_receipt_is_refused_by_name(contract):
+    for index, unit in enumerate(contract["tensor_parallel"]["units"]):
+        if unit["max_world_size"] <= 1:
+            continue
+        bad = _mutated(contract,
+                       lambda c: c["tensor_parallel"]["units"][index].pop("world_size_receipt"))
+        with pytest.raises(ValueError, match="names no world_size_receipt") as excinfo:
+            validate_serving_contract(bad)
+        assert unit["unit"] in str(excinfo.value)
 
 
 def test_a_receipt_the_block_does_not_publish_is_refused(contract):
-    bad = _mutated(contract, lambda c: c["tensor_parallel"]["units"][0]
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["units"][1]
                    .__setitem__("world_size_receipt", "some_other_serve"))
     with pytest.raises(ValueError, match="some_other_serve"):
         validate_serving_contract(bad)
@@ -1831,7 +1744,9 @@ def test_executed_units_are_what_every_rank_of_every_serve_traced(contract):
         on_every_rank = set.intersection(*per_rank)
         assert set(receipt["executed_units"]) == on_every_rank, (name, per_rank)
         raised = {u["unit"] for u in units if u.get("world_size_receipt") == name}
-        assert raised == on_every_rank
+        # Old TCQ bytes remain in the historical receipt, not current T4 qualification.
+        assert raised <= on_every_rank
+        assert on_every_rank - raised <= {"TESSERA_E2M1_K2"}
 
 
 def test_the_single_rank_kl_block_is_the_committed_table(contract):

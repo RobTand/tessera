@@ -19,8 +19,8 @@ dequantised ``scaled_fp4_quant`` output the kernel consumes.  Held here:
   GLM-5.3's DSA indexer ``weights_proj`` and ``wk``, and a block and a half)
   write only their own rows, and a rank's row cut of a dense unit computes
   the whole unit's rows;
-* the refusals by name, the chunk descriptors against a brute-force count,
-  and the scope: the library is not reachable from ``tessera.serving``.
+* the refusals by name and the chunk descriptors against a brute-force count.
+  Serving-owner tests validate the native WINDOW intake and retained tensors.
 
 GPU cases need sm_121 (the instruction exists on the architecture-specific
 target only) and the runtime's ``scaled_fp4_quant``; they run through
@@ -236,23 +236,36 @@ def test_only_the_e2m1_library_takes_the_architecture_specific_target():
     assert "-DTESSERA_ROUTED_FUSED_FP4=1" in fp4 and any("sm_121a" in f for f in fp4)
 
 
-def test_the_library_is_not_reachable_from_serving():
-    """No route loads a window-body E2M1 stack yet (``ROUTES['TESSERA_NVFP4']``
-    admits the TCQ span-2 body), so the library is not a serving extension:
-    no ``native_extensions`` entry, and no serving module reaches its load
-    site.  The route change that admits the window body flips this test."""
-    from tessera.serving import ext
-    from tessera.serving.scheme import ROUTES
 
-    from test_serving_native_extensions import SRC, _serving_modules, scan_jit_extension_loads
 
-    assert ROUTES["TESSERA_NVFP4"]["body"] == "TCQ"
-    sites = scan_jit_extension_loads(SRC, _serving_modules())
-    assert sites and fe.MODULE_NAME not in {s["name"] for s in sites}
-    assert fe.MODULE_NAME not in {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS}
-    source = (SRC / "tessera" / "routed_fused_e2m1.py").read_text()
-    assert f'name="{fe.MODULE_NAME}"' in source
 
+@pytest.mark.parametrize("field", ["packed", "scales", "k_split"])
+def test_prequantized_dense_input_refuses_wrong_layout_before_native_launch(field):
+    from test_resident_tensor_protocol import _e2m1_role
+
+    role, _tensors = _e2m1_role(1)
+    packed = torch.zeros((1, role.cols // 2), dtype=torch.uint8)
+    scales = torch.zeros((1, role.cols // 16), dtype=torch.uint8)
+    split = 1
+    if field == "packed":
+        packed = packed.float()
+    elif field == "scales":
+        scales = scales[:, :-1]
+    else:
+        split = fe.dense_split_max(role.cols) + 1
+    with pytest.raises(GrammarError, match=field):
+        fe.dense_forward_quantized(role, packed, scales, k_split=split)
+
+
+def test_prequantized_empty_dense_input_keeps_supported_output_column_view():
+    from test_resident_tensor_protocol import _e2m1_role
+
+    role, _tensors = _e2m1_role(1)
+    packed = torch.empty((0, role.cols // 2), dtype=torch.uint8)
+    scales = torch.empty((0, role.cols // 16), dtype=torch.uint8)
+    backing = torch.empty((0, role.rows + 32), dtype=torch.bfloat16)
+    out = backing[:, :role.rows]
+    assert fe.dense_forward_quantized(role, packed, scales, out=out) is out
 
 # ----------------------------------------------------------------------------- GPU fixtures
 def _encode(rows, cols, q256, seed):
@@ -581,6 +594,10 @@ def test_dense_forward_against_the_decode(m, kind):
     bound = (a.abs() @ w.abs().T) * float(role.ratio[0]) * I * 2.0 ** -23
     for k_split in (1, 3, fe.dense_split_max(I)):
         out = fe.dense_forward(role, x, k_split=k_split)
+        from tessera.kernel_a4 import a4_quantize_activation
+        packed, scales = a4_quantize_activation(x, role.gs)
+        quantized_out = fe.dense_forward_quantized(role, packed, scales, k_split=k_split)
+        assert torch.equal(out.view(torch.int16), quantized_out.view(torch.int16))
         torch.cuda.synchronize()
         _check(out, ref, bound, exact, f"dense M={m} S={k_split}")
         captured = torch.empty_like(out)

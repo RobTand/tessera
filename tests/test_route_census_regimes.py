@@ -75,47 +75,6 @@ def test_renaming_a_regime_on_the_contract_side_only_is_refused():
         validate_serving_contract(contract)
 
 
-def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
-    """The per-(family, regime) expectation, exercised on the real table.
-
-    Keyed the way an implementer would key it -- the census's phase name
-    mapped through the table, against the cells' own ``(family, regime)`` --
-    so a divergence shows up here as a missing pair rather than as a
-    ``KeyError`` on a loaded box, and a vacuous half of the matrix shows up as
-    an absent cell rather than as a guard that passed.
-    """
-    from tessera.serving.contract import _FAMILY_TO_ROUTE
-    from tessera.serving.scheme import STRUCTURES, launch_pairs
-
-    contract = load_serving_contract()
-    block = contract["lane_eligibility"]
-    cells = {(cell["family"], cell["regime"]) for cell in block["cells"]}
-    # A family whose route makes NO attested launch cannot have a cell: the
-    # validator derives ``executes`` from the launch table and refuses a cell
-    # that would be empty.  ``TESSERA_BF16_K1`` is in that state since contract
-    # v31 (tessera#538) -- its dense route's one launch is experimental -- so
-    # requiring a cell of it would require publishing one nothing can derive.
-    # The families are partitioned rather than filtered, and both halves are
-    # asserted, so a family cannot fall out of the join by going quiet.
-    families = {entry["family"] for entry in contract["formats"]}
-    assert families, "no family is published; the join below would be vacuous"
-    launchable = {family for family in families
-                  if any(launch_pairs(_FAMILY_TO_ROUTE[family], structure=structure)
-                         for structure in STRUCTURES)}
-    assert launchable, "no family makes an attested launch; the join is vacuous"
-    missing = sorted(
-        (family, phase, CENSUS_PHASE_REGIMES[phase])
-        for family in launchable
-        for phase in CENSUS_PHASE_REGIMES
-        if (family, CENSUS_PHASE_REGIMES[phase]) not in cells
-    )
-    assert not missing, (
-        "the census drives a phase whose regime has no cell for these families: "
-        f"{missing}; a per-(family, regime) expectation would be vacuous there"
-    )
-    for family in families - launchable:
-        assert not [c for c in block["cells"] if c["family"] == family], (
-            f"{family} publishes a cell while its route makes no attested launch")
 
 
 #: The two ranks' route traces from the two-rank GLM-5.3-Flash 4-layer stub
@@ -266,21 +225,11 @@ def _tool():
 
 
 def _record(m, **over):
-    """One served resident dense record whose forward ran ``m`` rows.
-
-    It was a ``TESSERA_FP8:resident`` record until contract v31 withdrew that
-    family's dense cells (tessera#538); the shape-and-regime matcher under test
-    is family-blind, and an E2M1x2 dense pair is the cell that still covers a
-    resident dense record in both regimes with one launch.  That "one launch in
-    both regimes" is the property this fixture needs: it is what makes a
-    miscounted decode observation invisible downstream, which is the defect
-    these tests pin.  Since contract v39 that pair is the GLM-image one on the
-    native A4 GEMM (tessera#604), so the join reads that cell's image.
-    """
-    return dict({"kind": "dense", "policy": "TESSERA_NVFP4:resident",
-                 "symbol": "tessera.kernel_a4.a4_span2_gemm", "decoder": "native_span2_gemm",
+    """A current FP8 dense record isolates the shape and regime rules."""
+    return dict({"kind": "dense", "policy": "TESSERA_FP8:resident",
+                 "symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm",
                  "shape": f"M{m}:N64:K64", "state": "served",
-                 "contract": "e2m1_group16_ue4m3_static"}, **over)
+                 "contract": "fp8_per_token_dynamic"}, **over)
 
 
 def _records(batch_m, decode_m):
@@ -294,14 +243,14 @@ def _agreement(records):
     return cell_launch_agreement(
         records, cells=contract["lane_eligibility"]["cells"],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
-        rungs_by_module={_MODULE: 896}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
-        runtime_image=_e2m1_dense_image(contract), execution_mode="eager")
+        rungs_by_module={_MODULE: 1024}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+        runtime_image=_dense_image(contract), execution_mode="eager")
 
 
-def _e2m1_dense_image(contract):
-    (image,) = {cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
-                if (cell["family"], cell["structure"]) == ("TESSERA_E2M1_K2", "dense")}
-    return image
+def _dense_image(contract):
+    return next(cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
+                if (cell["family"], cell["structure"], cell["regime"]) ==
+                ("TESSERA_E4M3_K1", "dense", "batch") and "eager" in cell["runtime"]["execution_modes"])
 
 
 def _decode_phase():

@@ -441,29 +441,34 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
             return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
         if decoder != "native" or not native_roles:
             raise ValueError("native A4 resident accounting requires per-role layout")
-        total, role_rows = 4 + trellis_table_bytes, 0
+        if trellis_table_bytes:
+            raise ValueError("native E2M1 WINDOW roles retain no TCQ trellis tables")
+        from .serving.scheme import e2m1_shape_reason
+
+        total, role_rows = 4, 0  # the static activation global is shared
         for role in native_roles:
             count, width = int(role["rows"]), int(role["cols"])
             rates = tuple(int(rate) for rate in role["rates"])
-            arity, memory, half = (int(role[key]) for key in ("arity", "memory", "half"))
-            if (arity != 2 or half != 16 or count <= 0 or count % (2 * arity * 8)
-                    or width != cols or width % half or len(rates) != width
-                    or len(set(rates)) != 1 or not 1 <= rates[0] <= 8 or memory < 1):
-                raise ValueError("invalid native A4 role layout")
-            steps, pairs = count // arity, count // (2 * arity)
-            points = 1 << (rates[0] - 1)
-            select = width * (pairs // 8 + 1) + 8
-            label = width * (pairs // 4)
-            point = width * (steps * (rates[0] - 1) // 8)
-            nibbles = count * width // (half * 2)
-            lut = int(role["lut_entries"]) if len(native_roles) > 1 else 16
-            if not 1 <= lut <= 16:
-                raise ValueError("invalid native A4 scale table")
-            tables = lut + (1 << (memory + 1)) * 4 + 4 * points * (arity + 1)
-            total += select + label + point + nibbles + tables + 4  # per-role epilogue
+            arity, half = int(role["arity"]), int(role["half"])
+            bits, tile = int(role["window_bits"]), int(role["tile_rows"])
+            reason = e2m1_shape_reason(count, width)
+            if (reason is not None or arity != 2 or half != 16 or width != cols
+                    or len(rates) != width or bits != 14 or tile != 512
+                    or any(rate < 1 or rate > 8 for rate in rates)
+                    or max(rates) - min(rates) > 1):
+                raise ValueError(f"invalid native E2M1 WINDOW role layout: {reason}")
+            padded_steps = -(-(count // arity) // tile) * tile
+            words = padded_steps * sum(rates) // 8
+            table = 1 << bits
+            scale_plane = count * width // (half * 2)
+            # DenseE2M1Role retains only these inputs. The original column
+            # permutation and run table are not retained after preparation.
+            initial_state = width * 4
+            descriptors = (width // 64) * 4 * 4
+            total += words + table + scale_plane + 16 + initial_state + descriptors + 4 + 4 + 32
             role_rows += count
         if role_rows != rows:
-            raise ValueError("native A4 role rows do not cover the fused module")
+            raise ValueError("native E2M1 WINDOW role rows do not cover the fused module")
         return total
     if family not in ("TESSERA_BF16", "TESSERA_FP8"):
         raise ValueError(f"no resident-mode accounting for family {family!r}")
@@ -517,7 +522,7 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
     Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
     (w13) or columns and their rate slice (w2) through the same function.
     """
-    if family not in ("TESSERA_BF16", "TESSERA_FP8"):
+    if family not in ("TESSERA_BF16", "TESSERA_FP8", "TESSERA_NVFP4"):
         raise ValueError(f"no compact routed accounting for family {family!r}")
     rows, cols, bits, tile = int(rows), int(cols), int(window_bits), int(tile_rows)
     rates = tuple(int(rate) for rate in rates)
@@ -525,6 +530,13 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
         raise ValueError("invalid compact routed unit geometry")
     if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
         raise ValueError("invalid compact routed window layout")
+    if family == "TESSERA_NVFP4":
+        if bits != 14 or tile != 512 or rows % 2 or cols % 16:
+            raise ValueError("invalid paired LUT window layout")
+        padded = -(-(rows // 2) // tile) * tile
+        words = padded * sum(rates) // 8
+        return (words + (1 << bits) + rows * cols // 32 + 16 + 4
+                + len(set(rates)) * 16 + cols * 8 + 16)
     padded = -(-rows // tile) * tile
     words = padded * sum(rates) // 8
     tables = (1 << bits) * 2 if family == "TESSERA_BF16" else (1 << bits) + 256
@@ -567,14 +579,18 @@ ROUTED_FUSED_BLOCK_COLS = 32
 ROUTED_FUSED_BDESC_INTS = 12
 
 
-def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
-    """What the fused routed lane holds per expert projection beside the
-    bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
-    the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
-    since contract v45 (tessera#694), the projection's run pair and its
-    block descriptors (``routed_fused.projection_tables``).  ``cols`` is the
-    unit's rank-local column count, which sets the descriptor count."""
+def routed_fused_unit_bytes(window_bits: int, cols: int, *, family: str = "TESSERA_FP8") -> int:
+    """Price native launch tables beside one projection bundle.
+
+    E2M1 uses the bundle code table directly. It adds a run pair,
+    one descriptor per 64 columns and one FP32 epilogue ratio.
+    FP8 and BF16 keep their existing composed-table layout.
+    """
     cols = int(cols)
+    if family == "TESSERA_NVFP4":
+        if int(window_bits) != 14 or cols < 256 or cols % 64:
+            raise ValueError("invalid fused E2M1 window geometry")
+        return 32 + 16 * (cols // 64) + 4
     if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
         raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
                          f"blocks; {cols} columns are not")

@@ -293,57 +293,6 @@ def test_tp2_column_cut_matches_the_reference():
         assert error < _tolerance(want), (rank, error)
 
 
-def test_compact_expert_reader_has_signature_and_refusal_parity():
-    """CPU: ``parse_compact_tessera_expert_blob(blob, declared_role, target,
-    device="cpu")`` accepts and refuses exactly what
-    ``parse_tessera_expert_blob`` does, on an actual routed A4 expert
-    container -- the shared reader the MoE owners pick up."""
-    from tessera.serving.scheme import (expert_role_declarations,
-                                        parse_compact_tessera_expert_blob,
-                                        parse_tessera_expert_blob,
-                                        validate_tessera_moe_scheme)
-
-    config = box_artifacts.skip_now("a4_export", "config.json")
-    settings = json.loads(Path(config).read_text())["quantization_config"]
-    group = next(value["scheme"] for value in settings["config_groups"].values()
-                 if value["scheme"].get("structure") == "routed_moe")
-    declared = validate_tessera_moe_scheme(group, "test")
-    declared_role = expert_role_declarations(declared["groups"]["w13"])[0]
-    blob = _a4_expert_wire()
-    materialised = parse_tessera_expert_blob(blob, declared_role, "test", device="cpu")
-    compact = parse_compact_tessera_expert_blob(blob, declared_role, "test", device="cpu")
-    assert [name for name, _ in materialised] == [name for name, _ in compact]
-    assert compact[0][1].role_facts == {
-        "grid": "E2M1x2", "body": "TCQ", "plane": "LUT", "q256": 896,
-        "rows": 2048, "columns": 4096, "span": 2,
-    }
-    # A stride bound that the blob overruns: one refusal, two readers.
-    with pytest.raises(ValueError) as materialised_stride:
-        parse_tessera_expert_blob(blob, {**declared_role, "wire_stride": len(blob) - 1},
-                                  "test", device="cpu")
-    with pytest.raises(ValueError) as compact_stride:
-        parse_compact_tessera_expert_blob(
-            blob, {**declared_role, "wire_stride": len(blob) - 1}, "test", device="cpu")
-    assert str(materialised_stride.value) == str(compact_stride.value)
-    # A wrong sidecar rung: one comparison, two readers, one sentence.
-    with pytest.raises(ValueError) as materialised_rung:
-        parse_tessera_expert_blob(blob, {**declared_role, "role_q256": [1152]},
-                                  "test", device="cpu")
-    with pytest.raises(ValueError) as compact_rung:
-        parse_compact_tessera_expert_blob(blob, {**declared_role, "role_q256": [1152]},
-                                          "test", device="cpu")
-    assert str(materialised_rung.value) == str(compact_rung.value)
-
-
-def _a4_expert_wire() -> bytes:
-    index_path = box_artifacts.skip_now("a4_export", "model.safetensors.index.json")
-    weight_map = json.loads(Path(index_path).read_text())["weight_map"]
-    tensor = "model.language_model.layers.3.mlp.experts.0.gate_proj.wire"
-    shard = box_artifacts.skip_now("a4_export", weight_map[tensor])
-    from safetensors import safe_open
-
-    with safe_open(str(shard), framework="pt") as handle:
-        return bytes(handle.get_tensor(tensor).detach().cpu().numpy().tobytes())
 
 
 @cuda
