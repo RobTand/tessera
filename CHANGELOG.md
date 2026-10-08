@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — remove a document-position test
+
+Remove the test that treats the first architecture paragraph as a fixed residency section.
+Keep the residency planner behavior tests and the general issue-reference audit.
+No planner behavior or document citation is changed.
+
 ## 2026-10-08 — complete the routed T16 experiment callers
 
 Use raw BF16 values and separate FP32 row scales in the routed oracle.

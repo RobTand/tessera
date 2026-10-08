@@ -320,13 +320,3 @@ print(json.dumps(report))
         assert report["reasons"][0]["field"].endswith("." + invalid)
 
 
-def test_residency_architecture_reference_uses_current_snapshot():
-    from test_issue_refs import DOCS, REF, _snapshot
-    snapshot = _snapshot()
-    paragraph = (DOCS / "ARCHITECTURE.md").read_text().split("\n\n", 2)[1]
-    citations = REF.findall(paragraph)
-    assert citations
-    missing = [(repo or snapshot["default_repo"], number) for repo, number in citations
-               if number not in snapshot["repos"][repo or snapshot["default_repo"]]]
-    assert not missing, f"residency architecture references absent from snapshot: {missing}"
-
