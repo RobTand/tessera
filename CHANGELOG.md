@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — keep benchmark imports free of runtime state
+
+Initialize the optional vLLM stand-ins and serving-mode default inside the benchmark entrypoint.
+Benchmark imports do not publish a false runtime or change the caller environment.
+Keep a local stub flag for every existing admission and metadata check.
+The import-boundary regression failed before the fix and passed after it.
+No serving default, qualifier or timing rule changes.
+
 ## 2026-10-08 — preserve the T16 cutover in native class dispatch
 
 Merge the released mandatory native class owner without a compact serving fallback.
