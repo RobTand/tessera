@@ -47,11 +47,12 @@ def require_probe_contract(report, *, device):
     return contract
 
 
-def require_t4_device_qualification(report, *, device, physical_device, comparison):
+def require_t4_device_qualification(report, *, device, physical_device, comparison, k, shape):
     """Qualify the explicit primitive or attested stock-reference comparison."""
+    _require_actual_shape(shape, k, device)
     contract = require_probe_contract(report, device=device)
     if comparison == "float32_stock_reference":
-        require_stock_reference_contract(report, device=device, physical_device=physical_device)
+        require_stock_reference_contract(report, device=device, physical_device=physical_device, k=k, shape=shape)
     elif comparison != "exact_represented_operands":
         raise FP4QualificationError(f"T4 refused on {device}: comparison {comparison} needs uncharacterized fused epilogue or cross-device terms")
     reviews = report.get("reviews", {})
@@ -138,8 +139,68 @@ def derive_attested_fp4_bound(magnitude, *, k, report, device, output_scale=None
 
 STOCK_PROPERTIES = ("activation_division", "ratio_formation", "library_fp32", "magnitude_fp64")
 
+FP64_MMA_INSTRUCTION = "mma.sync.aligned.m8n8k4.row.col.f64.f64.f64.f64"
+FP64_CONTRACT_MODEL = "ptx_9_0_f64_fma"
+FP64_CONTRACT_URL = "https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#warp-level-matrix-instructions-mma"
+FP64_FMA_CONTRACT_URL = "https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#floating-point-instructions-fma"
+FP64_BLOCK_WIDTH = 4
+FP64_BLOCK_ROUNDINGS = 4
+FP64_EPSILON = Fraction(1, 1 << 52)
 
-def require_stock_reference_contract(report, *, device, physical_device, shape=None):
+
+def _require_actual_shape(shape, k, device):
+    if not isinstance(shape, (tuple, list)) or len(shape) != 3 or any(type(value) is not int or value < 1 for value in shape):
+        raise FP4QualificationError(f"T4 refused on {device}: an actual stock shape (M,N,K) is required")
+    if type(k) is not int or k < 1 or shape[2] != k:
+        raise FP4QualificationError(f"T4 refused on {device}: actual stock shape contraction length {shape[2]} differs from k={k}")
+    return tuple(shape)
+
+
+def fp64_magnitude_contract(stock, *, shape, device):
+    """Bind the observed double kernels to the normative FMA contract.
+
+    PTX 9.0 defines double matrix multiply/add precision as double FMA
+    precision. The four-term instruction has at most four FMA roundings per
+    output. A split tree still has K products and at most K-1 nonzero sums.
+    Products of the converted float32 operands are exact in binary64.
+    """
+    if stock.get("magnitude_fp64_model", FP64_CONTRACT_MODEL) != FP64_CONTRACT_MODEL:
+        raise FP4QualificationError(f"T4 refused on {device}: unsupported double-precision block model")
+    profiles = [row for row in stock.get("profiles", []) if row.get("operation") == "magnitude_fp64" and row.get("shape") == list(shape)]
+    if not profiles:
+        raise FP4QualificationError(f"T4 refused on {device}: no double-precision profile covers the actual stock shape {shape}")
+    matched = []
+    arithmetic = False
+    for row in profiles:
+        for kernel in row.get("kernels", []):
+            lower = kernel.lower()
+            if "cutlass_80_tensorop_d884gemm" in lower:
+                arithmetic = True
+                matched.append({"kernel": kernel, "instruction": FP64_MMA_INSTRUCTION, "block_width": 4, "roundings_max": 4})
+            elif "dgemm_largek" in lower or ("internal::gemvx::kernel" in lower and "double" in lower):
+                arithmetic = True
+                matched.append({"kernel": kernel, "instruction": "fma.f64 or add.f64", "block_width": 1, "roundings_max": 1})
+            elif lower == "memset (device)" or "scal_kernel<double, double" in lower:
+                matched.append({"kernel": kernel, "instruction": "exact zero initialization or unit scaling", "roundings_max": 0})
+            else:
+                raise FP4QualificationError(f"T4 refused on {device}: unsupported double-precision kernel {kernel}")
+    if not arithmetic:
+        raise FP4QualificationError(f"T4 refused on {device}: the double profile has no supported arithmetic kernel")
+    return {"model": FP64_CONTRACT_MODEL, "basis": "normative instruction contract, not the six positive patterns",
+        "precision_bits": 53, "source": FP64_CONTRACT_URL, "scalar_source": FP64_FMA_CONTRACT_URL,
+        "block_width": FP64_BLOCK_WIDTH, "roundings_per_block_max": FP64_BLOCK_ROUNDINGS,
+        "block_inequality": "|MMA(C,A,B)-(C+sum_0^3 A_i*B_i)| <= gamma(4,2^-52)*(|C|+sum_0^3 |A_i*B_i|)",
+        "roundings_per_contraction_term_max": 1, "whole_dot_roundings_max": shape[2],
+        "roundoff": "2^-52", "matched_kernels": matched}
+
+
+def _magnitude_rounding_steps(k, contract):
+    width = contract["block_width"]
+    return (k // width) * contract["roundings_per_block_max"]
+
+
+def require_stock_reference_contract(report, *, device, physical_device, k, shape):
+    shape = _require_actual_shape(shape, k, device)
     require_probe_contract(report, device=device)
     _require_output_boundary(report, device, "float32_multiply")
     stock = report.get("stock_reference", {})
@@ -151,13 +212,15 @@ def require_stock_reference_contract(report, *, device, physical_device, shape=N
         raise FP4QualificationError(f"T4 refused on {device}: the stock reference is not attested on physical device {physical_device}")
     if stock.get("input_global_scale") != 896 or stock.get("allow_tf32") is not False:
         raise FP4QualificationError(f"T4 refused on {device}: unsupported stock-reference configuration")
-    if shape is not None and list(shape) not in stock.get("reference_shapes", []):
+    if list(shape) not in stock.get("reference_shapes", []):
         raise FP4QualificationError(f"T4 refused on {device}: the stock reference shape {shape} is uncharacterized")
     for name in ("activation_division_steps", "ratio_formation_steps"):
         if type(stock.get(name)) is not int or stock[name] not in (1, 2):
             raise FP4QualificationError(f"T4 refused on {device}: unsupported division model {name}")
     if stock.get("library_fp32_precision") != 24 or stock.get("magnitude_fp64_precision") != 53:
         raise FP4QualificationError(f"T4 refused on {device}: unsupported library precision")
+    stock = dict(stock)
+    stock["magnitude_fp64_contract"] = fp64_magnitude_contract(stock, shape=shape, device=device)
     return stock
 
 
@@ -173,9 +236,9 @@ def _outward_float(value):
     return math.nextafter(rounded, math.inf) if Fraction(rounded) < value else rounded
 
 
-def stock_magnitude_upper(measured, *, k, report, device, physical_device, shape=None):
+def stock_magnitude_upper(measured, *, k, report, device, physical_device, shape):
     """Inflate the actual positive binary64 contraction, not a fitted screen."""
-    require_stock_reference_contract(report, device=device, physical_device=physical_device, shape=shape)
+    stock = require_stock_reference_contract(report, device=device, physical_device=physical_device, k=k, shape=shape)
     if type(k) is not int or k < 128 or k % 128:
         raise ValueError("the packed reader requires a positive 128-column contraction")
     if isinstance(measured, bool) or not isinstance(measured, (int, float, Fraction)):
@@ -185,20 +248,20 @@ def stock_magnitude_upper(measured, *, k, report, device, physical_device, shape
     value = Fraction(measured)
     if value < 0:
         raise ValueError("the measured magnitude must be nonnegative")
-    gamma = _gamma_exact(2 * k, Fraction(1, 1 << 52))
+    gamma = _gamma_exact(_magnitude_rounding_steps(k, stock["magnitude_fp64_contract"]), FP64_EPSILON)
     if gamma >= 1:
         raise ValueError("the positive magnitude cannot establish an upper bound")
     return _outward_float(value / (1 - gamma))
 
 
-def derive_packed_stock_bound(magnitude_upper, *, k, global_scale, report, device, physical_device, shape=None, input_global_scale=896):
+def derive_packed_stock_bound(magnitude_upper, *, k, global_scale, report, device, physical_device, shape, input_global_scale=896):
     """Bound the original normalized FP32 stock-reference comparison.
 
     The four stock terms use their targeted contracts. Both sides share the
     represented activation codes and group scales. The power-of-two weight
     global makes stock weight formation exact within the stated normal domain.
     """
-    stock = require_stock_reference_contract(report, device=device, physical_device=physical_device, shape=shape)
+    stock = require_stock_reference_contract(report, device=device, physical_device=physical_device, k=k, shape=shape)
     if input_global_scale != 896:
         raise ValueError("the attested activation global is exactly 896")
     if type(k) is not int or k < 128 or k % 128:
@@ -243,7 +306,9 @@ def derive_packed_stock_bound(magnitude_upper, *, k, global_scale, report, devic
         "native_atoms": k // 64, "native_coefficient": str(native),
         "activation_division": str(division), "ratio_formation": str(ratio),
         "reference_gamma": str(reference), "reference_steps": 2 * k,
-        "magnitude_gamma": str(_gamma_exact(2 * k, Fraction(1, 1 << 52))),
+        "magnitude_gamma": str(_gamma_exact(_magnitude_rounding_steps(k, stock["magnitude_fp64_contract"]), FP64_EPSILON)),
+        "magnitude_roundings_max": _magnitude_rounding_steps(k, stock["magnitude_fp64_contract"]),
+        "magnitude_block_contract": stock["magnitude_fp64_contract"],
         "weight_formation_error": "0: exact normal power-of-two stock weight formation",
         "output_multiplication_roundoff": str(u), "subnormal_allowance": "0: the supported lattice keeps every nonzero intermediate normal",
         "weight_global_exponent": exponent, "physical_device": physical_device,

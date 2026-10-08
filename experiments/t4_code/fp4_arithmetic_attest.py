@@ -320,6 +320,11 @@ def main(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     cpu_controls()
+    if args.corrective_stock_audit:
+        if not args.native_attestation or not args.retained_outputs:
+            raise ValueError("a corrective audit requires a native attestation and retained outputs")
+        from fp4_corrective_audit import run
+        return run(args, sys.modules[__name__])
     if args.original_stock_regressions:
         if not args.native_attestation:
             raise ValueError("original comparison regressions require --native-attestation")
@@ -358,7 +363,7 @@ def main(args):
             raise AssertionError("negative control received a native contract")
         bound = derive_attested_fp4_bound(F(64), k=64, report=report, device="CPU reference control")
         try:
-            require_t4_device_qualification(report, device="CPU reference control", physical_device="CPU reference control", comparison="exact_represented_operands")
+            require_t4_device_qualification(report, device="CPU reference control", physical_device="CPU reference control", comparison="exact_represented_operands", k=64, shape=(16, 8, 64))
         except FP4QualificationError as exc:
             review_refusal = str(exc)
         else:
@@ -424,7 +429,7 @@ def main(args):
     except FP4QualificationError as exc:
         failures.append(str(exc))
     try:
-        require_t4_device_qualification(report, device=device["device"], physical_device=os.environ.get("HOST_NAME", "unidentified") + ":cuda:0", comparison="exact_represented_operands")
+        require_t4_device_qualification(report, device=device["device"], physical_device=os.environ.get("HOST_NAME", "unidentified") + ":cuda:0", comparison="exact_represented_operands", k=64, shape=(16, 8, 64))
     except FP4QualificationError as exc:
         report["qualification_refusal"] = str(exc)
     else:
@@ -470,5 +475,7 @@ if __name__ == "__main__":
     parser.add_argument("--stock-reference", action="store_true")
     parser.add_argument("--boundary-attestation")
     parser.add_argument("--original-stock-regressions", action="store_true")
+    parser.add_argument("--corrective-stock-audit", action="store_true")
+    parser.add_argument("--retained-outputs")
     parser.add_argument("--guarded-child", action="store_true", help=argparse.SUPPRESS)
     raise SystemExit(guarded(parser.parse_args()))

@@ -10,6 +10,11 @@ Round the magnitude, allowance, and measured discrepancy outward.
 Use the complete contract in the original dense and grouped correctness callers.
 Retain exact inputs, native outputs, byte oracles, traces, and negative controls.
 Refuse unsupported globals, reference shapes, kernels, overflow, and physical devices.
+Use the normative CUDA 13.0 double FMA contract for the four-term tensor block.
+Derive its whole-dot magnitude budget from K double result roundings.
+Require the actual shape and consistent contraction length before every stock operation count.
+Refuse unsupported block models, including the 48-bit truncation alternative.
+Retain failure-first controls and processor audits of both devices' original outputs.
 Keep arithmetic qualification false before both required reviews.
 Exclude unproved fused activations, router weights, split sums, token reductions, and two-device arithmetic.
 

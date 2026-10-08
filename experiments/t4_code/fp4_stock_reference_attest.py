@@ -14,7 +14,7 @@ import torch
 
 from tessera.fp4_arithmetic import (
     FP4QualificationError, _gamma_exact, check_packed_stock_arithmetic,
-    derive_packed_stock_bound, require_probe_contract, stock_magnitude_upper,
+    derive_packed_stock_bound, require_probe_contract, stock_magnitude_upper, fp64_magnitude_contract,
 )
 from tessera.stock import _nvfp4_values, materialize_stock, stock_dequant
 
@@ -186,9 +186,12 @@ def run(args, reference):
             if not kernels or not all(any(label in kernel.lower() for label in accepted) for kernel in kernels):
                 props[prop]["status"] = "unsupported_kernel"
                 props[prop]["failures"].append({"shape": [m, N, K], "kernels": kernels})
+    fp64_contracts = [fp64_magnitude_contract({"profiles": profiles}, shape=(m, N, K), device=report["device"]["device"]) for m in MS]
     report["stock_reference"] = {"properties": props, "physical_devices": [physical],
         "input_global_scale": 896, "allow_tf32": False, "activation_division_steps": division_steps,
-        "ratio_formation_steps": ratio_steps, "library_fp32_precision": 24, "magnitude_fp64_precision": 53,
+        "ratio_formation_steps": ratio_steps, "library_fp32_precision": 24,
+        "magnitude_fp64_precision": min(item["precision_bits"] for item in fp64_contracts),
+        "magnitude_fp64_model": "ptx_9_0_f64_fma", "magnitude_fp64_contracts": fp64_contracts,
         "reference_shapes": [[m, N, K] for m in MS], "current_k": K, "profiles": profiles,
         "weight_global_domain": [-73, 116], "context": ctx}
     report["arithmetic_qualified"] = False
@@ -259,7 +262,7 @@ def run_original(args, reference):
     out.mkdir(parents=True, exist_ok=True)
     report = json.loads(Path(args.native_attestation).read_text())
     physical = report["stock_reference"]["physical_devices"][0]
-    require_stock_reference_contract(report, device=report["device"]["device"], physical_device=physical, shape=(1, N, K))
+    require_stock_reference_contract(report, device=report["device"]["device"], physical_device=physical, k=K, shape=(1, N, K))
     index = torch.arange(32 * K).reshape(32, K)
     samples = {"gate": ((index % 13) - 6).float().mul(2.0 ** -8).to(torch.bfloat16),
                "up": ((index % 11) - 5).float().mul(2.0 ** -8).to(torch.bfloat16)}

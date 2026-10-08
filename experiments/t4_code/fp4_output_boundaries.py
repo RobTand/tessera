@@ -106,7 +106,7 @@ def run(args, reference):
     if not failures:
         report["boundary_bound_smoke"] = [derive_attested_fp4_bound(F(7), k=k, report=report, device=device["device"], output_scale=scale, output_dtype=dtype) for k, scale, dtype in ((64, F(1, 2), "float32"), (128, F(896), "bfloat16"), (4096, reference.power(-130), "bfloat16"))]
     try:
-        require_t4_device_qualification(report, device=device["device"], physical_device=next(iter(report.get("physical_devices", ())), "unidentified"), comparison="exact_represented_operands")
+        require_t4_device_qualification(report, device=device["device"], physical_device=next(iter(report.get("physical_devices", ())), "unidentified"), comparison="exact_represented_operands", k=64, shape=(16, 8, 64))
     except FP4QualificationError as exc:
         report["qualification_refusal"] = str(exc)
     else:

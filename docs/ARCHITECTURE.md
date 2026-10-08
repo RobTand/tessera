@@ -63,15 +63,19 @@ the conditional reader allowance, or any live measurement path.
 Section 17.7 of the serving contract gives the model, derivation, and limitations.
 The actual scalar output operations have separate targeted probes.
 The qualifier refuses an untested physical device. Each device has its own evidence.
-Re-stamped 2026-10-08 for the complete original stock-reference comparison.
-Targeted device probes now cover rendered-activation division, stored-ratio formation,
+Re-stamped 2026-10-08 for the corrected complete stock-reference comparison.
+Targeted device probes cover rendered-activation division, stored-ratio formation,
 single-precision library multiplication, and positive double-precision magnitude contraction.
-The complete bound composes these terms without a fitted multiplier or empirical floor.
-The original dense and grouped correctness callers use the complete stock API.
-Its supported global range, backend configuration, and reference shapes fail closed.
+The CUDA 13.0 PTX contract supplies double FMA precision for the four-term tensor block.
+Its whole-dot magnitude budget is K roundings, not an inferred 53-bit alignment screen.
+The complete bound has no fitted multiplier or empirical floor.
+Every stock bound and qualification call requires its actual shape before all operation counts.
+The owner refuses inconsistent contraction lengths, unknown shapes, kernels, and block models.
+The original dense and grouped correctness callers use this complete stock API.
+The corrected API also passes retained-output audits from both physical devices without a device replay.
 Arithmetic qualification remains false before both required reviews.
 Complete fused-network and two-device arithmetic qualification remain outside this claim.
-Section 17.8 gives the complete derivation and device receipts.
+Section 17.8 gives the normative derivation, corrective controls, and retained device receipts.
 
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank

@@ -2096,14 +2096,29 @@ The conservative reference model uses `epsilon32=2^-23` and an error depth of `2
 It requires normal finite intermediates, not only a single-precision output type.
 
 The magnitude uses the original positive contraction `abs(Xh.double()) @ abs(W.double()).T`.
-The profiles include double-precision GEMV, double-precision matrix kernels, and the double-precision tensor instruction with contraction width four.
+The profiles include double-precision GEMV, ordinary matrix kernels, and `cutlass_80_tensorop_d884gemm`.
+The tensor kernel uses the double-precision matrix instruction with contraction width four.
 Products of converted single-precision operands fit exactly in double precision.
-The positive tensor block has four products, an incoming sum, and final normalization.
-At least 53 alignment bits bound its six rounding contributions by the eight-count budget for four contraction terms.
-The complete positive reduction therefore uses `gamma(2*K,epsilon64)`, with `epsilon64=2^-52`.
+
+[PTX ISA 9.0 for CUDA 13.0](https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#warp-level-matrix-instructions-mma) supplies the normative tensor contract.
+It states: "Precision of the element-wise multiplication and addition operation is identical to that of .f64 precision fused multiply-add."
+Its default mode is nearest-even; directed modes also retain double precision.
+The corresponding [`fma.f64` contract](https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#floating-point-instructions-fma) specifies infinite-precision multiplication and addition followed by one double-precision result rounding.
+The binary64 format has 53 significant bits.
+This normative contract, not the six positive probe patterns, establishes the precision.
+
+Four contraction terms require at most four double FMA result roundings in any reduction order.
+For `S=|C|+sum_(j=1..4)|A[j]*B[j]|`, the block inequality is:
+
+`|block(C,A,B)-(C+sum_(j=1..4) A[j]*B[j])| <= gamma(4,epsilon64)*S`.
+
+The conservative choice `epsilon64=2^-52` covers both nearest-even and directed double-precision rounding.
+Ordinary double GEMV and matrix kernels use the corresponding scalar double-precision operations.
+Each output has K exact products and at most K-1 nonzero reduction additions, including split reductions.
+The whole-dot budget is therefore K roundings, with `GM=gamma(K,epsilon64)`.
 Zero initialization and exact unit scaling add no error.
-The recorded device traces retain the actual reduction and unit-scaling kernels.
-Unknown kernel families refuse qualification instead of inheriting these counts.
+The retained profiles select only these known operation families.
+Unknown kernel families and unsupported block models refuse instead of inheriting these counts.
 
 #### Exact composition
 
@@ -2115,7 +2130,7 @@ Define:
 
 `GR=gamma(2*K,epsilon32)`.
 
-`GM=gamma(2*K,epsilon64)`.
+`GM=gamma(K,epsilon64)`.
 
 Let `Mhat=max_(m,n) sum_k |Xh[m,k]|*|W[n,k]|`.
 Let `Mobs` be the actual positive double-precision contraction's maximum.
@@ -2161,6 +2176,9 @@ The gamma denominators must remain positive.
 The actual reference shapes have N=64, K=256, and M in `{1,2,3,16,33,65}`.
 Grouped outputs use their actual two- and three-row reference segments.
 Other reference shapes require their own backend characterization.
+Every stock bound and qualification call requires its actual `(M,N,K)` shape.
+The owner checks `shape[2]==k` before it computes any operation count.
+Absent, inconsistent, or uncharacterized shapes refuse; no compatibility default exists.
 
 The raw activation factor has magnitude at most 2,688 and minimum nonzero magnitude `2^-10`.
 The rendered activation has magnitude at most three and a smallest significand lattice of `2^-43`.
@@ -2242,3 +2260,26 @@ The complete API refuses the wrong output through the same actual-path checker.
 The original output remains intact in the retained tensor file.
 The complete comparison, byte checks, and finite-domain guards remain independent.
 Arithmetic qualification stays false until both required reviews pass.
+
+#### Corrective block contract and scope controls
+
+The initial review rejected the inferred alignment width and the optional shape scope.
+That review examined source head `a361165b05c6de3e949a6866e930ed17e19912b7`.
+The original failure count remains one, and the original blocker clock remains unchanged.
+The six magnitude patterns remain regression evidence, not proof of 53 alignment bits.
+The normative double FMA contract above now supplies the block inequality and operation budget.
+
+Processor action `669bda2b218652b52551ee3fc8c0c9045686288e1461ab197068be5edf8c161f` ran the new scope controls before the correction.
+Seven controls failed, two passed, and 39 unrelated controls were deselected.
+Processor action `76a6c0ab3f60db9fd0244fbdd9c06e050302a893e02ccd10ce4dc9ce97909fee` passed all 105 targeted controls after the correction.
+It skipped no test and allocated no CUDA device.
+The controls refuse absent shapes, uncharacterized shapes, inconsistent contraction lengths, unknown kernels, and the unsupported 48-bit truncation model.
+
+Processor action `fc8f4ba185030532accc3531ea0dece97280c9a43693237a7a7c93ba87c5f0d1` audited retained original outputs from both devices.
+Each device supplied 100 actual reference segments and 40 retained wrong-output controls.
+All segments passed the corrected bound, and all wrong-output controls refused.
+The audit recovered an upper estimate of the original magnitude observation from its retained outward bound.
+It then applied the new normative magnitude inflation.
+No device operation or completed characterization replay occurred.
+Every original device report, receipt, output, and failed action remains intact.
+The corrected reports remain unqualified before parent and independent reviews.

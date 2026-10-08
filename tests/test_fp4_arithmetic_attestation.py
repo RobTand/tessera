@@ -29,12 +29,12 @@ def test_each_failed_property_refuses_the_named_device(property_name):
     report = fixture_report()
     report["properties"][property_name]["status"] = "fail"
     with pytest.raises(FP4QualificationError, match=f"T4 refused on CPU test fixture: required probe {property_name}"):
-        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands")
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands", k=64, shape=(16, 8, 64))
 
 
 def test_unreviewed_native_results_do_not_qualify():
     with pytest.raises(FP4QualificationError, match="required reviews"):
-        require_t4_device_qualification(fixture_report(), device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands")
+        require_t4_device_qualification(fixture_report(), device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands", k=64, shape=(16, 8, 64))
 
 
 def test_empty_population_does_not_establish_a_property():
@@ -125,8 +125,8 @@ def test_an_approved_contract_cannot_transfer_to_an_untested_physical_device():
     report["arithmetic_qualified"] = True
     report["reviews"] = {"kernels_parent": True, "independent": True}
     with pytest.raises(FP4QualificationError, match="no required native probes cover physical device untested-device"):
-        require_t4_device_qualification(report, device="CPU test fixture", physical_device="untested-device", comparison="exact_represented_operands")
-    assert require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands") == report["contract"]
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="untested-device", comparison="exact_represented_operands", k=64, shape=(16, 8, 64))
+    assert require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands", k=64, shape=(16, 8, 64)) == report["contract"]
 
 
 @pytest.mark.parametrize("comparison", ["complete_fused_epilogue", "tp2_arithmetic"])
@@ -135,7 +135,7 @@ def test_uncharacterized_complete_comparisons_refuse_even_after_approval(compari
     report["arithmetic_qualified"] = True
     report["reviews"] = {"kernels_parent": True, "independent": True}
     with pytest.raises(FP4QualificationError, match="needs uncharacterized fused epilogue or cross-device terms"):
-        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison=comparison)
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison=comparison, k=64, shape=(16, 8, 64))
 
 
 
@@ -145,7 +145,9 @@ def stock_fixture_report():
         "physical_devices": ["fixture-device"], "input_global_scale": 896, "allow_tf32": False,
         "activation_division_steps": 1, "ratio_formation_steps": 1,
         "library_fp32_precision": 24, "magnitude_fp64_precision": 53,
-        "reference_shapes": [[1, 64, 256], [16, 64, 256]]}
+        "reference_shapes": [[1, 64, 256], [16, 64, 256]],
+        "magnitude_fp64_model": "ptx_9_0_f64_fma",
+        "profiles": [{"operation": "magnitude_fp64", "shape": [m, 64, 256], "kernels": ["void cutlass::Kernel2<cutlass_80_tensorop_d884gemm_32x32_16x5_tn_align1>()"]} for m in (1, 16)]}
     return report
 
 
@@ -173,21 +175,132 @@ def test_each_missing_stock_term_refuses(name):
     report = stock_fixture_report()
     report["stock_reference"]["properties"][name]["status"] = "fail"
     with pytest.raises(FP4QualificationError, match=f"required stock-reference term {name}"):
-        derive_packed_stock_bound(1, k=256, global_scale=1, report=report, device="CPU test fixture", physical_device="fixture-device")
+        derive_packed_stock_bound(1, k=256, global_scale=1, report=report, device="CPU test fixture", physical_device="fixture-device", shape=(1, 64, 256))
 
 
 @pytest.mark.parametrize("global_scale", [Fraction(1, 1 << 74), 1 << 117, Fraction(3, 2), 0, -1])
 def test_stock_global_domain_refuses_subnormal_or_inexact_weight_cases(global_scale):
     from tessera.fp4_arithmetic import derive_packed_stock_bound
     with pytest.raises(ValueError):
-        derive_packed_stock_bound(1, k=256, global_scale=global_scale, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+        derive_packed_stock_bound(1, k=256, global_scale=global_scale, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device", shape=(1, 64, 256))
 
 
 def test_magnitude_inflation_uses_the_actual_double_contraction():
     from tessera.fp4_arithmetic import stock_magnitude_upper
     measured = Fraction(7, 8)
     epsilon = Fraction(1, 1 << 52)
-    gamma = 512 * epsilon / (1 - 512 * epsilon)
-    upper = stock_magnitude_upper(float(measured), k=256, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+    gamma = 256 * epsilon / (1 - 256 * epsilon)
+    upper = stock_magnitude_upper(float(measured), k=256, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device", shape=(1, 64, 256))
     assert Fraction(upper) >= measured / (1 - gamma)
+
+
+
+@pytest.mark.parametrize("api", ["bound", "magnitude"])
+def test_corrective_shape_keyword_is_required(api):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, stock_magnitude_upper
+    kwargs = dict(k=256, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+    if api == "bound":
+        kwargs["global_scale"] = 1
+        function = derive_packed_stock_bound
+    else:
+        function = stock_magnitude_upper
+    with pytest.raises(TypeError):
+        function(1, **kwargs)
+
+
+@pytest.mark.parametrize("api", ["bound", "magnitude"])
+def test_corrective_shape_none_refuses(api):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, stock_magnitude_upper
+    kwargs = dict(k=256, shape=None, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+    if api == "bound":
+        kwargs["global_scale"] = 1
+        function = derive_packed_stock_bound
+    else:
+        function = stock_magnitude_upper
+    with pytest.raises(FP4QualificationError, match="actual stock shape"):
+        function(1, **kwargs)
+
+
+@pytest.mark.parametrize("api", ["bound", "magnitude"])
+def test_corrective_shape_contraction_mismatch_refuses_before_counts(api):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, stock_magnitude_upper
+    kwargs = dict(k=128, shape=(1, 64, 256), report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+    if api == "bound":
+        kwargs["global_scale"] = 1
+        function = derive_packed_stock_bound
+    else:
+        function = stock_magnitude_upper
+    with pytest.raises(FP4QualificationError, match="contraction length"):
+        function(1, **kwargs)
+
+
+@pytest.mark.parametrize("api", ["bound", "magnitude"])
+def test_corrective_shape_uncharacterized_refuses(api):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, stock_magnitude_upper
+    kwargs = dict(k=512, shape=(1, 64, 512), report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+    if api == "bound":
+        kwargs["global_scale"] = 1
+        function = derive_packed_stock_bound
+    else:
+        function = stock_magnitude_upper
+    with pytest.raises(FP4QualificationError, match="uncharacterized"):
+        function(1, **kwargs)
+
+
+def test_corrective_shape_qualification_requires_shape():
+    report = stock_fixture_report()
+    report["arithmetic_qualified"] = True
+    report["reviews"] = {"kernels_parent": True, "independent": True}
+    with pytest.raises(TypeError):
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="float32_stock_reference", k=256)
+
+
+
+@pytest.mark.parametrize("shape,k", [(None, 256), ((1, 64, 4096), 4096), ((1, 64, 256), 128)])
+def test_corrective_stock_qualification_shape_refusals_after_approval(shape, k):
+    report = stock_fixture_report()
+    report["arithmetic_qualified"] = True
+    report["reviews"] = {"kernels_parent": True, "independent": True}
+    with pytest.raises(FP4QualificationError):
+        require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="float32_stock_reference", k=k, shape=shape)
+
+
+@pytest.mark.parametrize("api", ["bound", "magnitude", "qualification"])
+def test_corrective_fp64_48_bit_truncation_model_refuses(api):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, stock_magnitude_upper
+    report = stock_fixture_report()
+    report["stock_reference"]["magnitude_fp64_model"] = "final_truncation_48"
+    report["arithmetic_qualified"] = True
+    report["reviews"] = {"kernels_parent": True, "independent": True}
+    kwargs = dict(k=256, shape=(1, 64, 256), report=report, device="CPU test fixture", physical_device="fixture-device")
+    with pytest.raises(FP4QualificationError, match="unsupported double-precision block model"):
+        if api == "bound":
+            derive_packed_stock_bound(1, global_scale=1, **kwargs)
+        elif api == "magnitude":
+            stock_magnitude_upper(1, **kwargs)
+        else:
+            require_t4_device_qualification(comparison="float32_stock_reference", **kwargs)
+
+
+def test_corrective_fp64_block_budget_comes_from_the_normative_contract():
+    from tessera.fp4_arithmetic import derive_packed_stock_bound, fp64_magnitude_contract
+    report = stock_fixture_report()
+    contract = fp64_magnitude_contract(report["stock_reference"], shape=(1, 64, 256), device="CPU test fixture")
+    assert contract["model"] == "ptx_9_0_f64_fma"
+    assert contract["block_width"] == 4
+    assert contract["roundings_per_block_max"] == 4
+    assert contract["whole_dot_roundings_max"] == 256
+    assert contract["precision_bits"] == 53
+    _, receipt = derive_packed_stock_bound(1, k=256, global_scale=1, report=report, device="CPU test fixture", physical_device="fixture-device", shape=(1, 64, 256))
+    epsilon = Fraction(1, 1 << 52)
+    assert receipt["magnitude_roundings_max"] == 256
+    assert Fraction(receipt["magnitude_gamma"]) == 256 * epsilon / (1 - 256 * epsilon)
+
+
+def test_corrective_fp64_unknown_kernel_model_refuses():
+    from tessera.fp4_arithmetic import stock_magnitude_upper
+    report = stock_fixture_report()
+    report["stock_reference"]["profiles"][0]["kernels"] = ["unknown_double_kernel"]
+    with pytest.raises(FP4QualificationError, match="unsupported double-precision kernel"):
+        stock_magnitude_upper(1, k=256, shape=(1, 64, 256), report=report, device="CPU test fixture", physical_device="fixture-device")
 
