@@ -254,6 +254,38 @@ def test_the_library_is_not_reachable_from_serving():
     assert f'name="{fe.MODULE_NAME}"' in source
 
 
+@pytest.mark.parametrize("mode", [0, 1, 2])
+def test_every_routed_launch_receives_the_bm_route_superblock_prefix(monkeypatch, mode):
+    """The routed launch reads its BM-route prefix from the one route sort.
+
+    A CPU control of the launch boundary only: a recording library stands in
+    for the native call, so no CUDA arithmetic is claimed."""
+    import dataclasses
+    from types import SimpleNamespace
+
+    seen = []
+
+    class Recorder:
+        def routed_fused_forward_fp4(self, *args):
+            seen.append(args)
+
+    monkeypatch.setattr(fe, "_ext", lambda: Recorder())
+    monkeypatch.setattr(fe, "_sm_count", lambda index: 1)
+    bundle = SimpleNamespace(device=torch.device("cuda", 0), experts=E, rows=I, codes_all=None,
+                             init_all=None, has_init=None, scale_plane_all=None, scale_lut_all=None)
+    fields = {f.name: None for f in dataclasses.fields(fe.FusedRoutedE2M1MoE) if f.init}
+    fields.update(gate=bundle, up=bundle, down=bundle, tile_words_gate_up=1, tile_words_down=1,
+                  slot_words_gate_up=1, slot_words_down=1, counters=torch.zeros(2, dtype=torch.int32))
+    moe = fe.FusedRoutedE2M1MoE(**fields)
+    ids = torch.tensor([[0, 3], [3, 1], [3, 3]], dtype=torch.int32)
+    routing = rf._routing_tables(ids, torch.full(ids.shape, 0.5), E, torch.device("cpu"), (fe.BM,))
+    out = torch.empty(0)
+    moe._launch(mode, out, out, routing, a_row_mode=0, mul_weight=False, limit=float("inf"),
+                out=out, counter=0)
+    prefix = routing.superblocks(fe.BM)
+    assert len(seen) == 1 and sum(arg is prefix for arg in seen[0]) == 1
+
+
 # ----------------------------------------------------------------------------- GPU fixtures
 def _encode(rows, cols, q256, seed):
     from tessera.alphabet import E2M1_GRID, tuple_grid

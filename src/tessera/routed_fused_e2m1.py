@@ -443,7 +443,7 @@ class FusedRoutedE2M1MoE:
             b0.scale_plane_all, b1.scale_plane_all, b0.scale_lut_all, b1.scale_lut_all,
             q0, q1, r0, r1, d0, d1,
             int(b0.rows), int(tile_words), int(slot_words),
-            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off, slot,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(BM), slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
             out, _sm_count(index))
 
