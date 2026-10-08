@@ -10,14 +10,14 @@ superblock, empty and repeated experts, the route-preserving ``gate_up`` and
 the reduced ``down_routes`` stages, the SwiGLU clamp, the top-k = 1
 weight-on-input placement; CUDA-graph replay (twice, against eager); two-run
 bitwise equality of the deterministic reduction; the support predicate's
-refusals by name; and the adapter dispatch (fused where admitted, compact
-otherwise, each recording its own launch pair).
+refusals by name. The loader uses one native class dispatcher.
 
 The lane is a CUDA kernel JIT-built on first use; every GPU case here runs
 through PrismaBuild inside the pinned serving image
 (``experiments/routed_fused_tests.sh``).
 """
 
+import dataclasses
 import functools
 import sys
 from pathlib import Path
@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera import routed_fused as rf                    # noqa: E402
 from tessera import window_gemm_grouped as wgg            # noqa: E402
 from tessera.errors import GrammarError                   # noqa: E402
-from tessera.native_window_moe import (NativeWindowMoE, PackedWindowMoeBundles,  # noqa: E402
+from tessera.native_window_moe import (PackedWindowMoeBundles,  # noqa: E402
                                        _silu_and_mul, native_window_moe_from_bundles)
 
 import fused_bound as fb                                   # noqa: E402
@@ -125,13 +125,20 @@ def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cu
     return gate, up, down
 
 
+def _uniform_class_metadata(gate):
+    runs = gate.runs_all.view(gate.experts, -1, 4)[0].tolist()
+    q256 = sum(rate * count for rate, _, count, _ in runs) * 256 // gate.cols
+    return [{"start": 0, "end": gate.experts, "q256": {"w13": [q256, q256], "w2": [q256]}}]
+
+
+
 def _bundles(family, stacks):
     arithmetic = "folded" if family == "value" else "epilogue"
     gate, up, down = (wgg.prepare_grouped_window_gemm([e.unit for e in s], block_m=32,
                                                       block_n=64, block_k=64,
                                                       arithmetic=arithmetic)
                       for s in stacks)
-    return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family)
+    return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family, expert_classes=_uniform_class_metadata(gate))
 
 
 def _axis_bundles(family, stacks):
@@ -168,12 +175,11 @@ def _axis_bundles(family, stacks):
             cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
             family=family, block_m=32, block_n=64, block_k=64, arithmetic=arithmetic)
 
-    return PackedWindowMoeBundles(gate=bundle("gate"), up=bundle("up"), down=bundle("down"),
-                                  family=family)
+    return PackedWindowMoeBundles(gate=(g := bundle("gate")), up=bundle("up"), down=bundle("down"), family=family, expert_classes=_uniform_class_metadata(g))
 
 
 def _fused(bundles):
-    return rf.FusedRoutedWindowMoE.from_bundles(bundles.gate, bundles.up, bundles.down)
+    return rf.FusedRoutedWindowMoE.from_bundles(bundles.gate, bundles.up, bundles.down, expert_classes=bundles.expert_classes)
 
 
 def _legacy(bundles):
@@ -531,15 +537,12 @@ def test_support_predicate_refuses_by_name():
     assert reason is not None and "hidden" in reason
 
 
-def test_support_predicate_honours_the_opt_out_and_the_device(monkeypatch):
-    class B:  # the fields the predicate reads first
+def test_support_predicate_refuses_cpu_device():
+    class B:
         family = "value"
         arithmetic = "folded"
         device = torch.device("cpu")
         experts = 1
-    monkeypatch.setenv(rf.ENV_TOGGLE, "0")
-    assert "disabled" in rf.fused_routed_window_supported(B, B, B)
-    monkeypatch.delenv(rf.ENV_TOGGLE)
     assert "cpu" in rf.fused_routed_window_supported(B, B, B)
 
 
@@ -664,72 +667,6 @@ def test_the_routed_launches_stop_at_8_where_the_dense_launch_does_not(family):
             assert refusal is not None and "1..8" in refusal, (q256, part, refusal)
 
 
-@cuda
-@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
-def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch):
-    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
-    from tessera.serving.telemetry import DECODERS
-
-    stacks = _stacks(family)
-    monkeypatch.delenv(rf.ENV_TOGGLE, raising=False)
-    bundles = _bundles(family, stacks)
-    adapter = bundles.adapter()
-    assert isinstance(adapter, rf.FusedRoutedWindowMoE)
-    assert adapter is bundles.adapter(), "built once"
-    symbol, decoder = adapter.launch_pair
-    assert symbol == ROUTED_FUSED_WINDOW_SYMBOL and decoder in DECODERS
-    assert adapter.library == rf.library_for(family)
-    assert decoder == {"value": "native_routed_fused_window_folded",
-                       "e4m3": "native_routed_fused_window",
-                       "e4m3mma": "native_routed_fused_window_e4m3mma"}[adapter.library]
-    # the tables are the library's: 16-bit, or the E4M3 bytes on the E4M3 instruction
-    want_dtype = torch.uint8 if adapter.library == "e4m3mma" else torch.int16
-    assert adapter.table_gate.dtype == adapter.table_down.dtype == want_dtype
-    names = dict(bundles.named_tensors())
-    assert {"routed_fused.table_gate", "routed_fused.table_up", "routed_fused.table_down"} <= set(names)
-    assert bundles.resident_bytes() >= adapter.resident_bytes()
-    monkeypatch.setenv(rf.ENV_TOGGLE, "0")
-    compact = _bundles(family, stacks).adapter()
-    assert isinstance(compact, NativeWindowMoE)
-    symbol, decoder = compact.launch_pair
-    assert symbol == WINDOW_MOE_COMPACT_SYMBOL and decoder in DECODERS
-    assert decoder == ("native_window_moe_compact_folded" if family == "value"
-                       else "native_window_moe_compact")
-    # the mixed-rate stack keeps the compact adapter whatever the toggle says
-    monkeypatch.delenv(rf.ENV_TOGGLE)
-    gate, up, down = stacks
-    mixed = [Expert(INTER, HIDDEN, tuple(2 if c % 2 else 4 for c in range(HIDDEN)), 800 + i,
-                    family=family) for i in range(EXPERTS)]
-    mixed_bundles = _bundles(family, (mixed, up, down))
-    assert isinstance(mixed_bundles.adapter(), NativeWindowMoE)
-
-
-@cuda
-@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
-def test_a_build_failure_substitutes_the_compact_adapter(family, monkeypatch, caplog):
-    """``native_extensions[].when_unavailable`` publishes the compact adapter as
-    the substitute; ``adapter()`` makes that substitution at construction, not
-    on the first forward, and says why."""
-    import logging
-
-    def no_toolchain(_family):
-        raise RuntimeError("Error building extension: nvcc not found")
-
-    monkeypatch.delenv(rf.ENV_TOGGLE, raising=False)
-    monkeypatch.setattr(rf, "_ext", no_toolchain)
-    bundles = _bundles(family, _stacks(family))
-    with caplog.at_level(logging.WARNING, logger="tessera.native_window_moe"):
-        adapter = bundles.adapter()
-    assert isinstance(adapter, NativeWindowMoE)
-    assert adapter is bundles.adapter()
-    assert "_fused_adapter" not in bundles.__dict__
-    assert any("native build unavailable" in r.getMessage() and "nvcc not found" in r.getMessage()
-               for r in caplog.records)
-    # a grammar refusal is not a build failure and is never swallowed
-    monkeypatch.setattr(rf, "_ext", lambda _f: (_ for _ in ()).throw(GrammarError("grammar")))
-    with pytest.raises(GrammarError):
-        _bundles(family, _stacks(family)).adapter()
-
 
 def test_the_published_lane_predicate_is_the_kernels_shape():
     """``ext.ROUTED_FUSED_LANE_REQUIRES`` and the load-time predicate read one
@@ -829,8 +766,8 @@ def _decode_exact(family, q256, build, *, place=None):
     gate, up, down = stacks
     assert set(gate[0].rates) <= set(rf.RATES) and len(set(gate[0].rates)) in (1, 2)
     fused = _fused((_bundles if build == "prepare" else _axis_bundles)(family, stacks))
-    assert fused.tile_words_gate_up == 16 * sum(gate[0].rates)
-    assert fused.tile_words_down == 16 * sum(down[0].rates)
+    assert fused.classes[0].tile_words_gate_up == 16 * sum(gate[0].rates)
+    assert fused.classes[0].tile_words_down == 16 * sum(down[0].rates)
     _one_hot_exact(fused, stacks, family, f"q256={q256}", EXPERTS)
 
 
@@ -975,7 +912,7 @@ def _tp2_rank1_bundles(family, units, build):
         gate, up, down = (wgg.prepare_grouped_window_gemm(stack, block_m=32, block_n=64,
                                                           block_k=64, arithmetic=arithmetic)
                           for stack in units)
-        return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family)
+        return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family, expert_classes=_uniform_class_metadata(gate))
     parts = {"gate": ("w13", "gate_proj"), "up": ("w13", "up_proj"), "down": ("w2", "down_proj")}
     axes = {"w13": WindowUnitAxis(TP2_EXPERTS, ("gate_proj", "up_proj"), family=family),
             "w2": WindowUnitAxis(TP2_EXPERTS, ("down_proj",), family=family)}
@@ -997,8 +934,7 @@ def _tp2_rank1_bundles(family, units, build):
             cols=slot["cols"], experts=TP2_EXPERTS, window_bits=slot["window_bits"],
             family=family, block_m=32, block_n=64, block_k=64, arithmetic=arithmetic)
 
-    return PackedWindowMoeBundles(gate=bundle("gate"), up=bundle("up"), down=bundle("down"),
-                                  family=family)
+    return PackedWindowMoeBundles(gate=(g := bundle("gate")), up=bundle("up"), down=bundle("down"), family=family, expert_classes=_uniform_class_metadata(g))
 
 
 @cuda
@@ -1168,11 +1104,11 @@ def test_every_library_serves_gate_up_at_rates_7_and_8(q256, monkeypatch):
         assert fused.library == library
         mma8 = rf.library_mma8(library)
         lib = rf._ext(library)
-        stages = int(lib.word_stages(0, fused.slot_words_gate_up))
-        assert stages == rf.word_stages(0, fused.slot_words_gate_up, mma8=mma8) \
+        stages = int(lib.word_stages(0, fused.classes[0].slot_words_gate_up))
+        assert stages == rf.word_stages(0, fused.classes[0].slot_words_gate_up, mma8=mma8) \
             == (rf.WORD_STAGES if mma8 else rf.WORD_STAGES_MIN), library
-        assert int(lib.launch_smem_bytes(0, fused.slot_words_gate_up, rf.BM)) \
-            == rf.launch_smem_bytes(0, fused.slot_words_gate_up, mma8=mma8) <= rf.SM121_MAX_DYNAMIC_SMEM
+        assert int(lib.launch_smem_bytes(0, fused.classes[0].slot_words_gate_up, rf.BM)) \
+            == rf.launch_smem_bytes(0, fused.classes[0].slot_words_gate_up, mma8=mma8) <= rf.SM121_MAX_DYNAMIC_SMEM
 
 
 @cuda
@@ -1350,10 +1286,12 @@ def test_the_routed_width_reaches_the_launches_that_have_it(family, monkeypatch)
     """The ``bm`` each launch receives under ``TESSERA_ROUTED_FUSED_WIDE``:
     128 under ``1`` on the launches ``has_width`` names (down in the E4M3
     family, gate/up too on the E4M3 instruction), 64 everywhere else and
-    under ``0``; and the ``item_off`` a launch receives counts superblocks of
-    that width."""
+    under ``0``; and the superblock prefix a launch receives counts
+    superblocks of that width.  The uniform forward launches through the
+    module its kernel bound at load, so the spy replaces that module."""
     fused = _fused(_bundles(family, _stacks(family, cut=False)))
-    lib = rf._ext(fused.library)
+    assert fused.uniform is not None, "one class binds the uniform kernel"
+    lib = fused.uniform.module
     seen = []
 
     class Spy:
@@ -1365,7 +1303,7 @@ def test_the_routed_width_reaches_the_launches_that_have_it(family, monkeypatch)
             seen.append((mode, bm, [int(v) for v in item_off.tolist()]))
             return lib.routed_fused_forward(*args)
 
-    monkeypatch.setattr(rf, "_ext", lambda _library, spy=Spy(): spy)
+    fused = dataclasses.replace(fused, uniform=dataclasses.replace(fused.uniform, module=Spy()))
     t = 300
     x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
     ids, rw = _routes(t, TOP_K, 4600)

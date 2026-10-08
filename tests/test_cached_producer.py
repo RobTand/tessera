@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STACK = "model.layers.2.feed_forward.experts"
 TENSOR = STACK + ".0.w1.weight"
 UNIT = TENSOR.removesuffix(".weight")
-
+DIM = 128
 
 def _api():
     return importlib.import_module("tessera.cached_unit")
@@ -35,7 +35,7 @@ def _exporter():
 
 @pytest.fixture(scope="module")
 def encoded():
-    weight = torch.randn(32, 32, generator=torch.Generator().manual_seed(183)).bfloat16()
+    weight = torch.randn(DIM, DIM, generator=torch.Generator().manual_seed(183)).bfloat16()
     unit = encode_linear(weight.float(), grid=E4M3_GRID, q256=1024,
                          name="TESSERA_E4M3_K1_R1024", verify=False)
     return weight, unit.blob
@@ -45,7 +45,7 @@ def _projection():
     return {"tensor": TENSOR, "source_tensor": TENSOR,
             "source_layout": "unpacked_per_expert", "expert": 0,
             "source_slice": {"expert": 0, "selector": "whole", "transpose": False},
-            "projection": "gate_proj", "group": "w13", "rows": 32, "cols": 32}
+            "projection": "gate_proj", "group": "w13", "rows": DIM, "cols": DIM}
 
 
 def _record(encoded, activation=None):
@@ -99,9 +99,9 @@ def test_sealed_historical_identity_accepts_original_without_relabelling(tmp_pat
         producer.verify(encoded[1], record, exporter.cached_input_identity(
             producer, wrong, TENSOR, _projection(), E4M3_GRID, 1024))
     provenance = {"text_sha256": "a" * 64, "fit_ids_sha256": "b" * 64, "fit_tokens": 32}
-    first = ActivationSource({UNIT: torch.eye(32)}, provenance)
-    for changed in (ActivationSource({UNIT: torch.eye(32) * 2}, provenance),
-                    ActivationSource({UNIT: torch.eye(32)}, provenance,
+    first = ActivationSource({UNIT: torch.eye(DIM)}, provenance)
+    for changed in (ActivationSource({UNIT: torch.eye(DIM) * 2}, provenance),
+                    ActivationSource({UNIT: torch.eye(DIM)}, provenance,
                                      refit_objective_trailing="h^0.5")):
         historical = exporter.cached_input_identity(producer, encoded[0], TENSOR,
             _projection(), E4M3_GRID, 1024, activation=first)
@@ -168,9 +168,9 @@ def test_hessian_values_and_full_activation_settings_are_bound(encoded):
     api = _api()
     provenance = {"text_sha256": "a" * 64, "fit_ids_sha256": "b" * 64,
                   "fit_tokens": 32}
-    first = ActivationSource({UNIT: torch.eye(32)}, provenance)
-    changed = ActivationSource({UNIT: torch.eye(32) * 2}, provenance)
-    settings = ActivationSource({UNIT: torch.eye(32)}, provenance,
+    first = ActivationSource({UNIT: torch.eye(DIM)}, provenance)
+    changed = ActivationSource({UNIT: torch.eye(DIM) * 2}, provenance)
+    settings = ActivationSource({UNIT: torch.eye(DIM)}, provenance,
                                 refit_objective_trailing="h^0.5")
     identities = [api.unit_input_identity(encoded[0], _projection(), E4M3_GRID,
                                           1024, activation=a)
@@ -264,15 +264,15 @@ def test_a_partition_stamp_is_proved_against_the_bundle_whole_source(tmp_path, e
 
 def test_projection_uses_producer_role_order_and_group_geometry():
     exporter = _exporter()
-    shapes = {f"{STACK}.{expert}.{role}.weight": [32, 32]
+    shapes = {f"{STACK}.{expert}.{role}.weight": [DIM, DIM]
               for expert in range(2) for role in ("w1", "w2", "w3")}
-    config = {"num_experts": 2, "hidden_size": 32, "moe_intermediate_size": 32}
+    config = {"num_experts": 2, "hidden_size": DIM, "moe_intermediate_size": DIM}
     projected = exporter.project_expert_plan(shapes, config,
                                              {STACK: {"grid": "E4M3", "q256": 1024}})
     units = projected["stacks"][STACK]["units"]
     assert [u["tensor"].split(".")[-2] for u in units] == ["w1", "w3", "w2"] * 2
     assert [u["projection"] for u in units] == ["gate_proj", "up_proj", "down_proj"] * 2
-    assert projected["stacks"][STACK]["groups"]["w13"]["rows"] == 64
+    assert projected["stacks"][STACK]["groups"]["w13"]["rows"] == 2 * DIM
     assert json.loads(json.dumps(projected)) == projected
 
 
@@ -318,7 +318,7 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
     tensors = {f"{STACK}.0.{role}.weight": encoded[0].clone() for role in ("w1", "w2", "w3")}
     save_file(tensors, str(src / "model.safetensors"))
     config = {"architectures": ["Lfm2MoeForCausalLM"],
-              "hidden_size": 32, "moe_intermediate_size": 32, "num_experts": 1}
+              "hidden_size": DIM, "moe_intermediate_size": DIM, "num_experts": 1}
     (src / "config.json").write_text(json.dumps(config))
     choices = {STACK: {"grid": "E4M3", "q256": 1024}}
     projection = exporter.project_expert_plan({k: list(v.shape) for k, v in tensors.items()},
@@ -376,7 +376,7 @@ def test_complete_cached_export_preserves_dense_and_expert_originals(
     tensors = dict(dense)
     choices = {name: {"grid": "E4M3", "q256": 1024} for name in dense}
     config = {"architectures": ["Lfm2MoeForCausalLM"],
-              "hidden_size": 32, "moe_intermediate_size": 32, "num_experts": 1}
+              "hidden_size": DIM, "moe_intermediate_size": DIM, "num_experts": 1}
     if include_experts:
         tensors.update({f"{STACK}.0.{role}.weight": encoded[0].clone()
                         for role in ("w1", "w3", "w2")})
@@ -405,10 +405,9 @@ def test_complete_cached_export_preserves_dense_and_expert_originals(
     def forbidden(*args, **kwargs):
         raise AssertionError("an original dense or expert wire was re-encoded")
     monkeypatch.setattr(exporter, "encode_linear_planes", forbidden)
-    # The packaged LFM census has real 7168-row MLP roles; this miniature
-    # checkpoint has 32-row roles and exercises the same fusion partitioner.
+    # This native fixture uses the same fusion partitioner.
     monkeypatch.setattr(exporter, "output_partitions",
-                        lambda census, module: [32, 32] if module.endswith('.w13') else [32])
+                        lambda census, module: [DIM, DIM] if module.endswith('.w13') else [DIM])
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--plan-json", str(plan_path),
         "--cached-units", str(manifest_path), "--device", "cpu", "--allow-unrouted", "--allow-unserveable",
@@ -436,8 +435,8 @@ def test_complete_cached_export_preserves_dense_and_expert_originals(
 def test_projection_packed_layout_is_explicit_and_serialized():
     exporter = _exporter()
     stack = "model.layers.2.mlp.experts"
-    shapes = {stack + ".gate_up_proj": [2, 64, 32], stack + ".down_proj": [2, 32, 32]}
-    config = {"num_experts": 2, "hidden_size": 32, "moe_intermediate_size": 32}
+    shapes = {stack + ".gate_up_proj": [2, 2 * DIM, DIM], stack + ".down_proj": [2, DIM, DIM]}
+    config = {"num_experts": 2, "hidden_size": DIM, "moe_intermediate_size": DIM}
     with pytest.raises(SystemExit, match="source_layout"):
         exporter.project_expert_plan(shapes, config, {stack: {"grid": "E4M3", "q256": 1024}})
     result = exporter.project_expert_plan(shapes, config,
@@ -458,7 +457,7 @@ def test_cache_manifest_rejects_duplicate_json_keys(tmp_path):
 
 def test_encoding_identity_is_shared_by_dense_and_projected_callers():
     api = _api()
-    weight = torch.ones(32, 32, dtype=torch.bfloat16)
+    weight = torch.ones(DIM, DIM, dtype=torch.bfloat16)
     common = api.encoding_input_identity(weight, UNIT, E4M3_GRID, 1024)
     projected = api.unit_input_identity(weight, _projection(), E4M3_GRID, 1024)
     assert set(projected) - set(common) == {"projection"}
@@ -534,10 +533,10 @@ def calibrated_wires():
                       hessian_role="fit")
     result = []
     for index in range(6):
-        weight = torch.randn(32, 32, generator=torch.Generator().manual_seed(200 + index)).bfloat16()
-        hessian = torch.diag(torch.linspace(1 + index, 2 + index, 32))
+        weight = torch.randn(DIM, DIM, generator=torch.Generator().manual_seed(200 + index)).bfloat16()
+        hessian = torch.diag(torch.linspace(1 + index, 2 + index, DIM))
         activation = ActivationSource({"fixture": hessian}, provenance)
-        extra = activation.for_unit("fixture", 32, "cpu",
+        extra = activation.for_unit("fixture", DIM, "cpu",
                                     scale_plane=wire_recipe(E4M3_GRID, 1024).scale_plane)
         blob = encode_linear(weight.float(), grid=E4M3_GRID, q256=1024,
                              name="fixture", verify=False, **extra).blob
@@ -553,14 +552,14 @@ def _canonical_handoff(root, hessians, provenance):
     root.mkdir()
     (root / "inputs").mkdir()
     counts = {name: 32 for name in hessians}
-    shapes = {name: [32, 32] for name in hessians}
+    shapes = {name: [h.shape[0], h.shape[0]] for name, h in hessians.items()}
     census = root / "census.json"
     census_sha = write_json(census, dict(unit_shapes=shapes, counts=counts,
                                         max_abs={name: 1.0 for name in hessians}))
     entries = {}
     for index, (name, hessian) in enumerate(hessians.items()):
         path = root / "inputs" / f"unit-{index}.pt"
-        torch.save(dict(inputs=torch.ones(2, 32), hessian=hessian, name=name,
+        torch.save(dict(inputs=torch.ones(2, hessian.shape[0]), hessian=hessian, name=name,
                         source=CANONICAL_CAPTURE[1], count=32, max_abs=1.0), path)
         entries[name] = dict(path="inputs/" + path.name, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     canonical = root / "capture_manifest.json"
@@ -611,13 +610,13 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout, *
         tensors[stack + ".gate_up_proj.weight"] = torch.cat((gate, up), dim=1)
         tensors[stack + ".down_proj.weight"] = down
     else:
-        packed = torch.empty(2, 32, 64, dtype=gate.dtype)
+        packed = torch.empty(2, DIM, 2 * DIM, dtype=gate.dtype)
         packed[:, :, 0::2] = gate.transpose(1, 2)
         packed[:, :, 1::2] = up.transpose(1, 2)
         tensors[stack + ".gate_up_proj"] = packed
         tensors[stack + ".down_proj"] = down.transpose(1, 2).contiguous()
     config = dict(architectures=["Glm5NextForConditionalGeneration"],
-                  text_config=dict(hidden_size=32, moe_intermediate_size=32,
+                  text_config=dict(hidden_size=DIM, moe_intermediate_size=DIM,
                                    num_hidden_layers=2, n_routed_experts=2))
     choices = {name: dict(grid="E4M3", q256=1024) for name in dense}
     choices[stack] = dict(grid="E4M3", q256=1024, source_layout=layout)
@@ -654,7 +653,7 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout, *
         raise AssertionError("cached calibrated export invoked the encoder")
     monkeypatch.setattr(exporter, "encode_linear_planes", forbidden)
     monkeypatch.setattr(exporter, "output_partitions",
-                        lambda census, module: [32, 32] if module.endswith(".gate_up_proj") else [32])
+                        lambda census, module: [DIM, DIM] if module.endswith(".gate_up_proj") else [DIM])
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--plan-json", str(plan_path),
             "--cached-units", str(manifest_path), "--hessian", str(handoff),

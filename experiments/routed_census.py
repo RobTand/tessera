@@ -277,7 +277,7 @@ def tp2_wire_facts(args):
                                                            _compact_expert_units)
 
                     intake = _RankLocalPackedIntake(declared, module, dev, tp_rank, 2)
-                    rank["compact"] = bool(intake.compact)
+                    rank["intake"] = type(intake).__name__
                     fam = "value" if scheme["family"] == "TESSERA_BF16" else "e4m3"
                     scratch = {}
                     for (g, i), w in wires.items():

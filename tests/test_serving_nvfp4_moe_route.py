@@ -29,6 +29,10 @@ SHARDS = ("w1", "w3", "w2")
 PARTS = ("gate_proj", "up_proj", "down_proj")
 
 
+def _classes(q256):
+    return [{"start": 0, "end": EXPERTS, "q256": {"w13": [q256, q256], "w2": [q256]}}]
+
+
 def _stack(q256=896):
     wires, units = {}, {}
     for expert in range(EXPERTS):
@@ -39,6 +43,8 @@ def _stack(q256=896):
             units[expert, part] = prepare_reference(parse_compact_wire(blob, device="cpu"))
     declared = {"family": TESSERA_NVFP4, "structure": "routed_moe", "grid": "E2M1x2",
                 "body": "WINDOW", "plane": "LUT", "experts": EXPERTS,
+                "expert_ids": list(range(EXPERTS)),
+                "expert_classes": _classes(q256),
                 "groups": {
                     "w13": {"rows": 2 * INTER, "columns": HIDDEN, "q256": q256,
                             "wire_stride": max(len(wires[e, s]) for e in range(EXPERTS)
@@ -123,7 +129,7 @@ def test_real_intake_keeps_rank_local_bytes_and_each_projection_global(q256, ran
         for shard, part in zip(SHARDS, PARTS):
             group, index = ("w2", 0) if shard == "w2" else ("w13", SHARDS.index(shard))
             intake.take(group, index, expert, wires[expert, shard], "cpu", axes=axes)
-    bundles = route._window_bundles(axes, EXPERTS)
+    bundles = route._window_bundles(axes, EXPERTS, declared["expert_classes"])
     for part, bundle in zip(PARTS, (bundles.gate, bundles.up, bundles.down)):
         assert bundle.family == "e2m1"
         for expert in range(EXPERTS):
@@ -144,7 +150,7 @@ def test_axes_finish_keeps_allocations_and_drops_temporary_unit_storage(stack, r
     method = _build(scheme, layer)
     axes = _load(method, layer, wires)
     axis_words = axes["w13"]._slots["gate_proj"]["words"]
-    bundles = route._window_bundles(axes, EXPERTS)
+    bundles = route._window_bundles(axes, EXPERTS, scheme["expert_classes"])
     assert bundles.gate.words_all is axis_words
     for expert in range(EXPERTS):
         original = units[expert, "gate_proj"]
@@ -285,7 +291,7 @@ def test_real_equal_rate_counts_keep_different_expert_permutations():
             blob = window_blob(448, reverse_rates=bool(expert), name=part)
             unit = prepare_reference(parse_compact_wire(blob, device="cpu"))
             axes["w2" if part == "down_proj" else "w13"].put(part, expert, unit)
-    bundles = route._window_bundles(axes, EXPERTS)
+    bundles = route._window_bundles(axes, EXPERTS, _classes(448))
     assert not torch.equal(bundles.gate.perm_all[0], bundles.gate.perm_all[1])
     for part in ("gate", "up", "down"):
         assert _run_stack_reason(part, getattr(bundles, part), EXPERTS) is None

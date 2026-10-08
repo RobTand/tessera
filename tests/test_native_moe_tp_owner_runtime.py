@@ -530,38 +530,26 @@ def test_binding_reads_the_live_group_and_refuses_a_mismatch():
         moe.bind_owner_rank({**world, "rank": 1, "world_size": 2})
 
 
+def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
+    """Reject the retired materializer for every family and tensor-parallel cut."""
+    materializing = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+    assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materializing[0]
+    for world in (1, 2):
+        for format_name in (A4, A8, A16):
+            panel = _owner_panel(world, format_name, *materializing)
+            with pytest.raises(ValueError):
+                moe.validate_panel(panel)
 
 
 def test_an_fp8_owner_never_declares_the_materialising_launch():
-    """Contract v38: the materialising FP8 pair left the plugin's table.
-
-    ``moe_route.compact_window_lane`` takes every FP8 stack this build
-    constructs, so the compact window MoE adapter is the FP8 owner's one table
-    launch at every world.  Above one rank the selected owner's decoders stay
-    admissible beside it, as before.
-    """
-    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
-    compact = (WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact")
-    fused = (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window")
-    fused_mma8 = (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_e4m3mma")
-    wire = moe.owner_wire(_glm_shape(2, A8))
-    pairs = moe.owner_launch_pairs(wire, world=2)
-    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in pairs
-    assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window") in pairs
-    assert ("vllm.fused_moe.modular_kernel", "research_selected_torch_window") in pairs
-    assert compact in pairs
-    # Contract v41 (tessera#640): the fused lane's pair beside the compact one.
-    # Contract v46: the E4M3 instruction's library is a second fused decoder
-    # the same owner can launch (the default; TESSERA_FUSED_E4M3_MMA=f16 takes
-    # the 16-bit library), attested since contract v47.
-    assert moe.owner_launch_pairs(wire, world=1) == {compact, fused, fused_mma8}
-    # A compressed BF16 expert stack has no materialising launch at any world,
-    # and its selected owner's decoders are not admissible either (#613).
+    """WINDOW owner panels reject retired selected-reference launches at every cut."""
     for world in (1, 2):
-        bf16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(world, A16)), world=world)
-        assert ("vllm.fused_moe.modular_kernel",
-                "research_selected_triton_window_folded_bf16") not in bf16
-        assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in bf16
+        for format_name in (A8, A16):
+            for decoder in ("research_selected_triton_window", "research_selected_torch_window",
+                            "research_selected_triton_window_folded_bf16"):
+                panel = _owner_panel(world, format_name, "vllm.fused_moe.modular_kernel:TRITON_REF", decoder)
+                with pytest.raises(ValueError):
+                    moe.validate_panel(panel)
 
 
 def test_the_selected_block_is_required_exactly_where_no_production_owner_exists():
@@ -774,18 +762,22 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
     return panel
 
 
-@pytest.mark.parametrize("tp,format_name,symbol,decoder", [
-    (1, A8, "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-    (2, A4, A4_GROUPED[0], A4_GROUPED[1]),
-    (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
-    (1, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
-     "native_window_moe_compact_folded"),
-    (2, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
-     "native_window_moe_compact_folded"),
-])
-def test_a_glm_owner_panel_validates_at_its_own_family_and_cut(tp, format_name, symbol, decoder):
-    panel = _owner_panel(tp, format_name, symbol, decoder)
-    assert moe.validate_panel(panel) == panel
+@pytest.mark.parametrize("tp,format_name", [(1, A8), (2, A4), (2, A8), (1, A16), (2, A16)])
+def test_a_glm_owner_panel_validates_at_its_own_family_and_cut(tp, format_name):
+    from tessera.routed_fused import library_for
+    from tessera.serving.scheme import TESSERA_FP8, TESSERA_BF16, launch_pairs, routed_class_launch_pair
+
+    wire = moe.owner_wire(_glm_shape(tp, format_name))
+    if wire["family"] in (TESSERA_FP8, TESSERA_BF16):
+        lane = "value" if wire["family"] == TESSERA_BF16 else "e4m3"
+        expected = {routed_class_launch_pair(library_for(lane), uniform=uniform)
+                    for uniform in (False, True)}
+    else:
+        expected = set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
+    assert moe.owner_launch_pairs(wire) == expected
+    for symbol, decoder in expected:
+        panel = _owner_panel(tp, format_name, symbol, decoder)
+        assert moe.validate_panel(panel) == panel
 
 
 @pytest.mark.parametrize("backend", ["torch", "triton"])

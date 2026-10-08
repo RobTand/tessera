@@ -163,6 +163,9 @@ def dense_scheme(blob, rows, cols, q256, name="weight"):
 def routed_scheme(frames, hidden, inter, experts, q256):
     return dict(family="TESSERA_NVFP4", structure="routed_moe", grid="E2M1x2",
                 body="WINDOW", plane="LUT", span=1, experts=experts,
+                expert_ids=list(range(experts)),
+                expert_classes=[{"start": 0, "end": experts,
+                                 "q256": {"w13": [q256, q256], "w2": [q256]}}],
                 groups={"w13": dict(rows=2 * inter, columns=hidden, q256=q256,
                                     wire_stride=max(len(b) for r in ("gate", "up") for b in frames[r]),
                                     roles=[["gate_proj", inter], ["up_proj", inter]]),

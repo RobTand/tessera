@@ -117,18 +117,23 @@ def test_native_dense_uses_rank_local_padding_and_tables(planner):
     assert expected == 9232
 
 
-def test_native_routed_slices_rates_in_placement_order(planner):
+@pytest.mark.parametrize("table_dtype,element_bytes", [("uint8", 1), ("float16", 2)])
+def test_native_routed_slices_rates_in_placement_order(planner, table_dtype, element_bytes):
     from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "routed_window", "family": "TESSERA_FP8", "rates": [3] * 32 + [5] * 32,
-               "window_bits": 8, "tile_rows": TILE_ROWS, "fused": True}
-    placement = plan(allocation("experts", ranks=(1, 0), shard_axis=2, storage=storage),
-                     capacities=(23800, 15608))
-    report = planner.plan_residency(spec(experts=([2, 64, 64], "bfloat16")), placement)
+               "window_bits": 8, "tile_rows": TILE_ROWS, "table_dtype": table_dtype}
+
     def expected(rate):
-        unit = TILE_ROWS * 32 * rate // 8 + 256 + 256 + 64 * 4 + 16 + 32 * 8 + 16
-        fused = 2 * 256 + 4 * 8 + 4 * 12
-        return 2 * (unit + fused) + 8 * (2 + 1)
-    assert [r["peak_bytes"] for r in report["ranks"]] == [expected(5), expected(3)]
+        unit = TILE_ROWS * 32 * rate // 8 + 64 * 4 + 32 * 4 + 4
+        tables = 256 * element_bytes + 4 * 8 + 4 * 12
+        return 2 * (unit + tables) + 2 * 4 + 2 * 4
+
+    placement = plan(allocation("experts", ranks=(1, 0), shard_axis=2, storage=storage),
+                     allocation("inverse", ranks=(0, 1)), allocation("counters", ranks=(0, 1)),
+                     capacities=(expected(5), expected(3)))
+    inventory = spec(experts=([2, 64, 64], "bfloat16"), inverse=([2], "int32"), counters=([1, 2], "int32"))
+    report = planner.plan_residency(inventory, placement)
+    assert [row["peak_bytes"] for row in report["ranks"]] == [expected(5), expected(3)]
 
 
 def test_native_a4_uses_shared_accountant(planner):
@@ -248,7 +253,7 @@ def test_native_tile_geometry_refuses_before_pricing(planner, kind, tile_rows):
     storage = {"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
                "window_bits": 8, "tile_rows": tile_rows}
     if kind == "routed_window":
-        storage["fused"] = False
+        storage["table_dtype"] = "uint8"
     with pytest.raises(planner.ResidencyRefusal) as caught:
         planner.plan_residency(spec(x=(shape, "bfloat16")),
                               plan(allocation("x", storage=storage), capacities=(100000,)))
@@ -260,7 +265,7 @@ def test_native_tile_geometry_refuses_before_pricing(planner, kind, tile_rows):
 def test_routed_rate_wider_than_window_refuses(planner):
     from tessera.window_geometry import TILE_ROWS
     storage = {"kind": "routed_window", "family": "TESSERA_FP8", "rates": [5] * 32,
-               "window_bits": 4, "tile_rows": TILE_ROWS, "fused": False}
+               "window_bits": 4, "tile_rows": TILE_ROWS, "table_dtype": "uint8"}
     with pytest.raises(planner.ResidencyRefusal) as caught:
         planner.plan_residency(spec(x=([2, 64, 32], "bfloat16")),
                               plan(allocation("x", storage=storage), capacities=(100000,)))
@@ -295,7 +300,7 @@ def test_dense_loader_padding_refuses_the_old_small_capacity(planner):
 
 
 @pytest.mark.parametrize("kind,invalid,expected", [
-    ("dense_window", None, 9232), ("routed_window", None, 18520),
+    ("dense_window", None, 9232), ("routed_window", None, 17832),
     ("dense_window", "tile_rows", None), ("routed_window", "rates", None),
 ])
 def test_native_plan_and_refusal_use_only_stdlib(planner, kind, invalid, expected):
@@ -304,7 +309,7 @@ def test_native_plan_and_refusal_use_only_stdlib(planner, kind, invalid, expecte
                "window_bits": 8, "tile_rows": 512}
     shape = [32, 32] if kind == "dense_window" else [2, 64, 32]
     if kind == "routed_window":
-        storage["fused"] = False
+        storage["table_dtype"] = "uint8"
     if invalid == "tile_rows":
         storage["tile_rows"] = 64
     elif invalid == "rates":
@@ -335,5 +340,3 @@ print(json.dumps(report))
         assert report["fits"] is False
         assert report["reasons"][0]["code"] == "invalid_storage"
         assert report["reasons"][0]["field"].endswith("." + invalid)
-
-

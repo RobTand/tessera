@@ -533,25 +533,25 @@ def _moe_plan_source(tmp_path, *, packed=False):
     src = tmp_path / "source"
     src.mkdir()
     stack = "model.layers.0.feed_forward.experts"
-    tensors = {f"model.layers.0.feed_forward.gate.weight": torch.zeros(2, 64),
-               "model.layers.0.self_attn.o_proj.weight": torch.zeros(64, 64)}
+    hidden, intermediate = 128, 512
+    tensors = {f"model.layers.0.feed_forward.gate.weight": torch.zeros(2, hidden),
+               "model.layers.0.self_attn.o_proj.weight": torch.zeros(hidden, hidden)}
     if packed:
-        tensors.update({f"{stack}.gate_up_proj.weight": torch.zeros(2, 128, 64),
-                        f"{stack}.down_proj.weight": torch.zeros(2, 64, 64)})
+        tensors.update({f"{stack}.gate_up_proj.weight": torch.zeros(2, 2 * intermediate, hidden),
+                        f"{stack}.down_proj.weight": torch.zeros(2, hidden, intermediate)})
     else:
-        tensors.update({f"{stack}.{expert}.{role}.weight": torch.zeros(64, 64)
-                        for expert in range(2) for role in ("w1", "w2", "w3")})
+        tensors.update({f"{stack}.{expert}.{role}.weight": torch.zeros(
+            hidden if role == "w2" else intermediate, intermediate if role == "w2" else hidden)
+            for expert in range(2) for role in ("w1", "w2", "w3")})
     save_file(tensors, str(src / "model.safetensors"))
-    config = {"architectures": ["Lfm2MoeForCausalLM"], "hidden_size": 64,
-              "moe_intermediate_size": 64, "num_experts": 2}
+    config = {"architectures": ["Lfm2MoeForCausalLM"], "hidden_size": hidden,
+              "moe_intermediate_size": intermediate, "num_experts": 2}
     (src / "config.json").write_text(json.dumps(config))
     request = {stack: {"grid": "E4M3", "q256": 896,
                       "source_layout": "out_first_chunked" if packed else "unpacked_per_expert"}}
     projection = export.project_expert_plan({n: tuple(t.shape) for n, t in tensors.items()}, config, request)
     projection["source"] = source_identity(src)
-    keys = ("cols", "expert", "group", "projection", "rows", "source_layout",
-            "source_slice", "source_tensor", "tensor")
-    units = {u["tensor"][:-7]: {k: u[k] for k in keys}
+    units = {u["tensor"][:-7]: {k: v for k, v in u.items() if k != "wire"}
              for u in projection["stacks"][stack]["units"]}
     carried = {"schema": "prismaquant.tessera_expert_projection.v1", "producer": projection,
                "stacks": {stack: units}, "request": request}
@@ -600,7 +600,7 @@ def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, 
         actual = export.project_expert_plan({**dense, **packed_shapes, **routed},
                     json.loads((src / "config.json").read_text()), {stack: plan[stack]})
         assert actual["stacks"][stack]["units"] == carried["producer"]["stacks"][stack]["units"]
-        assert provenance["totals"]["quantized_params"] == 6 * 64 * 64
+        assert provenance["totals"]["quantized_params"] == sum(u["rows"] * u["cols"] for u in units.values())
 
     class PlanningCompleted(Exception):
         pass

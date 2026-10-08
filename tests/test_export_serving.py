@@ -45,7 +45,7 @@ from tessera import serving_parts as parts
 from tessera import source_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
-HIDDEN, MOE_INTER, EXPERTS = 128, 64, 3
+HIDDEN, MOE_INTER, EXPERTS = 128, 256, 3
 LAYER = "model.language_model.layers.1"
 STACK = f"{LAYER}.mlp.experts"
 PART_ARGV = ("--partition", "0/1", "--partition-runtime-image",
@@ -97,10 +97,10 @@ def _write(tmp_path, tensors, config=None):
 
 
 _FIXTURE_OUTPUT_SIZES = {
-    "language_model.model.layers.*.mlp.down_proj": [128],
-    "language_model.model.layers.*.mlp.gate_up_proj": [256, 256],
-    "language_model.model.layers.*.mlp.shared_experts.down_proj": [128],
-    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [64, 64],
+    "language_model.model.layers.*.mlp.down_proj": [HIDDEN],
+    "language_model.model.layers.*.mlp.gate_up_proj": [2 * HIDDEN, 2 * HIDDEN],
+    "language_model.model.layers.*.mlp.shared_experts.down_proj": [HIDDEN],
+    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [MOE_INTER, MOE_INTER],
 }
 
 

@@ -30,12 +30,6 @@ from tessera.serving.lane import TESSERA_MODE_ENV                   # noqa: E402
 from tessera.serving.scheme import TESSERA_NVFP4                    # noqa: E402
 
 
-def test_shared_config_preserves_existing_import():
-    from tessera.moe_execution import ResearchSelectedMoeConfig
-    from tessera.serving.moe_route import ResearchSelectedMoeConfig as ExistingImport
-    assert ExistingImport is ResearchSelectedMoeConfig
-
-
 def _research_checkpoint(tp=1, backend="triton"):
     return {"schema": "tessera.research_selected_moe.v1",
             "max_experts_per_chunk": 3, "decode_backend": backend,
@@ -46,6 +40,9 @@ def _expert_config(block):
     from tessera.serving.scheme import TESSERA_FP8
     scheme = {"family": TESSERA_FP8, "structure": "routed_moe", "grid": "E4M3",
               "body": "WINDOW", "plane": "CHANNEL", "experts": 4,
+              "expert_ids": list(range(4)),
+              "expert_classes": [{"start": 0, "end": 4,
+                                  "q256": {"w13": [512, 512], "w2": [512]}}],
               "groups": {
                   "w13": {"rows": 128, "columns": 128, "q256": 512,
                           "wire_stride": 10000, "roles": [["gate_proj", 64], ["up_proj", 64]]},
@@ -57,13 +54,12 @@ def _expert_config(block):
 
 
 @pytest.mark.parametrize("tp", [1, 2])
-@pytest.mark.parametrize("backend", ["torch", "triton"])
-def test_checkpoint_reconstruction_selects_existing_packed_owner(monkeypatch, tp, backend):
+def test_checkpoint_reconstruction_selects_existing_packed_owner(monkeypatch, tp):
     from tessera.serving import config as config_module, moe_route
     import vllm.model_executor.layers.fused_moe as moe
 
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    block = _research_checkpoint(tp, backend)
+    block = _research_checkpoint(tp)
     # The worker receives JSON, never the native control's local config subclass.
     payload = json.loads(json.dumps(_expert_config(block)))
     config = TesseraConfig.from_config(payload)
@@ -77,10 +73,8 @@ def test_checkpoint_reconstruction_selects_existing_packed_owner(monkeypatch, tp
     layer = moe.RoutedExperts()
     assert config.get_quant_method(layer, "model.layers.1.mlp.experts") is result
     selected = calls[0][1].get("research_selected")
-    assert isinstance(selected, moe_route.ResearchSelectedMoeConfig), (
-        "checkpoint reconstructed the ordinary FP8 materialized owner")
+    assert isinstance(selected, moe_route.ResearchSelectedMoeConfig)
     assert selected.expected_tensor_parallel_size == tp
-    assert selected.decode_backend == backend
     assert selected.max_experts_per_chunk == 3
     assert facts[0]["serve_mode"] == "resident"
     assert "research_selected_moe" in facts[0]
@@ -129,7 +123,7 @@ def test_ordinary_checkpoint_retains_builder_and_compile_identity(monkeypatch):
     assert facts == [{"serve_mode": "resident"}]
 
 
-def test_checkpoint_execution_identity_distinguishes_every_execution_choice(monkeypatch):
+def test_checkpoint_protocol_identity_preserves_topology_and_bounds(monkeypatch):
     from tessera.serving import config as config_module, moe_route
     import vllm.model_executor.layers.fused_moe as moe
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
@@ -138,12 +132,12 @@ def test_checkpoint_execution_identity_distinguishes_every_execution_choice(monk
     monkeypatch.setattr(moe_route, "build_tessera_moe_method", lambda *a, **kw: None)
     base = _research_checkpoint()
     variants = [base, {**base, "expected_tensor_parallel_size": 2},
-                {**base, "decode_backend": "torch"}, {**base, "max_experts_per_chunk": 5}]
+                {**base, "max_experts_per_chunk": 5}]
     for block in [*variants, dict(reversed(list(base.items())))]:
         config = TesseraConfig.from_config(_expert_config(block))
         config.get_quant_method(moe.RoutedExperts(), "model.layers.1.mlp.experts")
     hashes = [fact["research_selected_moe"] for fact in facts]
-    assert len(set(hashes[:4])) == 4
+    assert len(set(hashes[:3])) == 3
     assert hashes[0] == hashes[-1]
 
 
@@ -163,6 +157,9 @@ def _routed_scheme(family=None, **over):
         route = {"family": family, "grid": "E2M1x2", "body": "WINDOW", "plane": "LUT"}
         q256 = 896
     return {**route, "structure": "routed_moe", "experts": 32,
+            "expert_ids": list(range(32)),
+            "expert_classes": [{"start": 0, "end": 32,
+                                "q256": {"w13": [q256, q256], "w2": [q256]}}],
             "groups": {
                 "w13": {"rows": 512, "columns": 256, "q256": q256,
                         "wire_stride": 10000, "roles": [["gate_proj", 256], ["up_proj", 256]]},
@@ -205,7 +202,7 @@ def test_every_declared_stack_selects_the_packed_owner(monkeypatch):
     selected = {id(kwargs["research_selected"]) for _, kwargs in calls}
     assert len(selected) == 1, "each stack rebuilt its own execution object"
     only = calls[0][1]["research_selected"]
-    assert only.expected_tensor_parallel_size == 2 and only.decode_backend == "triton"
+    assert only.expected_tensor_parallel_size == 2
     # The execution declaration is a checkpoint fact, so every stack reports one
     # identity, not one per layer.
     assert facts and len({fact["research_selected_moe"] for fact in facts}) == 1

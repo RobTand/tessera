@@ -46,7 +46,6 @@ import torch
 
 from .errors import GrammarError
 from .routed_fused import (
-    ENV_TOGGLE,
     MODULE_NAME_VALUE,
     RATE_MAX,
     RATE_MIN,
@@ -60,7 +59,6 @@ from .routed_fused import (
     _run_stack_reason,
     _sm_count,
     build_library,
-    fused_routed_window_enabled,
     pair_tile_words,
     run_pair,
     slot_words_for_pair,
@@ -88,6 +86,8 @@ __all__ = [
 ]
 
 MODULE_NAME = "tessera_routed_fused_e2m1"
+# Standalone E2M1 window experiment; not the serving WINDOW class selector.
+ENV_TOGGLE_E2M1 = "TESSERA_ROUTED_FUSED"
 #: The family's geometry (``fp4`` in the kernel source), checked against the
 #: built library's attributes by :func:`_ext`.
 BN = 256
@@ -246,8 +246,8 @@ def fused_routed_e2m1_supported(gate, up, down) -> "str | None":
                                        "the E2M1 routed window reader")
     except GrammarError as exc:
         return str(exc)
-    if not fused_routed_window_enabled():
-        return f"disabled by {ENV_TOGGLE}=0"
+    if os.environ.get(ENV_TOGGLE_E2M1, "1") == "0":
+        return f"disabled by {ENV_TOGGLE_E2M1}=0"
     bundles = {"gate": gate, "up": up, "down": down}
     e = int(down.experts)
     for name, b in bundles.items():
@@ -431,7 +431,7 @@ class FusedRoutedE2M1MoE:
         return resident_storage_bytes(self.named_tensors())
 
     def _routing(self, expert_ids: torch.Tensor, routing_weights: torch.Tensor) -> _Routing:
-        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, None)
+        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, (BM,))
 
     def _quantized(self, x: torch.Tensor, gs: torch.Tensor):
         from .kernel_a4 import a4_quantize_activation
@@ -467,7 +467,7 @@ class FusedRoutedE2M1MoE:
             b0.scale_plane_all, b1.scale_plane_all, b0.scale_lut_all, b1.scale_lut_all,
             q0, q1, r0, r1, d0, d1,
             int(b0.rows), int(tile_words), int(slot_words),
-            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off, slot,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(BM), slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
             out, _sm_count(index))
 
