@@ -47,7 +47,7 @@ def test_manifest_counts_native_e2m1_window_roles_and_shared_activation_scale(mo
     from tessera.serving.residency import resident_storage_bytes
 
     spec = {'rows': rows, 'cols': cols, 'rates': (rate,) * cols,
-            'arity': 2, 'half': 16, 'window_bits': 14, 'tile_rows': kg.TILE_ROWS}
+            'arity': 2, 'half': 16, 'window_bits': 14, 'tile_rows': TILE_ROWS}
     priced = dense_resident_bytes_resident_mode(
         'TESSERA_NVFP4', 2 * rows, cols, native_roles=[spec, spec])
     # Only compiler loading is suppressed. The production role freezer and

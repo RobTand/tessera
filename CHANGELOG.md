@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-08 — shared geometry in the native footprint fixture
+
+The native E2M1 footprint fixture uses its existing `window_geometry.TILE_ROWS` import.
+The manifest byte comparison stays unchanged. No kernel module alias is added.
+
 ## 2026-10-08 — native T4 accounting callers
 
 The offline planner and manifest refresh use explicit WINDOW role metadata.
