@@ -906,6 +906,102 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
     return problems
 
 
+def graph_phase_witness(*, eager_records, capture_records, graph_launches, phase_regimes):
+    """Which logical-phase rows an eager control and a graph capture jointly state.
+
+    Replay runs no Python, so a capture record is its capture-time shape and
+    never a current logical row. This joins three observed facts and invents
+    none: the eager control's concrete shape per phase, the capture's concrete
+    shape per phase, and the profile's replay count. Prefill rows stand stated
+    only when both sides name the same concrete shape and that shape meets its
+    regime. Capture never states decode rows. Problems name every unstated
+    phase. The block carries facts and problems, and no admission verdict.
+    """
+    from tessera.serving.scheme import eager_regime_problem
+    batch_phase, decode_phase = driven_phase_pair(phase_regimes)
+    launched = (isinstance(graph_launches, int) and not isinstance(graph_launches, bool)
+                and graph_launches > 0)
+    phases = {}
+    problems = []
+    if not launched:
+        problems.append("no graph replay observed; a witness without replayed graphs states nothing")
+    for phase in (batch_phase, decode_phase):
+        eager = eager_records.get(phase, {}) or {}
+        capture = capture_records.get(phase, {}) or {}
+        owners = sorted(set(eager) | set(capture))
+        entries = {}
+        stated = bool(owners)
+        if not owners:
+            problems.append(f"{phase}: neither side names a module")
+        for owner in owners:
+            eshape = (eager.get(owner, {}) or {}).get("shape") or ""
+            cshape = (capture.get(owner, {}) or {}).get("shape") or ""
+            eager_ok = bool(eshape) and eager_regime_problem(eshape, phase_regimes.get(phase)) is None
+            if not eshape:
+                problems.append(f"{phase} {owner}: eager control states no shape")
+            elif not eager_ok:
+                problems.append(f"{phase} {owner}: eager control shape {eshape} misses its regime")
+            graph_ok = False
+            if not cshape:
+                problems.append(f"{phase} {owner}: capture states no shape")
+            elif phase == decode_phase:
+                problems.append(f"{phase} {owner}: capture {cshape} is capture-time; replay runs no Python")
+            elif not eager_ok or cshape != eshape:
+                problems.append(f"{phase} {owner}: capture {cshape} differs from eager {eshape or 'states nothing'}")
+            else:
+                graph_ok = True
+            stated = stated and eager_ok and graph_ok
+            entries[owner] = {"eager_shape": eshape, "capture_shape": cshape,
+                              "eager_states_rows": eager_ok, "graph_states_rows": graph_ok}
+        phases[phase] = {"regime": phase_regimes.get(phase), "owners": entries,
+                         "rows_attested": stated}
+    block = {"schema": "tessera.graph-phase-witness/1", "phases": phases,
+             "graph_launches": graph_launches if launched else 0,
+             "replay_observed": launched}
+    return block, problems
+
+
+_WITNESS_FLAGS = ("--witness-eager-receipt", "--witness-graph-receipt", "--witness-profile-launches")
+
+
+def witness_main(argv=None):
+    """Join two retained receipts into explicit phase facts. Loads no model."""
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="Join an eager control receipt and a graph capture receipt into explicit "
+                    "phase facts. Loads no model. Starts no engine.")
+    ap.add_argument("--witness-eager-receipt", required=True, metavar="PATH",
+                    help="A served eager receipt path. Its concrete shapes state each phase rows.")
+    ap.add_argument("--witness-graph-receipt", required=True, metavar="PATH",
+                    help="A served graph capture receipt path. Its shapes are capture-time only.")
+    ap.add_argument("--witness-profile-launches", type=int, default=0, metavar="N",
+                    help="Graph replays the profile observed. Zero means unobserved.")
+    ap.add_argument("out", metavar="OUT", help="Witness output path.")
+    args = ap.parse_args(argv)
+    if args.witness_profile_launches < 0:
+        ap.error("--witness-profile-launches must be >= 0")
+    try:
+        with open(args.witness_eager_receipt) as fh:
+            eager = json.load(fh)
+        with open(args.witness_graph_receipt) as fh:
+            capture = json.load(fh)
+    except (OSError, ValueError) as exc:
+        ap.error(f"cannot read a witness receipt: {exc}")
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES
+    block, problems = graph_phase_witness(
+        eager_records=eager.get("records", {}), capture_records=capture.get("records", {}),
+        graph_launches=args.witness_profile_launches, phase_regimes=CENSUS_PHASE_REGIMES)
+    with open(args.out, "w") as fh:
+        json.dump({"witness": block, "problems": problems}, fh, indent=1, sort_keys=True)
+    print(json.dumps({"rows_attested": {phase: entry["rows_attested"]
+                                        for phase, entry in block["phases"].items()},
+                      "replay_observed": block["replay_observed"]}, indent=1))
+    for problem in problems:
+        print("PROBLEM:", problem)
+    print(f"-> {args.out}")
+    return 0 if not problems else 1
+
+
 def _capability_or_none(torch):
     """The device's compute capability, or ``[]`` where it has none.
 
@@ -1615,6 +1711,8 @@ def parse_args(argv=None, env=None):
 
 
 def main() -> int:
+    if any(flag in sys.argv[1:] for flag in _WITNESS_FLAGS):
+        return witness_main()
     args = parse_args()
 
     # The census function must run in the process that holds the model.

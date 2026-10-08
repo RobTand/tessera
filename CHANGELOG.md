@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-08 — graph-phase witness over eager control and capture (issue #1062)
+
+The tool joins an eager control receipt and a graph capture receipt. Prefill rows stand stated when both sides name the same concrete shape. Capture never states decode rows. Replay runs no Python. The block carries facts and problems. It carries no admission verdict.
+
 ## 2026-10-08 — refresh the register-direct branch after the class build merge
 
 The register-direct branch now includes the accepted master base after pull request 1024 merged.

@@ -308,3 +308,56 @@ def test_a_compiled_census_refuses_concrete_capture_shapes():
     problems = tool.phase_shape_problems(
         records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True)
     assert problems and "shape-polymorphic" in problems[0], problems
+
+
+def _witness_side(prefill_m, decode_m):
+    """Concrete shapes per phase, mirroring the retained R768 eager/capture pair."""
+    out = {}
+    for phase, regime in CENSUS_PHASE_REGIMES.items():
+        m = prefill_m if regime == "batch" else decode_m
+        out[phase] = {_MODULE: {"shape": f"M{m}:N2048:K4096"}}
+    return out
+
+
+def test_graph_witness_states_prefill_and_withholds_decode():
+    """The retained R768 pair: eager M64/M1, capture M64/M64, seven replays."""
+    tool = _tool()
+    (decode,) = {p for p, r in CENSUS_PHASE_REGIMES.items() if r == "decode"}
+    (prefill,) = {p for p in CENSUS_PHASE_REGIMES if p != decode}
+    block, problems = tool.graph_phase_witness(
+        eager_records=_witness_side(64, 1), capture_records=_witness_side(64, 64),
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert block["schema"] == "tessera.graph-phase-witness/1"
+    assert block["graph_launches"] == 7 and block["replay_observed"] is True
+    assert block["phases"][prefill]["rows_attested"] is True
+    assert block["phases"][decode]["rows_attested"] is False
+    assert len(problems) == 1 and "no Python" in problems[0], problems
+
+
+def test_graph_witness_refuses_without_replay():
+    tool = _tool()
+    _, problems = tool.graph_phase_witness(
+        eager_records=_witness_side(64, 1), capture_records=_witness_side(64, 64),
+        graph_launches=0, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems and "no graph replay observed" in problems[0], problems
+
+
+def test_graph_witness_never_credits_capture_decode():
+    """Even a matching M1 capture stays capture-time (no weaker check)."""
+    tool = _tool()
+    (decode,) = {p for p, r in CENSUS_PHASE_REGIMES.items() if r == "decode"}
+    block, problems = tool.graph_phase_witness(
+        eager_records=_witness_side(64, 1), capture_records=_witness_side(64, 1),
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert block["phases"][decode]["rows_attested"] is False
+    assert problems and "capture-time" in " ".join(problems), problems
+
+
+def test_graph_witness_refuses_stale_prefill():
+    tool = _tool()
+    (prefill,) = {p for p, r in CENSUS_PHASE_REGIMES.items() if r == "batch"}
+    block, problems = tool.graph_phase_witness(
+        eager_records=_witness_side(64, 1), capture_records=_witness_side(32, 64),
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert block["phases"][prefill]["rows_attested"] is False
+    assert problems and "differs from eager" in " ".join(problems), problems
