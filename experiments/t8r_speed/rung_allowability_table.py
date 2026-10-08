@@ -248,7 +248,7 @@ def measurement(path,data,head,cell,key,build_id,cols,rows,grid):
 
 
 
-def merge_index(index, format_name, build_id, version, relative, table):
+def merge_index(index, format_name, build_id, version, relative, table, *, sha256=None):
     """Preserve every immutable version and every other family's entry."""
     from tessera.rung_allowability import validate_index
     validate_index(index)
@@ -256,6 +256,8 @@ def merge_index(index, format_name, build_id, version, relative, table):
     builds=index['formats'].setdefault(format_name, {'kernel_builds':{}})['kernel_builds']
     entry=builds.setdefault(build_id, {'current_version':version, 'versions':{}})
     record={'path':relative,'table_schema':table['schema'],'table_status':table['table_status']}
+    if sha256 is not None:
+        record['sha256'] = sha256
     if str(version) in entry['versions'] and entry['versions'][str(version)]!=record:
         raise ValueError('conflicting immutable table version')
     entry['versions'][str(version)]=record
@@ -284,7 +286,11 @@ def activate_published_index(publication, candidate_name="index.v2-candidate.jso
                         raise ValueError('conflicting immutable index history')
                     dest['versions'][version]=record
                 version=str(entry['current_version']);record=entry['versions'][version]
-                table=json.loads((publication/record['path']).read_text())
+                table_path = publication/record['path']
+                table_bytes = table_path.read_bytes()
+                if record.get('sha256') is not None and hashlib.sha256(table_bytes).hexdigest() != record['sha256']:
+                    raise ValueError('Selected table bytes differ from their digest')
+                table=json.loads(table_bytes)
                 validate_table(table)
                 if (table['schema']!=record['table_schema'] or table['table_status']!=record['table_status']
                         or table['format']!=format_name or table['kernel_build']['id']!=build_id
@@ -323,7 +329,7 @@ def apply_reader_findings(row, findings, format_name, kernel_shas):
 
 def performance_increment(table, raw_inputs, version, findings=()):
     """Upgrade a newly loaded table, preserve history, append only actual cells."""
-    from tessera.rung_allowability import PERFORMANT_POLICY, measured_geometry_classes, validate_table
+    from tessera.rung_allowability import PERFORMANT_POLICY, TIMING_PUBLICATION, measured_geometry_classes, validate_table
     validate_table(table)
     original_schema = table['schema']
     base, arity_text = table['format'].removeprefix('TESSERA_').rsplit('_K', 1)
@@ -401,9 +407,13 @@ def performance_increment(table, raw_inputs, version, findings=()):
         kernel_shas.add(source_sha)
         kernel_shas.discard(None)
         apply_reader_findings(row, findings, table['format'], kernel_shas)
-    table.update(schema='fleet.rung_allowability.v3', table_version=version, generated_at=datetime.now(timezone.utc).isoformat(), performant_policy=dict(PERFORMANT_POLICY))
+    table.update(schema='fleet.rung_allowability.v3', table_version=version, generated_at=datetime.now(timezone.utc).isoformat(),
+                 performant_policy=dict(PERFORMANT_POLICY), timing_publication=dict(TIMING_PUBLICATION))
     table['table_status'] = 'complete' if all(row['measurement_status'] != 'pending' for row in table['rungs']) else 'partial'
     table['geometry_classes'] = measured_geometry_classes(table)
+    previous_increment = table['evidence'].get('performance_increment')
+    if previous_increment is not None:
+        table['evidence'].setdefault('performance_increment_history', []).append(previous_increment)
     table['evidence']['performance_increment'] = {'input_schema': original_schema, 'actual_cells_imported': imported, 'ignored_other_format_inputs': ignored,
         'scope': 'Actual per-cell performance evidence, not original-weight numerical, assembled module, tensor-parallel collective or serving qualification. Quality samples remain historical telemetry.'}
     table['evidence']['summary'] = dict(Counter(row['measurement_status'] for row in table['rungs']))
@@ -420,13 +430,25 @@ def publish_table(table, args):
     format_name, build_id = table['format'], table['kernel_build']['id']
     rows = table['rungs']
     relative=f'{format_name}/{build_id}/v{args.version:04d}.json'
+    table_bytes = json.dumps(table, indent=1, allow_nan=False).encode()
+    table_sha256 = hashlib.sha256(table_bytes).hexdigest()
     index=json.loads(Path(args.index).read_text()) if args.index else {'schema':'fleet.rung_allowability.index.v1','formats':{}}
-    merge_index(index,format_name,build_id,args.version,relative,table)
+    merge_index(index,format_name,build_id,args.version,relative,table,sha256=table_sha256)
     validate_index(index)
     jsonschema.Draft202012Validator(json.loads(Path(args.index_schema).read_text())).validate(index)
     out=Path(args.out);out.mkdir(parents=True,exist_ok=True)
-    with (out/'table.json').open('x') as h:json.dump(table,h,indent=1,allow_nan=False)
+    with (out/'table.json').open('xb') as h:h.write(table_bytes)
     with (out/'index.json').open('x') as h:json.dump(index,h,indent=2,allow_nan=False)
+    if table['schema'] == 'fleet.rung_allowability.v3':
+        from tessera.rung_allowability import publication_scope
+        inventory = None
+        if args.unit_inventory:
+            inventory_bytes = Path(args.unit_inventory).read_bytes()
+            inventory = json.loads(inventory_bytes)
+        scope = publication_scope(table, unit_inventory=inventory)
+        if inventory is not None:
+            scope['inventory_binding'] = {'path': args.unit_inventory, 'sha256': hashlib.sha256(inventory_bytes).hexdigest()}
+        with (out/'scope.json').open('x') as h:json.dump(scope, h, indent=2, allow_nan=False)
     if args.publish_root:
         import fcntl
         publication=Path(args.publish_root)
@@ -437,16 +459,18 @@ def publish_table(table, args):
             current_path=publication/args.candidate_index_name
             source_path=current_path if current_path.exists() else selected_path
             current=json.loads(source_path.read_text()) if source_path.exists() else {'schema':'fleet.rung_allowability.index.v2','formats':{}}
-            merge_index(current,format_name,build_id,args.version,relative,table)
+            merge_index(current,format_name,build_id,args.version,relative,table,sha256=table_sha256)
             destination=publication/relative
             destination.parent.mkdir(parents=True,exist_ok=True)
-            with destination.open('x') as stream:json.dump(table,stream,indent=1,allow_nan=False)
+            with destination.open('xb') as stream:stream.write(table_bytes)
             temporary=current_path.with_suffix('.tmp')
             temporary.write_text(json.dumps(current,indent=2,allow_nan=False))
             temporary.replace(current_path)
     report={'status':'schema_and_semantic_validation_passed','table_path':relative,'table_status':table['table_status'],'kernel_build_id':build_id,'summary':dict(Counter(row['measurement_status'] for row in rows)),'excluded':[row['rung'] for row in rows if row['excluded']],'action_key':__import__('os').environ.get('PRISMABUILD_ACTION_KEY')}
     report['cell_summary']=dict(Counter(m['measurement_status'] for row in rows for m in row['measurements']))
     report['quality_rungs_measured']=sum(row['quality'].get('measurement_status')=='measured' for row in rows)
+    report['table_sha256']=table_sha256
+    report['scope_path']=str(out/'scope.json') if table['schema']=='fleet.rung_allowability.v3' else None
     report['geometry_classes']=len(table.get('geometry_classes', []))
     (out/'validation.json').write_text(json.dumps(report,indent=2))
     print(json.dumps(report),flush=True)
@@ -470,6 +494,8 @@ def main():
     ap.add_argument("--input-table", help="existing immutable table for a scoped performance-policy increment")
     ap.add_argument("--measurement-input", action="append", default=[], help="completed raw geometry JSON, normalized by this existing producer")
     ap.add_argument("--candidate-index-name", choices=("index.v2-candidate.json", "index.v3-candidate.json"), default="index.v2-candidate.json")
+    ap.add_argument('--unit-inventory', help='Retained release units and actual tensor-parallel shapes for the scope matrix')
+    ap.add_argument('--paired-value-packet', help='Retained T4 supplier semantics; this does not grant class admission')
     ap.add_argument('--structure-spec',help='D41 structure spec JSON with sweep shapes, experts, top_k, hidden, inter and Ms; without it the tool keeps its compiled GLM defaults')
     args=ap.parse_args()
     if args.activate_index:
@@ -479,7 +505,28 @@ def main():
         return
     findings=json.loads(Path(args.reader_findings).read_text()) if args.reader_findings else []
     if args.input_table:
-        table = performance_increment(json.loads(Path(args.input_table).read_text()), args.measurement_input, args.version, findings)
+        input_path = Path(args.input_table)
+        input_bytes = input_path.read_bytes()
+        input_table = json.loads(input_bytes)
+        original_version = input_table['table_version']
+        table = performance_increment(input_table, args.measurement_input, args.version, findings)
+        table['evidence'].setdefault('publication_history', []).append({
+            'input_table': str(input_path), 'sha256': hashlib.sha256(input_bytes).hexdigest(),
+            'table_version': original_version})
+        if args.paired_value_packet:
+            if table['format'] != 'TESSERA_E2M1_K2':
+                raise ValueError('Paired-value packet is only valid for TESSERA_E2M1_K2')
+            packet_bytes = Path(args.paired_value_packet).read_bytes()
+            packet = json.loads(packet_bytes)
+            semantics = packet['paired_value_semantics']
+            if semantics['arity'] != 2 or semantics['one_code'] != 'One code represents two scalar weights.':
+                raise ValueError('Paired-value packet contradicts the actual scalar arity')
+            if any(packet['qualified_class_menu'].values()):
+                raise ValueError('This publication preserves the empty qualified T4 menu')
+            table['evidence']['paired_value_supplier'] = {
+                'path': args.paired_value_packet, 'sha256': hashlib.sha256(packet_bytes).hexdigest(),
+                'producer': packet['canonical_producer'], 'paired_value_semantics': semantics,
+                'qualified_class_menu': packet['qualified_class_menu'], 'missing_evidence': packet['missing_evidence']}
         publish_table(table, args)
         return
     root=Path(args.root)

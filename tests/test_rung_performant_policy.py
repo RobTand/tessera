@@ -185,3 +185,128 @@ class PerformantPolicy(unittest.TestCase):
         table['geometry_classes'] = []
         self.assertEqual(decide(table, 896)['status'], 'wait')
         self.assertEqual(rung_speed(table, rung=896, cell_id=cell['cell_id'])['status'], 'wait')
+
+
+class TimingPublication(unittest.TestCase):
+    def test_retained_samples_publish_descriptive_uncertainty(self):
+        table = v3_fixture()
+        cell = table['rungs'][0]['measurements'][0]
+        cell['evidence'].update(action_key='original-action', paired_seed_contract='paired seed', timer='graph')
+        cell['evidence']['F'] = {'samples_ms': [0.009, 0.01, 0.011], 'median_ms': 0.01}
+        cell['evidence']['R'] = {'samples_ms': [0.009, 0.01, 0.012], 'median_ms': 0.01}
+        cell.update(kernel_time_us=10, pass_times_us=[10, 10])
+        result = rung_speed(table, rung=768, cell_id=cell['cell_id'])
+        self.assertEqual(result['value_kind'], 'measured')
+        self.assertEqual(result['timing']['passes']['F']['sample_count'], 3)
+        self.assertEqual(result['timing']['passes']['F']['sample_range_us'], [9, 11])
+        self.assertEqual(result['timing']['confidence_interval']['status'], 'unavailable')
+        self.assertEqual(result['timing']['source']['action_key'], 'original-action')
+
+    def test_missing_samples_are_not_fake_repetitions(self):
+        table = v3_fixture()
+        result = rung_speed(table, rung=768, cell_id='dense:o:M1')
+        self.assertEqual(result['timing']['passes']['F']['status'], 'unavailable')
+        self.assertEqual(result['timing']['passes']['F']['sample_count'], 0)
+        self.assertEqual(result['timing']['confidence_interval']['status'], 'unavailable')
+
+    def test_measured_samples_must_agree_with_their_pass_median(self):
+        table = v3_fixture()
+        cell = table['rungs'][0]['measurements'][0]
+        cell['evidence']['F'] = {'samples_ms': [1, 2, 3], 'median_ms': 2}
+        with self.assertRaisesRegex(ValueError, 'sample median'):
+            rung_speed(table, rung=768, cell_id=cell['cell_id'])
+
+    def test_publication_preserves_noise_observations_and_hard_refusals(self):
+        from tessera.rung_allowability import publication_scope
+        table = v3_fixture()
+        table['rungs'][0]['quality']['adjacent_higher_raw_error_ratios'] = [1.2]
+        table['rungs'][1]['anomaly_flags'] = table['rungs'][1]['quality']['anomaly_flags'] = ['reader_bounds']
+        scope = publication_scope(table)
+        self.assertEqual(scope['cells'][0]['rates'][0]['admission']['status'], 'allow')
+        self.assertEqual(scope['cells'][0]['rates'][0]['timing']['status'], 'measured')
+        self.assertEqual(scope['quality_observations'][0]['blocking'], False)
+        self.assertEqual(scope['correctness_holds'][0]['flags'], ['reader_bounds'])
+        self.assertEqual(scope['unavailable_rates'][0]['rung'], 640)
+        self.assertEqual(scope['pricing_anchors'][0]['rung'], 1280)
+        self.assertFalse(scope['pricing_anchors'][0]['performance_admitted'])
+
+    def test_class_publication_binds_all_observed_times(self):
+        from tessera.rung_allowability import TIMING_PUBLICATION
+        table = v3_fixture()
+        table['timing_publication'] = dict(TIMING_PUBLICATION)
+        table['geometry_classes'] = measured_geometry_classes(table)
+        timing = table['geometry_classes'][0]['timings'][0]
+        self.assertEqual(timing['value_kind'], 'measured')
+        table['geometry_classes'][0]['timings'][0]['kernel_time_us'] *= 2
+        with self.assertRaisesRegex(ValueError, 'class identity'):
+            validate_table(table)
+
+    def test_pair_publication_has_no_qualified_menu(self):
+        from tessera.rung_allowability import publication_scope
+        table = fixture_v2('tcq', 'native_tcq')
+        table['schema'] = 'fleet.rung_allowability.v3'
+        table['performant_policy'] = dict(PERFORMANT_POLICY)
+        table['scope']['shapes'] = [{'kernel_kind': 'dense', 'shape_id': 'o', 'rows': 512, 'columns': 256, 'mode': 2}]
+        for row in table['rungs']:
+            row['measurements'][0]['evidence'].update(rows=512, columns=256)
+        table['geometry_classes'] = measured_geometry_classes(table)
+        scope = publication_scope(table)
+        self.assertEqual(scope['qualified_menu'], {'dense': [], 'routed': []})
+        self.assertEqual(scope['rate_semantics']['scalar_weights_per_code'], 2)
+        self.assertEqual(scope['rate_semantics']['code_bits_per_symbol_denominator'], 128)
+
+    def test_release_units_link_exact_rank_shapes_without_qualification(self):
+        from tessera.rung_allowability import publication_scope
+        units = {'release': 'retained-release', 'config': {}, 'units': [
+            {'name': 'layer.0.mlp.gate', 'category': 'dense_mlp', 'role': 'gate', 'shape': [512, 512],
+             'tensor_parallel_shapes': {'1': [512, 512], '2': [512, 256]}}]}
+        scope = publication_scope(v3_fixture(), unit_inventory=units)
+        coverage = scope['release_unit_coverage'][0]['coverage']
+        self.assertEqual(coverage[0]['status'], 'wait')
+        self.assertEqual(coverage[1]['cell_ids'], ['dense:o:M1'])
+        self.assertFalse(scope['native_qualification_inherited'])
+
+    def test_all_class_spots_bound_the_derived_value(self):
+        table = v3_fixture()
+        donor = table['rungs'][1]
+        for q, time in ((770, 30), (771, 10), (772, 11), (773, 12)):
+            row = copy.deepcopy(donor)
+            row['rung'] = row['quality']['scope']['rung'] = q
+            row['measurements'][0].update(kernel_time_us=time, pass_times_us=[time, time])
+            table['rungs'].append(row)
+        missing = copy.deepcopy(donor)
+        missing.update(rung=774, measurement_status='pending', supported=None, measurements=[], quality={})
+        table['rungs'].append(missing)
+        table['scope']['rung_max'] = 774
+        table['table_status'] = 'partial'
+        table['geometry_classes'] = measured_geometry_classes(table)
+        identity = geometry_class_identity(table, 769, donor['measurements'][0])
+        result = rung_speed(table, rung=774, class_identity=identity)
+        self.assertEqual(result['kernel_time_us'], 30)
+        self.assertEqual(result['value_kind'], 'derived')
+        self.assertEqual(result['anchors'], [769, 770, 771, 772, 773])
+        self.assertFalse(result['menu_admitted'])
+
+    def test_candidate_table_digest_is_a_byte_integrity_refusal(self):
+        import tempfile
+        import json
+        import importlib.util
+        from pathlib import Path
+        root = Path(__file__).resolve().parents[1]
+        spec = importlib.util.spec_from_file_location('publication_producer', root/'experiments/t8r_speed/rung_allowability_table.py')
+        producer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(producer)
+        table = v3_fixture()
+        record = {'path': 'table.json', 'table_schema': table['schema'], 'table_status': table['table_status'], 'sha256': '0' * 64}
+        index = {'schema': 'fleet.rung_allowability.index.v2', 'formats': {table['format']: {'kernel_builds': {
+            table['kernel_build']['id']: {'current_version': 1, 'versions': {'1': record}}}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            active = json.dumps(index)
+            (path/'index.json').write_text(active)
+            (path/'index.v3-candidate.json').write_text(active)
+            (path/'table.json').write_text(json.dumps(table))
+            with self.assertRaisesRegex(ValueError, 'bytes differ from their digest'):
+                producer.activate_published_index(path, 'index.v3-candidate.json')
+            self.assertEqual((path/'index.json').read_text(), active)
+

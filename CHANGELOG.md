@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-08 — canonical class publication (issue #1018)
+
+Extend the existing producer with immutable class timing records and exact declared-cell scope matrices.
+Retain original samples, action bindings, build identities, failures, and quality observations.
+Report measured sample variability and explicit unavailable confidence intervals.
+Keep hard correctness refusals separate from historical sample variation.
+Keep the T4 menus empty and bind the producer's paired-value semantics.
+Preserve unavailable T8 rates and the R1280 pricing anchor.
+Bind new table bytes in the candidate index. Leave the active index unchanged.
+
 ## 2026-10-08 — rank identity in the graph witness (issue #1062)
 
 The witness reads each rank and world size from the real receipt fields.

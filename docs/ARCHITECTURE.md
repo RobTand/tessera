@@ -1,5 +1,24 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the canonical class publication (issue #1018).
+
+The existing class interface publishes retained timing samples and exact performance scope.
+Each measured value names its original action, source, binary, paired seed, and clock window.
+Pass ranges, sample standard deviations, and paired drift describe the retained samples.
+No confidence interval exists without a retained independent estimate.
+Class-derived values name every eligible donor and do not become measured values.
+
+The immutable producer adds class timing records and a complete declared-cell scope matrix.
+Historical sample variation stays separate from hard correctness flags.
+Missing shapes, recipes, activations, and token rows still wait.
+T4 uses one code for two scalar weights. Its qualified dense and routed menus stay empty.
+T8 R640 has no supported publication. R1280 stays a pricing anchor, not a performance option.
+Older T16 timings retain their actual build and do not qualify the new decoded-weight epilogue.
+
+New index entries bind each immutable table to its byte digest.
+The producer stages the candidate index without a change to the active index.
+Timing supplies no numerical, native, or serving qualification.
+
 Re-stamped 2026-10-08 for the graph witness rank correction (issue #1062).
 
 The witness joins the explicit rank and world size from each receipt row.
