@@ -101,9 +101,9 @@ DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 #: served censuses on both E4M3 cell images earned it the dense cells.
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)
 DENSE_FUSED_MMA_E4M3_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-#: ``DENSE_DECODE_ONCE_LAUNCH`` (contract v56, tessera#931, default-off) is the
-#: decode-once prefill lane: under ``TESSERA_E4M3_DECODE_ONCE=1`` a resident
-#: module holds its weights decoded once to E4M3 and serves M at or above
+#: DENSE_DECODE_ONCE_LAUNCH is the eligibility-scoped default prefill lane.
+#: A resident module with an eager forward holds its weights decoded once
+#: to E4M3 and serves M at or above
 #: ``e4m3_prefill.MIN_M`` with ``torch._scaled_mm``; ``apply`` stamps
 #: ``launch_pair_for(M)``, the pair that ran.
 DENSE_DECODE_ONCE_LAUNCH = (DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
@@ -425,19 +425,20 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 raise RuntimeError(
                     f"{prefix}: the prepared Tessera FP8 module runs {prepared.launch_pair!r}, "
                     f"the route publishes {DENSE_LAUNCHES!r}")
-            # Decode-once (tessera#931): default-off, resident modules only --
-            # a streamed module's weights do not stay on the device, and the
-            # decoded copy is one more resident byte per weight, counted by the
-            # module's ``named_tensors`` like every other prepared tensor.
+            # Decode-once adds a resident copy. Compiled forwards keep the
+            # window lane by default; an explicit unsupported request refuses.
             if e4m3_prefill.enabled() and layer.tessera_mode == "resident":
-                # Eager-only, refused HERE: a raise inside a compiled forward is
-                # a graph break Dynamo may run around, so the gate is the load.
-                if declared_forward_is_compiled():
-                    raise RuntimeError(
-                        f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
-                        "vLLM's compilation mode is not NONE; serve with compilation mode "
-                        "NONE (--enforce-eager) or unset the flag")
-                prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
+                compiled = declared_forward_is_compiled()
+                if compiled:
+                    from .flags import latched_bool
+
+                    if latched_bool(e4m3_prefill.FLAG):
+                        raise RuntimeError(
+                            f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
+                            "vLLM's compilation mode is not NONE; serve with compilation mode "
+                            f"NONE (--enforce-eager) or set {e4m3_prefill.FLAG}=0")
+                else:
+                    prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol

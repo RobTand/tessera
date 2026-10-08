@@ -1,6 +1,8 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-07 for native routed prices in the offline planner.
+Re-stamped 2026-10-08 for the approved eligibility-scoped serving defaults.
+Piece-major routed layout and decode-once dense/shared projections are default-on where their existing readers admit them.
+Maximum batched tokens remain 2048. KDA defaults, pins and current measurement source remain unchanged.
 
 The projection byte audit selects `served_recipe` before native resident accounting.
 Its 256-column fixture satisfies the native T4 input-width rule and also covers T8 and T16.
@@ -828,22 +830,22 @@ stages. At 0 the layout is master's and the SASS is master's up to commuted
 only into MMA8 compile flags, and checked against the loaded export. The value
 and `f16` libraries are untouched.
 
-Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
-(#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
-selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
-that choice before loading; each eligible one-run R4 unit is permuted from
-`[tile][column][64-row piece][word]` to `[tile][64-row piece][column][word]`
-before its one `WindowUnitAxis.put`. Serialized bytes, word counts, scales,
-column permutation and TP-cut initial states stay unchanged. The owner carries
-the layout through its signature and finished SoA; finish copies no word plane.
-BF16 (including A8SE layer45), forced f16 and routed opt-out retain legacy
-placement. A prepared PM stack refuses an incompatible reader or fallback.
-Dense Triton/fused/custom-op owners, GEMV argument extraction and E2M1 WINDOW
-readers require legacy words before dropping their layout metadata. Native PM
-dispatch is limited to routed E4M3 MMA, one-run R4, modes 0/1/2; history reads
-the same column's preceding piece/tile or its incoming state. This opt-in has
-no numerical, performance, graph or serving qualification from CPU checks or
-compilation alone. No serving cell, default, precision menu or pin is promoted.
+Re-stamped 2026-10-08 for the default-on routed R4 piece-major resident layout (Refs #739 and #750).
+Rob approved this default. An unset TESSERA_ROUTED_PIECE_MAJOR selects only a uniform R4 stack with the E4M3 MMA reader.
+Explicit 0 retains legacy placement. Explicit 1 still refuses a non-uniform stack before intake.
+All other allowable rates and mixed stacks remain usable with the flag unset.
+BF16, forced f16 and ineligible units retain legacy placement.
+The flag uses the existing strict, process-stable flag owner.
+
+Intake freezes the choice before load. Each eligible unit enters WindowUnitAxis.put once after the piece-major permutation.
+The permutation maps [tile][column][64-row piece][word] to [tile][64-row piece][column][word].
+Serialized bytes, word counts, scales, column permutation and tensor-parallel history states remain unchanged.
+The owner carries the layout through its signature and finished arrays. Finalization copies no word plane.
+A prepared piece-major stack refuses an incompatible reader or fallback.
+Dense readers, GEMV argument extraction and E2M1 WINDOW readers still require legacy words before metadata removal.
+Native piece-major dispatch remains limited to routed E4M3 MMA, one-run R4, modes 0/1/2.
+CPU checks and compilation alone do not qualify GPU numerics, graph behavior or serving.
+No qualified cell, precision menu, runtime pin or measurement source changes.
 
 The finite PM experiment extends the existing benchmark, StagedInputs and
 NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
@@ -1162,31 +1164,28 @@ savings (`docs/measurements/2026-10-04-mhc-fused-783.md`).
 No production pin, route cell, default, artifact or ship gate moves. Design:
 `docs/design/mhc-fusion-783.md`.
 
-Re-stamped 2026-10-05 for the default-off decode-once E4M3 dense prefill lane
-(contract v56, Refs #931). Under `TESSERA_E4M3_DECODE_ONCE=1`,
-`fp8_route.process_weights_after_loading` decodes each RESIDENT dense module
-once to plain E4M3 bytes (`serving.e4m3_prefill.decode_e4m3`: each role's own
-Triton window decoder run with unit row scales on an FP8 identity, which is
-exact) and attaches the copy to the module
-(`PreparedDenseNativeModule.attach_decoded`). The module then serves
-M >= `e4m3_prefill.MIN_M` (256, the measured crossover) with
-`torch._scaled_mm` row-wise on the unchanged E4M3 epilogue contract, and every
-smaller M on its window lane. The lane is EAGER-ONLY: the M branch is host
-Python, so the route refuses the flag AT LOAD when the compilation mode saved
-at model construction is not NONE (`compile_identity.declared_forward_is_compiled`),
-even after the current-config context exits. A raise in `apply` under
-`torch.compile` is only a backstop, since Dynamo may run around it. A
-copy-holding module declares a distinct compile-cache dispatch fact
-(`<window op>|<decode-once op>`). The route stamps `launch_pair_for(M)` (the
-pair that ran) only for a copy-holding module; every other module stamps its
-one `launch_pair` without reading the token count, as before v56. The copy is one byte per weight plus the fp32 row scale, yielded by
-`named_tensors`, so the residency accounting prices it. The launch
-`(tessera.serving.e4m3_prefill.prefill_apply, native_window_decode_once_e4m3)`
-enters `scheme.ROUTE_LAUNCHES[TESSERA_FP8]` (dense, both regimes, resident
-only, no extension lane) and `EXPERIMENTAL_LAUNCHES` together, so no cell names
-it until a served census of a T-8-projection artifact with the flag on earns
-one. Streamed modules, the flag unset and every other route are unchanged.
-Receipt: `docs/measurements/2026-10-04-e4m3-decode-once-prefill.md`.
+Re-stamped 2026-10-08 for the default-on decode-once E4M3 dense and shared projection lane.
+Rob approved this default. The route keeps the existing eligibility and correctness guards.
+With TESSERA_E4M3_DECODE_ONCE unset, each resident module with an eager forward receives a decoded copy at load.
+Explicit 0 disables the copy. Explicit 1 retains the load-time refusal for a compiled forward.
+A compiled forward with the flag unset keeps the existing window lane.
+The saved construction-time compile mode remains authoritative after the current configuration context exits.
+Streamed modules retain the existing packed path without a decoded copy.
+
+Each role uses its own Triton window decoder with unit scales on an FP8 identity.
+The decoded values and row scales retain the E4M3 epilogue contract.
+PreparedDenseNativeModule.attach_decoded retains its family, shape and single-attachment checks.
+The module serves M >= e4m3_prefill.MIN_M (256) through torch._scaled_mm.
+Smaller inputs use the existing window lane. The compiled-forward backstop remains a refusal.
+The copy adds one byte per weight and the fp32 row scale to named_tensors and resident accounting.
+The route records launch_pair_for(M) only for a module with a decoded copy.
+Its compile-cache dispatch fact remains <window op>|<decode-once op>.
+Every other module records its fixed launch pair without a token-count read.
+
+The launch remains in EXPERIMENTAL_LAUNCHES under contract v56 (Refs #931).
+This source default does not add a qualified cell or change a serving pin.
+The existing served-census and quality holds remain. No new performance or quality result follows from this default.
+Prior operator evidence: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md.
 
 Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
 (contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
