@@ -1,6 +1,6 @@
 """What the exporter is allowed to call a dense Linear.
 
-Three failures live here, and every one of them is silent at plan time and
+Four failures live here, and every one of them is silent at plan time and
 expensive later:
 
 1. **The body was not found at all.**  ``quantizable`` filtered on
