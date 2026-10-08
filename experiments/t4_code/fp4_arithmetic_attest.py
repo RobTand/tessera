@@ -443,7 +443,14 @@ def main(args):
 
 def guarded(args):
     if args.guarded_child:
-        return main(args)
+        result = main(args)
+        if args.targeted_tests:
+            if not args.cpu_preflight:
+                raise ValueError("targeted processor tests require --cpu-preflight")
+            if result == 0:
+                return subprocess.run([sys.executable, "-m", "pytest", "-q", "--durations=10",
+                    "tests/test_fp4_arithmetic_attestation.py", "tests/test_d41_e2m1_geometry.py"], cwd=ROOT).returncode
+        return result
     sys.path.insert(0, str(ROOT / "experiments" / "graph_attest_702"))
     from managed_window import Envelope
     samples = []
@@ -477,5 +484,6 @@ if __name__ == "__main__":
     parser.add_argument("--original-stock-regressions", action="store_true")
     parser.add_argument("--corrective-stock-audit", action="store_true")
     parser.add_argument("--retained-outputs")
+    parser.add_argument("--targeted-tests", action="store_true", help="Run the targeted processor tests inside the owned memory guard.")
     parser.add_argument("--guarded-child", action="store_true", help=argparse.SUPPRESS)
     raise SystemExit(guarded(parser.parse_args()))
