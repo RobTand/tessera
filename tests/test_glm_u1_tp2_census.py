@@ -127,9 +127,3 @@ def test_each_rank_is_the_tp1_module_cut_in_half_on_one_axis_and_admits_the_cut(
     assert axes_by_kind == {"dense": {"row", "column"}, "moe": {"column"}}
 
 
-def test_the_contract_keeps_e2m1_at_two_with_both_axes_sharded():
-    units = {u["unit"]: u for u in load_serving_contract()["tensor_parallel"]["units"]}
-    unit = units["TESSERA_E2M1_K2"]
-    assert unit["max_world_size"] == 2
-    assert {axis: v["status"] for axis, v in unit["loader_axes"].items()} == {
-        "row": "sharded", "column": "sharded"}

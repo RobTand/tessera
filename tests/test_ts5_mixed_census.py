@@ -19,19 +19,20 @@ def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=
     sizes = output_partitions(entry, target) if entry is not None else None
     if sizes is None or len(sizes) != len(members):
         sizes = [64] * len(members)
+    columns = 256 if family == TESSERA_NVFP4 else 128
     roles = [{"tensor": name, "role": name.removesuffix(".weight").rsplit(".", 1)[-1],
-              "rows": rows, "cols": 128, "grid": grid, "q256": q256, "family": family}
+              "rows": rows, "cols": columns, "grid": grid, "q256": q256, "family": family}
              for name, rows in zip(members, sizes)]
     for name in members:
         plan[name] = {"grid": grid, "q256": q256}
     scheme = {"structure": "dense", "family": family, "grid": grid,
               "body": route["body"], "plane": route["plane"], "q256": q256,
-              "rows": sum(r["rows"] for r in roles), "columns": 128, "wire_bytes": 4096,
+              "rows": sum(r["rows"] for r in roles), "columns": columns, "wire_bytes": 4096,
               "roles": [[r["role"], r["rows"]] for r in roles]}
     config["quantization_config"]["config_groups"][target] = {
         "targets": [target], "format": "TESSERA", "scheme": scheme}
     manifest["modules"][target] = {"family": family, "grid": grid, "q256": q256,
-        "rows": scheme["rows"], "cols": 128, "container_bytes": 4096, "roles": roles}
+        "rows": scheme["rows"], "cols": columns, "container_bytes": 4096, "roles": roles}
     manifest["export_identity"]["options"]["plan"] = copy.deepcopy(plan)
     manifest["totals"]["modules"] += 1
     manifest["totals"]["units"] += len(roles)
@@ -55,7 +56,7 @@ def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=
         census["records"][phase][target] = {"kind": "dense", "state": "served",
             "policy": family + ":resident", "contract": route["activation_contract"],
             "symbol": symbol, "decoder": decoder,
-            "shape": f"M{1 if phase == 'decode' else 64}:N{scheme['rows']}:K128"}
+            "shape": f"M{1 if phase == 'decode' else 64}:N{scheme['rows']}:K{columns}"}
         census["record_owner"][phase][target] = target
     census["declared_name_mapping"][target] = target
 

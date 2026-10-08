@@ -216,16 +216,17 @@ def test_a_row_without_its_wire_stamp_is_refused(contract):
 
 def test_a_stamp_covering_fewer_rungs_than_attested_is_refused(contract):
     bad = _mutated(contract)
-    bad["formats"][0]["attested_wire"] = bad["formats"][0]["attested_wire"][:-1] or []
+    row = next(entry for entry in bad["formats"] if entry["attested_wire"])
+    row["attested_wire"] = row["attested_wire"][:-1]
     with pytest.raises(ValueError, match="one entry per attested rung"):
         validate_serving_contract(bad)
 
 
 def test_a_stamp_naming_a_rung_the_family_does_not_attest_is_refused(contract):
     bad = _mutated(contract)
-    stamped = bad["formats"][0]["attested_wire"]
-    assert stamped, "test premise moved: the first family stamps nothing"
-    stamped[0] = {**stamped[0], "q256": max(bad["formats"][0]["attested_rungs_q256"]) + 1}
+    row = next(entry for entry in bad["formats"] if entry["attested_wire"])
+    stamped = row["attested_wire"]
+    stamped[0] = {**stamped[0], "q256": max(row["attested_rungs_q256"]) + 1}
     with pytest.raises(ValueError, match="does not attest"):
         validate_serving_contract(bad)
 

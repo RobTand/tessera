@@ -19,12 +19,12 @@ from tessera.serving.scheme import MOE_BUILDERS, ROUTES, ROUTE_LAUNCHES, route_l
 __all__ = [
     "WINDOW_GEMM_SYMBOL",
     "FUSED_WINDOW_DENSE_SYMBOL",
-    "A4_DENSE_GEMM_SYMBOL",
+    "FUSED_WINDOW_DENSE_E2M1_SYMBOL",
     "NATIVE_WINDOW_GEMM_DECODER",
     "NATIVE_WINDOW_GEMM_FOLDED_DECODER",
     "NATIVE_FUSED_WINDOW_DENSE_DECODER",
     "NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER",
-    "NATIVE_SPAN2_GEMM_DECODER",
+    "NATIVE_FUSED_WINDOW_DENSE_E2M1_DECODER",
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
     "NVFP4_ACTIVATION_CONTRACT",
@@ -41,11 +41,10 @@ __all__ = [
     "refusal_record",
 ]
 
-#: ``scheme.WINDOW_GEMM_SYMBOL`` / ``scheme.FUSED_WINDOW_DENSE_SYMBOL`` /
-#: ``scheme.A4_DENSE_GEMM_SYMBOL``.
+# The controller records the runtime's public launch identities.
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
 FUSED_WINDOW_DENSE_SYMBOL = "tessera::fused_window_dense"
-A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
+FUSED_WINDOW_DENSE_E2M1_SYMBOL = "tessera.routed_fused_e2m1.dense_forward_quantized"
 #: ``telemetry.DECODER_NATIVE_WINDOW_GEMM`` / ``DECODER_NATIVE_WINDOW_GEMM_FOLDED``
 #: / ``DECODER_NATIVE_FUSED_WINDOW_DENSE`` / ``DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED``
 #: / ``DECODER_NATIVE_SPAN2_GEMM``.
@@ -53,7 +52,7 @@ NATIVE_WINDOW_GEMM_DECODER = "native_window_gemm"
 NATIVE_WINDOW_GEMM_FOLDED_DECODER = "native_window_gemm_folded"
 NATIVE_FUSED_WINDOW_DENSE_DECODER = "native_fused_window_dense"
 NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER = "native_fused_window_dense_folded"
-NATIVE_SPAN2_GEMM_DECODER = "native_span2_gemm"
+NATIVE_FUSED_WINDOW_DENSE_E2M1_DECODER = "native_fused_window_dense_e2m1"
 #: Contract v46: the E4M3 family's tensor-core instruction library
 #: (``routed_fused.library_for``), experimental; TESSERA_FP8 only.
 NATIVE_FUSED_WINDOW_DENSE_E4M3MMA_DECODER = "native_fused_window_dense_e4m3mma"

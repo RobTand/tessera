@@ -25,8 +25,10 @@ torch = pytest.importorskip("torch")
 from experiments import bench_native_moe_operator as moe
 from experiments import bench_native_operator as dense
 
-#: The routed NVFP4 stack's one launch since contract v39 (tessera#604).
-A4_GROUPED = ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")
+# A native panel uses the plugin's actual routed owner, not a retired ABI.
+from tessera.serving.scheme import launch_pairs, TESSERA_NVFP4, STRUCTURE_ROUTED_MOE
+A4_GROUPED = next(iter(launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
+                                    mode="resident", include_experimental=True)))
 
 GLM_UNIT = "model.language_model.layers.3.mlp.experts"
 A4 = "TESSERA_E2M1x2_K2_R896"
@@ -528,6 +530,32 @@ def test_binding_reads_the_live_group_and_refuses_a_mismatch():
         moe.bind_owner_rank({**world, "rank": 1, "world_size": 2})
 
 
+#: validate_panel raises ValueError for many malformed panels.  A bare
+#: ``raises(ValueError)`` would pass for any of them, so a route refusal is
+#: pinned by the message the route check raises.
+ROUTE_REFUSAL = "route differs from native whole MoE binding"
+
+
+def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
+    """Reject the retired materializer for every family and tensor-parallel cut."""
+    materializing = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+    assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materializing[0]
+    for world in (1, 2):
+        for format_name in (A4, A8, A16):
+            panel = _owner_panel(world, format_name, *materializing)
+            with pytest.raises(ValueError, match=ROUTE_REFUSAL):
+                moe.validate_panel(panel)
+
+
+def test_an_fp8_owner_never_declares_the_materialising_launch():
+    """WINDOW owner panels reject retired selected-reference launches at every cut."""
+    for world in (1, 2):
+        for format_name in (A8, A16):
+            for decoder in ("research_selected_triton_window", "research_selected_torch_window",
+                            "research_selected_triton_window_folded_bf16"):
+                panel = _owner_panel(world, format_name, "vllm.fused_moe.modular_kernel:TRITON_REF", decoder)
+                with pytest.raises(ValueError, match=ROUTE_REFUSAL):
+                    moe.validate_panel(panel)
 
 
 def test_the_selected_block_is_required_exactly_where_no_production_owner_exists():
@@ -742,10 +770,20 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
 
 @pytest.mark.parametrize("tp,format_name", [(1, A8), (2, A4), (2, A8), (1, A16), (2, A16)])
 def test_a_glm_owner_panel_validates_at_its_own_family_and_cut(tp, format_name):
+    from tessera.routed_fused import library_for
+    from tessera.serving.scheme import TESSERA_FP8, TESSERA_BF16, launch_pairs, routed_class_launch_pair
+
     wire = moe.owner_wire(_glm_shape(tp, format_name))
-    (symbol, decoder), = moe.owner_launch_pairs(wire)
-    panel = _owner_panel(tp, format_name, symbol, decoder)
-    assert moe.validate_panel(panel) == panel
+    if wire["family"] in (TESSERA_FP8, TESSERA_BF16):
+        lane = "value" if wire["family"] == TESSERA_BF16 else "e4m3"
+        expected = {routed_class_launch_pair(library_for(lane), uniform=uniform)
+                    for uniform in (False, True)}
+    else:
+        expected = set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
+    assert moe.owner_launch_pairs(wire) == expected
+    for symbol, decoder in expected:
+        panel = _owner_panel(tp, format_name, symbol, decoder)
+        assert moe.validate_panel(panel) == panel
 
 
 @pytest.mark.parametrize("backend", ["torch", "triton"])

@@ -764,3 +764,15 @@ def test_carried_projection_still_refuses_another_checkpoint(tmp_path):
     with pytest.raises(PLAN.PlanError, match="source identity disagrees"):
         PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
     assert not out.exists()
+
+
+def test_explicit_router_and_vision_units_reach_the_export_plan():
+    router = "model.layers.0.mlp.gate"
+    vision = "model.visual.blocks.0.attn.qkv"
+    assignment = {router: "TESSERA_E4M3_K1_R1024", vision: "TESSERA_E4M3_K1_R1024"}
+    shapes = {router + ".weight": (32, 32), vision + ".weight": (96, 32)}
+    PLAN.refuse_before_source(assignment, None)
+    plan, _receipt = PLAN.build(assignment, shapes, cover="as-allocated",
+        allow_disagreement=False, prismaquant=None, with_control=False,
+        architecture="Glm5NextForConditionalGeneration")
+    assert plan == {name + ".weight": {"grid": "E4M3", "q256": 1024} for name in assignment}

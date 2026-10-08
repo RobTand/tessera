@@ -161,7 +161,7 @@ def cpu_preflight(args, report):
             "sha256": hashlib.sha256(Path(args.config).read_bytes()).hexdigest()}
     tiny = []
     pure_rates = sorted({q for name in args.schedules.split(",") for q in SCHEDULES[name]})
-    for rates in [SCHEDULES[name] for name in args.schedules.split(",")] + [(q,) for q in pure_rates]:
+    for rates in dict.fromkeys([SCHEDULES[name] for name in args.schedules.split(",")] + [(q,) for q in pure_rates]):
         packed, meta, inverse = packed_constants(rates, experts=24, hidden=256, inter=128,
                                                  device=torch.device("cpu"), seed=args.seed)
         if inverse.dtype != torch.int32 or inverse.numel() != 24:
@@ -430,7 +430,8 @@ def combine(report):
                 mean = sum(passes.values()) / 2
                 summary = {"median_ms": mean, "F_median_ms": passes["F"], "R_median_ms": passes["R"],
                            "spread": abs(passes["F"] - passes["R"]) / mean,
-                           "comparator_kind": "interpolation of pure whole-stack controls, not a mixed single launch",
+                           "comparator_kind": ("measured old pure whole-stack control" if len(group["rates"]) == 1
+                               else "interpolation of pure whole-stack controls, not a mixed single launch"),
                            "by_generation": {}}
                 summary["admission"] = report.data["meta"]["admission"]
                 for generation in (0, 1):
@@ -474,11 +475,14 @@ def run_gpu(args, report):
     ms = [int(m) for m in args.ms.split(",")]
     schedules = args.schedules.split(",")
     pure_rates = sorted({q for name in schedules for q in SCHEDULES[name]})
-    for name, rates in [(f"uniform_q{q}", (q,)) for q in pure_rates] + [(name, SCHEDULES[name]) for name in schedules]:
+    cases = dict([(f"uniform_q{q}", (q,)) for q in pure_rates] + [(name, SCHEDULES[name]) for name in schedules])
+    for name, rates in cases.items():
         for tokens in ms:
             check_case(args, report, name, rates, tokens)
     from class_dispatch_inputs import metadata
     for name in schedules:
+        if len(SCHEDULES[name]) == 1:
+            continue  # Its identity-map old-pure check already used the same route population.
         route_meta = metadata(SCHEDULES[name], EXPERTS)
         for q in SCHEDULES[name]:
             for tokens in ms:

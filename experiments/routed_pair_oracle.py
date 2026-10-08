@@ -130,11 +130,10 @@ def expected_pair(fam, method):
     """Execution pair selected by the native library, independently of telemetry."""
     if fam["family"] == "TESSERA_NVFP4":
         return tuple(fam["pair"])
-    from tessera.serving.scheme import routed_class_launch_pair
     native = method._native
     if type(native).__name__ != FUSED_ADAPTER:
         raise ValueError("WINDOW oracle requires the native expert-class owner")
-    return routed_class_launch_pair(native.library)
+    return native.launch_pair
 
 
 def f16_twin(method):
@@ -160,11 +159,22 @@ def f16_twin(method):
         classes.append(dataclasses.replace(cls, **fields))
     operands = dict(native.operands)
     operands["tables"] = [getattr(cls, f"table_{role}") for cls in classes for role in roles]
-    resources = dataclasses.replace(native.dispatch_resources, kernel=rf._LutClassKernel("e4m3", rf._ext("e4m3")))
-    resource_key = rf._retain_dispatch_resources(resources)
+    counters = torch.empty_like(native.counters)
+    uniform = None
+    if native.uniform is not None:
+        c = classes[0]
+        projections = tuple(rf._UniformProjection(getattr(c, role), getattr(c, "words_" + role),
+            getattr(c, "table_" + role), getattr(c, "runs_" + role), getattr(c, "bdesc_" + role)) for role in roles)
+        uniform = dataclasses.replace(native.uniform, library="e4m3", module=rf._ext("e4m3"),
+            gate=projections[0], up=projections[1], down=projections[2],
+            counters=(counters[0, :1], counters[0, 1:2]))
+        resources = resource_key = None
+    else:
+        resources = dataclasses.replace(native.dispatch_resources, kernel=rf._LutClassKernel("e4m3", rf._ext("e4m3")))
+        resource_key = rf._retain_dispatch_resources(resources)
     return dataclasses.replace(native, library="e4m3", classes=tuple(classes), operands=operands,
         table_gate=tables[0], table_up=tables[1], table_down=tables[2],
-        counters=torch.empty_like(native.counters), dispatch_resources=resources, resource_key=resource_key,
+        counters=counters, dispatch_resources=resources, resource_key=resource_key, uniform=uniform,
         **{role: dataclasses.replace(getattr(native, role), table_all=table)
            for role, table in zip(roles, tables)})
 

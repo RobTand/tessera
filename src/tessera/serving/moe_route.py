@@ -14,13 +14,13 @@ the actual class operation; it does not qualify an artifact or promote a cell.
 """
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 import torch
 
 from ..errors import GrammarError
+from ..expert_classes import storage_expert_ids
 from ..moe_execution import ResearchSelectedMoeConfig
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .glm53_shared_fold import native_call
@@ -34,15 +34,16 @@ from .scheme import (MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES, TESSERA_BF16, TESSERA
                      validate_tessera_moe_scheme)
 from .telemetry import emit_route, route_shape
 
-#: Opt-in: re-lay the compact routed window body piece-major (tessera#739).
-#: Default off.  Only the single-rate rate-4 body the fused R4 reader
-#: addresses is eligible (``kernel_window_gemv.piece_major_eligible``); every
-#: other unit keeps legacy words, and no reader is re-strided to read either.
+#: Default on for an eligible uniform R4 stack with the E4M3 MMA reader.
+#: Every other stack keeps legacy words. Explicit mixed-stack requests refuse.
 ENV_PIECE_MAJOR = "TESSERA_ROUTED_PIECE_MAJOR"
 
 
 def _piece_major_requested() -> bool:
-    return os.environ.get(ENV_PIECE_MAJOR, "0").strip().lower() not in ("", "0", "false", "no")
+    """An explicit request, separate from the eligibility-scoped default."""
+    from .flags import latched_bool
+
+    return latched_bool(ENV_PIECE_MAJOR, meaning="the routed piece-major layout")
 
 
 def _piece_major_admissible(family: str) -> bool:
@@ -50,13 +51,15 @@ def _piece_major_admissible(family: str) -> bool:
 
     All three hold before the transient is re-laid:
 
-    * the piece-major experiment is requested;
+    * the piece-major layout is enabled, by default or explicitly;
     * the family is E4M3 -- BF16 keeps canonical word placement;
     * the E4M3 library this process builds is the MMA one, since the
       piece-major reader is instantiated only there.  ``library_for`` reads
       ``TESSERA_FUSED_E4M3_MMA``: an explicit ``f16`` keeps every body legacy.
     """
-    if not _piece_major_requested():
+    from .flags import latched_bool
+
+    if not latched_bool(ENV_PIECE_MAJOR, default=True, meaning="the routed piece-major layout"):
         return False
     if family != "e4m3":
         return False
@@ -403,7 +406,7 @@ def _mixed_axis_word_runs(declared, plans):
     from ..alphabet import grid_for_name
     from ..compact_prep import WINDOW_GEMM_RATE_MAX
     from ..grammar import bresenham_rate_schedule
-    from ..kernel_window_gemv import TILE_ROWS
+    from ..window_geometry import TILE_ROWS
     from .sharding import AXIS_COLUMNS, AXIS_ROWS
 
     sizes = {}
@@ -461,12 +464,14 @@ class _RankLocalPackedIntake:
         self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
         self._has_loaded = False
         self._scratch = {}
-        self._non_uniform = len(stack_effective_rungs(declared)) > 1
-        if self._non_uniform and _piece_major_requested():
+        rungs = stack_effective_rungs(declared)
+        self._non_uniform = len(rungs) > 1
+        requested = _piece_major_requested()
+        if self._non_uniform and requested:
             raise ValueError(
                 f"{target}: {ENV_PIECE_MAJOR} supports one-run rate-4 stacks only; "
                 "a non-uniform class stack must use the common packed word layout")
-        self._piece_major = _piece_major_admissible(
+        self._piece_major = rungs == [1024] and _piece_major_admissible(
             "value" if self.family == TESSERA_BF16 else "e4m3")
         if len(self.roles['w13']) != 2:
             raise ValueError(f"{target}: routed w13 must carry gate and up")
@@ -819,8 +824,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             limit = self._require_native_contract(layer)
             if x.shape[0] == 0:
                 return x.new_empty((0, int(declared['hidden_size'])))
-            # index_select rejects negative IDs rather than wrapping them like advanced indexing.
-            stored_ids = self._expert_inverse.index_select(0, topk_ids.reshape(-1)).reshape_as(topk_ids)
+            stored_ids = storage_expert_ids(self._expert_inverse, topk_ids)
             with torch.profiler.record_function(_profiler_label(self._native)):
                 out = native_call(
                     self._native, x.contiguous(), stored_ids, topk_weights,

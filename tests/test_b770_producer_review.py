@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import os
 import shutil
 import struct
 import subprocess
@@ -45,6 +46,31 @@ def run_part(tmp_path, producer, source_ref, source, **env):
         SOURCE_CHECKPOINT=source, PYTHONPATH=ROOT / 'src', **env))
 
 
+#: The fixture checkpoint is a miniature. The pinned runtime attests
+#: production partitions, so a bare subprocess export would refuse it at the
+#: geometry gate. This shim declares the fixture's own lists inside that
+#: subprocess only, through startup import. The -m argv is unchanged.
+
+
+
+def _fixture_geometry_path(tmp_path, output_sizes):
+    """Write the subprocess geometry declaration; return its directory."""
+    shim = tmp_path / 'fixture-geometry'
+    shim.mkdir(exist_ok=True)
+    (shim / 'sitecustomize.py').write_text(
+        'import copy\n'
+        'def _declare_fixture_geometry():\n'
+        '    from tessera.serving import contract\n'
+        '    real = contract.load_serving_contract\n'
+        '    payload = copy.deepcopy(real())\n'
+        "    for entry in payload['construction']['architectures']:\n"
+        "        if entry.get('architecture') == 'Glm5NextForConditionalGeneration':\n"
+        f"            entry.setdefault('output_sizes', {{}}).update({output_sizes!r})\n"
+        '    contract.load_serving_contract = lambda: payload\n'
+        '_declare_fixture_geometry()\n')
+    return shim
+
+
 def test_real_installed_python_m_entrypoint(tmp_path, selected, frozen_source):
     """Real -m invocation, genuine ancestry, no canonical-module driver/alias."""
     repo = tmp_path / 'genuine'
@@ -61,9 +87,12 @@ def test_real_installed_python_m_entrypoint(tmp_path, selected, frozen_source):
     plan = tmp_path / 'plan.json'
     plan.write_text(json.dumps({selected.STACK: {'grid': 'E4M3', 'q256': 896}}))
     out = tmp_path / 'out'
+    env = selected._selected_export_env(site, repo)
+    shim = _fixture_geometry_path(tmp_path, selected._FIXTURE_OUTPUT_SIZES)
+    env['PYTHONPATH'] = str(shim) + os.pathsep + env['PYTHONPATH']
     done = subprocess.run([sys.executable, '-m', 'tessera.export_serving',
         *selected._selected_export_argv(source, out, plan)], cwd=tmp_path,
-        env=selected._selected_export_env(site, repo), capture_output=True, text=True, timeout=900)
+        env=env, capture_output=True, text=True, timeout=900)
     assert done.returncode == 0, done.stderr[-4000:]
     manifest = parts.read_serving_manifest(out / 'tessera_serving_manifest.json')
     assert manifest['producer']['git_head'] == selected._git('rev-parse', 'HEAD', cwd=repo).stdout.strip()

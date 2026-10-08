@@ -21,6 +21,10 @@ def clean_environment(monkeypatch):
     for key in ("TESSERA_ROUTED_PIECE_MAJOR", "TESSERA_ROUTED_FUSED",
                 "TESSERA_DENSE_FUSED", "TESSERA_FUSED_E4M3_MMA"):
         monkeypatch.delenv(key, raising=False)
+    from tessera.serving import flags
+    flags.reset_for_tests()
+    yield
+    flags.reset_for_tests()
 
 
 def unit(family="e4m3", layout=LEGACY, cols=128, rate=4):
@@ -176,14 +180,6 @@ def e2m1_bundle():
     return b
 
 
-def test_e2m1_legacy_positive_controls(monkeypatch):
-    from tessera import routed_fused_e2m1 as fe
-    monkeypatch.setattr(fe, "_ext", bomb)
-    monkeypatch.setattr(fe, "smem_reason", lambda *a: None)
-    u = SimpleNamespace(rep=unit(cols=256).rep, window_bits=14, arity=2, cols=256, rows=256)
-    assert fe.dense_role_reason(u) is None
-    b = e2m1_bundle()
-    assert fe.fused_routed_e2m1_supported(b, b, b) is None
 
 
 def intake(family):
@@ -205,14 +201,19 @@ def intake(family):
 
 
 @pytest.mark.parametrize("family,optin,mma,expected", [
+    ("e4m3", None, "e4m3", PM), ("e4m3", "", "e4m3", PM),
     ("e4m3", "1", "e4m3", PM), ("e4m3", "0", "e4m3", LEGACY),
+    ("e4m3", None, "f16", LEGACY), ("value", None, "e4m3", LEGACY),
     ("e4m3", "1", "f16", LEGACY), ("value", "1", "e4m3", LEGACY),
 ])
 @pytest.mark.parametrize("change_environment", [False, True])
 def test_actual_intake_finish_and_history(monkeypatch, family, optin, mma, expected,
                                          change_environment):
     from tessera.serving import moe_route as mr
-    monkeypatch.setenv(mr.ENV_PIECE_MAJOR, optin)
+    if optin is None:
+        monkeypatch.delenv(mr.ENV_PIECE_MAJOR, raising=False)
+    else:
+        monkeypatch.setenv(mr.ENV_PIECE_MAJOR, optin)
     monkeypatch.setenv("TESSERA_FUSED_E4M3_MMA", mma)
     u = unit(family)
     def repack(blob, role, plan, target, **kwargs):

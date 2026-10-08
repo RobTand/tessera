@@ -12,11 +12,9 @@ independent rows, so a checkpoint cut for 4 ranks could not be re-cut for 8.
 WHERE THE CUT HAPPENS.  Every rank loads the WHOLE blob (``wire_bytes`` is a
 ``BasevLLMParameter``, which vLLM copies rather than splits -- a wire has no
 element axis to slice), parses it, and then takes its own shard at the UNIT
-level through ``_shard_unit_for_rank``.  Unit-level slicing is not free: the
-span-2 trellis carries state along a row, so a column-sliced unit must record
-the state its first surviving column starts from.  That is the INITIAL_STATE
-plane, and it is why the cut belongs to ``tessera.layout.slice_unit`` -- a
-wire-format operation with its own exactness proof -- and not to a serving
+level through ``_shard_unit_for_rank``. A row cut preserves the trellis state
+before its first surviving row in the INITIAL_STATE plane. The cut belongs
+to ``tessera.layout.slice_unit``, a wire operation, rather than to a serving
 route reaching into planes it does not own.
 
 AT TP1.  The seam returns the whole unit unchanged -- the same object, so the caller's
@@ -35,13 +33,12 @@ TP group in a build with no ``tessera.layout.slice_unit`` -- the whole-file
 answer, asked once per module at method construction.  ``require_axis_supported``
 refuses an axis a route's decoders cannot start, read off ``ROUTE_TP_AXES``
 and asked at ``create_weights`` where ``plan_shard`` has just named the axis.  A
-ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and every shipping body
-threads that start state through its decoder's pad: the window body through
-``lane_planes.pack_window_planes`` (E4M3, BF16) and the span-2 TCQ body through
-the select plane's ``SELECT_PAD`` (``lane_planes._thread_start_state``, E2M1x2;
-tessera#492).  So every route serves both axes today and the table below
-refuses nothing -- it stays, and the gate stays, because the answer is a
-property of a BODY and a fourth body may bring a refusal with it.  Where a
+ROW shard (``r0 > 0``) carries an INITIAL_STATE plane. The served WINDOW
+bodies thread that state through their packed input; the E2M1x2 reader
+retains it in the prepared role's permuted column order. Each route
+supports both loader axes; that capability is separate from TP serving
+attestation. The table and gate remain for a body that cannot start a cut.
+Where a
 refusal exists it is symmetric across the group -- every rank, including rank 0,
 whose shard would in fact pack -- because a group whose ranks disagree about
 whether a module exists hangs on its first collective rather than failing.
@@ -201,19 +198,14 @@ TP_STATUSES = (TP_SHARDED, TP_REFUSED)
 #:
 #: It is a machine-readable STATUS, and it is a statement about this build's
 #: DECODERS, not an attestation: ``max_world_size`` in the same block is the
-#: attestation, 2 since v29 on a receipt each unit names.  The receipt's traces
-#: cut E4M3_K1 on rows and BF16_K1 on columns only, so the other axis of each is
-#: this table's word and no trace's.  A producer that wants "will this even
-#: load" reads this; a producer that wants "has this been measured" reads
+#: measured claim for that family. Historical TCQ receipts do not attest the
+#: replacement E2M1x2 WINDOW route. A producer that asks whether a cut can
+#: load reads this table; one that asks whether it has been measured reads
 #: ``max_world_size``.
 #:
-#: The row axis's answer is a property of the BODY, not of the tile: the window
-#: body's L-bit pad IS ``state_{-1}``, so a row shard costs the window decoders
-#: an argument; the span-2 TCQ body's ``SELECT_PAD`` is the same opportunity
-#: and, since tessera#492, ``lane_planes._thread_start_state`` writes the
-#: shard's register into it in the stream order ``build_span2_luts`` maps, so
-#: the native span-2 decoder and ``materialize_stock`` start a row shard from
-#: the same state (held to each other by the tests' reference asset).
+#: A row cut's incoming WINDOW state is a property of the body, not the
+#: output dtype. The compact readers retain it in the rank-local packed
+#: inputs and the native consumers read it before the first surviving row.
 #: It is keyed by ROUTE because family, body and route are one-to-one today
 #: (``tessera.export_serving.check_recipe`` enforces it); a fourth family with
 #: a different body brings its own row.
@@ -382,9 +374,8 @@ def require_axis_supported(family: str, plan: "ShardPlan") -> None:
     ranks disagree about whether a module exists does not fail: it hangs on the
     first collective, which is a worse bug than the one being reported.  So a
     refusal is symmetric across the group, and it arrives before any byte is
-    loaded rather than from inside a packer.  No shipping route refuses an
-    axis today (tessera#492 threaded the span-2 start state); the gate is
-    kept for the body that will.
+    loaded rather than from inside a packer. All current routes support both
+    axes; this capability does not by itself qualify a TP serving cell.
     """
     if plan.axis is None or plan.tp_size <= 1:
         return                       # nothing is cut: replicated, or one rank
@@ -551,6 +542,19 @@ def layer_replicas(prefix: str, layer, members) -> Tuple[int, ...]:
     roles, and it is refused by name rather than guessed at.
     """
     members = tuple(str(name) for name in members)
+    replicated = getattr(layer, "replicated_shard_ids", None)
+    if replicated is not None:
+        try:
+            indices = tuple(replicated)
+        except TypeError as exc:
+            raise ValueError(f"{prefix}: replicated_shard_ids must contain partition indices") from exc
+        if any(not isinstance(index, int) or isinstance(index, bool)
+               or index < 0 or index >= len(members) for index in indices):
+            raise ValueError(f"{prefix}: replicated_shard_ids {indices!r} do not name valid partitions")
+        if getattr(layer, KV_REPLICAS_ATTRIBUTE, None) is not None:
+            raise ValueError(f"{prefix}: replicated_shard_ids and {KV_REPLICAS_ATTRIBUTE} overlap")
+        _rank, size = layer_tp_coordinates(prefix, layer)
+        return tuple(size if index in indices else 1 for index in range(len(members)))
     declared = getattr(layer, KV_REPLICAS_ATTRIBUTE, None)
     if declared is None:
         return (1,) * len(members)

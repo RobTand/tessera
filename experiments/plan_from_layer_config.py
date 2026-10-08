@@ -116,7 +116,7 @@ from _accounting_source import accountant  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from export_tessera_serving import (  # noqa: E402
-    MOE_ROUTER, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, family_for,
+    MOE_ROUTER, VISION_LINEAR, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, family_for,
     fused_module, module_scheme_key,
     packed_expert_stacks, project_expert_plan, quantizable,
 )
@@ -235,11 +235,6 @@ def refuse_before_source(config: dict, research_input) -> None:
                if not qname.startswith("__")}
     refuse_non_tessera_choices({qname: payload for qname, (kind, payload) in choices.items()
                                 if kind == "other"})
-    # Router BF16 is a disposition, not an exporter override: GateLinear never
-    # asks a quantization method to load it and the exporter refuses that key.
-    for qname, (kind, _payload) in sorted(choices.items()):
-        if MOE_ROUTER.fullmatch(qname + ".weight") and kind != "bf16":
-            raise PlanError(f"{qname}: an immutable MoE router must remain BF16")
     if research_input is None:
         return
     # A selected stack's scheme is the scheme of the allocation entries for its
@@ -265,7 +260,8 @@ def body_weights(model: Path) -> dict:
 
 def model_plan_context(model: Path, config: dict):
     """Use the exporter's classification and its carried projection, never guess slices."""
-    _shards, dense, packed, routed = quantizable(model)
+    selected = {name + ".weight" for name in config if not name.startswith("__")}
+    _shards, dense, packed, routed = quantizable(model, selected=selected)
     stacks = expert_stacks(routed)
     packed_stacks = packed_expert_stacks(packed)
     if set(stacks) & set(packed_stacks):
@@ -330,11 +326,13 @@ def role_of(qname: str) -> str:
     return qname.rsplit(".", 1)[-1]
 
 
-def layer_of(qname: str) -> int:
+def layer_of(qname: str) -> int | None:
+    if VISION_LINEAR.fullmatch(qname + ".weight"):
+        return None
     return body_layer(qname + ".weight")
 
 
-def fused_key(qname: str, architecture: str | None = None):
+def fused_key(qname: str, architecture: str | None = None, *, model_config=None, tensor_names=None):
     """``(fused module qname, ordered member qnames)`` or ``None``.
 
     ``architecture`` is the model's HF ``architectures[0]``, passed through
@@ -349,7 +347,7 @@ def fused_key(qname: str, architecture: str | None = None):
     converter came to check the fused invariant on two of those groups and
     skip the rest (tessera#211).  One rule, one home.
     """
-    fused = fused_module(qname + ".weight", architecture)
+    fused = fused_module(qname + ".weight", architecture, config=model_config, tensor_names=tensor_names)
     if fused is None:
         return None
     module, members = fused
@@ -400,7 +398,7 @@ def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
 
 def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
           prismaquant: "Path | None", control_rule: str = "nearest",
-          with_control: bool = True, architecture: str | None = None):
+          with_control: bool = True, architecture: str | None = None, model_config=None):
     """``architecture`` is the model's HF ``architectures[0]`` (``None``
     keeps the exporter's name-only fused rule); ``main`` reads it from the
     model's ``config.json``.
@@ -421,8 +419,9 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             other[qname] = payload
     refuse_non_tessera_choices(other)
 
-    priced_layers = sorted({layer_of(q) for q in tessera} | {layer_of(q) for q in bf16})
-    all_layers = sorted({layer_of(t[: -len(".weight")]) for t in shapes})
+    priced_layers = sorted({layer_of(q) for q in tessera if ".layers." in q}
+                           | {layer_of(q) for q in bf16 if ".layers." in q})
+    all_layers = sorted({layer_of(t[: -len(".weight")]) for t in shapes if ".layers." in t})
 
     plan, units, broadcast_from = {}, [], None
     if cover == "as-allocated":
@@ -430,6 +429,8 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
         for qname in bf16:
             plan[qname + ".weight"] = "BF16"
     elif cover == "broadcast-by-role":
+        if any(".visual." in name for name in assignment):
+            raise PlanError("vision selections require --cover as-allocated")
         if len(priced_layers) != 1:
             raise PlanError(
                 f"--cover broadcast-by-role needs a single-layer allocation to broadcast; this "
@@ -473,7 +474,7 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
     # The fused invariant, checked before the encode rather than after it.
     groups, disagreements = {}, []
     for qname in chosen:
-        key = fused_key(qname, architecture)
+        key = fused_key(qname, architecture, model_config=model_config, tensor_names=shapes)
         if key is None:
             continue
         module, members = key
@@ -669,9 +670,9 @@ def main(argv=None):
     shapes, stack_members, layouts = model_plan_context(args.model, config)
     if args.cover != "as-allocated" and stack_members:
         raise PlanError("broadcast-by-role cannot extrapolate routed expert stacks; use as-allocated")
-    # The refusal for a router the allocation quantised is in
-    # ``refuse_before_source``; this set is the filter it leaves behind.
-    routers = {name for name in shapes if MOE_ROUTER.fullmatch(name)}
+    # Keep the existing router BF16 disposition outside exporter overrides.
+    routers = {name for name in shapes if MOE_ROUTER.fullmatch(name)
+               and parse_entry(name.removesuffix(".weight"), config.get(name.removesuffix(".weight"), "BF16"))[0] == "bf16"}
     allocation = {name: entry for name, entry in config.items()
                   if name + ".weight" not in routers}
     shapes = {name: shape for name, shape in shapes.items() if name not in routers}
@@ -688,7 +689,7 @@ def main(argv=None):
                              prismaquant=args.prismaquant,
                              control_rule=args.control_rule,
                              with_control=not args.no_uniform_control,
-                             architecture=architecture)
+                             architecture=architecture, model_config=model_config)
     logical_plan = plan
     plan = stack_plan(logical_plan, stack_members, layouts)
     # Only quantized expert stacks need model-config geometry. Dense planning

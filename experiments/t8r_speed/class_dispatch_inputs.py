@@ -14,6 +14,8 @@ from tessera.native_window_moe import PackedWindowMoeBundles
 from tessera.window_gemm_grouped import prepare_grouped_window_gemm_from_soa
 
 SCHEDULES = {"q3_q4": (768, 1024), "three": (512, 768, 1024)}
+SCHEDULES.update({f"uniform_q{q}": (q,)
+                  for q in sorted({q for rates in SCHEDULES.values() for q in rates})})
 
 
 def metadata(rates, experts):

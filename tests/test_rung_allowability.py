@@ -1,10 +1,19 @@
 """The canonical admission home is metadata-only and fail closed on bad evidence."""
 import copy
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 import unittest
 from tessera.rung_allowability import admit_rung, validate_index, validate_table
+
+#: The tree under test.  A child interpreter does not see the ``sys.path``
+#: entry ``conftest.py`` gives this process, so without this it imports an
+#: installed ``tessera`` pin -- one that may predate this checkout, or none.
+SRC = Path(__file__).resolve().parents[1] / "src"
+CHILD_ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(
+    [str(SRC), *filter(None, [os.environ.get("PYTHONPATH")])])}
 
 
 def fixture():
@@ -22,7 +31,7 @@ def fixture():
 
 class Admission(unittest.TestCase):
     def test_metadata_only_import(self):
-        subprocess.run([sys.executable,"-c","import sys; import tessera.rung_allowability; assert 'torch' not in sys.modules; assert not any(k.startswith('tessera.serving') for k in sys.modules)"],check=True)
+        subprocess.run([sys.executable,"-c","import sys; import tessera.rung_allowability; assert 'torch' not in sys.modules; assert not any(k.startswith('tessera.serving') for k in sys.modules)"],check=True,env=CHILD_ENV)
 
     def test_valid_and_allowed(self):
         t=fixture()
@@ -146,6 +155,9 @@ class GeometryHarvest(unittest.TestCase):
         cls.rates,cls.harvest=bench_rates,rung_allowability_table
 
     def test_increment_reader_findings_preserve_correctness_holds(self):
+        import importlib.util
+        if importlib.util.find_spec("torch") is not None and importlib.util.find_spec("jsonschema") is None:
+            self.fail("jsonschema is missing in this venv. Install it before running this test. The pool venv runs this test with CPU torch. PB x86 CPU actions also run it. Hosted pure has no torch and never covers it.")
         import tempfile
         from pathlib import Path
         from test_rung_performant_policy import v3_fixture
@@ -169,7 +181,7 @@ class GeometryHarvest(unittest.TestCase):
                        '--root', str(root), '--out', str(root / 'out'), '--version', '2',
                        '--schema', str(repo / 'docs/schema/allowable-rung-table.v3.schema.json'),
                        '--index-schema', str(repo / 'docs/schema/index.v2.schema.json')]
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True, env=CHILD_ENV)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
             actual = json.loads((root / 'out/table.json').read_text())
         decision = admit_rung(actual, format=table['format'], kernel_build_id='build', rung=768, cell_ids=['dense:o:M1'])
@@ -248,13 +260,13 @@ class GeometryHarvest(unittest.TestCase):
                      '--root',str(root/'must-not-reharvest'),'--schema',str(root/'unused-schema'),
                      '--index-schema',str(root/'unused-index-schema'),'--out',str(root/'report'),
                      '--version','2','--format','TESSERA_E4M3_K1']
-            result=subprocess.run(command,capture_output=True,text=True)
+            result=subprocess.run(command,capture_output=True,text=True,env=CHILD_ENV)
             self.assertEqual(result.returncode,0,result.stderr+result.stdout)
             selected=json.loads((published/'index.json').read_text())['formats']['TESSERA_E4M3_K1']['kernel_builds']['build']
             self.assertEqual(selected['current_version'],2)
             self.assertEqual(set(selected['versions']),{'1','2','3'})
             self.assertEqual(json.loads((published/'index.v1-history.json').read_text()),current)
-            self.assertEqual(subprocess.run(command,capture_output=True,text=True).returncode,0)
+            self.assertEqual(subprocess.run(command,capture_output=True,text=True,env=CHILD_ENV).returncode,0)
             for relative,digest in hashes.items():self.assertEqual(hashlib.sha256((published/relative).read_bytes()).hexdigest(),digest)
 
 

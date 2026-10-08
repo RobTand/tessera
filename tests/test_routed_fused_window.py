@@ -17,6 +17,7 @@ through PrismaBuild inside the pinned serving image
 (``experiments/routed_fused_tests.sh``).
 """
 
+import dataclasses
 import functools
 import sys
 from pathlib import Path
@@ -1285,10 +1286,12 @@ def test_the_routed_width_reaches_the_launches_that_have_it(family, monkeypatch)
     """The ``bm`` each launch receives under ``TESSERA_ROUTED_FUSED_WIDE``:
     128 under ``1`` on the launches ``has_width`` names (down in the E4M3
     family, gate/up too on the E4M3 instruction), 64 everywhere else and
-    under ``0``; and the ``item_off`` a launch receives counts superblocks of
-    that width."""
+    under ``0``; and the superblock prefix a launch receives counts
+    superblocks of that width.  The uniform forward launches through the
+    module its kernel bound at load, so the spy replaces that module."""
     fused = _fused(_bundles(family, _stacks(family, cut=False)))
-    lib = rf._ext(fused.library)
+    assert fused.uniform is not None, "one class binds the uniform kernel"
+    lib = fused.uniform.module
     seen = []
 
     class Spy:
@@ -1300,7 +1303,7 @@ def test_the_routed_width_reaches_the_launches_that_have_it(family, monkeypatch)
             seen.append((mode, bm, [int(v) for v in item_off.tolist()]))
             return lib.routed_fused_forward(*args)
 
-    monkeypatch.setattr(rf, "_ext", lambda _library, spy=Spy(): spy)
+    fused = dataclasses.replace(fused, uniform=dataclasses.replace(fused.uniform, module=Spy()))
     t = 300
     x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
     ids, rw = _routes(t, TOP_K, 4600)

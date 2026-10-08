@@ -14,16 +14,12 @@ import pytest
 
 from tessera.serving.contract import load_serving_contract
 from tessera.serving.scheme import (
-    ROUTES, TESSERA_FP8, expert_role_declarations, launch_pairs,
+    ROUTES, TESSERA_FP8, expert_role_declarations, routed_class_launch_pair,
     validate_tessera_moe_scheme)
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-# A census records the current route, not a qualification decision.
-# The full registry includes unqualified operations.
-(_MOE_LAUNCH,) = launch_pairs(
-    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident", lanes=(),
-    include_experimental=True)
-GEMM_SYMBOL, DECODER = _MOE_LAUNCH
+# The uniform census fixture uses the lane-free E4M3 native entry.
+GEMM_SYMBOL, DECODER = routed_class_launch_pair("e4m3", uniform=True)
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "example/runtime@sha256:" + "1" * 64

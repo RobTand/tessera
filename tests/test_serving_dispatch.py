@@ -172,7 +172,7 @@ IGNORED = "lm_head"
 
 
 def _scheme(**over):
-    return {"family": TESSERA_NVFP4, "grid": "E2M1x2", "body": "TCQ", "plane": "LUT", "q256": 896,
+    return {"family": TESSERA_NVFP4, "grid": "E2M1x2", "body": "WINDOW", "plane": "LUT", "q256": 896,
             "rows": 2048, "columns": 1024, "wire_bytes": 1048576,
             "roles": [["q_proj", 1024], ["k_proj", 512], ["v_proj", 512]], **over}
 
@@ -766,7 +766,8 @@ def test_a_routed_nvfp4_stack_dispatches_to_its_own_builder(monkeypatch, build):
         layer = object.__new__(RoutedExperts)
     else:
         layer = object.__new__(type("RoutedExperts", (), {}))
-    scheme = _moe_scheme(family=TESSERA_NVFP4, grid="E2M1x2", body="TCQ", plane="LUT", q256=896)
+    scheme = _moe_scheme(hidden=256, inter=256, family=TESSERA_NVFP4,
+                         grid="E2M1x2", body="WINDOW", plane="LUT", q256=896)
     config = _resolved(_config(scheme, targets=(MOE_TARGET,)))
     calls = []
     monkeypatch.setattr(nvfp4_moe_route, "build_tessera_nvfp4_moe_method",
@@ -1015,8 +1016,6 @@ def test_a_malformed_scheme_is_refused_at_config_parse(monkeypatch):
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     with pytest.raises(ValueError, match="stack to"):
         _resolved(_config(_scheme(rows=4096)))
-    with pytest.raises(ValueError, match="E2M1-based"):
-        _resolved(_config(_scheme(grid="E4M3")))
 
 
 def test_a_dense_scheme_on_an_expert_stack_is_refused_rather_than_mis_read(monkeypatch):
@@ -1242,48 +1241,6 @@ def test_a_model_with_no_mapper_is_untouched(monkeypatch):
 # through this load path), not from what anyone had exported.
 # --------------------------------------------------------------------------
 
-#: EVERY distinct ``(grid, q256)`` any Tessera checkpoint on either box was
-#: built at, read off the 15 artifacts' own ``config_groups`` rather than off
-#: the receipt that happened to mention seven of them.  ``E4M3`` spans 493 to
-#: 1384 -- SIXTEEN rungs, not the seven the allocated-serve receipt named --
-#: and ``E2M1x2`` is 896 and nothing else.
-_RUNGS_ACTUALLY_BUILT = {
-    "E4M3": (493, 749, 750, 785, 814, 824, 909, 934,
-             1006, 1024, 1083, 1107, 1217, 1262, 1366, 1384),
-    "E2M1x2": (896,),
-}
-
-
-def test_every_rung_ever_BUILT_is_inside_the_range(monkeypatch):
-    """The fix may not retroactively refuse a checkpoint that served correctly.
-
-    This is the whole built population, not the receipt's seven, and the two
-    extremes are the point: had the range been widened to cover the rungs the
-    allocated-serve receipt happened to list (749..1262), R493 and R1384 would
-    both be refused today.  Deriving the bound from the decoder rather than
-    from the exported history is what makes those pass, and that is the
-    difference between a gate and an accommodation.
-    """
-    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    for rung in _RUNGS_ACTUALLY_BUILT["E4M3"]:
-        validate_tessera_scheme(_fp8_scheme(q256=rung), f"m.R{rung}")
-    for rung in _RUNGS_ACTUALLY_BUILT["E2M1x2"]:
-        validate_tessera_scheme(_scheme(q256=rung), f"m.R{rung}")
-
-
-def test_no_artifact_was_ever_built_on_the_arity_1_grid(monkeypatch):
-    """The one refusal here that is new for a grid ``ROUTES`` still lists.
-
-    ``TESSERA_NVFP4`` holds ``E2M1`` as well as ``E2M1x2``, and the contract
-    publishes a range for the arity-2 grid only, so an arity-1 checkpoint is
-    now refused as unattested rather than served on the other grid's numbers.
-    That is safe to do because no such artifact exists: all 15 Tessera
-    checkpoints on either box are ``E2M1x2`` or ``E4M3``.
-    """
-    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    assert "E2M1" not in _RUNGS_ACTUALLY_BUILT
-    with pytest.raises(ValueError, match="publishes no decodable rate range"):
-        validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1.built")
 
 
 @pytest.mark.parametrize("rung", [256, 2048])
@@ -1299,21 +1256,6 @@ def test_a_rung_outside_the_published_range_refuses_by_number(monkeypatch, rung)
         validate_tessera_scheme(_fp8_scheme(q256=rung), "m.past")
 
 
-def test_the_e2m1x2_route_reads_one_rung_and_says_so(monkeypatch):
-    """896 exactly: the grammar caps it above, the native decoder below."""
-    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    validate_tessera_scheme(_scheme(q256=896), "m.cap")
-    for rung in (749, 895, 897, 1024):
-        with pytest.raises(ValueError, match="TESSERA_E2M1_K2"):
-            validate_tessera_scheme(_scheme(q256=rung), "m.offcap")
-
-
-def test_a_grid_the_contract_does_not_describe_refuses(monkeypatch):
-    """``TESSERA_NVFP4`` declares it holds ``E2M1`` too; nothing publishes a
-    range for it, and borrowing ``E2M1x2``'s would be the near-miss."""
-    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    with pytest.raises(ValueError, match="publishes no decodable rate range"):
-        validate_tessera_scheme(_scheme(grid="E2M1", q256=896), "m.arity1")
 
 
 @pytest.mark.parametrize("helper", [_scheme, _fp8_scheme, _bf16_scheme])

@@ -117,13 +117,13 @@ def census_symbol_base(symbol):
 
 
 def owner_launch_pairs(wire):
-    """Actual selected execution pairs, not a served-cell promotion."""
+    """Current native entries at the selected library, without a served-cell promotion."""
     from tessera.serving.scheme import TESSERA_FP8, TESSERA_BF16, launch_pairs
     if wire["family"] in (TESSERA_FP8, TESSERA_BF16):
         from tessera.routed_fused import library_for
         from tessera.serving.scheme import routed_class_launch_pair
         lane = "value" if wire["family"] == TESSERA_BF16 else "e4m3"
-        return {routed_class_launch_pair(library_for(lane))}
+        return {routed_class_launch_pair(library_for(lane), uniform=uniform) for uniform in (False, True)}
     return set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
 
 

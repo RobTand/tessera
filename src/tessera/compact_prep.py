@@ -45,6 +45,7 @@ from .errors import GrammarError
 from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind
 from .unit_artifact import ParsedMetadata, parse_unit_metadata
+from .window_geometry import TILE_ROWS, require_window_geometry
 
 #: The highest column rate :func:`prepare_window_compact` admits unless its
 #: caller names another: the routed-expert lanes' 1..8.  The documented window
@@ -634,8 +635,7 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     arity 1 the two are the same.
     """
     from . import kernel_wire as kw
-    from .kernel_window_gemv import Repacked, TILE_ROWS
-    from .lane_planes import require_window_geometry
+    from .kernel_window_gemv import Repacked
 
     arity = int(metadata.grid.arity)
     r0, r1 = (int(r) // arity for r in rows)
@@ -943,7 +943,7 @@ def prepare_a4_wire_compact(wire: CompactWire, *, device="cuda"):
     if md.body is BodyKind.WINDOW:
         if int(md.manifest.window_bits) != 12:
             raise GrammarError("packed A4 geometry requires the actual served twelve bit WINDOW")
-        lp.require_window_geometry(md.manifest.window_bits, rates)
+        require_window_geometry(md.manifest.window_bits, rates)
         # Existing packer is the byte-order, padding, offsets and slack owner.
         parsed = _window_unit(md, device)
         body, starts, rate_tensor = lp.pack_window_planes(parsed.unit.body_bits,

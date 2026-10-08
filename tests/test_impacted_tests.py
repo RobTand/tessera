@@ -2182,9 +2182,15 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # of them (it was 46 and 58 before Path.glob became an enumeration, and 117 and 178
 # before a function the file defines stopped being read as os.walk).  A new one
 # should name its base; if it cannot, raise these numbers in the same commit
-# and say why (PB1496).
+# and say why (PB1496).  Measured again on master 30418c445 (2026-10-07): 114 and
+# 167, one below the 115 and 168 pinned before, so the ceiling follows it down
+# (#1014).
+# The FP4 audit experiments/t4_code/fp4_corrective_audit.py reads dense-*.pt and
+# grouped-*.pt from external --retained-outputs evidence, not from tracked source
+# directories.  Its two reads raise the count to 115 and 169, measured on the tree
+# that holds the audit.  Numerical gates stay unchanged.
 _UNNAMED_DIRECTORY_READ_MODULES = 115
-_UNNAMED_DIRECTORY_READ_SITES = 168
+_UNNAMED_DIRECTORY_READ_SITES = 169
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:

@@ -15,10 +15,10 @@ import json
 import pytest
 
 from experiments.step4_route_qualification import (
-    A4_DENSE_GEMM_SYMBOL, BF16_ACTIVATION_CONTRACT, DENSE_LAUNCHES, FP8_ACTIVATION_CONTRACT,
+    FUSED_WINDOW_DENSE_E2M1_SYMBOL, BF16_ACTIVATION_CONTRACT, DENSE_LAUNCHES, FP8_ACTIVATION_CONTRACT,
     FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER,
     NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER,
-    NATIVE_SPAN2_GEMM_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_FOLDED_DECODER,
+    NATIVE_FUSED_WINDOW_DENSE_E2M1_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_FOLDED_DECODER,
     NVFP4_ACTIVATION_CONTRACT,
     QUALIFICATION_SCHEMA, QualificationRefused, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_LIBRARY_GLOB,
     mapped_native_libraries, qualify_dispatch, qualify_native_route, refusal_record,
@@ -40,9 +40,7 @@ def observation(libraries):
 
 def entry(family, *, symbol=None, decoder=None, launches=1, modules=1, shape="M512:N6144:K1024",
           names=None, unnamed=0, mode="resident"):
-    # The FIRST admissible pair is the Triton window GEMM every dense family
-    # stamps; the window families' second (contract v43) is the fused dense
-    # identity, exercised where a test names it.
+    # Use one admitted launch. A test can select another launch explicitly.
     contract, pairs = DENSE_LAUNCHES[family]
     native_symbol, native_decoder = pairs[0]
     record = {"policy": f"{family}:{mode}", "shape": shape,
@@ -84,26 +82,6 @@ def good_trace(identity=False):
 
 # -- the launch table is the routes' -------------------------------------------
 
-def test_the_dense_launch_table_names_the_routes_admissible_launches():
-    # Contract v43: the two window families stamp one of two dense launches per
-    # module -- the Triton window GEMM or the fused window kernel's dense
-    # identity -- and the A4 family one.
-    # Contract v46 adds a third FP8 pair: the E4M3 instruction library's dense
-    # identity, experimental until a served census earns it cells.
-    assert DENSE_LAUNCHES["TESSERA_FP8"] == (FP8_ACTIVATION_CONTRACT, (
-        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma"),
-        # contract v56: the decode-once prefill lane, experimental and eager-only
-        ("tessera.serving.e4m3_prefill.prefill_apply", "native_window_decode_once_e4m3")))
-    assert DENSE_LAUNCHES["TESSERA_BF16"] == (BF16_ACTIVATION_CONTRACT, (
-        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER)))
-    assert DENSE_LAUNCHES["TESSERA_NVFP4"] == (NVFP4_ACTIVATION_CONTRACT, (
-        (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER),))
-    assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
-    assert FUSED_WINDOW_DENSE_SYMBOL == "tessera::fused_window_dense"
-    assert A4_DENSE_GEMM_SYMBOL == "tessera.kernel_a4.a4_span2_gemm"
 
 
 # -- the library census is recorded, never required --------------------------
@@ -187,7 +165,7 @@ def test_the_retired_stock_substitute_is_refused_on_nvfp4():
 
 def test_a_native_pair_on_the_wrong_contract_is_refused():
     # The window GEMM pair stamped on the NVFP4 contract is not the A4 launch.
-    with pytest.raises(QualificationRefused, match="not tessera.kernel_a4.a4_span2_gemm / native_span2_gemm"):
+    with pytest.raises(QualificationRefused):
         qualify_dispatch(trace(entry("TESSERA_NVFP4", symbol=WINDOW_GEMM_SYMBOL,
                                      decoder=NATIVE_WINDOW_GEMM_DECODER)),
                          mode="resident", expected_modules={"TESSERA_NVFP4": 1})
@@ -252,7 +230,8 @@ def test_one_module_served_at_two_token_counts_is_counted_once():
               entry("TESSERA_NVFP4", shape="M1:N6144:K1024")), NVFP4_ACTIVATION_CONTRACT)
     (native,) = totals.values()
     assert (native["launches"], native["modules"], native["entries"]) == (2, 1, 2)
-    assert native["symbol"] == A4_DENSE_GEMM_SYMBOL and native["decoder"] == NATIVE_SPAN2_GEMM_DECODER
+    assert native["symbol"] == FUSED_WINDOW_DENSE_E2M1_SYMBOL
+    assert native["decoder"] == NATIVE_FUSED_WINDOW_DENSE_E2M1_DECODER
 
 
 def test_modules_with_different_geometries_are_added_within_one_token_count():

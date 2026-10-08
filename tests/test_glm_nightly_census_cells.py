@@ -121,7 +121,8 @@ def test_the_committed_receipt_is_the_one_the_nightly_cells_cite():
     assert len(cells) == 8
     for cell in cells.values():
         assert cell["runtime"] == {"image": IMAGE, "execution_modes": ["eager"],
-                                   "vllm": VLLM, "torch": TORCH}, cell["id"]
+                                   "vllm": VLLM, "torch": TORCH,
+                                   "kernel_build": f"legacy-toolchain/{VLLM}/{TORCH}"}, cell["id"]
         assert cell["id"].endswith(cell_runtime_id_suffix(cell)), cell["id"]
     assert (ROOT / MEASUREMENT).is_file()
 

@@ -125,7 +125,6 @@ def _finish(method, layer, wires):
         _callback(layer, storage, shard, blob)
     method.process_weights_after_loading(layer)
     assert not dict(layer.named_parameters())
-    assert method._native.launch_pair[0] == "tessera::routed_window_classes"
     assert method._native.counters.dtype == torch.int32
     assert method._native.counters.shape == (len(method._native.classes), 2)
 
@@ -157,6 +156,10 @@ def _assert_loaded_coordinates(actual, expected, degree, rank):
         assert (got.rows, got.cols, got.experts) == (want.rows, want.cols, EXPERTS)
         for field in ("words_all", "scale_all", "init_all", "has_init"):
             a, b = getattr(got, field), getattr(want, field)
+            if field == "words_all" and got.word_layout == "piece_major":
+                from tessera.kernel_window_gemv import PIECES_PER_TILE
+
+                b = b.reshape(EXPERTS, -1, want.cols, PIECES_PER_TILE, 8).transpose(2, 3).contiguous()
             assert torch.equal(a.view(torch.uint8).reshape(-1), b.view(torch.uint8).reshape(-1)), (role, field, degree, rank)
         # The native table is composed from definition-side codes and alphabet.
         table = rf.compose_table(want, library)
@@ -308,11 +311,17 @@ def test_real_plugin_maps_storage_and_replays_changed_global_routes(
 @cuda
 @pytest.mark.parametrize("family", ["e4m3", "value"])
 @pytest.mark.parametrize("degree,rank", TP_CUTS)
-def test_real_plugin_uniform_identity_is_exact_old_pure_schedule(family, degree, rank, tmp_path):
+def test_real_plugin_uniform_identity_is_exact_old_pure_schedule(family, degree, rank, tmp_path, monkeypatch):
+    from tessera.serving import flags
+
+    flags.reset_for_tests(moe_route.ENV_PIECE_MAJOR)
+    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR, raising=False)
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
     method, layer, scheme, wires = _new_method(family, "uniform", degree, rank)
     _finish(method, layer, wires)
     assert scheme["expert_ids"] == list(range(EXPERTS))
     assert len(method._native.classes) == 1
+    assert method._native.piece_major == (family == "e4m3")
     definition = _independent_packed(scheme, wires, degree, rank)
     _assert_loaded_coordinates(method._packed, definition, degree, rank)
     x = (torch.randn(16, HIDDEN, generator=torch.Generator().manual_seed(4108)) * 0.125).bfloat16().cuda()

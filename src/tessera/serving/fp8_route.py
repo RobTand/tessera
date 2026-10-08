@@ -1,30 +1,27 @@
-"""The Tessera FP8 W8A8 dense route: an E4M3 wire served packed.
+"""The Tessera FP8 dense route with packed windows and resident prefill.
 
-WHAT IT SERVES.  Tessera's E4M3 wire -- the window body over the CHANNEL scale
-plane (Tessera's default for the E4M3 grid at every rung; 4.07 bpp on the wire
-at q1024) -- loaded by the compact reader and decoded **inside** the packed
-bitstream GEMM (``tessera.window_gemm`` behind ``serving.native_window``): the
-wire's words are the resident weights in both residencies, the table gather and
-the ``tl.dot`` happen in registers/shared memory, and the fp32 epilogue is
-``y = a_scale[m] * w_scale[n] * acc``.  The activation is vLLM's per-token
-dynamic E4M3 quantizer, so the executed contract is ``fp8_per_token_dynamic``
-and the route stamps ``(tessera::window_gemm_dense, native_window_gemm)``.
+The compact reader loads the E4M3 WINDOW body and CHANNEL scale plane.
+Every module retains its packed words, lookup tables and fp32 row scales.
+The activation uses vLLM's per-token dynamic E4M3 quantizer.
+The executed activation contract remains fp8_per_token_dynamic.
+The route records the symbol and decoder that each forward uses.
 
-WHAT IT REUSES.  Blob parsing is the compact reader
-(``scheme.parse_compact_blob_for_scheme`` -> ``compact_prep``), which runs the
-same container/role/digest/slack/geometry checks as the materialising reader
-and expands no weight plane; the rank cut is the layer's own ``ShardPlan``; the
-compute is the window worker's prepared bundle, wrapped in one functional
-custom op.  The materialising preparation
-(``prepare_tessera_fp8_module``) and the torch window decode stay in the tree
-as the **reference** -- the decode oracle tests hold the native lane to
-(``tessera.decode.materialize_fp8``) -- and are no longer reached from a serve.
+Resident modules with an eager forward decode once by default at load.
+Their large-M prefill uses the same E4M3 values and row scales through
+serving.e4m3_prefill. Smaller inputs use the prepared window lane.
+Compiled and streamed modules retain the window lane by default.
+An explicit unsupported decode-once request refuses at load.
 
-RESIDENCY.  ``resident`` and ``streamed`` hold the same packed repack (the
-wire's body words plus small per-unit tables and the fp32 row scale); no
-decoded 8-bit tile is materialised at load or per forward, and the route trace
-is eager-only by design (tessera#113), so a compiled serve records no launch
-counts rather than counts of compilation.
+Blob parsing reuses scheme.parse_compact_blob_for_scheme and compact_prep.
+Container, role, digest, slack and geometry checks remain unchanged.
+The layer's ShardPlan defines the rank cut. No reference preparation runs
+from this serving path. The materialized preparation and Torch decoder
+remain test oracles for the native window lane.
+
+Resident accounting includes the decoded copy when the module holds one.
+Streamed modules retain only the packed representation.
+The route trace remains eager-only. A compiled forward records no launch
+counts instead of counts from compilation.
 
 THE ACTIVATION SIDE IS PRICED.  The stock arm of the same encoder measured KL
 0.470 against an image-matched BF16 teacher on Qwen3-0.6B
@@ -101,9 +98,9 @@ DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 #: served censuses on both E4M3 cell images earned it the dense cells.
 DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)
 DENSE_FUSED_MMA_E4M3_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
-#: ``DENSE_DECODE_ONCE_LAUNCH`` (contract v56, tessera#931, default-off) is the
-#: decode-once prefill lane: under ``TESSERA_E4M3_DECODE_ONCE=1`` a resident
-#: module holds its weights decoded once to E4M3 and serves M at or above
+#: DENSE_DECODE_ONCE_LAUNCH is the eligibility-scoped default prefill lane.
+#: A resident module with an eager forward holds its weights decoded once
+#: to E4M3 and serves M at or above
 #: ``e4m3_prefill.MIN_M`` with ``torch._scaled_mm``; ``apply`` stamps
 #: ``launch_pair_for(M)``, the pair that ran.
 DENSE_DECODE_ONCE_LAUNCH = (DECODE_ONCE_DENSE_SYMBOL, DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
@@ -425,19 +422,20 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 raise RuntimeError(
                     f"{prefix}: the prepared Tessera FP8 module runs {prepared.launch_pair!r}, "
                     f"the route publishes {DENSE_LAUNCHES!r}")
-            # Decode-once (tessera#931): default-off, resident modules only --
-            # a streamed module's weights do not stay on the device, and the
-            # decoded copy is one more resident byte per weight, counted by the
-            # module's ``named_tensors`` like every other prepared tensor.
+            # Decode-once adds a resident copy. Compiled forwards keep the
+            # window lane by default; an explicit unsupported request refuses.
             if e4m3_prefill.enabled() and layer.tessera_mode == "resident":
-                # Eager-only, refused HERE: a raise inside a compiled forward is
-                # a graph break Dynamo may run around, so the gate is the load.
-                if declared_forward_is_compiled():
-                    raise RuntimeError(
-                        f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
-                        "vLLM's compilation mode is not NONE; serve with compilation mode "
-                        "NONE (--enforce-eager) or unset the flag")
-                prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
+                compiled = declared_forward_is_compiled()
+                if compiled:
+                    from .flags import latched_bool
+
+                    if latched_bool(e4m3_prefill.FLAG):
+                        raise RuntimeError(
+                            f"{prefix}: {e4m3_prefill.FLAG}=1 serves an eager-only lane, and "
+                            "vLLM's compilation mode is not NONE; serve with compilation mode "
+                            f"NONE (--enforce-eager) or set {e4m3_prefill.FLAG}=0")
+                else:
+                    prepared.attach_decoded(e4m3_prefill.decode_e4m3(prepared))
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_symbol = prepared.symbol

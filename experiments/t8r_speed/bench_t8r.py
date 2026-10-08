@@ -347,6 +347,7 @@ def build_dense(store, module, kind):
 def build_routed(store, module):
     from tessera.serving.scheme import validate_tessera_moe_scheme
     from tessera.serving.moe_route import _RankLocalPackedIntake
+    from tessera.expert_classes import inverse_expert_ids, storage_expert_ids
     scheme = store.schemes[module]
     declared = validate_tessera_moe_scheme(scheme, module)
     dev = torch.device("cuda")
@@ -365,6 +366,9 @@ def build_routed(store, module):
                 w2_len[e] = wire.numel()
     packed = intake.finish(w13_len, w2_len)
     native = packed.adapter()
+    # The adapter takes storage IDs. Build the plugin's one device inverse here.
+    inverse = torch.tensor(inverse_expert_ids(declared["expert_ids"]), dtype=torch.int32,
+                           device=packed.device)
     library = getattr(native, "library", None)
     library_path = library_sha = None
     if library is not None:
@@ -394,7 +398,9 @@ def build_routed(store, module):
         return min(EXPERTS, m * TOP_K) * per_expert_rank
 
     def fn(x, ids, w):
-        return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+        return native(x, storage_expert_ids(inverse, ids), w, swiglu_limit=SWIGLU_LIMIT,
+                      apply_router_weight_on_input=False)
+    fn.gate_up = lambda x, ids, w: native.gate_up(x, storage_expert_ids(inverse, ids), w)
     fn.native = native  # The finite comparison observes this same serving owner.
     fn.native_adapter = native  # The closed paired mode observes this same owner.
     return fn, info, packed, touched
@@ -549,32 +555,34 @@ def require_single_replay_options(args, *, stubbed=False):
 
 
 def numeric_outputs(fn, xa):
-    """Observe the real frozen adapter's class seam for this one instance."""
+    """Observe the real frozen adapter's load-bound uniform launch for this one instance."""
     import torch
     from tessera import routed_fused as rf
 
     native = fn.native
     if type(native) is not rf.FusedRoutedWindowMoE or native.library != "e4m3mma":
         raise ValueError("comparison requires the actual frozen E4M3 MMA adapter")
-    owner = type(native)
-    original = owner._launch
+    if native.uniform is None:
+        raise ValueError("comparison observes the uniform launch; this owner has several classes")
+    owner = type(native.uniform)
+    original = owner.launch
     captured_outputs = {}
     def bits(tensor):
         return tensor.detach().contiguous().view(torch.uint8).cpu()
-    def observe(instance, mode, *a, **kw):
-        original(instance, mode, *a, **kw)
-        if instance is not native:
+    def observe(kernel, mode, *a, **kw):
+        original(kernel, mode, *a, **kw)
+        if kernel is not native.uniform:
             return
         key = "mode" + str(mode)
         if mode not in (0, 1, 2) or key in captured_outputs:
             raise ValueError("comparison must expose each routed reader mode once")
         captured_outputs[key] = bits(kw["out"])
-    owner._launch = observe
+    owner.launch = observe
     try:
         captured_outputs["forward"] = bits(fn(*xa))
-        captured_outputs["mode1"] = bits(native.gate_up(*xa))
+        captured_outputs["mode1"] = bits(fn.gate_up(*xa))
     finally:
-        owner._launch = original
+        owner.launch = original
     if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
         raise ValueError("comparison did not observe every routed reader mode")
     return captured_outputs

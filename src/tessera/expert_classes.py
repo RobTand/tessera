@@ -34,6 +34,15 @@ def inverse_expert_ids(expert_ids) -> list[int]:
     return inverse
 
 
+def storage_expert_ids(inverse, expert_ids):
+    """Map router IDs ``[T, top_k]`` to storage IDs through the one device inverse.
+
+    ``index_select`` rejects negative IDs rather than wrapping them like
+    advanced indexing.  Positions, and so routing weights, are unchanged.
+    """
+    return inverse.index_select(0, expert_ids.reshape(-1)).reshape_as(expert_ids)
+
+
 def _profile(q256, target):
     arities = _group_arities()
     if not isinstance(q256, Mapping) or set(q256) != set(arities):

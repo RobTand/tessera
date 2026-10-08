@@ -461,26 +461,18 @@ def smem_reason(mode: int, slot_words: int, device: torch.device, library: str) 
 
 def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: int,
                                     rates, window_bits: int) -> "str | None":
-    """The wire-shape half of :func:`fused_routed_window_supported`, on one
-    unit's manifest facts alone -- what an exporter can decide before any
-    bundle exists (tessera#624 prices the lane's tables only where the
-    stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
+    """The native shape rule on one verified unit manifest.
 
-    Only what the manifest says is checked here, with the runtime
-    predicate's own helpers: family, window bits, the column count the tiles
-    need, the run table the packer lays out for these rates (one run per
-    distinct rate, sorted by rate) as :func:`run_pair` reads it -- one rate or
-    two ADJACENT rates, each in 1..8 (contract v45, tessera#694) -- the
-    word-stage slot that pair needs against the target platform's opt-in
-    shared memory (``SM121_MAX_DYNAMIC_SMEM``) in the part's own launch (the
-    two-table gate/up launch reaches ``ROUTED_LANE_RATES``, the one-table
-    down launch every rate), and the row multiples the kernel's tiles need.
-    Device, arithmetic, the activation quantizer, the column order and the
-    env toggle are runtime facts the runtime predicate keeps.  A stack is
-    refused whole when any of its parts is, as at runtime, so a GLM stack
-    (one rung for all three parts) is admitted exactly where
-    ``column_rates_routed_moe`` admits its rates.  Returns the refusal, or
-    ``None`` when the shape serves.
+    The exporter applies this rule before it writes a required class stack.
+    Every accepted native unit retains its selected table and launch descriptors.
+    An unsupported unit refuses the complete stack; no compact serving fallback remains.
+    ``part`` names gate, up or down.
+
+    The rule checks family, window bits, columns, one or two adjacent rates,
+    word-stage slots, shared-memory limits and native row multiples.
+    The runtime handles device, arithmetic, activation quantization and column order.
+    The caller selects the native library.
+    Return the refusal, or None for an accepted shape.
     """
     if family not in ("value", "e4m3"):
         return f"family {family!r} is not a window family"
@@ -1214,6 +1206,83 @@ class _LutClassKernel:
 
 
 @dataclasses.dataclass(frozen=True)
+class _UniformProjection:
+    bundle: object
+    words: torch.Tensor
+    table: torch.Tensor
+    runs: torch.Tensor
+    bdesc: torch.Tensor
+
+
+@dataclasses.dataclass(frozen=True)
+class _UniformWindowKernel:
+    """One load-bound stack; every forward uses the old direct native launch."""
+    library: str
+    module: object
+    gate: _UniformProjection
+    up: _UniformProjection
+    down: _UniformProjection
+    counters: tuple
+    empty: torch.Tensor
+    tile_words_gate_up: int
+    tile_words_down: int
+    slot_words_gate_up: int
+    slot_words_down: int
+    piece_major: bool
+
+    def routing(self, expert_ids, routing_weights, modes=(0, 2)):
+        widths = tuple(dict.fromkeys(superblock_rows(self.library, mode, expert_ids.shape[0]) for mode in modes))
+        return _routing_tables(expert_ids, routing_weights, self.down.bundle.experts,
+                               self.down.bundle.device, widths)
+
+    def prepare_input(self, x, a_scale, rows, family, device):
+        return quantized_routed_input(x, a_scale, rows, family, device)
+
+    def launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
+        if mode == 2:
+            p0 = p1 = self.down
+            tile_words, slot_words = self.tile_words_down, self.slot_words_down
+            counter = self.counters[1]
+        else:
+            p0, p1 = self.gate, self.up
+            tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
+            counter = self.counters[0]
+        counter.zero_()
+        bm = superblock_rows(self.library, mode, routing.tokens)
+        device = x.device.index if x.device.index is not None else torch.cuda.current_device()
+        b0, b1 = p0.bundle, p1.bundle
+        self.module.routed_fused_forward(mode, self.library != "value", x,
+            a_scale if a_scale is not None else self.empty,
+            p0.words, p1.words, p0.table, p1.table,
+            b0.init_all, b1.init_all, b0.has_init, b1.has_init,
+            b0.scale_all, b1.scale_all, p0.runs, p1.runs, p0.bdesc, p1.bdesc,
+            tile_words, slot_words, self.piece_major,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
+            counter, routing.top_k, a_row_mode, mul_weight, limit, out, _sm_count(device), bm)
+
+    def forward(self, x, expert_ids, routing_weights, *, input_weight, limit, shared):
+        tokens = expert_ids.shape[0]
+        if input_weight:
+            x = x * routing_weights.reshape(-1, 1).to(x.dtype)
+        routing = self.routing(expert_ids, routing_weights)
+        family, device = self.down.bundle.family, self.down.bundle.device
+        xq, a1 = self.prepare_input(x, None, tokens, family, device)
+        act = torch.empty((routing.routes, self.down.bundle.cols), dtype=torch.bfloat16, device=device)
+        self.launch(0, xq, a1, routing, a_row_mode=0, mul_weight=False, limit=limit, out=act)
+        aq, a2 = self.prepare_input(act, None, routing.routes, family, device)
+        routed = torch.empty((routing.routes, self.down.bundle.rows), dtype=torch.bfloat16, device=device)
+        self.launch(2, aq, a2, routing, a_row_mode=1, mul_weight=not input_weight,
+                    limit=float("inf"), out=routed)
+        out = torch.empty((tokens, self.down.bundle.rows), dtype=torch.bfloat16, device=device)
+        if shared is None:
+            self.module.token_sum(routed, out, routing.top_k)
+        else:
+            self.module.token_sum_shared(routed, shared, out, routing.top_k)
+        return out
+
+
+
+@dataclasses.dataclass(frozen=True)
 class _DispatchResources:
     streams: tuple
     ready: object
@@ -1282,9 +1351,10 @@ class FusedRoutedWindowMoE:
     counters: torch.Tensor
     operands: dict
     class_issue_order: tuple
-    dispatch_resources: _DispatchResources
-    resource_key: str
+    dispatch_resources: _DispatchResources | None
+    resource_key: str | None
     activation: str = "silu"
+    uniform: _UniformWindowKernel | None = None
 
     @classmethod
     def from_bundles(cls, gate, up, down, *, expert_classes,
@@ -1337,15 +1407,28 @@ class FusedRoutedWindowMoE:
             tile_words=[v for c in classes for v in (c.tile_words_gate_up, c.tile_words_down)],
             slot_words=[v for c in classes for v in (c.slot_words_gate_up, c.slot_words_down)],
             piece_major=down.word_layout != "legacy")
-        resources = _make_dispatch_resources(down.device, _LutClassKernel(library, module))
-        resource_key = _retain_dispatch_resources(resources)
+        counters = torch.empty((len(classes), 2), dtype=torch.int32, device=down.device)
+        uniform = None
+        resources = None
+        resource_key = None
+        if len(classes) == 1:
+            c = classes[0]
+            projections = tuple(_UniformProjection(getattr(c, role), getattr(c, "words_" + role),
+                getattr(c, "table_" + role), getattr(c, "runs_" + role), getattr(c, "bdesc_" + role))
+                for role in ("gate", "up", "down"))
+            uniform = _UniformWindowKernel(library, module, *projections,
+                (counters[0, :1], counters[0, 1:2]), torch.empty(0, dtype=torch.float32, device=down.device),
+                c.tile_words_gate_up, c.tile_words_down, c.slot_words_gate_up, c.slot_words_down,
+                down.word_layout != "legacy")
+        else:
+            resources = _make_dispatch_resources(down.device, _LutClassKernel(library, module))
+            resource_key = _retain_dispatch_resources(resources)
         return cls(*(_native_view(b, t) for b, t in zip((gate, up, down), tables)),
             family=down.family, arithmetic=down.arithmetic, library=library,
             expert_classes=descriptors, classes=tuple(classes), table_gate=tables[0],
-            table_up=tables[1], table_down=tables[2],
-            counters=torch.empty((len(classes), 2), dtype=torch.int32, device=down.device),
+            table_up=tables[1], table_down=tables[2], counters=counters,
             operands=operands, class_issue_order=tuple(range(len(classes))),
-            dispatch_resources=resources, resource_key=resource_key, activation=activation)
+            dispatch_resources=resources, resource_key=resource_key, activation=activation, uniform=uniform)
 
     @property
     def piece_major(self) -> bool:
@@ -1354,7 +1437,7 @@ class FusedRoutedWindowMoE:
     @property
     def launch_pair(self):
         from .serving.scheme import routed_class_launch_pair
-        return routed_class_launch_pair(self.library)
+        return routed_class_launch_pair(self.library, uniform=self.uniform is not None)
 
     @property
     def experts(self):
@@ -1377,13 +1460,15 @@ class FusedRoutedWindowMoE:
                 if isinstance(value, torch.Tensor):
                     yield f"routed_classes.class_{i}.{field.name}", value
         yield "routed_classes.counters", self.counters
-        yield "routed_classes.empty_scale", self.dispatch_resources.empty
+        yield "routed_classes.empty_scale", (self.uniform.empty if self.uniform is not None else self.dispatch_resources.empty)
 
     def resident_bytes(self):
         from .serving.residency import resident_storage_bytes
         return resident_storage_bytes(self.named_tables())
 
     def _routing(self, expert_ids, routing_weights, *, modes=(0, 2)):
+        if self.uniform is not None:
+            return self.uniform.routing(expert_ids, routing_weights, modes)
         from .routed_class_dispatch import declared_route_widths
         tokens = expert_ids.shape[0] if expert_ids.ndim else 0
         widths = declared_route_widths(self.dispatch_resources.kernel, tokens,
@@ -1391,6 +1476,9 @@ class FusedRoutedWindowMoE:
         return _routing_tables(expert_ids, routing_weights, self.experts, self.device, widths)
 
     def _launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
+        if self.uniform is not None:
+            return self.uniform.launch(mode, x, a_scale, routing, a_row_mode=a_row_mode,
+                                       mul_weight=mul_weight, limit=limit, out=out)
         from . import routed_class_dispatch
         routed_class_dispatch.dispatch_class_projection(mode, x, a_scale, routing,
             parameters=self.operands,
@@ -1400,7 +1488,8 @@ class FusedRoutedWindowMoE:
             a_row_mode=a_row_mode, out=out)
 
     def _quantized(self, x, a_scale, rows):
-        return self.dispatch_resources.kernel.prepare_input(x, a_scale, rows, self.family, self.device)
+        kernel = self.uniform if self.uniform is not None else self.dispatch_resources.kernel
+        return kernel.prepare_input(x, a_scale, rows, self.family, self.device)
 
     def _check_x(self, x, rows, cols):
         if x.dim() != 2 or tuple(x.shape) != (rows, cols) or x.device != self.device:
@@ -1410,7 +1499,6 @@ class FusedRoutedWindowMoE:
     def __call__(self, x, expert_ids, routing_weights, *, apply_router_weight_on_input=False,
                  swiglu_limit=None, shared=None):
         from .native_window_moe import checked_swiglu_limit
-        from .serving.native_window import _routed_window_classes
 
         limit = checked_swiglu_limit(swiglu_limit)
         if expert_ids.dim() != 2 or routing_weights.shape != expert_ids.shape:
@@ -1430,6 +1518,10 @@ class FusedRoutedWindowMoE:
             raise GrammarError(f"shared must be contiguous bf16 {(tokens, self.down.rows)} on {self.device}")
         if tokens == 0:
             return torch.empty((0, self.down.rows), dtype=torch.bfloat16, device=self.device)
+        if self.uniform is not None:
+            return self.uniform.forward(x, expert_ids, routing_weights,
+                input_weight=apply_router_weight_on_input, limit=limit if limit is not None else float("inf"), shared=shared)
+        from .serving.native_window import _routed_window_classes
         return _routed_window_classes(x, expert_ids, routing_weights, shared,
             **self.operands, issue_order=list(self.class_issue_order), counters=self.counters,
             library=self.library, resource_key=self.resource_key,
