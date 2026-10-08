@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — validate every native owner panel route
+
+Owner panel tests derive the selected-library pair set from the registry.
+They validate both uniform and mixed WINDOW entries at each tested family and tensor-parallel cut.
+The tests no longer unpack an assumed single pair.
+Consumer checks still refuse retired materializers, selected-reference launches and foreign family or cut records.
+The reported single-pair failures preceded this correction. No native implementation or serving contract changes.
+
 ## 2026-10-08 — use the checkpoint dimensions in producer fixtures
 
 Producer fixtures now derive output partitions from the dimensions that generate their checkpoint tensors.
