@@ -184,6 +184,7 @@ the conditional reader allowance, or any live measurement path.
 Section 17.7 of the serving contract gives the model, derivation, and limitations.
 The actual scalar output operations have separate targeted probes.
 The qualifier refuses an untested physical device. Each device has its own evidence.
+
 Re-stamped 2026-10-08 for the corrected complete stock-reference comparison.
 Targeted device probes cover rendered-activation division, stored-ratio formation,
 single-precision library multiplication, and positive double-precision magnitude contraction.
