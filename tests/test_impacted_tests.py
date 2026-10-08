@@ -2179,8 +2179,11 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # before a function the file defines stopped being read as os.walk).  A new one
 # should name its base; if it cannot, raise these numbers in the same commit
 # and say why (PB1496).
+# The FP4 audit reads dense-*.pt and grouped-*.pt from external
+# --retained-outputs evidence, not tracked source directories.
+# Its two dynamic reads increase only this site budget. Numerical gates stay unchanged.
 _UNNAMED_DIRECTORY_READ_MODULES = 115
-_UNNAMED_DIRECTORY_READ_SITES = 168
+_UNNAMED_DIRECTORY_READ_SITES = 170
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:

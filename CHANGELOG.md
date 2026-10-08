@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — external arithmetic-audit evidence reads
+
+The corrective FP4 audit reads retained device outputs outside the checkout.
+Its dense and grouped glob calls add two explicit exceptions to the directory-read budget.
+The module budget and all numerical, byte and shape gates stay unchanged.
+
 ## 2026-10-08 — issue 1007: complete stock-reference arithmetic bound
 
 Characterize the actual rendered division, stored ratio, single-precision
