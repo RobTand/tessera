@@ -907,18 +907,46 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
 
 
 def _witness_rank_maps(receipt):
-    """(world size, per-rank record maps) preserving rank scope.
-
-    A receipt with a ranks array names each rank's records; one without is a
-    single-rank receipt. Topology names the observed world where present.
-    """
+    """Read the observed world and records keyed by their actual rank."""
     ranks = receipt.get("ranks") or []
-    maps = [(rank.get("records") or {}) for rank in ranks]
-    topology = receipt.get("topology") or {}
-    world = topology.get("observed_world_size")
-    if not isinstance(world, int) or isinstance(world, bool) or world < 1:
-        world = len(maps) or 1
-    return world, maps
+    world = (receipt.get("topology") or {}).get("observed_world_size")
+    problems = []
+    if world is not None and (type(world) is not int or world < 1):
+        return None, {}, ["observed_world_size must be a positive integer"]
+    if not ranks:
+        world = 1 if world is None else world
+        maps = {0: receipt.get("records") or {}} if world == 1 else {}
+        return world, maps, problems
+    if not isinstance(ranks, list):
+        return world, {}, ["ranks must be a list of rank records"]
+    if world is None:
+        worlds = {row.get("world_size") for row in ranks
+                  if isinstance(row, dict) and type(row.get("world_size")) is int
+                  and row["world_size"] > 0}
+        if len(worlds) != 1:
+            return None, {}, ["rank records must name one observed world_size"]
+        world = next(iter(worlds))
+    maps = {}
+    for row in ranks:
+        if not isinstance(row, dict):
+            problems.append("each rank record must be an object")
+            continue
+        rank = row.get("rank")
+        if type(rank) is not int or not 0 <= rank < world:
+            problems.append(f"rank {rank!r} is outside observed world {world}")
+            continue
+        if type(row.get("world_size")) is not int or row["world_size"] != world:
+            problems.append(f"rank {rank} world_size differs from observed world {world}")
+            continue
+        if rank in maps:
+            problems.append(f"rank {rank} occurs more than once")
+            continue
+        records = row.get("records") or {}
+        if not isinstance(records, dict):
+            problems.append(f"rank {rank} records must be an object")
+            continue
+        maps[rank] = records
+    return world, maps, problems
 
 
 def graph_phase_witness(*, eager_receipt, capture_receipt, graph_launches, phase_regimes):
@@ -935,32 +963,31 @@ def graph_phase_witness(*, eager_receipt, capture_receipt, graph_launches, phase
     batch_phase, decode_phase = driven_phase_pair(phase_regimes)
     launched = (isinstance(graph_launches, int) and not isinstance(graph_launches, bool)
                 and graph_launches > 0)
-    eager_world, eager_ranks = _witness_rank_maps(eager_receipt)
-    capture_world, capture_ranks = _witness_rank_maps(capture_receipt)
+    eager_world, eager_ranks, eager_problems = _witness_rank_maps(eager_receipt)
+    capture_world, capture_ranks, capture_problems = _witness_rank_maps(capture_receipt)
     phases = {}
-    problems = []
+    problems = [f"eager: {problem}" for problem in eager_problems]
+    problems.extend(f"capture: {problem}" for problem in capture_problems)
     if not launched:
         problems.append("no graph replay observed; a witness without replayed graphs yields no phase credit")
     if eager_world != capture_world:
         problems.append(f"eager world {eager_world} differs from capture world {capture_world}; scopes do not join")
-    if len(eager_ranks) > eager_world or len(capture_ranks) > capture_world:
-        problems.append("a receipt names more ranks than its world; scopes do not join")
-    world = max(eager_world, capture_world)
-    scope_ok = (launched and eager_world == capture_world
-                and len(eager_ranks) <= eager_world and len(capture_ranks) <= capture_world)
+    world = max(eager_world or 0, capture_world or 0)
+    scope_ok = (launched and eager_world is not None and eager_world == capture_world
+                and not eager_problems and not capture_problems)
     for rank in range(world):
-        if rank >= len(eager_ranks) or not eager_ranks[rank]:
+        if not eager_ranks.get(rank):
             problems.append(f"rank {rank} eager evidence missing; aggregate phase claims blocked")
             scope_ok = False
-        if rank >= len(capture_ranks) or not capture_ranks[rank]:
+        if not capture_ranks.get(rank):
             problems.append(f"rank {rank} capture evidence missing; aggregate phase claims blocked")
             scope_ok = False
     for phase in (batch_phase, decode_phase):
         entries = {}
         stated = scope_ok
         for rank in range(world):
-            eager = eager_ranks[rank] if rank < len(eager_ranks) else {}
-            capture = capture_ranks[rank] if rank < len(capture_ranks) else {}
+            eager = eager_ranks.get(rank, {})
+            capture = capture_ranks.get(rank, {})
             names = sorted(set(eager.get(phase, {}) or {}) | set(capture.get(phase, {}) or {}))
             if not names:
                 problems.append(f"{phase} rank {rank}: neither side names a module")
@@ -981,7 +1008,7 @@ def graph_phase_witness(*, eager_receipt, capture_receipt, graph_launches, phase
                     problems.append(f"{phase} {owner}: capture states no shape")
                 stated = stated and eager_ok
                 entries[owner] = {"eager_shape": eshape, "capture_shape": cshape,
-                                  "eager_states_rows": eager_ok and launched,
+                                  "eager_states_rows": eager_ok and scope_ok,
                                   "graph_states_rows": False}
         phases[phase] = {"regime": phase_regimes.get(phase), "owners": entries,
                          "eager_rows_stated": stated,

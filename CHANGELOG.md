@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — rank identity in the graph witness (issue #1062)
+
+The witness reads each rank and world size from the real receipt fields.
+Duplicate ranks and incomplete worlds cannot establish aggregate phase evidence.
+Array order does not change rank identity.
+A valid single-rank receipt uses its top-level records.
+Capture shapes still establish no current graph rows or admission.
+
 ## 2026-10-08 — separated witness observations (issue #1062)
 
 Supersedes the prior witness entry. Eager and capture observations stay separate. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join under rank scope. Schema moves to tessera.graph-phase-witness/2. Exit 0 names complete evidence, never admission.

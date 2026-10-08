@@ -325,7 +325,7 @@ def _witness_receipt(maps, world=None):
         world = len(maps)
     receipt = {"records": maps[0]}
     if world > 1 or len(maps) > 1:
-        receipt["ranks"] = [{"identity": {"rank": i}, "records": m}
+        receipt["ranks"] = [{"rank": i, "world_size": world, "records": m}
                             for i, m in enumerate(maps)]
         receipt["topology"] = {"observed_world_size": world}
     return receipt
@@ -384,3 +384,44 @@ def test_graph_witness_blocks_claims_on_missing_rank1():
     assert block["capture_world"] == 2
     assert all(phase["eager_rows_stated"] is False for phase in block["phases"].values())
     assert problems and "rank 1" in " ".join(problems), problems
+
+
+def test_graph_witness_refuses_duplicate_real_rank_identity():
+    eager = _witness_receipt([_witness_map(64, 1)] * 2)
+    eager["ranks"][1]["rank"] = 0
+    capture = _witness_receipt([_witness_map(64, 64)] * 2)
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems
+    assert all(not phase["eager_rows_stated"] for phase in block["phases"].values())
+    assert all(not owner["eager_states_rows"]
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+
+
+def test_graph_witness_joins_reversed_real_ranks_by_identity():
+    eager = _witness_receipt([_witness_map(64, 1), _witness_map(128, 1)])
+    eager["ranks"].reverse()
+    capture = _witness_receipt([_witness_map(64, 64), _witness_map(128, 128)])
+    capture["ranks"].reverse()
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems == []
+    prefill = next(phase for phase, regime in CENSUS_PHASE_REGIMES.items() if regime == "batch")
+    owners = block["phases"][prefill]["owners"]
+    assert owners[f"rank0/{_MODULE}"]["eager_shape"] == "M64:N2048:K4096"
+    assert owners[f"rank1/{_MODULE}"]["eager_shape"] == "M128:N2048:K4096"
+
+
+def test_graph_witness_reads_single_rank_top_level_records():
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt={"records": _witness_map(64, 1)},
+        capture_receipt={"records": _witness_map(64, 64)},
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems == []
+    assert (block["eager_world"], block["capture_world"]) == (1, 1)
+    assert all(phase["eager_rows_stated"] for phase in block["phases"].values())
+    assert all(not phase["graph_rows_stated"] for phase in block["phases"].values())
+
+

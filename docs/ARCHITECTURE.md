@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the graph witness rank correction (issue #1062).
+
+The witness joins the explicit rank and world size from each receipt row.
+It refuses duplicate ranks, incompatible worlds and missing participant evidence.
+A valid single-rank receipt uses its top-level records.
+Eager observations stay separate from capture observations.
+Neither equal capture shapes nor graph replay counts establish current graph rows.
+The witness supplies diagnostic evidence, not serving admission.
+
 Re-stamped 2026-10-08 for the separated witness observations (issue #1062).
 
 Eager and capture observations stay separate. Eager shapes can state eager rows. Capture shapes state observations only. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join. Replay runs no Python. The block states facts. It carries no admission verdict.
