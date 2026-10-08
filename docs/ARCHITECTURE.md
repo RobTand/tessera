@@ -9452,7 +9452,7 @@ The direct consumer contract separates the head operation from its unused dense 
 The indexer head uses FP32 inputs and weights without activation quantization.
 The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
 The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
-T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
+T-16 direct weights use canonical FP32 value-scale products. The direct consumer selects its final cache dtype.
 
 The constructor census records stock and selected views separately.
 Only actual get_quant_method calls establish an offered selected route.

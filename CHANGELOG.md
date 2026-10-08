@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — migrate direct BF16 projection buffers
+
+Read canonical FP32 value-scale products for direct consumers.
+Keep the indexer cache in FP32 and cast the MLA cache once to BF16.
+Remove the retired folded decoder and arithmetic selector.
+The resident-byte rule and the consumer buffer shapes remain unchanged.
+
 ## 2026-10-07 — isolate explicit pricing roots in tests
 
 Reuse the existing package isolation rule for both real pricing roots.
