@@ -1,11 +1,11 @@
 # Tessera: serving contract, MoE cell, and export gate
 
-**Status update, 2026-10-07:** contract v59 replaces folded T16 weights with
+**Status update, 2026-10-07:** contract v62 replaces folded T16 weights with
 raw BF16 values and separate FP32 row scales. Kernels apply each row scale
 after the FP32 dot. The selected research path preserves the BF16 stage
 boundaries and leaves shared output to the runner.
 
-The new BF16 decoder identities have no served cells. Contract v59 withdraws
+The new BF16 decoder identities have no served cells. Contract v62 withdraws
 the historical BF16 cells, wire/rung attestations and TP2 qualification.
 It does not relabel their receipts. New served censuses and merged-build
 D41 measurements must supply current evidence. The body below remains
@@ -1384,3 +1384,918 @@ native_span2_grouped)`, TP 1, eager and resident
 KL receipts above measured the materialising launch and do not carry over.
 Routed E2M1 at q256 128..768 is unattested until a census of the grouped
 route earns it.
+
+
+## 17. Packed T4 arithmetic contract (2026-10-07, issue 1007)
+
+Owner: kernels. Date: 2026-10-07.
+This section completes the conditional algebra, not a native qualification proof.
+The supported native specification does not supply the required local inequalities.
+Both `arithmetic_qualified` and `native_arithmetic_qualified` remain false.
+Issue 1007 remains open. No diagnostic pass releases that hold.
+
+### 17.1 Source custody and represented operands
+
+The reader base is `bf7d4550b9aa1d1d124aae31b78d223635822b71` in pull request 1008.
+Kernels owns `_rounding_gamma`, `dense_packed_fp4_operand_magnitude`,
+`derive_packed_fp4_arithmetic_bound`, and `check_packed_fp4_arithmetic`
+in `experiments/t4_code/bench_geometry_e2m1.py`.
+The implementation first separates input validation from scalar arithmetic.
+It preserves the existing conditional coefficient and all live measurement thresholds.
+
+The executive source head is `18d09db865e27d40f2ef4d80f70811294f767ba4`.
+Its public base is `af39d2162fb6b721368672df35adee9ca308514c`.
+The executive parent owns dense integration and architecture.
+The routed owner owns the native WINDOW library and route intake.
+The encoder owner owns the prepared WINDOW units.
+The qualification owner owns the finite fixture.
+This correction changes none of those executive sources or inputs.
+
+For each output, use the same represented codes and group scales on both sides:
+
+```text
+v_a, v_b in {+0, -0, +0.5, -0.5, +1, -1, +1.5, -1.5,
+             +2, -2, +3, -3, +4, -4, +6, -6}
+a_k = v_a[k] * s_a[floor(k/16)]
+b_k = v_b[k] * s_b[floor(k/16)]
+G_a = represented activation global; G_w = represented weight global
+X*_k = a_k / G_a; W*_k = b_k * G_w
+S = sum_k X*_k * W*_k = (G_w/G_a) * sum_k a_k*b_k
+M0 = sum_k |X*_k| * |W*_k|
+rendered_x[k] = fl32(a_k/G_a)
+M_upper >= max_output sum_k |rendered_x[k]| * |W*_k|
+```
+
+Here `K` is the actual column count, not a padded or model-wide count.
+The diagnostic fixes `G_a=896` and requests float32 output.
+A group contains sixteen columns. Finite UE4M3 scales range from zero to 448.
+Their smallest positive value is `2^-9`.
+Negative scales, NaN scale encodings, and nonfinite globals are outside this theorem.
+The theorem permits signed values and numerical signed zero.
+It does not establish bitwise equality of signed zeros.
+
+E2M1 has at most two significant binary bits.
+A finite UE4M3 scale has at most four significant binary bits.
+Thus an exact scaled operand has at most six significant bits.
+An exact product of two scaled operands has at most twelve significant bits.
+Its nonzero magnitude lies in `[2^-20, (6*448)^2]`.
+The upper endpoint is `7,225,344`.
+These exact products fit float32 without overflow or underflow.
+This representability result does not specify native multiplication behavior.
+E2M1 value 0.5 and small UE4M3 scales have subnormal encodings.
+Parallel Thread Execution leaves the native treatment of subnormal inputs unspecified.
+Normal expanded products therefore do not remove the native subnormal prerequisite.
+
+The quantization error is separate:
+
+```text
+Delta_q = S - sum_k original_x[k] * original_w[k]
+dx[k] = X*_k - original_x[k]; dw[k] = W*_k - original_w[k]
+Delta_q = sum_k (dx[k]*original_w[k] + original_x[k]*dw[k] + dx[k]*dw[k])
+arithmetic_error_native = native_output - S
+arithmetic_error_reference = reference_output - S
+```
+
+The arithmetic allowance does not bound `Delta_q`.
+The common activation quantizer adds no second bfloat16 input conversion term.
+Equal represented operands require equal codes, scales, group placement, and globals.
+The existing byte checks and grammar owners retain those refusals.
+
+### 17.2 Instructions, operation counts, and precision terms
+
+The reader uses `tl.dot_scaled` in `kernel_a4_wire._a4_wire_gemm_kernel`.
+It initializes one float32 accumulator and executes `K/128` source dot calls per output.
+Its block width is 128, at `kernel_a4_wire.py:259-265` in the reader base.
+The existing grammar requires columns divisible by 128, at lines 238-239.
+The bound interface now enforces that same column domain.
+A Triton call is not a documented internal addition count.
+Its compiled instruction list and local arithmetic contract are not established here.
+
+The executive library names this exact Parallel Thread Execution instruction at source lines 2249-2257:
+
+```text
+mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.
+    m16n8k64.row.col.f32.e2m1.e2m1.f32.ue4m3
+```
+
+The displayed line break does not form part of the instruction name.
+The source constant `fp4::BK=64` appears at line 2180.
+Each unsplit output has `K/64` instruction calls.
+The two calls at lines 2848-2849 update different output columns.
+They do not double one output's reduction length.
+The Parallel Thread Execution shape establishes sixty-four represented products per call.
+It does not establish sixty-four standard fused multiply-add operations.
+
+Use these precision terms:
+
+| Term | Value | Meaning |
+|---|---:|---|
+| `u_fp32` | `2^-24` | Float32 unit roundoff for round-to-nearest in the normal finite domain. |
+| `epsilon_fp32=e` | `2^-23` | One full relative spacing budget in that domain. |
+| `u_fp64` | `2^-53` | Float64 unit roundoff for round-to-nearest. |
+| `epsilon_fp64` | `2^-52` | The retained full spacing budget for the positive magnitude contraction. |
+| `u_bf16` | `2^-8` | Bfloat16 unit roundoff for round-to-nearest. |
+| `tau_fp32` | `2^-150` | Half the float32 subnormal spacing under gradual underflow. |
+| `tau_bf16` | `2^-134` | Half the bfloat16 subnormal spacing under gradual underflow. |
+
+These values follow from the significand widths and minimum subnormal exponents.
+They are not fitted constants.
+The retained coefficient uses `e`, not `u_fp32`.
+A full spacing budget does not become a native guarantee merely because it exceeds unit roundoff.
+
+Each use of the following assumptions remains conditional:
+
+- **N1, native dot:** each scaled product and accumulation step has local relative error at most `e`.
+  Each output path has at most `2*K` such errors.
+  Parallel Thread Execution supplies neither statement.
+- **N2, divisions:** each actual float32 division has error at most two units in the last place.
+  Each exact nonzero quotient is normal and finite.
+  The CUDA table describes `__fdividef`; this source does not prove that both divisions lower to it.
+- **R1, reference dot:** the actual float32 matrix product has at most `2*K` local errors per output path.
+  Each local relative error is at most `e`.
+  Disabling tensor-float32 does not specify its complete reduction algorithm.
+- **M1, magnitude dot:** the positive float64 matrix product has at most `2*K` local errors per output path.
+  Each local relative error is at most `epsilon_fp64`.
+  The source does not inspect that matrix product's compiled instruction list.
+- **W1, weight formation:** the float32 weight global is an exact power of two.
+  Each nonzero stock weight is exact, normal, and finite after its scale products.
+  This is a domain restriction, not a conclusion from finite output.
+- **E1, reader epilogue:** the float32 multiply has local relative error at most `e`.
+  Its exact nonzero result is normal and finite.
+- **D1, intermediate domain:** every counted nonzero intermediate obeys its stated local model.
+  Overflow and unsupported subnormal behavior do not occur.
+  The current interface does not establish this fact from scalar magnitude alone.
+
+The source count gives these conditional error budgets:
+
+| Path | Product and sum budget | Division budget | Final multiply budget | Total |
+|---|---:|---:|---:|---:|
+| Native packed reader | `2*K`, assumption N1 | `2`, assumption N2 | `1`, assumption E1 | `2*K+3` |
+| Float32 reference | `2*K`, assumption R1 | `2`, assumption N2 | `0`, restriction W1 | `2*K+2` |
+| Positive magnitude | `2*K`, assumption M1 | `0` | `0` | `2*K` with float64 epsilon |
+
+The division budget follows from two units in the last place, not two source divisions on each path.
+There is one normalization division on each path.
+The native ratio is `fl32(G_w/896)`.
+The reference activation is `fl32(a_k/896)`.
+The reader stores `acc*ratio` as float32, at `kernel_a4_wire.py:209-210`.
+The conditional diagnostic has no output bfloat16 conversion.
+
+### 17.3 Complete conditional gamma derivation
+
+Set `gamma(n)=n*e/(1-n*e)` with `n*e<1`.
+For each local factor, assume `|delta_j|<=w_j*e` and let `n=sum_j w_j`.
+Single-spacing errors have weight one. A two-spacing division has weight two.
+The product inequality `product_j(1-w_j*e)>=1-n*e` follows by induction.
+Also, `1+w_j*e<=1/(1-w_j*e)`.
+These inequalities give `|product_j(1+delta_j)-1|<=gamma(n)`.
+Thus the weighted division term retains its higher-order contribution.
+It does not require a first-order replacement of two errors by one.
+
+Apply that result to each represented product's path through the sum.
+The triangle inequality gives an absolute error of at most `gamma(n)*M0`.
+This step is valid for arbitrary signs and cancellation.
+It uses the sum of absolute products, not the final output magnitude.
+A zero exact sum can therefore have a nonzero allowance.
+When all represented products are zero, the conditional allowance is exactly zero.
+
+Under N2, `|rendered_x[k]|>=|X*_k|*(1-2*e)`.
+Under W1, the reference weight equals `W*_k` exactly.
+Under M1, the magnitude helper establishes `M_upper` for those reference operands.
+Therefore `M0<=M_upper/(1-2*e)`.
+Under N1, N2, E1, R1, W1, and D1, the two output errors satisfy:
+
+```text
+|native-S| <= gamma(2*K+3) * M0
+|reference-S| <= gamma(2*K+2) * M0
+|native-reference| <= [gamma(2*K+3)+gamma(2*K+2)] * M_upper/(1-2*e)
+rtol = 0
+```
+
+This is the retained allowance, not a native qualification theorem.
+No empirical safety multiplier appears.
+The scalar implementation rounds each gamma quotient, sum, coefficient, and final allowance outward.
+For its standard epsilon inputs, the counted integers, products, and gamma denominators are exactly representable in binary64.
+The helper refuses negative or noninteger counts and nonfinite or invalid precision terms.
+It also refuses a nonpositive gamma denominator.
+
+The packed interface accepts positive `K` values divisible by 128.
+Its gamma domain also requires `2*K+3<2^23`.
+The largest such length is `4,194,176`.
+The next aligned length, `4,194,304`, refuses even when the magnitude is zero.
+This gamma restriction is not a declaration that every smaller shape has a qualified device kernel.
+Existing native shape and grammar refusals remain independent.
+
+For magnitude operands, float32-to-float64 conversion is exact.
+Nonzero products lie between `2^-298` and a value below `2^256`.
+They are normal and finite in float64.
+For this legal `K` domain, the ideal positive sum is also finite in float64.
+Under M1, let `g64=gamma(2*K, epsilon_fp64)`.
+The measured positive sum is at least `(1-g64)` times the exact positive sum.
+The helper divides by an outward lower value of `1-g64` and rounds the quotient upward.
+It refuses `g64>=1`, a nonfinite reduction, or a nonfinite allowance.
+M1 remains explicit because precision alone does not name the actual reduction depth.
+
+### 17.4 Scale domains, subnormal values, and overflow
+
+A finite ratio alone does not establish a finite multiplication result.
+The normal relative model requires normal finite exact normalization quotients and epilogue products.
+The native sum also requires a bound on all internal intermediates, not merely its stored result.
+The ideal unnormalized magnitude obeys `sum_k |a_k*b_k|<=K*7,225,344`.
+This bounds exact sums for any order.
+It does not establish N1, the native input rules, or unspecified internal transformations.
+
+The power-of-two weight global must keep each reference weight representable exactly.
+A general finite weight global can introduce a separate weight formation error.
+Such an error is absent from the retained coefficient, so that case is outside W1.
+The general fused role ratio has no fixed-896 assumption.
+Its division error and output domain must use its actual globals.
+
+Under supported round-to-nearest and gradual underflow, a scalar result obeys:
+
+```text
+|round32(z)-z| <= u_fp32*|z| + tau_fp32
+|round_bf16(z)-z| <= u_bf16*|z| + tau_bf16
+```
+
+These inequalities include zero, cancellation into subnormal values, and a subnormal result.
+They exclude overflow.
+They do not describe the unspecified native matrix instruction.
+Flush-to-zero needs a different absolute term, up to the minimum normal magnitude for a flushed result.
+A flushed input also changes the represented product before accumulation.
+The current relative-only allowance includes neither contribution.
+The source therefore records `intermediate_domain_established=false`.
+Finite inputs and outputs do not upgrade that field.
+
+Float32's maximum finite value is `(2-2^-23)*2^127`.
+Bfloat16's maximum finite value is `(2-2^-7)*2^127`.
+For round-to-nearest, the bfloat16 overflow threshold is `(2-2^-8)*2^127`.
+A magnitude strictly below that threshold keeps the conversion finite.
+A proof for other modes must use their own thresholds.
+The code retains its finite-output refusal, including equal infinities.
+It does not claim that this refusal proves a finite intermediate domain.
+
+### 17.5 Fused WINDOW boundaries and actual reduction lengths
+
+This section inventories the executive source; it changes no fused threshold or interface.
+The dense ratio appears at `routed_fused_e2m1.py:631` in the executive head.
+Each role has its own represented `G_w/G_a` ratio.
+The routed ratios use the same role-specific construction.
+The two globals need not equal the diagnostic's values.
+
+For `S_split` split items, let `nk=K/64`.
+The actual length of split `s` is:
+
+```text
+K_s = 64 * (floor((s+1)*nk/S_split) - floor(s*nk/S_split))
+sum_s K_s = K
+1 <= S_split <= floor(K/128)
+```
+
+Source lines 2440-2441 define the chunk ranges.
+Source lines 3577-3584 require at least two chunks per split item.
+The native partial error uses `2*K_s`, conditional on N1 for that split.
+It must not use `2*ceil(K/S_split)` or the full `2*K` as an actual split count.
+The reduction at lines 2942-2945 performs `S_split` source additions from zero per output.
+The first addition is exact under an ordinary nonflushing scalar model.
+The conservative source budget counts all `S_split` additions.
+Under that scalar model, combine partial errors with this recurrence:
+
+```text
+E_s <= gamma(2*K_s) * sum_{k in split s} |a_k*b_k|
+E_sum <= sum_s E_s + gamma(S_split)*sum_s (|exact_partial_s|+E_s)
+E_ratio <= d_ratio * |G_w/G_a|
+E_scaled <= |G_w/G_a|*E_sum
+            + E_ratio*(|exact_sum|+E_sum)
+            + u_fp32*(|G_w/G_a|+E_ratio)*(|exact_sum|+E_sum) + tau_fp32
+```
+
+Here `d_ratio` needs the actual division guarantee and its valid domain.
+Use `2*epsilon_fp32` only under N2 for that actual division.
+Use the additive subnormal term only under its stated scalar mode.
+The unsplit case has no split-reduction term.
+Both dense cases apply one `__fmul_rn` and one bfloat16 conversion per output.
+Source lines 2916-2918 and 2947-2951 define those operations.
+
+The converter `bf16_bits_rn` calls `__float2bfloat16_rn`, at source lines 506-507.
+Let `E` bound the float32 output error against exact represented result `S`.
+Under finite round-to-nearest conversion with gradual underflow:
+
+```text
+|bf16(native)-S| <= (1+u_bf16)*E + u_bf16*|S| + tau_bf16
+|bf16(native)-bf16(reference)|
+    <= E_pair + u_bf16*(|native|+|reference|) + 2*tau_bf16
+```
+
+This follows from the triangle inequality, not a fitted bfloat16 tolerance.
+Adjacent bfloat16 values can differ across a midpoint for arbitrarily small input error.
+A midpoint cannot justify a Lipschitz bound proportional only to `E_pair`.
+The diagnostic's float32 coefficient therefore cannot certify these bfloat16 boundaries.
+
+The routed output has these additional operations per scalar output:
+
+| Mode or stage | Operations in the executive source |
+|---|---|
+| Gate/up projection, mode 1 | One ratio multiplication and one bfloat16 conversion for each role. |
+| Fused activation, mode 0 | Two ratio multiplications and two bfloat16 conversions, then exact float32 widening. |
+| Activation clamp | One `fminf` for gate; one `fminf` and one `fmaxf` for up. |
+| SwiGLU after the clamp | One sign negation, one `expf`, one float32 addition, one division, one `__fmul_rn`, and one bfloat16 conversion. |
+| Down projection, mode 2 | One ratio multiplication, an optional router-weight multiplication, and one bfloat16 conversion. |
+| Token sum | `top_k` float32 source additions from zero, exact bfloat16 widening, and one bfloat16 conversion. |
+
+Source lines 2885-2892 define mode 0.
+Source lines 2903-2904 define mode 1.
+Source lines 2916-2918 define mode 2.
+Source lines 1901-1915 define the fixed-order token sum.
+The router weight acts on the input instead when the caller selects that existing top-one path.
+That path adds its weight conversion and bfloat16 input product before the shared quantizer.
+The source defines it at `routed_fused_e2m1.py:492-497`.
+
+For finite inputs, the clamp is nonexpansive.
+For SwiGLU, propagate errors through the actual operations, not through a linear matrix product coefficient.
+For a multiplication, input errors `E_a,E_b` contribute:
+
+```text
+E_product <= |a|*E_b + |b|*E_a + E_a*E_b
+local_RN_error <= u_fp32*(|a|+E_a)*(|b|+E_b) + tau_fp32
+```
+
+For a division with `|b|>E_b`, input errors contribute:
+
+```text
+E_quotient <= E_a/(|b|-E_b) + |a|*E_b/(|b|*(|b|-E_b))
+```
+
+Then add the actual division's local error bound.
+For `exp(t)` on a finite interval, the mean-value theorem uses `exp(max_interval)` as its derivative bound.
+Then add the actual `expf` implementation's local error bound.
+The source name does not establish its compiler mode, error bound, or overflow domain.
+These scalar facts remain unproved at this use.
+Negation is exact for finite float32 values under ordinary scalar semantics.
+A token sum uses its actual `top_k` count, not `K` or `S_split`.
+Each bfloat16 boundary needs the separate term above.
+
+The second activation quantizer consumes the bfloat16 SwiGLU result, at executive Python lines 503-508.
+Different activation codes produce different represented down operands.
+That difference belongs to quantization error, not a same-operand arithmetic allowance.
+The native prerequisite already blocks qualification before this nonlinear composition can certify a full routed path.
+No finite random fixture supplies these missing arithmetic statements.
+
+### 17.6 Exact missing statement and receipt scope
+
+The Parallel Thread Execution specification's matrix section states:
+
+> Accumulation of the intermediate values is performed with at least single precision.
+> The accumulation order, rounding, and handling of subnormal inputs are unspecified.
+
+Source: [Parallel Thread Execution matrix instruction specification](https://docs.nvidia.com/cuda/parallel-thread-execution/#warp-level-matrix-instructions-mma).
+The same section says element-wise multiplication uses specified precision.
+It does not state the needed scaled-product local inequality.
+Source: [CUDA mathematical function accuracy](https://docs.nvidia.com/cuda/archive/13.1.0/cuda-programming-guide/05-appendices/mathematical-functions.html).
+That scalar table cannot define matrix-instruction arithmetic.
+
+The missing native statement must cover every legal E2M1 code and finite UE4M3 scale:
+
+1. State a local error inequality for the complete scaled product and accumulation operations.
+2. State the maximum error depth for one output, including the incoming float32 accumulator and consecutive instruction calls.
+3. State how subnormal codes, scales, products, sums, and results behave.
+4. State an intermediate-domain guarantee or restrictions that exclude overflow and unsupported underflow.
+
+A rigorous implementation-specific contract can supply the same facts instead.
+Finite random samples, a fitted constant, or a float32 output type cannot supply them.
+These are the original four missing facts, not new authority or seal gates.
+The inherited failed-revision count remains one.
+The inherited blocker clock remains `2026-10-06T18:25:28.755894+00:00`.
+
+The retained receipts have these limits:
+
+| Action prefix | Retained scope |
+|---|---|
+| `4ea427ad9294` | Packed reader at `91bdb523`: ten rows and seventy conditional comparisons. |
+| `c6ef4e550613` | WINDOW fixture: thirty cases, sixty routed checks, and 450 dense checks. |
+| `b060a2f2a98e` | Synthetic pure-seven timing, not arithmetic qualification. |
+| `546f38019629`, `5001053baf49` | Historical CPU boundary and same-entry controls, not native proof. |
+
+The scope note retains their full keys, payload digests, receipt digests, and result paths.
+It is `/home/rob/fleet/inventory/kernels-1007-window-hold-scope-sol-20261007.md`.
+The implementation record retains that scope and the original issue record without replacement.
+It also retains new failing-before controls and the actual interface smoke.
+No historical receipt covers this correction's new source head.
+No source identity difference adds a refusal under development mode.
+The existing code, scale, shape, finite-value, and discrepancy refusals stay intact.
+
+### 17.7 Targeted native implementation attestation
+
+Owner: kernels. Date: 2026-10-07. Arithmetic qualification remains false.
+The sole implementation record is `kernels-t4-fp4-mma-attestation-sol-20261007`.
+The conditional source remains frozen at `3fc62f102871e8a050d0e2eb5ef53c3c2f5745da`.
+The original failed-revision count and blocker clock remain unchanged.
+
+#### Method and retained evidence
+
+The method follows Fasi, Higham, Mikaitis and Pranesh, PeerJ Computer Science 7:e330, 2021.
+Source: https://pmc.ncbi.nlm.nih.gov/articles/PMC7959640/ .
+Use their targeted characterization method, not their older-device conclusions.
+The suite uses no random samples and no fitted allowance.
+Each test selects inputs that separate explicit arithmetic alternatives.
+The implementation can refuse an unsupported model without calling the device defective.
+
+The native instruction is:
+
+`mma.sync.aligned.kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64.row.col.f32.e2m1.e2m1.f32.ue4m3`.
+
+The probe uses the existing real fragment layout, with lane `4*g+t`:
+
+- A register r, nibble i: row `g+8*(r&1)`, column `8*t+32*(r>>1)+i`.
+- B register r, nibble i: column `g`, reduction index `8*t+32*r+i`.
+- D register j: row `g+8*(j>>1)`, column `2*t+(j&1)`.
+- A scale byte b: lane `(g,0)` names row g and group b.
+- A scale byte b: lane `(g,1)` names row g+8 and group b.
+- B scale byte b: lane `(g,0)` names column g and group b.
+
+The suite retains these files beside each action:
+
+- `inputs.bin`: every operand code, scale byte, and incoming accumulator bit.
+- `inputs.json`: the exact binary layout, case names, and byte digest.
+- `outputs.bin`: every native output bit, before any negative control.
+- `references.json`: exact rational sums, output bits, and alternative model outputs.
+- `negative-references.json`: the altered output and its exact failed inequality.
+- `fp4_arithmetic_probe.cu`, `context.json`, and `probe.sass`: source, flags, compiler, device context, and native code.
+- `memory-guard.json`: memory samples and the owned process-group termination record.
+- `attestation.json`: each required result, refusal, model candidates, and qualification state.
+
+The independent interpreter uses exact rational arithmetic and explicit binary rounding.
+Its processor controls compare values with the host IEEE conversion and exact tie cases.
+A processor interpreter failure supplies no native device verdict.
+A layout failure supplies no arithmetic verdict.
+A failed measured inequality refuses the device by name.
+
+#### Six targeted properties
+
+| Property | Targeted inputs | Tested premise |
+|---|---|---|
+| Product exactness | All signed E2M1 pairs; all finite A scale bytes against scale corners | No product narrows below its exact FP32 representation. |
+| Scale order | Four distinct scale groups and small group sums below the alignment quantum | Group scales enter before the common accumulation, or through an equivalent exact group calculation. |
+| Alignment width | Signed cancellation with exponent gaps from ten through forty | The cancellation cutoff supports the 36-bit alignment model. |
+| Rounding mode | Signed sums, odd/even significands, ties, and above-half-spacing increments | The observed two-term rounding class belongs to the stated alternatives. |
+| Subnormal handling | E2M1 half values, UE4M3 subnormal bytes, and FP32 accumulator subnormals | The measured input and output values remain present. |
+| Intermediate domain | Maximum products, full atoms, seven carry bits, and cancellation permutations | The supported model has no narrow intermediate overflow or premature normalization. |
+
+Product scaling and exact group scaling can be observationally equivalent.
+The suite does not infer a physical circuit order when the represented results agree.
+The report retains each compatible model instead of inventing a unique circuit.
+An empty candidate set means that the current implementation model is unsupported.
+It does not establish a defective GPU.
+
+#### Explicit implementation inequalities
+
+Let `epsilon=2^-23`, and let `p_k=a_k*b_k*sA_g*sB_g` for group `g=floor(k/16)`.
+The contract uses these inequalities:
+
+`|native_product(p_k)-p_k| = 0`.
+
+`q=2^(E-35) <= 2^-35*max_i |x_i|`, where E is the largest summand exponent.
+
+`|aligned(x_i)-x_i| < q` for a nonzero discarded part.
+
+`|normalized(z)-z| <= epsilon*|z|` within the finite normal domain.
+
+`|native_atom(C,p)-[C+sum_(k=0)^63 p_k]| <= (65*2^-35+2^-23)*S`.
+
+Here `S=|C|+sum_k |p_k|`.
+An atom has at most 65 aligned summands and one final normalization.
+The coefficients count 65 alignments and one FP32 normalization.
+They are not fitted multipliers.
+The truncation model does not enlarge any aligned summand's magnitude.
+Thus the exact aligned sum has magnitude at most S.
+The 65 alignment errors contribute less than `65*2^-35*S`.
+The final normalization contributes at most `epsilon*S`.
+Their sum gives the atom inequality, including cancellation and exact zero.
+
+Exact group formation does not require another error term.
+Each raw E2M1 product is a multiple of one quarter and has magnitude at most 36.
+A sixteen-product raw group has magnitude at most 576.
+Its integer numerator needs at most twelve bits.
+Two UE4M3 significands contribute at most eight further bits.
+The scaled group therefore fits exactly within FP32's 24-bit precision.
+The group-first model aligns at most five summands, which the 65-summand bound also covers.
+
+The targeted results test each premise and retain its alternative outputs.
+They do not prove every hardware input or every future compiler build.
+Required reviewers decide whether the measured model supports the stated implementation domain.
+No source approval or processor pass alone supplies that acceptance.
+
+#### Reduction-length derivation
+
+Let `L=K/64`, `M=sum_(k=0)^(K-1) |p_k|`, and `eta=65*2^-35+2^-23`.
+The initial accumulator is zero.
+Let `E_j` bound the error after j native atoms.
+The atom inequality gives:
+
+`E_j <= (1+eta)*E_(j-1)+eta*M`, with `E_0=0`.
+
+The finite geometric sum gives:
+
+`|native_dot-exact_dot| <= [(1+eta)^L-1]*M`.
+
+The API evaluates that expression with exact rational arithmetic.
+It rounds the reported absolute bound outward to binary64.
+It does not fit a multiplier to observed errors.
+The bound depends on the attested contract, FP32 precision, and actual reduction length.
+The source performs K/64 native atoms, not one error per abstract source dot call.
+
+#### Domain and actual boundaries
+
+The domain has E2M1 codes 0 through 15 and finite unsigned UE4M3 bytes 0 through 126.
+It requires a zero initial accumulator and a positive K divisible by 64.
+Every nonzero scaled product is a multiple of `2^-20`.
+Its magnitude is at most `36*448^2`.
+A native sum from zero remains on that lattice under the supported alignment model.
+Thus a nonzero raw accumulator cannot become an FP32 subnormal.
+Subnormal accumulator probes remain useful controls, but the derived dot domain does not need that extension.
+
+The domain guard requires `(1+eta)^L*M <= FP32_MAX`.
+This bound excludes overflow on each prefix, not only at the final output.
+Signs and cancellation do not relax that guard.
+The implementation supports exact zero without an artificial absolute floor.
+Signed-zero bit semantics are not part of the value inequality.
+NaN scales, nonfinite values, and arbitrary initial accumulators are unsupported.
+
+The raw instruction has no normalization division and returns FP32 directly.
+Its normalization term and separate output-conversion term are therefore zero.
+The optional represented output scale adds only the actual scalar multiplication term:
+
+`E_scaled <= |r|*E_native + 2^-24*|r|*(M+E_native) + 2^-150`.
+
+The optional bfloat16 conversion adds only its actual boundary term:
+
+`E_bf16 <= E_input + 2^-8*(M_input+E_input) + 2^-134`.
+
+The small absolute terms are half the minimum subnormal spacing, not empirical allowances.
+These scalar boundaries use their explicit round-to-nearest contract.
+They are separate from the characterized matrix instruction.
+No activation quantization term belongs to arithmetic on equal represented operands.
+No division term applies when a caller supplies an already represented scale.
+A caller that computes a scale or changes the reference must account for those actual operations separately.
+
+This attestation does not cover an uncharacterized library reference GEMM.
+It does not qualify a complete fused network path with SwiGLU, router weights, split sums, or token sums.
+Section 17.5 retains those distinct boundaries and reduction lengths.
+The existing packed comparison remains a conditional diagnostic.
+Its allowance and every live measurement path remain unchanged.
+
+#### Fail-closed qualification and failure-first controls
+
+`require_probe_contract` requires all six measured properties and the layout controls.
+`require_t4_device_qualification` also requires kernels parent review and independent review.
+Every emitted report keeps `arithmetic_qualified: false` before those reviews.
+A required failed probe refuses T4 on the named device.
+A meaningful negative control changes an exact native product output before analysis.
+The original captured output remains unchanged in `outputs.bin`.
+The altered result must fail the same product inequality and device gate.
+The record distinguishes that injected failure from a failed device probe.
+
+PrismaBuild executes the same entry point on the processor before a changed GPU invocation.
+Each action retains fresh disk admission, declared resources, the memory guard, and completion custody.
+Short GPU actions use ordinary exclusive admission at priority zero.
+They request no quiet-host or measurement-class certificate.
+The report adds no seal, source-identity refusal, serving default, pin, artifact change, or row admission.
+
+
+#### Complete comparison and unsupported compositions
+
+The native primitive bound does not replace the existing stock-reference comparison.
+Let Q be the exact dot on the unnormalized represented code and scale values.
+Let `r*=g/gs` be the exact global ratio, and let `rN` be its stored single-precision value.
+Let X and W be the exact normalized operands.
+Let `Xh` and `Wh` be the actual stock-reference operands after their scalar operations.
+Let R be the actual library multiplication result.
+
+The complete comparison requires these terms:
+
+`E_matrix = [(1+eta)^(K/64)-1]*M_raw`.
+
+`E_native_output = |rN|*E_matrix + 2^-24*|rN|*(M_raw+E_matrix) + 2^-150`.
+
+`E_ratio = |rN-r*|*M_raw`.
+
+`E_operands >= sum_k (|Xh-X|*|W| + |X|*|Wh-W| + |Xh-X|*|Wh-W|)`.
+
+`E_library >= |R-Xh*Wh|`.
+
+`|native_output-R| <= E_native_output + E_ratio + E_operands + E_library`.
+
+The first two terms have targeted native evidence.
+The ratio term requires the actual stored ratio and exact source globals.
+The operand term must include the actual rendered-activation division and weight formation.
+The library term must describe the actual single-precision library implementation.
+Its floating-point output type alone supplies no internal product or reduction guarantee.
+The existing magnitude contraction also retains its separate conditional rounding model.
+
+The primitive API compares against exact represented arithmetic.
+The complete stock API in section 17.8 also supplies ratio, operand, library, and magnitude-contraction terms.
+The original packed correctness callers use that complete API.
+The earlier conditional formula remains an explicit regression baseline, not a qualification fallback.
+Primitive evidence alone cannot qualify the complete stock comparison.
+
+The fused source uses `__fmul_rn` and `__float2bfloat16_rn` at its output boundaries.
+The boundary probe issues those actual operations.
+Its two inequalities apply only where those operations occur.
+A split path must also include its actual split lengths and reduction additions.
+A routed path must include router multiplication and token reduction.
+A gate/up path must include its actual activation and intermediate bfloat16 boundaries.
+These additional compositions remain unsupported by the new primitive API.
+No complete fused-network or two-device arithmetic qualification follows.
+
+A device result applies only to the physical device that executes its probes.
+The qualifier requires an explicit comparison name.
+`exact_represented_operands` names the primitive comparison.
+`float32_stock_reference` also requires the four targeted stock terms in section 17.8.
+Complete fused-epilogue and two-device comparison requests refuse until their additional contracts exist.
+The qualification API refuses an untested physical-device identifier, even after simulated approval flags become true.
+The source records each physical device separately.
+Different source identities remain development-mode stamps, not seal refusals.
+
+#### Observed device evidence
+
+The suite ran independently on both physical devices on 2026-10-07.
+Each matrix action produced 2,221 native atoms and 284,288 output values.
+Each action passed 64 layout controls and all six required properties.
+The property counts were 2,032 products, four scale cases, 62 alignment cases, 16 rounding cases, eight subnormal cases, and 35 domain cases.
+
+| Physical device | Native action | Successful receipt digest |
+|---|---|---|
+| sparky, CUDA device zero | `416d56c1b36e1ab1840ef5502105745d592c5950519b5ebf87d7acebf7528d5d` | `eb76a5eb705448fd37a86c1685fbcbc0b90c3db1ec17dd0d4e64e13d80589620` |
+| sparklina, CUDA device zero | `1f41a0ee2fe0f77a5c19ee8961e4b6d6da089fc6eb11ef7d04cc7e4214d6d5ae` | `80eade20b9974aaa18accad40cf144adf34cb8d21664d57daa134ca62e45e719` |
+
+Cancellation retains `2^-20` through exponent gap 35 and discards it at gap 36.
+The group-order cases reject individual-product alignment and support exact group formation before 36-bit alignment.
+The separate rounding family selects round toward zero.
+The cancellation subset alone retains both final-normalization alternatives.
+Their separate rounding results determine the combined measured model.
+
+The compiler was CUDA 13.0, version 13.0.88.
+The device reported compute capability 12.1, runtime 13000, and driver interface 13020.
+The retained flags were `-O3 -std=c++17 -gencode arch=compute_121a,code=sm_121a --ftz=false --fmad=false`.
+The native code contains `OMMA.SF.16864.F32.E2M1.E2M1.UE4M3.4X`.
+The source digest was `03bd4e8960b5047656dab732eae140dce4cd5fe600fe2755b788c53337250df3`.
+The image reference was `localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a`.
+
+Each physical device also passed 119 multiplication cases and 119 bfloat16 conversion cases.
+Each boundary action exercised three actual bound calls at lengths 64, 128, and 4096.
+The inputs include exact ties, both signs, zero, normal values, and gradual-underflow cases.
+
+| Physical device | Boundary action | Successful receipt digest |
+|---|---|---|
+| sparky, CUDA device zero | `78acfd8125c5e9db1ce8e9581febf095c34121f2dc2808404e753e313c634380` | `c26bbd55212c8d965cf26acfe302907410195de642ad4804bb1789f8507e94b1` |
+| sparklina, CUDA device zero | `9649e746bec209717eb2ff245c1c2d58638319006d5130e35e59dca3b0f4edb2` | `4280e8813a3c09092b16a82726d75938baf0beec50b8de63000712e120559538` |
+
+Three earlier actions remain failed:
+
+- `4545c0f8eb075d9acf5955ff04996e5419aefe641c8c200e117662325f079a0c`: the processor interpreter compared a signed zero bit instead of its value.
+- `794efb97efd1b06feb296f7bb4265dd4bdb14d5a6c7da9a0b4eba832580cc6ed`: the intentional negative control changed an exact zero product to one.
+- `88b1b6302df1f86e18b112f0616d62f1d9efdd6b8825fa39abb977ee56bb73b4`: native execution succeeded, but the interpreter alternatives stopped at 32 alignment bits.
+
+The last failure supplies no defective-device verdict.
+Its exact outputs revealed the missing wider alternative.
+A retained processor projection verified the original input and output digests before the revised probes.
+No failed action has a successful receipt.
+
+The final processor action `b1269009f0eb71d3067d1cd8a3057613044f7e2f33983a0e8f2933f9e189225f` passed 29 controls without skips.
+It exercised the actual bound and qualification APIs, including explicit unsupported-comparison and physical-device refusals.
+It allocated no CUDA device and supplies no native arithmetic proof.
+
+All evidence remains under `/mnt/shared/tessera-measurements/kernels-t4-fp4-mma-attestation-sol-20261007/`.
+The owning record retains full keys, fresh disk results, resources, guards, logs, receipts, and completion custody.
+The successful claim checks verified receipt consistency and payload bytes.
+They did not verify the worker attestation.
+The original comparison, full fused-network composition, and two-device arithmetic remain unqualified.
+The kernels parent review and independent review remain required.
+
+
+### 17.8 Complete original stock-reference bound (2026-10-08)
+
+The four missing stock terms now have targeted evidence on each physical device.
+This section replaces their unsupported status in section 17.7 for the domain below.
+The device reports remain unqualified until the kernels parent review and independent review pass.
+No complete SwiGLU, router-weight, fused split, token-reduction, or two-device claim follows.
+
+#### Actual operations and targeted results
+
+The activation renderer forms `A = E2M1(code)*UE4M3(scale)` exactly, then computes `Xh=fl32(A/896)`.
+The suite checks all sixteen signed codes against all 127 finite scale bytes.
+All 2,032 divisions match the independent nearest-even reference on each device.
+The ratio owner is `A4WireUnit.epilogue_for`, not a host approximation.
+It computes one device-tensor division `rN=fl32(g/896)`.
+All 190 supported power-of-two globals match nearest-even on each device.
+The resulting relative bounds are `rho_x=u32` and `rho_r=u32`, with `u32=2^-24`.
+
+The stock weight owner is `stock_dequant`.
+Its E2M1 and UE4M3 factors need at most six significant bits.
+Its stored divisor is the exact reciprocal of a power-of-two global.
+Normal finite power-of-two weight formation has zero rounding error.
+It contributes no extra weight term.
+
+The reference uses the original `rendered_x @ weight.T` with `allow_tf32=False`.
+Targeted products retain the low single-precision bits that TF32 would discard.
+Sign, half-spacing, cancellation, and carry cases check the reduction model.
+The actual profiles include single-precision GEMV, small-N GEMM, and the CUTLASS SIMT SGEMM kernel.
+Their split reduction operates on single-precision partial sums.
+Each output has K products and at most K-1 nonzero reduction additions.
+Exact unit scaling and zero initialization contribute no extra rounding term.
+The conservative reference model uses `epsilon32=2^-23` and an error depth of `2*K`.
+It requires normal finite intermediates, not only a single-precision output type.
+
+The magnitude uses the original positive contraction `abs(Xh.double()) @ abs(W.double()).T`.
+The profiles include double-precision GEMV, ordinary matrix kernels, and `cutlass_80_tensorop_d884gemm`.
+The tensor kernel uses the double-precision matrix instruction with contraction width four.
+Products of converted single-precision operands fit exactly in double precision.
+
+[PTX ISA 9.0 for CUDA 13.0](https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#warp-level-matrix-instructions-mma) supplies the normative tensor contract.
+It states: "Precision of the element-wise multiplication and addition operation is identical to that of .f64 precision fused multiply-add."
+Its default mode is nearest-even; directed modes also retain double precision.
+The corresponding [`fma.f64` contract](https://docs.nvidia.com/cuda/archive/13.0.0/parallel-thread-execution/index.html#floating-point-instructions-fma) specifies infinite-precision multiplication and addition followed by one double-precision result rounding.
+The binary64 format has 53 significant bits.
+This normative contract, not the six positive probe patterns, establishes the precision.
+
+Four contraction terms require at most four double FMA result roundings in any reduction order.
+For `S=|C|+sum_(j=1..4)|A[j]*B[j]|`, the block inequality is:
+
+`|block(C,A,B)-(C+sum_(j=1..4) A[j]*B[j])| <= gamma(4,epsilon64)*S`.
+
+The conservative choice `epsilon64=2^-52` covers both nearest-even and directed double-precision rounding.
+Ordinary double GEMV and matrix kernels use the corresponding scalar double-precision operations.
+Each output has K exact products and at most K-1 nonzero reduction additions, including split reductions.
+The whole-dot budget is therefore K roundings, with `GM=gamma(K,epsilon64)`.
+Zero initialization and exact unit scaling add no error.
+The retained profiles select only these known operation families.
+Unknown kernel families and unsupported block models refuse instead of inheriting these counts.
+
+#### Exact composition
+
+Define:
+
+`eta=65*2^-35+2^-23`, `L=K/64`, and `gamma(n,e)=n*e/(1-n*e)`.
+
+`GN=(1+eta)^L-1`.
+
+`GR=gamma(2*K,epsilon32)`.
+
+`GM=gamma(K,epsilon64)`.
+
+Let `Mhat=max_(m,n) sum_k |Xh[m,k]|*|W[n,k]|`.
+Let `Mobs` be the actual positive double-precision contraction's maximum.
+Its targeted arithmetic contract gives:
+
+`Mhat <= Mobs/(1-GM)`.
+
+The implementation evaluates the inflation with exact rational arithmetic.
+It rounds the resulting `M_upper` outward to double precision.
+Thus `M_upper >= Mhat`.
+
+Let `MT` be the magnitude before the rendered-activation division error.
+Each nonzero rendered activation differs by at most `rho_x` relatively.
+Consequently:
+
+`MT <= M_upper/(1-rho_x)`.
+
+The native ratio, native matrix, and output multiplication compose multiplicatively:
+
+`FN=(1+rho_r)*(1+GN)*(1+u32)-1`.
+
+The original comparison's complete bound is:
+
+`|native_output-stock_reference| <= [(FN+rho_x)/(1-rho_x)+GR]*M_upper`.
+
+The comparison uses zero relative tolerance.
+Every product of rounding factors remains in the expression.
+No first-order approximation, fitted multiplier, or fixed empirical allowance appears.
+The reference and magnitude operation counts come from their actual reduction graphs.
+The native count comes from the actual 64-column instruction.
+No independent bfloat16 input term applies because both paths share one activation quantizer.
+The diagnostic asks for single-precision output, so it has no bfloat16 output conversion term.
+
+#### Supported normal finite domain
+
+The input global is exactly 896.
+The weight global is `g=2^e`, with `-73<=e<=116`.
+Each E2M1 code lies between zero and fifteen.
+Each unsigned UE4M3 byte lies between zero and 126.
+The initial native accumulator is zero.
+The packed contraction length is a positive multiple of 128.
+The gamma denominators must remain positive.
+The actual reference shapes have N=64, K=256, and M in `{1,2,3,16,33,65}`.
+Grouped outputs use their actual two- and three-row reference segments.
+Other reference shapes require their own backend characterization.
+Every stock bound and qualification call requires its actual `(M,N,K)` shape.
+The owner checks `shape[2]==k` before it computes any operation count.
+Absent, inconsistent, or uncharacterized shapes refuse; no compatibility default exists.
+
+The raw activation factor has magnitude at most 2,688 and minimum nonzero magnitude `2^-10`.
+The rendered activation has magnitude at most three and a smallest significand lattice of `2^-43`.
+The exact stock weight lattice is `2^(e-10)`.
+Reference products and partial sums remain on a lattice no finer than `2^(e-53)`.
+The lower exponent bound keeps every nonzero such intermediate normal in single precision.
+The upper exponent bound keeps every possible stock weight finite.
+Signs and cancellation can produce exact zero but cannot produce an unsupported subnormal intermediate.
+The native dot remains on its `2^-20` lattice.
+Its ratio multiplication has a nonzero magnitude above the smallest single-precision normal value in this domain.
+Thus the full stock bound needs no absolute subnormal floor.
+
+The implementation also requires these prefix and output guards:
+
+`(1+GR)*M_upper <= FP32_MAX`.
+
+`(1+GN)*(896/g)*M_upper/(1-rho_x) <= FP32_MAX`.
+
+`(1+rho_r)*(1+GN)*M_upper/(1-rho_x) <= FP32_MAX`.
+
+These guards cover all possible prefixes, not only the final observed output.
+They refuse non-power-of-two globals, unsupported scale bytes, nonfinite values, overflow, different globals, and uncharacterized reference shapes.
+Exact zero magnitude has an exact zero allowance.
+Signed-zero bit semantics remain outside the value comparison.
+
+The discrepancy reduction converts both single-precision outputs exactly to double precision.
+It rounds their difference in double precision.
+The checker inflates that observed difference by `1/(1-2^-53)` and rounds outward.
+It compares this upper value with the outward derived allowance.
+This accounts for the checker operation without adding an empirical error floor.
+
+#### Observed original-path evidence
+
+Sparky action `bc466b44bdd5f3a740d414f4e96322f40b6b38b4fc6a33695f8f2518d83e7307` passed all four stock families.
+Its successful receipt digest is `5cdc946a04ec971d5ddef24dff280aac8c9a5466654f611aae546b78832d63ed`.
+Sparklina action `654d26d4b40d7b654a1e20228dde899b2481c2e7e663282f61ac2af202ca01da` passed the same families independently.
+Its successful receipt digest is `d3f6da8aa6368c1e809c406fe4fb4c6d352bc2092e8937ca75be701ca0ba0449`.
+Each action checked 2,032 divisions, 190 ratios, 36 single-precision library cases, and 36 magnitude cases.
+Each action passed eight actual packed comparisons at rates 895 and 896.
+The maximum observed difference was `4.284083843231202e-08`.
+Its corresponding allowance was `5.4292702357934556e-05`, derived from the operands and operation counts.
+The wrong-output controls refused through the same full comparison API.
+Each action retains its actual device trace, independent rational references, ratio alternatives, inputs, and source context.
+
+The earlier stock processor action `f9f336f8cf228b8f6e6a20863544880111b4e35489c974c55adb9110d15818d1` remains failed.
+It exposed an omitted processor-device argument in the probe harness.
+The earlier native stock action `2bf5e951bf548767c76f303a0f301c1de73dec7a6d9f21a271c2f73ce237d395` also remains failed.
+Its arithmetic checks passed, but its profile interpreter did not recognize the actual split-reduction and exact unit-scaling kernels.
+Neither failure supplies a defective-device verdict.
+No six-property or scalar-boundary replay follows those corrections.
+
+
+#### Original dense and grouped comparison panel
+
+The complete bound now runs in the original correctness entry, not only in an isolated primitive test.
+The panel retains both routed and dense recipes at rates 129, 383, 641, 895, and 896.
+It retains token counts one, sixteen, thirty-three, and sixty-five.
+Grouped checks retain three experts, one empty expert, repeated and reordered routes, and the distinct final expert.
+Each reference segment uses its actual global, magnitude, and two- or three-row library shape.
+The source retains every encoded unit, represented operand, native output, stock output, and derived bound.
+
+Sparky original-panel action `c50dff334df5b95ed8521e381ab84b7f155e7a91b861dbd09b67681934cd878f` completed ten rows and seventy comparisons.
+Its receipt digest is `976d0b65d7332b8c5f8d14609b1ee08b97b3815a5db1cadd8b956e0ab79561d0`.
+Sparklina original-panel action `3e8b0474bdb0bdca4b92a67cca734c9e9f4fbc3db84b3f9e1de86b5843792f86` completed the same panel independently.
+Its receipt digest is `803a4e9f2b61bcc2aeb827521a33d87d165af8f6521bc6eaec8f6b044605e874`.
+Each panel's maximum observed difference was `1.7881393432617188e-07`.
+The largest operand-derived allowance was `0.0001829943822073238`.
+Those maxima describe different entries and are not a fitted error ratio.
+
+Processor action `71d5d6dc7c3fc9073aadcaea4a41817ff4553ced0261add3718af73e956aeb34` checked both actual inputs and passed 88 targeted controls.
+It skipped no test and allocated no CUDA device.
+Its receipt digest is `d2900214be43202220de123789256e26be44dedd7f11d00276c1c52a1286be1c`.
+The original-panel actions used this exact processor preflight.
+Each physical action had priority zero, ordinary graphics-processor exclusivity, fresh disk admission, and its own completion client.
+No six-property or scalar-boundary replay occurred.
+
+The dense negative controls place a wrong output between the earlier conditional allowance and the new complete allowance.
+The complete API refuses the wrong output through the same actual-path checker.
+The original output remains intact in the retained tensor file.
+The complete comparison, byte checks, and finite-domain guards remain independent.
+Arithmetic qualification stays false until both required reviews pass.
+
+#### Corrective block contract and scope controls
+
+The initial review rejected the inferred alignment width and the optional shape scope.
+That review examined source head `a361165b05c6de3e949a6866e930ed17e19912b7`.
+The original failure count remains one, and the original blocker clock remains unchanged.
+The six magnitude patterns remain regression evidence, not proof of 53 alignment bits.
+The normative double FMA contract above now supplies the block inequality and operation budget.
+
+Processor action `669bda2b218652b52551ee3fc8c0c9045686288e1461ab197068be5edf8c161f` ran the new scope controls before the correction.
+Seven controls failed, two passed, and 39 unrelated controls were deselected.
+Processor action `76a6c0ab3f60db9fd0244fbdd9c06e050302a893e02ccd10ce4dc9ce97909fee` passed all 105 targeted controls after the correction.
+It skipped no test and allocated no CUDA device.
+The controls refuse absent shapes, uncharacterized shapes, inconsistent contraction lengths, unknown kernels, and the unsupported 48-bit truncation model.
+
+Processor action `fc8f4ba185030532accc3531ea0dece97280c9a43693237a7a7c93ba87c5f0d1` audited retained original outputs from both devices.
+Each device supplied 100 actual reference segments and 40 retained wrong-output controls.
+All segments passed the corrected bound, and all wrong-output controls refused.
+The audit recovered an upper estimate of the original magnitude observation from its retained outward bound.
+It then applied the new normative magnitude inflation.
+No device operation or completed characterization replay occurred.
+Every original device report, receipt, output, and failed action remains intact.
+The corrected reports remain unqualified before parent and independent reviews.
+
+Earlier combined processor commands guarded the preflight, but their pytest child had only broker containment.
+Those actions retain this explicit guard limitation.
+The `--targeted-tests` option now runs the pytest child inside the same entry point and owned memory guard.
+The parent guard monitors the full child lifetime and retains its terminal status.

@@ -920,9 +920,8 @@
     "id": "tessera_e4m3_k1_dense_sm121_decode",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": [
-      "eager"
-     ],
+     "kernel_build": "legacy-toolchain/0.28.0/2.13.0+cu130",
+     "execution_modes": ["eager"],
      "vllm": "0.28.0",
      "torch": "2.13.0+cu130"
     },
@@ -977,9 +976,8 @@
     "id": "tessera_e4m3_k1_dense_sm121_batch",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": [
-      "eager"
-     ],
+     "kernel_build": "legacy-toolchain/0.28.0/2.13.0+cu130",
+     "execution_modes": ["eager"],
      "vllm": "0.28.0",
      "torch": "2.13.0+cu130"
     },
@@ -1034,6 +1032,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1159,6 +1158,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1281,9 +1281,11 @@
     }
    },
    {
+
     "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1356,6 +1358,7 @@
     "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1425,9 +1428,11 @@
     }
    },
    {
+
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1496,6 +1501,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1561,9 +1567,11 @@
     }
    },
    {
+
     "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1632,6 +1640,7 @@
     "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1695,6 +1704,7 @@
       "record": null
      }
     }
+
    }
   ]
  },
@@ -2414,6 +2424,11 @@
    "contract_version": 62,
    "date": "2026-10-07",
    "change": "T16 keeps raw BF16 values and FP32 row scales separate through the dot. The row scale applies to the FP32 accumulator before its BF16 output. Folded selectors and materializers are removed without aliases. Four new BF16 decoder names distinguish this arithmetic. The eight folded BF16 cells and their attested rung stamps are withdrawn, not relabelled. BF16 TP2 qualification is also withdrawn. Their historical receipts remain retained. New BF16 pairs need a served census before qualification. Changed D41 classes need new measurements on the merged build before allocation."
+  },
+  {
+   "contract_version": 61,
+   "date": "2026-10-07",
+   "change": "Cell lookup uses kernel build and module kind (#1036). The compatibility map preserves receipt identifiers and image-only calls. Legacy build names identify recorded toolchain scopes, not native binary equivalence. Defaults, pins, wire bytes, rungs and evidence remain unchanged."
   },
   {
    "contract_version": 60,

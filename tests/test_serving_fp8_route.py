@@ -43,10 +43,16 @@ def _tessera():
 
 @pytest.fixture(autouse=True)
 def _fresh_env(monkeypatch):
+    from tessera.serving import compile_identity, e4m3_prefill, flags
+
     serving_lane.reset_for_tests()
+    flags.reset_for_tests(e4m3_prefill.FLAG)
+    compile_identity.reset_for_tests()
     monkeypatch.delenv(TESSERA_MODE_ENV, raising=False)
     yield
     serving_lane.reset_for_tests()
+    flags.reset_for_tests(e4m3_prefill.FLAG)
+    compile_identity.reset_for_tests()
 
 
 def _scheme(rows=256, columns=1024, roles=None, **over):
@@ -348,17 +354,28 @@ def test_streamed_holds_the_packed_wire_and_no_resident_tile(monkeypatch):
 
 
 @requires_cuda
-def test_resident_drops_the_wire(monkeypatch):
+@pytest.mark.parametrize("decode_once", [None, "0"], ids=["default", "opt-out"])
+def test_resident_drops_the_wire(monkeypatch, decode_once):
+    from tessera.serving.e4m3_prefill import FLAG
+
+    if decode_once is None:
+        monkeypatch.delenv(FLAG, raising=False)
+    else:
+        monkeypatch.setenv(FLAG, decode_once)
     _g, _w, r, _m, _ = _drive(monkeypatch, MODE_RESIDENT)
     assert not hasattr(r, "wire_bytes") and not hasattr(r, "weight_fp8")
     native = r.tessera_native
     assert native is not None
-    # Resident mode holds the packed repack, not an 8-bit tile: the wire's own
-    # words over the layout's padded rows (``rep.rows_p``), plus the small
-    # tables and the per-column bookkeeping.
+    # Preserve the packed budget and count the default decoded copy separately.
+    decoded = native.decoded
+    assert (decoded is not None) == (decode_once is None)
+    decoded_bytes = 0 if decoded is None else decoded.nbytes
+    if decoded is not None:
+        assert decoded_bytes == native.rows * native.columns + 4 * native.rows
     facts = native.layout_facts()[0]
     cap = facts.rows_p * facts.cols * 4.5 / 8 + 65536
-    assert native.packed_bytes() < cap, (native.packed_bytes(), cap)
+    packed = native.packed_bytes() - decoded_bytes
+    assert packed < cap, (packed, cap)
 
 
 @requires_cuda

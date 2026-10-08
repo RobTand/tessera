@@ -309,21 +309,39 @@ def test_a_mixed_stack_refuses_an_incompatible_piece_major_knob_by_name(monkeypa
     and others legacy (and never re-tags after the fact).  That covers the
     expert matrix AND a schedule that compresses to a per-role list with no
     matrix anywhere.  With the knob unset the mixed stack is wholly legacy,
-    exactly like every uniform stack today.
+    regardless of the default-on uniform R4 selection.
     """
-    real_admissible = moe_route._piece_major_admissible
-    monkeypatch.setattr(moe_route, "_piece_major_requested", lambda: True)
-    monkeypatch.setattr(moe_route, "_piece_major_admissible", lambda family: True)
+    from tessera.serving import flags
+
+    flags.reset_for_tests(moe_route.ENV_PIECE_MAJOR)
+    monkeypatch.setenv(moe_route.ENV_PIECE_MAJOR, "1")
     matrix = validate_tessera_moe_scheme(_moe(q256_w13=MIXED_W13, q256_w2=MIXED_W2), "m")
     with pytest.raises(ValueError, match="piece-major|PIECE_MAJOR"):
         moe_route._RankLocalPackedIntake(matrix, "m", torch.device("cpu"), 0, 1)
     per_role = validate_tessera_moe_scheme(_moe(q256_w2=1088), "m")
     with pytest.raises(ValueError, match="piece-major|PIECE_MAJOR"):
         moe_route._RankLocalPackedIntake(per_role, "m", torch.device("cpu"), 0, 1)
-    monkeypatch.setattr(moe_route, "_piece_major_requested", lambda: False)
-    monkeypatch.setattr(moe_route, "_piece_major_admissible", real_admissible)
-    intake = moe_route._RankLocalPackedIntake(matrix, "m", torch.device("cpu"), 0, 1)
-    assert intake._piece_major is False
+    flags.reset_for_tests(moe_route.ENV_PIECE_MAJOR)
+    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR)
+    for declared in (matrix, per_role):
+        owner = moe_route._RankLocalPackedIntake(declared, "m", torch.device("cpu"), 0, 1)
+        assert owner._piece_major is False
+    flags.reset_for_tests(moe_route.ENV_PIECE_MAJOR)
+
+
+@pytest.mark.parametrize("family,grid", [(TESSERA_FP8, "E4M3"), (TESSERA_BF16, "BF16")])
+def test_unset_piece_major_keeps_every_native_rate_usable(family, grid, monkeypatch):
+    from tessera import routed_fused
+    from tessera.serving import flags
+
+    flags.reset_for_tests(moe_route.ENV_PIECE_MAJOR)
+    monkeypatch.delenv(moe_route.ENV_PIECE_MAJOR, raising=False)
+    for rate in routed_fused.ROUTED_LANE_RATES:
+        declared = validate_tessera_moe_scheme(_moe(
+            q256_w13=256 * rate, q256_w2=256 * rate, family=family, grid=grid), "m")
+        owner = moe_route._RankLocalPackedIntake(declared, "m", torch.device("cpu"), 0, 1)
+        assert owner._piece_major == (family == TESSERA_FP8 and rate == 4)
+    flags.reset_for_tests(moe_route.ENV_PIECE_MAJOR)
 
 
 # ------------------------------------------------- the axis, in exact storage

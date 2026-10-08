@@ -454,7 +454,7 @@ class PreparedDenseNativeModule:
             if torch.compiler.is_compiling():
                 raise RuntimeError(
                     f"the decode-once E4M3 lane is eager-only ({FLAG}=1); serve with "
-                    "compilation mode NONE or unset the flag")
+                    f"compilation mode NONE or set {FLAG}=0")
             if int(x.shape[0]) >= MIN_M:
                 return prefill_apply(self.__decoded, x, a_scale)
         if self.__lane == LANE_FUSED:

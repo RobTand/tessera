@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-08 — combine released defaults and kernel-build scope with T16 epilogues
+
+Retain the approved eligible piece-major and decode-once E4M3 defaults.
+Keep raw BF16 values and FP32 row-scale epilogues unchanged.
+Preserve adopted v61 history beside T16 v62 withdrawal under active v64.
+No old BF16 cell, receipt or qualification returns.
+Delete the obsolete historical whole-contract copy pin; key, build, id, launch and overlap controls remain.
+The current serving and MoE status header cites v62.
+
 ## 2026-10-08 — keep TP2 fixture proofs on the native class owner
 
 Use native-valid geometry and the current intake contract.
@@ -186,6 +195,33 @@ and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
 Preserve external paths through their active measurement lifetimes.
+## 2026-10-08 — explicit A8S graph MNBT matrix harness
+
+The opt-in `ship-graph-mnbt-matrix` mode measures the authorized 18-cell matrix.
+It compares maximum batched tokens 2048 and 4096.
+The prompt lengths are 512, 2048 and 8192; concurrency is 1, 4 and 8.
+Both arms use tensor parallel size two, graph decode without speculative tokens, and the accepted A8S artifact.
+All three levers remain explicitly ON, independent of the default-only source change.
+
+The prompts repeat the single-request prompt across concurrent slots; prefix cache use stays disabled.
+The CPU smoke checks real inputs; permanent tests check protocol and population refusals without external data.
+The harness retains both-Spark power, Torch profiles and raw latency data.
+Priority is zero after the PACT band handoff; GPU exclusivity remains explicit.
+Every old mode, key and controller client stays unchanged.
+The default maximum batched tokens stays at 2048.
+
+## 2026-10-08 — enable eligible routed layout and dense/shared decode defaults
+
+Piece-major routed layout is default-on for uniform R4 E4M3 MMA stacks.
+Other allowable rates and mixed stacks retain legacy placement when the flag is unset.
+Explicit mixed-stack requests still refuse. The strict flag owner preserves a fixed process choice.
+
+Decode-once E4M3 is default-on for resident dense and shared projection modules with an eager forward.
+Compiled and streamed modules keep their existing packed path by default.
+Explicit decode-once requests still refuse compiled forwards. Explicit 0 opts out of either default.
+
+Byte checks, reader guards, arithmetic, residency accounting and serving qualification holds remain unchanged.
+Maximum batched tokens remain 2048. KDA defaults, runtime pins and current measurement source remain unchanged.
 ## 2026-10-08 — T4 route tests declare their Torch dependency
 
 The CPU route-admission tests use export and telemetry code that requires Torch.
@@ -545,6 +581,53 @@ development-mode split; byte integrity, execution scope, grammar and
 comparison-key checks stay refusals. The verdict is about the comparison
 only: it is not a measurement, an admission, a price or a pin, and the
 full #688 native acceptance stays open.
+
+## 2026-10-08 — external arithmetic-audit evidence reads
+
+The corrective FP4 audit reads retained device outputs outside the checkout.
+Its dense and grouped glob calls add two explicit exceptions to the directory-read budget.
+The module budget and all numerical, byte and shape gates stay unchanged.
+
+## 2026-10-08 — issue 1007: complete stock-reference arithmetic bound
+
+Characterize the actual rendered division, stored ratio, single-precision
+library multiplication, and double-precision magnitude contraction on each physical device.
+Compose these terms with the native atom contract and actual output multiplication.
+Evaluate every higher-order factor with exact rational arithmetic.
+Round the magnitude, allowance, and measured discrepancy outward.
+Use the complete contract in the original dense and grouped correctness callers.
+Retain exact inputs, native outputs, byte oracles, traces, and negative controls.
+Refuse unsupported globals, reference shapes, kernels, overflow, and physical devices.
+Use the normative CUDA 13.0 double FMA contract for the four-term tensor block.
+Derive its whole-dot magnitude budget from K double result roundings.
+Require the actual shape and consistent contraction length before every stock operation count.
+Refuse unsupported block models, including the 48-bit truncation alternative.
+Retain failure-first controls and processor audits of both devices' original outputs.
+Run optional processor tests inside the existing owned memory guard.
+Keep arithmetic qualification false before both required reviews.
+Exclude unproved fused activations, router weights, split sums, token reductions, and two-device arithmetic.
+
+## 2026-10-07 — issue 1007: targeted native four-bit arithmetic probes
+
+Add exact native probes for products, scale order, alignment width,
+rounding, subnormal values, and the intermediate domain. Retain rational
+references and expected alternative models beside every native output.
+Add a named-device refusal and an atom-derived diagnostic bound.
+Probe the actual scalar multiplication and bfloat16 output conversion separately.
+Refuse transfer to an untested physical device and uncharacterized complete comparisons.
+Keep arithmetic qualification false before both required reviews.
+Preserve the conditional source, thresholds, original failures, and measurement paths.
+
+## 2026-10-07 — issue 1007: explicit packed T4 arithmetic assumptions
+
+Refactor the bound owner before the contract correction. Preserve its
+conditional allowance and all live measurement thresholds. Refuse illegal
+reader lengths and invalid gamma inputs. The v4 receipt states unit
+roundoff, actual tile counts, and each unproved arithmetic assumption.
+Complete the conditional derivation in the existing serving contract.
+Separate quantization error, fused epilogues, split lengths, and bfloat16
+boundaries. Keep native arithmetic unqualified because PTX does not supply
+the required local-error, reduction-depth, subnormal, or intermediate-domain contract.
 
 ## 2026-10-06 — issue 1005: actual T4 geometry reader coverage
 
