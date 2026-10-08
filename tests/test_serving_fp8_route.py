@@ -43,10 +43,14 @@ def _tessera():
 
 @pytest.fixture(autouse=True)
 def _fresh_env(monkeypatch):
+    from tessera.serving import e4m3_prefill, flags
+
     serving_lane.reset_for_tests()
+    flags.reset_for_tests(e4m3_prefill.FLAG)
     monkeypatch.delenv(TESSERA_MODE_ENV, raising=False)
     yield
     serving_lane.reset_for_tests()
+    flags.reset_for_tests(e4m3_prefill.FLAG)
 
 
 def _scheme(rows=256, columns=1024, roles=None, **over):
