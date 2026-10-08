@@ -401,6 +401,53 @@ comparison-key checks stay refusals. The verdict is about the comparison
 only: it is not a measurement, an admission, a price or a pin, and the
 full #688 native acceptance stays open.
 
+## 2026-10-08 — external arithmetic-audit evidence reads
+
+The corrective FP4 audit reads retained device outputs outside the checkout.
+Its dense and grouped glob calls add two explicit exceptions to the directory-read budget.
+The module budget and all numerical, byte and shape gates stay unchanged.
+
+## 2026-10-08 — issue 1007: complete stock-reference arithmetic bound
+
+Characterize the actual rendered division, stored ratio, single-precision
+library multiplication, and double-precision magnitude contraction on each physical device.
+Compose these terms with the native atom contract and actual output multiplication.
+Evaluate every higher-order factor with exact rational arithmetic.
+Round the magnitude, allowance, and measured discrepancy outward.
+Use the complete contract in the original dense and grouped correctness callers.
+Retain exact inputs, native outputs, byte oracles, traces, and negative controls.
+Refuse unsupported globals, reference shapes, kernels, overflow, and physical devices.
+Use the normative CUDA 13.0 double FMA contract for the four-term tensor block.
+Derive its whole-dot magnitude budget from K double result roundings.
+Require the actual shape and consistent contraction length before every stock operation count.
+Refuse unsupported block models, including the 48-bit truncation alternative.
+Retain failure-first controls and processor audits of both devices' original outputs.
+Run optional processor tests inside the existing owned memory guard.
+Keep arithmetic qualification false before both required reviews.
+Exclude unproved fused activations, router weights, split sums, token reductions, and two-device arithmetic.
+
+## 2026-10-07 — issue 1007: targeted native four-bit arithmetic probes
+
+Add exact native probes for products, scale order, alignment width,
+rounding, subnormal values, and the intermediate domain. Retain rational
+references and expected alternative models beside every native output.
+Add a named-device refusal and an atom-derived diagnostic bound.
+Probe the actual scalar multiplication and bfloat16 output conversion separately.
+Refuse transfer to an untested physical device and uncharacterized complete comparisons.
+Keep arithmetic qualification false before both required reviews.
+Preserve the conditional source, thresholds, original failures, and measurement paths.
+
+## 2026-10-07 — issue 1007: explicit packed T4 arithmetic assumptions
+
+Refactor the bound owner before the contract correction. Preserve its
+conditional allowance and all live measurement thresholds. Refuse illegal
+reader lengths and invalid gamma inputs. The v4 receipt states unit
+roundoff, actual tile counts, and each unproved arithmetic assumption.
+Complete the conditional derivation in the existing serving contract.
+Separate quantization error, fused epilogues, split lengths, and bfloat16
+boundaries. Keep native arithmetic unqualified because PTX does not supply
+the required local-error, reduction-depth, subnormal, or intermediate-domain contract.
+
 ## 2026-10-06 — issue 1005: actual T4 geometry reader coverage
 
 Add a default-off measurement reader for actual mixed-rate span-two TCQ and

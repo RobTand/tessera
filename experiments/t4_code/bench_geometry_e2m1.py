@@ -23,6 +23,7 @@ import argparse
 from fractions import Fraction
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import statistics
@@ -440,18 +441,174 @@ def run_gpu(args, grid):
         capture.close()
 
 
+def _rounding_gamma(steps, epsilon):
+    """Outward-rounded finite gamma_n; no first-order remainder is dropped."""
+    if type(steps) is not int or steps < 0:
+        raise ValueError("the rounding bound needs a non-negative integer operation count")
+    if not math.isfinite(epsilon) or not 0 < epsilon < 1:
+        raise ValueError("the rounding bound needs a finite precision term between zero and one")
+    if steps >= 1.0 / epsilon:
+        raise ValueError("the rounding bound needs steps * epsilon below one")
+    scaled = steps * epsilon
+    if scaled == 0:
+        return 0.0
+    return math.nextafter(scaled / (1.0 - scaled), math.inf)
+
+
+def dense_packed_fp4_operand_magnitude(rendered_x, weight):
+    """Conditional upper magnitude for the actual float32 operands.
+
+    Float32 operands convert exactly to float64. Their products remain
+    normal and finite in float64. ASSUMPTION: the positive GEMM has at most
+    2*K local errors, each at most float64 epsilon times its exact magnitude.
+    Inflate that conditional contraction and round its scalar value upward.
+    Grouped gates take the maximum over their actual expert segments.
+    """
+    if rendered_x.dim() != 2 or weight.dim() != 2:
+        raise ValueError("operand magnitude needs two-dimensional activation and weight tiles")
+    if rendered_x.dtype != torch.float32 or weight.dtype != torch.float32:
+        raise ValueError("operand magnitude needs the actual float32 reference operands")
+    if rendered_x.shape[1] != weight.shape[1]:
+        raise ValueError("activation and weight contraction lengths differ")
+    if rendered_x.shape[0] < 1 or weight.shape[0] < 1 or rendered_x.shape[1] < 1:
+        raise ValueError("operand magnitude needs at least one row and one contraction step")
+    if not torch.isfinite(rendered_x).all() or not torch.isfinite(weight).all():
+        raise ValueError("operand magnitude needs finite activation and weight tiles")
+    gamma = _rounding_gamma(2 * int(rendered_x.shape[1]), torch.finfo(torch.float64).eps)
+    if gamma >= 1:
+        raise ValueError("the float64 magnitude reduction cannot establish an upper bound")
+    measured = float((rendered_x.double().abs() @ weight.double().abs().T).max())
+    if not math.isfinite(measured):
+        raise ValueError("the operand magnitude reduction is not finite")
+    if measured == 0:
+        return 0.0
+    denominator = math.nextafter(1.0 - gamma, -math.inf)
+    upper = math.nextafter(measured / denominator, math.inf)
+    if not math.isfinite(upper):
+        raise ValueError("the operand magnitude upper bound is not finite")
+    return upper
+
+
+def _packed_fp4_bound_inputs(operand_magnitude, k):
+    """Validate the scalar contract independently of the diagnostic receipt."""
+    if type(k) is not int or k < 1:
+        raise ValueError("the derived packed FP4 bound needs the contraction length as a positive integer")
+    if k % 128:
+        raise ValueError("the packed reader contraction length must be a multiple of 128")
+    try:
+        magnitude = float(operand_magnitude)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("the derived packed FP4 bound needs a real operand magnitude") from exc
+    if not math.isfinite(magnitude) or magnitude < 0:
+        raise ValueError("the derived packed FP4 bound needs a finite non-negative operand magnitude")
+    return magnitude
+
+
+def _packed_fp4_conditional_terms(magnitude, k):
+    """Compute the existing envelope without native qualification policy."""
+    epsilon = torch.finfo(torch.float32).eps
+    native_steps, reference_steps = 2 * k + 3, 2 * k + 2
+    native_gamma = _rounding_gamma(native_steps, epsilon)
+    reference_gamma = _rounding_gamma(reference_steps, epsilon)
+    combined = math.nextafter(native_gamma + reference_gamma, math.inf)
+    coefficient = math.nextafter(combined / (1.0 - 2.0 * epsilon), math.inf)
+    atol = math.nextafter(coefficient * magnitude, math.inf) if magnitude else 0.0
+    if not math.isfinite(atol):
+        raise ValueError("the derived packed FP4 bound is not finite")
+    return epsilon, native_steps, reference_steps, native_gamma, reference_gamma, coefficient, atol
+
+
+def derive_packed_fp4_arithmetic_bound(operand_magnitude, *, k):
+    """Return the unchanged conditional allowance and its explicit assumptions.
+
+    The complete derivation is in section 17 of the serving contract.
+    Let e = 2^-23 and gamma(n) = n*e/(1-n*e). The diagnostic uses::
+
+        [gamma(2*K+3) + gamma(2*K+2)] * M_upper / (1-2*e)
+
+    ASSUMPTION: each native scaled product and sum obeys the local relative
+    error model, with at most 2*K errors along each output path. PTX does
+    not guarantee either fact. ASSUMPTION: both normal finite divisions
+    have error at most two ULPs. These are activation/896 and weight_global/896.
+    ASSUMPTION: the reference GEMM and magnitude GEMM obey their stated models.
+    ASSUMPTION: reference weight formation is exact and intermediate values
+    obey the relative models, without overflow or subnormal exceptions.
+
+    Both paths share one quantizer and return float32. No independent BF16
+    term applies here. The fused WINDOW epilogue has separate BF16 terms.
+    Neither finite outputs nor diagnostic agreement proves these assumptions.
+    """
+    magnitude = _packed_fp4_bound_inputs(operand_magnitude, k)
+    (epsilon, native_steps, reference_steps, native_gamma, reference_gamma,
+     coefficient, atol) = _packed_fp4_conditional_terms(magnitude, k)
+    return ({"atol": atol, "rtol": 0.0}, {
+        "schema": "tessera.packed_fp4_arithmetic_bound.v4",
+        "status": "conditional_diagnostic_only",
+        "arithmetic_qualified": False,
+        "native_arithmetic_qualified": False,
+        "intermediate_domain_established": False,
+        "missing_native_contract": "PTX supplies no scaled-product error inequality, accumulation depth bound, or subnormal rule for E2M1 MMA.",
+        "bound": "[gamma(2*K+3) + gamma(2*K+2)] * max output sum_k |ax||w| / (1-2*epsilon_fp32)",
+        "u_fp32": 2.0**-24,
+        "epsilon_fp32": epsilon,
+        "packed_reader_k_tiles": k // 128,
+        "native_rounding": "ASSUMPTION: each scaled product and sum has local relative error at most epsilon_fp32. Each output path has at most 2*K errors.",
+        "normalization_rounding": "ASSUMPTION: each activation/896 and weight_global/896 division has at most two ULPs of error. Each exact quotient is normal and finite.",
+        "reference_rounding": "ASSUMPTION: the actual float32 reference GEMM has at most 2*K product and sum errors. Each local relative error is at most epsilon_fp32.",
+        "magnitude_rounding": "ASSUMPTION: the positive float64 GEMM has at most 2*K local errors. Each local relative error is at most epsilon_fp64.",
+        "epilogue_rounding": "ASSUMPTION: the native float32 multiplication has local relative error at most epsilon_fp32. Its exact result is normal and finite.",
+        "weight_formation": "ASSUMPTION: the UE4M3 scales are finite and nonnegative. An exact float32 power-of-two weight global produces exact normal finite reference weights.",
+        "quantization_error": "excluded: both paths use the same represented activation codes, group scales, weight codes, and weight scales",
+        "derivation_owner": "docs/tessera-serving-and-moe-contract.md#17-packed-t4-arithmetic-contract-2026-10-07-issue-1007",
+        "native_steps": native_steps,
+        "reference_steps": reference_steps,
+        "native_gamma": native_gamma,
+        "reference_gamma": reference_gamma,
+        "k": k,
+        "coefficient": coefficient,
+        "operand_magnitude_upper": magnitude,
+        "atol": atol,
+        "rtol_is_zero_because": "the bound scales with the operand magnitude sum, not with the expected output",
+        "scope": "conditional normal finite intermediate arithmetic; intermediate domain not established by finite outputs; no overflow or subnormal qualification",
+        "bf16_terms": "none: one shared BF16 quantizer; float32 reference, accumulation and output",
+    })
+
+
+def check_packed_fp4_arithmetic(actual, expected, operand_magnitude, *, k):
+    """Reject diagnostic discrepancies without certifying the native model."""
+    if actual.dtype != torch.float32 or expected.dtype != torch.float32:
+        raise ValueError("the packed FP4 arithmetic gate needs float32 native and reference outputs")
+    if actual.dim() != 2 or actual.shape != expected.shape or actual.numel() == 0:
+        raise ValueError("the packed FP4 arithmetic gate needs equal nonempty two-dimensional output shapes")
+    if not torch.isfinite(actual).all() or not torch.isfinite(expected).all():
+        raise ValueError("the packed FP4 arithmetic gate needs finite native and reference outputs")
+    tolerances, receipt = derive_packed_fp4_arithmetic_bound(operand_magnitude, k=k)
+    # Float32 subtraction/threshold casting can admit an error just beyond
+    # the outward-rounded allowance. Compare the actual float32 values in
+    # float64 instead; significant near-boundary subtraction is exact there.
+    torch.testing.assert_close(actual.double(), expected.double(), **tolerances)
+    return receipt
+
+
 def run_correctness(args, grid, samples):
-    """Real packed-byte and native arithmetic oracles, bounded to 64 by 256."""
+    """Byte oracles and attested full stock-reference comparisons, 64 by 256."""
     from tessera.compact_prep import parse_compact_wire, prepare_a4_wire_compact
     from tessera.kernel_a4_wire import PreparedA4Wire, decode_wire_codes
     from tessera.kernel_a4 import a4_quantize_activation
     from tessera.stock import materialize_stock, stock_dequant, _nvfp4_values
     from tessera.unit_artifact import parse_unit_artifact
+    from tessera.fp4_arithmetic import check_packed_stock_arithmetic, stock_magnitude_upper
+    if not getattr(args, "arithmetic_attestation", ""):
+        raise ValueError("packed correctness requires --arithmetic-attestation for the complete stock comparison")
+    attestation = json.loads(Path(args.arithmetic_attestation).read_text())
+    physical = os.environ["HOST_NAME"] + ":cuda:0"
+    Path(args.out).mkdir(parents=True, exist_ok=True)
     if not args.packed_reader or grid.name != "E2M1x2":
         raise ValueError("correctness needs the explicit packed E2M1 pair reader")
     torch.backends.cuda.matmul.allow_tf32 = False
     gs = torch.tensor(896.0, dtype=torch.float32, device="cuda")
-    result = {"schema": "tessera.a4_packed_correctness.v1", "status": "running", "rows": []}
+    result = {"schema": "tessera.a4_packed_correctness.v2", "status": "running",
+              "native_arithmetic_qualified": False, "rows": []}
     structures = (STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE) if args.part == "all" else ((STRUCTURE_ROUTED_MOE,) if args.part == "routed" else (STRUCTURE_DENSE,))
     for q in args.qs:
         for structure in structures:
@@ -460,6 +617,7 @@ def run_correctness(args, grid, samples):
             for role in ("gate", "up"):
                 encoded = encode_linear(samples[role].repeat(2, 1).to("cuda"),
                     grid=grid, q256=q, **recipe_kwargs(recipe))
+                Path(args.out, f"unit-q{q}-{structure}-{role}.blob").write_bytes(encoded.blob)
                 unit = prepare_a4_wire_compact(parse_compact_wire(encoded.blob, device="cuda"))
                 parsed = parse_unit_artifact(encoded.blob, device="cpu")
                 stock = materialize_stock(parsed.unit, parsed.forests, parsed.code)
@@ -481,33 +639,74 @@ def run_correctness(args, grid, samples):
             dense = PreparedA4Wire([units[0]], gs)
             grouped = PreparedA4Wire([units[0], units[0], units[1]], gs)
             errors = []
+            magnitudes = []
+            gate_atols = []
+            comparisons = []
+            bound_template = None
             for m in (1, 16, 33, 65):
                 generator = torch.Generator(device="cuda").manual_seed(3100 + m)
                 x = torch.randn(m, 256, generator=generator, device="cuda").to(torch.bfloat16)
                 a, scale = a4_quantize_activation(x, gs)
                 nib = torch.stack((a & 15, a >> 4), dim=-1).reshape(m, 256)
                 rendered_x = _nvfp4_values(nib) * scale.float().repeat_interleave(16, dim=1) / gs
+                k = int(x.shape[1])
+                if k != int(weights[0].shape[1]) or k != int(rendered_x.shape[1]):
+                    raise ValueError(f"the gate contraction lengths differ: {k}")
+                magnitude = stock_magnitude_upper(float((rendered_x.double().abs() @ weights[0].double().abs().T).max()), k=k, report=attestation, device=attestation["device"]["device"], physical_device=physical, shape=(m, units[0].rows, k))
+
                 expected = rendered_x @ weights[0].T
                 actual = dense(x, out_dtype=torch.float32)
-                torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
-                errors.append(float((actual - expected).abs().max()))
+                bound_template = check_packed_stock_arithmetic(actual, expected, magnitude, k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical)
+                legacy_allowance, _ = derive_packed_fp4_arithmetic_bound(magnitude, k=k)
+                bad = actual.clone()
+                bad[0, 0] = expected[0, 0] + (bound_template["atol"] + legacy_allowance["atol"]) / 2
+                try:
+                    check_packed_stock_arithmetic(bad, expected, magnitude, k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical)
+                except ValueError as exc:
+                    bound_template["negative_control_refusal"] = str(exc)
+                else:
+                    raise AssertionError("actual-path wrong output passed the attested stock bound")
+                torch.save({"x": x.cpu(), "codes": a.cpu(), "scales": scale.cpu().view(torch.uint8), "rendered_x": rendered_x.cpu(), "weight": weights[0].cpu(), "actual": actual.cpu(), "expected": expected.cpu(), "negative_output": bad.cpu(), "bound": bound_template, "legacy_allowance": legacy_allowance}, Path(args.out) / f"dense-q{q}-{structure}-m{m}.pt")
+                errors.append(float((actual.double() - expected.double()).abs().max()))
+                magnitudes.append(float(magnitude))
+                gate_atols.append(bound_template["atol"])
+                comparisons.append({"kind": "dense", "M": m, "max_abs_error": errors[-1],
+                    "operand_magnitude_upper": magnitude, "atol": gate_atols[-1]})
                 if m >= 4:
                     offsets = torch.tensor([0, 3, 3, 5], dtype=torch.int32, device="cuda")
                     tokens = torch.tensor([2, 0, 2, 1, 3], dtype=torch.int32, device="cuda")
+                    segment_magnitudes = (
+                        stock_magnitude_upper(float((rendered_x[tokens[:3].long()].double().abs() @ weights[0].double().abs().T).max()), k=k, report=attestation, device=attestation["device"]["device"], physical_device=physical, shape=(3, units[0].rows, k)),
+                        stock_magnitude_upper(float((rendered_x[tokens[3:].long()].double().abs() @ weights[1].double().abs().T).max()), k=k, report=attestation, device=attestation["device"]["device"], physical_device=physical, shape=(2, units[1].rows, k)))
+                    grouped_magnitude = max(segment_magnitudes)
+
                     actual = grouped(x, expert_offsets=offsets, route_ids=tokens, num_routes=5, out_dtype=torch.float32)
                     expected = torch.cat((rendered_x[tokens[:3].long()] @ weights[0].T,
                                           rendered_x[tokens[3:].long()] @ weights[1].T))
-                    torch.testing.assert_close(actual, expected, rtol=3e-5, atol=3e-5)
-                    errors.append(float((actual - expected).abs().max()))
+                    segment_checks = [
+                        check_packed_stock_arithmetic(actual[:3], expected[:3], segment_magnitudes[0], k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical),
+                        check_packed_stock_arithmetic(actual[3:], expected[3:], segment_magnitudes[1], k=k, global_scale=units[1].global_scale, report=attestation, physical_device=physical)]
+                    bound_template = max(segment_checks, key=lambda item: item["atol"])
+                    torch.save({"x": x.cpu(), "tokens": tokens.cpu(), "offsets": offsets.cpu(), "actual": actual.cpu(), "expected": expected.cpu(), "segment_bounds": segment_checks}, Path(args.out) / f"grouped-q{q}-{structure}-{role}-m{m}.pt")
+                    errors.append(float((actual.double() - expected.double()).abs().max()))
+                    magnitudes.append(float(grouped_magnitude))
+                    gate_atols.append(bound_template["atol"])
+                    comparisons.append({"kind": "grouped", "M": m, "routes": 5, "max_abs_error": errors[-1],
+                        "operand_magnitude_upper": grouped_magnitude, "atol": gate_atols[-1]})
             row = {"q256": q, "structure": structure, "recipe": recipe.to_config(),
                 "codes_and_scales": "byte identical to materialize_stock", "native_max_abs_error": max(errors),
+                "derived_max_atol": max(gate_atols), "derived_atol_per_gate": gate_atols,
+                "operand_magnitude_upper_per_gate": magnitudes,
+                "arithmetic_comparisons": comparisons, "native_arithmetic_qualified": False,
+                "arithmetic_bound": {name: value for name, value in bound_template.items()
+                    if name not in ("atol", "operand_magnitude_upper")},
                 "M": [1, 16, 33, 65], "grouped": "three experts, one empty, distinct last expert, duplicate and reordered tokens",
                 "inputs": {name: {"shape": list(t.shape), "dtype": str(t.dtype),
                     "bytes": t.numel() * t.element_size()} for name, t in units[0].named_tensors()}}
             result["rows"].append(row)
             dump(Path(args.out) / "correctness.json", result)
             print(json.dumps(row), flush=True)
-    result["status"] = "passed"
+    result["status"] = "diagnostic_passed"
     dump(Path(args.out) / "correctness.json", result)
 
 
@@ -529,6 +728,7 @@ def main():
     ap.add_argument("--quality-structure", choices=(STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE), default=STRUCTURE_ROUTED_MOE)
     ap.add_argument("--packed-reader", action="store_true", help="Opt-in actual mixed TCQ and dense WINDOW reader")
     ap.add_argument("--correctness", action="store_true", help="Bounded byte and numerical native reader oracle")
+    ap.add_argument("--arithmetic-attestation", default="", help="Measured complete stock-reference arithmetic contract")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--power-s", type=float, default=0.1)
@@ -611,6 +811,12 @@ def main():
                         "inputs": {name: {"shape": list(t.shape), "dtype": str(t.dtype),
                             "bytes": t.numel() * t.element_size()} for name, t in unit.named_tensors()}}
                     if args.correctness:
+                        from tessera.stock import stock_dequant
+                        magnitude = dense_packed_fp4_operand_magnitude(
+                            samples["gate"][:1].float(), stock_dequant(reference))
+                        _, row["arithmetic_bound_cpu_preparation"] = derive_packed_fp4_arithmetic_bound(
+                            magnitude, k=int(wire.metadata.columns))
+                        row["arithmetic_bound_cpu_preparation"]["operand_source"] = "unquantized CPU sample; helper preparation only, not the GPU FP4 contraction"
                         from tessera.slicing import slice_unit
                         from tessera.unit_artifact import build_unit_artifact
                         shard = slice_unit(parsed, rows=(16, 32))
