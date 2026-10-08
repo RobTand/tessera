@@ -237,6 +237,23 @@ and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
 Preserve external paths through their active measurement lifetimes.
+
+## 2026-10-08 — rank identity in the graph witness (issue #1062)
+
+The witness reads each rank and world size from the real receipt fields.
+Duplicate ranks and incomplete worlds cannot establish aggregate phase evidence.
+Array order does not change rank identity.
+A valid single-rank receipt uses its top-level records.
+Capture shapes still establish no current graph rows or admission.
+
+## 2026-10-08 — separated witness observations (issue #1062)
+
+Supersedes the prior witness entry. Eager and capture observations stay separate. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join under rank scope. Schema moves to tessera.graph-phase-witness/2. Exit 0 names complete evidence, never admission.
+
+## 2026-10-08 — graph-phase witness over eager control and capture (issue #1062)
+
+The tool joins an eager control receipt and a graph capture receipt. Prefill rows stand stated when both sides name the same concrete shape. Capture never states decode rows. Replay runs no Python. The block carries facts and problems. It carries no admission verdict.
+
 ## 2026-10-08 — refresh the register-direct branch after the class build merge
 
 The register-direct branch now includes the accepted master base after pull request 1024 merged.
@@ -244,6 +261,12 @@ The bundle adapter reads the tile row constant from its shared geometry owner.
 The byte audit retains both the fragment checks and the projection checks.
 The register-direct CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
 This refresh does not establish a new graphics processor measurement or serving qualification.
+
+## 2026-10-08 — truthful graph witness contract (issue #1062)
+
+The census refused a CUDA-graph-only R768 serve as compiled. The serve used mode NONE with FULL_DECODE_ONLY. Its records kept concrete M64 capture shapes. Replay runs no Python. The latest record cannot attest current logical rows.
+
+--compiled now refuses mode NONE before any load. Real Torch compilation still requires shape-polymorphic M star records. Phase, owner, route, decoder, dtype and cell checks stay unchanged. No new admission follows from this change.
 
 ## 2026-10-08 — replay-free native matrix selection
 

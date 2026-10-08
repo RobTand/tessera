@@ -300,3 +300,129 @@ def test_a_compiled_census_keeps_its_symbolic_records():
     records = {phase: {_MODULE: _record("*")} for phase in CENSUS_PHASE_REGIMES}
     assert tool.phase_shape_problems(
         records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True) == []
+
+
+def test_a_compiled_census_refuses_concrete_capture_shapes():
+    """Graph-only capture keeps M64 in both phases (issue #1062)."""
+    tool = _tool()
+    records = _records(64, 64)
+    problems = tool.phase_shape_problems(
+        records, phase_regimes=CENSUS_PHASE_REGIMES, compiled=True)
+    assert problems and "shape-polymorphic" in problems[0], problems
+
+
+def _witness_map(prefill_m, decode_m):
+    """Concrete shapes per phase, mirroring the retained R768 eager/capture pair."""
+    out = {}
+    for phase, regime in CENSUS_PHASE_REGIMES.items():
+        m = prefill_m if regime == "batch" else decode_m
+        out[phase] = {_MODULE: {"shape": f"M{m}:N2048:K4096"}}
+    return out
+
+
+def _witness_receipt(maps, world=None):
+    """Minimal receipt holding per-rank record maps under rank scope."""
+    if world is None:
+        world = len(maps)
+    receipt = {"records": maps[0]}
+    if world > 1 or len(maps) > 1:
+        receipt["ranks"] = [{"rank": i, "world_size": world, "records": m}
+                            for i, m in enumerate(maps)]
+        receipt["topology"] = {"observed_world_size": world}
+    return receipt
+
+
+def _witness_pair(eager_sides, capture_sides, launches=7):
+    """The witness over two TP2-style receipts and a replay count."""
+    tool = _tool()
+    return tool.graph_phase_witness(
+        eager_receipt=_witness_receipt(eager_sides),
+        capture_receipt=_witness_receipt(capture_sides),
+        graph_launches=launches, phase_regimes=CENSUS_PHASE_REGIMES)
+
+
+def test_graph_witness_states_eager_rows_and_withholds_graph_rows():
+    """The retained R768 pair: eager M64/M1, capture M64/M64, seven replays."""
+    (decode,) = {p for p, r in CENSUS_PHASE_REGIMES.items() if r == "decode"}
+    (prefill,) = {p for p in CENSUS_PHASE_REGIMES if p != decode}
+    block, problems = _witness_pair([_witness_map(64, 1)] * 2, [_witness_map(64, 64)] * 2)
+    assert block["schema"] == "tessera.graph-phase-witness/2"
+    assert (block["eager_world"], block["capture_world"]) == (2, 2)
+    assert block["graph_launches"] == 7 and block["replay_observed"] is True
+    assert block["phases"][prefill]["eager_rows_stated"] is True
+    assert block["phases"][decode]["eager_rows_stated"] is True
+    assert all(owner["graph_states_rows"] is False
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+    assert all(name.startswith("rank") for phase in block["phases"].values() for name in phase["owners"])
+    assert problems == [], problems
+
+
+def test_graph_witness_withholds_graph_rows_on_equal_stale_shapes():
+    """A fully matching capture still credits no graph row (issue #1062)."""
+    block, problems = _witness_pair([_witness_map(64, 1)] * 2, [_witness_map(64, 1)] * 2)
+    assert all(owner["graph_states_rows"] is False
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+    assert all(phase["graph_rows_stated"] is False for phase in block["phases"].values())
+    assert problems == [], problems
+
+
+def test_graph_witness_yields_no_credit_without_replay():
+    block, problems = _witness_pair([_witness_map(64, 1)] * 2, [_witness_map(64, 64)] * 2, launches=0)
+    assert all(owner["eager_states_rows"] is False
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+    assert all(phase["eager_rows_stated"] is False for phase in block["phases"].values())
+    assert problems and "no graph replay observed" in problems[0], problems
+
+
+def test_graph_witness_blocks_claims_on_missing_rank1():
+    """A capture with world two but rank one only blocks every claim."""
+    tool = _tool()
+    eager = _witness_receipt([_witness_map(64, 1)] * 2)
+    capture = _witness_receipt([_witness_map(64, 64)], world=2)
+    block, problems = tool.graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert block["capture_world"] == 2
+    assert all(phase["eager_rows_stated"] is False for phase in block["phases"].values())
+    assert problems and "rank 1" in " ".join(problems), problems
+
+
+def test_graph_witness_refuses_duplicate_real_rank_identity():
+    eager = _witness_receipt([_witness_map(64, 1)] * 2)
+    eager["ranks"][1]["rank"] = 0
+    capture = _witness_receipt([_witness_map(64, 64)] * 2)
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems
+    assert all(not phase["eager_rows_stated"] for phase in block["phases"].values())
+    assert all(not owner["eager_states_rows"]
+               for phase in block["phases"].values() for owner in phase["owners"].values())
+
+
+def test_graph_witness_joins_reversed_real_ranks_by_identity():
+    eager = _witness_receipt([_witness_map(64, 1), _witness_map(128, 1)])
+    eager["ranks"].reverse()
+    capture = _witness_receipt([_witness_map(64, 64), _witness_map(128, 128)])
+    capture["ranks"].reverse()
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt=eager, capture_receipt=capture,
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems == []
+    prefill = next(phase for phase, regime in CENSUS_PHASE_REGIMES.items() if regime == "batch")
+    owners = block["phases"][prefill]["owners"]
+    assert owners[f"rank0/{_MODULE}"]["eager_shape"] == "M64:N2048:K4096"
+    assert owners[f"rank1/{_MODULE}"]["eager_shape"] == "M128:N2048:K4096"
+
+
+def test_graph_witness_reads_single_rank_top_level_records():
+    block, problems = _tool().graph_phase_witness(
+        eager_receipt={"records": _witness_map(64, 1)},
+        capture_receipt={"records": _witness_map(64, 64)},
+        graph_launches=7, phase_regimes=CENSUS_PHASE_REGIMES)
+    assert problems == []
+    assert (block["eager_world"], block["capture_world"]) == (1, 1)
+    assert all(phase["eager_rows_stated"] for phase in block["phases"].values())
+    assert all(not phase["graph_rows_stated"] for phase in block["phases"].values())
+
+
