@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-08 — public structure-spec harvest proof on a committed fixture
+
+The structure-spec harvest tests run the real rung-allowability CLI on a small
+committed fixture with two rungs over the four GLM TP2 shapes. The fixture
+carries no timings, so every joined measurement stays pending; the tests prove
+coordinate selection and never claim a GPU timing. The serialized no-flag table
+matches the equivalent structure-spec table on every mathematical, geometry,
+measurement, quality and admission field, ignoring only timestamps and explicit
+provenance fields. An altered dimension and a mismatched mode each leave the
+affected cells out of the table while the unrelated valid cells stay joined.
+Production code, parser controls, defaults, pins and wire bytes stay unchanged.
+
 ## 2026-10-08 — explicit A8S graph MNBT matrix harness
 
 The opt-in `ship-graph-mnbt-matrix` mode measures the authorized 18-cell matrix.
