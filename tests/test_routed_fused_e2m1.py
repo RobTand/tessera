@@ -740,9 +740,9 @@ def test_the_stack_refusals_name_their_reason(monkeypatch):
         gate, up, _replace(down, family="e4m3"))
     assert "window_bits" in fe.fused_routed_e2m1_supported(
         gate, _replace(up, window_bits=12), down)
-    monkeypatch.setenv(rf.ENV_TOGGLE, "0")
+    monkeypatch.setenv(fe.ENV_TOGGLE_E2M1, "0")
     assert "disabled" in fe.fused_routed_e2m1_supported(gate, up, down)
-    monkeypatch.delenv(rf.ENV_TOGGLE)
+    monkeypatch.delenv(fe.ENV_TOGGLE_E2M1)
     _, _, db = _blobs(448)
     unit = _replace(_unit(db[0]), rows=48)
     assert "multiple of 32" in fe.dense_role_reason(unit)
