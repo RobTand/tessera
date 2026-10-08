@@ -522,4 +522,5 @@ def test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes():
             assert record["padding_rows"] == 64 and record["direct_buffer_bytes"] == 0
         else:
             assert record["padding_rows"] == 0
-            assert record["direct_buffer_bytes"] == 64 * 32 * (4 if case.condition == "head" else 2)
+            assert record["direct_buffer_bytes"] == (
+                record["source_rows"] * record["source_cols"] * (4 if case.condition == "head" else 2))

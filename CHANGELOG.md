@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — native projection byte audit integration
+
+The projection audit selects the served recipe before it prices native tensors.
+All three weight families use the same 256-column fixture.
+T4 WINDOW roles use the shared row geometry and retain no TCQ trellis tables.
+The audit records source columns, so direct buffer checks derive bytes from the actual tensor shape.
+The source, wire, native resident and direct buffer checks stay separate.
+
 ## 2026-10-07 — independent eager snapshot for T4 graph evidence
 
 The graph helper copies the eager result before warmup, capture and replay.

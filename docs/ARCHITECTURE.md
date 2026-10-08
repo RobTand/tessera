@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+The projection byte audit selects `served_recipe` before native resident accounting.
+Its 256-column fixture satisfies the native T4 input-width rule and also covers T8 and T16.
+Native T4 roles carry arity, half width, window bits and the shared row tile.
+They retain no TCQ trellis tables. The audit preserves the wire and direct buffer checks.
+Direct buffer assertions use the recorded source rows and columns, not an incidental fixture width.
+
 Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
 `tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
 It includes explicit copies, padded shards, temporary buffers, and rank reserves.

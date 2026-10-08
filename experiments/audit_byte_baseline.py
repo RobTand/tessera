@@ -703,16 +703,15 @@ def _projection_cases():
 
 def projection_record(case: ProjectionCase) -> dict:
     """Audit padding and direct buffers with the existing wire and resident owners."""
-    from tessera.export import encode_linear_planes
+    from tessera.export import encode_linear_planes, served_recipe
     from tessera.export_serving import family_for
     from tessera.serving.dense_ownership import partition_members, source_padding_rows
     from tessera.serving.projection_routes import direct_consumer_resident_bytes, direct_consumer_weight
     from tessera.serving_parts import dense_resident_bytes_resident_mode
     from tessera.unit_artifact import parse_unit_artifact
     from tessera.window_geometry import TILE_ROWS
-    from tessera.decode import replay_table_bytes
 
-    source = torch.randn(64, 32, generator=torch.Generator().manual_seed(
+    source = torch.randn(64, 256, generator=torch.Generator().manual_seed(
         zlib.crc32(case.label.encode()) & 0xFFFF)).bfloat16()
     original = source.clone()
     prefix = "model.layers.0.self_attn."
@@ -730,24 +729,23 @@ def projection_record(case: ProjectionCase) -> dict:
     else:
         owner, role = prefix + "kv_b_proj", "kv_b_proj"
     weight = torch.nn.functional.pad(source, (0, 0, 0, padding)) if padding else source
-    exported, unit, forests = encode_linear_planes(weight.float(), grid=case.grid, q256=case.q256,
-                                                  name=case.label)
+    recipe = served_recipe(case.grid, case.q256, "dense")
+    exported, unit, _forests = encode_linear_planes(
+        weight.float(), grid=case.grid, q256=case.q256, name=case.label,
+        body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
     parsed = parse_unit_artifact(exported.blob)
     wire = int(parsed.manifest.terminals[0].exact_bytes)
     if wire != exported.exact_bytes:
         raise AssertionError("the wire accountant disagrees with the encoded region")
     family = family_for(case.grid)
+    layout = {"rows": exported.rows, "cols": exported.columns, "rates": unit.rates,
+              "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
     if family == "TESSERA_NVFP4":
-        layouts = [{"rows": exported.rows, "cols": exported.columns, "rates": unit.rates,
-                    "arity": parsed.grid.arity, "memory": parsed.code.memory, "half": unit.half,
-                    "lut_entries": int(unit.scale_lut.numel())}]
-        tables = sum(replay_table_bytes(forests[rate], parsed.code) for rate in set(unit.rates))
-    else:
-        layouts = [{"rows": exported.rows, "cols": exported.columns, "rates": unit.rates,
-                    "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}]
-        tables = 0
+        layout.update(arity=parsed.grid.arity, half=unit.half)
     native = dense_resident_bytes_resident_mode(family, exported.rows, exported.columns,
-        native_roles=layouts, trellis_table_bytes=tables)
+                                               native_roles=[layout])
     direct = 0
     if case.condition != "nope":
         costs = direct_consumer_resident_bytes(owner, family, exported.rows, exported.columns,
@@ -758,7 +756,8 @@ def projection_record(case: ProjectionCase) -> dict:
             raise AssertionError("the direct byte rule disagrees with the retained buffer")
     if not torch.equal(source, original):
         raise AssertionError("the audit changed its source tensor")
-    return {"source_rows": int(source.shape[0]), "padding_rows": padding, "encoded_rows": exported.rows,
+    return {"source_rows": int(source.shape[0]), "source_cols": int(source.shape[1]),
+            "padding_rows": padding, "encoded_rows": exported.rows,
             "wire_accounted_bytes": wire, "container_bytes": len(exported.blob),
             "native_resident_bytes": native, "direct_buffer_bytes": direct,
             "resident_bytes": native + direct, "wire_and_direct_buffer_bytes": wire + direct,
