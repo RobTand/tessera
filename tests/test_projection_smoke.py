@@ -188,3 +188,20 @@ def test_resident_footprint_counts_shared_tail_storage_once():
     assert footprint["bytes_by_device"] == {"cpu": 8 * 16 * 4}
     assert sum(row["unique_storage"] for row in footprint["tensors"]) == 1
 
+
+def test_projection_artifact_stays_inside_the_fp32_accumulation_domain(artifact):
+    from tessera.serving.bf16_route import prepare_tessera_bf16_module
+
+    maximum = torch.finfo(torch.float32).max
+    for item in smoke.read_inputs(artifact, 3):
+        module = prepare_tessera_bf16_module(item["parsed"]["T-16"], device="cpu")
+        values = module.decode().double()
+        scale = module.row_scale().double()
+        source = item["input"].double()
+        columns = source.shape[1]
+        magnitude = source.abs() @ values.abs().t()
+        accumulated = magnitude * (1 + smoke.fb.gamma(2 * columns + 2, smoke.fb.U_ACC))
+        effective = values.abs() * scale[:, None].abs()
+        assert bool((accumulated <= maximum).all()), "The BF16 fixture can overflow a valid FP32 dot before its epilogue"
+        assert bool((effective <= maximum).all()), "The canonical FP32 consumer buffer can overflow"
+        assert bool((accumulated * scale[None, :].abs() <= maximum).all()), "The BF16 fixture can overflow its FP32 epilogue"

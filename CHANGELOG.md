@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — keep the projection fixture inside the FP32 domain
+
+Map synthetic BF16 table words into the normal unit binade.
+Keep all sign and fraction bits; production grids stay unchanged.
+The derived domain regression failed before the fix.
+Both eager and graph device forwards pass on the finite bank.
+
 ## 2026-10-08 — use canonical factors in the projection oracle
 
 Use the current BF16 native decoder and keep its exact launch-pair check.

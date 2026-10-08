@@ -69,6 +69,9 @@ def _unit(rows, columns, grid, seed):
         state = ((state << 4) | bits[row].long()) & ((1 << 14) - 1)
         states[row] = state
     table = window_table(grid, 14, seed=0)
+    if grid.name == "BF16":
+        # Keep every sign and fraction bit in the normal unit binade.
+        table = ((table.to(torch.int32) & 0x807F) | 0x3F80).to(table.dtype)
     empty_byte = torch.empty(0, dtype=torch.uint8)
     empty_long = torch.empty(0, dtype=torch.int64)
     return EncodedUnit(
