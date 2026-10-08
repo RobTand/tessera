@@ -1,6 +1,24 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
+Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
+
+The native driver accepts repeated `--matrix-cell MNBT:L:C` arguments in the matrix mode.
+Each row names maximum batched tokens, prompt tokens and concurrency.
+The driver refuses duplicate rows, unsupported coordinates and selection in another mode.
+Without selection, the full eighteen-cell invocation stays unchanged.
+
+Selection retains only the required arms and their existing declared profiles.
+The unchanged timing client executes each selected cell once on the admitted server pair.
+Each cell retains one warmup, ten trials and the frozen prompt draw.
+Raw cell files remain separate; the aggregate records the explicit population, not its Cartesian product.
+Both ranks receive the same selection through the existing native lifecycle.
+Scope differences remain correctness refusals; no identity seal or scheduler is added.
+
+For the seven missing 4096 cells, selection omits the 2048 arm and its completed profiles.
+Earlier failed actions and their eleven measured rows remain partial evidence.
+The real entry CPU smoke names seven timing calls, the 4096 profiles and both serve ranks.
+It reads bounded samples from the actual artifact and imports both existing instruments.
+The 5400-second bound, caps, guards, image and numerical rules stay unchanged.
 
 The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
 The arms compare maximum batched tokens 2048 and 4096.

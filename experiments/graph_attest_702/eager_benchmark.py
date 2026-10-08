@@ -168,26 +168,95 @@ def require_timing(result):
                 raise Refused("Window4 timing request counts/stream incomplete")
 
 
-def require_matrix_timing(result):
-    """Exact 18-cell population: 2 MNBT arms each hold 9 timing cells."""
-    for length in MATRIX_LENS:
-        for conc in MATRIX_CONC:
-            label = f"host-L{length}-c{conc}"
-            cell = result["cells"].get(label)
-            if cell is None or cell.get("skipped") or not cell.get("complete"):
-                raise Refused(f"MNBT matrix incomplete cell at L{length} c{conc}")
-            if len(cell["trials"]) != MATRIX_TRIALS:
-                raise Refused(f"MNBT matrix trial count differs at L{length} c{conc}")
-            for trial, row in enumerate(cell["trials"], start=1):
-                if row["trial"] != trial or len(row["requests"]) != conc:
-                    raise Refused(f"MNBT matrix trial/concurrency differs at L{length} c{conc}")
-                for request in row["requests"]:
-                    usage = request.get("usage") or {}
-                    if (request.get("error") or usage.get("prompt_tokens") != length
-                            or usage.get("completion_tokens") != MATRIX_OUTPUT
-                            or not request["generation"]["done"]
-                            or request["completion_tokens"] != MATRIX_OUTPUT):
-                        raise Refused(f"MNBT matrix request incomplete at L{length} c{conc}")
+def parse_matrix_cells(raw):
+    """Validate explicit maximum-batched-token, length and concurrency rows."""
+    if raw is None:
+        return None
+    try:
+        rows = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError) as exc:
+        raise Refused("MNBT matrix selection must be a JSON list of triples") from exc
+    if not isinstance(rows, list) or not rows:
+        raise Refused("MNBT matrix selection must contain explicit cells")
+    seen = set()
+    result = []
+    for row in rows:
+        if (not isinstance(row, list) or len(row) != 3 or any(type(value) is not int for value in row)
+                or row[0] not in MATRIX_MNBTS or row[1] not in MATRIX_LENS or row[2] not in MATRIX_CONC):
+            raise Refused(f"MNBT matrix selection has an incompatible row: {row!r}")
+        key = tuple(row)
+        if key in seen:
+            raise Refused(f"MNBT matrix selection has a duplicate row: {row!r}")
+        seen.add(key)
+        result.append(list(row))
+    return result
+
+
+def matrix_arm_cells(config, arm):
+    rows = parse_matrix_cells(config.get("matrix_cells"))
+    if rows is None:
+        return [[length, conc] for length in MATRIX_LENS for conc in MATRIX_CONC]
+    return [[length, conc] for mnbt, length, conc in rows if mnbt == arm["max_batched"]]
+
+
+def require_matrix_timing(result, *, cells=None):
+    """Require the full default arm or exactly the selected cell population."""
+    expected = cells if cells is not None else [(length, conc) for length in MATRIX_LENS for conc in MATRIX_CONC]
+    if cells is not None and set(result["cells"]) != {f"host-L{length}-c{conc}" for length, conc in expected}:
+        raise Refused("MNBT matrix selected timing population differs")
+    for length, conc in expected:
+        label = f"host-L{length}-c{conc}"
+        cell = result["cells"].get(label)
+        if cell is None or cell.get("skipped") or not cell.get("complete"):
+            raise Refused(f"MNBT matrix incomplete cell at L{length} c{conc}")
+        if len(cell["trials"]) != MATRIX_TRIALS:
+            raise Refused(f"MNBT matrix trial count differs at L{length} c{conc}")
+        for trial, row in enumerate(cell["trials"], start=1):
+            if row["trial"] != trial or len(row["requests"]) != conc:
+                raise Refused(f"MNBT matrix trial/concurrency differs at L{length} c{conc}")
+            for request in row["requests"]:
+                usage = request.get("usage") or {}
+                if (request.get("error") or usage.get("prompt_tokens") != length
+                        or usage.get("completion_tokens") != MATRIX_OUTPUT
+                        or not request["generation"]["done"]
+                        or request["completion_tokens"] != MATRIX_OUTPUT):
+                    raise Refused(f"MNBT matrix request incomplete at L{length} c{conc}")
+
+
+def matrix_timing_argv(name, prompts, out, lens, conc):
+    return [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
+            "--prompts", str(prompts), "--out", str(out),
+            "--lens", *map(str, lens), "--conc", *map(str, conc), "--trials", "10", "--output", "128",
+            "--label-mode", "graph", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
+            "--events", str(Path(out).parent / "events.jsonl")]
+
+
+def selected_matrix_timing(adapter, arm, out, binding, prompts):
+    """Call the unchanged client once per cell, without a Cartesian replay."""
+    cells = matrix_arm_cells(adapter.config, arm)
+    if not cells:
+        raise Refused("MNBT matrix selection has no cells for this arm")
+    binding["timing_runs"] = []
+    timing = None
+    for length, conc in cells:
+        raw_path = out / f"timing-L{length}-c{conc}.json"
+        argv = matrix_timing_argv(arm["arm"], prompts, raw_path, [length], [conc])
+        binding["timing_runs"].append(dict(cells=[[length, conc]], argv=argv, output=str(raw_path)))
+        atomic_json(out / "invocation.json", binding)
+        with (out / "client.log").open("a") as stream:
+            adapter.command(argv, stdout=stream, tick=adapter.tick, limit=adapter.envelope.remaining())
+        result = json.loads(raw_path.read_bytes())
+        require_matrix_timing(result, cells=[(length, conc)])
+        if timing is None:
+            timing = dict(result, schema="tessera.ship_graph_selected_cells_timing.v1", cells={},
+                          config=dict(result["config"], lens=sorted({row[0] for row in cells}),
+                                      conc=sorted({row[1] for row in cells}), selected_cells=cells,
+                                      cartesian_population=False))
+        timing["cells"].update(result["cells"])
+        timing["ended_unix"] = result["ended_unix"]
+        atomic_json(out / "timing.json", timing)
+    require_matrix_timing(timing, cells=cells)
+    return timing
 
 
 def matrix_derived_prompts(rdv):
@@ -225,7 +294,7 @@ def matrix_derived_prompts(rdv):
                 derived_cells=sum(len(v) for v in derived_prompts.values()))
 
 
-def matrix_preflight(env, prompt_directory):
+def matrix_preflight(env, prompt_directory, plan_path=None):
     """D38 on the real matrix driver: imports, shapes and bounded reads only."""
     import tp2_recipe as recipe
     if env.get("WINDOW_MODE") != MATRIX_MODE:
@@ -267,11 +336,19 @@ def matrix_preflight(env, prompt_directory):
     document, _, _, _ = instrument.load_manifest(env.get("PROFILE_MANIFEST", str(PANEL / "manifest-decode.json")))
     cells = instrument.declared_cells(document)
     rendered = []
-    for name, mnbt in [("graph_mnbt2048_on", "2048"), ("graph_mnbt4096_on", "4096")]:
-        arm = recipe.pair_arm(name, dict(env, FABRIC="socket", EAGER="0", MAX_BATCHED=mnbt,
-                                         SPEC_JSON="null",
-                                         COMPILATION_JSON=json.dumps(recipe.GRAPH, separators=(",", ":")),
-                                         **MATRIX_LEVERS_ON), MATRIX_MODE)
+    arms = recipe.plan(plan_path or Path(__file__).with_name("plan-graph-mnbt-matrix.txt"),
+                       mode=MATRIX_MODE, matrix_cells=config.get("matrix_cells"))
+    timing_commands = []
+    for arm in arms:
+        name = arm["arm"]
+        selected = matrix_arm_cells(config, arm)
+        if config.get("matrix_cells") is None:
+            timing_commands.append(matrix_timing_argv(name, prompt_proof["path"], prompt_directory / "timing.json",
+                                                      MATRIX_LENS, MATRIX_CONC))
+        else:
+            for length, conc in selected:
+                timing_commands.append(matrix_timing_argv(name, prompt_proof["path"],
+                    prompt_directory / f"timing-L{length}-c{conc}.json", [length], [conc]))
         for rank in (0, 1):
             argv = recipe.serve(dict(config, profile_dir="/tmp/matrix-preflight-profiles"), arm, rank)
             rendered.append(dict(arm=name, rank=rank, argv=argv))
@@ -280,8 +357,13 @@ def matrix_preflight(env, prompt_directory):
             slot = argv.index("--max-num-seqs") + 1
             if argv[slot] != "8":
                 raise Refused("matrix preflight serve requires max-num-seqs 8")
+    timing_spec = importlib.util.spec_from_file_location("matrix_timing_inputs", CLIENT / "u4_speed_client.py")
+    timing_instrument = importlib.util.module_from_spec(timing_spec)
+    timing_spec.loader.exec_module(timing_instrument)
     return dict(window_mode=MATRIX_MODE, input_reads=reads, artifact_files=len(entries),
                 derived_prompt_trials=derived_prompts, profile_cells=cells, matrix_prompts=prompt_proof,
+                selected_timing_cells=[[arm["max_batched"], *cell] for arm in arms for cell in matrix_arm_cells(config, arm)],
+                profile_arms=[arm["arm"] for arm in arms], timing_commands=timing_commands,
                 rendered_arms=len(rendered), model_type=model_config.get("model_type"),
                 scope="CPU arguments/imports/input shapes and bounded real reads only; no GPU or served parity")
 
@@ -359,6 +441,8 @@ def probes(adapter, arm, peer):
         binding["lever_env"] = arm["lever_env"]
         binding["matrix"] = dict(mnbt=arm["max_batched"], lens=list(MATRIX_LENS), conc=list(MATRIX_CONC),
                                  trials=MATRIX_TRIALS, output=MATRIX_OUTPUT)
+    if matrix and config.get("matrix_cells") is not None:
+        binding["matrix"]["cells"] = matrix_arm_cells(config, arm)
     if graph_ship or eager_levers:
         binding["differences_from_EXL3"][2] = ("graph" if graph_ship else "eager") + "/socket/public-runtime labels and explicit per-arm lever env"
         binding["lever_env"] = arm["lever_env"]
@@ -367,26 +451,26 @@ def probes(adapter, arm, peer):
         derived = matrix_derived_prompts(adapter.rdv)
         binding["matrix_prompts"] = derived
         atomic_json(out / "invocation.json", binding)
-        argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
-                "--prompts", derived["path"], "--out", str(out / "timing.json"),
-                "--lens", "512", "2048", "8192", "--conc", "1", "4", "8", "--trials", "10", "--output", "128",
-                "--label-mode", "graph", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
-                "--events", str(out / "events.jsonl")]
+    if matrix and config.get("matrix_cells") is not None:
+        timing = selected_matrix_timing(adapter, arm, out, binding, derived["path"])
     else:
-        argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
-                "--prompts", config["prompts"], "--out", str(out / "timing.json"),
-                "--lens", "512", "2048", "8192", "--conc", "1", "--trials", "10", "--output", "128",
-                "--label-mode", "graph" if graph_ship else "eager", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
-                "--events", str(out / "events.jsonl")]
-    binding["timing_argv"] = argv
-    with (out / "client.log").open("w") as stream:
-        adapter.command(argv, stdout=stream, tick=adapter.tick, limit=adapter.envelope.remaining())
+        if matrix:
+            argv = matrix_timing_argv(name, derived["path"], out / "timing.json", MATRIX_LENS, MATRIX_CONC)
+        else:
+            argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
+                    "--prompts", config["prompts"], "--out", str(out / "timing.json"),
+                    "--lens", "512", "2048", "8192", "--conc", "1", "--trials", "10", "--output", "128",
+                    "--label-mode", "graph" if graph_ship else "eager", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
+                    "--events", str(out / "events.jsonl")]
+        binding["timing_argv"] = argv
+        with (out / "client.log").open("w") as stream:
+            adapter.command(argv, stdout=stream, tick=adapter.tick, limit=adapter.envelope.remaining())
+        timing = json.loads((out / "timing.json").read_bytes())
+        if matrix:
+            require_matrix_timing(timing)
+        else:
+            require_timing(timing)
     binding["timing_finished_unix"] = time.time()
-    timing = json.loads((out / "timing.json").read_bytes())
-    if matrix:
-        require_matrix_timing(timing)
-    else:
-        require_timing(timing)
     if eager_levers:
         prompt_path = Path(config["prompts"])
         outputs = output_hashes(timing, json.loads(prompt_path.read_bytes()), sha(prompt_path))

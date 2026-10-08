@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-10-08 — replay-free native matrix selection
+
+The existing driver accepts explicit maximum-batched-token, prompt-length and concurrency triples.
+Duplicate and unsupported rows refuse before preparation.
+Selection retains only the required arms and their declared profiles.
+Each selected cell uses the unchanged timing client, warmup, ten trials and prompt draw.
+Raw timing files remain separate; the aggregate records the selected population.
+The seven missing 4096 cells do not replay the 2048 arm or its profiles.
+The no-selection eighteen-cell invocation stays unchanged.
+Both ranks retain the existing lifecycle, image, caps, guards and 5400-second window.
+No default, numerical rule, serving gate or identity seal changes.
+
 ## 2026-10-08 — public structure-spec harvest proof on a committed fixture
 
 The structure-spec harvest tests run the real rung-allowability CLI on a small
