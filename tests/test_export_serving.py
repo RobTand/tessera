@@ -96,26 +96,30 @@ def _write(tmp_path, tensors, config=None):
     return src
 
 
-_FIXTURE_OUTPUT_SIZES = {
-    "language_model.model.layers.*.mlp.down_proj": [128],
-    "language_model.model.layers.*.mlp.gate_up_proj": [256, 256],
-    "language_model.model.layers.*.mlp.shared_experts.down_proj": [128],
-    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [64, 64],
-}
+def _fixture_output_sizes(*, hidden=HIDDEN, mlp_inter=2 * HIDDEN, shared_inter=MOE_INTER):
+    return {
+        "language_model.model.layers.*.self_attn.o_proj": [hidden],
+        "language_model.model.layers.*.mlp.down_proj": [hidden],
+        "language_model.model.layers.*.mlp.gate_up_proj": [mlp_inter, mlp_inter],
+        "language_model.model.layers.*.mlp.shared_experts.down_proj": [hidden],
+        "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [shared_inter, shared_inter],
+    }
 
 
-def _declare_fixture_geometry(monkeypatch):
-    """Use the fixture's own partition lists, and nothing else."""
+def _declare_fixture_geometry(monkeypatch, *, hidden=HIDDEN,
+                              mlp_inter=2 * HIDDEN, shared_inter=MOE_INTER):
+    """Declare the small fixture partitions without a production contract change."""
     import copy
     from tessera.serving.contract import construction_entry as live_entry
-    real = live_entry
+
+    sizes = _fixture_output_sizes(hidden=hidden, mlp_inter=mlp_inter, shared_inter=shared_inter)
 
     def _entry(architectures, contract=None):
-        entry = real(architectures) if contract is None else real(architectures, contract)
+        entry = live_entry(architectures) if contract is None else live_entry(architectures, contract)
         if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
             return entry
         entry = copy.deepcopy(entry)
-        entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
+        entry.setdefault("output_sizes", {}).update(sizes)
         return entry
 
     monkeypatch.setattr(export, "construction_entry", _entry)
@@ -328,13 +332,10 @@ def _selected_export_env(site, repo):
 
 
 def _run_selected_exporter(tmp_path, site, repo, out_name="out"):
-    """The real exporter main, in a subprocess, under the fixture install.
+    """Run the real exporter under the fixture install.
 
-    The driver binds only the ANCESTRY REFERENCE to the fixture's own
-    (main passes the genuine b770 constant, which no fixture can forge);
-    every check around it -- interpreter, install, projection, clean HEAD,
-    loaded origins, the receipt and its sealing -- is the production code
-    reached through ``export_serving.main`` itself.
+    The driver declares the fixture ancestry and miniature output partitions.
+    All identity checks, origin checks and receipt sealing use production code.
     """
     src = _write(tmp_path, _checkpoint(), _config())
     plan_path = tmp_path / "plan.json"
@@ -342,7 +343,7 @@ def _run_selected_exporter(tmp_path, site, repo, out_name="out"):
     out = tmp_path / out_name
     base = _fixture_ancestor(repo)
     driver = tmp_path / "driver.py"
-    sizes = dict(_FIXTURE_OUTPUT_SIZES)
+    sizes = _fixture_output_sizes()
     driver.write_text(
         "import sys\n"
         "from tessera import export_serving as export\n"

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — declare miniature export geometry
+
+Reuse the shared fixture size generator in exporter tests.
+Declare the tiny attention and MLP partitions instead of the real model dimensions.
+Keep the same geometry in the installed exporter fixture.
+The production geometry gate stays unchanged.
+
 ## 2026-10-08 — isolate the portable preflight test
 
 Run the portable construction preflight through its real CLI in a fresh process.

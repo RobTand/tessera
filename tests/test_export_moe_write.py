@@ -47,6 +47,8 @@ from tessera.moe_execution import ResearchSelectedMoeConfig
 
 export = importlib.import_module("tessera.export_serving")
 
+from test_export_serving import _declare_fixture_geometry
+
 HIDDEN, MOE_INTER, EXPERTS = 128, 64, 4
 LAYER = "model.language_model.layers.1"
 STACK = f"{LAYER}.mlp.experts"
@@ -55,9 +57,7 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the encoder is a GPU job")
 
 
-# Rungs no routed cell attests (the E4M3 cells carry 832..1088 since contract
-# v39, the BF16 cells 1024), so the ordinary gate refuses and only the research
-# block admits them.
+# These research rungs have no serving cell.
 @pytest.mark.parametrize("grid,q256", [("E4M3", 1536), ("BF16", 1792)])
 def test_research_selected_export_gate_accepts_reader_range_without_publishing_a_cell(grid, q256):
     from tessera.control import grid_for_name
@@ -268,6 +268,8 @@ def _write(tmp_path: Path, tensors, config=None) -> Path:
 
 def _export(tmp_path, monkeypatch, tensors, plan, *extra, config=None):
     """Run the exporter over ``tensors`` with ``plan``; return the out dir."""
+    _declare_fixture_geometry(monkeypatch, hidden=HIDDEN,
+                              mlp_inter=2 * HIDDEN, shared_inter=MOE_INTER)
     src = _write(tmp_path, tensors, config)
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", "1024",

@@ -50,6 +50,8 @@ import box_artifacts
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
 
+from test_export_serving import _declare_fixture_geometry
+
 export = importlib.import_module("tessera.export_serving")
 
 HIDDEN, MOE_INTER, EXPERTS = 128, 64, 4
@@ -547,6 +549,8 @@ def test_the_exported_ignore_names_what_vllm_builds(tmp_path, monkeypatch):
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
                                      "--grid", "E4M3", "--q256", "1024",
                                      "--passthrough-unrouted"])
+    _declare_fixture_geometry(monkeypatch, hidden=HIDDEN,
+                              mlp_inter=3 * HIDDEN, shared_inter=MOE_INTER)
     export.main()
 
     written = json.loads((out / "config.json").read_text())["quantization_config"]
@@ -626,6 +630,8 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out),
                                      "--grid", "E4M3", "--q256", "1024",
                                      "--passthrough-unrouted"])
+    _declare_fixture_geometry(monkeypatch, hidden=HIDDEN,
+                              mlp_inter=3 * HIDDEN, shared_inter=MOE_INTER)
     export.main()
 
     written = json.loads((out / "config.json").read_text())["quantization_config"]
