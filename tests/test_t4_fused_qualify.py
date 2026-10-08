@@ -372,3 +372,20 @@ def test_empty_t8_receipt_needs_actual_exclusion_evidence(tmp_path, plan):
     packet.write_text(json.dumps({"cells": [], "byte_plan": [plan]}))
     with pytest.raises(ValueError):
         qual.load_t8_comparison(packet)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="graph output lifetime requires a CUDA device")
+def test_capture_keeps_eager_snapshot_independent_from_persistent_output():
+    buffer = torch.zeros((1, 4), dtype=torch.bfloat16, device="cuda")
+
+    def mutate_persistent_output():
+        buffer.add_(1)
+        return buffer
+
+    eager, graph, replayed, equal = qual.capture_callable(mutate_persistent_output)
+    assert torch.equal(eager, torch.ones_like(eager))
+    assert not torch.equal(eager, replayed)
+    assert equal is False
+    graph.replay()
+    torch.cuda.synchronize()
+    assert torch.equal(eager, torch.ones_like(eager))

@@ -143,3 +143,43 @@ def test_paired_netdata_uses_the_same_stable_box_endpoints(monkeypatch):
     assert calls == [address for _, address in module.BOX_ENDPOINTS]
     assert set(result) == {host for host, _ in module.BOX_ENDPOINTS}
     assert all(not ipaddress.ip_address(address).is_loopback for address in calls)
+
+
+@pytest.mark.parametrize("memory_gib,kill_required", [(3, False), (1, True)])
+def test_explicit_d30_policy_uses_two_gib_floor_and_pb_cleanup(tmp_path, monkeypatch, memory_gib, kill_required):
+    module = action(monkeypatch)
+    policy = {"measured_cpu_peak_bytes": 2557706240,
+              "unmeasured_gpu_overhead_bytes": 1 << 30, "deadline_s": 600}
+    pressure = iter([(16 << 30, 0), (memory_gib << 30, 0)])
+    clock = iter([0, 1])
+    monkeypatch.setattr(module.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(module.time, "sleep", lambda _: None)
+    signals = []
+    monkeypatch.setattr(module.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(module, "owned_cleanup", lambda _: pytest.fail("PB owns container cleanup"))
+    class Child:
+        pid = 424242
+        returncode = 0
+        polls = iter([None, None, None]) if kill_required else iter([None, 0, 0])
+        def poll(self):
+            return next(self.polls)
+        def wait(self, timeout):
+            if timeout == 10:
+                raise module.subprocess.TimeoutExpired("owned", timeout)
+            assert timeout == 5
+            return -9
+    call = lambda: module.run_direct_arm([], {}, None, tmp_path / "arm", tmp_path / "guard", policy=policy,
+        pressure=lambda: next(pressure), popen=lambda *args, **kw: Child())
+    if kill_required:
+        with pytest.raises(RuntimeError, match="bound reached"):
+            call()
+        assert signals == [(424242, module.signal.SIGTERM), (424242, module.signal.SIGKILL)]
+    else:
+        assert call() == 0
+        assert not signals
+    record = json.loads((tmp_path / "guard").read_text())
+    assert record["floor_bytes"] == 2 << 30
+    assert record["start_bytes"] == 2557706240 + (4 << 30)
+    assert record["gpu_overhead_measured"] is False
+    assert json.loads((tmp_path / "arm-cleanup.json").read_text())["state"].startswith("PrismaBuild")
+

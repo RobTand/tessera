@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-06T18:21:59Z",
+ "generated": "2026-10-07T19:06:23Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5320,7 +5320,7 @@
     "title": "Restore Torch-free campaign builder digest import context"
    },
    "2195": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Project authenticated acquisition requests through existing PB plan, staged readset and merge"
    },
    "2196": {
@@ -5504,15 +5504,15 @@
     "title": "[P1] Complete remaining header and qname owner slice with real consumer proof"
    },
    "2236": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix: the io engine seals on interpreters without CPython build-time fcntl/os names (1896)"
    },
    "2237": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Count and stamp real-vs-synthetic multimodal calibration composition"
    },
    "2238": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse a joint plan without its campaign chain, by name (#1293)"
    },
    "2239": {
@@ -5540,7 +5540,7 @@
     "title": "[P2] Census caller writes its request file before refusing an output inside the checkpoint; caller key rides inside the producer block"
    },
    "2244": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Synthetic-only calibration composition stamps the requested count and unlabeled row provenance"
    },
    "2245": {
@@ -5580,7 +5580,7 @@
     "title": "Integrate approved byte/text digest routing slice (#2234; epic #1301 stays open)"
    },
    "2253": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix: bind acquisition deferred domains to authenticated checkpoint menus (Closes #2195)"
    },
    "2254": {
@@ -5684,7 +5684,7 @@
     "title": "[P1] test_dsv4_real_topology_passes_the_gate_end_to_end fails when transformers' native deepseek_v4 was imported first in the same worker"
    },
    "2277": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Qualify sparse T8 catalog bridge for the retained producer (#2271)"
    },
    "2278": {
@@ -5744,7 +5744,7 @@
     "title": "[P1] Skip expert-wire bundling when the allocation keeps all experts in BF16"
    },
    "2290": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Cover paired-trade refusal in measured-runtime allocation acceptance"
    },
    "2291": {
@@ -5916,7 +5916,7 @@
     "title": "[P1] D41: require measured kernel-bound rung allowability for production allocation"
    },
    "2329": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Research feasibility of equal-byte per-block Tessera allocation"
    },
    "233": {
@@ -5960,7 +5960,7 @@
     "title": "Integration batch 45: #2332 CPU adjoint preflight and #2336 final-vocabulary KL owner reuse (one bundle)"
    },
    "2339": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Bind Stage A produced-output launch context without input residency"
    },
    "234": {
@@ -5972,7 +5972,7 @@
     "title": "[P1] D41: delegate v1/v2 body-aware table intake to canonical producer"
    },
    "2341": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Bind produced-output queue without input residency"
    },
    "2342": {
@@ -6020,7 +6020,7 @@
     "title": "Integration batch 51: consolidate digest test nodes, preserving all 618 outcomes (#2349), on main"
    },
    "2352": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] RTN FP8 helper returns NaN for finite FP16 zero and tiny rows"
    },
    "2353": {
@@ -6028,32 +6028,204 @@
     "title": "[P2] D41 tests need the canonical rung-allowability producer: composed suites on the pinned interpreter fail without it"
    },
    "2354": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fix FP16 NaN in the RTN FP8 helper via an FP32 intermediate roundtrip"
    },
    "2355": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Consolidate the allocator partition and admitted-cost byte SHA consumers"
    },
    "2356": {
-    "state": "OPEN",
-    "title": "Integration batch 55: #2341 produced-output queue binding and #2236 io-engine seal (one bundle)"
+    "state": "CLOSED",
+    "title": "Integration batch 55: #2236 io-engine seal and #2357 allocator byte digests (one bundle, re-cut without #2341)"
+   },
+   "2357": {
+    "state": "CLOSED",
+    "title": "Reuse digests.bytes_sha256hex for the two allocator raw byte digests"
+   },
+   "2358": {
+    "state": "CLOSED",
+    "title": "Integration batch 57: allocator raw byte digests reuse bytes_sha256hex (#2357), stacked on batch 55"
+   },
+   "2359": {
+    "state": "CLOSED",
+    "title": "[P1] Share the two GLM MTP capture pretty-byte publication recipes"
    },
    "236": {
     "state": "CLOSED",
     "title": "[P1] Grouped UCB underprices correlated AURA uncertainty"
    },
+   "2360": {
+    "state": "CLOSED",
+    "title": "Share the two GLM MTP capture pretty-byte recipes"
+   },
+   "2361": {
+    "state": "CLOSED",
+    "title": "Integration batch 63: share the two GLM MTP capture pretty-byte recipes (#2360), on main"
+   },
+   "2362": {
+    "state": "CLOSED",
+    "title": "Cover the paired-trade refusal in measured-runtime allocation (#2290)"
+   },
+   "2363": {
+    "state": "CLOSED",
+    "title": "Integration batch 61: #2341 produced-output queue binding, corrected head 4e8b7f31"
+   },
+   "2364": {
+    "state": "OPEN",
+    "title": "[P1] Join canonical performant rung classes to allocator and PACT"
+   },
+   "2365": {
+    "state": "CLOSED",
+    "title": "Integration batch 65: #2362 paired-trade coverage and #2237 multimodal calibration stamps, stacked on batch 63"
+   },
+   "2366": {
+    "state": "CLOSED",
+    "title": "Integration batch 66: #2253 authenticated control identity and #2238 joint-plan campaign chain, stacked on batch 65"
+   },
+   "2367": {
+    "state": "CLOSED",
+    "title": "Research: close equal-byte block-allocation recipe with two negative contrasts"
+   },
+   "2368": {
+    "state": "CLOSED",
+    "title": "Bound paired-rate-trade diagnostic retention to summaries"
+   },
+   "2369": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse E2M1 values in RTN and MXFP4 source decode"
+   },
    "237": {
     "state": "OPEN",
     "title": "[P2] Connect joint AURA and prefill-aware selection for overlapping Tessera families"
+   },
+   "2370": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse E2M1 values in RTN and MXFP4 source decode"
+   },
+   "2371": {
+    "state": "OPEN",
+    "title": "[P1] Declare explicit GLM projection source owners"
+   },
+   "2372": {
+    "state": "CLOSED",
+    "title": "Integration batch 67: research block-allocation harness with two negative contrasts (#2367)"
+   },
+   "2373": {
+    "state": "CLOSED",
+    "title": "Integration batch 71: reuse E2M1 values in RTN and MXFP4 source decode (#2370), on main"
+   },
+   "2374": {
+    "state": "CLOSED",
+    "title": "Integration batch 69: bound paired-trade diagnostic retention to summaries (#2368), stacked on batch 68"
+   },
+   "2375": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the AURA JSON profile and honor D32 for dirty source"
+   },
+   "2376": {
+    "state": "CLOSED",
+    "title": "Integration batch 72: research block-allocation harness, corrected head (#2367), stacked on batch 71"
+   },
+   "2377": {
+    "state": "CLOSED",
+    "title": "Bounded, read-only head walk measurement mode (#1492, #1247)"
+   },
+   "2378": {
+    "state": "CLOSED",
+    "title": "Reuse the AURA manifest profile and honor dirty-source development mode"
+   },
+   "2379": {
+    "state": "CLOSED",
+    "title": "Integration batch 73: reuse the AURA manifest profile and honor dirty-source development mode (#2378)"
    },
    "238": {
     "state": "CLOSED",
     "title": "Reuse shared anchored shapes for Tessera curve replay"
    },
+   "2380": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the E2M1 owner in the MXFP4 widening table"
+   },
+   "2381": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch74: PR #2368 (#2286) and PR #2382 (#2380)"
+   },
+   "2382": {
+    "state": "CLOSED",
+    "title": "Reuse shared E2M1 positive grid in MXFP4 widening table"
+   },
+   "2383": {
+    "state": "CLOSED",
+    "title": "[P3] Reuse the existing safetensors fixture writer in allocation tests"
+   },
+   "2384": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the text digest owner in shipcard model identity"
+   },
+   "2385": {
+    "state": "CLOSED",
+    "title": "Reuse test_footprint safetensors writer in allocator tests"
+   },
+   "2386": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch75: PR #2377, #2385 and #2387"
+   },
+   "2387": {
+    "state": "CLOSED",
+    "title": "Reuse digests.text_sha256hex for the two shipcard canonical-text digests"
+   },
+   "2388": {
+    "state": "OPEN",
+    "title": "[P3] Reuse the safetensors fixture owner in byte-budget tests"
+   },
+   "2389": {
+    "state": "OPEN",
+    "title": "Reuse test_footprint writer in byte-budget fixture"
+   },
    "239": {
     "state": "CLOSED",
     "title": "[P1] Coordinator recovery can mistake a helper exit for an ownership mismatch"
+   },
+   "2390": {
+    "state": "CLOSED",
+    "title": "[P3] Reuse the safetensors fixture owner in native route tests"
+   },
+   "2391": {
+    "state": "CLOSED",
+    "title": "Nested-rotary meta-skeleton test owns its DSv4 import process (#2279)"
+   },
+   "2392": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch76: PR #2391 (nested-rotary own_process, #2279)"
+   },
+   "2393": {
+    "state": "CLOSED",
+    "title": "Reuse test_footprint writer in native route-histogram fixture"
+   },
+   "2394": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the byte digest owner for shipcard config identity"
+   },
+   "2395": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch77: PR #2393 (native route-histogram fixture writer, #2390)"
+   },
+   "2396": {
+    "state": "CLOSED",
+    "title": "Shipcard config digest calls the bytes owner"
+   },
+   "2397": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch78: PR #2396 (shipcard config digest, #2394)"
+   },
+   "2398": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse digest owners in forward recovery readers"
+   },
+   "2399": {
+    "state": "CLOSED",
+    "title": "Reuse digest owners at forward-recovery sites"
    },
    "24": {
     "state": "CLOSED",
@@ -6063,9 +6235,69 @@
     "state": "CLOSED",
     "title": "Recover completed helpers across process-exit races"
    },
+   "2400": {
+    "state": "OPEN",
+    "title": "[P1] Price and export explicitly selected GLM projection owners"
+   },
+   "2401": {
+    "state": "CLOSED",
+    "title": "[P1] Reuse the signed MXFP4 table in streaming decode"
+   },
+   "2402": {
+    "state": "CLOSED",
+    "title": "[P3] Reuse the safetensors fixture owner in read-traffic tests"
+   },
+   "2403": {
+    "state": "CLOSED",
+    "title": "Reuse shared E2M1 signed table in streaming MXFP4 decode"
+   },
+   "2404": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch79: PR #2403 (streaming MXFP4 signed table, #2401)"
+   },
+   "2405": {
+    "state": "CLOSED",
+    "title": "Integration vehicle batch80: PR #2399 (forward-recovery digest owners, #2398)"
+   },
+   "2406": {
+    "state": "OPEN",
+    "title": "[P1] Complete canonical consumer scope and exact proposal joins"
+   },
+   "2407": {
+    "state": "OPEN",
+    "title": "Integration vehicle batch81: PR #2371 (explicit GLM projection source owners, Refs #2400)"
+   },
+   "2408": {
+    "state": "OPEN",
+    "title": "[P2+] Read kernel-build serving cell keys"
+   },
+   "2409": {
+    "state": "OPEN",
+    "title": "[P2+] Derive Tessera export wiring and partitions from model metadata"
+   },
    "241": {
     "state": "CLOSED",
     "title": "Add joint AURA scoring and prefill-aware discrete allocation"
+   },
+   "2410": {
+    "state": "OPEN",
+    "title": "[P2+] Add day-zero model intake and a new-model runbook"
+   },
+   "2411": {
+    "state": "OPEN",
+    "title": "[P1] D50 repo-owned model-agnostic quality and ship gates"
+   },
+   "2412": {
+    "state": "OPEN",
+    "title": "[P1] D50 repo-owned G3 v2 and small task suite"
+   },
+   "2413": {
+    "state": "OPEN",
+    "title": "[P1] D50 single ship-gates job and model-agnostic shipcards"
+   },
+   "2414": {
+    "state": "OPEN",
+    "title": "Integration vehicle batch82: PR #2371 at a47c6c45 (explicit GLM projection source owners, Refs #2400)"
    },
    "242": {
     "state": "CLOSED",
@@ -9486,24 +9718,164 @@
     "title": "Nothing versions the encoder, so a byte-moving encoder change passes the merge guard and a cache resume"
    },
    "1010": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Impacted-test selector: module glob.glob(pattern) resolves no directory and glob.iglob is not recognised"
    },
    "1011": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Impacted-test selector does not follow a link reached only through a wildcard directory component"
+   },
+   "1012": {
+    "state": "CLOSED",
+    "title": "Add the #685 baseline comparison consumer for #688 timing panels"
+   },
+   "1013": {
+    "state": "CLOSED",
+    "title": "[P2] Resolve module glob.glob/iglob bases and follow links through wildcard components (#1010, #1011)"
+   },
+   "1014": {
+    "state": "OPEN",
+    "title": "[P3] Triage the listed unnameable-base directory reads and lower the pinned ceiling"
+   },
+   "1015": {
+    "state": "OPEN",
+    "title": "[P2] Isolate vLLM stub state in the compile-identity co-run population"
+   },
+   "1016": {
+    "state": "CLOSED",
+    "title": "bench: express G2 joined geometry and preflight its before profiles"
+   },
+   "1017": {
+    "state": "OPEN",
+    "title": "[P1] Repair issue 875 native qualification pytest runtime"
+   },
+   "1018": {
+    "state": "OPEN",
+    "title": "[P1] Price D41 by measured geometry classes and report exact release-unit coverage"
+   },
+   "1019": {
+    "state": "CLOSED",
+    "title": "[P1] Measure missing pure near-eight real dense projection shapes"
    },
    "102": {
     "state": "CLOSED",
     "title": "The served-KL harness cannot reach any decode-only kernel (M=1); #83's two-arm KL measured the prefill path instead"
    },
+   "1020": {
+    "state": "OPEN",
+    "title": "[P2] Dense KDA benchmark omits replicated projection rows"
+   },
+   "1021": {
+    "state": "CLOSED",
+    "title": "[P1] Publish canonical structure-scoped performant rung policy"
+   },
+   "1022": {
+    "state": "CLOSED",
+    "title": "[P2+] Correct the down input order in the aligned rung oracle"
+   },
+   "1023": {
+    "state": "CLOSED",
+    "title": "Add the default-off T16 decode-once prefill prototype"
+   },
+   "1024": {
+    "state": "OPEN",
+    "title": "Cut routed WINDOW serving over to required expert classes"
+   },
+   "1025": {
+    "state": "CLOSED",
+    "title": "Fix KDA benchmark to full 12576-row shape (#1020)"
+   },
+   "1026": {
+    "state": "CLOSED",
+    "title": "Skip increment publish test where jsonschema is missing"
+   },
+   "1027": {
+    "state": "CLOSED",
+    "title": "D41 v2: register_direct decoder kind, per-shape rung grids, serving-qualification hold"
+   },
+   "1028": {
+    "state": "OPEN",
+    "title": "Apply T16 row scales in FP32 epilogues"
+   },
+   "1029": {
+    "state": "OPEN",
+    "title": "Register-direct routed T-8 kernel, stage 1: kernel, fragment wire and build_layer (not selected)"
+   },
    "103": {
     "state": "CLOSED",
     "title": "ActivationSource cannot record a trailing refit objective, so no exportable artifact can carry one"
    },
+   "1030": {
+    "state": "CLOSED",
+    "title": "[P3] Lower the unnamed directory read ceiling to the measured 114 modules and 167 sites (#1014)"
+   },
+   "1031": {
+    "state": "OPEN",
+    "title": "[P2] test_serving_moe_bf16_tp1_intake fails after a vllm stub test in the same process (PR 1024 branch)"
+   },
+   "1032": {
+    "state": "OPEN",
+    "title": "Serve native fused T4 WINDOW weights across dense and routed owners"
+   },
+   "1033": {
+    "state": "OPEN",
+    "title": "Route explicitly selected GLM attention, router, and vision projections"
+   },
+   "1034": {
+    "state": "CLOSED",
+    "title": "Add T-4 route admission with CPU proof"
+   },
+   "1035": {
+    "state": "OPEN",
+    "title": "Add T-4 route admission with CPU proof"
+   },
+   "1036": {
+    "state": "OPEN",
+    "title": "[P2+] Store the serving image and use kernel-build cell keys"
+   },
+   "1037": {
+    "state": "OPEN",
+    "title": "[P2+] Compute offline per-rank residency peaks before load"
+   },
+   "1038": {
+    "state": "OPEN",
+    "title": "[P2] D41 sweep reads hardcoded GLM shapes, not the model profile"
+   },
+   "1039": {
+    "state": "CLOSED",
+    "title": "Add --structure-spec to D41 table tool"
+   },
    "104": {
     "state": "CLOSED",
     "title": "No allocated checkpoint can serve the window-GEMV lane: every one carries a rate outside SUPPORTED_RATES"
+   },
+   "1040": {
+    "state": "OPEN",
+    "title": "Restore T-16 routed cells to served-census R1024 pin (contract v59)"
+   },
+   "1041": {
+    "state": "OPEN",
+    "title": "Compute offline per-rank residency peaks before load"
+   },
+   "1042": {
+    "state": "OPEN",
+    "title": "[P1] Pool CPU venv lacks jsonschema, so the rung-allowability gate test fails on x86"
+   },
+   "1043": {
+    "state": "CLOSED",
+    "title": "[P2] Refuse a loose structure spec and skip a measurement taken at another geometry (#1038)"
+   },
+   "1044": {
+    "state": "OPEN",
+    "title": "[P2+] source_dependencies link test collides on shared /tmp and blocks the CPU green proof"
+   },
+   "1045": {
+    "state": "OPEN",
+    "title": "Admit run table [3] on base routed T-8 cells (contract v59)"
+   },
+   "1046": {
+    "state": "OPEN",
+    "title": "Store the serving image and portable cell keys"
    },
    "105": {
     "state": "CLOSED",
@@ -13146,7 +13518,7 @@
     "title": "[P1] Select directory-wide non-Python inputs in the impacted-test selector"
    },
    "925": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] GLM-5.3 prefill: fuse SP-aware mHC pre/post (#783)"
    },
    "926": {

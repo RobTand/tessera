@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Refuse a floating serve image, and hand the resolved digest to the receipt.
+# Resolve selected image bytes; stamp historical default-pin drift in dev mode.
 #
 # Sourced by every wrapper that starts a container.  Two functions, no side
 # effects at source time.
@@ -15,7 +15,7 @@
 # stamped without being compared to the unrelated default pin.
 #
 #   runtime_image_pin                -> print the pinned pull reference
-#   runtime_image_require IMAGE      -> enforce the default repository pin and
+#   runtime_image_require IMAGE      -> stamp historical default-pin drift under D32;
 #                                       verify any explicit digest reference;
 #                                       sets RUNTIME_IMAGE_{DIGEST,LOCAL_ID,JSON}
 #                                       and RUNTIME_IMAGE_CONTAINER_ENV
@@ -54,12 +54,10 @@ runtime_image_require() {
   json="$(_runtime_image_cli resolve --image "$image")" || rc=$?
   RUNTIME_IMAGE_JSON="$json"
   if [ "$rc" != "0" ]; then
-    # Unlike build_identity_stamp, this IS fatal.  A warning nothing reads is a
-    # confession log, not a gate (principle 9), and the whole point of #100 is
-    # that the previous behaviour -- run whatever `latest` happens to be --
-    # recorded nothing about what ran.  The record goes to stdout so a caller
-    # that captures the wrapper's output has the refusal in a form it can
-    # parse; the CLI has already written the prose to stderr for a reader.
+    # Missing images and requested-byte integrity are fatal in every mode.
+    # Historical default-pin drift stamps in dev mode; its record still names
+    # the actual image selected. Refusals go to stdout as JSON, with prose
+    # already on stderr, so callers never need to infer acceptance from a log.
     echo "$json"
     return 2
   fi

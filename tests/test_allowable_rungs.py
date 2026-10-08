@@ -95,15 +95,26 @@ def test_the_bf16_rule_admits_every_rate_the_dense_launch_reads(contract):
         assert {k: v for k, v in item.items() if k != "q256"} == rule["wire"]
 
 
+def _bf16_routed_cells(contract):
+    """Every T-16 routed_moe cell: the base decode/batch pair and the two
+    runtime-suffixed twins.  Derived from the contract, never a roster."""
+    cells = [c for c in contract["lane_eligibility"]["cells"]
+             if c["family"] == BF16 and c["structure"] == "routed_moe"]
+    assert len(cells) == 4
+    return cells
+
+
 def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(contract):
     """The rule is family-wide; coverage is per cell.  The value library's
     dense launch reads 1..14 and its routed launches 1..8, so a routed_moe
     cell's run tables stay at or below [8], and a rung the rule admits is
     covered only by a cell of a structure whose census reached its table.
-    Contract v52's dense census (the t16d1 and t16d2 stubs, one rung of every
-    table [1]..[14] and each pair between them) brings the dense cells' tables
-    to every table the rule admits, so they cover the rule's whole range,
-    256..3584; the routed cells stay at stub B's [4]."""
+    Contract v52's dense census brings the dense cells' tables to every table
+    the rule admits, so they cover the rule's whole range, 256..3584; the
+    routed cells stay at stub B's [4], the one served-census rung.
+    Contract v59 restores this pin after review: no rung joins the routed
+    cells without a served receipt.  Fail-before on the widened contract:
+    run_tables [[1]]..[[7]] against [[4]]."""
     row = _row(contract, BF16)
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     requires = by_name["tessera_routed_fused_value"]["lane"]["requires"]
@@ -119,10 +130,55 @@ def test_bf16_coverage_is_per_cell_and_routed_cells_stop_at_the_routed_launch(co
             cell["id"]
     routed, dense = _cell(contract, BF16_ROUTED), _cell(contract, BF16_DENSE)
     assert routed["run_tables"] == [[4]]
+    assert routed["rungs_q256"] == [1024]
     assert dense["run_tables"] == row["allowable_rungs"]["run_tables"]
     assert [q for q in range(256, 3585) if cell_covers_rung(routed, q, row)] == [1024]
     assert [q for q in range(256, 4097)
             if cell_covers_rung(dense, q, row)] == list(range(256, 3585))
+
+
+def test_bf16_routed_cells_census_only_the_served_rung_on_every_cell(contract):
+    """Each of the four T-16 routed cells censuses exactly R1024, the one
+    rung with a served receipt.  Fail-before on the widened contract: seven
+    rungs against [1024]."""
+    row = _row(contract, BF16)
+    for cell in _bf16_routed_cells(contract):
+        assert cell["rungs_q256"] == [1024], cell["id"]
+        assert cell["run_tables"] == [[4]], cell["id"]
+        assert cell_covers_rung(cell, 1024, row), cell["id"]
+
+
+def test_bf16_routed_cells_refuse_every_unserved_rung(contract):
+    """No T-16 routed cell covers a rung without a served receipt: the other
+    whole bits, half-bit and fractional rungs, higher bits and rungs outside
+    the wire range.  Fail-before on the widened contract: R256 covered
+    against refused."""
+    row = _row(contract, BF16)
+    unserved = [255, 256, 257, 512, 640, 768, 896, 1152, 1280, 1536, 1792,
+                2048, 2049, 2304, 3584, 3585]
+    for cell in _bf16_routed_cells(contract):
+        for q in unserved:
+            assert not cell_covers_rung(cell, q, row), (cell["id"], q)
+
+
+def test_bf16_family_admission_is_exact_per_structure(contract):
+    """Family-wide admission, not one cell's: every BF16 cell's covered set
+    is pinned by structure and image, so a new cell or a widened twin cannot
+    slip past single-cell checks.  Routed cells cover exactly {1024}; base
+    dense cells cover the rule's whole range; nightly dense cells cover the
+    tables of their stub-B census (769..1279).  Fail-before on the widened
+    contract: routed cells cover seven rungs against [1024]."""
+    row = _row(contract, BF16)
+    cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == BF16]
+    assert len(cells) == 8
+    for cell in cells:
+        covered = [q for q in range(256, 4097) if cell_covers_rung(cell, q, row)]
+        if cell["structure"] == "routed_moe":
+            assert covered == [1024], cell["id"]
+        elif "runtime_" in cell["id"]:
+            assert covered == list(range(769, 1280)), cell["id"]
+        else:
+            assert covered == list(range(256, 3585)), cell["id"]
 
 
 def test_a_rung_resolves_to_its_run_table():

@@ -1,0 +1,724 @@
+{
+ "schema": "tessera.construction-census.v1",
+ "runtime": {
+  "vllm": "0.30.1rc1.dev336+gaf5b4857e.d20260929",
+  "torch": "2.13.0+cu130",
+  "python": "3.12.3",
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "image_id": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+  "image_declaration": {
+   "schema": "tessera.runtime-image-declaration/1",
+   "source": "launcher_repo_digests",
+   "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+   "env": [
+    "TESSERA_CENSUS_RUNTIME_IMAGE",
+    "TESSERA_CENSUS_RUNTIME_IMAGE_DECLARATION"
+   ],
+   "record": {
+    "fix": null,
+    "gated": true,
+    "local_id": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+    "present": true,
+    "reason": "explicit_digest",
+    "refused": false,
+    "repo_digests": [
+     "192.168.1.107/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a"
+    ],
+    "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "requested_tag": null,
+    "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "resolved_digest": "sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+    "schema": "tessera.runtime_image/1"
+   }
+  },
+  "vllm_file": "/usr/local/lib/python3.12/dist-packages/vllm/__init__.py"
+ },
+ "model": {
+  "path": "/mnt/shared/models/GLM-5.3-Flash-4layer",
+  "architectures": [
+   "Glm5NextForConditionalGeneration"
+  ],
+  "model_type": "glm5_next",
+  "num_hidden_layers": 4,
+  "layer_types": [
+   "linear_attention",
+   "deepseek_sparse_attention",
+   "linear_attention",
+   "deepseek_sparse_attention"
+  ],
+  "mlp_layer_types": [
+   "dense",
+   "sparse",
+   "sparse",
+   "sparse"
+  ],
+  "first_k_dense_replace": 1
+ },
+ "supports_quant": false,
+ "hf_to_vllm_mapper_unstacked": {
+  "orig_to_new_prefix": {
+   "lm_head.": "language_model.lm_head.",
+   "model.language_model.": "language_model.model.",
+   "model.visual.": "visual."
+  }
+ },
+ "offered_non_linear": [
+  {
+   "prefix_pattern": "language_model.lm_head",
+   "class": "ParallelLMHead",
+   "instances": [
+    {
+     "prefix": "language_model.lm_head",
+     "class_module": "vllm.model_executor.layers.vocab_parallel_embedding",
+     "parameter_shapes": {
+      "weight": [
+       154880,
+       4096
+      ]
+     },
+     "parameter_dtypes": {
+      "weight": "torch.bfloat16"
+     }
+    }
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.mlp.experts",
+   "class": "RoutedExperts",
+   "instances": [
+    {
+     "prefix": "language_model.model.layers.1.mlp.experts",
+     "class_module": "vllm.model_executor.layers.fused_moe.routed_experts",
+     "parameter_shapes": {
+      "e_score_correction_bias": [
+       288
+      ],
+      "w13_weight": [
+       288,
+       4096,
+       4096
+      ],
+      "w2_weight": [
+       288,
+       4096,
+       2048
+      ]
+     },
+     "parameter_dtypes": {
+      "e_score_correction_bias": "torch.float32",
+      "w13_weight": "torch.bfloat16",
+      "w2_weight": "torch.bfloat16"
+     }
+    },
+    {
+     "prefix": "language_model.model.layers.2.mlp.experts",
+     "class_module": "vllm.model_executor.layers.fused_moe.routed_experts",
+     "parameter_shapes": {
+      "e_score_correction_bias": [
+       288
+      ],
+      "w13_weight": [
+       288,
+       4096,
+       4096
+      ],
+      "w2_weight": [
+       288,
+       4096,
+       2048
+      ]
+     },
+     "parameter_dtypes": {
+      "e_score_correction_bias": "torch.float32",
+      "w13_weight": "torch.bfloat16",
+      "w2_weight": "torch.bfloat16"
+     }
+    },
+    {
+     "prefix": "language_model.model.layers.3.mlp.experts",
+     "class_module": "vllm.model_executor.layers.fused_moe.routed_experts",
+     "parameter_shapes": {
+      "e_score_correction_bias": [
+       288
+      ],
+      "w13_weight": [
+       288,
+       4096,
+       4096
+      ],
+      "w2_weight": [
+       288,
+       4096,
+       2048
+      ]
+     },
+     "parameter_dtypes": {
+      "e_score_correction_bias": "torch.float32",
+      "w13_weight": "torch.bfloat16",
+      "w2_weight": "torch.bfloat16"
+     }
+    }
+   ]
+  }
+ ],
+ "view": "selected",
+ "full_receipt": "/mnt/shared/tessera-measurements/eng-attn-route-20261007/gpu-meta-width-fix-9eef9fea6/construction-TESSERA_FP8.json",
+ "action_key": "6a53898583824d17b622a54e4722b88b6d2b2b2c052ffa2ce31392fabeb617ed",
+ "weights_loaded": false,
+ "forward_executed": false,
+ "observed_families": [
+  "TESSERA_FP8",
+  "TESSERA_BF16"
+ ],
+ "linears": [
+  {
+   "prefix_pattern": "language_model.model.layers.*.mlp.down_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096
+   ],
+   "input_sizes": [
+    12288
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [
+    0
+   ],
+   "examples": [
+    "language_model.model.layers.0.mlp.down_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.mlp.gate",
+   "class": "GateLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    288
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 288,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    2,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.mlp.gate",
+    "language_model.model.layers.2.mlp.gate"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.mlp.gate_up_proj",
+   "class": "MergedColumnParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    12288,
+    12288
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 24576,
+   "replicated_shard_ids": [],
+   "layers": [
+    0
+   ],
+   "examples": [
+    "language_model.model.layers.0.mlp.gate_up_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.mlp.shared_experts.down_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096
+   ],
+   "input_sizes": [
+    2048
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    2,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.mlp.shared_experts.down_proj",
+    "language_model.model.layers.2.mlp.shared_experts.down_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.mlp.shared_experts.gate_up_proj",
+   "class": "MergedColumnParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    2048,
+    2048
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    2,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.mlp.shared_experts.gate_up_proj",
+    "language_model.model.layers.2.mlp.shared_experts.gate_up_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.f_b_proj",
+   "class": "ColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    8192
+   ],
+   "input_sizes": [
+    128
+   ],
+   "output_size": 8192,
+   "replicated_shard_ids": [],
+   "layers": [
+    0,
+    2
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.f_b_proj",
+    "language_model.model.layers.2.self_attn.f_b_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.fused_qkv_a_proj",
+   "class": "DeepSeekV2FusedQkvAProjLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    1536,
+    512
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 2048,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.self_attn.fused_qkv_a_proj",
+    "language_model.model.layers.3.self_attn.fused_qkv_a_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.g_b_proj",
+   "class": "ColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    8192
+   ],
+   "input_sizes": [
+    128
+   ],
+   "output_size": 8192,
+   "replicated_shard_ids": [],
+   "layers": [
+    0,
+    2
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.g_b_proj",
+    "language_model.model.layers.2.self_attn.g_b_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a",
+   "class": "_Glm5NextMergedColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    8192,
+    8192,
+    8192,
+    64,
+    128,
+    128
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 24896,
+   "replicated_shard_ids": [
+    4,
+    5
+   ],
+   "layers": [
+    0,
+    2
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.in_proj_qkvbfg_a",
+    "language_model.model.layers.2.self_attn.in_proj_qkvbfg_a"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wk_weights_proj",
+   "class": "MergedColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    128,
+    32
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 160,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.self_attn.indexer.wk_weights_proj",
+    "language_model.model.layers.3.self_attn.indexer.wk_weights_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wq_b",
+   "class": "ReplicatedLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096
+   ],
+   "input_sizes": [
+    1536
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.self_attn.indexer.wq_b",
+    "language_model.model.layers.3.self_attn.indexer.wq_b"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.k_conv1d",
+   "class": "ColumnParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": true,
+   "offered_to_quant_config": false,
+   "output_sizes": [
+    8192
+   ],
+   "input_sizes": [
+    4
+   ],
+   "output_size": 8192,
+   "replicated_shard_ids": [],
+   "layers": [
+    0,
+    2
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.k_conv1d",
+    "language_model.model.layers.2.self_attn.k_conv1d"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.kv_b_proj",
+   "class": "ColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    32768
+   ],
+   "input_sizes": [
+    512
+   ],
+   "output_size": 32768,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.self_attn.kv_b_proj",
+    "language_model.model.layers.3.self_attn.kv_b_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.o_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096
+   ],
+   "input_sizes": [
+    8192,
+    16384
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.o_proj",
+    "language_model.model.layers.1.self_attn.o_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.q_b_proj",
+   "class": "ColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    16384
+   ],
+   "input_sizes": [
+    1536
+   ],
+   "output_size": 16384,
+   "replicated_shard_ids": [],
+   "layers": [
+    1,
+    3
+   ],
+   "examples": [
+    "language_model.model.layers.1.self_attn.q_b_proj",
+    "language_model.model.layers.3.self_attn.q_b_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.q_conv1d",
+   "class": "ColumnParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": true,
+   "offered_to_quant_config": false,
+   "output_sizes": [
+    8192
+   ],
+   "input_sizes": [
+    4
+   ],
+   "output_size": 8192,
+   "replicated_shard_ids": [],
+   "layers": [
+    0,
+    2
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.q_conv1d",
+    "language_model.model.layers.2.self_attn.q_conv1d"
+   ]
+  },
+  {
+   "prefix_pattern": "language_model.model.layers.*.self_attn.v_conv1d",
+   "class": "ColumnParallelLinear",
+   "quant_method": "UnquantizedLinearMethod",
+   "quant_config_is_none": true,
+   "offered_to_quant_config": false,
+   "output_sizes": [
+    8192
+   ],
+   "input_sizes": [
+    4
+   ],
+   "output_size": 8192,
+   "replicated_shard_ids": [],
+   "layers": [
+    0,
+    2
+   ],
+   "examples": [
+    "language_model.model.layers.0.self_attn.v_conv1d",
+    "language_model.model.layers.2.self_attn.v_conv1d"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.blocks.*.attn.proj",
+   "class": "RowParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    1024
+   ],
+   "input_sizes": [
+    1024
+   ],
+   "output_size": 1024,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.blocks.0.attn.proj",
+    "visual.blocks.1.attn.proj"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.blocks.*.attn.qkv",
+   "class": "QKVParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    1024,
+    1024,
+    1024
+   ],
+   "input_sizes": [
+    1024
+   ],
+   "output_size": 3072,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.blocks.0.attn.qkv",
+    "visual.blocks.1.attn.qkv"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.blocks.*.mlp.down_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    1024
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 1024,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.blocks.0.mlp.down_proj",
+    "visual.blocks.1.mlp.down_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.blocks.*.mlp.gate_up_proj",
+   "class": "MergedColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096,
+    4096
+   ],
+   "input_sizes": [
+    1024
+   ],
+   "output_size": 8192,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.blocks.0.mlp.gate_up_proj",
+    "visual.blocks.1.mlp.gate_up_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.merger.down_proj",
+   "class": "RowParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096
+   ],
+   "input_sizes": [
+    10240
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.merger.down_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.merger.gate_up_proj",
+   "class": "MergedColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    10240,
+    10240
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 20480,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.merger.gate_up_proj"
+   ]
+  },
+  {
+   "prefix_pattern": "visual.merger.proj",
+   "class": "ColumnParallelLinear",
+   "quant_method": "TesseraFp8LinearMethod",
+   "quant_config_is_none": false,
+   "offered_to_quant_config": true,
+   "output_sizes": [
+    4096
+   ],
+   "input_sizes": [
+    4096
+   ],
+   "output_size": 4096,
+   "replicated_shard_ids": [],
+   "layers": [],
+   "examples": [
+    "visual.merger.proj"
+   ]
+  }
+ ]
+}

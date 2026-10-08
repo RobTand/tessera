@@ -6,6 +6,7 @@ from tessera import kernel_window_gemv as kg
 from tessera.window_gemm import prepare_window_gemm
 from tessera.serving.native_window import PreparedDenseNativeModule
 from tessera.serving_parts import dense_resident_bytes_resident_mode
+from tessera.window_geometry import TILE_ROWS
 from window_pack_reference import pack_bitstream
 
 
@@ -29,7 +30,7 @@ def test_manifest_counts_actual_native_kernel_inputs(family, rows, rates):
     # Both current routes keep this independent fp32 row-scale buffer.
     route_scale = prepared.row_scale()
     actual = prepared.packed_bytes() + route_scale.numel() * route_scale.element_size()
-    role = {'rows': rows, 'cols': len(rates), 'rates': rates, 'window_bits': bits, 'tile_rows': kg.TILE_ROWS}
+    role = {'rows': rows, 'cols': len(rates), 'rates': rates, 'window_bits': bits, 'tile_rows': TILE_ROWS}
     priced = dense_resident_bytes_resident_mode(family, rows, len(rates), native_roles=[role])
     assert priced == actual
 
@@ -46,7 +47,7 @@ def test_manifest_counts_native_e2m1_window_roles_and_shared_activation_scale(mo
     from tessera.serving.residency import resident_storage_bytes
 
     spec = {'rows': rows, 'cols': cols, 'rates': (rate,) * cols,
-            'arity': 2, 'half': 16, 'window_bits': 14, 'tile_rows': kg.TILE_ROWS}
+            'arity': 2, 'half': 16, 'window_bits': 14, 'tile_rows': TILE_ROWS}
     priced = dense_resident_bytes_resident_mode(
         'TESSERA_NVFP4', 2 * rows, cols, native_roles=[spec, spec])
     # Only compiler loading is suppressed. The production role freezer and

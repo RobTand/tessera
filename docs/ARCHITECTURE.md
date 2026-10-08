@@ -1,5 +1,77 @@
 # Tessera plan-to-serve architecture
 
+The projection byte audit selects `served_recipe` before native resident accounting.
+Its 256-column fixture satisfies the native T4 input-width rule and also covers T8 and T16.
+Native T4 roles carry arity, half width, window bits and the shared row tile.
+They retain no TCQ trellis tables. The audit preserves the wire and direct buffer checks.
+Direct buffer assertions use the recorded source rows and columns, not an incidental fixture width.
+
+Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
+`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
+It includes explicit copies, padded shards, temporary buffers, and rank reserves.
+Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
+They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
+The planner refuses a different declared row tile before byte pricing.
+The planner reports named capacity refusals before load.
+The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
+The README states its input and output contracts.
+The planner `dense_a4` storage kind declares `window_bits`, `tile_rows`, `arity`, `half` and per-column rates.
+It rejects obsolete TCQ fields and uses the same window geometry owner as the loader.
+The manifest refresh verifies the encoded WINDOW roles before it updates native resident bytes.
+The T4 path requires span one and the LUT plane; the shared accountant retains native shape checks.
+The source manifest and safetensors bytes remain unchanged. This metadata refresh does not attest serving.
+
+
+Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
+The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
+Its execution scope is `register_direct_fragment` and its word ring is `register`.
+A cell states fragment-order units from `tessera.fragment_wire`: 32 lanes, 8 history lanes and 32 R words per unit.
+It states one rate or two adjacent rates, the k-step width, prefetch depth, superblock routes, K parts and compiler resources.
+The decoder is routed only.
+A table scope may give a shape its own rung step in `grid_steps_q256`, as a multiple of the table step.
+k-step rungs step 2 q256 at K=4096 and 16 q256 per TP2 rank of a K=1024 down projection.
+A rung owes exactly the cells whose shape grid it lies on. Version one tables cannot carry per-shape grids.
+An unscoped `admit_rung` waits at a rung where a declared shape has no measurement (`declared_shape_not_measured_at_rung`).
+A dominance proof needs a measured higher-rung counterpart for every lower cell; otherwise the table is refused.
+The published schema files `docs/schema/allowable-rung-table.v2.schema.json` and `.v3` track the Python schemas, descriptions aside.
+A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
+The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
+
+Re-stamped 2026-10-07 for the producer correction in issue #1018.
+The canonical `fleet.rung_allowability.v3` interface keeps the historical census.
+`performant_rungs` and `admit_rung` use the actual dense or routed structure and kernel build.
+R896 joins the measured menu for T8 and T16 under the D41 half-bit decision.
+`rung_speed` uses the recorded per-cell cost, not a pure-rung cost.
+Queries wait when actual shape, recipe, activation, or token-count evidence is absent.
+Present pending cells wait before class reconstruction. Failed and unsupported cells retain their states.
+Both producer paths apply source-specific reader findings to correctness holds and preserve prior flags and observations.
+Class inheritance selects safe donors before it selects anchors. Held or refused donors never supply times.
+Class-derived times never change measurement status or numerical and serving qualification.
+`geometry_class_identity` retains family, arity, recipe, build, path, shape, activation, and token count.
+`rung_quality` derives quality from whole-anchor chords, not per-rung sample gates.
+The existing producer stages immutable versions through `index.v3-candidate.json`.
+This correction leaves the active index and the campaign blocker clock unchanged.
+Issue #1018 stays open. Historical version one and version two semantics remain explicit.
+No decoder, kernel, format, runtime pin, consumer policy, or serving route changes.
+
+Re-stamped 2026-10-06 for issue #1018: the geometry entry accepts explicit
+dense shapes (`name:rows:columns`) so the missing real shared-expert and
+dense layer zero-to-two projections can use the existing harness and its
+uncompressed BF16-weight comparator. A BF16 activation label alone is never
+that comparator. The near-eight-bit pure R2048 work retains the real
+configuration read through the existing PrismaBuild residency reader.
+Full-source shared roles are 2048 by 4096 and 4096 by 2048; dense roles are
+12288 by 4096 and 4096 by 12288. Tensor parallel size two splits the gate/up
+output rows and down input columns; gate/up role timings are not a fused
+module, collective or served proof. No format, native route or ship gate moves.
+D41 retains the whole-bit menu and half-bit rungs at their measured costs.
+This producer correction restores R896 for T8 and T16 only where actual scoped measurements exist.
+Routed T16 keeps whole-bit R256 through R2048. Dense T16 keeps whole-bit R256 through R3584.
+T4 keeps its historical native times but waits for performance admission.
+Quality uses whole-anchor chords, not per-rung sample gates.
+This work starts no graphics processor campaign and makes no serving or speed qualification claim.
+
 Re-stamped 2026-10-06 for issue #1005: the default-off D41 T4
 `--packed-reader` measures actual mixed span-two TCQ and dense twelve-bit
 WINDOW recipes on the E2M1 pair grid. `compact_prep.prepare_a4_wire_compact`
@@ -77,7 +149,7 @@ point must pass a fresh CPU PrismaBuild preflight after source/argument
 changes. The existing full 33-output ship gate, quality gates, defaults and
 serving pin do not change. See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
-Re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
+Historical v1/v2 policy, re-stamped 2026-10-06 for issue #989: `tessera.rung_allowability` is the
 pure-standard-library, non-serving owner of measured-rung table and index
 semantics. `validate_index(index)` and `validate_table(table)` return the
 input or raise `ValueError`; `admit_rung(table, *, format, kernel_build_id,
@@ -144,7 +216,8 @@ text receipt prints it, so a reader of this shape is seen instead of silently
 unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
 when this was added (115 modules, 168 sites, most taking the directory as a
 parameter or calling the standard library's `glob.glob(pattern)`) and fails if
-it rises. Selector infrastructure only: no wire, recipe
+it rises. The count was 114 modules and 167 sites on 2026-10-07 and the ceiling
+now holds there (#1014). Selector infrastructure only: no wire, recipe
 table, serving lane, plugin contract, numerical path, residency or performance
 default moves.
 
@@ -974,6 +1047,44 @@ meta placement. Gradient-bearing inputs with autograd enabled also retain
 the functional reference; no-grad calls keep the optimized CPU path. No
 recipe, contract, native source, serving route or production pin changes; these CPU controls do not qualify exported containers or GPU
 serving, and no new throughput claim is made.
+
+Re-stamped 2026-10-06 for the default-off fused mHC override (contract v58, renumbered at composition
+because master published v56 for #931 and v57 for #967; Refs #783). `TESSERA_GLM53_MHC_FUSED=1` rebinds
+`Glm5NextDecoderLayer.hc_fused_post_pre` (new `stock_kernel_overrides` kind
+`model_method`) so that a split-k mHC site runs the stock post kernel,
+DeepGEMM's TF32 pre-norm GEMM and the TileLang pre kernel as one kernel
+(`csrc/mhc_fused.cu`) that reproduces their arithmetic, at the split
+`compute_num_split` answers at call time (exact SP's forced split included).
+The stock byte model is 144 KiB per token per site; 80 KiB is the theoretical
+external-memory floor if the GEMM and pre rereads hit L2. Cache locality and
+actual DRAM traffic have not been measured. The stock small-batch path, an
+incompatible method or dispatch interface, and a layer whose op is not on
+`forward_cuda` stay stock. Recorded source and predicted library-path
+differences stamp and continue in development mode under D32; actual
+interface, shape, launch and safety checks remain active. Required identity
+`bitwise_vs_stock` uses integer-view comparisons in
+`experiments/mhc/mhc_fused_probe.py` and `tests/test_mhc_fusion_cuda.py`.
+The stock TFLOAT32 tensor-map conversion was measured on GB10 as nearest,
+ties to even (sixteen sparse sign/parity/below/tie/above controls, PB
+`23f83a454a3c`). The fused asynchronous copy retains FP32, then rounds
+significands to that rule before FP32-accumulating TF32 MMAs; the former
+`cvt.rna.tf32.f32` used the wrong halfway rule. Native controls compare
+projection and squared-sum workspaces and all outputs at TF32 halfway inputs. Earlier
+sixty-case receipts used value equality and did not establish signed-zero identity.
+
+The corrected kernel passed the complete sixty-case integer-view probe on GB10
+(PB `403c665b2ebd`, source SHA256 `0ebf0f43304f01439204855a6bfa6ae7e7e6b20aee6fd05814aa428978c29a30`),
+including tile variants, deterministic reruns and graph replay. Eight random
+FP32/TF32-halfway native tests also passed; their containing action remained
+failed after a population-path error and an insufficient GPU-memory declaration.
+Both the code table and packaged contract remove the obsolete value-equality
+receipt labelled bitwise. The metadata correction changes no kernel or default.
+Calls stock runs at split > 1 stay stock. The retained site
+microbenchmarks imply estimated sums of 2.5881 and 3.1111 ms per rank over
+44 attention and 45 feed-forward sites; these are not measured served chunk
+savings (`docs/measurements/2026-10-04-mhc-fused-783.md`).
+No production pin, route cell, default, artifact or ship gate moves. Design:
+`docs/design/mhc-fusion-783.md`.
 
 Re-stamped 2026-10-05 for the default-off decode-once E4M3 dense prefill lane
 (contract v56, Refs #931). Under `TESSERA_E4M3_DECODE_ONCE=1`,
@@ -5369,7 +5480,11 @@ recorded in `docs/measurements/2026-09-28-routed-fused-640.md`.
 The E2M1 family now has its own native serving owner, described below.
 Historical span-2 measurements do not qualify that replacement route.
 
-**Native fused E2M1 serving (Refs #750).** The NVFP4 route admits E2M1x2
+Contract v64 withdraws the current FP4 activation attestations.
+The v61/v62 gaps remain reserved for PR1046 and PR1028.
+Source approval remains separate from native arithmetic, D41 and serving qualification.
+
+**Native fused E2M1 serving (contract v63, Refs #750).** The NVFP4 route admits E2M1x2
 WINDOW L14 over LUT16, with group-16 UE4M3 scales. Dense and routed exports
 use the same served recipe. Pure pair widths 1 through 8 correspond to
 q128 through q1024. The research recipe and explicit TCQ encoding stay
@@ -5400,6 +5515,12 @@ or end-to-end quality. The shared qualification harness owns independent
 numerical references, required populations, raw timings, and graph checks.
 The current mainloop still decodes weights per 64-route superblock; this
 cutover does not claim decode-once speed or the projected twofold FP4 gain.
+
+The graph helper copies each eager output before warmup, capture and replay.
+The reference snapshot must remain independent of any persistent output buffer.
+The prior 192 mode-0 graph claims remain withdrawn.
+New graph receipts compare independent eager snapshots.
+GPU-exclusive timing rows do not establish quiet-host or measurement-class qualification.
 
 The step-4 preflight builds the required E2M1 extension and checks its ABI before it starts an engine.
 It records the actual library path and SHA256.
@@ -7738,7 +7859,7 @@ Each entry is closed and validated by `contract._validate_stock_kernel_overrides
 
 | Field | Value |
 |---|---|
-| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts). |
+| `kind` | What is replaced. Each kind has its own closed `overrides` fields: `attention_backend` names `backend` (the vLLM `AttentionBackendEnum` member) and `kernel` (the stock kernel whose call it intercepts); `model_method` (v58) names `method` (the stock model method rebound, by dotted path) and `kernels` (the stock kernel sequence the replacement computes, `+`-joined in launch order). |
 | `enabled_by` | The `TESSERA_*` flag that installs it. One flag per entry. |
 | `default` | `off`, the only value. An unset flag installs nothing, so a serve that did not ask is the stock serve. |
 | `loaded_by` | The `tessera.serving` module that installs it. |
@@ -8762,6 +8883,7 @@ raises.
 | `TESSERA_GLM53_ONORM_CUDA` | `0` | `1` adds `+fused_rms_norm_gated` to `custom_ops` when the serve's own `custom_ops` names that op neither way, so the KDA output norm runs vLLM's `forward_cuda`. Nothing is rebound. Under compilation mode NONE (§5.1.2) `custom_ops` is already `all`, so it changes nothing there; in any other mode it changes a stock default, which is why it is opt-in. |
 | `TESSERA_GLM53_SP_MHC` | `off` | `force` or `auto` rebinds `Glm5NextDecoderLayer.forward` so that each TP 2 rank keeps the mHC state for half the batch's tokens. Every mHC call on an SP pass runs at the full batch's pre-norm split-k (`SplitForcer`), which is what makes it bitwise. `auto` measures `T*` per serve, and that measurement is known to be wrong at small token counts. |
 | `TESSERA_GLM53_SP_MHC_SPEC` | unset | `1` allows SP with speculative decoding. Without it, a speculative serve declines SP. |
+| `TESSERA_GLM53_MHC_FUSED` | unset | `1` installs `mhc_fusion` (contract `stock_kernel_overrides`, kind `model_method`): `Glm5NextDecoderLayer.hc_fused_post_pre` runs one fused post/GEMM/pre kernel per mHC site that stock runs at split 1, the split read at call time, so it composes with `TESSERA_GLM53_SP_MHC`. It must be bitwise to stock, and it stays default-off until the GPU gate and a served A/B land (#783). Unlike the rows above, an install whose contract entry has drifted raises instead of declining. |
 | `TESSERA_GLM53_KDA_CONV_SPLIT` | `off` | `on` rebinds `Glm5NextLinearAttention._forward` to run the KDA prefill's short conv once per q/k/v slice, so FlashKDA's three `.contiguous()` copies become no-ops. The rebind compiles the stock method's own source with one block replaced, and only when that block occurs exactly once. `glm53_prefill.py` reads and digest-checks the file; `src/tessera/serving/method_rebuild.py` compiles the text and reads no file. The #808 selector follows that helper call, so the generic source parameter remains unknown. The frozen `202d1f07` receipt established a static predecessor path through layout's lazy slicing import; the guarded-re-export analyzer now distinguishes direct layout names from slicing demands. Runtime callable reachability and source origin remain unproved. |
 
 The module docstring records the decline rules and the exactness argument.
@@ -9317,3 +9439,49 @@ CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
 explicit `enforce_eager=True` requirement. This enables the real native factory
 without fabricating a model configuration, and does not admit compiled or
 captured selected execution.
+
+## Explicit GLM projection owners
+
+The dense owner rule identifies the KDA six-member input, the MLA low-rank input, and the DSA key and head-weight pair.
+The source config identifies KDA layers and standalone MLA queries.
+The construction receipt supplies output partitions; the exporter does not derive them from weight shapes.
+KDA roles four and five keep their full source rows on each tensor parallel rank.
+
+The stock NoPE loader pads only kv_a_proj_with_mqa output rows.
+The exporter preserves its source range and records the added zero rows separately.
+BF16 passthrough keeps every original tensor and bias unchanged.
+An explicit plan can select the router and vision Linear units without a default change.
+The selected vision qkv target keeps the stock prefix.
+
+The direct consumer byte rule belongs to serving.projection_routes.
+The DSA head tail uses its stock FP32 cache.
+The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
+Their decoded buffers increase resident prices; they do not become compressed BMM routes.
+The exporter refuses compressed stock twins for constructors that suppress quantization.
+
+The plugin installs a selective LinearBase constructor hook before model construction.
+The hook supplies TesseraConfig only for an explicit target whose constructor has no quant_config.
+Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
+The KDA shard planner reads replicated_shard_ids from the actual layer.
+It does not infer replication from a shape total.
+
+The direct consumer contract separates the head operation from its unused dense output.
+The indexer head uses FP32 inputs and weights without activation quantization.
+The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
+The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+T-16 direct weights use the existing folded BF16 arithmetic before any FP32 cast.
+
+The constructor census records stock and selected views separately.
+Only actual get_quant_method calls establish an offered selected route.
+A meta census proves construction, not a loaded forward or CUDA graph execution.
+The current CPU sparse backend cannot construct the full GLM model.
+That refusal does not qualify a GPU route or permit a substitute backend.
+The census records input width variants separately from reachability disagreements.
+An output projection can have different input widths on KDA and MLA layers without a routing disagreement.
+The TP2 smoke accepts a Torch rendezvous URL for native gang members on distinct GPU hosts.
+Runtime identities remain observations. Only mode and artifact input mismatches stop the peer arithmetic check.
+The active construction entry names one selected receipt for each architecture. Historical receipts remain unchanged.
+The current GLM entry derives from actual T-8/T-16 constructor calls on the current image.
+The topology specifies two nodes with one rank and one CUDA device per node.
+
+Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.

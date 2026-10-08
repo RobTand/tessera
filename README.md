@@ -219,6 +219,59 @@ them, with no `[rows, columns]` weight tile materialised. `resident` and
 (`TESSERA_SERVE_MODE`, no default). Routed mixture-of-experts is **resident,
 eager mode only**.
 
+### Offline residency plan
+
+The offline planner computes each rank memory peak before load. It allocates no tensors and changes no live-load path.
+
+Run the planner with a concrete structure inventory and an allocation plan.
+
+```bash
+PYTHONPATH=src python -m tessera.residency_plan \
+  --structure-spec structure.json --plan residency.json
+```
+
+The structure inventory has a `tensors` object. Each named tensor has a `shape` array and a `dtype` string.
+An empty shape describes a scalar. All dimensions are positive integers. Architecture profiles without concrete shapes cannot supply this inventory alone.
+
+```json
+{"tensors":{"weight":{"shape":[4,8],"dtype":"bfloat16"}}}
+```
+
+The plan has a `ranks` array and an `allocations` array. Rank array positions name the ranks.
+Each rank declares `capacity_bytes` and an optional `reserve_bytes` value. The reserve covers memory outside the allocation inventory.
+
+```json
+{"ranks":[{"capacity_bytes":128,"reserve_bytes":16}],
+ "allocations":[{"id":"weight","tensor":"weight","ranks":[0],"start":0,"stop":null}]}
+```
+
+Each allocation names a tensor, destination ranks, and a lifetime. Different identifiers represent separate copies, even when they name the same tensor.
+All inventory tensors require a placement. Temporary buffers, draft copies, caches, and workspace require explicit allocations or reserve bytes.
+
+Lifetimes use integer steps and the half-open interval `[start, stop)`. A null or absent `stop` keeps the allocation.
+Release a source copy after its destination exists. Use overlapping steps when both copies coexist.
+An absent `shard_axis` replicates the tensor. A declared axis divides that dimension equally across the destination ranks.
+The destination rank order defines contiguous shard order. Nondivisible dimensions refuse unless `padding_multiple` explicitly pads the shard axis.
+Padding also rounds the dimension to equal rank cuts. The planner counts padded bytes.
+
+An absent `storage` uses the tensor shape and data type. Native layouts use the existing `serving_parts` byte accountant.
+Storage kinds `dense_window` and `routed_window` require `family`, `rates`, `window_bits`, and `tile_rows`.
+Dense shapes use `[rows, columns]`. Routed shapes use `[experts, rows, columns]`. Column shards slice the rate array before byte calculation.
+Both layouts use the compact loader row tile size. The planner refuses a different `tile_rows` value before byte calculation.
+The planner also applies the loader window-width and rate checks before byte calculation.
+Native layout checks read shared metadata. They do not load weights or allocate device tensors.
+The native planner path uses only the standard library. The loader and planner read the same geometry owner.
+The routed layout also declares `fused` as a Boolean. This value includes or excludes fused tables and descriptors.
+The `dense_a4` kind requires `rates`, `arity`, `half`, `window_bits`, and `tile_rows`. It uses the native E2M1 WINDOW accountant.
+It accepts no TCQ `memory` or `lut_entries` fields.
+Native layouts obey the published window-width bound and the shared native shape checks.
+These counts describe prepared tensor storage. They do not qualify a kernel or predict an undeclared runtime allocation.
+
+The report gives peak bytes, the peak step, named peak allocations, final bytes, and headroom for each rank.
+A capacity refusal gives every affected rank and its excess bytes. Invalid fields also produce named refusal reasons.
+The command writes a JSON report to standard output. It exits with zero when the plan fits, or two after refusal.
+
+
 ## A format you can inspect
 
 The wire schema is **`prismaquant.tessera.v1`**. Each encoded unit carries a

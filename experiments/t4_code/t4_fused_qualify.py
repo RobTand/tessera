@@ -344,7 +344,7 @@ def fixed_token_sum(route_rows, m, top_k):
 def capture_callable(fn):
     import torch
 
-    eager = fn()
+    eager = fn().clone()
     torch.cuda.synchronize()
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())
