@@ -151,6 +151,53 @@ Serving does not import this reader. No encoded bytes, serving recipe, format
 menu, pin, default or admission gate changes. Existing uniform reader
 measurements and immutable allowability tables remain unchanged.
 
+Re-stamped 2026-10-07 for issue #1007 and the packed T4 arithmetic contract.
+The bound owner separates scalar validation from arithmetic terms before the
+contract correction. The conditional allowance and measurement paths do not
+change. The bound interface now refuses lengths outside the reader's 128-column blocks.
+It also refuses invalid operation counts and precision terms.
+The v4 receipt exposes unit roundoff, actual tile count, and every unproved
+native, reference, normalization, magnitude, and intermediate-domain assumption.
+Both arithmetic qualification fields remain false.
+
+The complete derivation is in
+[`tessera-serving-and-moe-contract.md`, section 17](tessera-serving-and-moe-contract.md#17-packed-t4-arithmetic-contract-2026-10-07-issue-1007).
+It separates represented-operand arithmetic from quantization error.
+It covers signs, cancellation, exact zero, scale domains, legal lengths,
+overflow, subnormal behavior, and the fused library's bfloat16 boundaries.
+The native specification states at least single precision for accumulation.
+It does not supply the local inequalities or internal reduction depth that the gamma theorem needs.
+The positive float64 magnitude contraction also has an explicit conditional model.
+Finite diagnostics cannot replace these missing facts. Byte-exact code and
+scale checks remain independent. No serving default, threshold, pin, or row changes.
+
+Re-stamped 2026-10-07 for the targeted native four-bit arithmetic probes.
+`experiments/t4_code/fp4_arithmetic_attest.py` issues the actual block-scaled
+E2M1 instruction through a standalone CUDA probe. It retains exact input
+bytes, output bits, rational references, alternative models, source, and compiler context.
+`tessera.fp4_arithmetic` owns the device refusal and the atom-derived diagnostic bound.
+The six required properties and the operand-layout controls must pass.
+The device gate also requires kernels parent review and independent review.
+All emitted reports keep `arithmetic_qualified` false before those reviews.
+The probe suite does not change serving defaults, pins, row admission,
+the conditional reader allowance, or any live measurement path.
+Section 17.7 of the serving contract gives the model, derivation, and limitations.
+The actual scalar output operations have separate targeted probes.
+The qualifier refuses an untested physical device. Each device has its own evidence.
+Re-stamped 2026-10-08 for the corrected complete stock-reference comparison.
+Targeted device probes cover rendered-activation division, stored-ratio formation,
+single-precision library multiplication, and positive double-precision magnitude contraction.
+The CUDA 13.0 PTX contract supplies double FMA precision for the four-term tensor block.
+Its whole-dot magnitude budget is K roundings, not an inferred 53-bit alignment screen.
+The complete bound has no fitted multiplier or empirical floor.
+Every stock bound and qualification call requires its actual shape before all operation counts.
+The owner refuses inconsistent contraction lengths, unknown shapes, kernels, and block models.
+The original dense and grouped correctness callers use this complete stock API.
+The corrected API also passes retained-output audits from both physical devices without a device replay.
+Arithmetic qualification remains false before both required reviews.
+Complete fused-network and two-device arithmetic qualification remain outside this claim.
+Section 17.8 gives the normative derivation, corrective controls, and retained device receipts.
+
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
 lifecycle: `WINDOW_MODE=investigate-eager-control-2048` runs only two fresh
