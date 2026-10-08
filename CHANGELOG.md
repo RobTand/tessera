@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — isolate the portable preflight test
+
+Run the portable construction preflight through its real CLI in a fresh process.
+Keep the refusal for an initialized CUDA process unchanged.
+The test retains its configuration and KDA geometry checks.
+
 ## 2026-10-08 — remove a document-position test
 
 Remove the test that treats the first architecture paragraph as a fixed residency section.
