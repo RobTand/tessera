@@ -1,34 +1,17 @@
-"""The fused routed window MoE lane (tessera#640).
+"""Native WINDOW class dispatch and the existing dense kernel entries.
 
-One persistent, warp-specialised CUDA kernel (``serving/csrc/routed_fused_
-window.cu``) serves a routed expert stack's gate/up projection together with
-its SwiGLU epilogue, and a second launch of the same kernel serves the down
-projection into a route-sorted buffer that a fixed-order per-token sum
-reduces.  It computes the same functions of the wire as the Triton grouped
-window GEMM behind :class:`tessera.native_window_moe.NativeWindowMoE` -- the
-FOLDED arithmetic for the BF16 (value) family and the epilogue arithmetic for
-the E4M3 family, per-token native A quantisation, the bf16 route boundary
-before the reduction -- with three differences a reader must know:
+The routed adapter uses one class dispatcher. Every class aliases its exact
+word storage and uses the CUDA body for its declared schedule. Two fixed side
+streams run the class projections. Events fork and join both streams inside
+one opaque native operation. Each replay computes routing prefixes on the
+device and copies each class start into its own projection counter.
 
-* Scheduling is route-count sized: work items are ``(expert, n-block,
-  superblock)`` triples counted on the device, claimed through one device
-  counter that the caller zeroes in-stream, so no host synchronisation exists
-  and a captured forward replays.
-* Every weight is decoded once per (item, superblock) into a shared-memory B
-  tile and reused across up to 64 routes; the gate and up tiles share one
-  read of the activation tile.
-* The down reduction is DETERMINISTIC: each route's bf16-rounded, weighted
-  row is written by route position and the ``top_k`` rows of a token are
-  added in fixed order in fp32.  Two runs are bitwise equal; the legacy
-  kernel's fp32 ``atomic_add`` is scheduling-order dependent.
+The adapter retains the existing activation quantizer, SwiGLU arithmetic,
+sorted-route activation boundary, flat down writes and fixed-order token sum.
+Its execution telemetry names the class dispatcher. It does not qualify a
+new serving contract row. Unsupported classes and unavailable native builds
+refuse; no feature switch selects a second routed implementation.
 
-It is a NEW launch identity: ``scheme.ROUTED_FUSED_WINDOW_SYMBOL`` with the
-decoders ``native_routed_fused_window`` (E4M3, epilogue) and
-``native_routed_fused_window_folded`` (BF16, folded), both lane-bearing
-``scheme.ROUTE_LAUNCHES`` rows since contract v42, where the four window routed
-cells name them.  The compact adapter's pairs stay attested and stay the dispatch for every stack
-this lane refuses (:func:`fused_routed_window_supported`) and for
-``TESSERA_ROUTED_FUSED=0``.
 
 THE DENSE CASE (contract v43).  A dense window Linear is the E = 1, top_k = 1,
 unweighted case of the down projection, and the same kernel serves it: one
@@ -68,13 +51,13 @@ import functools
 import glob as _glob
 import logging
 import os
+import weakref
 
 import torch
 
 from .errors import GrammarError
 
 __all__ = [
-    "ENV_TOGGLE",
     "ENV_E4M3_MMA",
     "ENV_TOGGLE_DENSE",
     "ENV_DENSE_MODULE",
@@ -104,7 +87,6 @@ __all__ = [
     "fused_dense_window_enabled",
     "fused_dense_window_supported",
     "fused_routed_window_supported",
-    "fused_routed_window_enabled",
     "library_for",
     "prepare_dense_role",
     "superblock_rows",
@@ -113,10 +95,9 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-#: ``TESSERA_ROUTED_FUSED=0`` keeps the compact Triton adapter for every stack;
-#: unset or ``1`` takes this lane wherever :func:`fused_routed_window_supported`
-#: admits the stack.
-ENV_TOGGLE = "TESSERA_ROUTED_FUSED"
+
+
+
 #: ``TESSERA_DENSE_FUSED=0`` keeps the Triton ``tessera::window_gemm_dense``
 #: for every dense module; unset or ``1`` takes this kernel's dense identity
 #: wherever :func:`fused_dense_window_supported` admits every role.  Its own
@@ -478,32 +459,20 @@ def smem_reason(mode: int, slot_words: int, device: torch.device, library: str) 
             f"per block and this device allows {have}")
 
 
-def fused_routed_window_enabled() -> bool:
-    return os.environ.get(ENV_TOGGLE, "1") != "0"
-
-
 def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: int,
                                     rates, window_bits: int) -> "str | None":
-    """The wire-shape half of :func:`fused_routed_window_supported`, on one
-    unit's manifest facts alone -- what an exporter can decide before any
-    bundle exists (tessera#624 prices the lane's tables only where the
-    stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
+    """The native shape rule on one verified unit manifest.
 
-    Only what the manifest says is checked here, with the runtime
-    predicate's own helpers: family, window bits, the column count the tiles
-    need, the run table the packer lays out for these rates (one run per
-    distinct rate, sorted by rate) as :func:`run_pair` reads it -- one rate or
-    two ADJACENT rates, each in 1..8 (contract v45, tessera#694) -- the
-    word-stage slot that pair needs against the target platform's opt-in
-    shared memory (``SM121_MAX_DYNAMIC_SMEM``) in the part's own launch (the
-    two-table gate/up launch reaches ``ROUTED_LANE_RATES``, the one-table
-    down launch every rate), and the row multiples the kernel's tiles need.
-    Device, arithmetic, the activation quantizer, the column order and the
-    env toggle are runtime facts the runtime predicate keeps.  A stack is
-    refused whole when any of its parts is, as at runtime, so a GLM stack
-    (one rung for all three parts) is admitted exactly where
-    ``column_rates_routed_moe`` admits its rates.  Returns the refusal, or
-    ``None`` when the shape serves.
+    The exporter applies this rule before it writes a required class stack.
+    Every accepted native unit retains its selected table and launch descriptors.
+    An unsupported unit refuses the complete stack; no compact serving fallback remains.
+    ``part`` names gate, up or down.
+
+    The rule checks family, window bits, columns, one or two adjacent rates,
+    word-stage slots, shared-memory limits and native row multiples.
+    The runtime handles device, arithmetic, activation quantization and column order.
+    The caller selects the native library.
+    Return the refusal, or None for an accepted shape.
     """
     if family not in ("value", "e4m3"):
         return f"family {family!r} is not a window family"
@@ -945,13 +914,10 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     stack's root, rates 1..8), the packer's column order (low-rate columns
     ascending, then high-rate ascending), and the family's published
     arithmetic (folded for value, epilogue for e4m3).  One run table and one
-    ``tile_words`` per stack: the kernel takes a single tile stride for all
-    experts and for both gate and up.  A stack outside that shape keeps the
-    compact adapter, and the reason is the string returned here so a log can
-    say which.
+    ``tile_words`` per class: the kernel takes a single tile stride for all
+    experts in that class and for both gate and up. Unsupported classes
+    refuse with this reason; there is no compact runtime substitute.
     """
-    if not fused_routed_window_enabled():
-        return f"disabled by {ENV_TOGGLE}=0"
     bundles = {"gate": gate, "up": up, "down": down}
     fam = down.family
     if fam not in ("value", "e4m3"):
@@ -1057,24 +1023,20 @@ class _Routing:
     offsets: torch.Tensor      # [E + 1] int32
     flat_sorted: torch.Tensor  # [P] int32
     rw_sorted: torch.Tensor    # [P] fp32
-    item_off: torch.Tensor     # [E + 1] int32: prefix sum of ceil(routes_e / BM)
+    prefixes: dict[int, torch.Tensor]  # Each declared width: [E + 1] int32
     tokens: int
     top_k: int
-    #: The same at ``BM_WIDE``-route superblocks, built only when a launch of
-    #: the step takes that width (:func:`superblock_rows`).
-    item_off_wide: "torch.Tensor | None" = None
 
     @property
     def routes(self) -> int:
         return self.tokens * self.top_k
 
     def superblocks(self, bm: int) -> torch.Tensor:
-        """``item_off`` for ``bm``-route superblocks: [E + 1] int32."""
-        if int(bm) == BM:
-            return self.item_off
-        if int(bm) != BM_WIDE or self.item_off_wide is None:
-            raise GrammarError(f"no {bm}-route superblock offsets for this step")
-        return self.item_off_wide
+        """Return the absolute prefix for a bound-kernel superblock width."""
+        try:
+            return self.prefixes[bm]
+        except KeyError:
+            raise GrammarError(f"no {bm}-route superblock offsets for this step") from None
 
 
 def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
@@ -1085,11 +1047,8 @@ def _item_off(counts: torch.Tensor, bm: int) -> torch.Tensor:
 
 
 def _routing_tables(expert_ids: torch.Tensor, routing_weights: torch.Tensor, experts: int,
-                    device: torch.device, library: "str | None") -> _Routing:
-    """The step's routing in the order the fused launches read it: routes
-    sorted by expert (stable), their weights, and the superblock offsets at
-    each width a launch of ``library`` takes this step (``None``: a library
-    with the one width, ``BM``)."""
+                    device: torch.device, widths: tuple[int, ...]) -> _Routing:
+    """Sort the routes once and derive every declared width from the same counts."""
     if expert_ids.dim() != 2 or routing_weights.shape != expert_ids.shape:
         raise GrammarError("expert_ids and routing_weights must share [T, top_k]")
     if expert_ids.device != device or routing_weights.device != device:
@@ -1105,10 +1064,9 @@ def _routing_tables(expert_ids: torch.Tensor, routing_weights: torch.Tensor, exp
     order = torch.argsort(ids, stable=True)
     flat_sorted = order.to(torch.int32).contiguous()
     rw_sorted = routing_weights.reshape(-1).to(torch.float32)[order].contiguous()
-    wide = library is not None and any(superblock_rows(library, mode, tokens) == BM_WIDE for mode in (0, 2))
+    prefixes = {bm: _item_off(counts, bm) for bm in widths}
     return _Routing(offsets=offsets, flat_sorted=flat_sorted, rw_sorted=rw_sorted,
-                    item_off=_item_off(counts, BM), tokens=tokens, top_k=top_k,
-                    item_off_wide=_item_off(counts, BM_WIDE) if wide else None)
+                    prefixes=prefixes, tokens=tokens, top_k=top_k)
 
 
 @functools.lru_cache(maxsize=None)
@@ -1116,42 +1074,84 @@ def _sm_count(device_index: int) -> int:
     return int(torch.cuda.get_device_properties(device_index).multi_processor_count)
 
 
-@dataclasses.dataclass(frozen=True)
-class FusedRoutedWindowMoE:
-    """The fused lane over a loader-filled grouped stack.
+def grouped_class_view(bundle, start: int, end: int):
+    """Bound every grouped plane to one storage class, without copying weights.
 
-    ``gate``/``up``/``down`` are the compact loader's
-    :class:`~tessera.window_gemm_grouped.PreparedGroupedWindowGemm` bundles
-    (the same objects the compact adapter would serve); ``library`` is the
-    :data:`LIBRARIES` key the launches take (:func:`library_for` at
-    construction), the three ``table`` tensors are :func:`compose_table` of
-    each for that library and the ``words`` tensors are
-    :func:`words_by_expert` views.  ``__call__`` is the routed forward;
-    ``gate_up``/``down_routes`` are the teacher-forced stages the routed pair
-    oracle calls.
+    Offsets are read once at load. Dynamic routing offsets are never read here.
+    The class has its own constant word/run origins; route origins stay absolute.
     """
-    #: The ``torch.profiler`` range ``moe_route`` runs this adapter's forward
-    #: under; the compact adapter's is ``tessera_native_window_moe`` (#640).
-    PROFILER_LABEL = "tessera_routed_fused_window"
-    #: ``__call__`` takes ``shared=``: the MoE runner's shared-expert output,
-    #: added as the token sum is stored (``tessera.serving.glm53_shared_fold``).
-    supports_shared_fold = True
+    e = int(bundle.experts)
+    if type(start) is not int or type(end) is not int or not 0 <= start < end <= e:
+        raise GrammarError(f"class extent [{start!r}, {end!r}) is outside [0, {e}) or empty")
+    if bundle.word_off is None or bundle.run_off is None:
+        raise GrammarError("class views need the load-time word and run bounds, not a retired projection")
+    if not bundle.words_all.is_contiguous() or not bundle.runs_all.is_contiguous():
+        raise GrammarError("class words and runs must be contiguous zero-copy storage")
+    words = bundle.words_all.view(-1)
+    runs = bundle.runs_all.view(-1, 4)
+    word_off = bundle.word_off.tolist()
+    widths = bundle.total_words.tolist()
+    run_off = bundle.run_off.tolist()
+    if len(word_off) != e or len(widths) != e or len(run_off) != e + 1:
+        raise GrammarError("class word/run bounds do not cover the expert axis")
+    cursor = 0
+    for off, width in zip(word_off, widths):
+        if off != cursor or width <= 0:
+            raise GrammarError("class word bounds contain a hole, overlap or empty expert")
+        cursor += width
+    if cursor != words.numel():
+        raise GrammarError("class word bounds do not exactly cover the retained words")
+    if run_off[0] != 0 or run_off[-1] != runs.shape[0] or any(
+            a >= b for a, b in zip(run_off, run_off[1:])):
+        raise GrammarError("class run bounds contain a hole, overlap or empty expert")
+    width = widths[start]
+    if any(w != width for w in widths[start:end]):
+        raise GrammarError("class words do not have one per-expert stride")
+    w0 = word_off[start]
+    r0, r1 = run_off[start], run_off[end]
+    count = end - start
+    changes = {}
+    for name in ("table_all", "codes_all", "native_all", "scale_all", "init_all", "has_init",
+                 "tile_words", "total_words", "perm_all"):
+        tensor = getattr(bundle, name)
+        changes[name] = tensor if tensor is None or tensor.numel() == 0 else tensor[start:end]
+    return dataclasses.replace(bundle, **changes, experts=count,
+        words_all=words.narrow(0, w0, width * count).view(count, width),
+        runs_all=runs.narrow(0, r0, r1 - r0),
+        word_off=torch.arange(count, device=bundle.device, dtype=bundle.word_off.dtype) * width,
+        run_off=bundle.run_off[start:end + 1] - r0)
 
 
+def _native_view(bundle, table):
+    return dataclasses.replace(bundle, table_all=table, codes_all=None, native_all=None,
+        runs_all=None, word_off=None, tile_words=None, total_words=None, run_off=None, perm_all=None)
+
+
+def _profile_schedule(bundle, q256: int, role: str) -> None:
+    from fractions import Fraction
+    from .grammar import bresenham_rate_schedule
+
+    schedule = bresenham_rate_schedule(Fraction(q256, 256), int(bundle.cols), cap=RATE_MAX)
+    expected = [(rate, schedule.count(rate)) for rate in sorted(set(schedule))]
+    for expert_runs in bundle.runs_all.view(bundle.experts, -1, 4):
+        actual = [(int(row[0]), int(row[2])) for row in expert_runs.tolist()]
+        if actual != expected:
+            raise GrammarError(f"{role} class q256 {q256} disagrees with stored schedule {actual}; expected {expected}")
+
+
+@dataclasses.dataclass(frozen=True)
+class _WindowClass:
+    start: int
+    end: int
     gate: object
     up: object
     down: object
-    family: str
-    arithmetic: str
-    library: str
     table_gate: torch.Tensor
     table_up: torch.Tensor
     table_down: torch.Tensor
     words_gate: torch.Tensor
     words_up: torch.Tensor
     words_down: torch.Tensor
-    #: The run pairs (int32 ``[E, 8]``, one row per expert, all equal) and the
-    #: block descriptors (int32 ``[E, K / 32, BDESC_INTS]``) of each projection.
     runs_gate: torch.Tensor
     runs_up: torch.Tensor
     runs_down: torch.Tensor
@@ -1162,270 +1162,420 @@ class FusedRoutedWindowMoE:
     tile_words_down: int
     slot_words_gate_up: int
     slot_words_down: int
+
+
+@dataclasses.dataclass(frozen=True)
+class _LutClassKernel:
+    """Today's native LUT binding; routing orchestration owns no launch details."""
+    library: str
+    module: object
+
+    def work_shape(self, mode, tokens, index, parameters):
+        down = mode == 2
+        projection = 3 * index + (2 if down else 0)
+        bm = superblock_rows(self.library, mode, tokens)
+        units = parameters["wscales"][projection].shape[1] // (BN if down else HALF)
+        return bm, units
+
+    def prepare_input(self, x, a_scale, rows, family, device):
+        # This decoder needs no sentinel. A register-direct binding supplies
+        # its own M+1 zero-row operand and persistent K-part scratch.
+        return quantized_routed_input(x, a_scale, rows, family, device)
+
+    def launch(self, mode, x, a_scale, *, index, start, end, prefix, counter,
+               routing, parameters, bm, work_units, empty_scale, a_row_mode,
+               mul_weight, limit, out):
+        if counter is None:
+            raise GrammarError("the LUT class kernel requires a claim counter")
+        down = mode == 2
+        projection = 1 if down else 0
+        p0 = 3 * index + (2 if down else 0)
+        p1 = p0 if down else p0 + 1
+        p = parameters
+        device = x.device.index if x.device.index is not None else torch.cuda.current_device()
+        self.module.routed_fused_forward(mode, self.library != "value", x,
+            a_scale if a_scale is not None else empty_scale,
+            p["words"][p0], p["words"][p1], p["tables"][p0], p["tables"][p1],
+            p["inits"][p0], p["inits"][p1], p["has_inits"][p0], p["has_inits"][p1],
+            p["wscales"][p0], p["wscales"][p1], p["runs"][p0], p["runs"][p1],
+            p["bdescs"][p0], p["bdescs"][p1],
+            p["tile_words"][2 * index + projection], p["slot_words"][2 * index + projection],
+            p["piece_major"], routing.offsets[start:end + 1], routing.flat_sorted, routing.rw_sorted,
+            prefix[start:end + 1], counter, routing.top_k, a_row_mode, mul_weight, limit,
+            out, _sm_count(device), bm)
+
+
+@dataclasses.dataclass(frozen=True)
+class _UniformProjection:
+    bundle: object
+    words: torch.Tensor
+    table: torch.Tensor
+    runs: torch.Tensor
+    bdesc: torch.Tensor
+
+
+@dataclasses.dataclass(frozen=True)
+class _UniformWindowKernel:
+    """One load-bound stack; every forward uses the old direct native launch."""
+    library: str
+    module: object
+    gate: _UniformProjection
+    up: _UniformProjection
+    down: _UniformProjection
+    counters: tuple
+    empty: torch.Tensor
+    tile_words_gate_up: int
+    tile_words_down: int
+    slot_words_gate_up: int
+    slot_words_down: int
+    piece_major: bool
+
+    def routing(self, expert_ids, routing_weights, modes=(0, 2)):
+        widths = tuple(dict.fromkeys(superblock_rows(self.library, mode, expert_ids.shape[0]) for mode in modes))
+        return _routing_tables(expert_ids, routing_weights, self.down.bundle.experts,
+                               self.down.bundle.device, widths)
+
+    def prepare_input(self, x, a_scale, rows, family, device):
+        return quantized_routed_input(x, a_scale, rows, family, device)
+
+    def launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
+        if mode == 2:
+            p0 = p1 = self.down
+            tile_words, slot_words = self.tile_words_down, self.slot_words_down
+            counter = self.counters[1]
+        else:
+            p0, p1 = self.gate, self.up
+            tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
+            counter = self.counters[0]
+        counter.zero_()
+        bm = superblock_rows(self.library, mode, routing.tokens)
+        device = x.device.index if x.device.index is not None else torch.cuda.current_device()
+        b0, b1 = p0.bundle, p1.bundle
+        self.module.routed_fused_forward(mode, self.library != "value", x,
+            a_scale if a_scale is not None else self.empty,
+            p0.words, p1.words, p0.table, p1.table,
+            b0.init_all, b1.init_all, b0.has_init, b1.has_init,
+            b0.scale_all, b1.scale_all, p0.runs, p1.runs, p0.bdesc, p1.bdesc,
+            tile_words, slot_words, self.piece_major,
+            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
+            counter, routing.top_k, a_row_mode, mul_weight, limit, out, _sm_count(device), bm)
+
+    def forward(self, x, expert_ids, routing_weights, *, input_weight, limit, shared):
+        tokens = expert_ids.shape[0]
+        if input_weight:
+            x = x * routing_weights.reshape(-1, 1).to(x.dtype)
+        routing = self.routing(expert_ids, routing_weights)
+        family, device = self.down.bundle.family, self.down.bundle.device
+        xq, a1 = self.prepare_input(x, None, tokens, family, device)
+        act = torch.empty((routing.routes, self.down.bundle.cols), dtype=torch.bfloat16, device=device)
+        self.launch(0, xq, a1, routing, a_row_mode=0, mul_weight=False, limit=limit, out=act)
+        aq, a2 = self.prepare_input(act, None, routing.routes, family, device)
+        routed = torch.empty((routing.routes, self.down.bundle.rows), dtype=torch.bfloat16, device=device)
+        self.launch(2, aq, a2, routing, a_row_mode=1, mul_weight=not input_weight,
+                    limit=float("inf"), out=routed)
+        out = torch.empty((tokens, self.down.bundle.rows), dtype=torch.bfloat16, device=device)
+        if shared is None:
+            self.module.token_sum(routed, out, routing.top_k)
+        else:
+            self.module.token_sum_shared(routed, shared, out, routing.top_k)
+        return out
+
+
+
+@dataclasses.dataclass(frozen=True)
+class _DispatchResources:
+    streams: tuple
+    ready: object
+    finished: tuple
+    empty: torch.Tensor
+    kernel: object
+
+
+# The registry holds no weights or adapters. The adapter owns these resources.
+_dispatch_resources = weakref.WeakValueDictionary()
+
+
+def _make_dispatch_resources(device: torch.device, kernel) -> _DispatchResources:
+    resources = _DispatchResources(
+        streams=tuple(torch.cuda.Stream(device=device) for _ in range(2)),
+        ready=torch.cuda.Event(), finished=tuple(torch.cuda.Event() for _ in range(2)),
+        empty=torch.empty(0, dtype=torch.float32, device=device), kernel=kernel)
+    # CUDA creates event handles at the first record. Create them at load,
+    # before graph capture or a timed forward uses this adapter.
+    caller = torch.cuda.current_stream(device)
+    resources.ready.record(caller)
+    for stream, finished in zip(resources.streams, resources.finished):
+        stream.wait_event(resources.ready)
+        finished.record(stream)
+        caller.wait_event(finished)
+    return resources
+
+
+def _retain_dispatch_resources(resources: _DispatchResources) -> str:
+    key = str(id(resources))
+    _dispatch_resources[key] = resources
+    return key
+
+
+def resolve_dispatch_resources(key: str) -> _DispatchResources:
+    resources = _dispatch_resources.get(key)
+    if resources is None:
+        raise GrammarError("the routed dispatcher resource owner no longer exists")
+    return resources
+
+
+
+
+
+@dataclasses.dataclass(frozen=True)
+class FusedRoutedWindowMoE:
+    """The sole native WINDOW routed path, including the one-class case.
+
+    IDs are STORAGE coordinates. The plugin owns the single global-to-storage
+    remap; positions, weights, sorted-route activation boundary and flat down
+    writes are unchanged. All class bundles alias the exact loader storage.
+    """
+    PROFILER_LABEL = "tessera_routed_window_classes"
+    supports_shared_fold = True
+    gate: object
+    up: object
+    down: object
+    family: str
+    arithmetic: str
+    library: str
+    expert_classes: list
+    classes: tuple
+    table_gate: torch.Tensor
+    table_up: torch.Tensor
+    table_down: torch.Tensor
     counters: torch.Tensor
+    operands: dict
+    class_issue_order: tuple
+    dispatch_resources: _DispatchResources | None
+    resource_key: str | None
     activation: str = "silu"
+    uniform: _UniformWindowKernel | None = None
+
+    @classmethod
+    def from_bundles(cls, gate, up, down, *, expert_classes,
+                     activation: str = "silu") -> "FusedRoutedWindowMoE":
+        from .expert_classes import normalize_expert_classes, validate_gate_up_schedule
+
+        descriptors = normalize_expert_classes(expert_classes, int(down.experts))
+        if activation != "silu":
+            raise GrammarError(f"activation {activation!r} is not served; the class dispatcher computes silu")
+        if any(b.experts != down.experts for b in (gate, up)):
+            raise GrammarError("gate/up/down expert counts disagree")
+        library = library_for(down.family)
+        views = []
+        for desc in descriptors:
+            start, end = desc["start"], desc["end"]
+            g, u, d = (grouped_class_view(b, start, end) for b in (gate, up, down))
+            validate_gate_up_schedule(*desc["q256"]["w13"], int(g.cols), target=f"class [{start}, {end})")
+            reason = fused_routed_window_supported(g, u, d)
+            if reason is not None:
+                raise GrammarError(f"native class [{start}, {end}) refuses: {reason}")
+            for role, b, q in (("gate", g, desc["q256"]["w13"][0]),
+                               ("up", u, desc["q256"]["w13"][1]),
+                               ("down", d, desc["q256"]["w2"][0])):
+                _profile_schedule(b, q, role)
+            views.append((desc, g, u, d))
+        # Build at load. There is no compact substitute or late-forward build.
+        module = _ext(library)
+        tables = tuple(compose_table(b, library) for b in (gate, up, down))
+        classes = []
+        for desc, g, u, d in views:
+            start, end = desc["start"], desc["end"]
+            rg, bg, twg, swg = projection_tables(g)
+            ru, bu, twu, swu = projection_tables(u)
+            rd, bd, twd, swd = projection_tables(d)
+            if twg != twu or not torch.equal(rg, ru):
+                raise GrammarError(f"class [{start}, {end}) gate/up schedules or tile strides disagree")
+            tg, tu, td = (table[start:end] for table in tables)
+            classes.append(_WindowClass(start, end, _native_view(g, tg), _native_view(u, tu),
+                _native_view(d, td), tg, tu, td, words_by_expert(g), words_by_expert(u),
+                words_by_expert(d), rg, ru, rd, bg, bu, bd, twg, twd, max(swg, swu), swd))
+        operands = {name: [getattr(c, field) for c in classes for field in fields]
+            for name, fields in {
+                "words": ("words_gate", "words_up", "words_down"),
+                "tables": ("table_gate", "table_up", "table_down"),
+                "runs": ("runs_gate", "runs_up", "runs_down"),
+                "bdescs": ("bdesc_gate", "bdesc_up", "bdesc_down")}.items()}
+        for name, field in (("inits", "init_all"), ("has_inits", "has_init"), ("wscales", "scale_all")):
+            operands[name] = [getattr(b, field) for c in classes for b in (c.gate, c.up, c.down)]
+        operands.update(starts=[c.start for c in classes], ends=[c.end for c in classes],
+            tile_words=[v for c in classes for v in (c.tile_words_gate_up, c.tile_words_down)],
+            slot_words=[v for c in classes for v in (c.slot_words_gate_up, c.slot_words_down)],
+            piece_major=down.word_layout != "legacy")
+        counters = torch.empty((len(classes), 2), dtype=torch.int32, device=down.device)
+        uniform = None
+        resources = None
+        resource_key = None
+        if len(classes) == 1:
+            c = classes[0]
+            projections = tuple(_UniformProjection(getattr(c, role), getattr(c, "words_" + role),
+                getattr(c, "table_" + role), getattr(c, "runs_" + role), getattr(c, "bdesc_" + role))
+                for role in ("gate", "up", "down"))
+            uniform = _UniformWindowKernel(library, module, *projections,
+                (counters[0, :1], counters[0, 1:2]), torch.empty(0, dtype=torch.float32, device=down.device),
+                c.tile_words_gate_up, c.tile_words_down, c.slot_words_gate_up, c.slot_words_down,
+                down.word_layout != "legacy")
+        else:
+            resources = _make_dispatch_resources(down.device, _LutClassKernel(library, module))
+            resource_key = _retain_dispatch_resources(resources)
+        return cls(*(_native_view(b, t) for b, t in zip((gate, up, down), tables)),
+            family=down.family, arithmetic=down.arithmetic, library=library,
+            expert_classes=descriptors, classes=tuple(classes), table_gate=tables[0],
+            table_up=tables[1], table_down=tables[2], counters=counters,
+            operands=operands, class_issue_order=tuple(range(len(classes))),
+            dispatch_resources=resources, resource_key=resource_key, activation=activation, uniform=uniform)
 
     @property
     def piece_major(self) -> bool:
-        """Whether the resident words are the piece-major order (tessera#739).
-
-        Read off the bundles' shared tag (``word_layout``), never recomputed
-        from the run table: the reader must agree with how the stack was
-        actually written.
-        """
-        return str(getattr(self.down, "word_layout", "legacy")) != "legacy"
-
-    @classmethod
-    def from_bundles(cls, gate, up, down, *, activation: str = "silu") -> "FusedRoutedWindowMoE":
-        reason = fused_routed_window_supported(gate, up, down)
-        if reason is not None:
-            raise GrammarError(f"the fused routed window lane refuses this stack: {reason}")
-        if activation != "silu":
-            raise GrammarError(f"activation {activation!r} is not served; the fused lane computes silu")
-        # Build (or load) the family's extension HERE, at adapter construction:
-        # a toolchain that cannot compile it fails in the caller's hands --
-        # ``PackedWindowMoeBundles.adapter`` substitutes the compact adapter,
-        # the ``when_unavailable`` answer the contract publishes -- and not on
-        # the first forward of a serve.
-        library = library_for(down.family)
-        _ext(library)
-        runs_gate, bdesc_gate, tw_gate, sw_gate = projection_tables(gate)
-        runs_up, bdesc_up, _tw_up, sw_up = projection_tables(up)
-        runs_down, bdesc_down, tw_down, sw_down = projection_tables(down)
-        # All compact inputs stay valid for their caller. The native owner keeps
-        # independent frozen views of only the planes its launch still reads;
-        # lookup/permutation/run composition above has already succeeded.
-        def native_view(bundle):
-            return dataclasses.replace(bundle, table_all=None, codes_all=None, native_all=None,
-                runs_all=None, word_off=None, tile_words=None, total_words=None,
-                run_off=None, perm_all=None)
-
-        return cls(gate=native_view(gate), up=native_view(up), down=native_view(down),
-                   family=down.family, arithmetic=down.arithmetic,
-                   library=library,
-                   table_gate=compose_table(gate, library), table_up=compose_table(up, library),
-                   table_down=compose_table(down, library),
-                   words_gate=words_by_expert(gate), words_up=words_by_expert(up),
-                   words_down=words_by_expert(down),
-                   runs_gate=runs_gate, runs_up=runs_up, runs_down=runs_down,
-                   bdesc_gate=bdesc_gate, bdesc_up=bdesc_up, bdesc_down=bdesc_down,
-                   tile_words_gate_up=tw_gate, tile_words_down=tw_down,
-                   slot_words_gate_up=max(sw_gate, sw_up), slot_words_down=sw_down,
-                   counters=torch.zeros(2, dtype=torch.int32, device=down.device),
-                   activation=activation)
-
-    # -- identity -----------------------------------------------------------
-    @property
-    def launch_pair(self) -> "tuple[str, str]":
-        from .serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
-        from .serving.telemetry import (DECODER_NATIVE_ROUTED_FUSED_WINDOW,
-                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
-                                        DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
-
-        decoder = {"value": DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
-                   "e4m3": DECODER_NATIVE_ROUTED_FUSED_WINDOW,
-                   "e4m3mma": DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA}[self.library]
-        return ROUTED_FUSED_WINDOW_SYMBOL, decoder
+        return self.down.word_layout != "legacy"
 
     @property
-    def experts(self) -> int:
+    def launch_pair(self):
+        from .serving.scheme import routed_class_launch_pair
+        return routed_class_launch_pair(self.library, uniform=self.uniform is not None)
+
+    @property
+    def experts(self):
         return int(self.down.experts)
 
     @property
-    def device(self) -> torch.device:
+    def device(self):
         return self.down.device
 
     @property
-    def fp8(self) -> bool:
+    def fp8(self):
         return self.family == "e4m3"
 
     def named_tables(self):
-        """Native lookup, dispatch metadata and counters, declared by reference."""
-        yield "routed_fused.table_gate", self.table_gate
-        yield "routed_fused.table_up", self.table_up
-        yield "routed_fused.table_down", self.table_down
-        yield "routed_fused.runs_gate", self.runs_gate
-        yield "routed_fused.runs_up", self.runs_up
-        yield "routed_fused.runs_down", self.runs_down
-        yield "routed_fused.bdesc_gate", self.bdesc_gate
-        yield "routed_fused.bdesc_up", self.bdesc_up
-        yield "routed_fused.bdesc_down", self.bdesc_down
-        yield "routed_fused.counters", self.counters
+        for role in ("gate", "up", "down"):
+            yield f"routed_classes.table_{role}", getattr(self, f"table_{role}")
+        for i, c in enumerate(self.classes):
+            for field in dataclasses.fields(c):
+                value = getattr(c, field.name)
+                if isinstance(value, torch.Tensor):
+                    yield f"routed_classes.class_{i}.{field.name}", value
+        yield "routed_classes.counters", self.counters
+        yield "routed_classes.empty_scale", (self.uniform.empty if self.uniform is not None else self.dispatch_resources.empty)
 
-    def resident_bytes(self) -> int:
+    def resident_bytes(self):
         from .serving.residency import resident_storage_bytes
-
         return resident_storage_bytes(self.named_tables())
 
-    # -- routing ------------------------------------------------------------
-    def _routing(self, expert_ids: torch.Tensor, routing_weights: torch.Tensor) -> _Routing:
-        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, self.library)
+    def _routing(self, expert_ids, routing_weights, *, modes=(0, 2)):
+        if self.uniform is not None:
+            return self.uniform.routing(expert_ids, routing_weights, modes)
+        from .routed_class_dispatch import declared_route_widths
+        tokens = expert_ids.shape[0] if expert_ids.ndim else 0
+        widths = declared_route_widths(self.dispatch_resources.kernel, tokens,
+                                       self.class_issue_order, self.operands, modes)
+        return _routing_tables(expert_ids, routing_weights, self.experts, self.device, widths)
 
-    def _launch(self, mode: int, x: torch.Tensor, a_scale: "torch.Tensor | None",
-                routing: _Routing, *, a_row_mode: int, mul_weight: bool, limit: float,
-                out: torch.Tensor, counter: int) -> None:
-        lib = _ext(self.library)
-        if mode == 2:
-            b0 = b1 = self.down
-            w0 = w1 = self.words_down
-            t0 = t1 = self.table_down
-            r0 = r1 = self.runs_down
-            d0 = d1 = self.bdesc_down
-            tile_words, slot_words = self.tile_words_down, self.slot_words_down
-        else:
-            b0, b1 = self.gate, self.up
-            w0, w1 = self.words_gate, self.words_up
-            t0, t1 = self.table_gate, self.table_up
-            r0, r1 = self.runs_gate, self.runs_up
-            d0, d1 = self.bdesc_gate, self.bdesc_up
-            tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
-        bm = superblock_rows(self.library, mode, routing.tokens)
-        empty = self.counters.new_zeros(0, dtype=torch.float32)
-        slot = self.counters[counter:counter + 1]
-        slot.zero_()   # in-stream: a captured forward replays with a fresh work list
-        index = self.device.index if self.device.index is not None else torch.cuda.current_device()
-        lib.routed_fused_forward(
-            int(mode), bool(self.fp8),
-            x, a_scale if a_scale is not None else empty,
-            w0, w1, t0, t1,
-            b0.init_all, b1.init_all, b0.has_init, b1.has_init,
-            b0.scale_all, b1.scale_all,
-            r0, r1, d0, d1,
-            int(tile_words), int(slot_words),
-            bool(self.piece_major),
-            routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.superblocks(bm),
-            slot,
-            int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
-            out, _sm_count(index), int(bm))
+    def _launch(self, mode, x, a_scale, routing, *, a_row_mode, mul_weight, limit, out):
+        if self.uniform is not None:
+            return self.uniform.launch(mode, x, a_scale, routing, a_row_mode=a_row_mode,
+                                       mul_weight=mul_weight, limit=limit, out=out)
+        from . import routed_class_dispatch
+        routed_class_dispatch.dispatch_class_projection(mode, x, a_scale, routing,
+            parameters=self.operands,
+            starts=self.operands["starts"], ends=self.operands["ends"],
+            issue_order=self.class_issue_order, counters=self.counters,
+            resources=self.dispatch_resources, mul_weight=mul_weight, limit=limit,
+            a_row_mode=a_row_mode, out=out)
 
-    def _quantized(self, x: torch.Tensor, a_scale: "torch.Tensor | None", rows: int):
-        """The A operand the family's kernel reads: bf16 as is, or e4m3 + scale."""
-        if not self.fp8:
-            if x.dtype != torch.bfloat16 or a_scale is not None:
-                raise GrammarError("the value family takes a bf16 x and no activation scale")
-            return x, None
-        if x.dtype == torch.float8_e4m3fn:
-            if a_scale is None:
-                raise GrammarError("an fp8 x must carry its per-row activation scale")
-            a_scale = a_scale.reshape(-1)
-            if a_scale.numel() != rows or a_scale.dtype != torch.float32 or a_scale.device != self.device:
-                raise GrammarError(f"a_scale must be fp32 [{rows}] on {self.device}")
-            return x, a_scale.contiguous()
-        if x.dtype != torch.bfloat16:
-            raise GrammarError(f"the E4M3 family takes bf16 or fp8 x, got {x.dtype}")
-        if a_scale is not None:
-            raise GrammarError("a_scale belongs with a prequantized fp8 x")
-        from .serving.native_ops import native_fp8_quant
+    def _quantized(self, x, a_scale, rows):
+        kernel = self.uniform if self.uniform is not None else self.dispatch_resources.kernel
+        return kernel.prepare_input(x, a_scale, rows, self.family, self.device)
 
-        xq, s = native_fp8_quant(x)
-        return xq, s.reshape(-1)
-
-    def _check_x(self, x: torch.Tensor, rows: int, cols: int) -> torch.Tensor:
+    def _check_x(self, x, rows, cols):
         if x.dim() != 2 or tuple(x.shape) != (rows, cols) or x.device != self.device:
             raise GrammarError(f"x must be [{rows}, {cols}] on {self.device}, got {tuple(x.shape)} on {x.device}")
         return x if x.is_contiguous() else x.contiguous()
 
-    # -- the routed forward -------------------------------------------------
-    def __call__(self, x: torch.Tensor, expert_ids: torch.Tensor, routing_weights: torch.Tensor,
-                 *, apply_router_weight_on_input: bool = False,
-                 swiglu_limit: "float | None" = None,
-                 shared: "torch.Tensor | None" = None) -> torch.Tensor:
-        """The routed forward: bf16 ``[T, H]``.
-
-        ``shared``, when given, is a contiguous bf16 ``[T, H]`` tensor (the MoE
-        runner's shared-expert output). It is added as the token sum is
-        stored, bitwise equal to ``shared + forward(...)`` in bf16.
-        """
-        from .native_window_moe import SUPPORTED_ACTIVATIONS, checked_swiglu_limit
+    def __call__(self, x, expert_ids, routing_weights, *, apply_router_weight_on_input=False,
+                 swiglu_limit=None, shared=None):
+        from .native_window_moe import checked_swiglu_limit
 
         limit = checked_swiglu_limit(swiglu_limit)
-        if self.activation not in SUPPORTED_ACTIVATIONS:
-            raise GrammarError(f"activation {self.activation!r} has no exact implementation here")
-        if expert_ids.dim() != 2:
-            raise GrammarError("expert_ids must be [T, top_k]")
-        tokens = int(expert_ids.shape[0])
+        if expert_ids.dim() != 2 or routing_weights.shape != expert_ids.shape:
+            raise GrammarError("expert_ids and routing_weights must share [T, top_k]")
+        if expert_ids.dtype not in (torch.int32, torch.int64):
+            raise GrammarError("expert_ids must be int32 or int64 storage IDs")
+        if expert_ids.device != self.device or routing_weights.device != self.device:
+            raise GrammarError("routing tensors must live on the compute device")
+        tokens, top_k = expert_ids.shape
         x = self._check_x(x, tokens, self.gate.cols)
-        if apply_router_weight_on_input:
-            # The modular prepare's placement (see NativeWindowMoE.__call__):
-            # the weight scales x BEFORE the activation quantiser, topk=1 only.
-            if int(expert_ids.shape[1]) != 1:
-                raise GrammarError(
-                    "apply_router_weight_on_input is only implemented for topk=1 (vLLM's own "
-                    f"prepare asserts this); got topk={int(expert_ids.shape[1])}")
-            x = x * routing_weights.reshape(-1, 1).to(x.dtype)
-        hidden, inter = self.down.rows, self.down.cols
+        if x.dtype != torch.bfloat16:
+            raise GrammarError("the routed forward takes bf16 hidden states")
+        if apply_router_weight_on_input and top_k != 1:
+            raise GrammarError("apply_router_weight_on_input is only implemented for topk=1")
         if shared is not None and (shared.dtype != torch.bfloat16 or not shared.is_contiguous()
-                                   or tuple(shared.shape) != (tokens, hidden)
-                                   or shared.device != self.device):
-            raise GrammarError(f"shared must be contiguous bf16 {(tokens, hidden)} on {self.device}, "
-                               f"got {shared.dtype} {tuple(shared.shape)} on {shared.device}")
+                or tuple(shared.shape) != (tokens, self.down.rows) or shared.device != self.device):
+            raise GrammarError(f"shared must be contiguous bf16 {(tokens, self.down.rows)} on {self.device}")
         if tokens == 0:
-            return torch.empty((0, hidden), dtype=torch.bfloat16, device=self.device)
-        routing = self._routing(expert_ids, routing_weights)
-        xq, a1 = self._quantized(x, None, tokens)
-        act = torch.empty((routing.routes, inter), dtype=torch.bfloat16, device=self.device)
-        self._launch(0, xq, a1, routing, a_row_mode=0, mul_weight=False,
-                     limit=limit if limit is not None else float("inf"), out=act, counter=0)
-        aq, a2 = self._quantized(act, None, routing.routes)
-        routed = torch.empty((routing.routes, hidden), dtype=torch.bfloat16, device=self.device)
-        self._launch(2, aq, a2, routing, a_row_mode=1, mul_weight=not apply_router_weight_on_input,
-                     limit=float("inf"), out=routed, counter=1)
-        out = torch.empty((tokens, hidden), dtype=torch.bfloat16, device=self.device)
-        if shared is None:
-            _ext(self.library).token_sum(routed, out, int(routing.top_k))
-        else:
-            _ext(self.library).token_sum_shared(routed, shared, out, int(routing.top_k))
-        return out
+            return torch.empty((0, self.down.rows), dtype=torch.bfloat16, device=self.device)
+        if self.uniform is not None:
+            return self.uniform.forward(x, expert_ids, routing_weights,
+                input_weight=apply_router_weight_on_input, limit=limit if limit is not None else float("inf"), shared=shared)
+        from .serving.native_window import _routed_window_classes
+        return _routed_window_classes(x, expert_ids, routing_weights, shared,
+            **self.operands, issue_order=list(self.class_issue_order), counters=self.counters,
+            library=self.library, resource_key=self.resource_key,
+            input_weight=apply_router_weight_on_input, swiglu_limit=limit if limit is not None else float("inf"))
 
-    # -- the teacher-forced stages (the oracle's interface) ------------------
-    def gate_up(self, x: torch.Tensor, expert_ids: torch.Tensor, routing_weights: torch.Tensor,
-                a_scale: "torch.Tensor | None" = None, *, preserve: bool = True,
-                apply_router_weight_on_input: bool = False) -> torch.Tensor:
-        """Both projections, route-preserved: bf16 ``[T, top_k, 2I]`` (gate | up)."""
+    def gate_up(self, x, expert_ids, routing_weights, a_scale=None, *, preserve=True,
+                apply_router_weight_on_input=False):
         if not preserve or apply_router_weight_on_input:
-            raise GrammarError(
-                "the fused lane's gate_up stage is the route-preserving, unweighted projection; "
-                "the routed forward is __call__")
-        routing = self._routing(expert_ids, routing_weights)
+            raise GrammarError("gate_up is the unweighted route-preserving projection")
+        routing = self._routing(expert_ids, routing_weights, modes=(1,))
         x = self._check_x(x, routing.tokens, self.gate.cols)
-        inter = self.down.cols
-        out = torch.empty((routing.tokens, routing.top_k, 2 * inter), dtype=torch.bfloat16,
+        out = torch.empty((routing.tokens, routing.top_k, 2*self.down.cols), dtype=torch.bfloat16,
                           device=self.device)
-        if routing.tokens == 0:
-            return out
-        xq, a1 = self._quantized(x, a_scale, routing.tokens)
-        self._launch(1, xq, a1, routing, a_row_mode=0, mul_weight=False, limit=float("inf"),
-                     out=out, counter=0)
+        if routing.tokens:
+            xq, a1 = self._quantized(x, a_scale, routing.tokens)
+            self._launch(1, xq, a1, routing, a_row_mode=0, mul_weight=False, limit=float("inf"), out=out)
         return out
 
-    def down_routes(self, x: torch.Tensor, expert_ids: torch.Tensor, routing_weights: torch.Tensor,
-                    a_scale: "torch.Tensor | None" = None, *, route_input: bool = True,
-                    apply_router_weight_on_input: bool = False,
-                    round_routes: bool = True) -> torch.Tensor:
-        """The down projection reduced per token: bf16 ``[T, H]``.
-
-        ``x`` is the route-indexed activation ``[T * top_k, I]`` in ROUTE order
-        (row ``t * top_k + j``), as the compact adapter's ``down(...,
-        route_input=True)`` takes it.  Only the stock boundary is served:
-        ``round_routes=True`` (each route rounded to bf16 before the fixed-order
-        fp32 sum, then one rounding).
-        """
-        if not route_input:
-            raise GrammarError("the fused lane's down stage takes route-indexed input")
-        if not round_routes:
-            raise GrammarError("the fused lane serves the stock bf16 route boundary only (round_routes=True)")
-        routing = self._routing(expert_ids, routing_weights)
-        hidden, inter = self.down.rows, self.down.cols
-        x = self._check_x(x, routing.routes, inter)
-        out = torch.empty((routing.tokens, hidden), dtype=torch.bfloat16, device=self.device)
-        if routing.tokens == 0:
-            return out
-        xq, a2 = self._quantized(x, a_scale, routing.routes)
-        routed = torch.empty((routing.routes, hidden), dtype=torch.bfloat16, device=self.device)
-        self._launch(2, xq, a2, routing, a_row_mode=2, mul_weight=not apply_router_weight_on_input,
-                     limit=float("inf"), out=routed, counter=1)
-        _ext(self.library).token_sum(routed, out, int(routing.top_k))
+    def down_routes(self, x, expert_ids, routing_weights, a_scale=None, *, route_input=True,
+                    apply_router_weight_on_input=False, round_routes=True):
+        if not route_input or not round_routes:
+            raise GrammarError("down_routes needs route-indexed input and the bf16 route boundary")
+        routing = self._routing(expert_ids, routing_weights, modes=(2,))
+        x = self._check_x(x, routing.routes, self.down.cols)
+        out = torch.empty((routing.tokens, self.down.rows), dtype=torch.bfloat16, device=self.device)
+        if routing.tokens:
+            xq, a2 = self._quantized(x, a_scale, routing.routes)
+            routed = torch.empty((routing.routes, self.down.rows), dtype=torch.bfloat16, device=self.device)
+            self._launch(2, xq, a2, routing, a_row_mode=2, mul_weight=not apply_router_weight_on_input,
+                         limit=float("inf"), out=routed)
+            _ext(self.library).token_sum(routed, out, routing.top_k)
         return out
+
+
+def quantized_routed_input(x, a_scale, rows, family, device):
+    if family == "value":
+        if x.dtype != torch.bfloat16 or a_scale is not None:
+            raise GrammarError("the value family takes bf16 x and no activation scale")
+        return x, None
+    if x.dtype == torch.float8_e4m3fn:
+        if a_scale is None:
+            raise GrammarError("an fp8 x must carry its per-row activation scale")
+        a_scale = a_scale.reshape(-1)
+        if a_scale.numel() != rows or a_scale.dtype != torch.float32 or a_scale.device != device:
+            raise GrammarError(f"a_scale must be fp32 [{rows}] on {device}")
+        return x, a_scale.contiguous()
+    if x.dtype != torch.bfloat16 or a_scale is not None:
+        raise GrammarError("the E4M3 family takes bf16 or scaled fp8 x")
+    from .serving.native_ops import native_fp8_quant
+    xq, scale = native_fp8_quant(x)
+    return xq, scale.reshape(-1)
+
+
+
 
 
 # ---------------------------------------------------------------------------

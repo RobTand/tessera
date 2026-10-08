@@ -258,7 +258,7 @@ def body_weights(model: Path) -> dict:
     return shapes
 
 
-def model_plan_context(model: Path, config: dict, *, research_selected: bool = False):
+def model_plan_context(model: Path, config: dict):
     """Use the exporter's classification and its carried projection, never guess slices."""
     selected = {name + ".weight" for name in config if not name.startswith("__")}
     _shards, dense, packed, routed = quantizable(model, selected=selected)
@@ -285,8 +285,7 @@ def model_plan_context(model: Path, config: dict, *, research_selected: bool = F
                 != source_roster_identity(model)):
             raise PlanError("carried expert projection source identity disagrees with this checkpoint")
         current = project_expert_plan({**dense, **packed, **routed},
-                    json.loads((model / "config.json").read_text()), request,
-                    research_selected=research_selected)
+                    json.loads((model / "config.json").read_text()), request)
         if current["stacks"] != producer.get("stacks"):
             raise PlanError("carried expert projection disagrees with the producer's current source projection")
         bindings = carried.get("stacks")
@@ -668,8 +667,7 @@ def main(argv=None):
         from tessera.moe_execution import ResearchSelectedMoeInput
         research_input = ResearchSelectedMoeInput.read(args.research_selected_moe_json)
     refuse_before_source(config, research_input)
-    shapes, stack_members, layouts = model_plan_context(
-        args.model, config, research_selected=research_input is not None)
+    shapes, stack_members, layouts = model_plan_context(args.model, config)
     if args.cover != "as-allocated" and stack_members:
         raise PlanError("broadcast-by-role cannot extrapolate routed expert stacks; use as-allocated")
     # Keep the existing router BF16 disposition outside exporter overrides.
@@ -708,7 +706,7 @@ def main(argv=None):
         _shards, dense, packed, routed = quantizable(args.model)
         project_expert_plan({**dense, **packed, **routed},
                            json.loads((args.model / "config.json").read_text()),
-                           selected_stacks, research_selected=research_input is not None)
+                           selected_stacks)
     provenance["expert_stacks"] = {stack: {"units": members, "planned_as": plan[stack]}
                                    for stack, members in stack_members.items()}
     provenance["immutable_bf16_routers"] = sorted(routers)

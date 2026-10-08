@@ -11,12 +11,11 @@ top-8) are loaded through the SAME builder and loader callbacks a serve uses
 every ``weight_loader`` -> ``process_weights_after_loading`` -> ``apply``), and
 the routed output is held to an independent reference:
 
-* ``TESSERA_E4M3_K1`` -> ``(NativeWindowMoE.__call__, native_window_moe_compact)``
-* ``TESSERA_BF16_K1`` -> ``(NativeWindowMoE.__call__, native_window_moe_compact_folded)``
-* ``TESSERA_E2M1_K2`` -> ``(kernel_a4.a4_span2_grouped_gemm, native_span2_grouped)``
+* E4M3 and folded BF16 WINDOW wires execute the native expert-class operation.
+* E2M1x2 uses the native grouped A4 operation.
 
-The launch pair is not asserted from the family: it is read off the route's
-own ``emit_route`` telemetry during ``apply`` and compared with the pair above.
+Actual emit_route telemetry is checked against the selected native library
+or the A4 route, not against a historical compact fallback.
 
 THE REFERENCE.  Weights: ``tessera.stock.materialize_stock`` on each unit the
 MATERIALISING reader parses (``scheme.parse_tessera_expert_blob``), dequantised
@@ -118,16 +117,8 @@ PROJ = ("gate_proj", "up_proj", "down_proj")
 SHARDS = (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj"))
 
 FAMILIES = {
-    "e4m3": {"payload": "TESSERA_E4M3_K1", "rung": "R1024", "family": "TESSERA_FP8",
-             "pair": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                      "native_window_moe_compact"),
-             "fused_pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-                            "native_routed_fused_window")},
-    "bf16": {"payload": "TESSERA_BF16_K1", "rung": "R1024", "family": "TESSERA_BF16",
-             "pair": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                      "native_window_moe_compact_folded"),
-             "fused_pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-                            "native_routed_fused_window_folded")},
+    "e4m3": {"payload": "TESSERA_E4M3_K1", "rung": "R1024", "family": "TESSERA_FP8"},
+    "bf16": {"payload": "TESSERA_BF16_K1", "rung": "R1024", "family": "TESSERA_BF16"},
     "e2m1": {"payload": "TESSERA_E2M1_K2", "rung": "R896", "family": "TESSERA_NVFP4",
              "pair": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")},
 }
@@ -136,59 +127,58 @@ FUSED_ADAPTER = "FusedRoutedWindowMoE"
 
 
 def expected_pair(fam, method):
-    """The launch pair the built method must emit.
-
-    ``PackedWindowMoeBundles.adapter`` (tessera#640) takes the fused
-    warp-specialised lane for every stack it admits and the compact Triton
-    adapter otherwise; the expectation is keyed on WHICH adapter class was
-    built, never read off the adapter's own ``launch_pair`` (that would make
-    the telemetry check circular).  The A4 family's pair is fixed.
-    """
-    nat = getattr(method, "_native", None)
-    if type(nat).__name__ == FUSED_ADAPTER:
-        # The E4M3 family's library is a construction fact of the adapter
-        # (``routed_fused.library_for`` at ``from_bundles``), not its telemetry.
-        if getattr(nat, "library", None) == "e4m3mma":
-            return (fam["fused_pair"][0], "native_routed_fused_window_e4m3mma")
-        return tuple(fam["fused_pair"])
-    return tuple(fam["pair"])
+    """Execution pair selected by the native library, independently of telemetry."""
+    if fam["family"] == "TESSERA_NVFP4":
+        return tuple(fam["pair"])
+    native = method._native
+    if type(native).__name__ != FUSED_ADAPTER:
+        raise ValueError("WINDOW oracle requires the native expert-class owner")
+    return native.launch_pair
 
 
 def f16_twin(method):
-    """The fused lane on the f16 instruction (``tessera_routed_fused_e4m3``)
-    over the SAME prepared bundles as an E4M3-instruction ``method._native``,
-    or None for any other adapter: the two differ in the tensor-core
-    instruction only, so their outputs differ by fp32 summation order."""
-    nat = getattr(method, "_native", None)
-    if type(nat).__name__ != FUSED_ADAPTER or getattr(nat, "library", None) != "e4m3mma":
-        return None
+    """F16-instruction control over the same retained words and descriptors."""
+    import dataclasses
     from tessera import routed_fused as rf
 
-    old = os.environ.get(rf.ENV_E4M3_MMA)
-    os.environ[rf.ENV_E4M3_MMA] = "f16"
-    try:
-        twin = rf.FusedRoutedWindowMoE.from_bundles(nat.gate, nat.up, nat.down,
-                                                    activation=nat.activation)
-    finally:
-        if old is None:
-            os.environ.pop(rf.ENV_E4M3_MMA, None)
-        else:
-            os.environ[rf.ENV_E4M3_MMA] = old
-    assert twin.library == "e4m3", twin.library
-    return twin
-
-
-def compact_twin(method, activation="silu"):
-    """The compact Triton adapter over the SAME prepared bundles as a fused
-    ``method._native`` (no second copy of the weights), or None when the
-    method's adapter is not the fused lane."""
-    nat = getattr(method, "_native", None)
-    if type(nat).__name__ != FUSED_ADAPTER:
+    native = getattr(method, "_native", None)
+    if type(native).__name__ != FUSED_ADAPTER or native.library != "e4m3mma":
         return None
-    from tessera.native_window_moe import native_window_moe_from_bundles
+    if native.piece_major:
+        raise ValueError("f16 instruction control cannot read piece-major words")
+    rf._ext("e4m3")
+    tables = tuple(t.view(torch.float8_e4m3fn).to(torch.float16).contiguous().view(torch.int16)
+                   for t in (native.table_gate, native.table_up, native.table_down))
+    roles = ("gate", "up", "down")
+    classes = []
+    for cls in native.classes:
+        selected = [table[cls.start:cls.end] for table in tables]
+        fields = {f"table_{role}": table for role, table in zip(roles, selected)}
+        fields.update({role: dataclasses.replace(getattr(cls, role), table_all=table)
+                       for role, table in zip(roles, selected)})
+        classes.append(dataclasses.replace(cls, **fields))
+    operands = dict(native.operands)
+    operands["tables"] = [getattr(cls, f"table_{role}") for cls in classes for role in roles]
+    counters = torch.empty_like(native.counters)
+    uniform = None
+    if native.uniform is not None:
+        c = classes[0]
+        projections = tuple(rf._UniformProjection(getattr(c, role), getattr(c, "words_" + role),
+            getattr(c, "table_" + role), getattr(c, "runs_" + role), getattr(c, "bdesc_" + role)) for role in roles)
+        uniform = dataclasses.replace(native.uniform, library="e4m3", module=rf._ext("e4m3"),
+            gate=projections[0], up=projections[1], down=projections[2],
+            counters=(counters[0, :1], counters[0, 1:2]))
+        resources = resource_key = None
+    else:
+        resources = dataclasses.replace(native.dispatch_resources, kernel=rf._LutClassKernel("e4m3", rf._ext("e4m3")))
+        resource_key = rf._retain_dispatch_resources(resources)
+    return dataclasses.replace(native, library="e4m3", classes=tuple(classes), operands=operands,
+        table_gate=tables[0], table_up=tables[1], table_down=tables[2],
+        counters=counters, dispatch_resources=resources, resource_key=resource_key, uniform=uniform,
+        **{role: dataclasses.replace(getattr(native, role), table_all=table)
+           for role, table in zip(roles, tables)})
 
-    return native_window_moe_from_bundles(nat.down, gate=nat.gate, up=nat.up,
-                                          activation=getattr(nat, "activation", activation))
+
 
 
 # ---- the dtype constants the bound is built from ---------------------------
@@ -316,6 +306,9 @@ def scheme_for(fam, blobs, n_experts):
     scheme = {
         "family": fam["family"], "structure": "routed_moe", "grid": g["grid"],
         "body": g["body"], "plane": g["plane"], "experts": int(n_experts),
+        "expert_ids": list(range(int(n_experts))),
+        "expert_classes": [{"start": 0, "end": int(n_experts),
+                            "q256": {"w13": [g["q256"], u["q256"]], "w2": [d["q256"]]}}],
         "groups": {
             "w13": {"rows": g["rows"] + u["rows"], "columns": g["columns"],
                     "q256": [g["q256"], u["q256"]],
@@ -1377,7 +1370,7 @@ def run_oracle(args):
     for fkey in args.families.split(","):
         fam = FAMILIES[fkey]
         entry = {"payload_family": fam["payload"], "rung": fam["rung"],
-                 "scheme_family": fam["family"], "expected_launch_pair": list(fam["pair"])}
+                 "scheme_family": fam["family"]}
         report["families"][fkey] = entry
         try:
             log(fkey, "loading wires")
@@ -1396,7 +1389,6 @@ def run_oracle(args):
             layer, method, info = build_after(fam, scheme, blobs, scales, E, cfg, args.clamp, prefix)
             entry["native"] = info
             entry["expected_launch_pair"] = list(expected_pair(fam, method))
-            entry["compact_launch_pair"] = list(fam["pair"])
             if fam["family"] == "TESSERA_NVFP4":
                 entry["native"]["note"] = (
                     "gs13/gs2 are the route's own reduction over the LOADED experts "
@@ -1420,7 +1412,7 @@ def run_oracle(args):
             twin = f16_twin(method)
             if twin is not None:
                 entry["f16_twin"] = {"library": twin.library, "launch_pair": list(twin.launch_pair),
-                                     "shares_bundles_with_native": True}
+                                     "shares_retained_word_planes_with_native": True}
             for m in [int(v) for v in args.m.split(",")]:
                 x, ids, w = make_inputs(m, E, args.seed + m, args.sigma)
                 log(fkey, "oracle M", m)
@@ -1523,15 +1515,6 @@ def run_profile(args):
             layer, method, info = build_after(fam, scheme, blobs, scales, E, cfg, args.clamp, prefix)
             entry["after_build"] = info
             legs["after"] = lambda x, w, ids, _m=method, _l=layer: _m.apply(_l, x, w, ids, None, None)
-            compact = compact_twin(method)
-            if compact is not None:
-                # tessera#640: the lane this build replaces, over the same
-                # resident bundles, so after/legacy differ in the kernel only.
-                entry["legacy_build"] = {"adapter": type(compact).__name__,
-                                         "launch_pair": list(compact.launch_pair),
-                                         "shares_bundles_with_after": True}
-                legs["legacy"] = lambda x, w, ids, _c=compact, _lim=args.clamp: _c(
-                    x, ids, w, swiglu_limit=_lim, apply_router_weight_on_input=False)
             try:
                 before, binfo, _bl = build_before(fkey, fam, scheme, blobs, scales, E, cfg,
                                                   args.clamp, prefix)

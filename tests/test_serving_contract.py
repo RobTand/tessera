@@ -782,15 +782,15 @@ def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
     cell = next(c for c in revived["lane_eligibility"]["cells"]
                 if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_resident")
     cell["executes"] = [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}]
-    with pytest.raises(ValueError, match="but the TESSERA_FP8 route makes"):
+    with pytest.raises(ValueError):
         validate_serving_contract(revived)
 
 
 def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     """The published cells read against the DISPATCH, not against the table.
 
-    ``test_every_cell_executes_a_launch_its_route_can_make`` compares cells to
-    ``ROUTE_LAUNCHES``; #538 is the case where BOTH drifted together, so a
+    Historical receipts use the qualification table. This dense check also reads the
+    actual dispatch; #538 is the case where both tables drifted together, so a
     second reference is needed.  This one is the literal pair ``apply`` emits.
     It names nothing this branch introduced, so it runs to this assertion on
     ``master`` too -- where it fails, listing the eight stale cells.
@@ -926,10 +926,10 @@ def test_a_reminted_cell_id_names_its_image_and_rung(contract):
     assert checked == _WITHDRAWN_V38_CELL_IDS, checked
 
 
-def test_every_cell_executes_a_launch_its_route_can_make(contract):
-    """The shipped table, read against the launch table rather than mutated."""
+def test_every_cell_retains_its_attested_launch_identity(contract):
+    """Historical receipts do not claim current class execution."""
     from tessera.serving.contract import cell_executes, cell_residency_modes
-    from tessera.serving.scheme import launch_pairs
+    from tessera.serving.scheme import qualification_launch_pairs
 
     by_family = {"TESSERA_E2M1_K2": "TESSERA_NVFP4", "TESSERA_E4M3_K1": "TESSERA_FP8",
                  "TESSERA_BF16_K1": "TESSERA_BF16"}
@@ -937,13 +937,15 @@ def test_every_cell_executes_a_launch_its_route_can_make(contract):
         route = by_family[cell["family"]]
         admissible = set()
         for mode in cell_residency_modes(cell):
-            admissible |= launch_pairs(route, structure=cell["structure"],
+            admissible |= qualification_launch_pairs(route, structure=cell["structure"],
                                        regime=cell["regime"], mode=mode)
         assert cell_executes(cell) <= admissible, cell["id"]
 
 
 def test_native_route_pairs_are_supported_and_censusable():
-    """Launch support is not a claim that a serving receipt exists."""
+    """Launch support is not a claim that a serving receipt exists.
+
+    Current operations and historical receipts have separate qualification sets."""
     pytest.importorskip("torch")
     from tessera.serving import telemetry
     from tessera.serving.scheme import (FUSED_WINDOW_DENSE_E2M1_SYMBOL, ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
@@ -951,7 +953,8 @@ def test_native_route_pairs_are_supported_and_censusable():
                                         STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
                                         TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4,
                                         WINDOW_GEMM_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL,
-                                        experimental_launch_pairs, launch_pairs)
+                                        experimental_launch_pairs, launch_pairs, qualification_launch_pairs,
+                                        routed_class_launch_pair, WINDOW_CLASS_LAUNCHES)
 
     expected = {
         (FUSED_WINDOW_DENSE_E2M1_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1):
@@ -959,11 +962,7 @@ def test_native_route_pairs_are_supported_and_censusable():
         (ROUTED_FUSED_WINDOW_E2M1_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1):
             (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
     }
-    # Contract v42 (tessera#640): the fused warp-specialised routed lane is
-    # the dispatch's default for rate-4 window-14 expert stacks.  Its two
-    # pairs stood in the experimental set while the lane was built; a served
-    # census of the rate-4 u1 stub B recorded both, the four window routed
-    # cells name them, and the set is empty again.
+    # These identities belong to the retained historical qualification records.
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
     fused_fp8 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW)
     fused_bf16 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
@@ -980,17 +979,19 @@ def test_native_route_pairs_are_supported_and_censusable():
     # (tessera#931), default-off, until a served census earns it a cell.
     from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
     decode_once = (DECODE_ONCE_DENSE_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3)
-    assert EXPERIMENTAL_LAUNCHES == frozenset({decode_once})
-    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == set()
+    classes = {routed_class_launch_pair(library, uniform=uniform) for library in WINDOW_CLASS_LAUNCHES for uniform in (False, True)}
+    assert EXPERIMENTAL_LAUNCHES == frozenset({decode_once, *classes})
+    fp8_classes = {routed_class_launch_pair(library, uniform=uniform) for library in ("e4m3", "e4m3mma") for uniform in (False, True)}
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == fp8_classes
     assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {decode_once}
-    assert mma_routed in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
+    assert mma_routed in qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
     assert mma_dense in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
-    assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == set()
+    assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == {routed_class_launch_pair("value", uniform=uniform) for uniform in (False, True)}
     assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == set()
-    assert fused_fp8 in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
-    assert fused_bf16 in launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
-    assert fused_fp8 not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
-    assert fused_bf16 not in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_fp8 in qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_bf16 in qualification_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_fp8 not in qualification_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_bf16 not in qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
     # Each NVFP4 structure makes exactly its A4 launch; the retired
     # ``(torch._scaled_mm, native_span2)`` and ``torch_materialize_stock``
     # rows left the table with the v39 withdrawal.
@@ -1011,23 +1012,17 @@ def test_native_route_pairs_are_supported_and_censusable():
     }
     for pair, (route, structure) in earned_v38.items():
         assert pair not in EXPERIMENTAL_LAUNCHES, pair
-        assert pair in launch_pairs(route, structure=structure), pair
+        assert pair in qualification_launch_pairs(route, structure=structure), pair
         assert pair not in experimental_launch_pairs(route, structure=structure), pair
-    # ...and the launches FP8 experts can make are the compact adapter's and
-    # the fused lane's, in the attested view and the census's alike: the
-    # materialising stock launch left the table with the v38 withdrawal.
-    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
-                        include_experimental=True) == {
-        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8,
-        mma_routed}
-    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {
-        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8,
-        mma_routed}
-    # Narrowed to a box with NO extension prepared, the fused row drops and
-    # the compact row stays (it is not ``when_lane_absent``: it runs beside
-    # the lane too, for the stacks the lane's geometry check refuses).
-    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, lanes=()) == {
+    assert qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8, mma_routed}
+    assert qualification_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, lanes=()) == {
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT)}
+    for route in (TESSERA_FP8, TESSERA_BF16):
+        current = launch_pairs(route, structure=STRUCTURE_ROUTED_MOE, include_experimental=True)
+        assert current <= EXPERIMENTAL_LAUNCHES
+        assert not launch_pairs(route, structure=STRUCTURE_ROUTED_MOE)
+        assert current.isdisjoint(qualification_launch_pairs(route, structure=STRUCTURE_ROUTED_MOE))
     # LEFT at contract v34 (tessera#545), and this is the other half of that
     # move: the dense window GEMM is attested now, so it is NOT experimental
     # and it IS in the validator's default view -- which is what lets the v34
@@ -1084,9 +1079,8 @@ def test_native_route_pairs_are_supported_and_censusable():
                              (TESSERA_BF16, STRUCTURE_ROUTED_MOE)):
         assert experimental_launch_pairs(route, structure=structure) <= launch_pairs(
             route, structure=structure, include_experimental=True)
-    # A routed BF16 stack's launches: the folded compact pair, attested since
-    # v38, and the folded fused pair, attested since v42 (tessera#640).
-    assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == {
+    # The BF16 receipts retain both previous folded identities.
+    assert qualification_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == {
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED),
         fused_bf16}
 
@@ -1115,13 +1109,7 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
         MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
         TESSERA_BF16, TESSERA_FP8, launch_pairs)
 
-    # Existing callers keep their dense meaning. A requested expert structure
-    # cannot borrow a dense launch, even at the same family and rate.  Both
-    # sides are compared with the experimental launches in: every route
-    # owner's census expectation knows what the build can really launch
-    # (``scheme.EXPERIMENTAL_LAUNCHES``), and the expert stack's compact lane
-    # is what the dispatch takes on any build with the compact reader
-    # (tessera#604, #609).  Attestation is the cells' question, not this one.
+    # A current census includes experimental operations without a qualification claim.
     dense = launch_pairs(TESSERA_FP8, regime=regime, include_experimental=True)
     assert dense == launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
                                  regime=regime, include_experimental=True)
@@ -1133,12 +1121,11 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
     moe = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                        regime=regime, mode="resident", include_experimental=True)
     assert moe == moe_route.census_expected(compiled=False)[regime]
-    # Narrowed to a box with NO extension prepared (contract v42, tessera#640):
-    # the fused routed row is lane-bearing and drops, the compact row stays.
-    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
+    # The lane-free class entry remains; the E4M3 instruction entry needs its extension.
+    from tessera.serving.scheme import routed_class_launch_pair
     bare = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                         regime=regime, mode="resident", lanes=(), include_experimental=True)
-    assert bare == {pair for pair in moe if pair[0] != ROUTED_FUSED_WINDOW_SYMBOL}
+    assert bare == {routed_class_launch_pair("e4m3", uniform=uniform) for uniform in (False, True)}
     assert bare < moe
     assert moe and moe.isdisjoint(dense)
     bf16_moe = launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE,

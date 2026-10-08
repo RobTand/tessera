@@ -52,10 +52,10 @@ safetensors_torch = pytest.importorskip("safetensors.torch")
 
 export = importlib.import_module("tessera.export_serving")
 
-HIDDEN, MOE_INTER, EXPERTS = 128, 64, 4
+HIDDEN, MOE_INTER, EXPERTS = 256, 128, 4
 #: The dims that make GLM-5.3-Flash's packed orientation UNDECIDABLE, scaled
 #: down: ``hidden == 2 * moe_intermediate``, so ``gate_up_proj`` is square.
-AMBIGUOUS_HIDDEN, AMBIGUOUS_INTER = 128, 64
+AMBIGUOUS_HIDDEN, AMBIGUOUS_INTER = 256, 128
 
 
 def _config(hidden=HIDDEN, inter=MOE_INTER):
@@ -271,7 +271,7 @@ def test_packed_orientation_refuses_when_the_dims_cannot_decide():
     config = _config(hidden=AMBIGUOUS_HIDDEN, inter=AMBIGUOUS_INTER)
     name = "model.language_model.layers.1.mlp.experts.gate_up_proj.weight"
     with pytest.raises(SystemExit) as caught:
-        export.packed_expert_orientation(name, (EXPERTS, 128, 128), config)
+        export.packed_expert_orientation(name, (EXPERTS, AMBIGUOUS_HIDDEN, AMBIGUOUS_HIDDEN), config)
     assert "both axis orders fit" in str(caught.value), str(caught.value)
 
 
@@ -283,12 +283,8 @@ def test_packed_orientation_refuses_a_stack_that_fits_neither_way():
     assert "neither axis order fits" in str(caught.value), str(caught.value)
 
 
-#: Decidable dims the E4M3 encoder can also cut: ``2 * 32 != 128``, so a
-#: packed ``gate_up_proj`` orients, and both groups' rows are whole tuples
-#: (``grid.arity * 32 == 32``) with columns a multiple of 16.  ``PACKED_INTER``
-#: below orients too but is 48, which the encoder cannot cut -- fine for the
-#: classification tests that use it, useless for one that must reach the plan.
-DECIDABLE_HIDDEN, DECIDABLE_INTER = 128, 32
+#: These distinct dimensions satisfy native rows and columns.
+DECIDABLE_HIDDEN, DECIDABLE_INTER = 128, 256
 
 #: The two closed conventions, as the shapes each one's ``gate_up_proj`` and
 #: ``down_proj`` must have, and the orientation both of them state.
@@ -661,10 +657,7 @@ def test_the_router_is_passed_through_and_ignored_by_default(tmp_path, monkeypat
 # which is how far the inconsistency reached before anything caught it.
 # --------------------------------------------------------------------------
 
-#: An intermediate size that ORIENTS: ``2 * 48 != 128``, so a packed
-#: ``gate_up_proj`` is not square and ``packed_expert_orientation`` decides it
-#: instead of refusing.  These tests are about the plan-time classification, so
-#: the orientation must not be the thing that raises.
+#: These source dimensions select one orientation for classification.
 PACKED_INTER = 48
 
 
@@ -832,3 +825,35 @@ def test_a_packed_stack_is_found_under_a_feed_forward_owner(tmp_path, suffix):
         f"model.language_model.layers.1.feed_forward.experts.gate_up_proj{suffix}"], sorted(packed)
     assert routed == {}, sorted(routed)
     assert not any(".feed_forward.experts." in n for n in shapes), sorted(shapes)
+
+
+
+@pytest.mark.parametrize("layout", ["out_first_chunked", "in_first_interleaved"])
+def test_sorted_storage_keeps_packed_source_slices_global(layout):
+    stack = "model.layers.1.mlp.experts"
+    dimensions = ([4, 1024, 128], [4, 128, 512]) if layout == "out_first_chunked" else ([4, 128, 1024], [4, 512, 128])
+    shapes = {f"{stack}.{p}.weight": shape
+              for p, shape in zip(("gate_up_proj", "down_proj"), dimensions)}
+    assignments = {f"{stack}.{e}.{p}": 1088 for e in (0, 2) for p in export.EXPERT_PROJECTIONS}
+    plan = {stack: {"grid": "E4M3", "q256": 1024, "source_layout": layout, "unit_q256": assignments}}
+    projected = export.project_expert_plan(
+        shapes, {"hidden_size": 128, "moe_intermediate_size": 512, "n_routed_experts": 4}, plan)["stacks"][stack]
+    assert projected["expert_ids"] == [1, 3, 0, 2]
+    source = torch.arange(4 * 1024 * 128).reshape(4, 1024, 128)
+    if layout == "in_first_interleaved":
+        source = source.transpose(1, 2).contiguous()
+    for unit in projected["units"]:
+        original, storage = unit["expert"], unit["storage_expert"]
+        assert projected["expert_ids"][storage] == original
+        assert unit["source_slice"]["expert"] == original
+        if unit["projection"] == "down_proj":
+            continue
+        matrix = export.packed_expert_weight(source, unit)
+        if layout == "out_first_chunked":
+            expected = source[original, :512] if unit["projection"] == "gate_proj" else source[original, 512:]
+        else:
+            parity = 0 if unit["projection"] == "gate_proj" else 1
+            expected = source[original, :, parity::2].T
+        assert torch.equal(matrix, expected)
+        assert unit["wire"] == f"{stack}.{storage}.{unit['projection']}.wire"
+

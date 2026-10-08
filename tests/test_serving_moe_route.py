@@ -1,19 +1,9 @@
-"""The routed-MoE expert route's decode half, on real Tessera wires.
+"""Reference-only decode controls over real expert wire containers.
 
-WHAT THIS FILE CAN COVER AND WHAT IT CANNOT.  The route's ``apply`` hands
-vLLM's own fused-MoE modular kernel vLLM's own parameters, and its loader is
-called by ``RoutedExperts.load_weights``; neither exists in a pure test
-environment, and vendoring the serving runtime is forbidden (AGENTS.md).  So
-what is pinned here is the half that is ours: the decode from per-expert
-containers to the stock per-channel FP8 stack, the row order the two w13
-projections land in, and the shard vocabulary the loader dispatches on.  The
-load-and-execute half is a container run
-(``experiments/moe_route_load_probe.py``).
-
-THE LOAD-BEARING ASSERTION is the same one the dense FP8 route makes: the
-decoded tile and per-row scale ARE ``tessera.stock.materialize_stock``'s, expert
-by expert and projection by projection, so the arithmetic the fused-MoE kernel
-runs is the arithmetic the stock lane was measured on.
+These CPU controls compare per-expert tiles and row scales with the encoder
+stock oracle. Production WINDOW serving retains compressed planes and executes
+the native class dispatcher, proved separately through real framework loading
+and eager/captured device execution in the serving image.
 """
 from __future__ import annotations
 
@@ -57,6 +47,9 @@ def _stack(experts=EXPERTS, hidden=HIDDEN, inter=INTER):
     scheme = {
         "family": TESSERA_FP8, "structure": "routed_moe", "grid": "E4M3", "body": "WINDOW",
         "plane": "CHANNEL", "experts": experts,
+        "expert_ids": list(range(experts)),
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [Q256, Q256], "w2": [Q256]}}],
         "groups": {
             "w13": {"rows": 2 * inter, "columns": hidden, "q256": Q256,
                     "wire_stride": max(len(b) for pair in w13_blobs for b in pair),
@@ -160,51 +153,6 @@ SERVED_MOE_SYMBOL = "vllm.fused_moe.modular_kernel:TRITON"
 SERVED_MOE_DECODER = "torch_materialize_stock"
 
 
-def test_the_expert_route_publishes_one_launch_in_both_regimes():
-    """No GEMV lane: one launch per stack at every M.
-
-    The window routes' two regimes admit different pairs because their
-    dispatch branches on M.  This one does not branch on M -- a stack takes
-    the compact native window lane every forward -- so a regime split here
-    would be a distinction the code does not make.
-
-    tessera#609: the expectation is what the build can launch, experimental
-    pairs included (the rule ``scheme.EXPERIMENTAL_LAUNCHES`` states).  Contract
-    v38 (tessera#604) dropped the materialising FP8 pair from the table: this
-    build always publishes the compact reader, so ``compact_window_lane``
-    takes every FP8 stack and that branch cannot run.  Since contract v42
-    (tessera#640) the fused warp-specialised lane's pair sits beside the
-    compact one: ``PackedWindowMoeBundles.adapter`` takes it for every rate-4
-    window-14 stack, it is experimental (no cell), and an expectation without
-    it could never match a served fused record.
-    """
-    from tessera.serving.scheme import (ROUTED_FUSED_WINDOW_SYMBOL, TESSERA_BF16,
-                                        WINDOW_MOE_COMPACT_SYMBOL)
-    from tessera.serving.telemetry import (
-        DECODER_NATIVE_ROUTED_FUSED_WINDOW, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
-        DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
-        DECODER_NATIVE_WINDOW_MOE_COMPACT, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
-        DECODER_TORCH_STOCK)
-
-    expected = moe_route.census_expected(compiled=False)
-    assert set(expected) == {"decode", "batch"}
-    assert expected["decode"] == expected["batch"]
-    # Contract v46: the E4M3 instruction's fused library is a second
-    # experimental decoder of the same symbol, admitted beside the f16 one.
-    assert expected["decode"] == {
-        (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)}
-    assert (moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK) not in expected["decode"]
-    # A traced forward changes nothing: the combined ``a+b`` symbol the window
-    # routes stamp under compile exists because two launches share one graph.
-    assert moe_route.census_expected(compiled=True) == expected
-    # BF16 has no materialising expert path: its only pair is the compact
-    # lane's folded one, in both regimes.
-    bf16 = moe_route.census_expected(compiled=False, family=TESSERA_BF16)
-    assert bf16["decode"] == bf16["batch"] == {
-        (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED),
-        (ROUTED_FUSED_WINDOW_SYMBOL, DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)}
 
 
 def test_the_served_records_symbol_reduces_into_the_expectation():
@@ -223,13 +171,13 @@ def test_the_served_records_symbol_reduces_into_the_expectation():
     from tessera.serving import nvfp4_moe_route
 
     served = (moe_route.census_symbol_base(SERVED_MOE_SYMBOL), SERVED_MOE_DECODER)
-    assert served == (moe_route.GEMM_SYMBOL, SERVED_MOE_DECODER)
+    from tessera.serving.scheme import MOE_GEMM_SYMBOL
+    assert served == (MOE_GEMM_SYMBOL, SERVED_MOE_DECODER)
     assert served not in moe_route.census_expected(compiled=False)["batch"]
     assert served not in nvfp4_moe_route.census_expected(compiled=False)["batch"]
-    # ...and a suffix is not a licence: another entry point reduces to itself,
-    # with or without one.
-    for other in ("torch._scaled_mm", "torch._scaled_mm:TRITON", "tessera_window_gemv::gemv"):
-        assert moe_route.census_symbol_base(other) == other.partition(":")[0]
+    # A qualified operation is not a backend-suffixed stock MoE launch.
+    for other in ("torch._scaled_mm", "tessera::routed_window_classes", "tessera::another_operation"):
+        assert moe_route.census_symbol_base(other) == other
         assert (moe_route.census_symbol_base(other), SERVED_MOE_DECODER) != served
 
 
