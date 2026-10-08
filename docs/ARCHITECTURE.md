@@ -834,6 +834,7 @@ Re-stamped 2026-10-08 for the default-on routed R4 piece-major resident layout (
 Rob approved this default. An unset TESSERA_ROUTED_PIECE_MAJOR selects only a uniform R4 stack with the E4M3 MMA reader.
 Explicit 0 retains legacy placement. Explicit 1 still refuses a non-uniform stack before intake.
 All other allowable rates and mixed stacks remain usable with the flag unset.
+
 BF16, forced f16 and ineligible units retain legacy placement.
 The flag uses the existing strict, process-stable flag owner.
 
@@ -841,6 +842,7 @@ Intake freezes the choice before load. Each eligible unit enters WindowUnitAxis.
 The permutation maps [tile][column][64-row piece][word] to [tile][64-row piece][column][word].
 Serialized bytes, word counts, scales, column permutation and tensor-parallel history states remain unchanged.
 The owner carries the layout through its signature and finished arrays. Finalization copies no word plane.
+
 A prepared piece-major stack refuses an incompatible reader or fallback.
 Dense readers, GEMV argument extraction and E2M1 WINDOW readers still require legacy words before metadata removal.
 Native piece-major dispatch remains limited to routed E4M3 MMA, one-run R4, modes 0/1/2.
@@ -1168,6 +1170,7 @@ Re-stamped 2026-10-08 for the default-on decode-once E4M3 dense and shared proje
 Rob approved this default. The route keeps the existing eligibility and correctness guards.
 With TESSERA_E4M3_DECODE_ONCE unset, each resident module with an eager forward receives a decoded copy at load.
 Explicit 0 disables the copy. Explicit 1 retains the load-time refusal for a compiled forward.
+
 A compiled forward with the flag unset keeps the existing window lane.
 The saved construction-time compile mode remains authoritative after the current configuration context exits.
 Streamed modules retain the existing packed path without a decoded copy.
@@ -1177,6 +1180,7 @@ The decoded values and row scales retain the E4M3 epilogue contract.
 PreparedDenseNativeModule.attach_decoded retains its family, shape and single-attachment checks.
 The module serves M >= e4m3_prefill.MIN_M (256) through torch._scaled_mm.
 Smaller inputs use the existing window lane. The compiled-forward backstop remains a refusal.
+
 The copy adds one byte per weight and the fp32 row scale to named_tensors and resident accounting.
 The route records launch_pair_for(M) only for a module with a decoded copy.
 Its compile-cache dispatch fact remains <window op>|<decode-once op>.

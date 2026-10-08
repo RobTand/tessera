@@ -5,9 +5,11 @@
 Piece-major routed layout is default-on for uniform R4 E4M3 MMA stacks.
 Other allowable rates and mixed stacks retain legacy placement when the flag is unset.
 Explicit mixed-stack requests still refuse. The strict flag owner preserves a fixed process choice.
+
 Decode-once E4M3 is default-on for resident dense and shared projection modules with an eager forward.
 Compiled and streamed modules keep their existing packed path by default.
 Explicit decode-once requests still refuse compiled forwards. Explicit 0 opts out of either default.
+
 Byte checks, reader guards, arithmetic, residency accounting and serving qualification holds remain unchanged.
 Maximum batched tokens remain 2048. KDA defaults, runtime pins and current measurement source remain unchanged.
 
