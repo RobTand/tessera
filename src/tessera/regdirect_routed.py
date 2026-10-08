@@ -323,15 +323,16 @@ def fragment_stack(mode: int, experts) -> dict:
 def _bundle_expert(bundle, e: int):
     """Expert ``e`` of a routed construction bundle (``window_gemm_grouped.PreparedGroupedWindowGemm``):
     BODY codes ``[rows, cols]``, per-column rates and the start state (or None), original column order."""
-    from .kernel_window_gemv import TILE_ROWS, Repacked, unpack_tile_words
+    from .kernel_window_gemv import Repacked, unpack_tile_words
+    from . import window_geometry
     words = bundle.words_all
     total = int(bundle.total_words[e])
     words = words[e, :total] if words.dim() == 2 else words.narrow(0, int(bundle.word_off[e]), total)
     runs = bundle.runs_all[int(bundle.run_off[e]):int(bundle.run_off[e + 1])].reshape(-1, 4)
     perm = bundle.perm_all[e].long()
-    n_tiles = -(-int(bundle.rows) // TILE_ROWS)
+    n_tiles = -(-int(bundle.rows) // window_geometry.TILE_ROWS)
     rep = Repacked(words=words, tile_words=int(bundle.tile_words[e]), n_tiles=n_tiles, rows=int(bundle.rows),
-                   cols=int(bundle.cols), rows_p=n_tiles * TILE_ROWS, perm=perm, runs=runs, rates=(),
+                   cols=int(bundle.cols), rows_p=n_tiles * window_geometry.TILE_ROWS, perm=perm, runs=runs, rates=(),
                    word_layout=str(bundle.word_layout))
     codes = unpack_tile_words(rep)
     permuted = torch.empty(int(bundle.cols), dtype=torch.int64)

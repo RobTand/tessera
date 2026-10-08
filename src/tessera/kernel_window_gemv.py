@@ -663,13 +663,13 @@ def unpack_tile_words(rep: Repacked) -> torch.Tensor:
         raise GrammarError(f"unknown word layout {rep.word_layout!r}")
     tiles = words.reshape(n_tiles, int(rep.tile_words)).to(torch.int64) & 0xFFFFFFFF
     shifts = torch.arange(31, -1, -1, device=words.device)
-    permuted = torch.empty(n_tiles * TILE_ROWS, cols, dtype=torch.int32, device=words.device)
+    permuted = torch.empty(n_tiles * window_geometry.TILE_ROWS, cols, dtype=torch.int32, device=words.device)
     for rate, col0, n, word0 in rep.runs.reshape(-1, 4).tolist():
         seg = tiles[:, word0:word0 + n * 16 * rate].reshape(n_tiles, n, 16 * rate)
-        bits = ((seg.unsqueeze(-1) >> shifts) & 1).reshape(n_tiles, n, TILE_ROWS, rate)
+        bits = ((seg.unsqueeze(-1) >> shifts) & 1).reshape(n_tiles, n, window_geometry.TILE_ROWS, rate)
         weight = 1 << torch.arange(rate - 1, -1, -1, device=words.device)
         codes = (bits * weight).sum(-1).to(torch.int32)                       # [tiles, n, 512]
-        permuted[:, col0:col0 + n] = codes.permute(0, 2, 1).reshape(n_tiles * TILE_ROWS, n)
+        permuted[:, col0:col0 + n] = codes.permute(0, 2, 1).reshape(n_tiles * window_geometry.TILE_ROWS, n)
     out = torch.empty_like(permuted)
     out[:, rep.perm.long()] = permuted                                         # perm: permuted -> original
     return out[: int(rep.rows)].contiguous()
