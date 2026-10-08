@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — keep one owner for fixture geometry
+
+Read the miniature geometry from the caller configuration.
+Use the same geometry for export and its declared runtime partitions.
+Remove the second census from the routed pricing fixture.
+The production geometry gate stays unchanged.
+
 ## 2026-10-08 — compare native scalar retention bytes
 
 Flatten scalar and nonscalar retained tensors before their uint8 views.

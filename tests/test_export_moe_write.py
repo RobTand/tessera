@@ -268,8 +268,11 @@ def _write(tmp_path: Path, tensors, config=None) -> Path:
 
 def _export(tmp_path, monkeypatch, tensors, plan, *extra, config=None):
     """Run the exporter over ``tensors`` with ``plan``; return the out dir."""
-    _declare_fixture_geometry(monkeypatch, hidden=HIDDEN,
-                              mlp_inter=2 * HIDDEN, shared_inter=MOE_INTER)
+    config = _config() if config is None else config
+    text_config = config["text_config"]
+    _declare_fixture_geometry(monkeypatch, hidden=text_config["hidden_size"],
+                              mlp_inter=2 * text_config["hidden_size"],
+                              shared_inter=text_config["moe_intermediate_size"])
     src = _write(tmp_path, tensors, config)
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--grid", "E4M3", "--q256", "1024",
