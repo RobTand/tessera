@@ -146,6 +146,19 @@ def test_native_a4_uses_shared_accountant(planner):
     assert report["ranks"][0]["peak_bytes"] == expected
 
 
+@pytest.mark.parametrize("retired", ["memory", "lut_entries"])
+def test_native_a4_refuses_the_retired_tcq_fields(planner, retired):
+    from tessera.window_geometry import TILE_ROWS
+    storage = {"kind": "dense_a4", "rates": [2] * 256, "arity": 2, "half": 16,
+               "window_bits": 14, "tile_rows": TILE_ROWS, retired: 1}
+    with pytest.raises(planner.ResidencyRefusal) as caught:
+        planner.plan_residency(spec(weight=([32, 256], "bfloat16")),
+                               plan(allocation("weight", storage=storage)))
+    reason = caught.value.report["reasons"][0]
+    assert reason["code"] == "unknown_field"
+    assert reason["field"].endswith("." + retired)
+
+
 def test_empty_inventory_has_only_reserve(planner):
     report = planner.plan_residency(spec(), plan(capacities=(30,), reserves=(30,)))
     assert report["ranks"][0]["peak_bytes"] == report["ranks"][0]["final_bytes"] == 30
