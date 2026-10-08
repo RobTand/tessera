@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — declare the research span-two boundary wire
+
+Use the explicit TCQ recipe for the span-two numerical boundary bank.
+Keep the native serving WINDOW default unchanged.
+The actual serialized-wire oracle passes all seven TCQ rates.
+
 ## 2026-10-08 — remove the historical phase-error wording pin
 
 Remove the comparison with a retained list of error sentences.
