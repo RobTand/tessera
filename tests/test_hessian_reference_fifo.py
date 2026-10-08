@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -15,6 +16,24 @@ from reuse_authority_fixture import CANONICAL_CAPTURE
 #: at all under a plain ``pytest`` (ModuleNotFoundError), or an installed pin
 #: that is not this checkout, which then passes or fails for that pin's code.
 SRC = Path(__file__).resolve().parents[1] / "src"
+
+#: A blocked FIFO open spends no CPU, and a loaded box still gives a working
+#: child some.  So the test fails on the absence of progress, not on elapsed
+#: time: a wall-clock bound sized for an idle box failed at four times
+#: oversubscription, because the refusal path imports and reads before it
+#: refuses (#1049).
+STALL_SECONDS = 5
+POLL_SECONDS = 0.25
+
+
+def _cpu_ticks(pid):
+    """User plus system CPU ticks the process has used, or None once it is gone."""
+    try:
+        with open(f'/proc/{pid}/stat') as handle:
+            fields = handle.read().rsplit(')', 1)[1].split()
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+    return int(fields[11]) + int(fields[12])
 
 
 @pytest.mark.parametrize('intake', ['metadata', 'hessian'])
@@ -48,19 +67,23 @@ else:
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, env=env)
     try:
         # Interpreter start and the import are not what a FIFO can block, so
-        # they are not charged to the bound; the child prints this line after
-        # the import and just before the open this test is about (#1049).  The
+        # the stall clock starts after the child prints this line (#1049).  The
         # pipe is unbuffered so that this read takes nothing past the line and
         # communicate() below, which reads the descriptor, sees the rest.
         entered = child.stdout.readline()
         assert entered == b'ENTERING_REFERENCE_INTAKE\n', (entered, child.communicate()[1])
-        stdout, stderr = child.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        # Kill and reap this owned child; no FIFO writer or helper process is
-        # needed to release an accidentally blocked open.
-        child.kill()
-        child.communicate()
-        pytest.fail(f'{intake} FIFO blocked instead of refusing within 5 seconds')
+        ticks, progressed = _cpu_ticks(child.pid), time.monotonic()
+        while child.poll() is None:
+            time.sleep(POLL_SECONDS)
+            now = _cpu_ticks(child.pid)
+            if now != ticks:
+                ticks, progressed = now, time.monotonic()
+            elif time.monotonic() - progressed >= STALL_SECONDS:
+                # The finally clause kills and reaps this owned child; no FIFO
+                # writer or helper process is needed to release a blocked open.
+                pytest.fail(f'{intake} FIFO blocked instead of refusing: '
+                            f'the child used no CPU for {STALL_SECONDS} seconds')
+        stdout, stderr = child.communicate()
     finally:
         if child.poll() is None:
             child.kill()
