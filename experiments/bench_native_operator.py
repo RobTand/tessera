@@ -361,62 +361,30 @@ def _check_native_library_scope(runtime):
 
 def _native_tensor_items(layer):
     """Registered state plus explicit compact serving owners, never scratch."""
-    import dataclasses
-    import torch
     result = list(layer.named_parameters()) + list(layer.named_buffers())
+    method = getattr(layer, "quant_method", None)
+    resident = getattr(method, "resident_tensors", None)
+    if callable(resident):
+        result.extend(("$owner." + name, value) for name, value in resident(layer))
+        return result
     native = getattr(layer, "tessera_native", None)
     if native is not None:
         from tessera.serving.native_window import PreparedDenseNativeModule
         if not isinstance(native, PreparedDenseNativeModule):
             raise ValueError("unsupported compact dense native owner")
         result.extend(("$owner.native." + name, value) for name, value in native.named_tensors())
-    units = getattr(layer, "tessera_a4_units", ())
-    if units:
-        from tessera.kernel_a4 import A4Unit
-        for index, unit in enumerate(units):
-            if not isinstance(unit, A4Unit):
-                raise ValueError("unsupported compact A4 native owner")
-            result.extend((f"$owner.a4.{index}.{field.name}", value)
-                for field in dataclasses.fields(unit)
-                if isinstance(value := getattr(unit, field.name), torch.Tensor))
-        epilogues = getattr(layer, "tessera_a4_epilogues", ())
-        if len(epilogues) != len(units):
-            raise ValueError("compact A4 epilogue roster differs")
-        result.extend((f"$owner.a4_epilogue.{index}", value)
-                      for index, value in enumerate(epilogues))
-    method = getattr(layer, "quant_method", None)
     packed = getattr(method, "_packed", None)
     if packed is not None:
         from tessera.native_window_moe import PackedWindowMoeBundles
         if not isinstance(packed, PackedWindowMoeBundles):
             raise ValueError("native receipts require the compact grouped window owner")
         result.extend(("$owner.moe." + name, value) for name, value in packed.named_tensors())
-    for stage in ("gate", "up", "down"):
-        stack = getattr(layer, f"tessera_a4_{stage}_stack", None)
-        if stack is not None:
-            from tessera.kernel_a4 import A4UnitStack
-            if not isinstance(stack, A4UnitStack):
-                raise ValueError("unsupported compact A4 expert stack")
-            result.extend((f"$owner.a4_moe.{stage}.{field.name}", value)
-                for field in dataclasses.fields(stack)
-                if isinstance(value := getattr(stack, field.name), torch.Tensor))
-            epilogue = getattr(layer, f"tessera_a4_{stage}_epilogues")
-            result.append((f"$owner.a4_moe.{stage}.epilogues", epilogue))
-    for stage in ("gs13", "gs2"):
-        scale = getattr(layer, "tessera_a4_" + stage, None)
-        if scale is not None:
-            result.append(("$owner.a4_moe." + stage, scale))
     return result
 
 
 def _native_tensors(layer):
-    import torch
     result = {name: tensor_identity(value) for name, value in
               _native_tensor_items(layer)}
-    # NVFP4's externally applied epilogue is a Python scalar, not a buffer.
-    for name in ("tessera_epilogue_scale", "tessera_global_scale_real"):
-        if hasattr(layer, name):
-            result["$scalar." + name] = tensor_identity(torch.tensor(getattr(layer, name), dtype=torch.float64))
     if not result:
         raise ValueError("native operator has no observed resident tensors")
     return result
@@ -447,7 +415,7 @@ def represented_native_input(layer, x):
     from tessera.alphabet import E2M1_VALUES
     from tessera.serving.nvfp4_route import blocked_scales, GROUP_SIZE
     scale = (layer.trellis_input_global_scale if hasattr(layer, "trellis_input_global_scale")
-             else layer.tessera_a4_gs13)
+             else layer.tessera_routed_fused.gs13)
     g = scale.data.reshape(())
     packed, blocked = native_ops.native_fp4_quant(x.contiguous(), g)
     m, k = x.shape
@@ -589,6 +557,7 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
         raise ValueError("format differs from original wire recipe")
     method = build_tessera_method(scheme, unit, "resident")
     layer = torch.nn.Module()
+    layer.quant_method = method
     layer.tp_rank, layer.tp_size = rank, world
     local_rows, local_columns = local_shape([rows, columns], execution)
     method.create_weights(layer, input_size_per_partition=local_columns, output_partition_sizes=[local_rows],

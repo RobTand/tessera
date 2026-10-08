@@ -25,8 +25,10 @@ torch = pytest.importorskip("torch")
 from experiments import bench_native_moe_operator as moe
 from experiments import bench_native_operator as dense
 
-#: The routed NVFP4 stack's one launch since contract v39 (tessera#604).
-A4_GROUPED = ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")
+# A native panel uses the plugin's actual routed owner, not a retired ABI.
+from tessera.serving.scheme import launch_pairs, TESSERA_NVFP4, STRUCTURE_ROUTED_MOE
+A4_GROUPED = next(iter(launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
+                                    mode="resident", include_experimental=True)))
 
 GLM_UNIT = "model.language_model.layers.3.mlp.experts"
 A4 = "TESSERA_E2M1x2_K2_R896"

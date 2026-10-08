@@ -12,9 +12,8 @@ and scheme disagree, and the tile the tensor core runs.
 FAMILY = ROUTE.  A Tessera family names what the decoded tile *is* on the
 hardware, not the body inside the blob.  Three families, one plugin:
 
-* ``TESSERA_NVFP4`` is any E2M1-based grid over a LUT scale plane, decoded to
-  the stock NVFP4 tile (nibble-packed E2M1 codes + group-16 ue4m3 block scales
-  + one global) and served through ``torch._scaled_mm`` W4A4.
+* ``TESSERA_NVFP4`` reads E2M1x2 WINDOW L14 over LUT16. Native block-scaled
+  FP4 instructions execute W4A4. Each role keeps its own weight global.
 * ``TESSERA_FP8`` is the scalar E4M3 grid over the CHANNEL scale plane (schema
   minor 3: one fp16 word per output row times a global), decoded to the stock
   per-channel FP8 pair (E4M3 bytes + one fp32 scale per row) and served through
@@ -67,6 +66,10 @@ from typing import Any, Mapping
 
 __all__ = [
     "NVFP4_ACTIVATION_CONTRACT",
+    "e2m1_shape_reason",
+    "e2m1_expert_rate_reason",
+    "FUSED_WINDOW_DENSE_E2M1_SYMBOL",
+    "ROUTED_FUSED_WINDOW_E2M1_SYMBOL",
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
     "TESSERA_NVFP4",
@@ -213,12 +216,8 @@ MOE_SOURCE_LAYOUTS = (
 #: FP8 E4M3 and BF16 WINDOW wires share one native expert-class dispatcher.
 #: The reader retains compressed rank-local planes; no stock-tile fallback is
 #: selected by format, metadata, research mode or a feature flag.
-#: NVFP4 builder (tessera#492) decodes E2M1x2 trellis wires into the stock
-#: modelopt NVFP4 fused-MoE parameter set (packed nibbles, group-16 ue4m3
-#: block scales, one per-expert global, a static per-expert input scale) and
-#: hands it to the runtime's own ``select_nvfp4_moe_backend`` answer, which on
-#: sm121 with ``swiglu_limit`` set resolves to a clamp-capable flashinfer
-#: CUTLASS backend (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``).
+#: The NVFP4 builder reads paired WINDOW L14 and LUT16 scales.
+#: FusedRoutedE2M1MoE executes native W4A4. No stock substitute exists.
 #: A builder is a dispatch fact, not a served qualification: which
 #: ``(family, structure)`` cells the packaged contract attests is
 #: ``lane_eligibility``'s to say, and ``attested_cells`` reads it.
@@ -234,10 +233,9 @@ MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_BF16: ("tessera.serving.moe_route", "build_tessera_moe_method"),
 }
 
-#: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
-#: ``ScalePlaneKind.name``).  NVFP4: grids whose codes are E2M1 nibbles (arity
-#: 1 or 2 over the E2M1 base) over the LUT plane the tile's ue4m3 block scales
-#: come from.  FP8: the scalar E4M3 grid over the CHANNEL plane the tile's
+#: The route table states the byte reader and activation contract.
+#: NVFP4 reads only paired E2M1 WINDOW with the LUT16 scale plane.
+#: FP8 reads scalar E4M3 with the CHANNEL scale plane.
 #: per-row fp32 scale comes from.  ``tile`` is the stock tensor the route
 #: decodes to, ``columns_multiple`` the K quantum its mainloop needs,
 #: ``activation_contract`` what it executes on the A side, and ``gemm_symbol``
@@ -255,15 +253,15 @@ MOE_BUILDERS: dict[str, tuple[str, str]] = {
 #: statement about one decoder.
 ROUTES: dict[str, dict] = {
     TESSERA_NVFP4: {
-        "grids": ("E2M1", "E2M1x2"), "plane": "LUT",
-        "body": "TCQ", "span": 2,
+        "grids": ("E2M1x2",), "plane": "LUT",
+        "body": "WINDOW", "span": 1, "window_bits": 14,
         "short": "NVFP4",
-        "grid_kind": "an E2M1-based",
+        "grid_kind": "the paired E2M1",
         "builder": ("tessera.serving.nvfp4_route", "build_tessera_nvfp4_method"),
-        "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
-        "columns_multiple": 16,
+        "tile": "native E2M1x2 window words, LUT16 group-16 scales and per-role global",
+        "columns_multiple": 64,
         "activation_contract": NVFP4_ACTIVATION_CONTRACT,
-        "gemm_symbol": "torch._scaled_mm",
+        "gemm_symbol": "tessera.routed_fused_e2m1.dense_forward_quantized",
     },
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
@@ -303,6 +301,39 @@ ROUTES: dict[str, dict] = {
         "gemm_symbol": "torch.mm",
     },
 }
+
+
+def e2m1_shape_reason(rows: int, columns: int, *, structure: str = STRUCTURE_DENSE,
+                       projection: "str | None" = None) -> "str | None":
+    """Metadata-only native FP4 shape rule, shared by writer and reader."""
+    rows, columns = int(rows), int(columns)
+    column_multiple = ROUTES[TESSERA_NVFP4]["columns_multiple"]
+    if columns < 256 or columns % column_multiple:
+        return (f"{columns} columns; the native E2M1 launch needs a multiple of "
+                f"{column_multiple} and at least 256")
+    if structure == STRUCTURE_DENSE:
+        multiple = 32
+    elif structure == STRUCTURE_ROUTED_MOE and projection in ("gate_proj", "up_proj", "down_proj"):
+        multiple = 256 if projection == "down_proj" else 128
+    else:
+        return f"no native E2M1 geometry for structure {structure!r}, projection {projection!r}"
+    if rows <= 0 or rows % multiple:
+        return f"{rows} rows; the native E2M1 {projection or structure} launch needs a positive multiple of {multiple}"
+    return None
+
+
+def e2m1_expert_rate_reason(rungs) -> "str | None":
+    """The native stride rule for a normalized [experts][roles] rate matrix.
+
+    The caller validates dimensions and positive rungs first.
+    A row holds down, gate/up, or gate/up/down in that order.
+    Column permutations remain each projection and expert's own data.
+    """
+    if any(row != rungs[0] for row in rungs[1:]):
+        return "experts disagree on their run tables; the lane reads one schedule per stack"
+    if len(rungs[0]) >= MOE_GROUP_ROLES["w13"] and rungs[0][0] != rungs[0][1]:
+        return "the gate/up launch reads one tile stride for both; gate and up need the same q256"
+    return None
 
 #: DERIVED from ``ROUTES``, never written twice.  FAMILY = ROUTE is the rule,
 #: so the set of families a build serves is exactly the set of routes it has:
@@ -453,6 +484,9 @@ WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: deterministic where the compact adapter's is an fp32 atomic.  Same two
 #: arithmetics, same two decoder spellings as the compact lane, its own.
 ROUTED_FUSED_WINDOW_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+#: Native paired WINDOW W4A4 identities; no stock or TCQ serving substitute.
+FUSED_WINDOW_DENSE_E2M1_SYMBOL = "tessera.routed_fused_e2m1.dense_forward_quantized"
+ROUTED_FUSED_WINDOW_E2M1_SYMBOL = "tessera.routed_fused_e2m1.FusedRoutedE2M1MoE.__call__"
 #: The same kernel's DENSE identity (contract v43): the functional custom op
 #: ``serving.native_window`` registers, which launches ``routed_fused_kernel``'s
 #: E = 1 case once per role of a dense Linear into the role's column slice of
@@ -510,6 +544,8 @@ _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 #: order, so their own strings.
 _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA = "native_routed_fused_window_e4m3mma"
 _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
+_DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1 = "native_fused_window_dense_e2m1"
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1 = "native_routed_fused_window_e2m1"
 _DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
 
 _ALL_REGIMES = ("batch", "decode")
@@ -605,36 +641,18 @@ def routed_class_launch_pair(library: str, *, uniform: bool = False) -> tuple[st
 
 
 ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
-    # The dense half is ONE launch, the fused span-2 GEMM below.  The
-    # ``(torch._scaled_mm, native_span2)`` entry that stood before it -- the
-    # span-2 kernel decoding a stock tile for a scaled GEMM -- left this table
-    # at contract v39 (tessera#604, second half) with the two pin-image dense
-    # cells that named it: ``nvfp4_route``'s ``process_weights_after_loading``
-    # always prepares native A4 units and ``apply`` runs ``a4_span2_gemm`` on
-    # every forward, so the build cannot make it.  The v38 reason for the FP8
-    # expert row, applied to the NVFP4 dense one.
+    # Launch support is not qualification. Historical TCQ cells are withdrawn;
+    # a real serving receipt must earn new WINDOW lane_eligibility cells.
     TESSERA_NVFP4: (
-        # The native A4 dense GEMM: the compact loader's packed span-2 planes
-        # decoded in-kernel by tessera.kernel_a4, no materialised stock tile,
-        # in both regimes and both residencies.  No lane and no fallback flag.
-        # Attested since contract v39 (tessera#604) by the GLM-image dense
-        # E2M1 cells.
-        {"symbol": A4_DENSE_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GEMM,
-         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
-         "structures": (STRUCTURE_DENSE,),
-         "when_lane_absent": False},
-        # The native A4 routed GEMM (resident like every expert stack): the
-        # grouped form over the compact loader's planes, attested since
-        # contract v39 by the GLM-image routed E2M1 cells.  It is
-        # the expert half's ONLY launch.  The materialising
-        # ``(MOE_GEMM_SYMBOL, _DECODER_TORCH_STOCK)`` entry that stood before
-        # it left this table at contract v39 (tessera#604, second half):
-        # ``nvfp4_moe_route``'s ``process_weights_after_loading`` always
-        # builds the native grouped stacks and stamps this pair, and the
-        # module owns no stock kernel to fall back to.  The v38 reason for
-        # the FP8 row, applied to the NVFP4 one.
-        {"symbol": A4_GROUPED_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GROUPED,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+        {"symbol": FUSED_WINDOW_DENSE_E2M1_SYMBOL,
+         "decoder": _DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES,
+         "lane": "tessera_routed_fused_e2m1",
+         "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
+        {"symbol": ROUTED_FUSED_WINDOW_E2M1_SYMBOL,
+         "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1,
+         "regimes": _ALL_REGIMES, "modes": ("resident",),
+         "lane": "tessera_routed_fused_e2m1",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     # The dense half is TWO launches since contract v43: ``fp8_route.apply``
@@ -1009,14 +1027,9 @@ def _expert_role_rungs(group: Mapping, experts: int, roles, family: str,
     per role, uniform across the expert axis -- the pre-#967 mixed-RUNG
     spelling, unchanged.  A list of lists is the per-unit spelling (#967): one
     row per expert in expert order, each a rung per role in the group's row
-    order -- the spelling of a genuinely across-expert mixed stack.  The
-    matrix is a WINDOW-family spelling and nothing else: the A4 route's intake
-    preallocates one uniform TCQ owner per group
-    (``nvfp4_moe_route._RankLocalA4Intake``'s roles), so an across-expert
-    mixed stack has no NVFP4 owner and is refused here by name rather than
-    accepted into a schema no loader can serve.  Lengths must cover every
-    expert and role exactly -- the matrix is read positionally, and a hole is
-    a wrong tensor waiting to happen, not something to pad.
+    order. The FP8 and BF16 owners can store different rates across experts.
+    The native E2M1 owner requires one run pair per projection.
+    A rate matrix must cover every expert and role without a gap.
     """
     declared = group.get("q256")
     arity = len(roles)
@@ -1031,15 +1044,13 @@ def _expert_role_rungs(group: Mapping, experts: int, roles, family: str,
                 f"{experts} expert(s) x {arity} role(s) {[r[0] for r in roles]}; an "
                 "expert-role matrix is read as [experts][roles] and must cover every "
                 "expert and role exactly")
-        if family not in (TESSERA_FP8, TESSERA_BF16):
-            raise ValueError(
-                f"tessera target {target!r}: an expert-major q256 matrix declares a mixed "
-                f"per-unit stack, and the {family} route has no mixed owner -- the A4 intake "
-                "preallocates one uniform TCQ owner per group, so per-unit rungs are a "
-                "WINDOW-family (TESSERA_FP8/TESSERA_BF16) spelling. Refusing rather than "
-                "accepting a matrix no owner serves.")
-        return [[_positive_int(v, f"q256[{e}][{j}]", target)
-                 for j, v in enumerate(row)] for e, row in enumerate(declared)]
+        matrix = [[_positive_int(v, f"q256[{e}][{j}]", target)
+                   for j, v in enumerate(row)] for e, row in enumerate(declared)]
+        if family == TESSERA_NVFP4:
+            reason = e2m1_expert_rate_reason(matrix)
+            if reason is not None:
+                raise ValueError(f"tessera target {target!r}: {reason}")
+        return matrix
     if len(declared) != arity:
         raise ValueError(
             f"tessera target {target!r}: q256 is a flat list of {len(declared)} rung(s) for a "
@@ -1051,33 +1062,11 @@ def _expert_role_rungs(group: Mapping, experts: int, roles, family: str,
 
 
 def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) -> None:
-    """The rate has to be one the decoder reads, and the contract has to say so.
+    """Refuse a rung outside this route and grid's declared reader range.
 
-    Nothing checked this.  An allocated checkpoint served seven rungs
-    (R749/R750/R934/R1006/R1083/R1107/R1262) that the contract's published set
-    did not name, and nothing refused -- the run happened to be fine because
-    every one of them IS decodable, but a rung the decoder could not read would
-    have produced a wrong tensor rather than a refusal, which is the failure
-    this gate exists for.
-
-    The published range is derived from the decoder, not from what has been
-    exported: each candidate rate was encoded and taken through this very load
-    path, and the accepted set is what the contract now states.  Two different
-    mechanisms bound it.  On ``E4M3`` the trellis grammar's shaped domain
-    (code rate 1..8 over an 8-bit-native alphabet) gives a CONTINUOUS
-    ``q256`` in [256, 2048] -- so the contract says continuous, not a list of
-    the two rungs anyone had built.  On ``E2M1x2`` the same grammar caps the
-    top at 896 (rate 7 of arity-2 native 8).  The bottom is the served set,
-    not the grammar: the routed path serves the span-2 TCQ body only, and
-    a rung is published when a served spelling of it has been taken through
-    this load path and measured (contract v32 publishes the whole trellis
-    domain [128, 896] step 128 on that basis -- the E2M1_K2 reader row, not
-    the dense cells, which stay at [896] for lack of a dense-decoder receipt
-    (tessera#560 D2); the research ``wire_recipe`` default below the cap is
-    still the WINDOW body, which the routed path promotes to TCQ at export
-    for ``STRUCTURE_ROUTED_MOE`` only -- see
-    ``tessera.export.served_recipe`` -- while a dense
-    module keeps WINDOW and is refused there).
+    Reader support does not attest a D41 cell or a served checkpoint.
+    The native E2M1 reader accepts paired WINDOW rates 1 through 8.
+    It does not accept the old TCQ serving body.
     """
     from .contract import reader_accepts, reader_rate_grid
 
@@ -1211,62 +1200,13 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
                             span: "int | None" = None, target: str,
                             structure: str = STRUCTURE_DENSE,
                             contract: "Mapping | None" = None) -> str:
-    """Refuse, AT EXPORT, a wire this plugin build publishes no decode for.
+    """Refuse bytes outside the published serving reader contract.
 
-    The producer's output range was wider than the consumer's input range, in
-    the one direction nothing checked (#41).  ``export.wire_recipe`` writes the
-    WINDOW body over LUT16 for every sub-cap ``E2M1x2`` unit -- the research
-    default below the cap -- while the contract published ``E2M1x2`` as the
-    single point 896, so a legal low-rate unit encoded fine and was refused at
-    LOAD, hours later, on the operator rather than at export on the exporter.
-    (Contract v32 publishes the trellis domain [128, 896] step 128 on the
-    E2M1_K2 reader row, and served ROUTED stacks below the cap carry the
-    span-2 TCQ spelling -- see
-    ``tessera.export.served_recipe`` -- while a dense
-    module keeps the WINDOW body and stays refused here exactly as before;
-    the shape of the failure this gate exists for is unchanged.)
-
-    This is principle 9's one carve-out for a producer-side refusal: a MEASURED
-    platform fact -- the pinned runtime has no native route for these bytes --
-    and not a taste-based ban on a format.  It is therefore scoped to the
-    SERVING boundary: research and measurement encode sub-cap ``E2M1x2``
-    constantly (the whole rate-frontier body of work does) and are untouched.
-    ``encode_linear``, ``wire_recipe`` and the rung axis stay exactly as wide as
-    they were; what narrows is only what may be written into a checkpoint that
-    declares ``quant_method: "tessera"``.
-
-    Principle 14: every bound it reads comes from the packaged
-    ``runtime_contract.json`` (``contract.reader_rate_grid`` /
-    ``reader_accepts``) or from ``ROUTES``, the table the loader itself gates
-    on.  Nothing here hardcodes 896: the day a measured range widens, the file
-    changes and this gate follows it.
-
-    Returns the route the wire would take.  Raises ``ValueError`` naming the
-    unit, the ``(route, grid, q256)`` it asked for, the range this build
-    publishes, and the fact that the rung is still encodable for research.
-
-    ``family`` names the route being written.  The exporter knows it -- it is
-    the family the checkpoint will declare for this wire -- so it passes it,
-    and the gate reads the published range for THAT ``(route, grid)`` pair
-    rather than resolving the route from the grid alone.  Resolving from the
-    grid alone is ambiguous the moment two routes hold one grid, and the
-    winner would be whichever entry the dict order puts first (#51); omitting
-    ``family`` keeps the old behaviour for grids one route holds, and refuses
-    an ambiguous grid instead of guessing.
-
-    ``structure`` names what the wire is served AS, and it picks the BOUND
-    (#135).  A dense module is read by the route's decoder, whose range is
-    the format row's ``reader_rate_range_q256``; a ``routed_moe`` stack is
-    read by ``moe_route`` into a fused-MoE kernel the contract attests
-    separately, as cells of its own structure at their own ``rungs_q256``.
-    Until this parameter existed a routed stack was held to the dense
-    reader's range -- ``[256, 2048]`` on E4M3 -- while the routed cells
-    attest exactly one rung, and no producer gate read them.  The bound for
-    a non-dense structure is the union of the rungs its cells cover -- their
-    census rungs and the allowable rungs of their run tables (lane schema v11,
-    tessera#750) -- so a rung the dense cells attest and no routed cell covers
-    is refused, and the refusal names the cells it read.  ``contract`` is for a caller holding a table
-    other than the packaged one (tests); the packaged file is the default.
+    ``family`` identifies the consuming route. ``structure`` selects dense
+    or routed ownership. Native E2M1 uses one paired WINDOW reader for both.
+    Its reader range states byte support, not D41 or serving qualification.
+    The FP8 and BF16 routes retain their existing structure-specific bounds.
+    Research encoding remains outside this serving check.
     """
     from .contract import reader_accepts, reader_rate_grid
 
@@ -1296,7 +1236,12 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
             f"load. A range is published when a rung has been taken through the decoder and "
             f"measured, never asserted here. " + still_legal)
     family, low, high, step = found
-    if structure == STRUCTURE_DENSE:
+    if structure == STRUCTURE_DENSE or route == TESSERA_NVFP4:
+        # The native E2M1 library has the same byte reader for dense and routed
+        # owners. Admit its declared reader range without manufacturing a
+        # serving attestation; D41 allocator eligibility remains separate.
+        if structure == STRUCTURE_ROUTED_MOE:
+            refuse_a_family_with_no_expert_route(route, target)
         if not reader_accepts(q256, low, high, step):
             span_text = f"[{low}, {high}]" + (f" step {step}" if step != 1 else " (every integer)")
             raise ValueError(
@@ -1762,7 +1707,7 @@ def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str
             f"has no {route['short']} tile")
     rows = _as_int(group, "rows", target)
     columns = _as_int(group, "columns", target)
-    if columns % route["columns_multiple"]:
+    if family != TESSERA_NVFP4 and columns % route["columns_multiple"]:
         raise ValueError(
             f"tessera target {target!r}: the {family} mainloop needs "
             f"K % {route['columns_multiple']} == 0, got {columns}")
@@ -1779,12 +1724,22 @@ def _validate_group(group: Mapping, family: str, target: str, *, byte_field: str
         raise ValueError(
             f"tessera target {target!r}: roles stack to {sum(r[1] for r in roles)} rows, the "
             f"scheme declares {rows}")
+    if family == TESSERA_NVFP4:
+        structure = STRUCTURE_ROUTED_MOE if experts is not None else STRUCTURE_DENSE
+        for name, role_rows in roles:
+            reason = e2m1_shape_reason(role_rows, columns, structure=structure, projection=name)
+            if reason is not None:
+                raise ValueError(f"tessera target {target!r} role {name!r}: {reason}")
     # AFTER the roles, because the rate is a per-ROLE fact and the roles are
     # what indexes it.  Every rung is put through the same gate the module-level
     # one used to be: a group is legal only when EVERY member's rate is one this
     # build's decoder publishes a read for.
     if experts is not None:
         matrix = _expert_role_rungs(group, experts, roles, family, target)
+        if family == TESSERA_NVFP4:
+            reason = e2m1_expert_rate_reason(matrix)
+            if reason is not None:
+                raise ValueError(f"tessera target {target!r}: {reason}")
         for e, row in enumerate(matrix):
             for (name, _role_rows), rung in zip(roles, row):
                 _refuse_an_unreadable_rung(family, grid, rung,
@@ -2005,10 +1960,13 @@ def _per_weight_q256(root: int, arity: int, target: str, name: str) -> int:
 
 def _role_expected(declared: Mapping, member, member_q256: int) -> dict:
     """What the sidecar promises THIS role -- its own rung, not the module's."""
-    return {"grid": declared["grid"], "body": declared["body"], "plane": declared["plane"],
-            "q256": int(member_q256), "rows": member.rows,
-            "columns": declared["columns"],
-            "span": ROUTES[declared["family"]]["span"]}
+    expected = {"grid": declared["grid"], "body": declared["body"], "plane": declared["plane"],
+                "q256": int(member_q256), "rows": member.rows,
+                "columns": declared["columns"],
+                "span": ROUTES[declared["family"]]["span"]}
+    if declared["family"] == TESSERA_NVFP4:
+        expected.update(window_bits=ROUTES[TESSERA_NVFP4]["window_bits"], half=GROUP_SIZE)
+    return expected
 
 
 def _require_role_facts(actual: Mapping, expected: Mapping, target: str, name: str) -> None:
@@ -2057,6 +2015,9 @@ def _parse_container(blob: bytes, declared: Mapping, target: str, device="cpu",
             "rows": geometry.rows, "columns": geometry.columns,
             "span": int(unit.manifest.span),
         }
+        if declared["family"] == TESSERA_NVFP4:
+            actual.update(window_bits=int(unit.manifest.window_bits),
+                          half=int(geometry.half_weights))
         _require_role_facts(actual, _role_expected(declared, member, member_q256),
                             target, member.name)
         parsed.append((member.name, unit))
@@ -2101,6 +2062,9 @@ def _parse_compact_container(blob: bytes, declared: Mapping, target: str,
             "rows": meta.rows, "columns": meta.columns,
             "span": int(meta.span),
         }
+        if declared["family"] == TESSERA_NVFP4:
+            actual.update(window_bits=int(meta.manifest.window_bits),
+                          half=int(meta.manifest.geometry.half_weights))
         _require_role_facts(actual, _role_expected(declared, member, member_q256),
                             target, member.name)
         out.append((member.name, wire))

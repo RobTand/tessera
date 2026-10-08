@@ -191,7 +191,7 @@ def test_a_fused_group_whose_explicit_members_disagree_on_scheme_is_refused(tmp_
             v: {"grid": "E4M3", "q256": 1024}}
     with pytest.raises(SystemExit) as caught:
         _run(tmp_path, monkeypatch,
-             {name: _tensor(64, 32, i) for i, name in enumerate((q, k, v))}, plan,
+             {name: _tensor(64, 256, i) for i, name in enumerate((q, k, v))}, plan,
              architecture=FUSED_QKV_ARCHITECTURE)
     message = str(caught.value)
     assert BODY + "0.self_attn.qkv_proj" in message

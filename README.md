@@ -264,8 +264,9 @@ The native planner path uses only the standard library. The loader and planner r
 A routed layout also declares `table_dtype` for its selected native table. The byte accountant prices that explicit entry width.
 It always includes native run pairs and block descriptors. It does not retain raw grids, permutations or run offsets.
 Declare each stack inverse and class-counter tensor as a separate inventory allocation, once per stack.
-The `dense_a4` kind requires `rates`, `arity`, `memory`, `half`, and `lut_entries`. It uses the native four-bit dense accountant.
-Native layouts obey the existing window-width bound and the process address limit.
+The `dense_a4` kind requires `rates`, `arity`, `half`, `window_bits`, and `tile_rows`. It uses the native E2M1 WINDOW accountant.
+It accepts no TCQ `memory` or `lut_entries` fields.
+Native layouts obey the published window-width bound and the shared native shape checks.
 These counts describe prepared tensor storage. They do not qualify a kernel or predict an undeclared runtime allocation.
 
 The report gives peak bytes, the peak step, named peak allocations, final bytes, and headroom for each rank.

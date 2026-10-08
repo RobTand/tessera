@@ -30,17 +30,10 @@ WHAT THIS SCRIPT MAY WRITE IS WHAT THE PLUGIN PUBLISHES A DECODE FOR.
 ``check_recipe`` gates the default ``(grid, q256)`` and every ``--plan-json``
 override against the packaged ``runtime_contract.json`` before the first
 encode, so a wire the pinned runtime cannot read is refused at export rather
-than at load (#41).  The encoder is untouched: ``wire_recipe`` still writes
-the sub-cap window body and every research encode of it still runs.  What a
-served ROUTED stack carries is a spelling above it -- ``served_recipe``
-promotes every NVFP4 rung to the span-2 TCQ body the routed path decodes, for
-``STRUCTURE_ROUTED_MOE`` only, because a sub-cap rung served through the
-WINDOW recipe would be unreadable by the one decoder that path has; a DENSE
-module keeps the ``wire_recipe`` spelling (WINDOW below the cap), which the
-route refuses at export (tessera#560 D2b).  That promotion is necessary and
-measured-worse (TCQ span-2 at
-1.36-1.43x EXL3 at 2.5-3.5 bpp against window L=12 at 1.06-1.10x,
-``docs/tessera-one-format.md`` §4); ``served_recipe``'s docstring states both.
+than at load (#41). ``served_recipe`` selects WINDOW L14 over LUT16 for
+dense and routed E2M1x2 units. ``wire_recipe`` keeps its research defaults,
+and explicit TCQ remains available for research. The serving contract owns
+reader admission and measured route eligibility.
 The override is ``--allow-unserveable``, and it is stamped into the manifest.
 
 The checkpoint declares ``quantization_config.quant_method: "tessera"``, which
@@ -57,9 +50,8 @@ decodes (``module_scheme_key``).  They need NOT share a RATE: every decoder in
 group whose members took different rungs is written as one container with a
 per-role ``q256`` list in its scheme, and the runtime publishes that rule as a
 value a producer's group allocator reads (``runtime_contract.json``'s
-``fused_module``, contract v6, #37).  An NVFP4 module's roles are additionally
-checked at export for the exact binade shift the lane applies at load
-(``shared_lut_global``), so an unserveable group is refused here, not there.
+``fused_module``, contract v6, #37). Each NVFP4 role keeps its own weight
+global. The native epilogue applies that global without a shared-LUT remap.
 
 THE STOCK TWIN.  ``--stock-twin DIR`` also writes the materialisation of the
 SAME wires (``tessera.stock.materialize_stock``; NVFP4 groups moved onto one
@@ -180,7 +172,7 @@ from tessera.manifest import body_rate_cap  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, encode_linears_planes, served_recipe)
-from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
+from tessera.fused import pack_fused, shared_input_global_scale  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, classify_construction, construction_entry,
     format_entry, load_serving_contract, output_partitions)
@@ -197,13 +189,12 @@ from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
-from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
     exporter_code_root, git_hash,
     mtp_draft_embed_head_duplicate_bytes, parse_partition, make_artifact_readable,
     partition_owner, per_rank_fit_items, require_json, routed_fused_unit_bytes,
-    routed_window_unit_resident_bytes, sha256_file,
+    routed_window_part_resident_bytes, routed_window_unit_resident_bytes, sha256_file,
     summarize_modules, validate_explicit_plan, write_serving_manifest)
 from tessera.serving_plan import (  # noqa: E402
     SERVING_PLAN_SCHEMA, family_for, module_scheme_key, validate_serving_plan)
@@ -1503,15 +1494,19 @@ def require_plannable_unit_layout(layout, q256, target, *, manifest=None):
                     f"but q256={q256} declares {want}; a non-aligned importance "
                     "placement is not plannable. Refusing before the shard write.")
 
+
 def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
                                 expert_classes, native_library,
                                 tp_size: int = 1, tp_rank: int = 0) -> tuple[int, int]:
     """Native retained unit and stack bytes at the explicitly selected library.
 
-    Class views alias the global words, scales, init and composed tables.
-    Raw compact planes and run offsets have no retained owner after cutover.
-    The one inverse and per-class counters are the only stack-wide tensors.
+    FP8 and BF16: class views alias the global words, scales, init and
+    composed tables. Raw compact planes and run offsets have no retained
+    owner after cutover. The one inverse and per-class counters are the only
+    stack-wide tensors. E2M1 is priced by :func:`_e2m1_stack_resident_bytes`.
     """
+    if family == NVFP4:
+        return _e2m1_stack_resident_bytes(experts, layouts, tp_size=tp_size, tp_rank=tp_rank)
     from tessera.window_geometry import TILE_ROWS
     from tessera.expert_classes import normalize_expert_classes
 
@@ -1520,9 +1515,6 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
     table_element_bytes = None
     for layout in layouts:
         cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
-        if family == NVFP4:
-            units_total += cut["rows"] * cut["cols"] // 2 + cut["rows"] * cut["cols"] // 16 + 8
-            continue
         if table_element_bytes is None:
             if native_library is None:
                 raise ValueError("native WINDOW residency requires its selected library")
@@ -1533,12 +1525,47 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
             window_bits=cut["window_bits"], tile_rows=TILE_ROWS)
         fused_total += routed_fused_unit_bytes(
             cut["window_bits"], cut["cols"], table_element_bytes=table_element_bytes)
-    if family == NVFP4 or not layouts:
+    if not layouts:
         return units_total, 0
     return units_total, fused_total + 4 * experts + 8 * len(classes)
 
 
+def _e2m1_stack_resident_bytes(experts: int, layouts, *, tp_size: int = 1,
+                               tp_rank: int = 0) -> tuple[int, int]:
+    """Price rank-local E2M1 unit tensors and stack-level launch tensors.
 
+    Each projection owns its packed words, scale plane and code table.
+    E2M1 adds run pairs, descriptors and FP32 ratios per projection.
+    It adds per-part run offsets, two static input scales and two counters
+    per stack.
+    """
+    from tessera.window_geometry import TILE_ROWS
+
+    units_total, parts, refused, fused_total = 0, set(), False, 0
+    schedules = {}
+    for layout in layouts:
+        cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
+        # The paired body stores one code for two weight rows.
+        units_total += routed_window_unit_resident_bytes(
+            NVFP4, cut["rows"], cut["cols"], cut["rates"],
+            window_bits=cut["window_bits"], tile_rows=TILE_ROWS)
+        part = "down" if cut["group"] == "w2" else str(cut["projection"]).removesuffix("_proj")
+        parts.add(part)
+        counts = tuple((rate, cut["rates"].count(rate)) for rate in sorted(set(cut["rates"])))
+        signature = (cut["rows"], cut["cols"], int(cut["window_bits"]), counts)
+        if schedules.setdefault(part, signature) != signature:
+            refused = True
+        fused_total += routed_fused_unit_bytes(int(cut["window_bits"]), cut["cols"], family=NVFP4)
+    gate, up = schedules.get("gate"), schedules.get("up")
+    if gate is not None and up is not None:
+        if sum(r * n for r, n in gate[-1]) != sum(r * n for r, n in up[-1]):
+            refused = True
+    if not layouts:
+        return units_total, 0
+    if refused:
+        raise SystemExit("the fused E2M1 stack has unequal expert schedules or gate/up strides")
+    stack_total = len(parts) * routed_window_part_resident_bytes(experts)
+    return units_total, stack_total + fused_total + 16  # gs13, gs2 and two native counters
 
 
 def check_native_class_geometry(record, *, fit_tp_size=1, allow_unserveable=False, overrides=None):
@@ -1583,7 +1610,6 @@ def check_native_class_geometry(record, *, fit_tp_size=1, allow_unserveable=Fals
                         if overrides is not None:
                             overrides.append({"target": record["stack"], "structure": STRUCTURE_ROUTED_MOE,
                                               "refusal": refusal})
-
 
 
 def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
@@ -1825,14 +1851,20 @@ def assign_expert_unit_rungs(record, assignments):
         if module_scheme_key(record["grid"], rung, STRUCTURE_ROUTED_MOE) != base:
             raise SystemExit(f"{name}: selected rung changes the stack grid/body/plane")
     effective = {name: assignments.get(name, record["q256"]) for name in names}
+    if record["family"] == NVFP4:
+        from tessera.serving.scheme import e2m1_expert_rate_reason
+        by_slot = {(unit["expert"], unit["projection"]):
+                   effective[unit["tensor"].removesuffix(".weight")]
+                   for unit in record["units"]}
+        matrix = [[by_slot[expert, projection] for projection in EXPERT_PROJECTIONS]
+                  for expert in range(record["experts"])]
+        reason = e2m1_expert_rate_reason(matrix)
+        if reason is not None:
+            raise SystemExit(f"{record['stack']}: {reason}")
     if len(set(effective.values())) == 1:
         record["q256"] = next(iter(effective.values()))
         record.pop("unit_q256", None)
     else:
-        if record["family"] == NVFP4:
-            raise SystemExit(
-                f"{record['stack']}: per-unit routed rungs require the WINDOW "
-                "E4M3/BF16 loader; mixed NVFP4 expert schedules are not supported")
         record["unit_q256"] = {name: rung for name, rung in sorted(effective.items())
                                if rung != record["q256"]}
     from tessera.expert_classes import build_expert_metadata, inverse_expert_ids, validate_gate_up_schedule
@@ -1958,7 +1990,10 @@ def fresh_joined_encode(members, *, stack_plan, activation, device, no_verify,
             grid=unit_grid, q256=unit_q256,
             names=[unit["tensor"] for unit, _weight, _mapping in subset],
             per_unit=[mapping for _unit, _weight, mapping in subset],
-            body=unit_recipe.body, verify=not no_verify)
+            body=unit_recipe.body, span=unit_recipe.span, scale_plane=unit_recipe.scale_plane,
+            window_bits=unit_recipe.window_bits, window_seed=unit_recipe.window_seed,
+            window_sigma=unit_recipe.window_sigma, channel_sigma=unit_recipe.channel_sigma,
+            verify=not no_verify)
         for (unit, weight, _mapping), (exported, unit_artifact_, _forests) in zip(subset, encoded):
             del weight
             unit_manifest = parse_unit_artifact(exported.blob, device=device).manifest
@@ -2606,6 +2641,13 @@ def main():
                 stack, stacks[stack], grid, q256, source_layout=source_layout,
                 config=src_config,
                 allow_unserveable=args.allow_unserveable)
+        if record["family"] == NVFP4:
+            from tessera.serving.scheme import e2m1_shape_reason
+            for unit in record["units"]:
+                reason = e2m1_shape_reason(unit["rows"], unit["cols"],
+                    structure=STRUCTURE_ROUTED_MOE, projection=unit["projection"])
+                if reason is not None:
+                    raise SystemExit(f"{unit['tensor']}: {reason}")
         assign_expert_unit_rungs(record, plan_snapshot.entries[stack].get("unit_q256", {}))
         if plan_snapshot.entries[stack].get("unit_q256"):
             for unit in record["units"]:
@@ -2688,7 +2730,12 @@ def main():
         if MOE_ROUTER.match(name) and name not in explicit:
             passthrough.append(name); continue
         grid, q256 = overrides.get(name, (default_grid, args.q256))
-        if rows % (grid.arity * 32) or cols % 16:
+        if family_for(grid) == NVFP4:
+            from tessera.serving.scheme import e2m1_shape_reason
+            reason = e2m1_shape_reason(rows, cols)
+            if reason is not None:
+                raise SystemExit(f"{name}: {reason}")
+        elif rows % (grid.arity * 32) or cols % 16:
             if name in explicit:
                 raise SystemExit(
                     f"the plan names {name} at {grid.name} q256={q256}, but its shape "
@@ -2858,8 +2905,16 @@ def main():
                 f"{exc}. The partition list is the pinned runtime's, read from the construction "
                 "census (contract.output_partitions); a checkpoint declaring different roles "
                 "is refused at load by sharding.plan_shard, so it is refused here instead.")
+        for part in parts:
+            part_grid, _part_q, _part_rows, part_cols = plan[part.tensor]
+            if family_for(part_grid) == NVFP4:
+                from tessera.serving.scheme import e2m1_shape_reason
+                reason = e2m1_shape_reason(part.rows, part_cols)
+                if reason is not None:
+                    raise SystemExit(f"{module} role {part.role}: {reason}")
         unfit = [part for part in parts
-                 if part.rows % (plan[part.tensor][0].arity * 32)]
+                 if family_for(plan[part.tensor][0]) != NVFP4
+                 and part.rows % (plan[part.tensor][0].arity * 32)]
         if unfit:
             # The same shape rule the per-tensor plan applied, re-asked on the
             # row slice the runtime actually builds; the same resolution too.
@@ -3289,7 +3344,11 @@ def main():
                                 scale_plane=unit_recipe.scale_plane))
                             exported, unit_artifact_, _forests = encode_linear_planes(
                                 weight, grid=unit_grid, q256=unit_q256,
-                                body=unit_recipe.body, name=unit["tensor"], verify=not args.no_verify, **extra)
+                                body=unit_recipe.body, span=unit_recipe.span,
+                                scale_plane=unit_recipe.scale_plane, window_bits=unit_recipe.window_bits,
+                                window_seed=unit_recipe.window_seed, window_sigma=unit_recipe.window_sigma,
+                                channel_sigma=unit_recipe.channel_sigma,
+                                name=unit["tensor"], verify=not args.no_verify, **extra)
                             extra.clear()
                             # The manifest the runtime's compact lane reads
                             # (rates, window bits) comes off the bytes just
@@ -3329,15 +3388,16 @@ def main():
                                 raise SystemExit(f"{scale_key} = {a_scale!r} is not a finite positive scale")
                             shard_payload[scale_key] = torch.tensor([a_scale], dtype=torch.float32)
                             expert_scale = {"input_global_scale": a_scale}
-                            # The stock NVFP4 tile: packed nibbles, group-16
-                            # ue4m3 block scales, one fp32 global and one fp32
-                            # input scale per expert projection.
-                            stack_record["resident_bytes_resident_mode"] += (
-                                exported.rows * exported.columns // 2
-                                + exported.rows * exported.columns // 16 + 8)
-                            stack_record["unit_layouts"].append({
+                            layout = {
                                 "group": unit["group"], "projection": unit["projection"],
-                                "rows": exported.rows, "cols": exported.columns})
+                                "rows": int(unit_manifest.geometry.rows),
+                                "cols": int(unit_manifest.geometry.columns),
+                                "rates": tuple(int(r) for r in unit_manifest.rates),
+                                "window_bits": int(unit_manifest.window_bits)}
+                            stack_record["resident_bytes_resident_mode"] += routed_window_unit_resident_bytes(
+                                NVFP4, layout["rows"], layout["cols"], layout["rates"],
+                                window_bits=layout["window_bits"], tile_rows=512)
+                            stack_record["unit_layouts"].append(layout)
                         else:
                             # Price the verified manifest's native retained planes:
                             # words, weight scales, init and has_init. The class
@@ -3426,11 +3486,6 @@ def main():
             role_records = []
             native_a4_roles = []
             stock_tensors: dict[str, dict] = {}
-            # The distinct trellis-table sets the serving load pins for this
-            # module (tessera#557): one memoised ``(forest, code)`` set per
-            # trellis the module's roles prepare, keyed exactly as the load's
-            # ``lru_cache`` keys them so the count below is the load's count.
-            trellis_keys: set = set()
             for part in partitions[module]:
                 member = part.tensor
                 member_grid, q256, source_rows, _mc = plan[member]
@@ -3452,7 +3507,10 @@ def main():
                                                  scale_plane=member_recipe.scale_plane))
                     exported, unit, forests = encode_linear_planes(
                         weight, grid=member_grid, q256=q256, name=unit_name,
-                        body=member_recipe.body, verify=not args.no_verify, **extra)
+                        body=member_recipe.body, span=member_recipe.span,
+                        scale_plane=member_recipe.scale_plane, window_bits=member_recipe.window_bits,
+                        window_seed=member_recipe.window_seed, window_sigma=member_recipe.window_sigma,
+                        channel_sigma=member_recipe.channel_sigma, verify=not args.no_verify, **extra)
                     extra.clear()
                     parsed = parse_unit_artifact(exported.blob, device=args.device)
                     stock_code = DEFAULT_CODE
@@ -3475,15 +3533,8 @@ def main():
                 if family == NVFP4:
                     native_a4_roles.append({"rows": exported.rows, "cols": exported.columns,
                                             "rates": unit.rates, "arity": parsed.grid.arity,
-                                            "memory": parsed.code.memory, "half": unit.half,
-                                            "lut_entries": int(unit.scale_lut.numel())})
-                    # NVFP4 is the TCQ body, so the parsed unit carries the
-                    # forests by rate and the convolutional code the load
-                    # prepares select planes from; every rate's trellis it
-                    # touches pins one table set (served span-2 units carry
-                    # exactly one rate -- the load refuses more).
-                    for rate in parsed.manifest.rates:
-                        trellis_keys.add((parsed.forests[rate], parsed.code))
+                                            "half": unit.half, "window_bits": unit.window_bits,
+                                            "tile_rows": 512})
                 stock_tensors[unit_name] = materialize_stock(unit, forests, stock_code)
                 role_records.append({
                     "tensor": member, "role": role, "rows": exported.rows, "cols": exported.columns,
@@ -3527,9 +3578,6 @@ def main():
                                  "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
                                 for _name, role_rows, _blob, unit, _forests in roles]
             if family == NVFP4:
-                shared, _moved = shared_lut_global(
-                    [u.scale_lut for _, _, _, u, _ in roles], [float(u.scale_global) for _, _, _, u, _ in roles],
-                    [r for r, *_ in roles])
                 # The A-side static scale is ONE value per fused module and it
                 # is the MIN over members (``fused.shared_input_global_scale``,
                 # the join's one home): the route hands the value unmodified to
@@ -3548,20 +3596,9 @@ def main():
                 a_scale = shared_input_global_scale(
                     [input_scales[k] for k in scale_keys], scale_keys)
                 shard_payload[f"{module}.trellis_input_global_scale"] = torch.tensor([a_scale], dtype=torch.float32)
-                # The trellis tables are shared per process (see
-                # ``decode.replay_table_bytes``): per-module pricing is exact
-                # exactly when each trellis is prepared once in the serve.
-                trellis_table_bytes = sum(replay_table_bytes(forest, code)
-                                          for forest, code in trellis_keys)
-                if args.shared_candidate_pricing:
-                    from tessera.decode import replay_table_spec
-                    module_replay_groups[module] = [replay_table_spec(forest, code)
-                                                    for forest, code in trellis_keys]
-                record.update({"shared_global": shared, "input_global_scale": a_scale,
+                record.update({"input_global_scale": a_scale,
                                "resident_bytes_resident_mode": dense_resident_bytes_resident_mode(
-                                   family, rows_total, cols,
-                                   trellis_table_bytes=trellis_table_bytes,
-                                   native_roles=native_a4_roles)})
+                                   family, rows_total, cols, native_roles=native_a4_roles)})
                 if twin is not None:
                     moved, divisor = share_global({module_of(m): stock_tensors[m] for m in members})
                     for m in members:
@@ -3680,13 +3717,13 @@ def main():
         stack_record["wire_stride"] = {g: groups[g]["wire_stride"] for g in MOE_GROUPS}
         stack_record.pop("group_blob_bytes")
         routed_layouts[stack] = stack_record.pop("unit_layouts")
-        if spec["family"] != NVFP4:
-            # Selected composed tables and launch descriptors are aliases
-            # across class views, charged once per unit. The inverse and
-            # class counters are the only stack-wide persistent tensors.
-            stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
-                spec["family"], spec["experts"], routed_layouts[stack],
-                expert_classes=spec["expert_classes"], native_library=spec["native_library"])[1]
+        # FP8/BF16: selected composed tables and launch descriptors are
+        # aliases across class views, charged once per unit; the inverse and
+        # class counters are the only stack-wide persistent tensors. E2M1 adds
+        # per-part offsets and its native launch tables once per stack.
+        stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
+            spec["family"], spec["experts"], routed_layouts[stack],
+            expert_classes=spec["expert_classes"], native_library=spec["native_library"])[1]
         stack_record["roles"].sort(key=lambda r: (r["expert"], r["group"], r["role"]))
         module_records[stack] = stack_record
         for role in stack_record["roles"]:

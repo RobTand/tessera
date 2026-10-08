@@ -457,10 +457,8 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
     (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
     grid, q256 = ("E2M1x2", 896) if input_scales else ("E4M3", 1024)
     family = "TESSERA_NVFP4" if input_scales else "TESSERA_FP8"
-    # The body/plane pair each route decodes (``scheme.ROUTES``): the NVFP4
-    # route reads a TCQ body over the LUT plane its group-16 ue4m3 block
-    # scales come from, the FP8 route a WINDOW body over the CHANNEL plane.
-    body, plane = ("TCQ", "LUT") if input_scales else ("WINDOW", "CHANNEL")
+    body, plane = ("WINDOW", "LUT") if input_scales else ("WINDOW", "CHANNEL")
+    dimension = 256 if input_scales else 32
     plan = {stack: {"grid": grid, "q256": q256} for stack in stacks}
     identity = {"source": parts.source_part_identity(source), "code_sha256": "a" * 64,
                 "runtime_image": "test/image@sha256:" + "b" * 64, "options": {"plan": plan}}
@@ -477,7 +475,7 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
                       "source_slice": {"expert": 0, "selector": "whole", "transpose": False},
                       "storage_expert": 0, "wire": tensor.removesuffix(".weight") + ".wire",
                       "role": role, "group": "w2" if role == "down_proj" else "w13",
-                      "grid": grid, "q256": q256, "rows": 32, "cols": 32,
+                      "grid": grid, "q256": q256, "rows": dimension, "cols": dimension,
                       **({"input_global_scale": 2.5} if input_scales else {})}
                      for tensor, role in zip(owned, ("gate_proj", "up_proj", "down_proj"))]
             names = [role["wire"] for role in roles]
@@ -489,10 +487,10 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
             groups[f"stack{rank}"] = {"targets": [stack], "format": "TESSERA", "scheme": {
                 "structure": "routed_moe", "family": family, "grid": grid,
                 "body": body, "plane": plane, "experts": 1, **metadata, "groups": {
-                    "w13": {"q256": q256, "rows": 64, "columns": 32, "wire_stride": 2,
-                            "roles": [["gate_proj", 32], ["up_proj", 32]]},
-                    "w2": {"q256": q256, "rows": 32, "columns": 32, "wire_stride": 2,
-                           "roles": [["down_proj", 32]]}}}}
+                    "w13": {"q256": q256, "rows": 2 * dimension, "columns": dimension, "wire_stride": 2,
+                            "roles": [["gate_proj", dimension], ["up_proj", dimension]]},
+                    "w2": {"q256": q256, "rows": dimension, "columns": dimension, "wire_stride": 2,
+                           "roles": [["down_proj", dimension]]}}}}
         else:
             names, ignore = owned, [stack]
         _tensor_file(path / "model.safetensors", names)

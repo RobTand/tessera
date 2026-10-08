@@ -309,7 +309,7 @@ def test_unit_pricing_refuses_what_the_lane_cannot_read():
     with pytest.raises(ValueError, match="geometry"):
         routed_window_unit_resident_bytes("TESSERA_FP8", 8, 3, (4, 4), window_bits=14, tile_rows=512)
     with pytest.raises(ValueError, match="family"):
-        routed_window_unit_resident_bytes("TESSERA_NVFP4", 8, 2, (4, 4), window_bits=14, tile_rows=512)
+        routed_window_unit_resident_bytes("unknown", 8, 2, (4, 4), window_bits=14, tile_rows=512)
 
 
 def test_fused_shape_predicate_reads_the_manifest_alone():

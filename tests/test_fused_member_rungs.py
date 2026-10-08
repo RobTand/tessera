@@ -141,16 +141,11 @@ def test_every_role_goes_through_the_reader_range_gate_the_module_used_to():
 def test_the_grouping_key_is_the_module_scheme_and_not_the_rate():
     export = _exporter()
     e4m3, bf16 = grid_for_name("E4M3"), grid_for_name("BF16")
-    k2 = grid_for_name("E2M1x2")
     # Two rungs, one key: this is the group the old ``(grid, q256)`` check
     # passed through at source precision.
     assert export.module_scheme_key(e4m3, 900) == export.module_scheme_key(e4m3, 1200)
     # Two families: still separated, because vLLM builds one method per module.
     assert export.module_scheme_key(e4m3, 1024) != export.module_scheme_key(bf16, 1024)
-    # Two BODIES on one grid: separated, because they are two decoders.  The
-    # E2M1x2 sub-cap window body is refused by ``check_recipe`` long before
-    # this, and the key does not lean on that.
-    assert export.module_scheme_key(k2, 512) != export.module_scheme_key(k2, 896)
 
 
 def test_the_grouping_key_compares_exactly_the_fields_the_contract_calls_shared():

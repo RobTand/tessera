@@ -338,8 +338,12 @@ class WindowUnitAxis:
                   *state, int(rep.n_tiles), str(getattr(rep, "word_layout", "legacy")))
         if self._sizes.get(str(part)):
             return shared
+        schedule = (tuple((rate, rep.rates.count(rate)) for rate in sorted(set(rep.rates)))
+                    if self.family == "e2m1" else tuple(int(r) for r in rep.rates))
+        # E2M1 stores each expert's permutation and descriptors separately.
+        # Equal rate counts and strides do not require equal column placement.
         return shared + (int(rep.words.numel()), int(rep.runs.shape[0]),
-                         tuple(int(r) for r in rep.rates), int(rep.tile_words))
+                         schedule, int(rep.tile_words))
 
     def _alloc(self, part: str, unit) -> dict:
         e = self.experts
@@ -532,6 +536,13 @@ class WindowUnitAxis:
         """How many (part, expert) slots have been placed."""
         return sum(len(s) for s in self._filled.values())
 
+    def named_tensors(self):
+        """Declare each tensor in the current axis slots by reference."""
+        for part, slot in self._slots.items():
+            for field, value in slot.items():
+                if isinstance(value, torch.Tensor):
+                    yield f"{part}.{field}", value
+
     def resident_bytes(self) -> int:
         """Bytes the allocated slots hold (packed constants only)."""
         return sum(t.numel() * t.element_size()
@@ -613,6 +624,10 @@ class PackedWindowMoeBundles:
 
     def adapter(self):
         """Build the sole class dispatcher once, with no feature switch or substitute."""
+        if self.family == "e2m1":
+            raise GrammarError(
+                "e2m1 bundles require FusedRoutedE2M1MoE.from_bundles with checkpoint "
+                "gs13 and gs2; the FP8/BF16 class dispatcher is not a W4A4 substitute")
         cached = self.__dict__.get("_adapter")
         if cached is not None:
             return cached

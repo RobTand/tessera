@@ -492,7 +492,7 @@ def test_parts_with_different_scale_bindings_refuse_to_merge(tmp_path):
 # The input-scale binding seals the bytes the roles consumed
 # --------------------------------------------------------------------------
 
-NVFP4_HIDDEN = NVFP4_INTER = 64
+NVFP4_HIDDEN = NVFP4_INTER = 256
 
 
 def _nvfp4_scales(experts=1):

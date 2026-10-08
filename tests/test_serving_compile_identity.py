@@ -104,23 +104,46 @@ def test_no_current_config_declares_nothing():
     assert declare_compile_identity(serve_mode="resident") is None
 
 
-def test_vllm_hashes_the_two_modes_apart():
-    pytest.importorskip("vllm.config")
-    from vllm.config import VllmConfig, set_current_vllm_config
+def _real_vllm_hash_check(code):
+    # A fresh interpreter cannot read another test's fake vLLM package.
+    import subprocess
+    import sys
 
-    hashes = {}
-    for mode in ("resident", "streamed"):
-        cfg = VllmConfig()
-        with set_current_vllm_config(cfg):
-            rec = declare_compile_identity(serve_mode=mode)
-        assert rec is cfg.additional_config[TESSERA_KEY]
-        assert rec["serve_mode"] == mode
-        hashes[mode] = cfg.compute_hash()
-    assert hashes["resident"] != hashes["streamed"]
-    again = VllmConfig()
-    with set_current_vllm_config(again):
-        declare_compile_identity(serve_mode="resident")
-    assert again.compute_hash() == hashes["resident"]
+    imports = """
+import importlib.util, sys
+if importlib.util.find_spec("vllm") is None:
+    sys.exit(77)
+from vllm.config import VllmConfig, set_current_vllm_config
+from vllm.platforms import current_platform
+current_platform.import_ir_kernels()
+from tessera.serving.compile_identity import (
+    TESSERA_KEY, declare_compile_identity, note_traced_dispatch, reset_for_tests)
+"""
+    constants = (f"FIRST_OP, SECOND_OP, MODULES = "
+                 f"{(WINDOW_GEMM_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL, MODULES)!r}\n")
+    result = subprocess.run([sys.executable, "-c", imports + constants + code],
+                            capture_output=True, text=True)
+    if result.returncode == 77:
+        pytest.skip("real vLLM is absent from the test interpreter")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_vllm_hashes_the_two_modes_apart():
+    _real_vllm_hash_check(r"""
+hashes = {}
+for mode in ("resident", "streamed"):
+    cfg = VllmConfig()
+    with set_current_vllm_config(cfg):
+        rec = declare_compile_identity(serve_mode=mode)
+    assert rec is cfg.additional_config[TESSERA_KEY]
+    assert rec["serve_mode"] == mode
+    hashes[mode] = cfg.compute_hash()
+assert hashes["resident"] != hashes["streamed"]
+again = VllmConfig()
+with set_current_vllm_config(again):
+    declare_compile_identity(serve_mode="resident")
+assert again.compute_hash() == hashes["resident"]
+""")
 
 
 
@@ -191,15 +214,22 @@ def test_a_second_config_starts_a_fresh_accumulation():
 
 
 def test_vllm_hashes_the_two_lane_states_apart():
-    pytest.importorskip("vllm.config")
-    from vllm.config import VllmConfig, set_current_vllm_config
-    hashes = {}
-    for operation in (WINDOW_GEMM_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL):
-        reset_for_tests()
-        cfg = VllmConfig()
-        with set_current_vllm_config(cfg):
-            declare_compile_identity(serve_mode="streamed")
-        for name in MODULES:
-            note_traced_dispatch(name, operation)
-        hashes[operation] = cfg.compute_hash()
-    assert len(set(hashes.values())) == 2
+    _real_vllm_hash_check(r"""
+hashes = {}
+for operation in (FIRST_OP, SECOND_OP):
+    reset_for_tests()
+    cfg = VllmConfig()
+    with set_current_vllm_config(cfg):
+        declare_compile_identity(serve_mode="streamed")
+    for name in MODULES:
+        note_traced_dispatch(name, operation)
+    hashes[operation] = cfg.compute_hash()
+assert hashes[FIRST_OP] != hashes[SECOND_OP]
+reset_for_tests()
+again = VllmConfig()
+with set_current_vllm_config(again):
+    declare_compile_identity(serve_mode="streamed")
+for name in MODULES:
+    note_traced_dispatch(name, FIRST_OP)
+assert again.compute_hash() == hashes[FIRST_OP]
+""")

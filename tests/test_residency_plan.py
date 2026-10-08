@@ -137,12 +137,13 @@ def test_native_routed_slices_rates_in_placement_order(planner, table_dtype, ele
 
 
 def test_native_a4_uses_shared_accountant(planner):
-    storage = {"kind": "dense_a4", "rates": [2] * 32,
-               "arity": 2, "memory": 1, "half": 16, "lut_entries": 16}
-    report = planner.plan_residency(spec(weight=([32, 32], "bfloat16")),
-                                    plan(allocation("weight", storage=storage)))
-    # Global scale, select, label, point, scale nibbles, tables, role epilogue.
-    assert report["ranks"][0]["peak_bytes"] == 4 + 72 + 64 + 64 + 32 + 16 + 16 + 24 + 4
+    from tessera.window_geometry import TILE_ROWS
+    storage = {"kind": "dense_a4", "rates": [2] * 256, "arity": 2, "half": 16,
+               "window_bits": 14, "tile_rows": TILE_ROWS}
+    expected = 4 + TILE_ROWS * 256 * 2 // 8 + 16384 + 256 + 16 + 1024 + 64 + 4 + 4 + 32
+    report = planner.plan_residency(spec(weight=([32, 256], "bfloat16")),
+        plan(allocation("weight", storage=storage), capacities=(expected,)))
+    assert report["ranks"][0]["peak_bytes"] == expected
 
 
 def test_empty_inventory_has_only_reserve(planner):
@@ -210,15 +211,18 @@ def test_cli_fit_and_capacity_refusal(planner, tmp_path):
 def test_oversized_native_table_refuses_by_name(planner, kind):
     from tessera.manifest import WINDOW_BITS_MAX
     from tessera.window_geometry import TILE_ROWS
-    storage = ({"kind": kind, "family": "TESSERA_FP8", "rates": [4] * 32,
-                "window_bits": WINDOW_BITS_MAX + 1, "tile_rows": TILE_ROWS}
-               if kind == "dense_window" else
-               {"kind": kind, "rates": [2] * 32, "arity": 2,
-                "memory": 10**100, "half": 16, "lut_entries": 16})
+    columns = 32 if kind == "dense_window" else 256
+    storage = {"kind": kind, "rates": [2] * columns,
+               "window_bits": WINDOW_BITS_MAX + 1, "tile_rows": TILE_ROWS}
+    if kind == "dense_window":
+        storage["family"] = "TESSERA_FP8"
+    else:
+        storage.update(arity=2, half=16)
     with pytest.raises(planner.ResidencyRefusal) as caught:
-        planner.plan_residency(spec(x=([32, 32], "bfloat16")),
+        planner.plan_residency(spec(x=([32, columns], "bfloat16")),
                               plan(allocation("x", storage=storage)))
     assert caught.value.report["reasons"][0]["code"] == "invalid_storage"
+    assert caught.value.report["reasons"][0]["field"].endswith(".window_bits")
 
 
 def test_import_needs_no_tensor_runtime(planner):
@@ -323,6 +327,3 @@ print(json.dumps(report))
         assert report["fits"] is False
         assert report["reasons"][0]["code"] == "invalid_storage"
         assert report["reasons"][0]["field"].endswith("." + invalid)
-
-
-

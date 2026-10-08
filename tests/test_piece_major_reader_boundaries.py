@@ -176,14 +176,6 @@ def e2m1_bundle():
     return b
 
 
-def test_e2m1_legacy_positive_controls(monkeypatch):
-    from tessera import routed_fused_e2m1 as fe
-    monkeypatch.setattr(fe, "_ext", bomb)
-    monkeypatch.setattr(fe, "smem_reason", lambda *a: None)
-    u = SimpleNamespace(rep=unit(cols=256).rep, window_bits=14, arity=2, cols=256, rows=256)
-    assert fe.dense_role_reason(u) is None
-    b = e2m1_bundle()
-    assert fe.fused_routed_e2m1_supported(b, b, b) is None
 
 
 def intake(family):

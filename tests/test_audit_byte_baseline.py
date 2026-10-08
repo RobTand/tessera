@@ -547,6 +547,39 @@ def test_cpu_class_export_read_roundtrip_preserves_source_wire_bytes(tmp_path, m
                 parse_tessera_expert_blob(blob, wrong, "wrong storage rung")
 
 
+def test_served_window_matrix_covers_both_structures_and_all_pure_classes():
+    module = _load()
+    from tessera.structure import STRUCTURES
+    cases = module._served_window_cases()
+    assert {(structure, q256) for _label, _grid, q256, structure in cases} == {
+        (structure, q256) for structure in STRUCTURES for q256 in range(128, 1025, 128)}
+
+
+def test_served_window_matrix_records_actual_bytes_and_detects_table_changes(monkeypatch):
+    from dataclasses import replace
+    import tessera.export as export_module
+    from tessera.container import parse, plane_ranges
+    from tessera.planes import PlaneKind
+    module = _load()
+    case = next(c for c in module._served_window_cases() if c[2] == 1024)
+    kept = module.encode_served_window_case(case)
+    artifact = parse(kept["bytes"])
+    assert artifact.manifest.window_bits == 14
+    alphabet = next(content for d, _offset, content, _total in
+                    plane_ranges(artifact.manifest, artifact.terminal) if d.kind is PlaneKind.ALPHABET)
+    assert alphabet == 16384 and kept["decode"]
+    monkeypatch.setattr(export_module, "E2M1X2_SERVED_RECIPE",
+                        replace(export_module.E2M1X2_SERVED_RECIPE, window_bits=12))
+    changed = module.encode_served_window_case(case)
+    assert changed["bytes"] != kept["bytes"]
+    # A different table width can preserve decoded values at the cap.
+    # The byte audit must detect the table cost, not require a quality change.
+    from test_served_e2m1_window import decode_window_bytes
+    import torch
+    decoded = torch.frombuffer(bytearray(changed["decode"]), dtype=torch.float32).reshape(32, 32)
+    assert torch.equal(decode_window_bytes(changed["bytes"]), decoded)
+
+
 def test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes():
     module = _load()
     cases = module._projection_cases()
@@ -562,4 +595,5 @@ def test_projection_matrix_reaches_padding_and_all_direct_buffer_dtypes():
             assert record["padding_rows"] == 64 and record["direct_buffer_bytes"] == 0
         else:
             assert record["padding_rows"] == 0
-            assert record["direct_buffer_bytes"] == 64 * 32 * (4 if case.condition == "head" else 2)
+            assert record["direct_buffer_bytes"] == (
+                record["source_rows"] * record["source_cols"] * (4 if case.condition == "head" else 2))

@@ -126,9 +126,8 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
     kind = storage.get("kind")
     if kind not in ("dense_window", "routed_window", "dense_a4"):
         _refuse("unknown_storage", field + ".kind", f"{field}.kind {kind!r} is not supported")
-    allowed = {"kind", "rates"}
-    allowed |= ({"arity", "memory", "half", "lut_entries"} if kind == "dense_a4"
-                else {"family", "window_bits", "tile_rows"})
+    allowed = {"kind", "rates", "window_bits", "tile_rows"}
+    allowed |= {"arity", "half"} if kind == "dense_a4" else {"family"}
     if kind == "routed_window":
         allowed.add("table_dtype")
     _fields(storage, allowed, field)
@@ -140,26 +139,19 @@ def _storage_layout(raw, global_shape: tuple, field: str) -> Mapping:
         _refuse("invalid_storage", field + ".rates", f"{field}.rates does not cover the columns")
     for index, rate in enumerate(rates):
         _integer(rate, f"{field}.rates[{index}]", "invalid_storage", 1)
-    numeric = ("arity", "memory", "half", "lut_entries") if kind == "dense_a4" else ("window_bits", "tile_rows")
+    numeric = ("window_bits", "tile_rows") + (("arity", "half") if kind == "dense_a4" else ())
     for key in numeric:
         _integer(storage.get(key), field + "." + key, "invalid_storage", 1)
-    if kind == "dense_a4":
-        # Each native trellis table entry occupies one int32.
-        address_bits = (sys.maxsize // DTYPE_BYTES["int32"]).bit_length()
-        if storage["memory"] + 1 >= address_bits:
-            _refuse("invalid_storage", field + ".memory", f"{field}.memory exceeds the addressable table size")
-    else:
-        from .window_geometry import TILE_ROWS
-        from .window_geometry import require_window_geometry
+    from .window_geometry import TILE_ROWS, require_window_geometry
 
-        if storage["tile_rows"] != TILE_ROWS:
-            _refuse("invalid_storage", field + ".tile_rows",
-                    f"{field}.tile_rows must match the compact loader row tile {TILE_ROWS}")
-        try:
-            require_window_geometry(storage["window_bits"], rates)
-        except GrammarError as exc:
-            key = ".rates" if max(rates) > storage["window_bits"] else ".window_bits"
-            _refuse("invalid_storage", field + key, f"{field}{key}: {exc}")
+    if storage["tile_rows"] != TILE_ROWS:
+        _refuse("invalid_storage", field + ".tile_rows",
+                f"{field}.tile_rows must match the compact loader row tile {TILE_ROWS}")
+    try:
+        require_window_geometry(storage["window_bits"], rates)
+    except GrammarError as exc:
+        key = ".rates" if max(rates) > storage["window_bits"] else ".window_bits"
+        _refuse("invalid_storage", field + key, f"{field}{key}: {exc}")
     if kind != "dense_a4" and storage.get("family") not in ("TESSERA_BF16", "TESSERA_FP8"):
         _refuse("invalid_storage", field + ".family", f"{field}.family has no window byte accountant")
     if kind == "routed_window":
