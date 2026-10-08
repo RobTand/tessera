@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-08 — position-independent issue reference checks
+
+Remove the residency test that assumes a fixed architecture paragraph position.
+The same deletion exists at the PR1024 head. The global issue-reference gate stays unchanged.
+
 ## 2026-10-08 — shared geometry in the native footprint fixture
 
 The native E2M1 footprint fixture uses its existing `window_geometry.TILE_ROWS` import.
