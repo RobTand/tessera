@@ -60,7 +60,9 @@ def _resolved(laws: dict[str, object]) -> dict[str, object]:
     runtime = laws["runtime"]
     if runtime["image"] is _DENSE_IMAGE_FROM_RECEIPT:
         laws = {**laws, "runtime": {**runtime, "image": _dense_runtime_image()}}
-    return laws
+    runtime = laws["runtime"]
+    return {**laws, "runtime": {**runtime,
+        "kernel_build": f"legacy-toolchain/{runtime['vllm']}/{runtime['torch']}"}}
 
 
 #: The toolchain the dense receipts record, verbatim:

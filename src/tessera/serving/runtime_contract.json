@@ -1112,6 +1112,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_decode",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "kernel_build": "legacy-toolchain/0.28.0/2.13.0+cu130",
      "execution_modes": ["eager"],
      "vllm": "0.28.0",
      "torch": "2.13.0+cu130"
@@ -1161,6 +1162,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_batch",
     "runtime": {
      "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "kernel_build": "legacy-toolchain/0.28.0/2.13.0+cu130",
      "execution_modes": ["eager"],
      "vllm": "0.28.0",
      "torch": "2.13.0+cu130"
@@ -1210,6 +1212,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1282,6 +1285,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1354,6 +1358,7 @@
     "id": "tessera_bf16_k1_dense_sm121_decode_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1435,6 +1440,7 @@
     "id": "tessera_bf16_k1_dense_sm121_batch_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1516,6 +1522,7 @@
     "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1576,6 +1583,7 @@
     "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1636,6 +1644,7 @@
     "id": "tessera_bf16_k1_routed_moe_sm121_decode_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1685,6 +1694,7 @@
     "id": "tessera_bf16_k1_routed_moe_sm121_batch_resident",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+     "kernel_build": "legacy-toolchain/0.28.1rc1.dev397+gfd4a15126.d20260904/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1734,6 +1744,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1790,6 +1801,7 @@
     "id": "tessera_e4m3_k1_dense_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1846,6 +1858,7 @@
     "id": "tessera_bf16_k1_dense_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1899,6 +1912,7 @@
     "id": "tessera_bf16_k1_dense_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -1952,6 +1966,7 @@
     "id": "tessera_e4m3_k1_routed_moe_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -2008,6 +2023,7 @@
     "id": "tessera_e4m3_k1_routed_moe_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -2064,6 +2080,7 @@
     "id": "tessera_bf16_k1_routed_moe_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -2113,6 +2130,7 @@
     "id": "tessera_bf16_k1_routed_moe_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "runtime": {
      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705acaecc7b4aaf342a84f80d67844c9970ff8375bf9fbeecc9c98ce84a",
+     "kernel_build": "legacy-toolchain/0.30.1rc1.dev336+gaf5b4857e.d20260929/2.13.0+cu130",
      "execution_modes": [
       "eager"
      ],
@@ -2865,6 +2883,7 @@
  "changelog": [
   {"contract_version": 64, "date": "2026-10-07", "change": "Withdraw the current FP4 activation attestations with the old T4 cells. Keep the required activation_quantizers object and its existing schema and generator, with platforms {}. An empty collection makes no claim. Archive the exact old receipt block in experiments/results/t4_activation_quantizers_historical_20261007.json. Claimed image lists and contracts remain nonempty. The served-contract and numerical validation rules stay unchanged. No WINDOW cell, pin or default changes."},
   {"contract_version": 63, "date": "2026-10-06", "change": "Cut TESSERA_NVFP4 serving to native E2M1x2 WINDOW span1 LUT16 L14 for dense and routed owners. Publish tessera_routed_fused_e2m1 and its refusing-unavailability contract, including carried start states and paired column rates 1..8. Reader support is q128..1024; it is not D41 or serving qualification. Withdraw the four historical TCQ cells and current E2M1 wire/rung and TP-world attestations rather than relabel their bytes. Historical receipts and changelog remain unchanged; T-8/T-16, defaults and serving pin are unchanged."},
+  {"contract_version":61,"date":"2026-10-07","change":"Cell lookup uses kernel build and module kind (#1036). The compatibility map preserves receipt identifiers and image-only calls. Legacy build names identify recorded toolchain scopes, not native binary equivalence. Defaults, pins, wire bytes, rungs and evidence remain unchanged."},
   {"contract_version": 60, "date": "2026-10-07", "change": "The GLM construction entry derives from selected T-8/T-16 calls in the current image. Explicit targets reach the plugin; unselected modules retain stock methods. Historical receipts remain unchanged. Input width variants do not become routing disagreements. This entry proves construction, not a full-model forward or a serving-cell promotion. Defaults, serving pins, wire bytes, and kernels remain unchanged."},
   {"contract_version": 59, "date": "2026-10-07", "change": "Restore the four TESSERA_BF16_K1 routed_moe cells to R1024 with run table [4], the served-census rung. Independent review refused widening on sweep rows, prototype speed, and quality screens without served receipts, and refused bit 8 on the rate-8 down anomaly. No rung joins these cells without a served receipt. The sweep results stay as research evidence in docs/measurements/2026-09-30-t16-run-tables.md. The served re-census stays open. No kernel, decoder, default, pin, or evidence-grade change."},
   {"contract_version":58,"date":"2026-10-04","change":"Publish the default-off TESSERA_GLM53_MHC_FUSED stock override (#783) under stock_kernel_overrides kind model_method. Its overrides name Glm5NextDecoderLayer.hc_fused_post_pre and the post/TF32 pre-norm GEMM/pre kernel sequence in launch order. The fused kernel preserves the split chosen at call time, including exact SP, and unsupported/small-batch or split>1 calls stay stock. Integer-view bitwise_vs_stock is required for every output; historical value-equality receipts are not bitwise qualification. Corrected 2026-10-06: stock TMA conversion was measured as nearest-even (PB23f83a454a3c), the kernel rounding was corrected, and the complete sixty-case integer-view probe passed (PB403c665b2ebd), with tile variants, determinism and graph replay. Remove the obsolete receipt from both the canonical override table and packaged copy; keep their evidence arrays empty rather than relabelling historical results. No serving pin, default, runtime cell or performance claim is promoted."},
