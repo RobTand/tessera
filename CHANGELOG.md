@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — keep TP2 fixture proofs on the native class owner
+
+Use native-valid geometry and the current intake contract.
+Remove retired decoder, load-plane shape and cumulative-allocation pins.
+Preserve the real rank-local numerical and integrity checks.
+Prove the zero-copy handoff through exact BODY storage identity.
+Do not restore compact or materializing serving fallbacks.
+
 ## 2026-10-08 — read installed-export geometry from the fixture owner
 
 Call the authoritative fixture geometry function for the real installed exporter.
