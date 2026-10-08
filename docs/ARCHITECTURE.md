@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the register-direct base refresh after pull request 1024 merged.
+The register-direct bundle adapter reads `TILE_ROWS` from `tessera.window_geometry`, its shared owner.
+The byte audit retains both the fragment checks and the projection checks.
+The CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
+The retained graphics processor evidence does not establish serving qualification.
+
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
 
 The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
@@ -86,6 +92,56 @@ A dominance proof needs a measured higher-rung counterpart for every lower cell;
 The published schema files `docs/schema/allowable-rung-table.v2.schema.json` and `.v3` track the Python schemas, descriptions aside.
 A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
 The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
+
+## Register-direct routed kernel (stage 1; not selected)
+
+`tessera.regdirect_routed` owns the register-direct routed T-8 kernel (`serving/csrc/regdirect_routed.cu`).
+Each warp decodes its own MMA A fragment from the fragment wire and never stages decoded weights in shared memory.
+It serves the e4m3 family at a 14-bit window with the row-scale epilogue, at R3, R4 and their k-step mix.
+Today's LUT class kernel stays the default. This kernel is selected nowhere until it passes G3 v2 and an end-to-end serve.
+`build_layer(gate, up, down, classes, device, *, top_k, max_tokens)` reads the class build's full storage-ordered bundles.
+It returns `parameters["regdirect"]`, one tuple of tensors per mode in `PAYLOAD_FIELDS` order, and a tensor-free `RegDirectClassKernel`.
+The payload holds the fragment planes, the zero page, the K-part scratch and the arrival counters, sized for `max_tokens`.
+The binding plugs into `routed_class_dispatch` unchanged and does not use the claim counter.
+Each expert must spend exactly its class rung. A per-column (Bresenham) mixed rung splits k-steps and is refused by name.
+`kernel_window_gemv.unpack_tile_words` is the inverse of the tile-order repack that the bundles hold.
+The opaque operation `tessera::routed_regdirect_classes` (`tessera/regdirect_op.py`) takes every tensor explicitly:
+each mode's nine weight planes, and each mode's two scratch tensors, which `mutates_args` declares.
+Its resource registry entry holds only streams, events and the tensor-free binding. The LUT planes stay loaded:
+they retire only with a serving default switch, after G3 v2, an end-to-end serve and Rob's approval.
+The module stays outside `tessera.serving` until serving selects it; the selecting call sites also declare its native library in `runtime_contract.json`.
+
+## Register-direct fragment wire (stage 1; not a serving path)
+
+The CPU fragment repack is available in `tessera.fragment_wire` for the register-direct routed build.
+It preserves the disk BODY streams and accepts only R3 and R4.
+Each original 32-column group has one rate.
+The repack sorts these groups by rate and preserves their order within each rate.
+Down pairs successive groups of one rate, so each rate needs an even group count.
+
+A data unit holds 32 lanes and R words per lane.
+Word i of lane L is at unit word i*32+L.
+Lane L has g=L>>2 and t=L&3.
+Pair q=p*8+j contains the codes of two successive rows at column 8t+j of group p.
+Each pair starts at bit q*2R in the MSB-first lane stream.
+
+Both projection groups use eight 16-row units per 128-row tile.
+For gate/up, p selects the projection and both projections use the same 32 columns.
+For down, p selects one of two 32-column groups in the same 16 rows.
+Gate/up uses one int16 permutation entry per slot; down uses two entries at s*2+p.
+The permutation restores the original column order.
+
+Each k-step has one compact history unit before tile zero.
+It stores lanes 24 through 31 with word stride eight.
+The history contains the last four fields of the incoming column state.
+An explicit TP-cut state takes precedence over the initial state.
+All unit and history offsets include the expert's absolute word base.
+
+The final tile contains zero codes outside the declared rows.
+The reference decode returns native E4M3 bytes, with gate rows before up rows.
+It does not apply row scales.
+The byte audit covers encoded R3 and R4 BODY bits, fragment words, history size, and decoded bytes.
+This module does not change the encoder, disk format, or selected serving path.
 
 Re-stamped 2026-10-07 for the producer correction in issue #1018.
 The canonical `fleet.rung_allowability.v3` interface keeps the historical census.
