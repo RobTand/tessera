@@ -2283,3 +2283,8 @@ It then applied the new normative magnitude inflation.
 No device operation or completed characterization replay occurred.
 Every original device report, receipt, output, and failed action remains intact.
 The corrected reports remain unqualified before parent and independent reviews.
+
+Earlier combined processor commands guarded the preflight, but their pytest child had only broker containment.
+Those actions retain this explicit guard limitation.
+The `--targeted-tests` option now runs the pytest child inside the same entry point and owned memory guard.
+The parent guard monitors the full child lifetime and retains its terminal status.
