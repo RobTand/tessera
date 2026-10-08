@@ -19,7 +19,7 @@ import inspect
 import pytest
 
 pytest.importorskip("torch")
-pytest.importorskip("vllm")
+pytest.importorskip("vllm.model_executor.layers.quantization.base_config")
 
 from vllm.model_executor.layers.quantization.base_config import (  # noqa: E402
     QuantizationConfig)

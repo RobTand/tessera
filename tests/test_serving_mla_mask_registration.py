@@ -1,6 +1,6 @@
 """Runtime-scoped causal plugin registration test; pinned stock vLLM required."""
 import pytest
-pytest.importorskip('vllm')
+pytest.importorskip('vllm.v1.attention.backends.registry')
 from tessera.serving import flags, register
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
