@@ -10,7 +10,7 @@ import subprocess
 
 from managed_window import MEMORY_POLICY, NOT_COMPUTED, Refused, dev_mode_enabled, seal_check
 from submit import parse_plan, IMAGE
-from eager_benchmark import DETERMINISM_MODE, PIECE_MAJOR_MODE, PHASE_MODES, EAGER_LEVER_MODE, GRAPH_SHIP_MODE, MATRIX_MODE, MATRIX_LEVERS_ON, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal
+from eager_benchmark import DETERMINISM_MODE, PIECE_MAJOR_MODE, PHASE_MODES, EAGER_LEVER_MODE, GRAPH_SHIP_MODE, MATRIX_MODE, MATRIX_LEVERS_ON, LEVER_VALUES, PAIRS as BENCHMARK_PAIRS, pair_refusal, parse_matrix_cells
 
 CONTROL = "/mnt/shared/tessera-runs/moe/glm53-a8-bf16menu-20260930/release/exported"
 CONFIG_SHA = "3f5c2c7381aae1c02d486c645ec6015cd1a60eb41faa5686541a15f523d79898"
@@ -115,6 +115,11 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
     development = dev_mode_enabled(env)
     if mode != "graph-control" and mode not in BENCHMARK_PAIRS:
         raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
+    matrix_cells = None
+    if "MATRIX_CELLS" in env:
+        if mode != MATRIX_MODE:
+            raise Refused("MNBT matrix selection requires the matrix window mode")
+        matrix_cells = parse_matrix_cells(env["MATRIX_CELLS"])
     for name in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC"):
         if not env.get(name):
             raise Refused(f"{name} is required; no fabric/source default")
@@ -172,6 +177,8 @@ def inputs(env: dict, *, live: bool, runner=None) -> dict:
                 producer_sha256=env.get("PRODUCER_SHA256", NOT_COMPUTED) if development else producer_sha(),
                 hooks_sha256=env.get("HOOKS_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/digest/usercustomize.py"),
                 equal_script_sha256=env.get("EQUAL_SCRIPT_SHA256", NOT_COMPUTED) if development else sha(root / "experiments/glm53_508_graph_qual/equal-508.py"))
+    if matrix_cells is not None:
+        result["matrix_cells"] = matrix_cells
     if mode in BENCHMARK_PAIRS:
         if env["FABRIC"] != "socket":
             raise Refused("Ship graph MNBT matrix is A8S/socket/TP2/c1-8 only" if mode == MATRIX_MODE else
@@ -262,13 +269,20 @@ def pair_arm(name: str, env: dict, mode: str, *, exact_keys=False) -> dict:
     return dict(arm, max_batched=int(env["MAX_BATCHED"]), fabric="socket")
 
 
-def plan(path: Path, *, mode="graph-control") -> list[dict]:
+def plan(path: Path, *, mode="graph-control", matrix_cells=None) -> list[dict]:
+    selection = parse_matrix_cells(matrix_cells)
+    if selection is not None and mode != MATRIX_MODE:
+        raise Refused("MNBT matrix selection requires the matrix window mode")
     rows = parse_plan(path)
     if mode in BENCHMARK_PAIRS:
         expected = BENCHMARK_PAIRS[mode]
         if [(name, env.get("MAX_BATCHED")) for name, env in rows] != expected:
             raise Refused(pair_refusal(mode))
-        return [pair_arm(name, env, mode, exact_keys=True) for name, env in rows]
+        arms = [pair_arm(name, env, mode, exact_keys=True) for name, env in rows]
+        if selection is not None:
+            selected_mnbts = {row[0] for row in selection}
+            arms = [arm for arm in arms if arm["max_batched"] in selected_mnbts]
+        return arms
     if mode != "graph-control":
         raise Refused("unknown WINDOW_MODE; no inferred benchmark scope")
     if [arm for arm, _ in rows] != ["aE1", "aGR", "aE2"]:

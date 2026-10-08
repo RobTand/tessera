@@ -36,7 +36,12 @@ def dry_arm(name: str, env: dict):
     if config.get("window_mode") in recipe.PHASE_MODES:
         print("  all eleven L2048 seeded outputs; fresh servers per block; matched OFF and separate profiles/power for piece-major only")
     elif config.get("window_mode") == recipe.MATRIX_MODE:
-        print("  exact 18-cell A8S graph MNBT matrix: MNBT2048 vs MNBT4096 at L512/2048/8192 c1/4/8, MTP off, explicit ON levers; both-Spark power and profiles")
+        if config.get("matrix_cells") is None:
+            print("  exact 18-cell A8S graph MNBT matrix: MNBT2048 vs MNBT4096 at L512/2048/8192 c1/4/8, MTP off, explicit ON levers; both-Spark power and profiles")
+        else:
+            from eager_benchmark import matrix_arm_cells
+            cells = ", ".join(f"L{length} c{conc}" for length, conc in matrix_arm_cells(config, arm))
+            print(f"  selected MNBT{arm['max_batched']} cells: {cells}; unchanged declared profiles for this arm; MTP off; both-Spark power")
     else:
         print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
               "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
@@ -63,7 +68,7 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            container_images=[config["image"]], timeout_s=config.get("window_seconds", WINDOW_SECONDS),
                            env={**{key: env[key] for key in ("TS", "ARTIFACT", "RECEIPTS", "FABRIC",
                                                           "SOURCE_COMMIT", "SOURCE_SHA256", "PRODUCER_COMMIT", "PRODUCER_SHA256")},
-                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST") if key in env},
+                                **{key: env[key] for key in ("WINDOW_MODE", "ARTIFACT_MANIFEST", "PQ_PIN_COMMIT", "CONTROL_ROOT", "PROFILE_MANIFEST", "DATA_MANIFEST", "MATRIX_CELLS") if key in env},
                                 "GRAPH_WINDOW_INPUT_SHA256": recipe.sha(root / "inputs.json"),
                                 "GRAPH_PEER_WAIT_SECONDS": str(config.get("peer_wait_seconds", 3600)),
                                 **{key: "1" for key in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
@@ -119,7 +124,7 @@ def prepare(root: Path, path: Path, env: dict, predecessor_path: Path | None, ce
                             env.get("PRODUCER_SHA256", ""), exact_head=True)
     config = recipe.inputs(env, live=True)
     mode = config.get("window_mode", "graph-control")
-    arms = recipe.plan(path, mode=mode)
+    arms = recipe.plan(path, mode=mode, matrix_cells=config.get("matrix_cells"))
     if any(arm.get("fabric", config["fabric"]) != config["fabric"] for arm in arms):
         raise Refused("plan and frozen issues-owned fabric differ")
     if not str(root).startswith("/mnt/shared/"):
@@ -183,6 +188,8 @@ def submit(root: Path, reviews: Path):
     for key, field in (("WINDOW_MODE", "window_mode"), ("ARTIFACT_MANIFEST", "artifact_manifest"), ("PQ_PIN_COMMIT", "pq_pin_commit"), ("CONTROL_ROOT", "control_root"), ("PROFILE_MANIFEST", "profile_manifest"), ("DATA_MANIFEST", "data_manifest")):
         if field in setup["config"]:
             env[key] = setup["config"][field]
+    if "matrix_cells" in setup["config"]:
+        env["MATRIX_CELLS"] = json.dumps(setup["config"]["matrix_cells"])
     recipe.require_producer(Path(__file__).resolve().parents[2], env["PRODUCER_COMMIT"],
                             env["PRODUCER_SHA256"], exact_head=True)
     current = recipe.inputs(env, live=True)
@@ -276,6 +283,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("plan", type=Path)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--matrix-cell", action="append", help="explicit MNBT:L:C triple; repeat for each selected timing cell")
     ap.add_argument("--preflight-output", type=Path, help="with --dry-run: bounded actual-input D38 proof, no submission")
     ap.add_argument("--prepare", type=Path)
     ap.add_argument("--census-key", action="append", default=[], help="current exact campaign769 GPU action key; two keys, no inferred roster")
@@ -284,28 +292,39 @@ def main():
     ap.add_argument("--submit", type=Path)
     ap.add_argument("--reviews", type=Path)
     args = ap.parse_args()
+    env = dict(os.environ)
+    if args.matrix_cell:
+        if args.submit:
+            raise Refused("MNBT matrix selection belongs to prepare; submit uses the prepared selection")
+        env["MATRIX_CELLS"] = json.dumps(recipe.parse_matrix_cells(
+            [[int(value) for value in row.split(":")] for row in args.matrix_cell]))
+    if "MATRIX_CELLS" in env and env.get("WINDOW_MODE") != recipe.MATRIX_MODE:
+        raise Refused("MNBT matrix selection requires the matrix window mode")
     if args.dry_run:
+        arms = recipe.plan(args.plan, mode=env.get("WINDOW_MODE", "graph-control"),
+                           matrix_cells=recipe.parse_matrix_cells(env.get("MATRIX_CELLS")))
         if args.preflight_output:
-            if os.environ.get("WINDOW_MODE") in recipe.PHASE_MODES:
+            if env.get("WINDOW_MODE") in recipe.PHASE_MODES:
                 from eager_determinism import input_preflight
-                config = recipe.inputs(dict(os.environ), live=False)
+                config = recipe.inputs(env, live=False)
                 args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
                 atomic_json(args.preflight_output, input_preflight(config))
-            elif os.environ.get("WINDOW_MODE") == recipe.MATRIX_MODE:
+            elif env.get("WINDOW_MODE") == recipe.MATRIX_MODE:
                 from eager_benchmark import matrix_preflight
                 args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
-                atomic_json(args.preflight_output, matrix_preflight(dict(os.environ), args.preflight_output.parent))
+                atomic_json(args.preflight_output, matrix_preflight(env, args.preflight_output.parent, args.plan))
             else:
                 raise Refused("input preflight output requires the explicit seeded investigation or MNBT matrix scope")
-        for arm, env in recipe.parse_plan(args.plan):
-            print(f"== arm {arm}")
-            dry_arm(arm, {**os.environ, **env})
-        recipe.plan(args.plan, mode=os.environ.get("WINDOW_MODE", "graph-control"))
+        selected_names = {arm["arm"] for arm in arms}
+        for arm, overrides in recipe.parse_plan(args.plan):
+            if arm in selected_names:
+                print(f"== arm {arm}")
+                dry_arm(arm, {**env, **overrides})
         return 0
     if args.prepare and not args.submit:
-        if os.environ.get("WINDOW_MODE", "graph-control") not in recipe.BENCHMARK_PAIRS and len(args.census_key) != 2:
+        if env.get("WINDOW_MODE", "graph-control") not in recipe.BENCHMARK_PAIRS and len(args.census_key) != 2:
             raise Refused("supply the two exact current campaign769 action keys")
-        prepare(args.prepare, args.plan, os.environ, args.handoffs, args.census_key,
+        prepare(args.prepare, args.plan, env, args.handoffs, args.census_key,
                 role_preflight=args.prepare_role_preflight)
         return 0
     if args.submit and args.reviews and not args.prepare:
