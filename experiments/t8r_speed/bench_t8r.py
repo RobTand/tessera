@@ -347,6 +347,7 @@ def build_dense(store, module, kind):
 def build_routed(store, module):
     from tessera.serving.scheme import validate_tessera_moe_scheme
     from tessera.serving.moe_route import _RankLocalPackedIntake
+    from tessera.expert_classes import inverse_expert_ids, storage_expert_ids
     scheme = store.schemes[module]
     declared = validate_tessera_moe_scheme(scheme, module)
     dev = torch.device("cuda")
@@ -365,6 +366,9 @@ def build_routed(store, module):
                 w2_len[e] = wire.numel()
     packed = intake.finish(w13_len, w2_len)
     native = packed.adapter()
+    # The adapter takes storage IDs. Build the plugin's one device inverse here.
+    inverse = torch.tensor(inverse_expert_ids(declared["expert_ids"]), dtype=torch.int32,
+                           device=packed.device)
     library = getattr(native, "library", None)
     library_path = library_sha = None
     if library is not None:
@@ -394,7 +398,9 @@ def build_routed(store, module):
         return min(EXPERTS, m * TOP_K) * per_expert_rank
 
     def fn(x, ids, w):
-        return native(x, ids, w, swiglu_limit=SWIGLU_LIMIT, apply_router_weight_on_input=False)
+        return native(x, storage_expert_ids(inverse, ids), w, swiglu_limit=SWIGLU_LIMIT,
+                      apply_router_weight_on_input=False)
+    fn.gate_up = lambda x, ids, w: native.gate_up(x, storage_expert_ids(inverse, ids), w)
     fn.native = native  # The finite comparison observes this same serving owner.
     fn.native_adapter = native  # The closed paired mode observes this same owner.
     return fn, info, packed, touched
