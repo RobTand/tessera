@@ -1,7 +1,24 @@
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
-`WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`: graph_mnbt2048_on then graph_mnbt4096_on at MNBT2048 vs MNBT4096, A8S/socket/TP2/resident/c1-8 and the unchanged release graph compilation flags. Both arms use graph decode, MTP off and all three levers explicitly ON, so the matrix does not depend on the default-only PR. Each arm measures L512/2048/8192 at c1/4/8 with 10 trials and 128 completions per request, reusing the frozen c1 prompts by replication within each trial with prefix caching off. Both arms retain the existing torch profiles and both-Spark Netdata power windows; missing profiles, power or effective path evidence cannot establish a workload rule. MNBT stays 2048 by default. The existing graph-control, Window4, ship-eager, ship-graph and seeded-phase modes are unchanged.
+
+The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
+The arms compare maximum batched tokens 2048 and 4096.
+Both arms use the accepted A8S artifact, resident service, socket transport and tensor parallel size two.
+They use graph decode without speculative tokens and retain the existing graph compilation flags.
+All three levers are explicitly ON, independent of the default-only pull request.
+
+Each arm measures prompt lengths 512, 2048 and 8192 at concurrency 1, 4 and 8.
+Each cell has one warmup and ten timed trials, with 128 completion tokens per request.
+The prompts repeat the existing single-request prompt across the concurrent slots in each trial.
+Prefix cache use stays disabled.
+The CPU dry run checks the real input population and prompt geometry.
+
+The harness retains Torch profiles and both-Spark Netdata power records.
+Missing profiles, power or effective path evidence cannot establish a workload rule.
+The default stays at 2048.
+Every old harness mode stays unchanged.
+The matrix uses priority zero after the PACT band handoff and retains GPU exclusivity.
 
 Re-stamped 2026-10-07 for native routed prices in the offline planner.
 

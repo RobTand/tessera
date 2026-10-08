@@ -294,7 +294,7 @@ def main():
             elif os.environ.get("WINDOW_MODE") == recipe.MATRIX_MODE:
                 from eager_benchmark import matrix_preflight
                 args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
-                atomic_json(args.preflight_output, matrix_preflight(dict(os.environ)))
+                atomic_json(args.preflight_output, matrix_preflight(dict(os.environ), args.preflight_output.parent))
             else:
                 raise Refused("input preflight output requires the explicit seeded investigation or MNBT matrix scope")
         for arm, env in recipe.parse_plan(args.plan):

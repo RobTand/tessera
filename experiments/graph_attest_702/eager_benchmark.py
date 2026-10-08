@@ -225,7 +225,7 @@ def matrix_derived_prompts(rdv):
                 derived_cells=sum(len(v) for v in derived_prompts.values()))
 
 
-def matrix_preflight(env):
+def matrix_preflight(env, prompt_directory):
     """D38 on the real matrix driver: imports, shapes and bounded reads only."""
     import tp2_recipe as recipe
     if env.get("WINDOW_MODE") != MATRIX_MODE:
@@ -252,14 +252,14 @@ def matrix_preflight(env):
         reads.append(dict(name=entry["name"], sample_bytes=len(sample)))
         if not entry["name"].endswith(".safetensors") and sha(path) != entry["sha256"]:
             raise Refused(f"matrix preflight A8S metadata differs: {entry['name']}")
+    from tessera.dev_mode import seal_check
     src = PANEL / "prompts.json"
-    raw = json.loads(src.read_bytes())
-    if hashlib.sha256(src.read_bytes()).hexdigest() != PROMPTS_SHA:
-        raise Refused("matrix preflight frozen prompt bytes differ")
-    derived_prompts = {}
-    for length in MATRIX_LENS:
-        trials = raw["prompts"][str(length)]["1"]
-        derived_prompts[str(length)] = {str(c): len(trials) for c in MATRIX_CONC}
+    seal_check("prompt history", PROMPTS_SHA, _identity(lambda: sha(src)),
+               where="Matrix CPU preflight", environ=env, refusal=Refused("recorded prompt identity differs"))
+    prompt_proof = matrix_derived_prompts(prompt_directory)
+    raw = json.loads(Path(prompt_proof["path"]).read_bytes())
+    derived_prompts = {length: {conc: len(trials) for conc, trials in cells.items()}
+                       for length, cells in raw["prompts"].items()}
     import importlib.util
     spec = importlib.util.spec_from_file_location("matrix_profile_inputs", CLIENT / "comparison_inputs.py")
     instrument = importlib.util.module_from_spec(spec)
@@ -281,7 +281,7 @@ def matrix_preflight(env):
             if argv[slot] != "8":
                 raise Refused("matrix preflight serve requires max-num-seqs 8")
     return dict(window_mode=MATRIX_MODE, input_reads=reads, artifact_files=len(entries),
-                derived_prompt_trials=derived_prompts, profile_cells=cells,
+                derived_prompt_trials=derived_prompts, profile_cells=cells, matrix_prompts=prompt_proof,
                 rendered_arms=len(rendered), model_type=model_config.get("model_type"),
                 scope="CPU arguments/imports/input shapes and bounded real reads only; no GPU or served parity")
 
