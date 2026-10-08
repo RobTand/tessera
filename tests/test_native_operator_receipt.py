@@ -778,19 +778,30 @@ def test_packed_native_owner_tensors_are_frozen_beside_registered_buffers():
     assert _module()._native_tensors(layer)!=before
 
 
-def test_compact_a4_tensor_planes_and_epilogues_are_frozen():
-    from tessera.kernel_a4 import A4Unit
-    layer=torch.nn.Module();layer.register_buffer('global_scale',torch.ones(1))
-    fields=('select','label','point','nibbles','lut_bytes','label_lut','subset_nibbles','code_nibbles')
-    unit=A4Unit(**{name:torch.arange(8,dtype=torch.uint8) for name in fields},
-        rows=4,cols=8,rate=7,arity=2,memory=8,half=4,global_scale=1.0)
-    layer.tessera_a4_units=[unit];layer.tessera_a4_epilogues=[torch.ones(1)]
-    assert len(_module()._native_tensors(layer))==10
-    before=_module()._native_tensors(layer);unit.point[0]+=1
-    assert _module()._native_tensors(layer)!=before
-    layer.tessera_a4_epilogues=[]
-    with pytest.raises(ValueError,match='epilogue roster'):
-        _module()._native_tensors(layer)
+def test_fused_t4_owner_mutation_changes_the_native_receipt(monkeypatch):
+    from tessera import routed_fused_e2m1 as fp4
+    from tessera.compact_prep import WindowLutUnit
+    from tessera.serving.nvfp4_route import RESIDENT_ATTRIBUTES
+    from tessera.serving.residency import layer_resident_tensors
+    from window_pack_reference import pack_bitstream
+
+    monkeypatch.setattr(fp4, "_ext", lambda: None)
+    rep = pack_bitstream(torch.zeros((16, 256), dtype=torch.int64), (1,) * 256)
+    unit = WindowLutUnit(
+        rep=rep, codes=torch.zeros(1 << 14, dtype=torch.uint8),
+        scale_plane=torch.zeros(256, dtype=torch.uint8),
+        scale_lut=torch.zeros(16, dtype=torch.uint8), global_scale=1.0,
+        window_bits=14, rows=32, cols=256, arity=2, half=16,
+        initial_state=torch.ones(256, dtype=torch.int32), row_offset=32)
+    role = fp4.prepare_dense_role(unit, torch.tensor(2.0))
+    layer = torch.nn.Module()
+    layer.register_buffer("global_scale", torch.ones(1))
+    layer.tessera_a4_roles = [role]
+    layer.quant_method = SimpleNamespace(
+        resident_tensors=lambda owner: layer_resident_tensors(owner, RESIDENT_ATTRIBUTES))
+    before = _module()._native_tensors(layer)
+    role.words.reshape(-1)[0] += 1
+    assert _module()._native_tensors(layer) != before
 
 
 @pytest.mark.parametrize('cold_rate_grid', [False, True], ids=['warm-contract', 'cold-contract'])

@@ -1,5 +1,6 @@
 """Image identity drift stamps in development; unavailable images still refuse."""
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +13,13 @@ PATH = Path(__file__).parents[1] / "experiments/t4_code/geometry_runtime_image.p
 PIN = "vllm/vllm-openai@sha256:" + "a" * 64
 OTHER = "vllm/vllm-openai@sha256:" + "b" * 64
 CONTRACT = {"versions": {"default_serve_image": PIN}}
+
+#: The tree under test.  A child interpreter does not see the ``sys.path``
+#: entry ``conftest.py`` gives this process, so without this it imports an
+#: installed ``tessera`` pin -- one that may predate this checkout, or none.
+SRC = Path(__file__).resolve().parents[1] / "src"
+CHILD_ENV = {**os.environ, "PYTHONPATH": os.pathsep.join(
+    [str(SRC), *filter(None, [os.environ.get("PYTHONPATH")])])}
 
 
 def owner():
@@ -55,5 +63,5 @@ def test_image_absence_is_not_identity_drift(mode, monkeypatch):
 
 def test_image_owner_import_has_no_torch_or_shared_sdk_dependency():
     root = Path(__file__).parents[1]
-    result = subprocess.run([sys.executable, "-S", "-c", "import importlib.util, sys; s=importlib.util.spec_from_file_location('g','experiments/t4_code/geometry_runtime_image.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); assert 'torch' not in sys.modules and 'prismabuild' not in sys.modules"], cwd=root, capture_output=True, text=True)
+    result = subprocess.run([sys.executable, "-S", "-c", "import importlib.util, sys; s=importlib.util.spec_from_file_location('g','experiments/t4_code/geometry_runtime_image.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); assert 'torch' not in sys.modules and 'prismabuild' not in sys.modules"], cwd=root, capture_output=True, text=True, env=CHILD_ENV)
     assert result.returncode == 0, result.stderr

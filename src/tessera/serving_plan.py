@@ -174,17 +174,10 @@ def module_scheme_key(grid, q256: int, structure: str = STRUCTURE_DENSE) -> tupl
     through at source precision by the exporter, and the allocator's chosen
     point had no Tessera export at all.
 
-    The body and the plane are DERIVED from the rung here rather than assumed
-    constant, because the served recipe picks them per rung: ``served_recipe``
-    promotes every NVFP4 rung to the span-2 TCQ body the routed path decodes,
-    for ``STRUCTURE_ROUTED_MOE`` (the research ``wire_recipe`` default below
-    the coset cap is still the window body, which is why this key reads the
-    served spelling rather than the research one).  Two members resolving to
-    different served bodies would decode on two different decoders, and this
-    key separates them, so the relaxation cannot let a mixed-body group
-    through the back door.  (A rung no served spelling covers -- a dense
-    sub-cap rung keeps WINDOW and is refused -- is refused by ``check_recipe``
-    before this anyway; the key does not rely on that.)
+    The key reads body and plane from ``served_recipe`` rather than from
+    the research recipe. Dense and routed E2M1x2 units share WINDOW L14.
+    The key separates different grids, bodies and scale planes before the
+    exporter joins roles. ``check_recipe`` owns reader admission.
     """
     # Lazy: ``tessera.export`` imports torch, and this module stays on the
     # torch-free side of that boundary (CI ``pure``) -- the key needs the

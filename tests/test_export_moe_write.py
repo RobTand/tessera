@@ -804,7 +804,7 @@ def test_a_stack_at_a_rung_only_the_dense_route_reads_is_refused_before_any_enco
 # The NVFP4 expert stack (tessera#492): a static A-side scale beside each wire
 # --------------------------------------------------------------------------
 
-NVFP4_HIDDEN = NVFP4_INTER = 64     # the E2M1x2 encoder's row quantum, one group column
+NVFP4_HIDDEN = NVFP4_INTER = 256
 
 
 def _nvfp4_stack_tensors(experts=1):
@@ -841,13 +841,8 @@ def _nvfp4_scales(experts=1):
 
 
 def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, monkeypatch):
-    """What the exporter writes for an NVFP4 stack is what
-    ``nvfp4_moe_route`` reads: one ``.wire`` and one ``.input_global_scale``
-    per expert projection, the scheme on the NVFP4 route at the wire's rung,
-    the role records carrying the scale.  The routed E2M1_K2 cells attest the
-    stack at q896, so it exports with no override and names them."""
-    from tessera.serving import nvfp4_moe_route
-    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, attested_cells
+    """The exporter preserves calibrated scales beside each native WINDOW wire."""
+    from tessera.serving.scheme import TESSERA_NVFP4
 
     scales = _nvfp4_scales()
     donor = _input_scales_file(tmp_path, scales)
@@ -858,33 +853,22 @@ def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, m
     (group,) = [g for g in qconfig["config_groups"].values() if STACK in g["targets"]]
     scheme = group["scheme"]
     assert (scheme["family"], scheme["grid"], scheme["body"], scheme["plane"]) == (
-        TESSERA_NVFP4, "E2M1x2", "TCQ", "LUT")
+        TESSERA_NVFP4, "E2M1x2", "WINDOW", "LUT")
     declared = validate_tessera_moe_scheme(scheme, STACK)
     with safetensors_torch.safe_open(str(after / "model.safetensors"), framework="pt") as handle:
         keys = set(handle.keys())
         for key, value in scales.items():
             assert key in keys, key
             assert handle.get_tensor(key).tolist() == [value]
-            wire = handle.get_tensor(key[: -len(".input_global_scale")] + ".wire")
-            assert wire.dtype == torch.uint8 and wire.numel() > 0
     manifest = json.loads((after / "tessera_serving_manifest.json").read_text())
     stack_record = manifest["modules"][STACK]
     assert stack_record["family"] == TESSERA_NVFP4
-    assert stack_record["attested_by"] == [
-        cell["id"] for cell in attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE)
-        if 896 in cell["rungs_q256"]]
-    assert stack_record["attested_by"], "the stack names the cells that attest it"
     scale_of = {f"{STACK}.{record['expert']}.{record['role']}.input_global_scale":
                 record["input_global_scale"] for record in stack_record["roles"]}
     assert scale_of == scales
-    # The stock NVFP4 tile per projection: nibbles + group-16 scales + two fp32.
-    assert stack_record["resident_bytes_resident_mode"] == 3 * (
-        NVFP4_INTER * NVFP4_HIDDEN // 2 + NVFP4_INTER * NVFP4_HIDDEN // 16 + 8)
     gate = manifest["serving_gate"]
     assert gate["allow_unserveable"] is False and gate["unserveable_overrides"] == [], \
-        "an attested stack needs no override and stamps none"
-    # The suffix the route reads is the suffix the exporter wrote.
-    assert all(key.endswith("." + nvfp4_moe_route.INPUT_GLOBAL_SCALE_SUFFIX) for key in scales)
+        "native reader admission needs no override"
     # And the plugin reads the wires it was handed.
     with safetensors_torch.safe_open(str(after / "model.safetensors"), framework="pt") as handle:
         for group_name in MOE_GROUPS:

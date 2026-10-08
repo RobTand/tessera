@@ -40,13 +40,33 @@ def test_current_native_family_refuses_missing_layout():
         dense_resident_bytes_resident_mode('TESSERA_FP8', 512, 3)
 
 
-def test_manifest_prices_measured_native_a4_bundle_not_expanded_nibbles():
-    # 2026-09-22 real native capture, gate_up_proj: two 3072x1024 roles.
-    # Raw candidate persistent rows, independent of the pricing implementation.
-    captured = [1179648, 1179648, 196608, 196608, 99336, 99336, 98304, 98304,
-                2048, 1024, 1024, 512, 512, 512, 512, 256, 256, 16, 16, 4, 4, 4]
-    role = {'rows': 3072, 'cols': 1024, 'rates': (7,) * 1024,
-            'arity': 2, 'memory': 6, 'half': 16, 'lut_entries': 16}
-    assert dense_resident_bytes_resident_mode(
-        'TESSERA_NVFP4', 6144, 1024, native_roles=[role, role],
-        trellis_table_bytes=4096) == sum(captured)
+@pytest.mark.parametrize('rows,rate,cols', [(32, 1, 256), (1056, 7, 256), (1024, 8, 512)])
+def test_manifest_counts_native_e2m1_window_roles_and_shared_activation_scale(monkeypatch, rows, rate, cols):
+    from tessera.compact_prep import WindowLutUnit
+    from tessera import routed_fused_e2m1 as fp4
+    from tessera.serving.residency import resident_storage_bytes
+
+    spec = {'rows': rows, 'cols': cols, 'rates': (rate,) * cols,
+            'arity': 2, 'half': 16, 'window_bits': 14, 'tile_rows': TILE_ROWS}
+    priced = dense_resident_bytes_resident_mode(
+        'TESSERA_NVFP4', 2 * rows, cols, native_roles=[spec, spec])
+    # Only compiler loading is suppressed. The production role freezer and
+    # CPU reference bit packing determine the actual retained allocations.
+    monkeypatch.setattr(fp4, '_ext', lambda: None)
+    gs = torch.tensor(2.0, dtype=torch.float32)
+    roles = []
+    for global_scale in (1.0, 4.0):
+        rep = pack_bitstream(torch.zeros((rows // 2, cols), dtype=torch.int64), (rate,) * cols)
+        unit = WindowLutUnit(
+            rep=rep, codes=torch.zeros(1 << 14, dtype=torch.uint8),
+            scale_plane=torch.zeros(rows * cols // 32, dtype=torch.uint8),
+            scale_lut=torch.zeros(16, dtype=torch.uint8), global_scale=global_scale,
+            window_bits=14, rows=rows, cols=cols, arity=2, half=16,
+            initial_state=torch.ones(cols, dtype=torch.int32), row_offset=32)
+        roles.append(fp4.prepare_dense_role(unit, gs))
+    actual = resident_storage_bytes(
+        (f'{i}.{name}', value) for i, role in enumerate(roles)
+        for name, value in role.named_tensors())
+    assert priced == actual
+    assert roles[0].ratio.item() == 0.5
+    assert roles[1].ratio.item() == 2.0

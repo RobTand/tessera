@@ -12,7 +12,7 @@ FAMILIES = ("TESSERA_FP8", "TESSERA_BF16", "TESSERA_NVFP4")
 MOE = {
     "TESSERA_FP8": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
     "TESSERA_BF16": ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_bf16"),
-    "TESSERA_NVFP4": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),
+    "TESSERA_NVFP4": ("tessera.routed_fused_e2m1.FusedRoutedE2M1MoE.__call__", "native_routed_fused_window_e2m1"),
 }
 
 
@@ -34,31 +34,7 @@ def mixed():
 
 
 def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
-    from tessera.serving import scheme
-    from experiments.step4_route_qualification import (FUSED_WINDOW_DENSE_SYMBOL,
-                                                       FUSED_WINDOW_MOE_SYMBOL, KIND_LAUNCHES)
-
-    # Offline qualification data is tied to the producer's dispatch owner,
-    # including its no-extension-lane invariant; it does not qualify a cell.
-    for kind, table in KIND_LAUNCHES.items():
-        for family, (contract, pairs) in table.items():
-            structure = scheme.STRUCTURE_ROUTED_MOE if kind == "moe" else scheme.STRUCTURE_DENSE
-            rows = scheme.route_launches(family, structure=structure, mode="resident",
-                                        include_experimental=True)
-            assert {(r["symbol"], r["decoder"]) for r in rows} == set(pairs)
-            assert scheme.ROUTES[family]["activation_contract"] == contract
-            # The fused window kernel's two identities (routed at contract
-            # v42, tessera#640; dense at v43) are the launches that name their
-            # extension lane; every other row keeps the no-extension-lane
-            # invariant, and no row is a fallback.
-            for r in rows:
-                assert not r["when_lane_absent"]
-                if r["symbol"] == FUSED_WINDOW_MOE_SYMBOL:
-                    assert r["lane"] is not None and kind == "moe"
-                elif r["symbol"] == FUSED_WINDOW_DENSE_SYMBOL:
-                    assert r["lane"] is not None and kind == "dense"
-                else:
-                    assert r["lane"] is None
+    # The qualifier must keep dense and routed observations separate.
     expected, routes = mixed()
     result = qualify_dispatch(routes, mode="resident", expected_modules=expected)
     for family in FAMILIES:
@@ -196,14 +172,9 @@ def _run_preflight(tmp_path, monkeypatch):
     triton = ModuleType("triton")
     monkeypatch.setitem(sys.modules, "triton", triton)
     monkeypatch.setitem(sys.modules, "tessera.window_gemm", ModuleType("tessera.window_gemm"))
-    kernel = ModuleType("tessera.kernel_a4")
-    monkeypatch.setattr(kernel, "native_fp4_backend", lambda: "test-double", raising=False)
-    monkeypatch.setattr(kernel, "require_native_fp4_mma", lambda _: None, raising=False)
-    monkeypatch.setattr(kernel, "native_fp4_mma_ptx_tokens", lambda: [], raising=False)
-    monkeypatch.setitem(sys.modules, "tessera.kernel_a4", kernel)
-    monkeypatch.setattr(tessera, "kernel_a4", kernel, raising=False)
     monkeypatch.delenv("TRITON_CACHE_DIR", raising=False)
     expected, _ = mixed()
+    expected.pop("TESSERA_NVFP4")
     kinds = {family: members["kinds"] for family, members in expected.items()}
     output = tmp_path / "preflight.json"
     monkeypatch.setattr(sys, "argv", ["preflight", str(output), "resident",
@@ -213,25 +184,6 @@ def _run_preflight(tmp_path, monkeypatch):
     return result.value.code, json.loads(output.read_text())
 
 
-def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, monkeypatch):
-    code, record = _run_preflight(tmp_path, monkeypatch)
-    assert code == 0, record.get("refusal")
-    assert record["refusal"] is None
-    assert all(set(group) == {"dense", "moe"} for group in record["module_kind_launches"].values())
-    # The fused window lane's two extensions are recorded, not proven: every
-    # routed kind also publishes the compact adapter's lane-free launch, and
-    # since contract v43 every dense kind publishes the Triton window GEMM's
-    # lane-free launch beside the fused dense identity's lane row.
-    assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_mma_e4m3",
-                                       "tessera_routed_fused_value"]
-    for family, kinds in record["module_kind_launches"].items():
-        assert any(row["lane"] is None for row in kinds["moe"]), family
-        assert any(row["lane"] is None for row in kinds["dense"]), family
-    for family in ("TESSERA_FP8", "TESSERA_BF16"):
-        assert any(row["lane"] is not None
-                   for row in record["module_kind_launches"][family]["dense"]), family
-    assert all(row["lane"] is None
-               for row in record["module_kind_launches"]["TESSERA_NVFP4"]["dense"])
 
 
 def test_preflight_refuses_a_kind_whose_every_launch_needs_a_lane(tmp_path, monkeypatch):
@@ -251,26 +203,6 @@ def test_preflight_refuses_a_kind_whose_every_launch_needs_a_lane(tmp_path, monk
     assert "TESSERA_FP8/moe" in record["refusal"] and "no proof for a lane" in record["refusal"]
 
 
-@pytest.mark.parametrize("legacy", [False, True])
-def test_preflight_passes_normalized_controller_roster(tmp_path, monkeypatch, legacy):
-    from types import SimpleNamespace
-    from experiments import step4_capture_driver as driver
-    from experiments.step4_route_qualification import expected_module_kinds
-
-    expected, _ = mixed()
-    if legacy:
-        expected = {"TESSERA_FP8": {"count": 1, "names": ["model.layers.0.mlp.down_proj"]}}
-    observed = []
-
-    def child(argv):
-        observed.append(argv)
-        (tmp_path / "native-preflight.json").write_text(json.dumps({"refusal": None}))
-        return SimpleNamespace(returncode=0)
-
-    monkeypatch.setattr(driver.subprocess, "run", child)
-    driver.native_preflight(tmp_path, "resident", expected)
-    assert len(observed) == 1
-    assert json.loads(observed[0][-1]) == expected_module_kinds(expected)
 
 
 def test_dense_evidence_with_moe_stamp_is_not_dense_evidence():

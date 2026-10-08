@@ -157,12 +157,12 @@ FUSED_MIXED_RECEIPT_ROUTED = {
 #: The v38 receipt the six widened cells were first minted on; its rungs are
 #: part of what each cell must cover.
 V38 = ("glm53_x_stub_tp1_eager_census.json", "glm53_x_stub_config.json")
-MINTED = sorted(f"tessera_e2m1_k2_{structure}_sm121_{regime}_resident"
-                for structure in ("dense", "routed_moe") for regime in ("decode", "batch"))
+WITHDRAWN_T4 = sorted(f"tessera_e2m1_k2_{structure}_sm121_{regime}_resident"
+                       for structure in ("dense", "routed_moe") for regime in ("decode", "batch"))
 GLM_CELLS = sorted(
     [f"tessera_e4m3_k1_{structure}_sm121_{regime}_resident"
      for structure in ("dense", "routed_moe")
-     for regime in ("decode", "batch")] + MINTED)
+     for regime in ("decode", "batch")])
 A4_LAUNCH = {"dense": ("tessera.kernel_a4.a4_span2_gemm", "native_span2_gemm"),
              "routed_moe": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")}
 
@@ -244,15 +244,20 @@ def test_each_committed_receipt_is_the_one_the_contract_cites(stub):
 
 @pytest.mark.parametrize("stub", sorted(RECEIPTS))
 def test_every_served_module_joins_a_cell_in_both_phases(stub):
-    """Current agreement per stub: E2M1/E4M3 records join, BF16 records do not.
+    """Current E4M3 records join cells; historical BF16 records remain unattested.
 
-    Contract v59 withdrew the BF16 cells. A stub with BF16 modules leaves
-    exactly those records unattested. The split is derived from the receipt's
-    own policies. A record in the wrong cell still fails here.
+    Old TCQ rows do not describe the current WINDOW owner.
+    The receipt retains those rows for the separate historical check.
     """
     tool = _tool()
     receipt_path, config_path = _paths(stub)
     receipt = _load(receipt_path)
+    receipt["records"] = {phase: {name: record for name, record in records.items()
+                                  if not record["policy"].startswith("TESSERA_NVFP4:")}
+                          for phase, records in receipt["records"].items()}
+    if not any(receipt["records"].values()):
+        assert stub == "d"
+        return
     want = {}
     for phase, records in receipt["records"].items():
         for name, record in records.items():
@@ -273,13 +278,11 @@ def test_every_served_module_joins_a_cell_in_both_phases(stub):
                 stub, structure, phase, row)
 
 
-def test_the_all_e2m1_stub_is_unattested_without_the_minted_cells():
-    """The fail-before, as a mutation of the packaged table: drop the four
-    E2M1 cells v39 minted and no module of the all-E2M1 stub is covered."""
+def test_the_historical_tcq_stub_is_unattested_by_the_current_reader():
     tool = _tool()
     contract = load_serving_contract()
-    contract["lane_eligibility"]["cells"] = [
-        c for c in contract["lane_eligibility"]["cells"] if c["id"] not in MINTED]
+    assert all(cell["id"] not in WITHDRAWN_T4
+               for cell in contract["lane_eligibility"]["cells"])
     receipt_path, config_path = _paths("d")
     block, _problems = _agreement(tool, contract, _load(receipt_path), config_path)
     for per in block["structures"].values():
@@ -296,11 +299,8 @@ def test_the_e2m1_modules_ran_the_native_a4_launches():
             structure = "routed_moe" if record["kind"] == "moe" else "dense"
             assert (record["symbol"], record["decoder"]) == A4_LAUNCH[structure], (phase, name)
             assert record["contract"] == "e2m1_group16_ue4m3_static", (phase, name)
-    cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
-    for cell_id in MINTED:
-        cell = cells[cell_id]
-        assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [
-            A4_LAUNCH[cell["structure"]]], cell_id
+    cells = {c["id"] for c in load_serving_contract()["lane_eligibility"]["cells"]}
+    assert cells.isdisjoint(WITHDRAWN_T4)
 
 
 def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():

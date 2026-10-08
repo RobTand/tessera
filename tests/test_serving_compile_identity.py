@@ -114,30 +114,48 @@ def test_no_current_config_declares_nothing():
     # vLLM absent: ImportError; vLLM present but no set_current_vllm_config: None
     assert declare_compile_identity(serve_mode="resident") is None
 
-def _runtime_hash(config):
-    """Use the same IR provider setup as the initialized vLLM worker."""
-    with config.kernel_config.ir_op_priority.set_priority():
-        return config.compute_hash()
 
+
+
+def _real_vllm_hash_check(code):
+    # A fresh interpreter cannot read another test's fake vLLM package.
+    import subprocess
+    import sys
+
+    imports = """
+import importlib.util, sys
+if importlib.util.find_spec("vllm") is None:
+    sys.exit(77)
+from vllm.config import VllmConfig, set_current_vllm_config
+from vllm.platforms import current_platform
+current_platform.import_ir_kernels()
+from tessera.serving.compile_identity import (
+    TESSERA_KEY, declare_compile_identity, note_traced_dispatch, reset_for_tests)
+"""
+    constants = f"GEMV_OP, GEMM_OP, MODULES = {(GEMV_OP, GEMM_OP, MODULES)!r}\n"
+    result = subprocess.run([sys.executable, "-c", imports + constants + code],
+                            capture_output=True, text=True)
+    if result.returncode == 77:
+        pytest.skip("real vLLM is absent from the test interpreter")
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_vllm_hashes_the_two_modes_apart():
-    pytest.importorskip("vllm.config")
-    from vllm.config import VllmConfig, set_current_vllm_config
-
-    hashes = {}
-    for mode in ("resident", "streamed"):
-        cfg = VllmConfig()
-        with set_current_vllm_config(cfg):
-            rec = declare_compile_identity(serve_mode=mode)
-        assert rec is cfg.additional_config[TESSERA_KEY]
-        assert rec["serve_mode"] == mode
-        hashes[mode] = _runtime_hash(cfg)
-    assert hashes["resident"] != hashes["streamed"]
-    again = VllmConfig()
-    with set_current_vllm_config(again):
-        declare_compile_identity(serve_mode="resident")
-    assert _runtime_hash(again) == hashes["resident"]
+    _real_vllm_hash_check(r"""
+hashes = {}
+for mode in ("resident", "streamed"):
+    cfg = VllmConfig()
+    with set_current_vllm_config(cfg):
+        rec = declare_compile_identity(serve_mode=mode)
+    assert rec is cfg.additional_config[TESSERA_KEY]
+    assert rec["serve_mode"] == mode
+    hashes[mode] = cfg.compute_hash()
+assert hashes["resident"] != hashes["streamed"]
+again = VllmConfig()
+with set_current_vllm_config(again):
+    declare_compile_identity(serve_mode="resident")
+assert again.compute_hash() == hashes["resident"]
+""")
 
 
 # ---------------------------------------------------------------------------
@@ -245,23 +263,22 @@ def test_a_second_config_starts_a_fresh_accumulation():
 
 
 def test_vllm_hashes_the_two_lane_states_apart():
-    pytest.importorskip("vllm.config")
-    from vllm.config import VllmConfig, set_current_vllm_config
-
-    hashes = {}
-    for lane in (GEMV_OP, GEMM_OP):
-        reset_for_tests()
-        cfg = VllmConfig()
-        with set_current_vllm_config(cfg):
-            declare_compile_identity(serve_mode="streamed")
-        for name in MODULES:                       # at weight load: no current config
-            note_traced_dispatch(name, lane)
-        hashes[lane] = _runtime_hash(cfg)
-    assert hashes[GEMV_OP] != hashes[GEMM_OP]
+    _real_vllm_hash_check(r"""
+hashes = {}
+for lane in (GEMV_OP, GEMM_OP):
     reset_for_tests()
-    again = VllmConfig()
-    with set_current_vllm_config(again):
+    cfg = VllmConfig()
+    with set_current_vllm_config(cfg):
         declare_compile_identity(serve_mode="streamed")
     for name in MODULES:
-        note_traced_dispatch(name, GEMV_OP)
-    assert _runtime_hash(again) == hashes[GEMV_OP]
+        note_traced_dispatch(name, lane)
+    hashes[lane] = cfg.compute_hash()
+assert hashes[GEMV_OP] != hashes[GEMM_OP]
+reset_for_tests()
+again = VllmConfig()
+with set_current_vllm_config(again):
+    declare_compile_identity(serve_mode="streamed")
+for name in MODULES:
+    note_traced_dispatch(name, GEMV_OP)
+assert again.compute_hash() == hashes[GEMV_OP]
+""")

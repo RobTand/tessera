@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — combine the T4 and T16 serving withdrawals
+
+Keep the released v64 contract and the T16 v62 history entry.
+Retain native T4 WINDOW identities and raw BF16 decoder names.
+Both old serving cell sets stay withdrawn.
+All historical receipt bytes stay unchanged.
+
 ## 2026-10-08 — declare miniature export geometry
 
 Reuse the shared fixture size generator in exporter tests.
@@ -111,6 +118,82 @@ and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
 Preserve external paths through their active measurement lifetimes.
+## 2026-10-08 — position-independent issue reference checks
+
+Remove the residency test that assumes a fixed architecture paragraph position.
+The same deletion exists at the PR1024 head. The global issue-reference gate stays unchanged.
+
+## 2026-10-08 — shared geometry in the native footprint fixture
+
+The native E2M1 footprint fixture uses its existing `window_geometry.TILE_ROWS` import.
+The manifest byte comparison stays unchanged. No kernel module alias is added.
+
+## 2026-10-08 — native T4 accounting callers
+
+The offline planner and manifest refresh use explicit WINDOW role metadata.
+The planner requires window bits and the shared row tile, with no TCQ fields or Torch import.
+The refresh tool verifies span-one LUT WINDOW wires and preserves source bytes through hard links.
+Both callers retain the shared native accountant and its shape and byte checks.
+
+## 2026-10-08 — native projection byte audit integration
+
+The projection audit selects the served recipe before it prices native tensors.
+All three weight families use the same 256-column fixture.
+T4 WINDOW roles use the shared row geometry and retain no TCQ trellis tables.
+The audit records source columns, so direct buffer checks derive bytes from the actual tensor shape.
+The source, wire, native resident and direct buffer checks stay separate.
+
+## 2026-10-07 — independent eager snapshot for T4 graph evidence
+
+The graph helper copies the eager result before warmup, capture and replay.
+Persistent output buffers cannot change this reference snapshot.
+The CUDA regression uses a stateful buffer to expose the old false equality.
+The 192 prior mode-0 graph claims remain withdrawn.
+New graph receipts compare independent eager snapshots.
+GPU-exclusive timing rows are diagnostics, not quiet-host or measurement-class qualification.
+
+
+## 2026-10-07 — real vLLM hash test setup
+
+The hash tests use a fresh interpreter, so another test's fake package cannot supply the runtime.
+The real interpreter imports the platform IR kernels before it computes a config hash.
+The test keeps all configured provider priorities and checks both mode and dispatch identities.
+
+## 2026-10-07 — native fused T-4 served lane
+
+Contract v63 records the native T4 serving cutover.
+Contract v64 withdraws the current FP4 activation attestations.
+Versions v61 and v62 stay reserved for PR1046 and PR1028.
+Source approval does not qualify native arithmetic, D41 or serving cells.
+
+Dense and routed E2M1x2 exports use the named WINDOW L14 recipe over LUT16.
+The pure widths 1..8 cover q128..q1024, including the full-width cap.
+Serving exports, cached-unit records and control prices use the same recipe.
+Research defaults and explicit TCQ encodes stay unchanged.
+CPU tests replay the actual serialized bytes and check plane and full-file charges.
+The byte audit includes all pure classes and both structures.
+The shared rate guard checks expert strides and gate/up strides before encode.
+The down projection can use a separate rate when all experts agree.
+Dense and routed owners share the native fused E2M1 library.
+The dense route quantizes activations once and writes each role into the final output.
+Resident tensor owners expose the actual prepared tables, scale planes and descriptors.
+The current activation container stays empty until a new serving cell has its own evidence.
+The qualification harness checks actual serving paths, numeric references and CUDA graph equality.
+It retains physical byte counts and raw timing samples for later D41 review.
+The real-unit screen uses bounded GLM tensor ranges and explicit research TCQ.
+The native receipt collector uses the route's resident tensor interface.
+The input manifest declares one bounded phase for the selected GLM units.
+The step-4 preflight builds the required native FP4 extension and records its path and digest.
+Its dispatch qualifier uses the current WINDOW entry points.
+Historical TCQ fixtures remain outside the published contract.
+A feasible common-budget screen completes its comparison without an exact byte match.
+The receipt keeps the exact-match flag and the actual byte slack separate.
+The measurement encoder drains retained Viterbi plans after each unit.
+This bounds residency across byte-plan probes without a new encoder default.
+The T8 planner uses a high-rate reference only to estimate fixed serialized overhead.
+Actual encoded bytes still decide the selected rate and every exact-match claim.
+The D41 measurements and the real-unit screen remain pending.
+This change does not assert measured route eligibility or quality.
 
 ## 2026-10-07 — projection audit geometry import
 
