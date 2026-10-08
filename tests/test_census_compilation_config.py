@@ -26,6 +26,8 @@ from tessera.serving.runtime_image import container_env, resolve  # noqa: E402
 
 IMAGE = "example/runtime@sha256:" + "1" * 64
 CONFIG = '{"mode": 3, "cudagraph_mode": "FULL_DECODE_ONLY"}'
+GRAPH_ONLY = '{"mode": "NONE", "cudagraph_mode": "FULL_DECODE_ONLY"}'
+GRAPH_ONLY_INT = '{"mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY"}'
 
 
 def _tool():
@@ -76,3 +78,30 @@ def test_eager_with_a_compilation_config_is_refused(capsys):
         _args("--compilation-config", CONFIG)
     assert excinfo.value.code == 2
     assert "requires --compiled" in capsys.readouterr().err
+
+
+def test_graph_only_compilation_config_is_refused_as_compiled(capsys):
+    """Mode NONE keeps CUDA graphs but runs no Torch trace (issue #1062)."""
+    with pytest.raises(SystemExit) as excinfo:
+        _args("--compiled", "--compilation-config", GRAPH_ONLY)
+    assert excinfo.value.code == 2
+    err = capsys.readouterr().err
+    assert "mode NONE" in err
+    assert "no Python" in err
+
+
+def test_graph_only_int_mode_is_refused_as_compiled(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        _args("--compiled", "--compilation-config", GRAPH_ONLY_INT)
+    assert excinfo.value.code == 2
+    assert "mode NONE" in capsys.readouterr().err
+
+
+def test_torch_compile_detector_names_only_disabled_mode():
+    tool = _tool()
+    assert tool.torch_compile_disabled_by_config({"mode": "NONE"}) is True
+    assert tool.torch_compile_disabled_by_config({"mode": "none"}) is True
+    assert tool.torch_compile_disabled_by_config({"mode": 0}) is True
+    assert tool.torch_compile_disabled_by_config({"mode": 3}) is False
+    assert tool.torch_compile_disabled_by_config({}) is False
+    assert tool.torch_compile_disabled_by_config(None) is False

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — truthful graph witness contract (issue #1062)
+
+The census refused a CUDA-graph-only R768 serve as compiled. The serve used mode NONE with FULL_DECODE_ONLY. Its records kept concrete M64 capture shapes. Replay runs no Python. The latest record cannot attest current logical rows.
+
+--compiled now refuses mode NONE before any load. Real Torch compilation still requires shape-polymorphic M star records. Phase, owner, route, decoder, dtype and cell checks stay unchanged. No new admission follows from this change.
+
 ## 2026-10-08 — public structure-spec harvest proof on a committed fixture
 
 The structure-spec harvest tests run the real rung-allowability CLI on a small
