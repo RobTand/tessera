@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-08 — use canonical factors in the projection oracle
+
+Use the current BF16 native decoder and keep its exact launch-pair check.
+Decode raw values and FP32 row scales through one factor owner.
+Form the FP64 dense reference without a per-weight BF16 or FP32 cast.
+Keep the exact indexer reference on the canonical FP32 product.
+Only the explicit stock control casts a derived BF16 tensor.
+The three dtype-sensitive regressions failed before the correction.
+
 ## 2026-10-08 — isolate the final real pricing-shape case
 
 Request the existing import-isolation fixture for the one missed real-root pricing case.

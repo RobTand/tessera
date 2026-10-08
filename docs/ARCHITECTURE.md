@@ -9624,6 +9624,12 @@ The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family
 The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
 T-16 direct weights use canonical FP32 value-scale products. The direct consumer selects its final cache dtype.
 
+The projection diagnostic uses raw BF16 values and separate FP32 row scales for its FP64 dense reference.
+Its exact indexer reference uses the canonical FP32 product, as the direct buffer does.
+Only its explicit stock control casts a derived BF16 tensor.
+The device screen checks the current BF16 decoder and exact native launch pair.
+Its bitwise, finite-value, derived-bound and changed-input graph checks remain mandatory.
+
 The constructor census records stock and selected views separately.
 Only actual get_quant_method calls establish an offered selected route.
 A meta census proves construction, not a loaded forward or CUDA graph execution.

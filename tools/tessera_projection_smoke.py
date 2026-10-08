@@ -208,14 +208,22 @@ def _construct(row, world, rank):
     return cls(columns, sum(sizes), **kw)
 
 
-def _dense_weight(parsed, family):
+def _weight_factors(parsed, family):
     import torch
     from tessera.serving import bf16_route, fp8_route
+
     if family == "TESSERA_FP8":
         module = fp8_route.prepare_tessera_fp8_module(parsed, device="cpu")
-        return module.decode().view(torch.float8_e4m3fn).float() * module.row_scale().float()[:, None]
-    module = bf16_route.prepare_tessera_bf16_module(parsed, device="cpu")
-    return (module.decode().float() * module.row_scale().float()[:, None]).bfloat16().float()
+        values = module.decode().view(torch.float8_e4m3fn)
+    else:
+        module = bf16_route.prepare_tessera_bf16_module(parsed, device="cpu")
+        values = module.decode()
+    return values, module.row_scale()
+
+
+def _dense_weight(parsed, family):
+    values, scale = _weight_factors(parsed, family)
+    return values.float() * scale[:, None]
 
 
 def compare(got, expected, *, name, dtype, exact=False, bound=None):
@@ -241,12 +249,9 @@ def compare(got, expected, *, name, dtype, exact=False, bound=None):
 
 def _reference_weight(parsed, family, device):
     import torch
-    from tessera.serving import fp8_route
-    if family == "TESSERA_FP8":
-        module = fp8_route.prepare_tessera_fp8_module(parsed, device="cpu")
-        values = module.decode().view(torch.float8_e4m3fn).double().to(device)
-        return values * module.row_scale().double().to(device)[:, None]
-    return _dense_weight(parsed, family).double().to(device)
+
+    values, scale = _weight_factors(parsed, family)
+    return values.to(device=device, dtype=torch.float64) * scale.to(device=device, dtype=torch.float64)[:, None]
 
 
 def _bias_bound(reference, error, bias):
@@ -503,7 +508,7 @@ def run_device(inputs, mode, *, distributed_init_method=None):
             layer.update_param_tp_status()
             from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL
             expected_decoder = (telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA
-                                if family == "TESSERA_FP8" else telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
+                                if family == "TESSERA_FP8" else telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16)
             if tuple(layer.tessera_native.launch_pair) != (FUSED_WINDOW_DENSE_SYMBOL, expected_decoder):
                 raise AssertionError(f"{row['prefix']}: the requested native dense path was not prepared")
             x = item["input"].cuda()
