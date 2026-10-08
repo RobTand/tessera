@@ -21,6 +21,7 @@ from typing import Mapping, Sequence
 import torch
 
 from ..errors import GrammarError
+from ..expert_classes import storage_expert_ids
 from ..moe_execution import ResearchSelectedMoeConfig
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .glm53_shared_fold import native_call
@@ -819,8 +820,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             limit = self._require_native_contract(layer)
             if x.shape[0] == 0:
                 return x.new_empty((0, int(declared['hidden_size'])))
-            # index_select rejects negative IDs rather than wrapping them like advanced indexing.
-            stored_ids = self._expert_inverse.index_select(0, topk_ids.reshape(-1)).reshape_as(topk_ids)
+            stored_ids = storage_expert_ids(self._expert_inverse, topk_ids)
             with torch.profiler.record_function(_profiler_label(self._native)):
                 out = native_call(
                     self._native, x.contiguous(), stored_ids, topk_weights,
