@@ -22,6 +22,13 @@ MODE = "window4-eager-2048-4096"
 SHIP_MODE = "ship-eager-4096-8192"
 GRAPH_SHIP_MODE = "ship-graph-2048"
 EAGER_LEVER_MODE = "ship-eager-levers-4096"
+MATRIX_MODE = "ship-graph-mnbt-matrix"
+MATRIX_MNBTS = (2048, 4096)
+MATRIX_LENS = (512, 2048, 8192)
+MATRIX_CONC = (1, 4, 8)
+MATRIX_TRIALS = 10
+MATRIX_OUTPUT = 128
+MATRIX_LEVERS_ON = {"TESSERA_E4M3_DECODE_ONCE": "1", "TESSERA_GLM53_KDA_CONV_SPLIT": "on", "TESSERA_ROUTED_PIECE_MAJOR": "1"}
 LEVER_VALUES = {"TESSERA_E4M3_DECODE_ONCE": ("0", "1"),
                 "TESSERA_GLM53_KDA_CONV_SPLIT": ("off", "on"),
                 "TESSERA_ROUTED_PIECE_MAJOR": ("0", "1")}
@@ -29,6 +36,7 @@ PAIRS = {MODE: [("eager2048", "2048"), ("eager4096", "4096")],
          SHIP_MODE: [("eager4096", "4096"), ("eager8192", "8192")],
          GRAPH_SHIP_MODE: [("graph2048_off", "2048"), ("graph2048_on", "2048")],
          EAGER_LEVER_MODE: [("eager4096_off", "4096"), ("eager4096_on", "4096")],
+         MATRIX_MODE: [("graph_mnbt2048_on", "2048"), ("graph_mnbt4096_on", "4096")],
          **{mode: [(name, "4096") for name in names] for mode, names in MODES.items()}}
 
 RUNTIME_COMMIT = "2dbac1910c88254d9c6391f02a34c4b07e516803"
@@ -56,6 +64,8 @@ def pair_refusal(mode):
         return "Ship graph window is exactly graph2048_off/2048 then graph2048_on/2048"
     if mode == EAGER_LEVER_MODE:
         return "Ship eager lever window is exactly eager4096_off/4096 then eager4096_on/4096"
+    if mode == MATRIX_MODE:
+        return "Ship graph MNBT matrix is exactly graph_mnbt2048_on/2048 then graph_mnbt4096_on/4096"
     return "unknown WINDOW_MODE; no inferred benchmark scope"
 
 
@@ -157,6 +167,124 @@ def require_timing(result):
                     or not request["generation"]["done"] or request["completion_tokens"] != 128):
                 raise Refused("Window4 timing request counts/stream incomplete")
 
+
+def require_matrix_timing(result):
+    """Exact 18-cell population: 2 MNBT arms each hold 9 timing cells."""
+    for length in MATRIX_LENS:
+        for conc in MATRIX_CONC:
+            label = f"host-L{length}-c{conc}"
+            cell = result["cells"].get(label)
+            if cell is None or cell.get("skipped") or not cell.get("complete"):
+                raise Refused(f"MNBT matrix incomplete cell at L{length} c{conc}")
+            if len(cell["trials"]) != MATRIX_TRIALS:
+                raise Refused(f"MNBT matrix trial count differs at L{length} c{conc}")
+            for trial, row in enumerate(cell["trials"], start=1):
+                if row["trial"] != trial or len(row["requests"]) != conc:
+                    raise Refused(f"MNBT matrix trial/concurrency differs at L{length} c{conc}")
+                for request in row["requests"]:
+                    usage = request.get("usage") or {}
+                    if (request.get("error") or usage.get("prompt_tokens") != length
+                            or usage.get("completion_tokens") != MATRIX_OUTPUT
+                            or not request["generation"]["done"]
+                            or request["completion_tokens"] != MATRIX_OUTPUT):
+                        raise Refused(f"MNBT matrix request incomplete at L{length} c{conc}")
+
+
+def matrix_derived_prompts(rdv):
+    """Expand frozen c1 prompts to c1/c4/c8 by replication within each trial."""
+    src = PANEL / "prompts.json"
+    raw = json.loads(src.read_bytes())
+    if raw.get("warmup") != 1 or raw.get("trials") != 10:
+        raise Refused("MNBT matrix frozen prompt warmup/trials differ")
+    derived_prompts = {}
+    for length in MATRIX_LENS:
+        key = str(length)
+        trials = raw["prompts"].get(key, {}).get("1")
+        if trials is None or len(trials) != 11 or any(len(t) != 1 for t in trials):
+            raise Refused(f"MNBT matrix frozen c1 trials missing at L{length}")
+        for trial in trials:
+            if len(trial[0]) != length:
+                raise Refused(f"MNBT matrix frozen prompt length differs at L{length}")
+        entry = {}
+        for conc in MATRIX_CONC:
+            entry[str(conc)] = [[trials[t][0] for _ in range(conc)] for t in range(11)]
+        derived_prompts[key] = entry
+    derived = dict(schema=raw.get("schema"), source=raw.get("source"), layout=raw.get("layout"),
+                   lens=list(MATRIX_LENS), concurrency=list(MATRIX_CONC), trials=MATRIX_TRIALS,
+                   warmup=1, prompts=derived_prompts,
+                   derivation="replicate frozen c1 trial prompt across slots; prefix caching stays off")
+    blob = (json.dumps(derived, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    path = Path(rdv) / "matrix-prompts.json"
+    if path.is_file():
+        if path.read_bytes() != blob:
+            raise Refused("MNBT matrix derived prompts differ from frozen replication")
+    else:
+        path.write_bytes(blob)
+    return dict(path=str(path), sha256=hashlib.sha256(blob).hexdigest(),
+                source_sha256=hashlib.sha256(src.read_bytes()).hexdigest(),
+                derived_cells=sum(len(v) for v in derived_prompts.values()))
+
+
+def matrix_preflight(env):
+    """D38 on the real matrix driver: imports, shapes and bounded reads only."""
+    import tp2_recipe as recipe
+    if env.get("WINDOW_MODE") != MATRIX_MODE:
+        raise Refused("matrix preflight requires WINDOW_MODE=ship-graph-mnbt-matrix")
+    config = recipe.inputs(dict(env), live=False)
+    artifact = Path(env["ARTIFACT"])
+    if not (artifact / "config.json").is_file():
+        raise Refused("matrix preflight artifact has no config.json")
+    model_config = json.loads((artifact / "config.json").read_bytes())
+    manifest_path = Path(env.get("ARTIFACT_MANIFEST", ""))
+    if not manifest_path.is_file():
+        raise Refused("matrix preflight requires the actual ARTIFACT_MANIFEST file")
+    entries = json.loads(manifest_path.read_bytes())
+    names = [entry["name"] for entry in entries]
+    if len(entries) != 128 or names != sorted(names) or len(set(names)) != 128:
+        raise Refused("matrix preflight A8S manifest roster differs")
+    reads = []
+    for entry in entries:
+        path = artifact / entry["name"]
+        if path.stat().st_size != entry["bytes"]:
+            raise Refused(f"matrix preflight A8S byte length differs: {entry['name']}")
+        with path.open("rb") as stream:
+            sample = stream.read(64)
+        reads.append(dict(name=entry["name"], sample_bytes=len(sample)))
+        if not entry["name"].endswith(".safetensors") and sha(path) != entry["sha256"]:
+            raise Refused(f"matrix preflight A8S metadata differs: {entry['name']}")
+    src = PANEL / "prompts.json"
+    raw = json.loads(src.read_bytes())
+    if hashlib.sha256(src.read_bytes()).hexdigest() != PROMPTS_SHA:
+        raise Refused("matrix preflight frozen prompt bytes differ")
+    derived_prompts = {}
+    for length in MATRIX_LENS:
+        trials = raw["prompts"][str(length)]["1"]
+        derived_prompts[str(length)] = {str(c): len(trials) for c in MATRIX_CONC}
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("matrix_profile_inputs", CLIENT / "comparison_inputs.py")
+    instrument = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(instrument)
+    document, _, _, _ = instrument.load_manifest(env.get("PROFILE_MANIFEST", str(PANEL / "manifest-decode.json")))
+    cells = instrument.declared_cells(document)
+    rendered = []
+    for name, mnbt in [("graph_mnbt2048_on", "2048"), ("graph_mnbt4096_on", "4096")]:
+        arm = recipe.pair_arm(name, dict(env, FABRIC="socket", EAGER="0", MAX_BATCHED=mnbt,
+                                         SPEC_JSON="null",
+                                         COMPILATION_JSON=json.dumps(recipe.GRAPH, separators=(",", ":")),
+                                         **MATRIX_LEVERS_ON), MATRIX_MODE)
+        for rank in (0, 1):
+            argv = recipe.serve(dict(config, profile_dir="/tmp/matrix-preflight-profiles"), arm, rank)
+            rendered.append(dict(arm=name, rank=rank, argv=argv))
+            if "--speculative-config" in argv:
+                raise Refused("matrix preflight serve must omit speculative config for MTP off")
+            slot = argv.index("--max-num-seqs") + 1
+            if argv[slot] != "8":
+                raise Refused("matrix preflight serve requires max-num-seqs 8")
+    return dict(window_mode=MATRIX_MODE, input_reads=reads, artifact_files=len(entries),
+                derived_prompt_trials=derived_prompts, profile_cells=cells,
+                rendered_arms=len(rendered), model_type=model_config.get("model_type"),
+                scope="CPU arguments/imports/input shapes and bounded real reads only; no GPU or served parity")
+
 def output_hashes(result, prompts, prompt_sha256):
     """All 33 deterministic decoded-text/finish outputs, not token IDs or KL."""
     import importlib.util
@@ -216,28 +344,49 @@ def probes(adapter, arm, peer):
     invocation = uuid.uuid4().hex
     graph_ship = config.get("window_mode") == GRAPH_SHIP_MODE
     eager_levers = config.get("window_mode") == EAGER_LEVER_MODE
-    binding = dict(schema=("tessera.ship_graph_invocation.v1" if graph_ship else
+    matrix = config.get("window_mode") == MATRIX_MODE
+    binding = dict(schema=("tessera.ship_graph_mnbt_matrix_invocation.v1" if matrix else
+                           "tessera.ship_graph_invocation.v1" if graph_ship else
                            "tessera.eager_lever_invocation.v1" if eager_levers else "tessera.window4_eager_invocation.v1"), invocation=invocation,
                    source_bindings=config, arm=arm, identity=adapter.identity, peer=peer,
                    client_host="sparky", base_url=BASE, target_model=MODEL,
                    differences_from_EXL3=["endpoint :8142", "model glm53-artifact", "eager/socket/public-runtime labels",
                                           "fresh output namespace", "A8S runtime, MTP1 and unchanged 2GiB KV"],
                    timing_started_unix=time.time(), profile_timing_samples=False)
+    if matrix:
+        binding["differences_from_EXL3"][2] = "graph/socket/public-runtime labels and explicit ON lever env"
+        binding["differences_from_EXL3"][4] = "A8S runtime, MTP off and unchanged 2GiB KV"
+        binding["lever_env"] = arm["lever_env"]
+        binding["matrix"] = dict(mnbt=arm["max_batched"], lens=list(MATRIX_LENS), conc=list(MATRIX_CONC),
+                                 trials=MATRIX_TRIALS, output=MATRIX_OUTPUT)
     if graph_ship or eager_levers:
         binding["differences_from_EXL3"][2] = ("graph" if graph_ship else "eager") + "/socket/public-runtime labels and explicit per-arm lever env"
         binding["lever_env"] = arm["lever_env"]
     atomic_json(out / "invocation.json", binding)
-    argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
-            "--prompts", config["prompts"], "--out", str(out / "timing.json"),
-            "--lens", "512", "2048", "8192", "--conc", "1", "--trials", "10", "--output", "128",
-            "--label-mode", "graph" if graph_ship else "eager", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
-            "--events", str(out / "events.jsonl")]
+    if matrix:
+        derived = matrix_derived_prompts(adapter.rdv)
+        binding["matrix_prompts"] = derived
+        atomic_json(out / "invocation.json", binding)
+        argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
+                "--prompts", derived["path"], "--out", str(out / "timing.json"),
+                "--lens", "512", "2048", "8192", "--conc", "1", "4", "8", "--trials", "10", "--output", "128",
+                "--label-mode", "graph", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
+                "--events", str(out / "events.jsonl")]
+    else:
+        argv = [sys.executable, str(CLIENT / "u4_speed_client.py"), "--base-url", BASE, "--model", MODEL,
+                "--prompts", config["prompts"], "--out", str(out / "timing.json"),
+                "--lens", "512", "2048", "8192", "--conc", "1", "--trials", "10", "--output", "128",
+                "--label-mode", "graph" if graph_ship else "eager", "--label-fabric", "socket", "--label-server", "T8-A8S-2dbac191-" + name,
+                "--events", str(out / "events.jsonl")]
     binding["timing_argv"] = argv
     with (out / "client.log").open("w") as stream:
         adapter.command(argv, stdout=stream, tick=adapter.tick, limit=adapter.envelope.remaining())
     binding["timing_finished_unix"] = time.time()
     timing = json.loads((out / "timing.json").read_bytes())
-    require_timing(timing)
+    if matrix:
+        require_matrix_timing(timing)
+    else:
+        require_timing(timing)
     if eager_levers:
         prompt_path = Path(config["prompts"])
         outputs = output_hashes(timing, json.loads(prompt_path.read_bytes()), sha(prompt_path))

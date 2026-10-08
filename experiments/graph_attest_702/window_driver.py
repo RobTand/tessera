@@ -21,7 +21,7 @@ QUEUE = Path("/mnt/shared/prismabuild-fleet/pb-queue")
 
 def dry_arm(name: str, env: dict):
     config = recipe.inputs(env, live=False)
-    arm = recipe.arm_settings(name, env)
+    arm = recipe.arm_settings(name, env, config.get("window_mode"))
     if config.get("window_mode") in recipe.BENCHMARK_PAIRS:
         arm = recipe.pair_arm(name, env, config["window_mode"])
     if "lever_env" in arm:
@@ -35,6 +35,8 @@ def dry_arm(name: str, env: dict):
         print(f"  serve rank{rank}: {shlex.join(recipe.serve(config, arm, rank))}")
     if config.get("window_mode") in recipe.PHASE_MODES:
         print("  all eleven L2048 seeded outputs; fresh servers per block; matched OFF and separate profiles/power for piece-major only")
+    elif config.get("window_mode") == recipe.MATRIX_MODE:
+        print("  exact 18-cell A8S graph MNBT matrix: MNBT2048 vs MNBT4096 at L512/2048/8192 c1/4/8, MTP off, explicit ON levers; both-Spark power and profiles")
     else:
         print("  exact October 5 c1 timing/profile population; no graph receipt" if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
               "  equality: complete 48-choice pass, complete 48-choice second pass; four long screens")
@@ -51,7 +53,10 @@ def rows(root: Path, config: dict, env: dict) -> list[dict]:
                            cwd=str(Path(__file__).resolve().parents[2]), tags=[HOSTS[rank]],
                            demand=dict(cpu=8 if rank == 0 else 6, mem_gb=MEMORY_POLICY["host_cap_gib"], gpu=1),
                            gpu_memory_gb=MEMORY_POLICY["gpu_subset_cap_gib"], exclusive=True, measurement=True, host_class="gb10", max_attempts=1,
-                           priority=-10 if config.get("window_mode") in recipe.PHASE_MODES else 10, priority_reason=(("Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
+                           priority=0 if config.get("window_mode") == recipe.MATRIX_MODE else -10 if config.get("window_mode") in recipe.PHASE_MODES else 10,
+                           priority_reason=(("Goal: exact reviewed A8S graph MNBT matrix " + config["window_mode"]
+                                                        if config.get("window_mode") == recipe.MATRIX_MODE else
+                                                        "Goal: exact reviewed A8S graph lever pair " if config.get("window_mode") == recipe.GRAPH_SHIP_MODE else
                                                         "Goal: exact reviewed A8S eager pair ") + config["window_mode"]
                                                         if config.get("window_mode") in recipe.BENCHMARK_PAIRS else
                                                         "Goal: full nominated A8 graph control after exact-head review; one paired window at a time"),
@@ -281,12 +286,17 @@ def main():
     args = ap.parse_args()
     if args.dry_run:
         if args.preflight_output:
-            if os.environ.get("WINDOW_MODE") not in recipe.PHASE_MODES:
-                raise Refused("input preflight output requires the explicit seeded investigation scope")
-            from eager_determinism import input_preflight
-            config = recipe.inputs(dict(os.environ), live=False)
-            args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
-            atomic_json(args.preflight_output, input_preflight(config))
+            if os.environ.get("WINDOW_MODE") in recipe.PHASE_MODES:
+                from eager_determinism import input_preflight
+                config = recipe.inputs(dict(os.environ), live=False)
+                args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
+                atomic_json(args.preflight_output, input_preflight(config))
+            elif os.environ.get("WINDOW_MODE") == recipe.MATRIX_MODE:
+                from eager_benchmark import matrix_preflight
+                args.preflight_output.parent.mkdir(parents=True, exist_ok=True)
+                atomic_json(args.preflight_output, matrix_preflight(dict(os.environ)))
+            else:
+                raise Refused("input preflight output requires the explicit seeded investigation or MNBT matrix scope")
         for arm, env in recipe.parse_plan(args.plan):
             print(f"== arm {arm}")
             dry_arm(arm, {**os.environ, **env})
