@@ -530,6 +530,12 @@ def test_binding_reads_the_live_group_and_refuses_a_mismatch():
         moe.bind_owner_rank({**world, "rank": 1, "world_size": 2})
 
 
+#: validate_panel raises ValueError for many malformed panels.  A bare
+#: ``raises(ValueError)`` would pass for any of them, so a route refusal is
+#: pinned by the message the route check raises.
+ROUTE_REFUSAL = "route differs from native whole MoE binding"
+
+
 def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     """Reject the retired materializer for every family and tensor-parallel cut."""
     materializing = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
@@ -537,7 +543,7 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     for world in (1, 2):
         for format_name in (A4, A8, A16):
             panel = _owner_panel(world, format_name, *materializing)
-            with pytest.raises(ValueError):
+            with pytest.raises(ValueError, match=ROUTE_REFUSAL):
                 moe.validate_panel(panel)
 
 
@@ -548,7 +554,7 @@ def test_an_fp8_owner_never_declares_the_materialising_launch():
             for decoder in ("research_selected_triton_window", "research_selected_torch_window",
                             "research_selected_triton_window_folded_bf16"):
                 panel = _owner_panel(world, format_name, "vllm.fused_moe.modular_kernel:TRITON_REF", decoder)
-                with pytest.raises(ValueError):
+                with pytest.raises(ValueError, match=ROUTE_REFUSAL):
                     moe.validate_panel(panel)
 
 
