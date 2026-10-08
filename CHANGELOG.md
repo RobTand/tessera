@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — use the checkpoint dimensions in producer fixtures
+
+Producer fixtures now derive output partitions from the dimensions that generate their checkpoint tensors.
+The installed Python entrypoint uses the same declaration as the exporter tests.
+Shared gate/up tensors retain their 256 rows, instead of a stale 64-row declaration.
+The geometry gate and all authentication, receipt and joined-byte checks remain.
+The reported failures preceded this correction. No production code or runtime contract changes.
+
 ## 2026-10-07 — remove an incidental architecture-paragraph assertion
 
 The offline planner tests no longer require an issue citation in the first architecture paragraph.
