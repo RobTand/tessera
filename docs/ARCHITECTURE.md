@@ -442,7 +442,7 @@ servable one/two-run schedules are retained. Invalid geometry or gate/up
 pairing is refused by field; only an explicit unservable screen can continue,
 with its refusal recorded. Research inputs cannot bypass native geometry.
 
-E4M3 and folded BF16 WINDOW serving use one `FusedRoutedWindowMoE` native owner.
+E4M3 and BF16 WINDOW serving use one `FusedRoutedWindowMoE` native owner.
 The loader consumes storage-named wires into the exact rank-local
 flat axis, builds one int32 original-to-storage inverse at load, and remaps
 router ids once per invocation without reordering weights or top-k positions.

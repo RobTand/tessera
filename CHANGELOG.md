@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — describe the raw BF16 native owner
+
+Remove the stale folded label from the current native-owner paragraph.
+Keep dated historical prefetch receipts unchanged.
+This prose correction changes no runtime, byte price, default or qualification.
+
 ## 2026-10-08 — combine released defaults and kernel-build scope with T16 epilogues
 
 Retain the approved eligible piece-major and decode-once E4M3 defaults.
