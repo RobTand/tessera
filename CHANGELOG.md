@@ -18,6 +18,11 @@ The test keeps all configured provider priorities and checks both mode and dispa
 
 ## 2026-10-07 — native fused T-4 served lane
 
+Contract v63 records the native T4 serving cutover.
+Contract v64 withdraws the current FP4 activation attestations.
+Versions v61 and v62 stay reserved for PR1046 and PR1028.
+Source approval does not qualify native arithmetic, D41 or serving cells.
+
 Dense and routed E2M1x2 exports use the named WINDOW L14 recipe over LUT16.
 The pure widths 1..8 cover q128..q1024, including the full-width cap.
 Serving exports, cached-unit records and control prices use the same recipe.

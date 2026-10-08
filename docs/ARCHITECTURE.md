@@ -5468,7 +5468,11 @@ recorded in `docs/measurements/2026-09-28-routed-fused-640.md`.
 The E2M1 family now has its own native serving owner, described below.
 Historical span-2 measurements do not qualify that replacement route.
 
-**Native fused E2M1 serving (Refs #750).** The NVFP4 route admits E2M1x2
+Contract v64 withdraws the current FP4 activation attestations.
+The v61/v62 gaps remain reserved for PR1046 and PR1028.
+Source approval remains separate from native arithmetic, D41 and serving qualification.
+
+**Native fused E2M1 serving (contract v63, Refs #750).** The NVFP4 route admits E2M1x2
 WINDOW L14 over LUT16, with group-16 UE4M3 scales. Dense and routed exports
 use the same served recipe. Pure pair widths 1 through 8 correspond to
 q128 through q1024. The research recipe and explicit TCQ encoding stay
