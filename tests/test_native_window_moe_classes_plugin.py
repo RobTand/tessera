@@ -143,8 +143,7 @@ def _independent_packed(scheme, wires, degree, rank):
             assert parsed_name == name
             stacks[name].append(unit)
     family = "e4m3" if scheme["family"] == "TESSERA_FP8" else "value"
-    arithmetic = "epilogue" if family == "e4m3" else "folded"
-    bundles = [prepare_grouped_window_gemm(stacks[name], arithmetic=arithmetic)
+    bundles = [prepare_grouped_window_gemm(stacks[name])
                for name in ("gate_proj", "up_proj", "down_proj")]
     return PackedWindowMoeBundles(*bundles, family=family, expert_classes=scheme["expert_classes"])
 

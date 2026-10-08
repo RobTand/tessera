@@ -38,19 +38,18 @@ RUNGS = [768, 800, 832, 864, 896, 928, 960, 992, 1024, 1088, 1152, 1216, 1280]
 
 
 def encode(w: "torch.Tensor", q256: int, name: str, grid: str = "e4m3") -> "torch.Tensor":
-    """The unit encoded at ``q256`` and decoded the way its route serves it:
-    E4M3 bytes widened by the row scale, or (``grid="bf16"``, Tessera-16) the
-    BF16 tile with the row scale folded in, as the folded lane reads it."""
+    """Return canonical effective weights without a per-weight BF16 conversion."""
     import torch
     from tessera.alphabet import BF16_GRID, E4M3_GRID
-    from tessera.decode import materialize_bf16_folded, materialize_fp8
+    from tessera.decode import materialize_bf16, materialize_fp8
     from tessera.export import encode_linear_planes
 
     payload = BF16_GRID if grid == "bf16" else E4M3_GRID
     _exported, unit, forests = encode_linear_planes(w, grid=payload, q256=q256, name=name,
                                                     verify=True)
     if grid == "bf16":
-        return materialize_bf16_folded(unit, forests, None).float()
+        values, row_scale = materialize_bf16(unit, forests, None)
+        return values.float() * row_scale[:, None]
     tile, row_scale = materialize_fp8(unit, forests, None)
     # materialize_fp8 returns the E4M3FN BYTES (uint8): view them as FP8
     # before widening, or the byte codes 0..255 are read as values.

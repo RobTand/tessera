@@ -46,14 +46,12 @@ def unit(family="e4m3", layout=LEGACY, cols=128, rate=4):
 
 def prepared(family="e4m3", layout=LEGACY):
     from tessera.window_gemm import prepare_window_gemm
-    return prepare_window_gemm(unit(family, layout), quantizer=None,
-                               arithmetic="folded" if family == "value" else "epilogue")
+    return prepare_window_gemm(unit(family, layout), quantizer=None)
 
 
 def bundle(family="e4m3", layout=LEGACY, cols=128, rate=4):
     from tessera.window_gemm_grouped import prepare_grouped_window_gemm
-    b = prepare_grouped_window_gemm([unit(family, layout, cols=cols, rate=rate)] * 2, quantizer=None,
-                                   arithmetic="folded" if family == "value" else "epilogue")
+    b = prepare_grouped_window_gemm([unit(family, layout, cols=cols, rate=rate)] * 2, quantizer=None)
     # CUDA metadata only: tensor-content checks remain real CPU operations.
     return SimpleNamespace(**{**vars(b), "quantizer": "native"}, device=torch.device("cuda"))
 
@@ -246,7 +244,6 @@ def test_actual_intake_finish_and_history(monkeypatch, family, optin, mma, expec
     for role in ("gate", "up", "down"):
         b = getattr(bundles, role)
         assert b.word_layout == expected and b.words_all.data_ptr() == pointers[role]
-        assert b.arithmetic == ("folded" if family == "value" else "epilogue")
         assert torch.equal(b.words_all, want.expand(2, -1))
         assert torch.equal(b.init_all, u.permuted_start_state().expand(2, -1))
         assert torch.equal(b.has_init, torch.ones(2, dtype=torch.int32))

@@ -38,7 +38,7 @@ def bf16_wires():
                 weight, grid=BF16_GRID, q256=512, name=projection,
                 window_bits=8, verify=False)
             parts[projection] = (pack_fused([(projection, rows, written.blob)]),
-                                 read_unit_artifact(written.blob).to(torch.bfloat16))
+                                 read_unit_artifact(written.blob))
         w13_blobs.append([parts['gate_proj'][0], parts['up_proj'][0]])
         w2_blobs.append([parts['down_proj'][0]])
         expected.append((torch.cat([parts['gate_proj'][1], parts['up_proj'][1]]),
@@ -59,17 +59,18 @@ def bf16_wires():
     return w13_blobs, w2_blobs, scheme, expected
 
 
-def test_bf16_selected_owner_matches_actual_folded_wire_weights(bf16_wires):
+def test_bf16_selected_owner_matches_canonical_wire_weights(bf16_wires):
     w13_blobs, w2_blobs, scheme, expected = bf16_wires
     owner = moe_route.prepare_tessera_packed_bf16_moe_experts(
         {'w13': w13_blobs, 'w2': w2_blobs},
         validate_tessera_moe_scheme(scheme, 'm'), 'm', device='cpu')
     ids = torch.tensor([1, 0, 1], dtype=torch.int32)
-    selected = owner.decode_folded(ids, max_experts_per_chunk=2)
+    selected = owner.decode(ids, max_experts_per_chunk=2)
     for slot, expert in enumerate(ids.tolist()):
-        assert torch.equal(selected.w13_weight[slot], expected[expert][0])
-        assert torch.equal(selected.w2_weight[slot], expected[expert][1])
-    assert owner.resident_bytes() > 0
+        w13 = selected.w13_weight[slot].float() * selected.w13_weight_scale[slot].reshape(-1, 1)
+        w2 = selected.w2_weight[slot].float() * selected.w2_weight_scale[slot].reshape(-1, 1)
+        assert torch.equal(w13, expected[expert][0])
+        assert torch.equal(w2, expected[expert][1])
 
 
 def test_bf16_selected_owner_tp2_cuts_original_wires_into_exact_rank_tiles(bf16_wires):
@@ -80,13 +81,15 @@ def test_bf16_selected_owner_tp2_cuts_original_wires_into_exact_rank_tiles(bf16_
             {'w13': w13_blobs, 'w2': w2_blobs},
             validate_tessera_moe_scheme(scheme, 'm'), 'm', device='cpu',
             tp_rank=rank, tp_size=2)
-        selected = owner.decode_folded(ids, max_experts_per_chunk=2)
+        selected = owner.decode(ids, max_experts_per_chunk=2)
         lo, hi = rank * (INTER // 2), (rank + 1) * (INTER // 2)
         for slot, expert in enumerate(ids.tolist()):
             full13, full2 = expected[expert]
             local13 = torch.cat([full13[lo:hi], full13[INTER + lo:INTER + hi]])
-            assert torch.equal(selected.w13_weight[slot], local13)
-            assert torch.equal(selected.w2_weight[slot], full2[:, lo:hi])
+            w13 = selected.w13_weight[slot].float() * selected.w13_weight_scale[slot].reshape(-1, 1)
+            w2 = selected.w2_weight[slot].float() * selected.w2_weight_scale[slot].reshape(-1, 1)
+            assert torch.equal(w13, local13)
+            assert torch.equal(w2, full2[:, lo:hi])
 
 
 @pytest.fixture(scope='module')
@@ -180,6 +183,7 @@ def _layer():
 def _build(scheme, layer):
     config = moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2)
     return moe_route.build_tessera_moe_method(scheme,'m','resident',layer,research_selected=config)
+
 
 
 

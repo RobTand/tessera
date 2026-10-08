@@ -17,8 +17,8 @@ import pytest
 from experiments.step4_route_qualification import (
     FUSED_WINDOW_DENSE_E2M1_SYMBOL, BF16_ACTIVATION_CONTRACT, DENSE_LAUNCHES, FP8_ACTIVATION_CONTRACT,
     FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER,
-    NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER,
-    NATIVE_FUSED_WINDOW_DENSE_E2M1_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_FOLDED_DECODER,
+    NATIVE_FUSED_WINDOW_DENSE_BF16_DECODER,
+    NATIVE_FUSED_WINDOW_DENSE_E2M1_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_BF16_DECODER,
     NVFP4_ACTIVATION_CONTRACT,
     QUALIFICATION_SCHEMA, QualificationRefused, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_LIBRARY_GLOB,
     mapped_native_libraries, qualify_dispatch, qualify_native_route, refusal_record,
@@ -81,7 +81,6 @@ def good_trace(identity=False):
 
 
 # -- the launch table is the routes' -------------------------------------------
-
 
 
 # -- the library census is recorded, never required --------------------------

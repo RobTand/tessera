@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import subprocess
 
 import pytest
 
@@ -22,7 +23,14 @@ def config_dir(tmp_path):
 
 
 def test_preflight_keeps_global_and_local_kda_roles(config_dir):
-    result = census.preflight(str(config_dir), "declared-image")
+    receipt = config_dir / "preflight.json"
+    subprocess.run(
+        [sys.executable, str(ROOT / "tools/tessera_construction_census.py"),
+         str(config_dir), str(receipt), "--dry-run",
+         "--runtime-image", "declared-image"],
+        cwd=ROOT, check=True, capture_output=True, text=True,
+    )
+    result = json.loads(receipt.read_text())
     assert result["construction_performed"] is False
     assert result["status"] == "preflight-only"
     assert result["model_construction_performed"] is False

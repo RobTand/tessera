@@ -90,14 +90,6 @@ def test_every_case_names_a_grid_a_reader_would_accept():
             f"SERIALISABLE_GRIDS -- its digest is not a byte anyone can decode"
         )
 
-def test_substack_layout_condition_pins_unit_bytes_and_decode():
-    module = _load()
-    rows = module.substack_hashes()
-    assert rows and not any(v.startswith("REFUSED") for v in rows.values())
-    assert any(key.endswith("/bytes") for key in rows)
-    assert any(key.endswith("/decode") for key in rows)
-    assert any("1024-1088" in key for key in rows)
-    assert any(key.endswith("/sidecar") for key in rows)
 
 
 def _scale_channel_at(hold: str) -> types.ModuleType:

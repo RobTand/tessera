@@ -94,14 +94,13 @@ def _prepared_stack(family, units, experts, expert_classes):
 
     def bundle(group, part):
         slot = soa[group][part]
-        return prepare_grouped_window_gemm_from_soa(
-            words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
-            native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
-            init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
-            tile_words=slot["tile_words"], total_words=slot["total_words"],
-            run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
-            cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
-            family=family, arithmetic="folded" if family == "value" else "epilogue")
+        return prepare_grouped_window_gemm_from_soa(words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
+        native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
+        init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
+        tile_words=slot["tile_words"], total_words=slot["total_words"],
+        run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
+        cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
+        family=family)
 
     return PackedWindowMoeBundles(
         gate=bundle("w13", "gate_proj"), up=bundle("w13", "up_proj"),
@@ -406,13 +405,12 @@ def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables(monkeypatch):
     assert export.routed_stack_resident_bytes(
         family, EXPERTS, layouts, expert_classes=metadata["expert_classes"], native_library=library) == priced
 
-# The fixture declares its own dense and shared projection row partitions.
-_FIXTURE_OUTPUT_SIZES = {
-    "language_model.model.layers.*.mlp.down_proj": [HIDDEN],
-    "language_model.model.layers.*.mlp.gate_up_proj": [2 * HIDDEN, 2 * HIDDEN],
-    "language_model.model.layers.*.mlp.shared_experts.down_proj": [HIDDEN],
-    "language_model.model.layers.*.mlp.shared_experts.gate_up_proj": [INTER, INTER],
-}
+
+def _accepts_fit_flag() -> bool:
+    """Whether this exporter's argument parser (built inside ``main``) knows
+    ``--fit-tp-size``; read off the source since the parser is not exported."""
+    return "--fit-tp-size" in inspect.getsource(export)
+
 
 
 @pytest.fixture(scope="module")
@@ -431,20 +429,7 @@ def exported(tmp_path_factory):
     plan = {STACK: {"grid": "E4M3", "q256": 1024}}
 
     with pytest.MonkeyPatch.context() as monkeypatch:
-        import copy
-        from tessera.serving.contract import construction_entry as live_entry
-        real = live_entry
-
-        def _entry(architectures, contract=None):
-            entry = real(architectures) if contract is None else real(architectures, contract)
-            if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
-                return entry
-            entry = copy.deepcopy(entry)
-            entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
-            return entry
-
         monkeypatch.setenv(routed_fused.ENV_E4M3_MMA, "e4m3")
-        monkeypatch.setattr(export, "construction_entry", _entry)
         out = moe_write._export(root, monkeypatch, tensors, plan, "--device", "cpu",
                                 "--fit-tp-size", str(FIT_TP), config=config)
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())

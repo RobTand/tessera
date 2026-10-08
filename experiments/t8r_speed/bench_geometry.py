@@ -210,7 +210,7 @@ def compact_projection(p, rows, cols, *, grouped):
             native=empty, scale=p["scale"][0], runs=runs[0], init_perm=p["init"][0],
             perm=p["perm"][0], tile_words=p["tile_words"], total_words=p["words"].shape[1],
             rows=rows, cols=cols, window_bits=p["window_bits"], family="value", has_init=True,
-            block_m=64, block_n=64, block_k=64, arithmetic="folded")
+            block_m=64, block_n=64, block_k=64)
     from tessera.window_gemm_grouped import prepare_grouped_window_gemm_from_soa
     dev = p["words"].device
     width = p["words"].shape[1]
@@ -222,7 +222,7 @@ def compact_projection(p, rows, cols, *, grouped):
         total_words=torch.full((e,), width, device=dev, dtype=torch.int32),
         run_off=torch.arange(e + 1, device=dev, dtype=torch.int32) * nr,
         perm_all=p["perm"], rows=rows, cols=cols, experts=e, window_bits=p["window_bits"],
-        family="value", arithmetic="folded")
+        family="value")
 
 
 class CompilerSpy:

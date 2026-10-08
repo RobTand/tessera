@@ -852,7 +852,7 @@ def test_native_prepared_bundles_have_candidate_owners_and_resolve_to_units(monk
                for name in names}
     prepared = PreparedDenseNativeModule(
         [SimpleNamespace(name="q", rows=2,
-                         bundle=SimpleNamespace(cols=3, arithmetic="epilogue", **tensors))],
+                         bundle=SimpleNamespace(cols=3, **tensors))],
         rows=2, columns=3, device=torch.device("cpu"), family="e4m3")
     owner = torch.nn.Module()
     owner.tessera_native = prepared
@@ -881,7 +881,7 @@ def test_native_prepared_external_alias_stays_fixed(worker_module):
     tensors = {name: torch.zeros(2) for name in names}
     prepared = PreparedDenseNativeModule(
         [SimpleNamespace(name="q", rows=2,
-                         bundle=SimpleNamespace(cols=3, arithmetic="epilogue", **tensors))],
+                         bundle=SimpleNamespace(cols=3, **tensors))],
         rows=2, columns=3, device=torch.device("cpu"), family="e4m3")
     named = dict(prepared.named_tensors())
     assert list(named) == [f"roles.0.{name}" for name in names]

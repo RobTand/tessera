@@ -54,9 +54,9 @@ def direct_consumer_activation_contract(module, role):
 def direct_consumer_weight(blob, module, role, family, *, device="cpu"):
     """Decode a priced unit with the exact arithmetic of its direct consumer."""
     import torch
-    from ..decode import materialize_bf16_folded, reconstruct_unit
+    from ..decode import reconstruct_unit
     from ..unit_artifact import parse_unit_artifact
-    from .scheme import ROUTES, TESSERA_BF16
+    from .scheme import ROUTES
 
     contract = direct_consumer_activation_contract(module, role)
     if contract is None:
@@ -64,10 +64,7 @@ def direct_consumer_weight(blob, module, role, family, *, device="cpu"):
     parsed = parse_unit_artifact(blob, device=device)
     if family not in ROUTES or parsed.grid.name not in ROUTES[family]["grids"]:
         raise ValueError(f"{module}: {family!r} does not decode grid {parsed.grid.name!r}")
-    if family == TESSERA_BF16:
-        weight = materialize_bf16_folded(parsed.unit, parsed.forests, parsed.code)
-    else:
-        weight = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
+    weight = reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
     return weight.to(torch.float32 if contract == "a32" else torch.bfloat16)
 
 
@@ -108,7 +105,8 @@ def install() -> None:
 
 
 def _window_weight(bundle, dtype):
-    """Decode the bundle's exact weight arithmetic, without an activation scale."""
+    """Decode raw values and apply the FP32 scale before the cache cast."""
+    import dataclasses
     import torch
 
     if bundle.family == "e4m3":
@@ -116,15 +114,16 @@ def _window_weight(bundle, dtype):
 
         values = _decode_role(bundle, chunk=1024)
         return (values.float() * bundle.scale[:, None]).to(dtype)
-    if bundle.arithmetic != "folded":
-        raise ValueError(f"a direct BF16 consumer needs folded weights, not {bundle.arithmetic!r}")
+    if bundle.family != "value":
+        raise ValueError(f"a direct BF16 consumer needs value weights, not {bundle.family!r}")
+    raw = dataclasses.replace(bundle, scale=torch.ones_like(bundle.scale))
     columns = int(bundle.cols)
     result = torch.empty(int(bundle.rows), columns, device=bundle.scale.device, dtype=dtype)
     for lo in range(0, columns, 1024):
         hi = min(columns, lo + 1024)
         eye = torch.zeros(hi - lo, columns, dtype=torch.bfloat16, device=result.device)
         eye[:, lo:hi].fill_diagonal_(1.0)
-        result[:, lo:hi] = bundle(eye).t().to(dtype)
+        result[:, lo:hi] = raw(eye).t().float() * bundle.scale[:, None]
     return result
 
 

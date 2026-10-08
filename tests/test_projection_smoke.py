@@ -99,12 +99,48 @@ def test_wire_reader_preserves_numeric_rows_and_role_order(artifact, family):
         native = torch.tensor(grid.native, dtype=torch.long)
         values = torch.tensor(grid.values, dtype=torch.float32)[native[codes]]
         weight = values * unit.scale_rows.float()[:, None]
-        expected.append(weight if family == "T-8" else weight.bfloat16().float())
+        expected.append(weight)
     got = smoke._dense_weight(item["parsed"][family], smoke.FAMILIES[family][0])
     assert torch.equal(got, torch.cat(expected)), "A decoded role changed its source rows or row scale"
     # The two replicated KDA roles must remain complete on both TP ranks.
     assert row["roles"][-2:] == [["f_a_proj", 128], ["g_a_proj", 128]]
     assert not torch.equal(got[-256:-128], got[-128:])
+
+
+@pytest.fixture
+def bf16_pair():
+    from tessera.alphabet import BF16_GRID
+    from tessera.decode import materialize_bf16
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    unit = smoke._unit(128, 128, BF16_GRID, 211)
+    unit.scale_rows.fill_(1.0)
+    unit.scale_global = torch.nextafter(torch.tensor(1.0, dtype=torch.float32), torch.tensor(2.0, dtype=torch.float32)).item()
+    _weight, _exported, blob = build_unit_artifact(unit, "weights_proj", BF16_GRID, 1024, fixture_id=None)
+    parsed = parse_unit_artifact(blob, device="cpu")
+    values, scale = materialize_bf16(parsed.unit, parsed.forests, parsed.code)
+    return blob, [("weights_proj", parsed)], values, scale
+
+
+def test_fp64_reference_keeps_raw_bf16_and_fp32_scale_precision(bf16_pair):
+    _blob, parsed, values, scale = bf16_pair
+    expected = values.double() * scale.double()[:, None]
+    fp32_product = (values.float() * scale[:, None]).double()
+    assert not torch.equal(expected, fp32_product), "The wire must distinguish FP64 reference precision from the FP32 cache"
+    got = smoke._reference_weight(parsed, "TESSERA_BF16", "cpu")
+    assert got.dtype == torch.float64
+    assert torch.equal(got, expected), "The numerical oracle rounded an effective weight before its FP64 dot"
+
+
+def test_indexer_reference_matches_the_exact_fp32_direct_consumer(bf16_pair):
+    from tessera.serving.projection_routes import direct_consumer_weight
+
+    blob, parsed, _values, _scale = bf16_pair
+    prefix = next(prefix for prefix, kind, _columns, _roles in smoke.CASES if kind == "indexer")
+    expected = direct_consumer_weight(blob, prefix, "weights_proj", "TESSERA_BF16", device="cpu")
+    got = smoke._dense_weight(parsed, "TESSERA_BF16")
+    assert got.dtype == expected.dtype == torch.float32
+    assert torch.equal(got.view(torch.int32), expected.view(torch.int32)), "The exact indexer reference changed its canonical FP32 buffer"
 
 
 def test_numeric_screen_refuses_wrong_head_gate_dtype_and_values():
@@ -151,3 +187,21 @@ def test_resident_footprint_counts_shared_tail_storage_once():
     footprint = smoke.resident_tensors(layer)
     assert footprint["bytes_by_device"] == {"cpu": 8 * 16 * 4}
     assert sum(row["unique_storage"] for row in footprint["tensors"]) == 1
+
+
+def test_projection_artifact_stays_inside_the_fp32_accumulation_domain(artifact):
+    from tessera.serving.bf16_route import prepare_tessera_bf16_module
+
+    maximum = torch.finfo(torch.float32).max
+    for item in smoke.read_inputs(artifact, 3):
+        module = prepare_tessera_bf16_module(item["parsed"]["T-16"], device="cpu")
+        values = module.decode().double()
+        scale = module.row_scale().double()
+        source = item["input"].double()
+        columns = source.shape[1]
+        magnitude = source.abs() @ values.abs().t()
+        accumulated = magnitude * (1 + smoke.fb.gamma(2 * columns + 2, smoke.fb.U_ACC))
+        effective = values.abs() * scale[:, None].abs()
+        assert bool((accumulated <= maximum).all()), "The BF16 fixture can overflow a valid FP32 dot before its epilogue"
+        assert bool((effective <= maximum).all()), "The canonical FP32 consumer buffer can overflow"
+        assert bool((accumulated * scale[None, :].abs() <= maximum).all()), "The BF16 fixture can overflow its FP32 epilogue"

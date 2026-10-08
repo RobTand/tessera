@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 import box_artifacts
-from test_accounting_source import package_roots
+from test_accounting_source import isolated_prismaquant_imports, package_roots
 from tessera.errors import TesseraError
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -353,7 +353,8 @@ def test_broadcast_refuses_a_role_whose_shape_differs_at_another_depth():
 # -- the accounting the export is checked against ------------------------------
 
 @box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
-def test_the_sidecar_reproduces_prismaquants_own_charged_bits():
+def test_the_sidecar_reproduces_prismaquants_own_charged_bits(
+        isolated_prismaquant_imports):
     # Not "a plausible size": the exact integer the allocator spent its budget
     # in.  Computed by importing PrismaQuant's own accountant, so a divergence
     # here is a divergence between two trees, not between two formulas.
@@ -370,7 +371,8 @@ def test_the_sidecar_reproduces_prismaquants_own_charged_bits():
 
 @box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
 @box_artifacts.require("shared_runs", "pq-continuous", "qwen06b", "alloc")
-def test_broadcasting_keeps_the_allocations_bpp_because_every_layer_has_one_shape():
+def test_broadcasting_keeps_the_allocations_bpp_because_every_layer_has_one_shape(
+        isolated_prismaquant_imports):
     config = json.loads((ALLOC / "lc_full_4.0.json").read_text())
     achieved = config["__prismaquant__"]["achieved_bits"]
     _plan, provenance = build(config, one_layer_shapes(layers=28),
@@ -496,7 +498,7 @@ def test_shared_expert_gate_up_is_the_exporters_fused_group_too():
         build(config, shapes, with_control=False)
 
 
-def test_the_unit_table_carries_the_shape_the_rate_was_charged_on():
+def test_the_unit_table_carries_the_shape_the_rate_was_charged_on(isolated_prismaquant_imports):
     _plan, provenance = build(uniform_config(), one_layer_shapes(), prismaquant=PQ_TREE)
     rows = {u["qname"]: u for u in provenance["units"]}
     assert rows["model.layers.0.self_attn.q_proj"]["rows"] == 2048
