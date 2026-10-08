@@ -23,8 +23,18 @@ def load_guard():
 def running(pid):
     try:
         return Path(f"/proc/{pid}/stat").read_text().split(") ", 1)[1][0] != "Z"
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # The entry can vanish mid-read (ESRCH) while the task is reaped.
         return False
+
+
+def test_running_treats_a_vanishing_process_as_not_running(monkeypatch):
+    # A process that is being reaped can raise ESRCH from the read, not ENOENT.
+    def vanish(self, *args, **kwargs):
+        raise ProcessLookupError(3, "No such process")
+
+    monkeypatch.setattr(Path, "read_text", vanish)
+    assert running(os.getpid()) is False
 
 
 @pytest.mark.parametrize("trigger", ["floor", "read_error", "launcher_exit"])

@@ -1,10 +1,27 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the graph witness rank correction (issue #1062).
+
+The witness joins the explicit rank and world size from each receipt row.
+It refuses duplicate ranks, incompatible worlds and missing participant evidence.
+A valid single-rank receipt uses its top-level records.
+Eager observations stay separate from capture observations.
+Neither equal capture shapes nor graph replay counts establish current graph rows.
+The witness supplies diagnostic evidence, not serving admission.
+
+Re-stamped 2026-10-08 for the separated witness observations (issue #1062).
+
+Eager and capture observations stay separate. Eager shapes can state eager rows. Capture shapes state observations only. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join. Replay runs no Python. The block states facts. It carries no admission verdict.
+
 Re-stamped 2026-10-08 for the register-direct base refresh after pull request 1024 merged.
 The register-direct bundle adapter reads `TILE_ROWS` from `tessera.window_geometry`, its shared owner.
 The byte audit retains both the fragment checks and the projection checks.
 The CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
 The retained graphics processor evidence does not establish serving qualification.
+
+Re-stamped 2026-10-08 for the graph witness contract (issue #1062).
+
+--compiled names Torch compilation only. Mode NONE keeps CUDA graphs but disables the Torch trace. Its records keep capture shapes. Replay runs no Python. The census refuses that combination before any load. Real compiled records still carry M star. Phase cover still requires current logical rows. No default, pin, gate or admission changes.
 
 Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
 
