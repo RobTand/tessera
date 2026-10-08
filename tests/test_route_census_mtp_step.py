@@ -58,14 +58,13 @@ def _k1_plan(tool, fixture):
 
 
 def _replay(fixture, *, plan, with_draft=True):
-    """Replay the stored historical observations, not the current class dispatcher."""
+    """Validate historical observations against current admission."""
     pytest.importorskip("torch")  # the routes that own the launch sets import torch
     tool = _tool()
     from tessera.serving import bf16_route, fp8_route, moe_route, nvfp4_route
     from tessera.serving.contract import PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract
     from tessera.serving.scheme import (
-        ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4,
-        qualification_launch_pairs)
+        ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
 
     config = fixture["config"]
     groups = config["quantization_config"]["config_groups"]
@@ -80,10 +79,6 @@ def _replay(fixture, *, plan, with_draft=True):
     current = load_serving_contract()["lane_eligibility"]["cells"]
     archive = json.loads((ROOT / "tests/fixtures/t4_tcq_cells_historical.json").read_text())
     cells = [cell for cell in current if cell["family"] != "TESSERA_E2M1_K2"] + archive["cells"]
-    def historical_decoder(family):
-        pairs = qualification_launch_pairs(family, structure="routed_moe", lanes=(), mode="resident")
-        (_, decoder), = pairs
-        return decoder
     return tool.validate_census_observations(
         phases_by_rank={phase: [rank["records"][phase] for rank in ranks]
                         for phase in (PREFILL, GENERATION)},
@@ -113,7 +108,7 @@ def _replay(fixture, *, plan, with_draft=True):
                 "source_to_module": draft["source_to_module"],
                 "speculative_config": draft["speculative_config"],
                 "batch_prompts": draft["requested_batch_prompts"],
-                "native_decoder": historical_decoder,
+                "native_decoder": moe_route.native_decoder,
                 "supported_families": {TESSERA_FP8, TESSERA_BF16}}
                if with_draft else None))
 
@@ -176,7 +171,7 @@ def test_the_r5_records_replay_clean_under_the_k1_plan():
     plan = _k1_plan(tool, fixture)
     checked = _replay(fixture, plan=plan)
     problems = checked["problems"]
-    assert problems, "v59 must refuse the folded BF16 records under the current dispatch"
+    assert problems
     names = set()
     for rank_i, rank in enumerate(fixture["ranks"]):
         for phase_records in rank["records"].values():

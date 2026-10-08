@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — use the current decoder owner in historical census replay
+
+Read the unqualified native decoder from the serving owner.
+Refuse historical folded BF16 records without a missing-qualified-pair error.
+Keep the historical receipts and current admission gates unchanged.
+
 ## 2026-10-08 — migrate released class callers to the canonical table API
 
 Remove the retired arithmetic keyword from the released class fixtures and experiment builders.
