@@ -555,32 +555,34 @@ def require_single_replay_options(args, *, stubbed=False):
 
 
 def numeric_outputs(fn, xa):
-    """Observe the real frozen adapter's class seam for this one instance."""
+    """Observe the real frozen adapter's load-bound uniform launch for this one instance."""
     import torch
     from tessera import routed_fused as rf
 
     native = fn.native
     if type(native) is not rf.FusedRoutedWindowMoE or native.library != "e4m3mma":
         raise ValueError("comparison requires the actual frozen E4M3 MMA adapter")
-    owner = type(native)
-    original = owner._launch
+    if native.uniform is None:
+        raise ValueError("comparison observes the uniform launch; this owner has several classes")
+    owner = type(native.uniform)
+    original = owner.launch
     captured_outputs = {}
     def bits(tensor):
         return tensor.detach().contiguous().view(torch.uint8).cpu()
-    def observe(instance, mode, *a, **kw):
-        original(instance, mode, *a, **kw)
-        if instance is not native:
+    def observe(kernel, mode, *a, **kw):
+        original(kernel, mode, *a, **kw)
+        if kernel is not native.uniform:
             return
         key = "mode" + str(mode)
         if mode not in (0, 1, 2) or key in captured_outputs:
             raise ValueError("comparison must expose each routed reader mode once")
         captured_outputs[key] = bits(kw["out"])
-    owner._launch = observe
+    owner.launch = observe
     try:
         captured_outputs["forward"] = bits(fn(*xa))
-        captured_outputs["mode1"] = bits(native.gate_up(*xa))
+        captured_outputs["mode1"] = bits(fn.gate_up(*xa))
     finally:
-        owner._launch = original
+        owner.launch = original
     if set(captured_outputs) != {"forward", "mode0", "mode1", "mode2"}:
         raise ValueError("comparison did not observe every routed reader mode")
     return captured_outputs
