@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — read installed-export geometry from the fixture owner
+
+Call the authoritative fixture geometry function for the real installed exporter.
+Remove the stale constant reference.
+Keep the production geometry gate unchanged.
+
 ## 2026-10-08 — use the current decoder owner in historical census replay
 
 Read the unqualified native decoder from the serving owner.
