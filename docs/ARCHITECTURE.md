@@ -16,6 +16,12 @@ The planner refuses a different declared row tile before byte pricing.
 The planner reports named capacity refusals before load.
 The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
 The README states its input and output contracts.
+The planner `dense_a4` storage kind declares `window_bits`, `tile_rows`, `arity`, `half` and per-column rates.
+It rejects obsolete TCQ fields and uses the same window geometry owner as the loader.
+The manifest refresh verifies the encoded WINDOW roles before it updates native resident bytes.
+The T4 path requires span one and the LUT plane; the shared accountant retains native shape checks.
+The source manifest and safetensors bytes remain unchanged. This metadata refresh does not attest serving.
+
 
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.

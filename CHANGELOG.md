@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — native T4 accounting callers
+
+The offline planner and manifest refresh use explicit WINDOW role metadata.
+The planner requires window bits and the shared row tile, with no TCQ fields or Torch import.
+The refresh tool verifies span-one LUT WINDOW wires and preserves source bytes through hard links.
+Both callers retain the shared native accountant and its shape and byte checks.
+
 ## 2026-10-08 — native projection byte audit integration
 
 The projection audit selects the served recipe before it prices native tensors.
