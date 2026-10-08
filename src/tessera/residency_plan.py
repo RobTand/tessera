@@ -11,7 +11,6 @@ from collections import defaultdict
 from collections.abc import Mapping
 import json
 from math import lcm, prod
-import sys
 from pathlib import Path
 
 from .errors import GrammarError
