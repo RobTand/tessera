@@ -186,7 +186,7 @@ def test_the_fixture_reproduces_r5_under_the_contract_table():
 def test_the_r5_records_replay_clean_under_the_k1_plan():
     """Current agreement: r5's records replay with only the BF16 withdrawal refused.
 
-    Contract v59 withdrew the BF16 cells and the folded launches. The folded
+    Contract v62 withdrew the BF16 cells and the folded launches. The folded
     BF16 body and draft records the fixture kept have no current cell and no
     current native decode coverage. Everything else -- plan, shapes, sources,
     the launch the draft's own coverage names -- replays as r5 ran it. The
