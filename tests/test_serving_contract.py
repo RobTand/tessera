@@ -160,6 +160,8 @@ _GLM_X_CELLS = (
      "fp8_per_token_dynamic",
      ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"),
       (_FUSED_MOE, "native_routed_fused_window_e4m3mma"))),
+    # Contract v59 restores the served-census pin after review: the BF16
+    # routed cells census only R1024 until new served receipts support more.
     ("TESSERA_BF16_K1", "routed_moe", [1024], "bf16_unquantized",
      ((_COMPACT_MOE, "native_window_moe_compact_folded"),
       (_FUSED_MOE, "native_routed_fused_window_folded"))),
@@ -600,7 +602,9 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     image; the u1 stub censuses (v39) widened FP8 and added the E2M1x2 wire on
     the grouped A4 launch.  The LFM FP8 pair at q1024 was withdrawn at v38 and
     the materialising E2M1 pair at v39.  v48 (tessera#702) adds FP8 and BF16 on
-    the nightly, on stub B's rungs.  Each pair is resident and eager.
+    the nightly, on stub B's rungs.  v59 restores the served-census pin
+    after review: both BF16 routed pairs census only R1024 until new
+    served receipts support more.  Each pair is resident and eager.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]

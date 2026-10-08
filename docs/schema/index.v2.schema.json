@@ -55,7 +55,8 @@
                       "table_schema": {
                         "enum": [
                           "fleet.rung_allowability.v1",
-                          "fleet.rung_allowability.v2"
+                          "fleet.rung_allowability.v2",
+                          "fleet.rung_allowability.v3"
                         ]
                       },
                       "table_status": {
