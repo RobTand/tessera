@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-08T08:23:23Z",
+ "generated": "2026-10-08T14:51:50Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5724,7 +5724,7 @@
     "title": "Fix mixed-rate paired UCB and expert-dominated rate trades"
    },
    "2286": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bound paired-trade report memory before real MoE allocation"
    },
    "2287": {
@@ -5732,11 +5732,11 @@
     "title": "[P2] Qualify mixed-rate enumeration limits at real fused-group shapes"
    },
    "2288": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Evaluate expert dominance on the whole layer before pruning menus"
    },
    "2289": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bind paired joint prices to the resolved format identity"
    },
    "229": {
@@ -5856,7 +5856,7 @@
     "title": "Seed wire filename refusal in finalize() runs after the source wire read; no test for a misnamed wire there (#2309 follow-up)"
    },
    "2315": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] CaptureObserver telemetry-completeness refusal discards a completed measurement (D32 violation)"
    },
    "2316": {
@@ -6260,7 +6260,7 @@
     "title": "Integration vehicle batch80: PR #2399 (forward-recovery digest owners, #2398)"
    },
    "2406": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Complete canonical consumer scope and exact proposal joins"
    },
    "2407": {
@@ -6288,11 +6288,11 @@
     "title": "[P1] D50 repo-owned model-agnostic quality and ship gates"
    },
    "2412": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] D50 repo-owned G3 v2 and small task suite"
    },
    "2413": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] D50 single ship-gates job and model-agnostic shipcards"
    },
    "2414": {
@@ -6312,7 +6312,7 @@
     "title": "[P2+] Derive Tessera export setup from profile metadata"
    },
    "2418": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Default RoPE helper blocks the D50 real CPU smoke"
    },
    "2419": {
@@ -6324,7 +6324,7 @@
     "title": "Bound paired validation server startup memory"
    },
    "2420": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add configured ship gates and generic control record replay"
    },
    "2421": {
@@ -6340,7 +6340,7 @@
     "title": "Move PACT frontier and price adapter behind the model profile"
    },
    "2424": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add versioned offline G3 and a real small task suite"
    },
    "2425": {
@@ -6380,24 +6380,44 @@
     "title": "Integration vehicle: PR 2423 at 6e2d77dd (batch90)"
    },
    "2433": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Integration vehicle: PR 2406, 2424, 2420 at approved heads (batch91)"
    },
    "2434": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Honor declared profile cohort values in the PACT adapter"
    },
    "2435": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Honor declared profile cohort values in PACT adapter"
    },
    "2436": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Apply expert dominance only to complete-layer rosters"
+   },
+   "2437": {
+    "state": "CLOSED",
+    "title": "Bind paired joint prices to the resolved format identity"
+   },
+   "2438": {
+    "state": "CLOSED",
+    "title": "Integration vehicle: PR 2435 at 1c0bf110 (batch92)"
+   },
+   "2439": {
+    "state": "CLOSED",
+    "title": "[P1] Retain finished campaigns with incomplete profiler evidence"
    },
    "244": {
     "state": "CLOSED",
     "title": "[P2] Cluster campaign CI still has a refill-order race and an unexplained recovery failure"
+   },
+   "2440": {
+    "state": "CLOSED",
+    "title": "Integration vehicle: PR 2436 and 2437 at approved heads (batch93)"
+   },
+   "2441": {
+    "state": "CLOSED",
+    "title": "Integration vehicle: PR 2439 at 672755be (batch94)"
    },
    "245": {
     "state": "CLOSED",
@@ -9794,7 +9814,7 @@
     "title": "[P1] Derive the packed T4 GPU arithmetic correctness bound before qualification"
    },
    "1008": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Derive packed T4 FP4 arithmetic bound from float32 precision"
    },
    "1009": {
@@ -9886,7 +9906,7 @@
     "title": "Apply T16 row scales in FP32 epilogues"
    },
    "1029": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Register-direct routed T-8 kernel, stage 1: kernel, fragment wire and build_layer (not selected)"
    },
    "103": {
@@ -9926,7 +9946,7 @@
     "title": "[P2+] Compute offline per-rank residency peaks before load"
    },
    "1038": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] D41 sweep reads hardcoded GLM shapes, not the model profile"
    },
    "1039": {
@@ -9954,7 +9974,7 @@
     "title": "[P2] Refuse a loose structure spec and skip a measurement taken at another geometry (#1038)"
    },
    "1044": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] source_dependencies link test collides on shared /tmp and blocks the CPU green proof"
    },
    "1045": {
@@ -9970,7 +9990,7 @@
     "title": "[P2+] Served G3 v2 captures fail the probability contract"
    },
    "1048": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "State the packed T4 arithmetic contract and reduction domain"
    },
    "1049": {
@@ -9986,7 +10006,7 @@
     "title": "[P2] Charge only the FIFO refusal to the 5-second bound in the hessian FIFO test (#1049)"
    },
    "1051": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Attest native four-bit arithmetic and compose the complete stock-reference bound"
    },
    "1052": {
@@ -10024,6 +10044,26 @@
    "106": {
     "state": "CLOSED",
     "title": "_fit_lut's eps stop test moved wire bytes on master, undeclared"
+   },
+   "1060": {
+    "state": "CLOSED",
+    "title": "Prove public structure-spec harvest on a committed fixture"
+   },
+   "1061": {
+    "state": "OPEN",
+    "title": "[P2+] Execute missing MNBT cells without replay after a partial window"
+   },
+   "1062": {
+    "state": "OPEN",
+    "title": "[P2+] Distinguish R768 CUDA graph capture from polymorphic compilation"
+   },
+   "1063": {
+    "state": "OPEN",
+    "title": "Refuse graph-only mode as compiled census"
+   },
+   "1064": {
+    "state": "OPEN",
+    "title": "[P2+] Add replay-free selection to the native matrix entry"
    },
    "107": {
     "state": "CLOSED",
