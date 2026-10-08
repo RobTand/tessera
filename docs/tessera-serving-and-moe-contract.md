@@ -1981,11 +1981,11 @@ The library term must describe the actual single-precision library implementatio
 Its floating-point output type alone supplies no internal product or reduction guarantee.
 The existing magnitude contraction also retains its separate conditional rounding model.
 
-The new API compares against exact represented arithmetic.
-It does not supply the ratio, operand, library, or magnitude-contraction contracts for the original comparison.
-Those cases remain explicitly unsupported, not silently omitted.
-The original stock-reference checker and its allowance remain unchanged and conditional.
-No complete packed-reader qualification follows from the primitive probes.
+The primitive API compares against exact represented arithmetic.
+The complete stock API in section 17.8 also supplies ratio, operand, library, and magnitude-contraction terms.
+The original packed correctness callers use that complete API.
+The earlier conditional formula remains an explicit regression baseline, not a qualification fallback.
+Primitive evidence alone cannot qualify the complete stock comparison.
 
 The fused source uses `__fmul_rn` and `__float2bfloat16_rn` at its output boundaries.
 The boundary probe issues those actual operations.
@@ -1998,9 +1998,9 @@ No complete fused-network or two-device arithmetic qualification follows.
 
 A device result applies only to the physical device that executes its probes.
 The qualifier requires an explicit comparison name.
-Only `exact_represented_operands` belongs to this primitive contract.
-Stock-reference, complete fused-epilogue, and two-device comparison requests refuse by name.
-These refusals remain after simulated approval flags become true.
+`exact_represented_operands` names the primitive comparison.
+`float32_stock_reference` also requires the four targeted stock terms in section 17.8.
+Complete fused-epilogue and two-device comparison requests refuse until their additional contracts exist.
 The qualification API refuses an untested physical-device identifier, even after simulated approval flags become true.
 The source records each physical device separately.
 Different source identities remain development-mode stamps, not seal refusals.
@@ -2060,3 +2060,185 @@ The successful claim checks verified receipt consistency and payload bytes.
 They did not verify the worker attestation.
 The original comparison, full fused-network composition, and two-device arithmetic remain unqualified.
 The kernels parent review and independent review remain required.
+
+
+### 17.8 Complete original stock-reference bound (2026-10-08)
+
+The four missing stock terms now have targeted evidence on each physical device.
+This section replaces their unsupported status in section 17.7 for the domain below.
+The device reports remain unqualified until the kernels parent review and independent review pass.
+No complete SwiGLU, router-weight, fused split, token-reduction, or two-device claim follows.
+
+#### Actual operations and targeted results
+
+The activation renderer forms `A = E2M1(code)*UE4M3(scale)` exactly, then computes `Xh=fl32(A/896)`.
+The suite checks all sixteen signed codes against all 127 finite scale bytes.
+All 2,032 divisions match the independent nearest-even reference on each device.
+The ratio owner is `A4WireUnit.epilogue_for`, not a host approximation.
+It computes one device-tensor division `rN=fl32(g/896)`.
+All 190 supported power-of-two globals match nearest-even on each device.
+The resulting relative bounds are `rho_x=u32` and `rho_r=u32`, with `u32=2^-24`.
+
+The stock weight owner is `stock_dequant`.
+Its E2M1 and UE4M3 factors need at most six significant bits.
+Its stored divisor is the exact reciprocal of a power-of-two global.
+Normal finite power-of-two weight formation has zero rounding error.
+It contributes no extra weight term.
+
+The reference uses the original `rendered_x @ weight.T` with `allow_tf32=False`.
+Targeted products retain the low single-precision bits that TF32 would discard.
+Sign, half-spacing, cancellation, and carry cases check the reduction model.
+The actual profiles include single-precision GEMV, small-N GEMM, and the CUTLASS SIMT SGEMM kernel.
+Their split reduction operates on single-precision partial sums.
+Each output has K products and at most K-1 nonzero reduction additions.
+Exact unit scaling and zero initialization contribute no extra rounding term.
+The conservative reference model uses `epsilon32=2^-23` and an error depth of `2*K`.
+It requires normal finite intermediates, not only a single-precision output type.
+
+The magnitude uses the original positive contraction `abs(Xh.double()) @ abs(W.double()).T`.
+The profiles include double-precision GEMV, double-precision matrix kernels, and the double-precision tensor instruction with contraction width four.
+Products of converted single-precision operands fit exactly in double precision.
+The positive tensor block has four products, an incoming sum, and final normalization.
+At least 53 alignment bits bound its six rounding contributions by the eight-count budget for four contraction terms.
+The complete positive reduction therefore uses `gamma(2*K,epsilon64)`, with `epsilon64=2^-52`.
+Zero initialization and exact unit scaling add no error.
+The recorded device traces retain the actual reduction and unit-scaling kernels.
+Unknown kernel families refuse qualification instead of inheriting these counts.
+
+#### Exact composition
+
+Define:
+
+`eta=65*2^-35+2^-23`, `L=K/64`, and `gamma(n,e)=n*e/(1-n*e)`.
+
+`GN=(1+eta)^L-1`.
+
+`GR=gamma(2*K,epsilon32)`.
+
+`GM=gamma(2*K,epsilon64)`.
+
+Let `Mhat=max_(m,n) sum_k |Xh[m,k]|*|W[n,k]|`.
+Let `Mobs` be the actual positive double-precision contraction's maximum.
+Its targeted arithmetic contract gives:
+
+`Mhat <= Mobs/(1-GM)`.
+
+The implementation evaluates the inflation with exact rational arithmetic.
+It rounds the resulting `M_upper` outward to double precision.
+Thus `M_upper >= Mhat`.
+
+Let `MT` be the magnitude before the rendered-activation division error.
+Each nonzero rendered activation differs by at most `rho_x` relatively.
+Consequently:
+
+`MT <= M_upper/(1-rho_x)`.
+
+The native ratio, native matrix, and output multiplication compose multiplicatively:
+
+`FN=(1+rho_r)*(1+GN)*(1+u32)-1`.
+
+The original comparison's complete bound is:
+
+`|native_output-stock_reference| <= [(FN+rho_x)/(1-rho_x)+GR]*M_upper`.
+
+The comparison uses zero relative tolerance.
+Every product of rounding factors remains in the expression.
+No first-order approximation, fitted multiplier, or fixed empirical allowance appears.
+The reference and magnitude operation counts come from their actual reduction graphs.
+The native count comes from the actual 64-column instruction.
+No independent bfloat16 input term applies because both paths share one activation quantizer.
+The diagnostic asks for single-precision output, so it has no bfloat16 output conversion term.
+
+#### Supported normal finite domain
+
+The input global is exactly 896.
+The weight global is `g=2^e`, with `-73<=e<=116`.
+Each E2M1 code lies between zero and fifteen.
+Each unsigned UE4M3 byte lies between zero and 126.
+The initial native accumulator is zero.
+The packed contraction length is a positive multiple of 128.
+The gamma denominators must remain positive.
+The actual reference shapes have N=64, K=256, and M in `{1,2,3,16,33,65}`.
+Grouped outputs use their actual two- and three-row reference segments.
+Other reference shapes require their own backend characterization.
+
+The raw activation factor has magnitude at most 2,688 and minimum nonzero magnitude `2^-10`.
+The rendered activation has magnitude at most three and a smallest significand lattice of `2^-43`.
+The exact stock weight lattice is `2^(e-10)`.
+Reference products and partial sums remain on a lattice no finer than `2^(e-53)`.
+The lower exponent bound keeps every nonzero such intermediate normal in single precision.
+The upper exponent bound keeps every possible stock weight finite.
+Signs and cancellation can produce exact zero but cannot produce an unsupported subnormal intermediate.
+The native dot remains on its `2^-20` lattice.
+Its ratio multiplication has a nonzero magnitude above the smallest single-precision normal value in this domain.
+Thus the full stock bound needs no absolute subnormal floor.
+
+The implementation also requires these prefix and output guards:
+
+`(1+GR)*M_upper <= FP32_MAX`.
+
+`(1+GN)*(896/g)*M_upper/(1-rho_x) <= FP32_MAX`.
+
+`(1+rho_r)*(1+GN)*M_upper/(1-rho_x) <= FP32_MAX`.
+
+These guards cover all possible prefixes, not only the final observed output.
+They refuse non-power-of-two globals, unsupported scale bytes, nonfinite values, overflow, different globals, and uncharacterized reference shapes.
+Exact zero magnitude has an exact zero allowance.
+Signed-zero bit semantics remain outside the value comparison.
+
+The discrepancy reduction converts both single-precision outputs exactly to double precision.
+It rounds their difference in double precision.
+The checker inflates that observed difference by `1/(1-2^-53)` and rounds outward.
+It compares this upper value with the outward derived allowance.
+This accounts for the checker operation without adding an empirical error floor.
+
+#### Observed original-path evidence
+
+Sparky action `bc466b44bdd5f3a740d414f4e96322f40b6b38b4fc6a33695f8f2518d83e7307` passed all four stock families.
+Its successful receipt digest is `5cdc946a04ec971d5ddef24dff280aac8c9a5466654f611aae546b78832d63ed`.
+Sparklina action `654d26d4b40d7b654a1e20228dde899b2481c2e7e663282f61ac2af202ca01da` passed the same families independently.
+Its successful receipt digest is `d3f6da8aa6368c1e809c406fe4fb4c6d352bc2092e8937ca75be701ca0ba0449`.
+Each action checked 2,032 divisions, 190 ratios, 36 single-precision library cases, and 36 magnitude cases.
+Each action passed eight actual packed comparisons at rates 895 and 896.
+The maximum observed difference was `4.284083843231202e-08`.
+Its corresponding allowance was `5.4292702357934556e-05`, derived from the operands and operation counts.
+The wrong-output controls refused through the same full comparison API.
+Each action retains its actual device trace, independent rational references, ratio alternatives, inputs, and source context.
+
+The earlier stock processor action `f9f336f8cf228b8f6e6a20863544880111b4e35489c974c55adb9110d15818d1` remains failed.
+It exposed an omitted processor-device argument in the probe harness.
+The earlier native stock action `2bf5e951bf548767c76f303a0f301c1de73dec7a6d9f21a271c2f73ce237d395` also remains failed.
+Its arithmetic checks passed, but its profile interpreter did not recognize the actual split-reduction and exact unit-scaling kernels.
+Neither failure supplies a defective-device verdict.
+No six-property or scalar-boundary replay follows those corrections.
+
+
+#### Original dense and grouped comparison panel
+
+The complete bound now runs in the original correctness entry, not only in an isolated primitive test.
+The panel retains both routed and dense recipes at rates 129, 383, 641, 895, and 896.
+It retains token counts one, sixteen, thirty-three, and sixty-five.
+Grouped checks retain three experts, one empty expert, repeated and reordered routes, and the distinct final expert.
+Each reference segment uses its actual global, magnitude, and two- or three-row library shape.
+The source retains every encoded unit, represented operand, native output, stock output, and derived bound.
+
+Sparky original-panel action `c50dff334df5b95ed8521e381ab84b7f155e7a91b861dbd09b67681934cd878f` completed ten rows and seventy comparisons.
+Its receipt digest is `976d0b65d7332b8c5f8d14609b1ee08b97b3815a5db1cadd8b956e0ab79561d0`.
+Sparklina original-panel action `3e8b0474bdb0bdca4b92a67cca734c9e9f4fbc3db84b3f9e1de86b5843792f86` completed the same panel independently.
+Its receipt digest is `803a4e9f2b61bcc2aeb827521a33d87d165af8f6521bc6eaec8f6b044605e874`.
+Each panel's maximum observed difference was `1.7881393432617188e-07`.
+The largest operand-derived allowance was `0.0001829943822073238`.
+Those maxima describe different entries and are not a fitted error ratio.
+
+Processor action `71d5d6dc7c3fc9073aadcaea4a41817ff4553ced0261add3718af73e956aeb34` checked both actual inputs and passed 88 targeted controls.
+It skipped no test and allocated no CUDA device.
+Its receipt digest is `d2900214be43202220de123789256e26be44dedd7f11d00276c1c52a1286be1c`.
+The original-panel actions used this exact processor preflight.
+Each physical action had priority zero, ordinary graphics-processor exclusivity, fresh disk admission, and its own completion client.
+No six-property or scalar-boundary replay occurred.
+
+The dense negative controls place a wrong output between the earlier conditional allowance and the new complete allowance.
+The complete API refuses the wrong output through the same actual-path checker.
+The original output remains intact in the retained tensor file.
+The complete comparison, byte checks, and finite-domain guards remain independent.
+Arithmetic qualification stays false until both required reviews pass.

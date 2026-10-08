@@ -320,6 +320,16 @@ def main(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     cpu_controls()
+    if args.original_stock_regressions:
+        if not args.native_attestation:
+            raise ValueError("original comparison regressions require --native-attestation")
+        from fp4_stock_reference_attest import run_original
+        return run_original(args, sys.modules[__name__])
+    if args.stock_reference:
+        if not args.native_attestation:
+            raise ValueError("stock reference probes require --native-attestation")
+        from fp4_stock_reference_attest import run
+        return run(args, sys.modules[__name__])
     if args.output_boundaries:
         if not args.native_attestation:
             raise ValueError("output boundary probes require --native-attestation")
@@ -457,5 +467,8 @@ if __name__ == "__main__":
     parser.add_argument("--negative-control", action="store_true")
     parser.add_argument("--output-boundaries", action="store_true")
     parser.add_argument("--native-attestation")
+    parser.add_argument("--stock-reference", action="store_true")
+    parser.add_argument("--boundary-attestation")
+    parser.add_argument("--original-stock-regressions", action="store_true")
     parser.add_argument("--guarded-child", action="store_true", help=argparse.SUPPRESS)
     raise SystemExit(guarded(parser.parse_args()))

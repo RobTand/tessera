@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-10-08 — issue 1007: complete stock-reference arithmetic bound
+
+Characterize the actual rendered division, stored ratio, single-precision
+library multiplication, and double-precision magnitude contraction on each physical device.
+Compose these terms with the native atom contract and actual output multiplication.
+Evaluate every higher-order factor with exact rational arithmetic.
+Round the magnitude, allowance, and measured discrepancy outward.
+Use the complete contract in the original dense and grouped correctness callers.
+Retain exact inputs, native outputs, byte oracles, traces, and negative controls.
+Refuse unsupported globals, reference shapes, kernels, overflow, and physical devices.
+Keep arithmetic qualification false before both required reviews.
+Exclude unproved fused activations, router weights, split sums, token reductions, and two-device arithmetic.
+
 ## 2026-10-07 — issue 1007: targeted native four-bit arithmetic probes
 
 Add exact native probes for products, scale order, alignment width,

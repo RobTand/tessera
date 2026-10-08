@@ -129,10 +129,65 @@ def test_an_approved_contract_cannot_transfer_to_an_untested_physical_device():
     assert require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison="exact_represented_operands") == report["contract"]
 
 
-@pytest.mark.parametrize("comparison", ["float32_stock_reference", "complete_fused_epilogue", "tp2_arithmetic"])
+@pytest.mark.parametrize("comparison", ["complete_fused_epilogue", "tp2_arithmetic"])
 def test_uncharacterized_complete_comparisons_refuse_even_after_approval(comparison):
     report = fixture_report()
     report["arithmetic_qualified"] = True
     report["reviews"] = {"kernels_parent": True, "independent": True}
-    with pytest.raises(FP4QualificationError, match="needs uncharacterized normalization, library, or fused epilogue terms"):
+    with pytest.raises(FP4QualificationError, match="needs uncharacterized fused epilogue or cross-device terms"):
         require_t4_device_qualification(report, device="CPU test fixture", physical_device="fixture-device", comparison=comparison)
+
+
+
+def stock_fixture_report():
+    report = fixture_report()
+    report["stock_reference"] = {"properties": {name: {"status": "pass", "cases": 1} for name in ("activation_division", "ratio_formation", "library_fp32", "magnitude_fp64")},
+        "physical_devices": ["fixture-device"], "input_global_scale": 896, "allow_tf32": False,
+        "activation_division_steps": 1, "ratio_formation_steps": 1,
+        "library_fp32_precision": 24, "magnitude_fp64_precision": 53,
+        "reference_shapes": [[1, 64, 256], [16, 64, 256]]}
+    return report
+
+
+def test_complete_stock_bound_keeps_all_higher_order_terms():
+    from tessera.fp4_arithmetic import EPSILON, derive_packed_stock_bound
+    report = stock_fixture_report()
+    result, receipt = derive_packed_stock_bound(7, k=256, global_scale=Fraction(1, 256),
+        report=report, device="CPU test fixture", physical_device="fixture-device", shape=(1, 64, 256))
+    u = Fraction(1, 1 << 24)
+    native = (1 + ATOM_ERROR) ** 4 - 1
+    gamma = 512 * EPSILON / (1 - 512 * EPSILON)
+    coefficient = (((1 + u) * (1 + native) * (1 + u) - 1 + u) / (1 - u) + gamma)
+    assert Fraction(receipt["exact_bound"]) == 7 * coefficient
+    assert Fraction(result["atol"]) >= 7 * coefficient
+    assert receipt["activation_division"] == str(u)
+    assert receipt["ratio_formation"] == str(u)
+    assert receipt["weight_formation_error"].startswith("0:")
+    assert receipt["subnormal_allowance"].startswith("0:")
+    assert receipt["arithmetic_qualified"] is False
+
+
+@pytest.mark.parametrize("name", ["activation_division", "ratio_formation", "library_fp32", "magnitude_fp64"])
+def test_each_missing_stock_term_refuses(name):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound
+    report = stock_fixture_report()
+    report["stock_reference"]["properties"][name]["status"] = "fail"
+    with pytest.raises(FP4QualificationError, match=f"required stock-reference term {name}"):
+        derive_packed_stock_bound(1, k=256, global_scale=1, report=report, device="CPU test fixture", physical_device="fixture-device")
+
+
+@pytest.mark.parametrize("global_scale", [Fraction(1, 1 << 74), 1 << 117, Fraction(3, 2), 0, -1])
+def test_stock_global_domain_refuses_subnormal_or_inexact_weight_cases(global_scale):
+    from tessera.fp4_arithmetic import derive_packed_stock_bound
+    with pytest.raises(ValueError):
+        derive_packed_stock_bound(1, k=256, global_scale=global_scale, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+
+
+def test_magnitude_inflation_uses_the_actual_double_contraction():
+    from tessera.fp4_arithmetic import stock_magnitude_upper
+    measured = Fraction(7, 8)
+    epsilon = Fraction(1, 1 << 52)
+    gamma = 512 * epsilon / (1 - 512 * epsilon)
+    upper = stock_magnitude_upper(float(measured), k=256, report=stock_fixture_report(), device="CPU test fixture", physical_device="fixture-device")
+    assert Fraction(upper) >= measured / (1 - gamma)
+

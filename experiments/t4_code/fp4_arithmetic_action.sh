@@ -20,7 +20,7 @@ CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinit
 INPUT_MOUNTS=()
 previous=
 for argument in "$@"; do
-    if [[ "$previous" == "--native-attestation" ]]; then
+    if [[ "$previous" == "--native-attestation" || "$previous" == "--boundary-attestation" ]]; then
         [[ -f "$argument" ]] || { echo "missing native attestation input: $argument" >&2; exit 2; }
         INPUT_MOUNTS+=(-v "$argument:$argument:ro")
     fi

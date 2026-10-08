@@ -63,9 +63,15 @@ the conditional reader allowance, or any live measurement path.
 Section 17.7 of the serving contract gives the model, derivation, and limitations.
 The actual scalar output operations have separate targeted probes.
 The qualifier refuses an untested physical device. Each device has its own evidence.
-The original stock-reference comparison stays conditional. Its division, ratio,
-operand-formation, library-multiplication, and magnitude terms remain unsupported by the new primitive contract.
-Complete fused-network and two-device arithmetic qualification remain false.
+Re-stamped 2026-10-08 for the complete original stock-reference comparison.
+Targeted device probes now cover rendered-activation division, stored-ratio formation,
+single-precision library multiplication, and positive double-precision magnitude contraction.
+The complete bound composes these terms without a fitted multiplier or empirical floor.
+The original dense and grouped correctness callers use the complete stock API.
+Its supported global range, backend configuration, and reference shapes fail closed.
+Arithmetic qualification remains false before both required reviews.
+Complete fused-network and two-device arithmetic qualification remain outside this claim.
+Section 17.8 gives the complete derivation and device receipts.
 
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank

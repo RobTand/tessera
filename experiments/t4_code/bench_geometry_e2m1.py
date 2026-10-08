@@ -591,12 +591,18 @@ def check_packed_fp4_arithmetic(actual, expected, operand_magnitude, *, k):
 
 
 def run_correctness(args, grid, samples):
-    """Byte oracles and conditional arithmetic diagnostics, 64 by 256."""
+    """Byte oracles and attested full stock-reference comparisons, 64 by 256."""
     from tessera.compact_prep import parse_compact_wire, prepare_a4_wire_compact
     from tessera.kernel_a4_wire import PreparedA4Wire, decode_wire_codes
     from tessera.kernel_a4 import a4_quantize_activation
     from tessera.stock import materialize_stock, stock_dequant, _nvfp4_values
     from tessera.unit_artifact import parse_unit_artifact
+    from tessera.fp4_arithmetic import check_packed_stock_arithmetic, stock_magnitude_upper
+    if not getattr(args, "arithmetic_attestation", ""):
+        raise ValueError("packed correctness requires --arithmetic-attestation for the complete stock comparison")
+    attestation = json.loads(Path(args.arithmetic_attestation).read_text())
+    physical = os.environ["HOST_NAME"] + ":cuda:0"
+    Path(args.out).mkdir(parents=True, exist_ok=True)
     if not args.packed_reader or grid.name != "E2M1x2":
         raise ValueError("correctness needs the explicit packed E2M1 pair reader")
     torch.backends.cuda.matmul.allow_tf32 = False
@@ -611,6 +617,7 @@ def run_correctness(args, grid, samples):
             for role in ("gate", "up"):
                 encoded = encode_linear(samples[role].repeat(2, 1).to("cuda"),
                     grid=grid, q256=q, **recipe_kwargs(recipe))
+                Path(args.out, f"unit-q{q}-{structure}-{role}.blob").write_bytes(encoded.blob)
                 unit = prepare_a4_wire_compact(parse_compact_wire(encoded.blob, device="cuda"))
                 parsed = parse_unit_artifact(encoded.blob, device="cpu")
                 stock = materialize_stock(parsed.unit, parsed.forests, parsed.code)
@@ -645,11 +652,21 @@ def run_correctness(args, grid, samples):
                 k = int(x.shape[1])
                 if k != int(weights[0].shape[1]) or k != int(rendered_x.shape[1]):
                     raise ValueError(f"the gate contraction lengths differ: {k}")
-                magnitude = dense_packed_fp4_operand_magnitude(rendered_x, weights[0])
+                magnitude = stock_magnitude_upper(float((rendered_x.double().abs() @ weights[0].double().abs().T).max()), k=k, report=attestation, device=attestation["device"]["device"], physical_device=physical, shape=(m, units[0].rows, k))
 
                 expected = rendered_x @ weights[0].T
                 actual = dense(x, out_dtype=torch.float32)
-                bound_template = check_packed_fp4_arithmetic(actual, expected, magnitude, k=k)
+                bound_template = check_packed_stock_arithmetic(actual, expected, magnitude, k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical)
+                legacy_allowance, _ = derive_packed_fp4_arithmetic_bound(magnitude, k=k)
+                bad = actual.clone()
+                bad[0, 0] = expected[0, 0] + (bound_template["atol"] + legacy_allowance["atol"]) / 2
+                try:
+                    check_packed_stock_arithmetic(bad, expected, magnitude, k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical)
+                except ValueError as exc:
+                    bound_template["negative_control_refusal"] = str(exc)
+                else:
+                    raise AssertionError("actual-path wrong output passed the attested stock bound")
+                torch.save({"x": x.cpu(), "codes": a.cpu(), "scales": scale.cpu().view(torch.uint8), "rendered_x": rendered_x.cpu(), "weight": weights[0].cpu(), "actual": actual.cpu(), "expected": expected.cpu(), "negative_output": bad.cpu(), "bound": bound_template, "legacy_allowance": legacy_allowance}, Path(args.out) / f"dense-q{q}-{structure}-m{m}.pt")
                 errors.append(float((actual.double() - expected.double()).abs().max()))
                 magnitudes.append(float(magnitude))
                 gate_atols.append(bound_template["atol"])
@@ -658,14 +675,19 @@ def run_correctness(args, grid, samples):
                 if m >= 4:
                     offsets = torch.tensor([0, 3, 3, 5], dtype=torch.int32, device="cuda")
                     tokens = torch.tensor([2, 0, 2, 1, 3], dtype=torch.int32, device="cuda")
-                    grouped_magnitude = max(
-                        dense_packed_fp4_operand_magnitude(rendered_x[tokens[:3].long()], weights[0]),
-                        dense_packed_fp4_operand_magnitude(rendered_x[tokens[3:].long()], weights[1]))
+                    segment_magnitudes = (
+                        stock_magnitude_upper(float((rendered_x[tokens[:3].long()].double().abs() @ weights[0].double().abs().T).max()), k=k, report=attestation, device=attestation["device"]["device"], physical_device=physical, shape=(3, units[0].rows, k)),
+                        stock_magnitude_upper(float((rendered_x[tokens[3:].long()].double().abs() @ weights[1].double().abs().T).max()), k=k, report=attestation, device=attestation["device"]["device"], physical_device=physical, shape=(2, units[1].rows, k)))
+                    grouped_magnitude = max(segment_magnitudes)
 
                     actual = grouped(x, expert_offsets=offsets, route_ids=tokens, num_routes=5, out_dtype=torch.float32)
                     expected = torch.cat((rendered_x[tokens[:3].long()] @ weights[0].T,
                                           rendered_x[tokens[3:].long()] @ weights[1].T))
-                    bound_template = check_packed_fp4_arithmetic(actual, expected, grouped_magnitude, k=k)
+                    segment_checks = [
+                        check_packed_stock_arithmetic(actual[:3], expected[:3], segment_magnitudes[0], k=k, global_scale=units[0].global_scale, report=attestation, physical_device=physical),
+                        check_packed_stock_arithmetic(actual[3:], expected[3:], segment_magnitudes[1], k=k, global_scale=units[1].global_scale, report=attestation, physical_device=physical)]
+                    bound_template = max(segment_checks, key=lambda item: item["atol"])
+                    torch.save({"x": x.cpu(), "tokens": tokens.cpu(), "offsets": offsets.cpu(), "actual": actual.cpu(), "expected": expected.cpu(), "segment_bounds": segment_checks}, Path(args.out) / f"grouped-q{q}-{structure}-{role}-m{m}.pt")
                     errors.append(float((actual.double() - expected.double()).abs().max()))
                     magnitudes.append(float(grouped_magnitude))
                     gate_atols.append(bound_template["atol"])
@@ -706,6 +728,7 @@ def main():
     ap.add_argument("--quality-structure", choices=(STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE), default=STRUCTURE_ROUTED_MOE)
     ap.add_argument("--packed-reader", action="store_true", help="Opt-in actual mixed TCQ and dense WINDOW reader")
     ap.add_argument("--correctness", action="store_true", help="Bounded byte and numerical native reader oracle")
+    ap.add_argument("--arithmetic-attestation", default="", help="Measured complete stock-reference arithmetic contract")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--power-s", type=float, default=0.1)
