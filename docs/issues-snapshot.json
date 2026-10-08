@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-08T14:51:50Z",
+ "generated": "2026-10-08T17:36:00Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -6419,6 +6419,14 @@
     "state": "CLOSED",
     "title": "Integration vehicle: PR 2439 at 672755be (batch94)"
    },
+   "2442": {
+    "state": "OPEN",
+    "title": "Integration vehicle: PR 2371 at a47c6c45 (batch95)"
+   },
+   "2443": {
+    "state": "OPEN",
+    "title": "[P2] Fused-mapping lookup failure is swallowed in artifact completeness and native export (GLM lane lookup)"
+   },
    "245": {
     "state": "CLOSED",
     "title": "Retain refused pairing evidence and add bounded stack diagnostics"
@@ -10055,15 +10063,23 @@
    },
    "1062": {
     "state": "OPEN",
-    "title": "[P2+] Distinguish R768 CUDA graph capture from polymorphic compilation"
+    "title": "[P1] Distinguish R768 CUDA graph capture from polymorphic compilation"
    },
    "1063": {
     "state": "OPEN",
     "title": "Refuse graph-only mode as compiled census"
    },
    "1064": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Add replay-free selection to the native matrix entry"
+   },
+   "1065": {
+    "state": "OPEN",
+    "title": "[P2] Guard four vllm tests on the submodule they import, so the bench stub cannot break collection"
+   },
+   "1066": {
+    "state": "OPEN",
+    "title": "[P2] Fail the hessian FIFO test on no CPU progress, not on elapsed time"
    },
    "107": {
     "state": "CLOSED",
