@@ -77,7 +77,7 @@ def test_every_published_cell_names_its_measured_runtime_and_toolchain():
         vllm, torch = runtime_contract.cell_runtime_versions(cell)
         assert image and modes and vllm and torch
         assert set(cell["runtime"]) == (runtime_contract.RUNTIME_SCOPE_KEYS
-                                        | runtime_contract.RUNTIME_VERSION_KEYS)
+                                        | runtime_contract.RUNTIME_VERSION_KEYS | {"kernel_build"})
 
 
 def test_one_image_carries_one_toolchain():

@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-07T19:06:23Z",
+ "generated": "2026-10-07T19:37:47Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -6299,9 +6299,33 @@
     "state": "OPEN",
     "title": "Integration vehicle batch82: PR #2371 at a47c6c45 (explicit GLM projection source owners, Refs #2400)"
    },
+   "2415": {
+    "state": "OPEN",
+    "title": "Read kernel-build Tessera cell keys"
+   },
+   "2416": {
+    "state": "OPEN",
+    "title": "[P2+] Add day-zero model intake and a new-model runbook"
+   },
+   "2417": {
+    "state": "OPEN",
+    "title": "[P2+] Derive Tessera export setup from profile metadata"
+   },
+   "2418": {
+    "state": "OPEN",
+    "title": "[P2+] Default RoPE helper blocks the D50 real CPU smoke"
+   },
+   "2419": {
+    "state": "OPEN",
+    "title": "Integration vehicle batch83: D50 PR #2416 (day-zero intake) then PR #2417 (profile export setup)"
+   },
    "242": {
     "state": "CLOSED",
     "title": "Bound paired validation server startup memory"
+   },
+   "2420": {
+    "state": "OPEN",
+    "title": "Add configured ship gates and generic control record replay"
    },
    "243": {
     "state": "CLOSED",

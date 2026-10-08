@@ -8,6 +8,25 @@ Native T4 roles carry arity, half width, window bits and the shared row tile.
 They retain no TCQ trellis tables. The audit preserves the wire and direct buffer checks.
 Direct buffer assertions use the recorded source rows and columns, not an incidental fixture width.
 
+Re-stamped 2026-10-07 for issue #1036.
+The repository owns the serving Dockerfile, image job and source patch files under `images/serving`.
+The image job prints its PrismaBuild command unless the operator selects `--submit`.
+The job requests central processors only. This change starts no image build.
+Cells use kernel build and module kind for portable lookup.
+The compatibility map preserves historical cell identifiers and image-only calls.
+Legacy build names identify recorded toolchain scopes. They do not prove native binary equivalence.
+An explicit build context selects the portable key. The image remains provenance.
+Existing defaults, pins, wire bytes, rungs, evidence and paired-rank checks remain unchanged.
+No new device qualification or performance claim accompanies this change.
+Both validators reject overlapping image-only and kernel-build scopes.
+The image job uses an owned rootless BuildKit container through the published Docker shim.
+The builder writes a Docker archive to the explicit shared output directory.
+The producer mounts no host Docker socket. PrismaBuild retains resource ownership.
+The source reader names its repository root. The directory-read ceiling remains unchanged.
+The imported patches retain the GNU Affero General Public License version three and the historical license notice.
+The Dockerfile copies both upstream license files into the image.
+The contract history records this change as the assigned version 61. This request references issue 1036 and does not close it.
+
 Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
 `tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
 It includes explicit copies, padded shards, temporary buffers, and rank reserves.
