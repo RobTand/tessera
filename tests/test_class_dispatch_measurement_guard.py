@@ -27,6 +27,15 @@ def running(pid):
         return False
 
 
+def test_running_treats_a_vanishing_process_as_not_running(monkeypatch):
+    # A process that is being reaped can raise ESRCH from the read, not ENOENT.
+    def vanish(self, *args, **kwargs):
+        raise ProcessLookupError(3, "No such process")
+
+    monkeypatch.setattr(Path, "read_text", vanish)
+    assert running(os.getpid()) is False
+
+
 @pytest.mark.parametrize("trigger", ["floor", "read_error", "launcher_exit"])
 def test_guard_stops_workload_after_launcher_exit(tmp_path, monkeypatch, trigger):
     guard = load_guard()

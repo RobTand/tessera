@@ -104,6 +104,15 @@ def alive(pid):
     return path.exists() and path.read_text().split()[2] != "Z"
 
 
+def test_alive_treats_a_vanishing_process_as_not_alive(monkeypatch):
+    # The entry can exist and still raise ESRCH from the read while the task is reaped.
+    def vanish(self, *args, **kwargs):
+        raise ProcessLookupError(3, "No such process")
+
+    monkeypatch.setattr(Path, "read_text", vanish)
+    assert alive(os.getpid()) is False
+
+
 def scenario(root, name, *, mode="graph-control"):
     queue, rdv = root / "queue", root / "rdv"
     rdv.mkdir()
