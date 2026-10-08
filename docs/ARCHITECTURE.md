@@ -1,8 +1,8 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-10-08 for the graph-phase witness (issue #1062).
+Re-stamped 2026-10-08 for the separated witness observations (issue #1062).
 
-The offline witness joins an eager receipt and a capture receipt. Prefill rows stand stated on matching concrete shapes. Capture never states decode rows. Replay runs no Python. The block states facts and problems. It carries no admission verdict.
+Eager and capture observations stay separate. Eager shapes can state eager rows. Capture shapes state observations only. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join. Replay runs no Python. The block states facts. It carries no admission verdict.
 
 Re-stamped 2026-10-08 for the register-direct base refresh after pull request 1024 merged.
 The register-direct bundle adapter reads `TILE_ROWS` from `tessera.window_geometry`, its shared owner.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-10-08 — separated witness observations (issue #1062)
+
+Supersedes the prior witness entry. Eager and capture observations stay separate. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join under rank scope. Schema moves to tessera.graph-phase-witness/2. Exit 0 names complete evidence, never admission.
+
 ## 2026-10-08 — graph-phase witness over eager control and capture (issue #1062)
 
 The tool joins an eager control receipt and a graph capture receipt. Prefill rows stand stated when both sides name the same concrete shape. Capture never states decode rows. Replay runs no Python. The block carries facts and problems. It carries no admission verdict.

@@ -906,56 +906,89 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
     return problems
 
 
-def graph_phase_witness(*, eager_records, capture_records, graph_launches, phase_regimes):
-    """Which logical-phase rows an eager control and a graph capture jointly state.
+def _witness_rank_maps(receipt):
+    """(world size, per-rank record maps) preserving rank scope.
 
-    Replay runs no Python, so a capture record is its capture-time shape and
-    never a current logical row. This joins three observed facts and invents
-    none: the eager control's concrete shape per phase, the capture's concrete
-    shape per phase, and the profile's replay count. Prefill rows stand stated
-    only when both sides name the same concrete shape and that shape meets its
-    regime. Capture never states decode rows. Problems name every unstated
-    phase. The block carries facts and problems, and no admission verdict.
+    A receipt with a ranks array names each rank's records; one without is a
+    single-rank receipt. Topology names the observed world where present.
+    """
+    ranks = receipt.get("ranks") or []
+    maps = [(rank.get("records") or {}) for rank in ranks]
+    topology = receipt.get("topology") or {}
+    world = topology.get("observed_world_size")
+    if not isinstance(world, int) or isinstance(world, bool) or world < 1:
+        world = len(maps) or 1
+    return world, maps
+
+
+def graph_phase_witness(*, eager_receipt, capture_receipt, graph_launches, phase_regimes):
+    """Which phase facts an eager receipt and a graph capture receipt jointly state.
+
+    Eager and capture observations stay separate: eager shapes can state eager
+    rows, while capture shapes state only what the capture observed, never
+    current graph rows. Equal stale shapes credit nothing. Both ranks of each
+    receipt join under rank scope; a missing rank blocks aggregate claims.
+    Zero launches yield no phase credit. Problems name every gap. The block
+    carries facts, and no admission verdict.
     """
     from tessera.serving.scheme import eager_regime_problem
     batch_phase, decode_phase = driven_phase_pair(phase_regimes)
     launched = (isinstance(graph_launches, int) and not isinstance(graph_launches, bool)
                 and graph_launches > 0)
+    eager_world, eager_ranks = _witness_rank_maps(eager_receipt)
+    capture_world, capture_ranks = _witness_rank_maps(capture_receipt)
     phases = {}
     problems = []
     if not launched:
-        problems.append("no graph replay observed; a witness without replayed graphs states nothing")
+        problems.append("no graph replay observed; a witness without replayed graphs yields no phase credit")
+    if eager_world != capture_world:
+        problems.append(f"eager world {eager_world} differs from capture world {capture_world}; scopes do not join")
+    if len(eager_ranks) > eager_world or len(capture_ranks) > capture_world:
+        problems.append("a receipt names more ranks than its world; scopes do not join")
+    world = max(eager_world, capture_world)
+    scope_ok = (launched and eager_world == capture_world
+                and len(eager_ranks) <= eager_world and len(capture_ranks) <= capture_world)
+    for rank in range(world):
+        if rank >= len(eager_ranks) or not eager_ranks[rank]:
+            problems.append(f"rank {rank} eager evidence missing; aggregate phase claims blocked")
+            scope_ok = False
+        if rank >= len(capture_ranks) or not capture_ranks[rank]:
+            problems.append(f"rank {rank} capture evidence missing; aggregate phase claims blocked")
+            scope_ok = False
     for phase in (batch_phase, decode_phase):
-        eager = eager_records.get(phase, {}) or {}
-        capture = capture_records.get(phase, {}) or {}
-        owners = sorted(set(eager) | set(capture))
         entries = {}
-        stated = bool(owners)
-        if not owners:
-            problems.append(f"{phase}: neither side names a module")
-        for owner in owners:
-            eshape = (eager.get(owner, {}) or {}).get("shape") or ""
-            cshape = (capture.get(owner, {}) or {}).get("shape") or ""
-            eager_ok = bool(eshape) and eager_regime_problem(eshape, phase_regimes.get(phase)) is None
-            if not eshape:
-                problems.append(f"{phase} {owner}: eager control states no shape")
-            elif not eager_ok:
-                problems.append(f"{phase} {owner}: eager control shape {eshape} misses its regime")
-            graph_ok = False
-            if not cshape:
-                problems.append(f"{phase} {owner}: capture states no shape")
-            elif phase == decode_phase:
-                problems.append(f"{phase} {owner}: capture {cshape} is capture-time; replay runs no Python")
-            elif not eager_ok or cshape != eshape:
-                problems.append(f"{phase} {owner}: capture {cshape} differs from eager {eshape or 'states nothing'}")
-            else:
-                graph_ok = True
-            stated = stated and eager_ok and graph_ok
-            entries[owner] = {"eager_shape": eshape, "capture_shape": cshape,
-                              "eager_states_rows": eager_ok, "graph_states_rows": graph_ok}
+        stated = scope_ok
+        for rank in range(world):
+            eager = eager_ranks[rank] if rank < len(eager_ranks) else {}
+            capture = capture_ranks[rank] if rank < len(capture_ranks) else {}
+            names = sorted(set(eager.get(phase, {}) or {}) | set(capture.get(phase, {}) or {}))
+            if not names:
+                problems.append(f"{phase} rank {rank}: neither side names a module")
+                stated = False
+            for name in names:
+                owner = name if world == 1 else f"rank{rank}/{name}"
+                eshape = ((eager.get(phase, {}) or {}).get(name) or {}).get("shape") or ""
+                cshape = ((capture.get(phase, {}) or {}).get(name) or {}).get("shape") or ""
+                if not eshape:
+                    problems.append(f"{phase} {owner}: eager control states no shape")
+                    eager_ok = False
+                elif eager_regime_problem(eshape, phase_regimes.get(phase)) is not None:
+                    problems.append(f"{phase} {owner}: eager control shape {eshape} misses its regime")
+                    eager_ok = False
+                else:
+                    eager_ok = True
+                if not cshape:
+                    problems.append(f"{phase} {owner}: capture states no shape")
+                stated = stated and eager_ok
+                entries[owner] = {"eager_shape": eshape, "capture_shape": cshape,
+                                  "eager_states_rows": eager_ok and launched,
+                                  "graph_states_rows": False}
         phases[phase] = {"regime": phase_regimes.get(phase), "owners": entries,
-                         "rows_attested": stated}
-    block = {"schema": "tessera.graph-phase-witness/1", "phases": phases,
+                         "eager_rows_stated": stated,
+                         "graph_rows_stated": False,
+                         "graph_note": "capture shapes are capture-time; replay runs no Python"}
+    block = {"schema": "tessera.graph-phase-witness/2", "eager_world": eager_world,
+             "capture_world": capture_world, "phases": phases,
              "graph_launches": graph_launches if launched else 0,
              "replay_observed": launched}
     return block, problems
@@ -965,13 +998,16 @@ _WITNESS_FLAGS = ("--witness-eager-receipt", "--witness-graph-receipt", "--witne
 
 
 def witness_main(argv=None):
-    """Join two retained receipts into explicit phase facts. Loads no model."""
+    """Join two retained receipts into explicit phase facts. Loads no model.
+
+    Exit 0 names complete evidence, never admission.
+    """
     import argparse
     ap = argparse.ArgumentParser(
         description="Join an eager control receipt and a graph capture receipt into explicit "
                     "phase facts. Loads no model. Starts no engine.")
     ap.add_argument("--witness-eager-receipt", required=True, metavar="PATH",
-                    help="A served eager receipt path. Its concrete shapes state each phase rows.")
+                    help="A served eager receipt path. Its concrete shapes state eager rows only.")
     ap.add_argument("--witness-graph-receipt", required=True, metavar="PATH",
                     help="A served graph capture receipt path. Its shapes are capture-time only.")
     ap.add_argument("--witness-profile-launches", type=int, default=0, metavar="N",
@@ -989,12 +1025,14 @@ def witness_main(argv=None):
         ap.error(f"cannot read a witness receipt: {exc}")
     from tessera.serving.contract import CENSUS_PHASE_REGIMES
     block, problems = graph_phase_witness(
-        eager_records=eager.get("records", {}), capture_records=capture.get("records", {}),
+        eager_receipt=eager, capture_receipt=capture,
         graph_launches=args.witness_profile_launches, phase_regimes=CENSUS_PHASE_REGIMES)
     with open(args.out, "w") as fh:
         json.dump({"witness": block, "problems": problems}, fh, indent=1, sort_keys=True)
-    print(json.dumps({"rows_attested": {phase: entry["rows_attested"]
-                                        for phase, entry in block["phases"].items()},
+    print(json.dumps({"eager_rows_stated": {phase: entry["eager_rows_stated"]
+                                            for phase, entry in block["phases"].items()},
+                      "graph_rows_stated": {phase: entry["graph_rows_stated"]
+                                            for phase, entry in block["phases"].items()},
                       "replay_observed": block["replay_observed"]}, indent=1))
     for problem in problems:
         print("PROBLEM:", problem)
