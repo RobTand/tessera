@@ -48,7 +48,6 @@ def _packed(family, *, three=False, device="cuda"):
         for e, unit in enumerate(stack):
             axis.put(role, e, unit)
     soa = axis.finish()
-    arithmetic = "folded" if family == "value" else "epilogue"
     def bundle(role):
         s = soa[role]
         return prepare_grouped_window_gemm_from_soa(
@@ -57,7 +56,7 @@ def _packed(family, *, three=False, device="cuda"):
             word_off=s["word_off"], tile_words=s["tile_words"], total_words=s["total_words"],
             run_off=s["run_off"], perm_all=s["perm"], rows=s["rows"], cols=s["cols"],
             experts=EXPERTS, window_bits=s["window_bits"], family=family, block_m=32, block_n=64,
-            block_k=64, arithmetic=arithmetic)
+            block_k=64)
     return PackedWindowMoeBundles(*(bundle(role) for role in ("gate", "up", "down")), family=family,
         expert_classes=[{"start": start, "end": end, "q256": {"w13": [g, g], "w2": [d]}}
                         for start, end, g, d in profiles])

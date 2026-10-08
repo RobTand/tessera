@@ -40,7 +40,7 @@ def projection(rates=(3, 3, 4, 4), *, family="value", cols=128, rows=128):
         total_words=torch.tensor(widths, dtype=torch.int32), run_off=torch.arange(e + 1, dtype=torch.int64),
         perm_all=torch.arange(cols, dtype=torch.int32).expand(e, -1).clone(),
         rows=rows, cols=cols, experts=e, window_bits=14, family=family,
-        block_m=32, block_n=64, block_k=64, arithmetic="folded" if family == "value" else "epilogue")
+        block_m=32, block_n=64, block_k=64)
 
 
 def allow_cpu(monkeypatch):

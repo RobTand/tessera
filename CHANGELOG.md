@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — migrate released class callers to the canonical table API
+
+Remove the retired arithmetic keyword from the released class fixtures and experiment builders.
+Keep raw BF16 lookup values separate from FP32 row scales.
+The class parity and changed-route controls use the same native owner.
+No serving default or qualification changes.
+
 ## 2026-10-08 — keep benchmark imports free of runtime state
 
 Initialize the optional vLLM stand-ins and serving-mode default inside the benchmark entrypoint.
