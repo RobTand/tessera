@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
+The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
+Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
+The real hook constructs both TP cuts from checkpoint wires without the obsolete keyword.
+No serving or D41 admission follows from this source repair.
+
 Re-stamped 2026-10-07 for the T16 row-scale epilogue cutover (contract v62).
 T16 keeps raw BF16 table values and FP32 row scales separate. The encoder
 and canonical reader define each effective weight as their FP32 product.

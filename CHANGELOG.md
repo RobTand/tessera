@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — retire arithmetic attributes from register-direct consumers
+
+The grouped owner now has one FP32 row-scale epilogue.
+Register-direct consumers no longer read or pass the removed arithmetic field.
+The e4m3 family, 14-bit window, byte-table and rate guards stay unchanged.
+The four caller regressions and actual checkpoint-backed hook construction pass.
+No CUDA source, numerical rule or table changes.
+
 ## 2026-10-08 — keep the projection fixture inside the FP32 domain
 
 Map synthetic BF16 table words into the normal unit binade.

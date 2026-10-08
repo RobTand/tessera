@@ -353,9 +353,9 @@ def layer_stacks(gate, up, down, tables, rungs: "dict | None" = None) -> dict:
     ``rungs[e]`` = (gate, up, down) q256: each expert's rates must spend exactly that rung."""
     from .errors import GrammarError
     for b, t in zip((gate, up, down), tables):
-        if b.family != "e4m3" or b.arithmetic != "epilogue" or int(b.window_bits) != 14:
+        if b.family != "e4m3" or int(b.window_bits) != 14:
             raise GrammarError(f"the register-direct kernel serves the e4m3 family at a 14-bit window with "
-                               f"the row-scale epilogue, got {b.family}/{b.arithmetic}/L={b.window_bits}")
+                               f"the row-scale epilogue, got {b.family}/L={b.window_bits}")
         if t.dtype != torch.uint8 or tuple(t.shape) != (int(b.experts), 1 << 14):
             raise GrammarError("the register-direct kernel reads compose_table8's uint8 [E, 2^14] byte table")
     n = int(down.experts)
