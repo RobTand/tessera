@@ -102,6 +102,9 @@ __all__ = [
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16",
+    "DECODER_NATIVE_ROUTED_WINDOW_CLASSES",
+    "DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA",
+    "DECODER_NATIVE_ROUTED_WINDOW_CLASSES_BF16",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -208,6 +211,10 @@ DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 #: ``torch._scaled_mm`` row-wise at large M.  Same function of the wire, a
 #: different launch and accumulation order, so its own string.
 DECODER_NATIVE_WINDOW_DECODE_ONCE_E4M3 = "native_window_decode_once_e4m3"
+# Actual execution identities only; no serving contract row is qualified here.
+DECODER_NATIVE_ROUTED_WINDOW_CLASSES = "native_routed_window_classes"
+DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA = "native_routed_window_classes_e4m3mma"
+DECODER_NATIVE_ROUTED_WINDOW_CLASSES_BF16 = "native_routed_window_classes_bf16"
 #: Paired WINDOW LUT16 on native block-scaled FP4, not the retired TCQ lane.
 DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1 = "native_fused_window_dense_e2m1"
 DECODER_NATIVE_ROUTED_FUSED_WINDOW_E2M1 = "native_routed_fused_window_e2m1"
@@ -219,6 +226,9 @@ DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_W
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16,
+                      DECODER_NATIVE_ROUTED_WINDOW_CLASSES,
+                      DECODER_NATIVE_ROUTED_WINDOW_CLASSES_E4M3MMA,
+                      DECODER_NATIVE_ROUTED_WINDOW_CLASSES_BF16,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16,
                       DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_BF16,

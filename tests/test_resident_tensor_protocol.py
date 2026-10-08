@@ -183,7 +183,7 @@ def test_routed_native_owner_includes_bundles_tables_static_scales_and_counters(
     from tessera.native_window_moe import WindowUnitAxis
     from window_lut_reference import prepare_reference
 
-    wires, _scheme, _units = _stack()
+    wires, scheme, _units = _stack()
     axes = {"w13": WindowUnitAxis(2, ["gate_proj", "up_proj"], family="e2m1"),
             "w2": WindowUnitAxis(2, ["down_proj"], family="e2m1")}
     for (expert, shard), blob in wires.items():
@@ -191,7 +191,7 @@ def test_routed_native_owner_includes_bundles_tables_static_scales_and_counters(
         group = "w2" if shard == "w2" else "w13"
         axes[group].put(member.name, expert, prepare_reference(
             parse_compact_wire(member.blob, device="cpu")))
-    bundles = nvfp4_moe_route._window_bundles(axes, 2)
+    bundles = nvfp4_moe_route._window_bundles(axes, 2, scheme["expert_classes"])
     values = {}
     for part in ("gate", "up", "down"):
         bundle = getattr(bundles, part)

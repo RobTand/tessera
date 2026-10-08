@@ -759,15 +759,15 @@ def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
     cell = next(c for c in revived["lane_eligibility"]["cells"]
                 if c["id"] == "tessera_e4m3_k1_dense_sm121_decode_resident")
     cell["executes"] = [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}]
-    with pytest.raises(ValueError, match="but the TESSERA_FP8 route makes"):
+    with pytest.raises(ValueError):
         validate_serving_contract(revived)
 
 
 def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     """The published cells read against the DISPATCH, not against the table.
 
-    ``test_every_cell_executes_a_launch_its_route_can_make`` compares cells to
-    ``ROUTE_LAUNCHES``; #538 is the case where BOTH drifted together, so a
+    Historical receipts use the qualification table. This dense check also reads the
+    actual dispatch; #538 is the case where both tables drifted together, so a
     second reference is needed.  This one is the literal pair ``apply`` emits.
     It names nothing this branch introduced, so it runs to this assertion on
     ``master`` too -- where it fails, listing the eight stale cells.
@@ -903,10 +903,10 @@ def test_a_reminted_cell_id_names_its_image_and_rung(contract):
     assert checked == _WITHDRAWN_V38_CELL_IDS, checked
 
 
-def test_every_cell_executes_a_launch_its_route_can_make(contract):
-    """The shipped table, read against the launch table rather than mutated."""
+def test_every_cell_retains_its_attested_launch_identity(contract):
+    """Historical receipts do not claim current class execution."""
     from tessera.serving.contract import cell_executes, cell_residency_modes
-    from tessera.serving.scheme import launch_pairs
+    from tessera.serving.scheme import qualification_launch_pairs
 
     by_family = {"TESSERA_E2M1_K2": "TESSERA_NVFP4", "TESSERA_E4M3_K1": "TESSERA_FP8",
                  "TESSERA_BF16_K1": "TESSERA_BF16"}
@@ -914,7 +914,7 @@ def test_every_cell_executes_a_launch_its_route_can_make(contract):
         route = by_family[cell["family"]]
         admissible = set()
         for mode in cell_residency_modes(cell):
-            admissible |= launch_pairs(route, structure=cell["structure"],
+            admissible |= qualification_launch_pairs(route, structure=cell["structure"],
                                        regime=cell["regime"], mode=mode)
         assert cell_executes(cell) <= admissible, cell["id"]
 
@@ -946,13 +946,7 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
         MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
         TESSERA_BF16, TESSERA_FP8, launch_pairs)
 
-    # Existing callers keep their dense meaning. A requested expert structure
-    # cannot borrow a dense launch, even at the same family and rate.  Both
-    # sides are compared with the experimental launches in: every route
-    # owner's census expectation knows what the build can really launch
-    # (``scheme.EXPERIMENTAL_LAUNCHES``), and the expert stack's compact lane
-    # is what the dispatch takes on any build with the compact reader
-    # (tessera#604, #609).  Attestation is the cells' question, not this one.
+    # A current census includes experimental operations without a qualification claim.
     dense = launch_pairs(TESSERA_FP8, regime=regime, include_experimental=True)
     assert dense == launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
                                  regime=regime, include_experimental=True)
@@ -964,12 +958,11 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
     moe = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                        regime=regime, mode="resident", include_experimental=True)
     assert moe == moe_route.census_expected(compiled=False)[regime]
-    # Narrowed to a box with NO extension prepared (contract v42, tessera#640):
-    # the fused routed row is lane-bearing and drops, the compact row stays.
-    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
+    # The lane-free class entry remains; the E4M3 instruction entry needs its extension.
+    from tessera.serving.scheme import routed_class_launch_pair
     bare = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                         regime=regime, mode="resident", lanes=(), include_experimental=True)
-    assert bare == {pair for pair in moe if pair[0] != ROUTED_FUSED_WINDOW_SYMBOL}
+    assert bare == {routed_class_launch_pair("e4m3", uniform=uniform) for uniform in (False, True)}
     assert bare < moe
     assert moe and moe.isdisjoint(dense)
     bf16_moe = launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE,

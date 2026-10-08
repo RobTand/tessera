@@ -96,24 +96,15 @@ def owner_wire(shape):
             "policy": f"{family}:{MODE_RESIDENT}"}
 
 
-def selected_window_decoder(backend, family):
-    """The decoder ``moe_route`` stamps for an explicitly selected expert owner.
 
-    The panel independently names the expected selected route. That route
-    has no served cell. The BF16 suffix identifies raw values and separate
-    row scales.
-    """
-    return (f"research_selected_{backend}_window"
-            + ("_bf16" if family == "TESSERA_BF16" else ""))
 
 
 def owner_needs_selected(wire, world):
-    """Does this stack need the explicit selected owner, or its own builder?
+    """Does this operator harness require explicit research topology?
 
-    Only an FP8 stack above one rank.  Compressed BF16 has had a production
-    expert builder since tessera#609 (the compact row-scale epilogue path), and
-    the priced owner must be the served one (tessera#613): a checkpoint carries
-    no research block, so a BF16 owner is priced on that builder.
+    Its FP8 multi-rank measurement request still declares the topology/eager
+    research block. Both ordinary and research requests execute the same native
+    WINDOW class path; this policy does not choose a decoder or fallback.
     """
     return wire["family"] == "TESSERA_FP8" and int(world) > 1
 
@@ -126,26 +117,15 @@ def census_symbol_base(symbol):
     return moe_census_symbol_base(symbol)
 
 
-def owner_launch_pairs(wire, *, world=1):
-    """``{(symbol, decoder)}`` this owner's route may honestly report.
-
-    Read from the plugin's own launch table so the panel and the route cannot
-    drift apart, plus the selected owner's decoders where one is required --
-    both backends the versioned block admits, because which one an operator
-    declares is the operator's choice.  The symbol is compared on its BASE: a
-    served record carries the runtime-selected backend as a suffix, and that
-    choice is the runtime's, not a second route.
-    """
-    from tessera.serving.scheme import MOE_GEMM_SYMBOL, launch_pairs
-    # An FP8 stack's one table launch is the compact window MoE adapter.  The
-    # materialising pair this function used to drop above one rank (that
-    # builder was TP1-only) left the plugin's table at contract v38: the
-    # compact lane takes every FP8 stack this build constructs.
-    pairs = set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
-    if owner_needs_selected(wire, world):
-        for backend in ("torch", "triton"):
-            pairs.add((MOE_GEMM_SYMBOL, selected_window_decoder(backend, wire["family"])))
-    return pairs
+def owner_launch_pairs(wire):
+    """Current native entries at the selected library, without a served-cell promotion."""
+    from tessera.serving.scheme import TESSERA_FP8, TESSERA_BF16, launch_pairs
+    if wire["family"] in (TESSERA_FP8, TESSERA_BF16):
+        from tessera.routed_fused import library_for
+        from tessera.serving.scheme import routed_class_launch_pair
+        lane = "value" if wire["family"] == TESSERA_BF16 else "e4m3"
+        return {routed_class_launch_pair(library_for(lane), uniform=uniform) for uniform in (False, True)}
+    return set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
 
 
 def owner_research_selected(shape, wire, request_block):
@@ -660,6 +640,9 @@ def owner_scheme(shape, wire, *, strides, unit):
     return validate_tessera_moe_scheme({
         "family": wire["family"], "structure": "routed_moe", "grid": wire["grid"],
         "body": wire["body"], "plane": wire["plane"], "experts": experts,
+        "expert_ids": list(range(experts)),
+        "expert_classes": [{"start": 0, "end": experts,
+                            "q256": {"w13": [wire["q256"], wire["q256"]], "w2": [wire["q256"]]}}],
         "groups": {
             "w13": {"rows": 2 * n, "columns": k, "q256": wire["q256"],
                     "wire_stride": strides["w13"],
@@ -1422,7 +1405,7 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             or observed_route.get("policy") != wire["policy"]
             or observed_route.get("contract") != wire["activation_contract"]
             or (census_symbol_base(observed_route.get("symbol") or ""), observed_route.get("decoder"))
-            not in owner_launch_pairs(wire, world=world)):
+            not in owner_launch_pairs(wire)):
         raise ValueError(
             f"the native owner dispatched {observed_route!r}, which is not this "
             f"{wire['family']}/{wire['grid']} owner's own route")
@@ -1798,7 +1781,7 @@ def validate_panel(panel):
         dense._number(value, key)
     dense._fields(panel["phases"], PHASES, "phases")
     wire = owner_wire(shape)
-    panel_pairs = owner_launch_pairs(wire, world=shape.get("tensor_parallel", 1))
+    panel_pairs = owner_launch_pairs(wire)
     for phase, item in panel["phases"].items():
         dense._fields(item, ("m", *TENSOR_KEYS, "transport", "expected_route"), phase)
         dense._integer(item["m"], phase + ".m")

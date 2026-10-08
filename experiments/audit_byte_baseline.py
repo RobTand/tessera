@@ -580,18 +580,20 @@ def substack_hashes() -> dict:
     from tessera.unit_artifact import read_unit_artifact
 
     stack = "model.layers.2.mlp.experts"
-    shapes = {f"{stack}.{e}.{p}.weight": (32, 32) for e in range(2)
-              for p in ("gate_proj", "up_proj", "down_proj")}
-    config = {"num_experts": 2, "hidden_size": 32, "moe_intermediate_size": 32}
-    picked = stack + ".0.up_proj"
+    hidden, inter = 128, 128
+    shapes = {f"{stack}.{e}.{p}.weight":
+              ((hidden, inter) if p == "down_proj" else (inter, hidden))
+              for e in range(2) for p in ("gate_proj", "up_proj", "down_proj")}
+    config = {"num_experts": 2, "hidden_size": hidden, "moe_intermediate_size": inter}
     out = {}
     for grid in (E4M3_GRID, BF16_GRID):
-        choice = {"grid": grid.name, "q256": 1024, "unit_q256": {picked: 1088}}
+        choice = {"grid": grid.name, "q256": 1024,
+                  "unit_q256": {stack + ".0." + p: 1088 for p in ("gate_proj", "up_proj")}}
         record = project_expert_plan(shapes, config, {stack: choice})["stacks"][stack]
         work = expert_work_units(stack, record)
         encoded = []
         for i, unit in enumerate(work):
-            weight = torch.randn(32, 32, generator=torch.Generator().manual_seed(i))
+            weight = torch.randn(unit["rows"], unit["cols"], generator=torch.Generator().manual_seed(i))
             rung = unit.get("q256", record["q256"])
             exported, _unit, _forest = encode_linear_planes(weight, grid=grid, q256=rung)
             encoded.append((unit, exported, pack_fused([
@@ -606,13 +608,14 @@ def substack_hashes() -> dict:
         scheme = {
             "family": record["family"], "grid": grid.name, "body": recipe.body.name,
             "plane": recipe.scale_plane.name, "structure": "routed_moe",
-            "source_layout": record["source_layout"], "experts": 2, "groups": groups}
+            "source_layout": record["source_layout"], "experts": 2, "groups": groups,
+            "expert_ids": record["expert_ids"], "expert_classes": record["expert_classes"]}
         declared = validate_tessera_moe_scheme(scheme, stack)
         out[f"substack-{grid.name}-1024-1088/sidecar"] = hashlib.sha256(
             json.dumps(scheme, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for unit, exported, blob in encoded:
             group = declared["groups"][unit["group"]]
-            roles = expert_role_declarations(group, expert=unit["expert"])
+            roles = expert_role_declarations(group, expert=unit["storage_expert"])
             role = next(r for r in roles if r["roles"][0][0] == unit["projection"])
             parsed = parse_tessera_expert_blob(blob, role, unit["tensor"], device="cpu")
             expected = read_unit_artifact(exported.blob)

@@ -101,6 +101,62 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
+@torch.library.custom_op("tessera::routed_window_classes", mutates_args=("counters",))
+def _routed_window_classes(
+    x: torch.Tensor, expert_ids: torch.Tensor, routing_weights: torch.Tensor,
+    shared: Optional[torch.Tensor], words: List[torch.Tensor], tables: List[torch.Tensor],
+    inits: List[torch.Tensor], has_inits: List[torch.Tensor], wscales: List[torch.Tensor],
+    runs: List[torch.Tensor], bdescs: List[torch.Tensor], starts: List[int], ends: List[int],
+    tile_words: List[int], slot_words: List[int], issue_order: List[int], counters: torch.Tensor,
+    library: str, piece_major: bool, resource_key: str, input_weight: bool, swiglu_limit: float,
+) -> torch.Tensor:
+    """One opaque native routed operation, including the two-stream event DAG.
+
+    Routing prefixes are computed on-device on every invocation/replay. Class
+    launches seed preallocated counters from absolute prefixes, then share the
+    entire sorted activation and flat output buffers. No weights are repacked.
+    """
+    from .. import routed_fused as rf
+    from .. import routed_class_dispatch
+
+    family = "value" if library == "value" else "e4m3"
+    tokens, top_k = expert_ids.shape
+    hidden, inter = wscales[2].shape[1], wscales[0].shape[1]
+    if input_weight:
+        x = x * routing_weights.reshape(-1, 1).to(x.dtype)
+    resources = rf.resolve_dispatch_resources(resource_key)
+    parameters = dict(words=words, tables=tables, inits=inits, has_inits=has_inits, wscales=wscales,
+        runs=runs, bdescs=bdescs, tile_words=tile_words, slot_words=slot_words, piece_major=piece_major)
+    widths = routed_class_dispatch.declared_route_widths(resources.kernel, tokens, issue_order, parameters)
+    routing = rf._routing_tables(expert_ids, routing_weights, ends[-1], x.device, widths)
+    xq, a1 = resources.kernel.prepare_input(x, None, tokens, family, x.device)
+    act = torch.empty((routing.routes, inter), dtype=torch.bfloat16, device=x.device)
+    args = dict(parameters=parameters, starts=starts, ends=ends, issue_order=issue_order,
+                counters=counters, resources=resources)
+    routed_class_dispatch.dispatch_class_projection(0, xq, a1, routing, **args, a_row_mode=0,
+        mul_weight=False, limit=swiglu_limit, out=act)
+    # Join gate/up before quantizing the full sorted-route activation. The
+    # quantizer and all arithmetic/route boundaries are the existing ones.
+    aq, a2 = resources.kernel.prepare_input(act, None, routing.routes, family, x.device)
+    routed = torch.empty((routing.routes, hidden), dtype=torch.bfloat16, device=x.device)
+    routed_class_dispatch.dispatch_class_projection(2, aq, a2, routing, **args, a_row_mode=1,
+        mul_weight=not input_weight, limit=float("inf"), out=routed)
+    out = torch.empty((tokens, hidden), dtype=torch.bfloat16, device=x.device)
+    if shared is None:
+        rf._ext(library).token_sum(routed, out, top_k)
+    else:
+        rf._ext(library).token_sum_shared(routed, shared, out, top_k)
+    return out
+
+
+@_routed_window_classes.register_fake
+def _routed_window_classes_fake(x, expert_ids, routing_weights, shared, words, tables,
+        inits, has_inits, wscales, runs, bdescs, starts, ends, tile_words, slot_words,
+        issue_order, counters, library, piece_major, resource_key, input_weight, swiglu_limit):
+    return torch.empty((x.shape[0], wscales[2].shape[1]), dtype=torch.bfloat16, device=x.device)
+
+
+
 DENSE_FAMILIES = (TESSERA_FP8, TESSERA_BF16)
 
 #: The window GEMM's family spelling for each route family.

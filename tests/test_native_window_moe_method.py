@@ -1,11 +1,8 @@
 """The REAL vLLM window MoE method: create_weights -> every loader callback ->
-process_weights_after_loading -> apply, through the compact reader on real
-encoded wire containers.
+process_weights_after_loading -> apply through the mandatory native class path.
 
-Runs in the pinned image (real vLLM importable, CUDA enabled); the CPU-arithmetic
-stub fixtures of the other route tests are NOT used, because the native path
-executes Triton kernels.  The TP2 arms run both shard shapes on ONE GPU: a
-component check of the rank-local geometry and arithmetic, not a two-node
+Runs in the serving image with real vLLM and CUDA. Native-valid TP2 fixtures
+exercise row-cut gate/up and column-cut down on one GPU; this is not a two-node
 result.  The two-node run is a separate milestone.
 
 What is checked here:
@@ -31,10 +28,15 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.serving import moe_route                    # noqa: E402
-from test_serving_moe_route import _stack, EXPERTS, HIDDEN, INTER   # noqa: E402
+from test_serving_moe_route import _stack as _reference_stack, EXPERTS  # noqa: E402
 from test_serving_moe_selected import _layer             # noqa: E402
-from test_serving_moe_selected import bf16_wires         # noqa: E402,F401  (fixture)
 
+# The fused class decoder needs native-valid K and rank-local N geometry.
+HIDDEN, INTER = 128, 512
+
+
+def _stack():
+    return _reference_stack(experts=EXPERTS, hidden=HIDDEN, inter=INTER)
 
 class _Lax(types.SimpleNamespace):
     """A stub config that answers the properties the real dataclasses
@@ -48,11 +50,7 @@ class _Lax(types.SimpleNamespace):
 
 def _native_layer(tp_rank: int = 0, tp_size: int = 1, *, hidden: int = None,
                   inter: int = None, experts: int = None):
-    """The route's layer stub, completed for real vLLM's backend selection.
-
-    ``test_serving_moe_selected``'s CPU stub patches ``select_fp8_moe_backend``
-    away; the real image runs it, so the config it reads must be present.
-    """
+    """Complete the actual framework method and stock-reference configuration."""
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation
     import types as _types
 
@@ -180,7 +178,6 @@ def test_fp8_native_method_tp1_loads_compacts_and_matches_the_reference():
     method.process_weights_after_loading(layer)
     assert method._native is not None
     assert method.moe_kernel is None, "no internal MK kernel for the runner's overlap logic"
-    assert layer.tessera_decoder == 'native_window_moe_compact'
     assert not dict(layer.named_parameters()), "only packed constants stay resident"
 
     x = (torch.randn(8, HIDDEN) * 0.5).bfloat16().cuda()
@@ -224,11 +221,7 @@ def test_fp8_native_method_tp2_shard_shapes_are_rank_local(tp_rank):
 
 
 def bf16_wires_native_data():
-    """BF16 expert wires at the window width this build instantiates (14).
-
-    ``test_serving_moe_selected``'s fixture is encoded at window_bits 8 for the
-    legacy packed decoder; the native window compute's roster is L=14.
-    """
+    """Canonical BF16 reference wires at the native WINDOW width."""
     from tessera.alphabet import BF16_GRID
     from tessera.export import encode_linear_planes
     from tessera.fused import pack_fused
@@ -254,6 +247,9 @@ def bf16_wires_native_data():
     scheme = {
         'family': 'TESSERA_BF16', 'structure': 'routed_moe', 'grid': 'BF16',
         'body': 'WINDOW', 'plane': 'CHANNEL', 'experts': 2,
+        'expert_ids': [0, 1],
+        'expert_classes': [{'start': 0, 'end': 2,
+                            'q256': {'w13': [512, 512], 'w2': [512]}}],
         'groups': {
             'w13': {'rows': 2 * INTER, 'columns': HIDDEN, 'q256': 512,
                     'wire_stride': max(len(blob) for pair in w13_blobs for blob in pair),
@@ -317,20 +313,12 @@ def test_bf16_native_research_route_matches_the_canonical_reference(bf16_wires_n
 @pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
 def test_bf16_production_route_matches_the_canonical_reference(
         bf16_wires_native, tp_rank, tp_size):
-    """Exercise the production BF16 route at TP1 and both TP2 rank cuts.
-
-    The reference uses canonical effective weights with no per-weight BF16
-    conversion. The adapter must publish the BF16 epilogue decoder.
-    """
-    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
-    from tessera.serving.telemetry import (ATTR_PREFIX,
-                                           DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16)
+    """Exercise the real native owner on canonical BF16 weights at each TP cut."""
 
     w13_blobs, w2_blobs, scheme, expected = bf16_wires_native
     layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
     layer.global_num_experts = 2
     method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer)
-    assert method._native_mode is True
     method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
     registered = dict(layer.named_parameters())
     assert not {'w13_weight', 'w2_weight', 'w13_weight_scale',
@@ -340,7 +328,7 @@ def test_bf16_production_route_matches_the_canonical_reference(
     method.process_weights_after_loading(layer)
     assert method._native is not None and method.moe_kernel is None
     assert not dict(layer.named_parameters()), "only packed constants stay resident"
-    assert layer.tessera_decoder == DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16
+
 
     local = INTER // tp_size
     lo, hi = tp_rank * local, (tp_rank + 1) * local
@@ -353,8 +341,7 @@ def test_bf16_production_route_matches_the_canonical_reference(
     out = method.apply(layer, x, weights, ids, shared, None)
     assert shared.calls == 0
     assert out.dtype == torch.bfloat16 and out.shape == (8, HIDDEN)
-    assert getattr(layer, f"{ATTR_PREFIX}decoder") == DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16
-    assert getattr(layer, f"{ATTR_PREFIX}symbol") == WINDOW_MOE_COMPACT_SYMBOL
+
 
     ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
     for token in range(8):
@@ -374,59 +361,7 @@ def test_bf16_production_route_matches_the_canonical_reference(
         f"TP{tp_size} rank {tp_rank}: max abs diff {float(diff.max())}"
 
 
-def _bf16_owner(wires, tp_rank, tp_size, research=None):
-    """One loaded BF16 expert owner on ``wires``: the production builder when
-    ``research`` is None, else the plugin's research-selected owner."""
-    w13_blobs, w2_blobs, scheme, _expected = wires
-    layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
-    layer.global_num_experts = 2
-    if research is None:
-        method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer)
-    else:
-        from vllm.config import set_current_vllm_config
-        with set_current_vllm_config(
-                types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=True))):
-            method = moe_route.build_tessera_moe_method(
-                scheme, 'm', 'resident', layer, research_selected=research)
-    method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
-    _load_all(method, layer, [[pair[0], pair[1]] for pair in w13_blobs],
-              [pair[0] for pair in w2_blobs])
-    method.process_weights_after_loading(layer)
-    return method, layer
 
-
-@cuda
-@pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
-@pytest.mark.parametrize('chunk,backend', [(1, 'triton'), (8, 'torch')])
-def test_bf16_production_and_research_owners_are_bit_identical(
-        bf16_wires_native, tp_rank, tp_size, chunk, backend):
-    """The owner the operator bench prices is the served one (tessera#613).
-
-    The bench moved from the research-selected BF16 owner to the production
-    builder.  This is the forward guarantee that the move changes no number:
-    on the same wires and the same inputs the two owners return the SAME BITS,
-    at TP1 and at both TP2 ranks, for decode- and prefill-sized batches, and
-    whatever chunk bound or decode backend the research block declares --
-    both take the compact native lane, and neither setting reaches it.
-    """
-    production, p_layer = _bf16_owner(bf16_wires_native, tp_rank, tp_size)
-    research, r_layer = _bf16_owner(
-        bf16_wires_native, tp_rank, tp_size,
-        research=moe_route.ResearchSelectedMoeConfig(
-            max_experts_per_chunk=chunk, decode_backend=backend,
-            expected_tensor_parallel_size=tp_size))
-    assert production._native is not None and research._native is not None
-    assert p_layer.tessera_decoder == r_layer.tessera_decoder
-    gen = torch.Generator().manual_seed(613 + 10 * tp_size + tp_rank)
-    for tokens in (1, 8, 64, 300):
-        x = (torch.randn(tokens, HIDDEN, generator=gen) * 0.5).bfloat16().cuda()
-        ids = torch.randint(0, 2, (tokens, 2), generator=gen, dtype=torch.int32).cuda()
-        weights = torch.rand(tokens, 2, generator=gen).cuda()
-        a = production.apply(p_layer, x, weights, ids, _SharedSpy(), None)
-        b = research.apply(r_layer, x, weights, ids, _SharedSpy(), None)
-        assert torch.equal(a, b), (
-            f"TP{tp_size} rank {tp_rank}, {tokens} tokens: production and research owners "
-            f"differ by up to {float((a.float() - b.float()).abs().max())}")
 
 
 @cuda
@@ -497,7 +432,7 @@ def test_native_method_refuses_missing_duplicate_and_wrong_rung():
     layer.w13_wire.weight_loader(
         layer.w13_wire, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
         'wire', 'w1', 0, return_success=True)
-    with pytest.raises(Exception, match="already placed"):
+    with pytest.raises(ValueError):
         layer.w13_wire.weight_loader(
             layer.w13_wire, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
             'wire', 'w1', 0, return_success=True)

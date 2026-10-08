@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-08 — preserve the T16 cutover in native class dispatch
+
+Merge the released mandatory native class owner without a compact serving fallback.
+Keep raw BF16 values separate from FP32 row scales through each dot.
+Remove the newly merged arithmetic selectors and use the BF16 class decoder identity.
+The census reads actual retained class tensors instead of retired compact planes.
+All current BF16 operations remain unqualified. Historical receipts stay unchanged.
+
 ## 2026-10-08 — keep one owner for fixture geometry
 
 Read the miniature geometry from the caller configuration.
@@ -143,6 +151,167 @@ and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
 Preserve external paths through their active measurement lifetimes.
+## 2026-10-08 — T4 route tests declare their Torch dependency
+
+The CPU route-admission tests use export and telemetry code that requires Torch.
+The module now skips when Torch is absent, as the existing dependent tests do.
+Every assertion and production import remains unchanged.
+
+## 2026-10-08 — correct three class-cutover consumers
+
+The E2M1 routed launch reads its superblock prefix from `_Routing.superblocks(BM)`.
+The removed `item_off` field made every nonempty E2M1 routed launch raise before the native call.
+The T8R benchmark builder maps router IDs to storage IDs through one device inverse, as the plugin does.
+The plugin and the builder share `expert_classes.storage_expert_ids` for that gather.
+The bench and stageprev numeric observers watch the load-bound uniform launch and refuse a multi-class owner.
+Stageprev reads run tables from the class projections. The CUDA width test spies on the bound module.
+The E2M1 refusal test reads the E2M1 module's own lane switch.
+No kernel, wire, price, contract entry, tolerance or default changes.
+
+## 2026-10-08 — validate every native owner panel route
+
+Owner panel tests derive the selected-library pair set from the registry.
+They validate both uniform and mixed WINDOW entries at each tested family and tensor-parallel cut.
+The tests no longer unpack an assumed single pair.
+Consumer checks still refuse retired materializers, selected-reference launches and foreign family or cut records.
+The reported single-pair failures preceded this correction. No native implementation or serving contract changes.
+
+## 2026-10-08 — use the checkpoint dimensions in producer fixtures
+
+Producer fixtures now derive output partitions from the dimensions that generate their checkpoint tensors.
+The installed Python entrypoint uses the same declaration as the exporter tests.
+Shared gate/up tensors retain their 256 rows, instead of a stale 64-row declaration.
+The geometry gate and all authentication, receipt and joined-byte checks remain.
+The reported failures preceded this correction. No production code or runtime contract changes.
+
+## 2026-10-07 — remove an incidental architecture-paragraph assertion
+
+The offline planner tests no longer require an issue citation in the first architecture paragraph.
+That wording assertion caused the hosted pure failure after the current pricing description changed.
+Rank byte counts, capacity refusals, both table widths and standard-library-only CLI checks remain.
+No production code or native price changes.
+
+## 2026-10-07 — repair native prices in the offline planner
+
+The planner no longer imports the retired routed-part helper or offers a compact price branch.
+A routed projection declares `table_dtype`; selected table storage and launch descriptors are always included.
+The pure byte accountant accepts the table entry width. The exporter derives that width from its selected native library.
+The planner keeps its standard-library-only path. Stack inverse maps and class counters remain explicit inventory allocations.
+The import failed before this correction. Both table widths, exact-fit rank prices and tensor-free CLI paths now have checks.
+No native kernel, wire format, runtime contract entry or serving default changes.
+
+## 2026-10-07 — reconcile native pricing with the current master
+
+The exporter reads `TILE_ROWS` from `window_geometry` and prices each verified unit manifest.
+It retains the native plane model, selected tables, expert inverse and class counters.
+Both pricing test sets and both byte-audit matrices remain.
+The TP2 export proof uses native-valid rank shapes and preserves the separate MTP allowance.
+Historical preparation figures stay controls, not current serving prices.
+No contract entry, wire rule, allowed rung or kernel default changes.
+
+## 2026-10-07 — remove an incidental plugin assertion
+
+The plugin test no longer requires an opaque-operation spelling for a uniform owner.
+Its real wire load, inverse map, reference bits and changed-route replay checks remain.
+The old assertion stopped six GPU cases before their bit checks. No production code changes.
+
+## 2026-10-07 — observe the uniform production launch
+
+The paired-K32 numeric observer now records the actual uniform binding.
+It ignores other owners and restores the launch before profiling or after a refusal.
+The CPU regression calls the production owner and detects missing roles, changed bits, invalid reduction and wrong profiles.
+The test failed before the correction because the old observer did not expose either native role.
+Normal serving keeps its direct launch and no class-table work. No kernel default or qualification changes.
+
+## 2026-10-07 — cover every routed execution entry
+
+The route-kind proof now uses every current admissible entry, including uniform launches.
+It derives the entry set from the registry, not a fixed two-entry list.
+Module counts, observed pairs, module names and foreign-entry refusals remain checked.
+The proof does not promote a serving cell.
+
+## 2026-10-07 — select the uniform census fixture entry
+
+The uniform census fixture now selects its actual lane-free native entry.
+It does not require a one-entry route registry.
+The routed and mixed census tests retain their population and qualification checks.
+Production code, artifact bytes and qualification cells stay unchanged.
+
+## 2026-10-07 — use direct uniform native launches
+
+The uniform native owner binds one complete stack at load and uses the old direct CUDA launch.
+Its forward does not read class tables or class-prefix starts, and it does not create dispatch streams.
+Each projection counter resets before every eager launch and captured replay.
+The inverse remap, decoder arithmetic, retained tensor storage and byte price stay unchanged.
+Mixed layers keep the generic two-stream dispatcher and its kernel interface.
+The uniform execution pair stays experimental and cannot borrow historical qualification.
+The oracle and benchmark consumers accept the actual uniform or mixed entry.
+
+## 2026-10-07 — compare uniform production entries
+
+The matched D41 panel calls master and PR production adapters in separate source-isolated processes.
+Both arms use identical weight and input bytes and the existing CUDA-event timer.
+F/R orders pair both production wrappers, with eager and changed-input graph checks.
+The panel reports both arm spreads and uses their larger relative F/R spread as the conditional fast-path boundary.
+Raw old-pure template timings remain diagnostics, not production acceptance evidence.
+
+## 2026-10-07 — measure uniform class dispatch
+
+The class benchmark accepts uniform schedules derived from its mixed control rungs.
+It times the production one-class dispatcher against the measured old pure path.
+Uniform results use a direct old-pure comparator. Mixed results retain their declared interpolation.
+The numerical checks keep both routing generations and remove duplicate uniform cases.
+
+## 2026-10-07 — report retained class storage
+
+The D41 class benchmark retires load-only planes and the unused inverse before timing.
+`resident_bytes` now counts the production native owner and its inverse.
+`preparation_storage_bytes` records preparation storage separately. The two values overlap.
+
+## 2026-10-07 — stop class workloads after launcher exit
+
+The D30 guard now checks the owned process group, not only the launcher.
+Surviving group members receive SIGKILL after the bounded SIGTERM grace.
+The guard uses the same stop path after a memory read fails or the launcher exits.
+Process-group proof does not qualify the Docker relay in PrismaBuild issue 1599.
+
+## 2026-10-07 — routed class execution boundary corrections
+
+Build route prefixes for every bound-kernel width from the same device counts.
+The routing front end supports BM8 without a local override.
+The current execution registry owns class identities and census expectations.
+Historical WINDOW qualification records stay separate. The new operations remain unqualified.
+Remove the duplicate custom-op layout argument and preserve byte checks across tensor view shapes.
+Record the generic dispatcher source hash in the D41 report.
+The offline Step4 consumer now reads that registry and filters operations by residency.
+Historical R5 records retain their original operations during receipt replay.
+Each class timing row records its declared admission scope.
+The temporary ordinary GPU-exclusive scope is not quiet-host certification.
+
+## 2026-10-07 — refuse unsupported native expert bias
+
+The native WINDOW builder now refuses a biased expert configuration before load.
+The decoder executes no expert bias. A constructor regression proves the refusal.
+
+## 2026-10-07 — mandatory routed expert-class cutover
+
+Routed exports always write class-ordered storage, a slot-to-global expert map
+and complete class profiles, including identity metadata for uniform layers.
+Plans and source provenance retain original-global coordinates; wire names
+and scheme rung matrices use storage coordinates. Native geometry and fused
+gate/up schedules are refused before encoding, including requested fit-TP cuts.
+
+E4M3 and folded BF16 WINDOW loading and execution use one native class path,
+with one device inverse, zero-copy class views, two load-time streams/events
+and device-derived changing-route counter starts for captured replay. Remove
+the old stock/materializing WINDOW fallback and feature selection; the EP map
+remains untouched. Residency prices retained storage and selected table dtype,
+including the inverse and per-class counters. Add actual framework consumer
+proof and a production dynamic-routing D41 entry with honest pure comparators.
+
+CPU export/read and source approval do not qualify GPU serving or quality.
+No serving pin, allowable-rung/contract row or seal moves, and ongoing
+measurement source/artifact pins are not replaced.
 ## 2026-10-08 — position-independent issue reference checks
 
 Remove the residency test that assumes a fixed architecture paragraph position.

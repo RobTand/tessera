@@ -127,8 +127,12 @@ class _ExpertIntake:
         self._memo.clear()
 
 
-def _window_bundles(axes, experts):
-    """Wrap finished e2m1 SoA tensors by reference, never choose an adapter."""
+def _window_bundles(axes, experts, expert_classes):
+    """Wrap finished e2m1 SoA tensors by reference, never choose an adapter.
+
+    ``expert_classes`` is the scheme's declared class table. An E2M1 stack
+    has one class: its validator refuses experts with different run tables.
+    """
     from ..native_window_moe import PackedWindowMoeBundles
     from ..window_gemm_grouped import prepare_grouped_window_gemm_from_soa
 
@@ -151,7 +155,8 @@ def _window_bundles(axes, experts):
 
     return PackedWindowMoeBundles(gate=bundle("w13", "gate_proj"),
                                   up=bundle("w13", "up_proj"),
-                                  down=bundle("w2", "down_proj"), family="e2m1")
+                                  down=bundle("w2", "down_proj"), family="e2m1",
+                                  expert_classes=expert_classes)
 
 
 def _static_input_global(scales, device):
@@ -511,7 +516,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             if getattr(layer, "apply_router_weight_on_input", False) and int(self.moe.experts_per_token) != 1:
                 raise ValueError(
                     f"tessera target {prefix!r}: apply_router_weight_on_input requires topk=1")
-            bundles = _window_bundles(self._axes, experts)
+            bundles = _window_bundles(self._axes, experts, declared["expert_classes"])
             layer.tessera_routed_fused = FusedRoutedE2M1MoE.from_bundles(
                 bundles.gate, bundles.up, bundles.down, gs13=gs13, gs2=gs2)
             self._axes = None

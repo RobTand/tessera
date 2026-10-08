@@ -45,7 +45,7 @@ from tessera import serving_parts as parts
 from tessera import source_profiles
 
 ROOT = Path(__file__).resolve().parents[1]
-HIDDEN, MOE_INTER, EXPERTS = 128, 64, 3
+HIDDEN, MOE_INTER, EXPERTS = 128, 256, 3
 LAYER = "model.language_model.layers.1"
 STACK = f"{LAYER}.mlp.experts"
 PART_ARGV = ("--partition", "0/1", "--partition-runtime-image",

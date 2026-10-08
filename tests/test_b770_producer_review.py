@@ -50,15 +50,10 @@ def run_part(tmp_path, producer, source_ref, source, **env):
 #: production partitions, so a bare subprocess export would refuse it at the
 #: geometry gate. This shim declares the fixture's own lists inside that
 #: subprocess only, through startup import. The -m argv is unchanged.
-_FIXTURE_OUTPUT_SIZES = {
-    'language_model.model.layers.*.mlp.down_proj': [128],
-    'language_model.model.layers.*.mlp.gate_up_proj': [256, 256],
-    'language_model.model.layers.*.mlp.shared_experts.down_proj': [128],
-    'language_model.model.layers.*.mlp.shared_experts.gate_up_proj': [64, 64],
-}
 
 
-def _fixture_geometry_path(tmp_path):
+
+def _fixture_geometry_path(tmp_path, output_sizes):
     """Write the subprocess geometry declaration; return its directory."""
     shim = tmp_path / 'fixture-geometry'
     shim.mkdir(exist_ok=True)
@@ -70,7 +65,7 @@ def _fixture_geometry_path(tmp_path):
         '    payload = copy.deepcopy(real())\n'
         "    for entry in payload['construction']['architectures']:\n"
         "        if entry.get('architecture') == 'Glm5NextForConditionalGeneration':\n"
-        f"            entry.setdefault('output_sizes', {{}}).update({_FIXTURE_OUTPUT_SIZES!r})\n"
+        f"            entry.setdefault('output_sizes', {{}}).update({output_sizes!r})\n"
         '    contract.load_serving_contract = lambda: payload\n'
         '_declare_fixture_geometry()\n')
     return shim
@@ -93,7 +88,7 @@ def test_real_installed_python_m_entrypoint(tmp_path, selected, frozen_source):
     plan.write_text(json.dumps({selected.STACK: {'grid': 'E4M3', 'q256': 896}}))
     out = tmp_path / 'out'
     env = selected._selected_export_env(site, repo)
-    shim = _fixture_geometry_path(tmp_path)
+    shim = _fixture_geometry_path(tmp_path, selected._FIXTURE_OUTPUT_SIZES)
     env['PYTHONPATH'] = str(shim) + os.pathsep + env['PYTHONPATH']
     done = subprocess.run([sys.executable, '-m', 'tessera.export_serving',
         *selected._selected_export_argv(source, out, plan)], cwd=tmp_path,

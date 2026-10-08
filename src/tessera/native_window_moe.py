@@ -39,7 +39,6 @@ layer's; this adapter returns the routed-expert result ``[T, rows]`` bf16.
 from __future__ import annotations
 
 import dataclasses
-import logging
 import math
 from typing import Sequence
 
@@ -54,7 +53,6 @@ __all__ = ["NativeWindowMoE", "prepare_native_window_moe", "PackedWindowUnits",
 
 #: The activations this adapter reproduces exactly.  Everything else refuses.
 SUPPORTED_ACTIVATIONS = ("silu",)
-_log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -555,6 +553,13 @@ class PackedWindowMoeBundles:
     up: PreparedGroupedWindowGemm
     down: PreparedGroupedWindowGemm
     family: str
+    expert_classes: list
+
+    def __post_init__(self):
+        from .expert_classes import normalize_expert_classes
+
+        object.__setattr__(self, "expert_classes",
+            normalize_expert_classes(self.expert_classes, self.experts))
 
     @property
     def experts(self) -> int:
@@ -598,85 +603,35 @@ class PackedWindowMoeBundles:
                 value = getattr(bundle, field.name)
                 if isinstance(value, torch.Tensor):
                     yield f"{role}.{field.name}", value
-        fused = self.__dict__.get("_fused_adapter")
-        if fused is not None:
-            yield from fused.named_tables()
+        adapter = self.__dict__.get("_adapter")
+        if adapter is not None:
+            yield from adapter.named_tables()
 
     def native_owner(self):
-        """The retained owner after selection; caller-held compact inputs stay intact.
-
-        Construction/refusal is still owned by ``adapter``. A compact fallback
-        returns this original owner, while a successful fused selection keeps
-        its projection views plus the already-prepared native tables.
-        """
+        """Retain native aliases only; caller-held load planes remain untouched."""
         selected = self.adapter()
-        fused = self.__dict__.get("_fused_adapter")
-        if fused is None or selected is not fused:
+        if self.gate is selected.gate and self.up is selected.up and self.down is selected.down:
             return self
-        if self.gate is fused.gate and self.up is fused.up and self.down is fused.down:
-            return self
-        owner = dataclasses.replace(self, gate=fused.gate, up=fused.up, down=fused.down)
+        owner = dataclasses.replace(self, gate=selected.gate, up=selected.up, down=selected.down)
         object.__setattr__(owner, "_adapter", selected)
-        object.__setattr__(owner, "_fused_adapter", fused)
         return owner
 
     def adapter(self):
-        """The routed-expert compute over these bundles, built once.
-
-        The fused warp-specialised lane (``tessera.routed_fused``, #640) where
-        :func:`~tessera.routed_fused.fused_routed_window_supported` admits the
-        stack and ``TESSERA_ROUTED_FUSED`` is not ``0``; the compact Triton
-        adapter otherwise.  Each answers ``launch_pair`` with its own
-        ``(symbol, decoder)`` so the route records what actually ran.  The
-        refusal reason is logged at INFO so a serve's log says why a stack
-        kept the compact adapter.
-        """
+        """Build the sole class dispatcher once, with no feature switch or substitute."""
         if self.family == "e2m1":
             raise GrammarError(
                 "e2m1 bundles require FusedRoutedE2M1MoE.from_bundles with checkpoint "
-                "gs13 and gs2; the FP8/BF16 compact adapter is not a W4A4 substitute")
+                "gs13 and gs2; the FP8/BF16 class dispatcher is not a W4A4 substitute")
         cached = self.__dict__.get("_adapter")
         if cached is not None:
             return cached
-        from .routed_fused import FusedRoutedWindowMoE, fused_routed_window_supported
+        from .routed_fused import FusedRoutedWindowMoE
 
-        reason = fused_routed_window_supported(self.gate, self.up, self.down)
-        built = None
-        if reason is None:
-            try:
-                built = FusedRoutedWindowMoE.from_bundles(
-                    self.gate, self.up, self.down, activation="silu")
-            except GrammarError:
-                raise
-            except Exception as exc:  # noqa: BLE001 -- the native build is what may fail here
-                # The predicate admitted the stack, so what failed is the
-                # extension build or load (toolchain, architecture, ninja).
-                # ``native_extensions[].when_unavailable`` publishes the
-                # compact adapter as the substitute in both residencies; this
-                # is that substitution, and the reason goes where a serve's
-                # log shows it.
-                reason = f"native build unavailable ({type(exc).__name__}: {exc})"
-                _log.warning("fused routed window lane unavailable for a %s stack of %d "
-                             "experts; the compact adapter serves it: %s",
-                             self.family, self.experts, reason)
-            else:
-                object.__setattr__(self, "_fused_adapter", built)
-        if built is None:
-            # The compact Triton adapter reads the legacy ``[column][chunk]``
-            # order only.  A re-laid stack cannot be re-strided by a reader that
-            # does not know the order, so an unavailable fused lane is a
-            # refusal, not a substitution (tessera#793/#739).
-            if self.word_layout != "legacy":
-                raise GrammarError(
-                    f"the {self.word_layout!r} resident word layout is served only by the fused "
-                    f"routed window lane; it is unavailable ({reason}), and the compact adapter "
-                    "reads the legacy order only. Refusing rather than mis-reading the stack.")
-            _log.info("compact window MoE adapter kept for a %s stack of %d experts: %s",
-                      self.family, self.experts, reason)
-            built = native_window_moe_from_bundles(
-                self.down, gate=self.gate, up=self.up, activation="silu")
+        built = FusedRoutedWindowMoE.from_bundles(self.gate, self.up, self.down,
+            expert_classes=self.expert_classes, activation="silu")
         object.__setattr__(self, "_adapter", built)
         return built
+
 
 
 def native_window_moe_from_bundles(

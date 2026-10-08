@@ -70,61 +70,30 @@ def tensor_facts(t, values=8):
 # wires
 # ---------------------------------------------------------------------------
 
-def window_bundle_facts(bundle, *, fused_owner=None, projection=None):
-    """Read the compact planes or the fused owner that replaced those planes."""
-    if fused_owner is not None:
-        runs = getattr(fused_owner, "runs_" + projection).cpu()
-        groups = {}
-        for expert, row in enumerate(runs.tolist()):
-            groups.setdefault(json.dumps(row), []).append(expert)
+def window_bundle_facts(bundle, *, owner, projection):
+    """Read only the retained native class representation."""
+    classes = []
+    for item in owner.classes:
+        part = getattr(item, projection)
         down = projection == "down"
-        return {
-            "representation": "fused_native",
-            "family": bundle.family, "quantizer": bundle.quantizer,
-            "rows": int(bundle.rows), "cols": int(bundle.cols),
-            "experts": int(bundle.experts), "window_bits": int(bundle.window_bits),
-            "library": fused_owner.library,
-            "words": tensor_facts(getattr(fused_owner, "words_" + projection)),
-            "table": tensor_facts(getattr(fused_owner, "table_" + projection)),
-            "scale": tensor_facts(bundle.scale_all),
-            "initial_states": tensor_facts(bundle.init_all),
-            "has_init": tensor_facts(bundle.has_init),
-            "run_pairs": tensor_facts(runs),
-            "block_descriptors": tensor_facts(getattr(fused_owner, "bdesc_" + projection)),
-            "tile_words": int(fused_owner.tile_words_down if down else fused_owner.tile_words_gate_up),
-            "slot_words": int(fused_owner.slot_words_down if down else fused_owner.slot_words_gate_up),
-            "distinct_run_pairs": {key: {"experts": value} for key, value in groups.items()},
-            "n_distinct_run_pairs": len(groups),
-        }
-    E = int(bundle.experts)
-    cols = int(bundle.cols)
-    run_off = bundle.run_off.cpu()
-    runs = bundle.runs_all.cpu().reshape(-1, 4)
-    per_expert_runs = {}
-    for e in range(E):
-        r = runs[int(run_off[e]):int(run_off[e + 1])].tolist()
-        key = json.dumps(r)
-        per_expert_runs.setdefault(key, []).append(e)
-    perm = bundle.perm_all.cpu()
-    ident = torch.arange(cols, dtype=perm.dtype)
-    perm_identity = [bool((perm[e] == ident).all()) for e in range(E)]
-    init = bundle.init_all.cpu()
+        classes.append({
+            "start": int(item.start), "end": int(item.end),
+            "words": tensor_facts(getattr(item, "words_" + projection)),
+            "table": tensor_facts(getattr(item, "table_" + projection)),
+            "scale": tensor_facts(part.scale_all),
+            "initial_states": tensor_facts(part.init_all),
+            "has_init": tensor_facts(part.has_init),
+            "run_pairs": tensor_facts(getattr(item, "runs_" + projection)),
+            "block_descriptors": tensor_facts(getattr(item, "bdesc_" + projection)),
+            "tile_words": int(item.tile_words_down if down else item.tile_words_gate_up),
+            "slot_words": int(item.slot_words_down if down else item.slot_words_gate_up),
+        })
     return {
+        "representation": "native_classes",
         "family": bundle.family, "quantizer": bundle.quantizer,
-        "rows": int(bundle.rows), "cols": cols, "experts": E,
-        "window_bits": int(bundle.window_bits),
-        "block": [int(bundle.block_m), int(bundle.block_n), int(bundle.block_k)],
-        "words_all": tensor_facts(bundle.words_all),
-        "table_all": tensor_facts(bundle.table_all), "codes_all": tensor_facts(bundle.codes_all),
-        "native_all": tensor_facts(bundle.native_all), "scale_all": tensor_facts(bundle.scale_all),
-        "tile_words": tensor_facts(bundle.tile_words), "total_words": tensor_facts(bundle.total_words),
-        "word_off": tensor_facts(bundle.word_off),
-        "has_init": tensor_facts(bundle.has_init),
-        "init_nonzero_per_expert": [int((init[e] != 0).sum()) for e in range(E)],
-        "perm_identity_per_expert": perm_identity,
-        "distinct_run_tables": {k: {"experts": v if len(v) <= 8 else f"{len(v)} experts"}
-                                for k, v in per_expert_runs.items()},
-        "n_distinct_run_tables": len(per_expert_runs),
+        "rows": int(bundle.rows), "cols": int(bundle.cols),
+        "experts": int(bundle.experts), "window_bits": int(bundle.window_bits),
+        "library": owner.library, "classes": classes,
     }
 
 
@@ -178,13 +147,10 @@ def tp1_wire_facts(args):
                 entry["gs13"] = float(layer.tessera_a4_gs13)
                 entry["gs2"] = float(layer.tessera_a4_gs2)
             else:
-                from tessera.routed_fused import FusedRoutedWindowMoE
-
                 nat = method._native
-                owner = nat if isinstance(nat, FusedRoutedWindowMoE) else None
                 for name in ("gate", "up", "down"):
                     entry[name] = window_bundle_facts(
-                        getattr(nat, name), fused_owner=owner, projection=name)
+                        getattr(nat, name), owner=nat, projection=name)
             del layer, method
             torch.cuda.empty_cache()
         except Exception as exc:  # noqa: BLE001
@@ -305,7 +271,7 @@ def tp2_wire_facts(args):
                                                            _compact_expert_units)
 
                     intake = _RankLocalPackedIntake(declared, module, dev, tp_rank, 2)
-                    rank["compact"] = bool(intake.compact)
+                    rank["intake"] = type(intake).__name__
                     fam = "value" if scheme["family"] == "TESSERA_BF16" else "e4m3"
                     scratch = {}
                     for (g, i), w in wires.items():
