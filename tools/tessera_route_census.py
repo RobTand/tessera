@@ -1609,7 +1609,7 @@ def parse_args(argv=None, env=None):
         ap.error("--compilation-config mode NONE disables Torch compilation (CUDA graphs only). "
                  "Concrete capture shapes remain. Graph replay runs no Python. "
                  "The latest record cannot attest current logical rows. "
-                 "Remove --compiled for this config. Name a Torch-compile mode instead.")
+                 "Remove --compilation-config for this config. Name a Torch-compile mode instead.")
     args.execution_mode = "compiled" if args.compiled else "eager"
     return args
 
