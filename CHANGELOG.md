@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-08 — cite the actual BF16 withdrawal version
+
+Correct the contract docstring from v59 to the separate T16 v62 withdrawal.
+The published table, executable controls and tensor arithmetic stay unchanged.
+
 ## 2026-10-08 — describe the raw BF16 native owner
 
 Remove the stale folded label from the current native-owner paragraph.

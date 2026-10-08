@@ -59,7 +59,7 @@ that carries the two-rank serve record, one route trace per rank, the unit
 among the families those traces executed, and the KL against a single-rank arm
 -- and a unit above 1 without one is refused by name
 (``_validate_tensor_parallel``). Contract v29 raised all three families to two
-ranks. Contract v59 withdraws the BF16 claim after the epilogue cutover.
+ranks. Contract v62 withdraws the BF16 claim after the epilogue cutover.
 The E2M1 and E4M3 claims keep their historical ``route_only`` receipts.
 Read the receipt's ``excess_over_control`` as a DIVERGENCE, not as added error:
 on a quantized checkpoint a TP2-vs-TP1 comparison re-draws quantization noise
