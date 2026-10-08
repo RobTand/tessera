@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-08T07:22:02Z",
+ "generated": "2026-10-08T08:23:23Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -6391,6 +6391,10 @@
     "state": "OPEN",
     "title": "Honor declared profile cohort values in PACT adapter"
    },
+   "2436": {
+    "state": "OPEN",
+    "title": "[P1] Apply expert dominance only to complete-layer rosters"
+   },
    "244": {
     "state": "CLOSED",
     "title": "[P2] Cluster campaign CI still has a refill-order race and an unexplained recovery failure"
@@ -10006,15 +10010,15 @@
     "title": "[P2+] Publish a runtime endpoint-to-artifact binding for the D50 task adapter"
    },
    "1057": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Extend the A8S harness for the explicit 18-cell MNBT matrix"
    },
    "1058": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Enable eligible routed layout and dense shared decode defaults"
    },
    "1059": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add explicit A8S graph MNBT matrix harness scope"
    },
    "106": {
