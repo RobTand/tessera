@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-08 — complete the routed T16 experiment callers
+
+Use raw BF16 values and separate FP32 row scales in the routed oracle.
+Read both current decoder names from their telemetry owner.
+Keep the historical stock control outside the numerical reference.
+The census reports compact facts or the fused owner’s retained facts.
+Pass that owner from the actual census consumer instead of reading retired planes.
+The numerical regression shows the old reference failure on real serialized wires.
+
 ## 2026-10-08 — migrate direct BF16 projection buffers
 
 Read canonical FP32 value-scale products for direct consumers.

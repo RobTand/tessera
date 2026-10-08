@@ -16,6 +16,13 @@ BF16 stock checkpoint remains a derived control, not a Tessera compute path.
 The E4M3 decode-once helper uses the existing bundle family. It does not
 read an arithmetic selector.
 
+The routed-pair oracle reads raw BF16 values and separate FP32 row scales.
+Its FP64 reference applies the scale after the dot and reads decoder names from telemetry.
+Historical stock profiles remain controls, not the numerical reference.
+
+The routed census reads compact planes or the fused owner’s retained representation.
+Its consumer passes that owner explicitly. It reports composed tables, run pairs and block descriptors instead of retired compact metadata.
+
 Contract v62 withdraws eight historical folded BF16 cells, their wire/rung
 attestations and the BF16 TP2 qualification. It does not relabel receipts.
 The new BF16 pairs have no served census.

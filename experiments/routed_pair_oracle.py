@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Routed-pair oracle and before/after profiles for the three routed families
-master serves on sm_121 (tessera#604, acceptance items "Oracle" and "Before
-and after profiles").
+"""Routed-pair correctness oracle and historical stock-control profiles.
+The three routed families can execute on sm_121. Correctness checks do not
+qualify a serving cell, a price, or a performance claim.
 
 WHAT IT CHECKS.  For each routed launch pair, real production expert wires at
 the served GLM-5.3-Flash expert shapes (hidden 4096, moe_intermediate 2048,
@@ -12,19 +12,18 @@ every ``weight_loader`` -> ``process_weights_after_loading`` -> ``apply``), and
 the routed output is held to an independent reference:
 
 * ``TESSERA_E4M3_K1`` -> ``(NativeWindowMoE.__call__, native_window_moe_compact)``
-* ``TESSERA_BF16_K1`` -> ``(NativeWindowMoE.__call__, native_window_moe_compact_folded)``
+* ``TESSERA_BF16_K1`` -> ``(NativeWindowMoE.__call__, native_window_moe_compact_bf16)``
 * ``TESSERA_E2M1_K2`` -> ``(kernel_a4.a4_span2_grouped_gemm, native_span2_grouped)``
 
 The launch pair is not asserted from the family: it is read off the route's
 own ``emit_route`` telemetry during ``apply`` and compared with the pair above.
 
-THE REFERENCE.  Weights: ``tessera.stock.materialize_stock`` on each unit the
-MATERIALISING reader parses (``scheme.parse_tessera_expert_blob``), dequantised
-exactly (``stock_dequant`` for NVFP4, the FP8 bytes times the per-row scale, the
-folded BF16 tile).  Activations: the family's executed activation contract,
-called as the runtime's own ops -- per-token dynamic E4M3
-(``torch.ops._C.dynamic_per_token_scaled_fp8_quant``), NVFP4 group-16 under the
-layer's static global (``vllm._custom_ops.scaled_fp4_quant``), BF16 as is.
+THE REFERENCE. The materializing reader parses each projection wire.
+BF16 uses ``tessera.decode.materialize_bf16`` for raw BF16 values and
+separate FP32 row scales. The FP64 dot applies those scales after its sum.
+No BF16 stock checkpoint enters the numerical oracle. FP8 keeps its raw
+bytes and row scales; NVFP4 uses ``stock_dequant``. Activations use the
+runtime quantizers: per-token E4M3, group-16 NVFP4, or unchanged BF16.
 Every product is summed in fp64 on exactly representable operands, so the
 reference is exact to ~1e-15.  Placement mirrors vLLM's modular path the way
 ``tests/test_native_window_moe.py`` (``_per_expert``/``_routes``/``_down``) and
@@ -108,6 +107,9 @@ from typing import Any
 
 import torch
 
+from tessera.serving.telemetry import (DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16,
+                                       DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16)
+
 WIRE_ROOT = ("/mnt/shared/tessera-measurements/glm-canonical-census-20260908/"
              "activation-runtime-allocation-20260911/union-a4a8a16-01/cache/wire")
 SCALES = ("/mnt/shared/tessera-measurements/glm-canonical-census-20260908/"
@@ -125,9 +127,9 @@ FAMILIES = {
                             "native_routed_fused_window")},
     "bf16": {"payload": "TESSERA_BF16_K1", "rung": "R1024", "family": "TESSERA_BF16",
              "pair": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                      "native_window_moe_compact_folded"),
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT_BF16),
              "fused_pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-                            "native_routed_fused_window_folded")},
+                            DECODER_NATIVE_ROUTED_FUSED_WINDOW_BF16)},
     "e2m1": {"payload": "TESSERA_E2M1_K2", "rung": "R896", "family": "TESSERA_NVFP4",
              "pair": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")},
 }
@@ -431,7 +433,6 @@ def build_after(fam, scheme, blobs, scales, n_experts, cfg, clamp, prefix):
         assert method._native is not None
         info["native_adapter"] = type(method._native).__name__
         info["launch_pair"] = list(method._native.launch_pair)
-        info["arithmetic"] = getattr(method._native.down, "arithmetic", None)
         info["family_of_bundles"] = getattr(method._native.down, "family", None)
         info["fused_gate_up"] = method._native.gate_up is not None
     return layer, method, info
@@ -461,31 +462,37 @@ def parsed_unit(blob, role, target, device):
     return parsed[0][1]
 
 
-def reference_weights(fam, scheme, blobs, n_experts, prefix, device="cuda"):
-    """``materialize_stock`` per parsed unit (the materialising reader), dequantised
-    exactly.  Returns per projection: W [E] fp32 exact values, m [E] per-row
-    multipliers or None."""
+def _reference_factors(parsed, family, device):
+    """Read canonical factors without a per-weight BF16 conversion."""
+    if family == "TESSERA_BF16":
+        from tessera.decode import materialize_bf16
+
+        values, scale = materialize_bf16(parsed.unit, parsed.forests, parsed.code)
+        return values.to(device), scale.to(device)
+
     from tessera.stock import materialize_stock, stock_dequant
 
+    tiles = materialize_stock(parsed.unit, parsed.forests, parsed.code)
+    if family == "TESSERA_FP8":
+        return (tiles["weight"].to(device).float().contiguous(),
+                tiles["weight_scale"].to(device).reshape(-1).float())
+    tiles = {name: value.to(device) for name, value in tiles.items()}
+    return stock_dequant(tiles).float().contiguous(), None
+
+
+def reference_weights(fam, scheme, blobs, n_experts, prefix, device="cuda"):
+    """Read each projection into values and optional row multipliers."""
     _declared, roles = parse_roles(scheme, prefix)
     ref = {p: {"W": [], "m": []} for p in PROJ}
     t0 = time.time()
     for e in range(n_experts):
         for p in PROJ:
-            pu = parsed_unit(blobs[p][e], roles[p], f"{prefix} {p} expert {e}", device)
-            tiles = materialize_stock(pu.unit, pu.forests, pu.code)
-            if fam["family"] == "TESSERA_FP8":
-                ref[p]["W"].append(tiles["weight"].to(device).float().contiguous())
-                ref[p]["m"].append(tiles["weight_scale"].to(device).reshape(-1).float())
-            elif fam["family"] == "TESSERA_BF16":
-                ref[p]["W"].append(tiles["weight"].to(device).float().contiguous())
-                ref[p]["m"].append(None)
-            else:
-                tiles = {k: v.to(device) for k, v in tiles.items()}
-                ref[p]["W"].append(stock_dequant(tiles).float().contiguous())
-                ref[p]["m"].append(None)
-            del pu, tiles
-    torch.cuda.synchronize()
+            parsed = parsed_unit(blobs[p][e], roles[p], f"{prefix} {p} expert {e}", device)
+            values, scale = _reference_factors(parsed, fam["family"], device)
+            ref[p]["W"].append(values)
+            ref[p]["m"].append(scale)
+    if torch.device(device).type == "cuda":
+        torch.cuda.synchronize(device)
     return ref, round(time.time() - t0, 3)
 
 

@@ -70,8 +70,32 @@ def tensor_facts(t, values=8):
 # wires
 # ---------------------------------------------------------------------------
 
-def window_bundle_facts(bundle):
-    """A ``PreparedGroupedWindowGemm``: the SoA the grouped kernel reads."""
+def window_bundle_facts(bundle, *, fused_owner=None, projection=None):
+    """Read the compact planes or the fused owner that replaced those planes."""
+    if fused_owner is not None:
+        runs = getattr(fused_owner, "runs_" + projection).cpu()
+        groups = {}
+        for expert, row in enumerate(runs.tolist()):
+            groups.setdefault(json.dumps(row), []).append(expert)
+        down = projection == "down"
+        return {
+            "representation": "fused_native",
+            "family": bundle.family, "quantizer": bundle.quantizer,
+            "rows": int(bundle.rows), "cols": int(bundle.cols),
+            "experts": int(bundle.experts), "window_bits": int(bundle.window_bits),
+            "library": fused_owner.library,
+            "words": tensor_facts(getattr(fused_owner, "words_" + projection)),
+            "table": tensor_facts(getattr(fused_owner, "table_" + projection)),
+            "scale": tensor_facts(bundle.scale_all),
+            "initial_states": tensor_facts(bundle.init_all),
+            "has_init": tensor_facts(bundle.has_init),
+            "run_pairs": tensor_facts(runs),
+            "block_descriptors": tensor_facts(getattr(fused_owner, "bdesc_" + projection)),
+            "tile_words": int(fused_owner.tile_words_down if down else fused_owner.tile_words_gate_up),
+            "slot_words": int(fused_owner.slot_words_down if down else fused_owner.slot_words_gate_up),
+            "distinct_run_pairs": {key: {"experts": value} for key, value in groups.items()},
+            "n_distinct_run_pairs": len(groups),
+        }
     E = int(bundle.experts)
     cols = int(bundle.cols)
     run_off = bundle.run_off.cpu()
@@ -86,7 +110,7 @@ def window_bundle_facts(bundle):
     perm_identity = [bool((perm[e] == ident).all()) for e in range(E)]
     init = bundle.init_all.cpu()
     return {
-        "family": bundle.family, "arithmetic": bundle.arithmetic, "quantizer": bundle.quantizer,
+        "family": bundle.family, "quantizer": bundle.quantizer,
         "rows": int(bundle.rows), "cols": cols, "experts": E,
         "window_bits": int(bundle.window_bits),
         "block": [int(bundle.block_m), int(bundle.block_n), int(bundle.block_k)],
@@ -154,9 +178,13 @@ def tp1_wire_facts(args):
                 entry["gs13"] = float(layer.tessera_a4_gs13)
                 entry["gs2"] = float(layer.tessera_a4_gs2)
             else:
+                from tessera.routed_fused import FusedRoutedWindowMoE
+
                 nat = method._native
+                owner = nat if isinstance(nat, FusedRoutedWindowMoE) else None
                 for name in ("gate", "up", "down"):
-                    entry[name] = window_bundle_facts(getattr(nat, name))
+                    entry[name] = window_bundle_facts(
+                        getattr(nat, name), fused_owner=owner, projection=name)
             del layer, method
             torch.cuda.empty_cache()
         except Exception as exc:  # noqa: BLE001
