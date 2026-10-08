@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-10-08 — explicit A8S graph MNBT matrix harness
+
+The opt-in `ship-graph-mnbt-matrix` mode measures the authorized 18-cell matrix.
+It compares maximum batched tokens 2048 and 4096.
+The prompt lengths are 512, 2048 and 8192; concurrency is 1, 4 and 8.
+Both arms use tensor parallel size two, graph decode without speculative tokens, and the accepted A8S artifact.
+All three levers remain explicitly ON, independent of the default-only source change.
+
+The prompts repeat the single-request prompt across concurrent slots; prefix cache use stays disabled.
+The CPU smoke checks real inputs; permanent tests check protocol and population refusals without external data.
+The harness retains both-Spark power, Torch profiles and raw latency data.
+Priority is zero after the PACT band handoff; GPU exclusivity remains explicit.
+Every old mode, key and controller client stays unchanged.
+The default maximum batched tokens stays at 2048.
+
 ## 2026-10-08 — T4 route tests declare their Torch dependency
 
 The CPU route-admission tests use export and telemetry code that requires Torch.
