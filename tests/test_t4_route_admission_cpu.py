@@ -10,6 +10,8 @@ import types
 
 import pytest
 
+pytest.importorskip("torch")
+
 from tessera.t4_route_admission import (
     T4_PURE_Q256,
     build_attestation_stub,

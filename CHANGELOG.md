@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — T4 route tests declare their Torch dependency
+
+The CPU route-admission tests use export and telemetry code that requires Torch.
+The module now skips when Torch is absent, as the existing dependent tests do.
+Every assertion and production import remains unchanged.
+
 ## 2026-10-08 — position-independent issue reference checks
 
 Remove the residency test that assumes a fixed architecture paragraph position.
