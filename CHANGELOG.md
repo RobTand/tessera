@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-10-08 — correct three class-cutover consumers
+
+The E2M1 routed launch reads its superblock prefix from `_Routing.superblocks(BM)`.
+The removed `item_off` field made every nonempty E2M1 routed launch raise before the native call.
+The T8R benchmark builder maps router IDs to storage IDs through one device inverse, as the plugin does.
+The plugin and the builder share `expert_classes.storage_expert_ids` for that gather.
+The bench and stageprev numeric observers watch the load-bound uniform launch and refuse a multi-class owner.
+Stageprev reads run tables from the class projections. The CUDA width test spies on the bound module.
+The E2M1 refusal test reads the E2M1 module's own lane switch.
+No kernel, wire, price, contract entry, tolerance or default changes.
+
 ## 2026-10-08 — validate every native owner panel route
 
 Owner panel tests derive the selected-library pair set from the registry.
