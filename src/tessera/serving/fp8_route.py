@@ -1,30 +1,27 @@
-"""The Tessera FP8 W8A8 dense route: an E4M3 wire served packed.
+"""The Tessera FP8 dense route with packed windows and resident prefill.
 
-WHAT IT SERVES.  Tessera's E4M3 wire -- the window body over the CHANNEL scale
-plane (Tessera's default for the E4M3 grid at every rung; 4.07 bpp on the wire
-at q1024) -- loaded by the compact reader and decoded **inside** the packed
-bitstream GEMM (``tessera.window_gemm`` behind ``serving.native_window``): the
-wire's words are the resident weights in both residencies, the table gather and
-the ``tl.dot`` happen in registers/shared memory, and the fp32 epilogue is
-``y = a_scale[m] * w_scale[n] * acc``.  The activation is vLLM's per-token
-dynamic E4M3 quantizer, so the executed contract is ``fp8_per_token_dynamic``
-and the route stamps ``(tessera::window_gemm_dense, native_window_gemm)``.
+The compact reader loads the E4M3 WINDOW body and CHANNEL scale plane.
+Every module retains its packed words, lookup tables and fp32 row scales.
+The activation uses vLLM's per-token dynamic E4M3 quantizer.
+The executed activation contract remains fp8_per_token_dynamic.
+The route records the symbol and decoder that each forward uses.
 
-WHAT IT REUSES.  Blob parsing is the compact reader
-(``scheme.parse_compact_blob_for_scheme`` -> ``compact_prep``), which runs the
-same container/role/digest/slack/geometry checks as the materialising reader
-and expands no weight plane; the rank cut is the layer's own ``ShardPlan``; the
-compute is the window worker's prepared bundle, wrapped in one functional
-custom op.  The materialising preparation
-(``prepare_tessera_fp8_module``) and the torch window decode stay in the tree
-as the **reference** -- the decode oracle tests hold the native lane to
-(``tessera.decode.materialize_fp8``) -- and are no longer reached from a serve.
+Resident modules with an eager forward decode once by default at load.
+Their large-M prefill uses the same E4M3 values and row scales through
+serving.e4m3_prefill. Smaller inputs use the prepared window lane.
+Compiled and streamed modules retain the window lane by default.
+An explicit unsupported decode-once request refuses at load.
 
-RESIDENCY.  ``resident`` and ``streamed`` hold the same packed repack (the
-wire's body words plus small per-unit tables and the fp32 row scale); no
-decoded 8-bit tile is materialised at load or per forward, and the route trace
-is eager-only by design (tessera#113), so a compiled serve records no launch
-counts rather than counts of compilation.
+Blob parsing reuses scheme.parse_compact_blob_for_scheme and compact_prep.
+Container, role, digest, slack and geometry checks remain unchanged.
+The layer's ShardPlan defines the rank cut. No reference preparation runs
+from this serving path. The materialized preparation and Torch decoder
+remain test oracles for the native window lane.
+
+Resident accounting includes the decoded copy when the module holds one.
+Streamed modules retain only the packed representation.
+The route trace remains eager-only. A compiled forward records no launch
+counts instead of counts from compilation.
 
 THE ACTIVATION SIDE IS PRICED.  The stock arm of the same encoder measured KL
 0.470 against an image-matched BF16 teacher on Qwen3-0.6B
