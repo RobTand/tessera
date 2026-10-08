@@ -1,5 +1,25 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
+
+The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
+The arms compare maximum batched tokens 2048 and 4096.
+Both arms use the accepted A8S artifact, resident service, socket transport and tensor parallel size two.
+They use graph decode without speculative tokens and retain the existing graph compilation flags.
+All three levers are explicitly ON, independent of the default-only pull request.
+
+Each arm measures prompt lengths 512, 2048 and 8192 at concurrency 1, 4 and 8.
+Each cell has one warmup and ten timed trials, with 128 completion tokens per request.
+The prompts repeat the existing single-request prompt across the concurrent slots in each trial.
+Prefix cache use stays disabled.
+The CPU dry run checks the real input population and prompt geometry.
+
+The harness retains Torch profiles and both-Spark Netdata power records.
+Missing profiles, power or effective path evidence cannot establish a workload rule.
+The default stays at 2048.
+Every old harness mode stays unchanged.
+The matrix uses priority zero after the PACT band handoff and retains GPU exclusivity.
+
 Re-stamped 2026-10-07 for native routed prices in the offline planner.
 
 The projection byte audit selects `served_recipe` before native resident accounting.
