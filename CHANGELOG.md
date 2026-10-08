@@ -229,6 +229,13 @@ and the BF16 TP2 qualification. Historical receipts remain unchanged.
 The new BF16 decoder identities need a new served census. Changed T16
 D41 classes need measurements on the merged build before allocation.
 Preserve external paths through their active measurement lifetimes.
+## 2026-10-08 — refresh the register-direct branch after the class build merge
+
+The register-direct branch now includes the accepted master base after pull request 1024 merged.
+The bundle adapter reads the tile row constant from its shared geometry owner.
+The byte audit retains both the fragment checks and the projection checks.
+The register-direct CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
+This refresh does not establish a new graphics processor measurement or serving qualification.
 ## 2026-10-08 — public structure-spec harvest proof on a committed fixture
 
 The structure-spec harvest tests run the real rung-allowability CLI on a small
