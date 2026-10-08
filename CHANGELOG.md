@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — compare native scalar retention bytes
+
+Flatten scalar and nonscalar retained tensors before their uint8 views.
+Keep the bit-exact comparison across repeated real forwards.
+The native owner and its retained buffers stay unchanged.
+
 ## 2026-10-08 — declare the research span-two boundary wire
 
 Use the explicit TCQ recipe for the span-two numerical boundary bank.
