@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-08 — isolate the final real pricing-shape case
+
+Request the existing import-isolation fixture for the one missed real-root pricing case.
+Preserve exact charged shape checks and the strict foreign-source refusal.
+The actual foreign-cache smoke and all seven changed controls passed.
+Keep the pristine-master failed-file baseline separate from the corrected source.
+
 ## 2026-10-08 — cite the actual BF16 withdrawal version
 
 Correct the contract docstring from v59 to the separate T16 v62 withdrawal.

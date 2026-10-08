@@ -498,7 +498,7 @@ def test_shared_expert_gate_up_is_the_exporters_fused_group_too():
         build(config, shapes, with_control=False)
 
 
-def test_the_unit_table_carries_the_shape_the_rate_was_charged_on():
+def test_the_unit_table_carries_the_shape_the_rate_was_charged_on(isolated_prismaquant_imports):
     _plan, provenance = build(uniform_config(), one_layer_shapes(), prismaquant=PQ_TREE)
     rows = {u["qname"]: u for u in provenance["units"]}
     assert rows["model.layers.0.self_attn.q_proj"]["rows"] == 2048
