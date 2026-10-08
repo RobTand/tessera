@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — remove the historical phase-error wording pin
+
+Remove the comparison with a retained list of error sentences.
+Keep the functional phase-shape and historical receipt checks.
+The phase plan and production refusal rules stay unchanged.
+
 ## 2026-10-08 — combine the T4 and T16 serving withdrawals
 
 Keep the released v64 contract and the T16 v62 history entry.

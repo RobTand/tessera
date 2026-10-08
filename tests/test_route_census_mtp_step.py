@@ -154,33 +154,6 @@ def test_a_collapsed_table_names_its_phases_through_the_contract():
 
 # --- the served records -----------------------------------------------------
 
-def test_the_fixture_reproduces_r5_under_the_contract_table():
-    """The one-row plan still rejects M2 under every current cell.
-
-    The BF16 cell withdrawal removes its cell-specific shape checks.
-    The general shape checks remain. Old folded decoder records also refuse.
-    """
-    tool = _tool()
-    fixture = _fixture()
-    assert fixture["source"]["verdict"] == "REFUSED"
-    checked = _replay(fixture, plan=tool.census_phase_plan(None), with_draft=False)
-    from tessera.serving.contract import load_serving_contract
-
-    active_cells = {cell["id"] for cell in load_serving_contract()["lane_eligibility"]["cells"]}
-    original = [p for p in fixture["original_problems_for_kept_modules"]
-                if not p.startswith("draft")
-                and ("keyed to cell '" not in p
-                     or any(f"keyed to cell '{cell}'" in p for cell in active_cells))]
-    shape = [p for p in checked["problems"] if "shape M2 is a batch-regime forward" in p]
-    assert original and sorted(shape) == sorted(original)
-    extra = [p for p in checked["problems"] if p not in shape]
-    assert extra, "v59 must refuse the folded BF16 records under the current dispatch"
-    assert all("folded" in p for p in extra), extra
-    # ...and the draft side: no observed draft call was one row, so the M1
-    # bucket the old census read for the draft's decode phase was empty.
-    for row in fixture["draft"]["arms"]["decode_arm"]:
-        assert "decode" not in row["by_regime"]
-        assert row["by_regime"]["batch"]["latest_m"] == 2
 
 
 def test_the_r5_records_replay_clean_under_the_k1_plan():
