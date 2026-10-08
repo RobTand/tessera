@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-08 — T4 route tests declare their Torch dependency
+
+The CPU route-admission tests use export and telemetry code that requires Torch.
+The module now skips when Torch is absent, as the existing dependent tests do.
+Every assertion and production import remains unchanged.
+
 ## 2026-10-08 — correct three class-cutover consumers
 
 The E2M1 routed launch reads its superblock prefix from `_Routing.superblocks(BM)`.
