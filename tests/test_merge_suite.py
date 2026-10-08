@@ -325,7 +325,8 @@ def test_attempt_timeout_kills_a_term_resistant_process_group(monkeypatch, leade
     def running(pid):
         try:
             state = Path(f"/proc/{pid}/stat").read_text().rsplit(") ", 1)[1].split()[0]
-        except FileNotFoundError:
+        except (FileNotFoundError, ProcessLookupError):
+            # The entry can vanish mid-read (ESRCH) while the task is reaped.
             return False
         return state != "Z"  # a reparented zombie is dead, not retained work
 
