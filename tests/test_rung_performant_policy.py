@@ -362,11 +362,14 @@ class TimingPublication(unittest.TestCase):
             target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
             shape = next(s for s in mutated['scope']['shapes'] if s['shape_id'] == target['shape_id'])
             shape.update(rows=1, columns=1)
-            target['evidence'].update(rows=1, columns=1)
+            for measurement in mutated['rungs'][0]['measurements']:
+                if measurement['shape_id'] == target['shape_id']:
+                    measurement['evidence'].update(rows=1, columns=1)
             mutated['geometry_classes'] = measured_geometry_classes(mutated)
-            result = decide(mutated, 896, cell_ids=[cell_id])
-            self.assertEqual(result['cells'][0]['status'], 'wait')
-            self.assertEqual(result['cells'][0]['reason'], 'unmeasured_shape_or_M_scope')
+            result = decide(mutated, 896)
+            self.assertEqual(result['status'], 'wait')
+            self.assertTrue(all(cell['reason'] == 'performance_admission_not_established'
+                                for cell in result['cells']))
         with self.subTest(field='decoder'):
             mutated = copy.deepcopy(table)
             target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
