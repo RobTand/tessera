@@ -665,7 +665,7 @@ def _validate_panel(panel, *, expected_runtime, runtime_validation=None):
     cell, lane = admitted_cell(contract, scope, runtime, pair, roles)
     if row["cell_id"] != cell["id"]:
         raise ValueError("recorded cell differs from positive cell join")
-    agreement, problems = cell_launch_agreement({"timed": {row["prefix"]: records[-1]}}, cells=[cell], phase_regimes={"timed": scope["regime"]}, platform=runtime["platform"], rungs_by_module={row["prefix"]: scope["q256"]}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE, runtime_image=runtime["image"], execution_mode="eager", formats=contract["formats"])
+    agreement, problems = cell_launch_agreement({"timed": {row["prefix"]: records[-1]}}, cells=[cell], phase_regimes={"timed": scope["regime"]}, platform=runtime["platform"], rungs_by_module={row["prefix"]: scope["q256"]}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE, runtime_image=runtime["image"], execution_mode="eager", formats=contract["formats"], structure=scope["structure"])
     if problems or agreement["agrees"] is not True or agreement["phases"]["timed"]["covered_by_cell"] != 1:
         raise ValueError("observed launch lacks positive census agreement")
     if not raw["native_binary"].startswith(b"\x7fELF"):

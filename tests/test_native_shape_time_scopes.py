@@ -66,8 +66,8 @@ def test_request_accepts_dense_tp1_and_tp2(panel, monkeypatch, tp_degree):
 ROUTED_EXPERTS = 2
 ROUTED_TOPK = 2
 ROUTED_Q256 = 768
-ROUTED_HIDDEN = 256
-ROUTED_INTERMEDIATE = 512
+ROUTED_HIDDEN = 128
+ROUTED_INTERMEDIATE = 256
 #: The receipt-qualified current pair this fixture serves. The packaged
 #: contract's scoped TP2 census receipt qualifies exactly this pair at r768.
 ROUTED_PAIR = ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
@@ -227,7 +227,7 @@ def _routed_panel(tmp_path, monkeypatch):
     declared, roles = tp.wire_facts(tp.read_bound(wire_binding), scheme_decl)
     launch = _pick_routed_launch(doc, scope, runtime, roles)
     record = {"kind": "moe", "policy": scheme.TESSERA_FP8 + ":resident", "state": "served",
-              "symbol": launch["symbol"], "decoder": launch["decoder"], "shape": "M64:N512:K256",
+              "symbol": launch["symbol"], "decoder": launch["decoder"], "shape": "M64:N256:K128",
               "contract": scheme.ROUTES[scheme.TESSERA_FP8]["activation_contract"], "platform": "sm_121"}
     samples = [1.0, 2.0, 3.0, 4.0]
     trace = {"traceEvents": [{"cat": "kernel", "name": "CPU trace fixture", "dur": 1.0}]}
@@ -381,13 +381,14 @@ def test_worker_routed_tp2_uses_production_builder(panel, monkeypatch, tmp_path)
             calls.append(("load", shard_id, expert_id, int(blob.numel())))
 
         def process_weights_after_loading(self, layer):
-            layer.tessera_rows, layer.tessera_columns = 512, 256
+            layer.tessera_rows, layer.tessera_columns = 2 * (ROUTED_INTERMEDIATE // 2), ROUTED_HIDDEN
             self._native = SimpleNamespace(launch_pair=("fake.symbol", "fake.decoder"))
             self._packed = SimpleNamespace(resident_bytes=lambda: 77)
 
     def build_fake_moe_method(scheme_decl, prefix, mode, layer):
         calls.append(("build", prefix, mode))
         return FakeMethod()
+    build_fake_moe_method.__module__ = "shape_time_fake_moe"
 
     path, request = _routed_request(panel, monkeypatch, tmp_path)
     wire = app.tp.read_bound(request["wire"])
@@ -406,7 +407,7 @@ def test_worker_routed_tp2_uses_production_builder(panel, monkeypatch, tmp_path)
         dict(request, _wire_roles=app.tp.wire_facts(wire, request["scheme"])[1]), wire)
     assert isinstance(got, FakeMethod)
     assert calls[0] == ("build", "test.routed", "resident")
-    assert calls[1][1]["intermediate_size_per_partition"] == 256
+    assert calls[1][1]["intermediate_size_per_partition"] == ROUTED_INTERMEDIATE // 2
     assert calls[1][1]["num_experts"] == ROUTED_EXPERTS and calls[1][1]["hidden_size"] == ROUTED_HIDDEN
     loads = [c for c in calls if c[0] == "load"]
     assert len(loads) == ROUTED_EXPERTS * 3
