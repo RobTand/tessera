@@ -19,9 +19,9 @@ means the draft was not engaged and still refuses; an M1 draft call is
 inconsistent with k = 1 and refuses.  ``decode_regime_served: false`` is
 stamped rather than passed or refused.
 
-The fixture is trimmed from the r5 receipt by
-``tests/fixtures/generate_route_census_mtp_r5.py``.  The replay runs the tool's
-own ``validate_census_observations`` on those records, with no engine or device.
+The fixture is trimmed from the r5 receipt by tests/fixtures/generate_route_census_mtp_r5.py.
+The replay uses the original TCQ cells and the current census phase rules.
+These historical receipts do not attest the production WINDOW owner.
 """
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def _k1_plan(tool, fixture):
 
 
 def _replay(fixture, *, plan, with_draft=True):
-    """``main``'s validation call, fed from the stored observations."""
+    """Validate historical observations against current admission."""
     pytest.importorskip("torch")  # the routes that own the launch sets import torch
     tool = _tool()
     from tessera.serving import bf16_route, fp8_route, moe_route, nvfp4_route
@@ -75,6 +75,10 @@ def _replay(fixture, *, plan, with_draft=True):
     ranks = fixture["ranks"]
     platform = fixture["platform"]
     draft = fixture["draft"]
+    # Replay against the actual historical TCQ receipts, not current WINDOW admission.
+    current = load_serving_contract()["lane_eligibility"]["cells"]
+    archive = json.loads((ROOT / "tests/fixtures/t4_tcq_cells_historical.json").read_text())
+    cells = [cell for cell in current if cell["family"] != "TESSERA_E2M1_K2"] + archive["cells"]
     return tool.validate_census_observations(
         phases_by_rank={phase: [rank["records"][phase] for rank in ranks]
                         for phase in (PREFILL, GENERATION)},
@@ -85,12 +89,16 @@ def _replay(fixture, *, plan, with_draft=True):
         phase_plan=plan, mode=fixture["serve_mode"], platform=platform,
         runtime_image=fixture["runtime"]["image"],
         execution_mode=fixture["runtime"]["execution_mode"], compiled=False,
-        cells=load_serving_contract()["lane_eligibility"]["cells"],
+        cells=cells,
         contract_for={TESSERA_NVFP4: nvfp4_route.ACTIVATION_CONTRACT,
                       TESSERA_FP8: fp8_route.ACTIVATION_CONTRACT,
                       TESSERA_BF16: bf16_route.ACTIVATION_CONTRACT},
-        expected=lambda family, regime, kind: tool.expected_pairs(
-            family, regime, kind, compiled=False, platform=platform),
+        expected=lambda family, regime, kind: {
+            (launch["symbol"], launch["decoder"])
+            for cell in cells if cell["family"] == PAYLOAD_FAMILY_BY_ROUTE[family]
+            and cell["regime"] == regime
+            and cell["structure"] == ("routed_moe" if kind == "moe" else "dense")
+            for launch in cell["executes"]},
         symbol_for={family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES},
         symbol_base=moe_route.census_symbol_base,
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
@@ -146,30 +154,38 @@ def test_a_collapsed_table_names_its_phases_through_the_contract():
 
 # --- the served records -----------------------------------------------------
 
-def test_the_fixture_reproduces_r5_under_the_contract_table():
-    """Regression: the old one-row expectation refuses exactly what r5 refused."""
-    tool = _tool()
-    fixture = _fixture()
-    assert fixture["source"]["verdict"] == "REFUSED"
-    checked = _replay(fixture, plan=tool.census_phase_plan(None), with_draft=False)
-    original = [p for p in fixture["original_problems_for_kept_modules"]
-                if not p.startswith("draft")]
-    assert original and sorted(checked["problems"]) == sorted(original)
-    assert all("shape M2 is a batch-regime forward" in p for p in checked["problems"])
-    # ...and the draft side: no observed draft call was one row, so the M1
-    # bucket the old census read for the draft's decode phase was empty.
-    for row in fixture["draft"]["arms"]["decode_arm"]:
-        assert "decode" not in row["by_regime"]
-        assert row["by_regime"]["batch"]["latest_m"] == 2
 
 
 def test_the_r5_records_replay_clean_under_the_k1_plan():
-    """Acceptance: r5's own records, validated with the k=1 plan, refuse nothing."""
+    """Current agreement: r5's records replay with only the BF16 withdrawal refused.
+
+    Contract v62 withdrew the BF16 cells and the folded launches. The folded
+    BF16 body and draft records the fixture kept have no current cell and no
+    current native decode coverage. Everything else -- plan, shapes, sources,
+    the launch the draft's own coverage names -- replays as r5 ran it. The
+    folded decoder below is the receipt's own word for what ran, not a claim
+    about the current dispatch.
+    """
     tool = _tool()
     fixture = _fixture()
     plan = _k1_plan(tool, fixture)
     checked = _replay(fixture, plan=plan)
-    assert checked["problems"] == []
+    problems = checked["problems"]
+    assert problems
+    names = set()
+    for rank_i, rank in enumerate(fixture["ranks"]):
+        for phase_records in rank["records"].values():
+            for name, record in phase_records.items():
+                if record["policy"].partition(":")[0] == "TESSERA_BF16":
+                    names.add(name)
+                    names.add(f"rank{rank_i}/{name}")
+    for module in fixture["draft"]["source_to_module"].values():
+        names.add(module)
+        for rank_i in range(len(fixture["ranks"])):
+            names.add(f"rank{rank_i}/{module}")
+    for problem in problems:
+        assert ("folded" in problem or "compact_bf16" in problem
+                or any(name in problem for name in names)), problem
     assert plan["decode_regime_served"] is False
     assert checked["histogram"][GENERATION]["regime"] == "batch"
     draft = checked["draft"]

@@ -21,6 +21,7 @@ E2M1 and E4M3 formats themselves decide must be checkable there.
 from __future__ import annotations
 
 import copy
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +50,9 @@ import json
 
 CONTRACT_NAME = "e2m1_group16_ue4m3_static"
 
+ARCHIVE = (Path(__file__).resolve().parents[1] / "experiments" / "results" /
+           "t4_activation_quantizers_historical_20261007.json")
+
 
 @pytest.fixture(scope="module")
 def contract():
@@ -56,16 +60,14 @@ def contract():
 
 
 @pytest.fixture(scope="module")
-def lane(contract):
-    served: dict = {}
-    for cell in contract["lane_eligibility"]["cells"]:
-        served.setdefault(cell["platform"], set()).add(cell["activation_contract"])
-    return sorted(contract["lane_eligibility"]["platforms"]), served
+def lane():
+    """The historical FP4 scope, not a current WINDOW serving claim."""
+    return ["sm_121"], {"sm_121": {CONTRACT_NAME}}
 
 
 @pytest.fixture(scope="module")
-def block(contract):
-    return contract["activation_quantizers"]
+def block():
+    return json.loads(ARCHIVE.read_text())
 
 
 @pytest.fixture
@@ -152,7 +154,7 @@ def test_the_block_scale_probes_sit_on_the_e4m3_boundaries():
 
 
 # --- the published table ---------------------------------------------------
-def test_the_packaged_contract_carries_a_validated_table(block, lane):
+def test_historical_receipt_keeps_a_validated_table(block, lane):
     assert block["schema"] == ACTIVATION_QUANTIZER_SCHEMA
     _check(block, lane)
 
@@ -185,14 +187,12 @@ E2M1_IMAGE = (
     "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5")
 
 
-def test_every_sm121_image_an_fp4_cell_executes_on_has_a_table(contract, block):
-    """Each fp4 cell's runtime image carries its own attestation (v33 rule)."""
+def test_current_fp4_cells_do_not_borrow_the_historical_activation_receipt(contract):
     fp4 = {cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
-           if cell["platform"] == "sm_121"
-           and cell["activation_contract"] == CONTRACT_NAME}
-    attested = {entry["generated"]["image"] for entry in block["platforms"]["sm_121"]}
-    assert fp4 == {E2M1_IMAGE}
-    assert fp4 <= attested, sorted(fp4 - attested)
+           if cell["platform"] == "sm_121" and cell["activation_contract"] == CONTRACT_NAME}
+    current = contract["activation_quantizers"]["platforms"]
+    assert not fp4
+    assert current == {}
 
 
 def test_every_sm121_table_is_byte_identical(block):
@@ -295,18 +295,8 @@ def test_an_unknown_field_is_refused_not_ignored(mutable, lane):
 
 # --- one attestation per image (tessera#555) --------------------------------
 def _v2_block():
-    """The packaged sm_121 entry re-wrapped as a one-image v2 list.
-
-    The packaged contract itself migrates separately; these tests pin the new
-    grammar's rules without waiting for that merge, reading the entry raw so
-    no validation runs before the one under test.
-    """
-    import json
-    from tessera.serving.contract import contract_path
-    raw = json.loads(contract_path().read_text())
-    entry = copy.deepcopy(raw["activation_quantizers"]["platforms"]["sm_121"])
-    if isinstance(entry, list):
-        entry = entry[0]
+    """One measured historical image for the unchanged attestation grammar."""
+    entry = copy.deepcopy(json.loads(ARCHIVE.read_text())["platforms"]["sm_121"][0])
     return {"schema": ACTIVATION_QUANTIZER_SCHEMA,
             "generator": "experiments/attest_activation_quantizer.py",
             "platforms": {"sm_121": [entry]}}

@@ -152,6 +152,7 @@ def test_single_options_refuse_stubbed_runtime():
 def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     import sys
     from types import ModuleType
+    monkeypatch.setenv("TESSERA_SERVE_MODE", os.environ.get("TESSERA_SERVE_MODE", "resident"))
     path = ROOT / 'experiments/t8r_speed/bench_t8r.py'
     tree = ast.parse(path.read_text())
     node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
@@ -168,7 +169,7 @@ def test_main_releases_pin_if_metadata_admission_fails(tmp_path, monkeypatch):
     def failed_store(*args):
         raise ValueError('metadata admission refused')
     scope = {'argparse':SimpleNamespace(ArgumentParser=lambda:parser),
-        'ARTIFACT':'/legacy', 'VLLM_STUBBED':False,
+        'ARTIFACT':'/legacy', '_install_vllm_stubs':lambda:False,
         'require_single_replay_options':lambda *a,**k:None,
         'os':os, 'torch':SimpleNamespace(manual_seed=lambda *a:None,device=lambda *a:None),
         'Store':failed_store}

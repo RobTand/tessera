@@ -45,6 +45,33 @@ TENSOR = BODY + "0.mlp.down_proj.weight"
 STACK = BODY + "3.mlp.experts"
 
 
+#: The fixture checkpoint is a 32-row miniature. The pinned runtime attests
+#: production partitions, so a bare subprocess export would refuse it at the
+#: geometry gate. This shim declares the fixture's own list inside that
+#: subprocess only, through startup import. The entry point argv is unchanged.
+_FIXTURE_OUTPUT_SIZES = {
+    "language_model.model.layers.*.mlp.down_proj": [32],
+}
+
+
+def _fixture_geometry_path(tmp_path: Path) -> Path:
+    """Write the subprocess geometry declaration; return its directory."""
+    shim = tmp_path / "fixture-geometry"
+    shim.mkdir(exist_ok=True)
+    (shim / "sitecustomize.py").write_text(
+        "import copy\n"
+        "def _declare_fixture_geometry():\n"
+        "    from tessera.serving import contract\n"
+        "    real = contract.load_serving_contract\n"
+        "    payload = copy.deepcopy(real())\n"
+        "    for entry in payload['construction']['architectures']:\n"
+        "        if entry.get('architecture') == 'Glm5NextForConditionalGeneration':\n"
+        f"            entry.setdefault('output_sizes', {{}}).update({_FIXTURE_OUTPUT_SIZES!r})\n"
+        "    contract.load_serving_contract = lambda: payload\n"
+        "_declare_fixture_geometry()\n")
+    return shim
+
+
 def _plan() -> dict:
     """One plan holding every documented entry shape at once."""
     return {
@@ -159,25 +186,6 @@ def test_module_scheme_key_is_importable_from_the_package():
     assert family_for(grid) == "TESSERA_FP8"
 
 
-def test_module_scheme_key_separates_structures_through_the_served_recipe():
-    """The routed span-2 promotion is part of the key, not just of the decode.
-
-    A sub-cap E2M1x2 rung keeps the WINDOW body when served dense but is
-    promoted to TCQ when served routed, so one (grid, q256) names two served
-    wires and the key separates them.  At the cap (q256 896) both structures
-    already decode TCQ, which is why the sub-cap rung is the one that pins
-    this.
-    """
-    from tessera.alphabet import E2M1_GRID, tuple_grid
-    from tessera.serving.scheme import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
-    from tessera.serving_plan import module_scheme_key
-
-    grid, q256 = tuple_grid(E2M1_GRID, 2), 512
-    assert module_scheme_key(grid, q256, STRUCTURE_DENSE) == (
-        "TESSERA_NVFP4", "E2M1x2", "WINDOW", "LUT")
-    assert module_scheme_key(grid, q256, STRUCTURE_ROUTED_MOE) == (
-        "TESSERA_NVFP4", "E2M1x2", "TCQ", "LUT")
-
 
 def _write_checkpoint(tmp_path: Path) -> Path:
     import torch
@@ -209,8 +217,9 @@ def test_the_supported_entry_point_exports_a_fixture_on_cpu(tmp_path):
     plan_path.write_text(json.dumps({"schema": "tessera.serving_plan.v1",
                                      **entries}))
     out = tmp_path / "out"
+    shim = _fixture_geometry_path(tmp_path)
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(ROOT / "src")
+    env["PYTHONPATH"] = str(shim) + os.pathsep + str(ROOT / "src")
     proc = subprocess.run(
         [sys.executable, "-m", "tessera.export_serving", str(src), str(out),
          "--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--no-verify",
@@ -244,7 +253,8 @@ def test_the_legacy_shim_path_drives_a_real_export_on_cpu(tmp_path):
     plan_path.write_text(json.dumps(entries))
     out = tmp_path / "out"
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(ROOT / "src")
+    shim = _fixture_geometry_path(tmp_path)
+    env["PYTHONPATH"] = str(shim) + os.pathsep + str(ROOT / "src")
     proc = subprocess.run(
         [sys.executable, str(ROOT / "experiments" / "export_tessera_serving.py"),
          str(src), str(out), "--grid", "E4M3", "--q256", "1024",

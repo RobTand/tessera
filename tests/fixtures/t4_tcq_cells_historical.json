@@ -1,0 +1,183 @@
+{
+  "source_commit": "fc267e47558af8dfe1f34d788a91b34faac399b4",
+  "source_sha256": "840607e75b212e77aaa889803abf4e66ac7a7ef1815995db8c4a63d82523bbd7",
+  "scope": "Historical TCQ receipts only. These cells do not attest production WINDOW serving.",
+  "cells": [
+    {
+      "id": "tessera_e2m1_k2_dense_sm121_decode_resident",
+      "runtime": {
+        "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+        "execution_modes": [
+          "eager"
+        ],
+        "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E2M1_K2",
+      "structure": "dense",
+      "regime": "decode",
+      "rungs_q256": [
+        896
+      ],
+      "activation_contract": "e2m1_group16_ue4m3_static",
+      "executes": [
+        {
+          "symbol": "tessera.kernel_a4.a4_span2_gemm",
+          "decoder": "native_span2_gemm"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "route_only",
+        "kl": [],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_e2m1_k2_dense_sm121_batch_resident",
+      "runtime": {
+        "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+        "execution_modes": [
+          "eager"
+        ],
+        "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E2M1_K2",
+      "structure": "dense",
+      "regime": "batch",
+      "rungs_q256": [
+        896
+      ],
+      "activation_contract": "e2m1_group16_ue4m3_static",
+      "executes": [
+        {
+          "symbol": "tessera.kernel_a4.a4_span2_gemm",
+          "decoder": "native_span2_gemm"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "route_only",
+        "kl": [],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+      "runtime": {
+        "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+        "execution_modes": [
+          "eager"
+        ],
+        "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E2M1_K2",
+      "structure": "routed_moe",
+      "regime": "decode",
+      "rungs_q256": [
+        896
+      ],
+      "activation_contract": "e2m1_group16_ue4m3_static",
+      "executes": [
+        {
+          "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+          "decoder": "native_span2_grouped"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "route_only",
+        "kl": [],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_e2m1_k2_routed_moe_sm121_batch_resident",
+      "runtime": {
+        "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+        "execution_modes": [
+          "eager"
+        ],
+        "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E2M1_K2",
+      "structure": "routed_moe",
+      "regime": "batch",
+      "rungs_q256": [
+        896
+      ],
+      "activation_contract": "e2m1_group16_ue4m3_static",
+      "executes": [
+        {
+          "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+          "decoder": "native_span2_grouped"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "route_only",
+        "kl": [],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    }
+  ]
+}

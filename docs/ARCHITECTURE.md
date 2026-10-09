@@ -1,5 +1,155 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
+The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
+Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
+The real hook constructs both TP cuts from checkpoint wires without the obsolete keyword.
+No serving or D41 admission follows from this source repair.
+
+Re-stamped 2026-10-07 for the T16 row-scale epilogue cutover (contract v62).
+T16 keeps raw BF16 table values and FP32 row scales separate. The encoder
+and canonical reader define each effective weight as their FP32 product.
+Dense and grouped kernels accumulate the raw-value dot in FP32, then apply
+the row scale before the output conversion. Routed gate/up outputs, the
+activation and each weighted route preserve their BF16 conversion boundaries.
+The token reducer adds routes in a fixed order. The runner owns shared output.
+Re-stamped 2026-10-08 for the graph witness rank correction (issue #1062).
+
+The witness joins the explicit rank and world size from each receipt row.
+It refuses duplicate ranks, incompatible worlds and missing participant evidence.
+A valid single-rank receipt uses its top-level records.
+Eager observations stay separate from capture observations.
+Neither equal capture shapes nor graph replay counts establish current graph rows.
+The witness supplies diagnostic evidence, not serving admission.
+
+Re-stamped 2026-10-08 for the separated witness observations (issue #1062).
+
+Eager and capture observations stay separate. Eager shapes can state eager rows. Capture shapes state observations only. Equal shapes credit no graph rows. Zero launches yield no phase credit. Both ranks must join. Replay runs no Python. The block states facts. It carries no admission verdict.
+Re-stamped 2026-10-08 for the register-direct base refresh after pull request 1024 merged.
+The register-direct bundle adapter reads `TILE_ROWS` from `tessera.window_geometry`, its shared owner.
+The byte audit retains both the fragment checks and the projection checks.
+The CUDA source, numerical checks, tolerances and default-off selection stay unchanged.
+The retained graphics processor evidence does not establish serving qualification.
+
+Re-stamped 2026-10-08 for the graph witness contract (issue #1062).
+
+--compiled names Torch compilation only. Mode NONE keeps CUDA graphs but disables the Torch trace. Its records keep capture shapes. Replay runs no Python. The census refuses that combination before any load. Real compiled records still carry M star. Phase cover still requires current logical rows. No default, pin, gate or admission changes.
+
+Re-stamped 2026-10-08 for replay-free native matrix selection (issue #1061).
+
+The native driver accepts repeated `--matrix-cell MNBT:L:C` arguments in the matrix mode.
+Each row names maximum batched tokens, prompt tokens and concurrency.
+The driver refuses duplicate rows, unsupported coordinates and selection in another mode.
+Without selection, the full eighteen-cell invocation stays unchanged.
+
+Selection retains only the required arms and their existing declared profiles.
+The unchanged timing client executes each selected cell once on the admitted server pair.
+Each cell retains one warmup, ten trials and the frozen prompt draw.
+Raw cell files remain separate; the aggregate records the explicit population, not its Cartesian product.
+Both ranks receive the same selection through the existing native lifecycle.
+Scope differences remain correctness refusals; no identity seal or scheduler is added.
+
+For the seven missing 4096 cells, selection omits the 2048 arm and its completed profiles.
+Earlier failed actions and their eleven measured rows remain partial evidence.
+The real entry CPU smoke names seven timing calls, the 4096 profiles and both serve ranks.
+It reads bounded samples from the actual artifact and imports both existing instruments.
+The 5400-second bound, caps, guards, image and numerical rules stay unchanged.
+
+Re-stamped 2026-10-08 for the explicit A8S graph MNBT matrix (issue #1057).
+
+The opt-in mode `WINDOW_MODE=ship-graph-mnbt-matrix` selects `experiments/graph_attest_702/plan-graph-mnbt-matrix.txt`.
+The arms compare maximum batched tokens 2048 and 4096.
+Both arms use the accepted A8S artifact, resident service, socket transport and tensor parallel size two.
+They use graph decode without speculative tokens and retain the existing graph compilation flags.
+All three levers are explicitly ON, independent of the default-only pull request.
+
+Each arm measures prompt lengths 512, 2048 and 8192 at concurrency 1, 4 and 8.
+Each cell has one warmup and ten timed trials, with 128 completion tokens per request.
+The prompts repeat the existing single-request prompt across the concurrent slots in each trial.
+Prefix cache use stays disabled.
+The CPU dry run checks the real input population and prompt geometry.
+
+The harness retains Torch profiles and both-Spark Netdata power records.
+Missing profiles, power or effective path evidence cannot establish a workload rule.
+The default stays at 2048.
+Every old harness mode stays unchanged.
+The matrix uses priority zero after the PACT band handoff and retains GPU exclusivity.
+
+Re-stamped 2026-10-08 for the approved eligibility-scoped serving defaults.
+Piece-major routed layout and decode-once dense/shared projections are default-on where their existing readers admit them.
+Maximum batched tokens remain 2048. KDA defaults, pins and current measurement source remain unchanged.
+
+Re-stamped 2026-10-07 for native routed prices in the offline planner.
+
+The cutover removes folded materializers, arithmetic selectors and decoder aliases.
+The BF16 decoder suffix is `_bf16` for dense and native routed class operations.
+Uniform and mixed routed owners use the released mandatory native class path.
+That path keeps raw BF16 values and FP32 row scales separate through each dot.
+A plain BF16 stock checkpoint remains a derived control, not a Tessera compute path.
+The E4M3 decode-once helper uses the existing bundle family without an arithmetic selector.
+
+The routed-pair oracle reads raw BF16 values and separate FP32 row scales.
+Its FP64 reference applies the scale after the dot and reads decoder names from telemetry.
+Historical stock profiles remain controls, not the numerical reference.
+
+The routed census reads the native owner’s retained class inventory.
+Its consumer passes that owner explicitly. Each class reports its real tables, words, scales, runs and descriptors.
+
+Contract v62 withdraws eight historical folded BF16 cells, their wire/rung
+attestations and the BF16 TP2 qualification. It does not relabel receipts.
+The new BF16 pairs have no served census.
+All current BF16 pairs stay in `scheme.EXPERIMENTAL_LAUNCHES`. A census can
+observe the candidate view; neither old folded records nor old compact records qualify it.
+Loader sharding remains a capability, not a TP2 serve claim. The changed T16 D41 classes need new measurements
+on the merged build before the next allocation uses them. Active measurement
+paths remain unchanged until their owners release them. E4M3 and E2M1 math
+and their historical receipts remain unchanged.
+The projection byte audit selects `served_recipe` before native resident accounting.
+Its 256-column fixture satisfies the native T4 input-width rule and also covers T8 and T16.
+Native T4 roles carry arity, half width, window bits and the shared row tile.
+They retain no TCQ trellis tables. The audit preserves the wire and direct buffer checks.
+Direct buffer assertions use the recorded source rows and columns, not an incidental fixture width.
+
+Re-stamped 2026-10-07 for issue #1036.
+The repository owns the serving Dockerfile, image job and source patch files under `images/serving`.
+The image job prints its PrismaBuild command unless the operator selects `--submit`.
+The job requests central processors only. This change starts no image build.
+Cells use kernel build and module kind for portable lookup.
+The compatibility map preserves historical cell identifiers and image-only calls.
+Legacy build names identify recorded toolchain scopes. They do not prove native binary equivalence.
+An explicit build context selects the portable key. The image remains provenance.
+Existing defaults, pins, wire bytes, rungs, evidence and paired-rank checks remain unchanged.
+No new device qualification or performance claim accompanies this change.
+Both validators reject overlapping image-only and kernel-build scopes.
+The image job uses an owned rootless BuildKit container through the published Docker shim.
+The builder writes a Docker archive to the explicit shared output directory.
+The producer mounts no host Docker socket. PrismaBuild retains resource ownership.
+The source reader names its repository root. The directory-read ceiling remains unchanged.
+The imported patches retain the GNU Affero General Public License version three and the historical license notice.
+The Dockerfile copies both upstream license files into the image.
+The contract history records this change as the assigned version 61. This request references issue 1036 and does not close it.
+
+Re-stamped 2026-10-07 for shared window geometry in the offline planner (#1037), against base `19275e1e5`.
+`tessera.residency_plan` computes rank-local peaks from concrete tensor shapes, data types, placements, and allocation lifetimes.
+It includes explicit copies, padded shards, temporary buffers, and rank reserves.
+Native dense and routed layouts reuse the existing `serving_parts` byte accountant.
+A routed projection declares its native `table_dtype` and includes composed tables, run pairs and block descriptors.
+Raw grid, permutation and offset planes have no retained native charge.
+Stack inverse maps and class counters use separate inventory allocations, once per stack.
+The byte accountant reads scalar entry widths and needs no tensor runtime.
+Native window layouts derive row padding from `window_geometry.TILE_ROWS`, shared with the compact loader.
+They use `window_geometry.require_window_geometry` to refuse rates wider than the declared window.
+The planner refuses a different declared row tile before byte pricing.
+The planner reports named capacity refusals before load.
+The planner adds no load hook. The shared geometry move preserves loader arithmetic, defaults, pins, and wire bytes.
+The README states its input and output contracts.
+The planner `dense_a4` storage kind declares `window_bits`, `tile_rows`, `arity`, `half` and per-column rates.
+It rejects obsolete TCQ fields and uses the same window geometry owner as the loader.
+The manifest refresh verifies the encoded WINDOW roles before it updates native resident bytes.
+The T4 path requires span one and the LUT plane; the shared accountant retains native shape checks.
+The source manifest and safetensors bytes remain unchanged. This metadata refresh does not attest serving.
+
+
 Re-stamped 2026-10-07 for dec-1007-074543-94b8 (D41 schema for the register-direct kernel).
 The v2 and v3 tables accept decoder kind `register_direct`, owned by `tessera.regdirect_routed`.
 Its execution scope is `register_direct_fragment` and its word ring is `register`.
@@ -14,6 +164,56 @@ A dominance proof needs a measured higher-rung counterpart for every lower cell;
 The published schema files `docs/schema/allowable-rung-table.v2.schema.json` and `.v3` track the Python schemas, descriptions aside.
 A build with `metadata.serving_qualified` false admits nothing: `admit_rung` returns `wait`, reason `kernel_not_serving_qualified`.
 The allocator may not use such a table until the kernel passes G3 v2 and an end-to-end serve. PACT may read it only as a labelled speed scenario.
+
+## Register-direct routed kernel (stage 1; not selected)
+
+`tessera.regdirect_routed` owns the register-direct routed T-8 kernel (`serving/csrc/regdirect_routed.cu`).
+Each warp decodes its own MMA A fragment from the fragment wire and never stages decoded weights in shared memory.
+It serves the e4m3 family at a 14-bit window with the row-scale epilogue, at R3, R4 and their k-step mix.
+Today's LUT class kernel stays the default. This kernel is selected nowhere until it passes G3 v2 and an end-to-end serve.
+`build_layer(gate, up, down, classes, device, *, top_k, max_tokens)` reads the class build's full storage-ordered bundles.
+It returns `parameters["regdirect"]`, one tuple of tensors per mode in `PAYLOAD_FIELDS` order, and a tensor-free `RegDirectClassKernel`.
+The payload holds the fragment planes, the zero page, the K-part scratch and the arrival counters, sized for `max_tokens`.
+The binding plugs into `routed_class_dispatch` unchanged and does not use the claim counter.
+Each expert must spend exactly its class rung. A per-column (Bresenham) mixed rung splits k-steps and is refused by name.
+`kernel_window_gemv.unpack_tile_words` is the inverse of the tile-order repack that the bundles hold.
+The opaque operation `tessera::routed_regdirect_classes` (`tessera/regdirect_op.py`) takes every tensor explicitly:
+each mode's nine weight planes, and each mode's two scratch tensors, which `mutates_args` declares.
+Its resource registry entry holds only streams, events and the tensor-free binding. The LUT planes stay loaded:
+they retire only with a serving default switch, after G3 v2, an end-to-end serve and Rob's approval.
+The module stays outside `tessera.serving` until serving selects it; the selecting call sites also declare its native library in `runtime_contract.json`.
+
+## Register-direct fragment wire (stage 1; not a serving path)
+
+The CPU fragment repack is available in `tessera.fragment_wire` for the register-direct routed build.
+It preserves the disk BODY streams and accepts only R3 and R4.
+Each original 32-column group has one rate.
+The repack sorts these groups by rate and preserves their order within each rate.
+Down pairs successive groups of one rate, so each rate needs an even group count.
+
+A data unit holds 32 lanes and R words per lane.
+Word i of lane L is at unit word i*32+L.
+Lane L has g=L>>2 and t=L&3.
+Pair q=p*8+j contains the codes of two successive rows at column 8t+j of group p.
+Each pair starts at bit q*2R in the MSB-first lane stream.
+
+Both projection groups use eight 16-row units per 128-row tile.
+For gate/up, p selects the projection and both projections use the same 32 columns.
+For down, p selects one of two 32-column groups in the same 16 rows.
+Gate/up uses one int16 permutation entry per slot; down uses two entries at s*2+p.
+The permutation restores the original column order.
+
+Each k-step has one compact history unit before tile zero.
+It stores lanes 24 through 31 with word stride eight.
+The history contains the last four fields of the incoming column state.
+An explicit TP-cut state takes precedence over the initial state.
+All unit and history offsets include the expert's absolute word base.
+
+The final tile contains zero codes outside the declared rows.
+The reference decode returns native E4M3 bytes, with gate rows before up rows.
+It does not apply row scales.
+The byte audit covers encoded R3 and R4 BODY bits, fragment words, history size, and decoded bytes.
+This module does not change the encoder, disk format, or selected serving path.
 
 Re-stamped 2026-10-07 for the producer correction in issue #1018.
 The canonical `fleet.rung_allowability.v3` interface keeps the historical census.
@@ -78,6 +278,54 @@ is carried into the measurement container; this does not alter serving policy.
 Serving does not import this reader. No encoded bytes, serving recipe, format
 menu, pin, default or admission gate changes. Existing uniform reader
 measurements and immutable allowability tables remain unchanged.
+
+Re-stamped 2026-10-07 for issue #1007 and the packed T4 arithmetic contract.
+The bound owner separates scalar validation from arithmetic terms before the
+contract correction. The conditional allowance and measurement paths do not
+change. The bound interface now refuses lengths outside the reader's 128-column blocks.
+It also refuses invalid operation counts and precision terms.
+The v4 receipt exposes unit roundoff, actual tile count, and every unproved
+native, reference, normalization, magnitude, and intermediate-domain assumption.
+Both arithmetic qualification fields remain false.
+
+The complete derivation is in
+[`tessera-serving-and-moe-contract.md`, section 17](tessera-serving-and-moe-contract.md#17-packed-t4-arithmetic-contract-2026-10-07-issue-1007).
+It separates represented-operand arithmetic from quantization error.
+It covers signs, cancellation, exact zero, scale domains, legal lengths,
+overflow, subnormal behavior, and the fused library's bfloat16 boundaries.
+The native specification states at least single precision for accumulation.
+It does not supply the local inequalities or internal reduction depth that the gamma theorem needs.
+The positive float64 magnitude contraction also has an explicit conditional model.
+Finite diagnostics cannot replace these missing facts. Byte-exact code and
+scale checks remain independent. No serving default, threshold, pin, or row changes.
+
+Re-stamped 2026-10-07 for the targeted native four-bit arithmetic probes.
+`experiments/t4_code/fp4_arithmetic_attest.py` issues the actual block-scaled
+E2M1 instruction through a standalone CUDA probe. It retains exact input
+bytes, output bits, rational references, alternative models, source, and compiler context.
+`tessera.fp4_arithmetic` owns the device refusal and the atom-derived diagnostic bound.
+The six required properties and the operand-layout controls must pass.
+The device gate also requires kernels parent review and independent review.
+All emitted reports keep `arithmetic_qualified` false before those reviews.
+The probe suite does not change serving defaults, pins, row admission,
+the conditional reader allowance, or any live measurement path.
+Section 17.7 of the serving contract gives the model, derivation, and limitations.
+The actual scalar output operations have separate targeted probes.
+The qualifier refuses an untested physical device. Each device has its own evidence.
+
+Re-stamped 2026-10-08 for the corrected complete stock-reference comparison.
+Targeted device probes cover rendered-activation division, stored-ratio formation,
+single-precision library multiplication, and positive double-precision magnitude contraction.
+The CUDA 13.0 PTX contract supplies double FMA precision for the four-term tensor block.
+Its whole-dot magnitude budget is K roundings, not an inferred 53-bit alignment screen.
+The complete bound has no fitted multiplier or empirical floor.
+Every stock bound and qualification call requires its actual shape before all operation counts.
+The owner refuses inconsistent contraction lengths, unknown shapes, kernels, and block models.
+The original dense and grouped correctness callers use this complete stock API.
+The corrected API also passes retained-output audits from both physical devices without a device replay.
+Arithmetic qualification remains false before both required reviews.
+Complete fused-network and two-device arithmetic qualification remain outside this claim.
+Section 17.8 gives the normative derivation, corrective controls, and retained device receipts.
 
 Re-stamped 2026-10-06 for issue #1002 and the CEO 09:50 bounded diagnostic
 directive. Two explicit opt-in scopes extend the existing managed rank
@@ -176,7 +424,7 @@ is triggered by relocating stored data.
 Re-stamped 2026-10-06 for issues #989 and #750: the D41 geometry harness
 also parses the scalar BF16 producer axis at true q256 step one (256–4096).
 Its finite BF16 table follows the exporter's actual 14/15/16-bit window recipe,
-with BF16 activations without activation scales and folded weight arithmetic.
+with BF16 activations without activation scales and FP32 row-scale epilogue math.
 Above the fused specialization's bounds it measures the existing public
 compact projection constructors and records their independent serving-intake
 rate refusals. These are measurement scopes, not newly qualified serving
@@ -267,46 +515,117 @@ quality, ship admission or a serving-pin claim; only a later admitted leg can
 measure those. The independent merged-code 4096 leg need not wait for this selector.
 See `experiments/graph_attest_702/RUNPLAN-artifact.md`.
 
-Contract v57 (2026-10-05, #967) separates the executed routed stack from
-its plannable unit: one expert projection. A stack plan may carry
-`unit_q256` overrides keyed by canonical projected unit name, without
-`.weight`; the common grid/body/plane and source slicing stay stack facts.
-Every fresh, joined and cached encode selects that unit's rung; cached
-intake still validates its priced receipt and original source slice before
-framing. Unit payloads and containers do not change. A uniform assignment
-normalizes to the original scalar stack plan/scheme. Only genuinely
-across-expert differences use expert-major `groups.<group>.q256` matrices;
-per-projection decode tables, run pairs and TP cuts retain their v45 owners.
-The loader validates each expert/projection against its declared rung,
-preserving full-wire integrity and TP2 rank symmetry. Exact unit BODY/run
-storage is priced per unit, not at the largest rung in a stack. Before the
-shard write, every mixed unit's verified manifest must agree with the
-q256-derived word/run sizes on TP1 and both TP2 ranks. A non-aligned
-importance placement that changes those counts is refused by unit/rank;
-no guessed size, padding or large serialized per-column rate copy is used.
+## Routed expert-class storage and execution
 
-Explicit selected-expert research preparation also supports heterogeneous
-packed windows on CPU: it transfers each window's sole packed owner into
-the existing module axis, with no padded/duplicate weight stack at finish.
-Selection decodes only requested units through the original torch window
-reader, with one temporary tile at a time. Uniform preparation retains its
-batched layout. This reference-only route refuses the uniform-layout Triton
-decoder rather than claiming its qualification; production compact intake
-continues to use the exact flat BODY/run axis above.
+Every routed scheme now requires `expert_ids[storage_slot] = original_global_id`
+and `expert_classes`: sorted nonempty contiguous `[start,end)` partitions of the
+whole expert population, carrying the complete gate/up/down rung profile. The
+map is an integer bijection, with original ids ascending within each class.
+Uniform layers write the identity map and one class. There is no old-artifact
+reader, implicit map, version shim or default-off WINDOW serving path.
 
-**Performance boundary:** the fused lane still requires uniform strides
-and run schedules across each projection's expert axis, with equal gate/up
-tile strides. Divergent expert or gate/up schedules reach the compact-adapter
-cliff. A cross-group-only rung difference can satisfy the existing fused
-predicate; shape eligibility is not served qualification. Both cases are
-expressible/correct in explicit research/export, and production refuses
-non-uniform assignments without that qualification. Serving requires the
-existing explicit `ResearchSelectedMoeConfig` construction. This CPU-only
-change does not
-produce served GPU/performance qualification: that is a separate evidence
-packet before production admission. No cell, default or serving pin moves.
-The packaged `producer_interface.routed_units` is the capability a
-consumer reads; a pre-v57 installation refuses the new request by version.
+`expert_classes.py` owns map/profile normalization and class construction.
+The producer accepts stack plans with `unit_q256` keyed by canonical original
+projection name without `.weight`. It writes class-ordered checkpoint wires
+and storage-indexed group rung matrices. Export-record `tensor`, `source_tensor`,
+`source_slice.expert` and `expert` retain original-global coordinates;
+`storage_expert` and `wire` name emitted storage. Explicit-plan validation maps
+stored declarations back to the original plan. Source tensor slicing and each
+unit payload/container remain unchanged.
+
+Before any encode, native WINDOW geometry is checked by the runtime-owned shape
+predicate on the source and every requested fit-TP rank. Gate/up must have the
+same derived serving schedule and tile geometry; down may differ. Existing
+servable one/two-run schedules are retained. Invalid geometry or gate/up
+pairing is refused by field; only an explicit unservable screen can continue,
+with its refusal recorded. Research inputs cannot bypass native geometry.
+
+E4M3 and BF16 WINDOW serving use one `FusedRoutedWindowMoE` native owner.
+The loader consumes storage-named wires into the exact rank-local
+flat axis, builds one int32 original-to-storage inverse at load, and remaps
+router ids once per invocation without reordering weights or top-k positions.
+The layer's EP `expert_map` remains EP-owned and is not rewritten.
+The native WINDOW builder refuses expert bias before it binds or loads the layer.
+
+Class projection views alias retained words, scales and initial-state planes.
+Composed tables, run pairs and descriptors are prepared once.
+For mixed layers, device counters derive each class start from the live route prefix on every call and captured replay.
+No host route-count read occurs. Fixed full-SM grids use two load-time streams, with fork/join events and an empty scale tensor.
+Gate/up joins precede activation quantization. Down joins precede the fixed-order token reduction.
+The mixed opaque operation is `tessera::routed_window_classes`; its resource registry retains no weights.
+
+For one class, the loader binds the complete stack to the direct old native launch.
+Every forward uses full device route vectors and zeroes each projection counter before its launch.
+Captured replay repeats those counter resets.
+The uniform forward does not read class tables or class-prefix starts, and it does not fork dispatch streams.
+The mandatory artifact metadata and inverse remap remain. The decoder and resident byte price do not change.
+
+The paired-K32 numeric observer wraps the loaded uniform binding used by the production owner.
+It records gate/up and down-route outputs only for that binding.
+It restores the launch before profiling, independent reference execution, or any error return.
+The CPU regression calls the production owner with controlled native primitives, not the retired dispatch seam.
+That CPU proof does not qualify CUDA arithmetic, serving or a paired build.
+
+`routed_class_dispatch.py` owns only the stream DAG and live work intervals.
+A load-time kernel binding supplies superblock rows, work units per
+superblock, activation operands and the native launch. The factor includes
+output tiles and K parts; the dispatcher never derives it from a kernel tile
+constant. The launch receives full device prefix/route vectors and absolute
+expert bounds. Its claim counter is optional. Kernel payloads may describe
+one or several classes, including per-expert rates and absolute word offsets.
+Packing permutations, persistent K-part scratch, sentinel activation rows,
+grid and shared memory belong to kernel code.
+The route builder reads every requested mode and span width from the bound kernel.
+It builds each device prefix from one count vector before the stream fork.
+The prefix owner has no 64/128 restriction; a BM8 binding needs no routing override.
+
+The common execution registry names the mixed class operation and the uniform Python entry for both WINDOW families.
+All current pairs remain experimental and have no served qualification cell.
+The uniform entry retains the current class decoder label, distinct from each historical qualified pair.
+Historical compact and fused receipt identities have a separate qualification table.
+Both tables use the same axis filter. A historical receipt cannot qualify a current class or uniform operation.
+The offline Step4 consumer reads the same current execution registry.
+It checks actual operations and module populations, not served qualification cells.
+Historical R5 replay uses the qualification registry. It does not rewrite archived operations.
+
+The D41 class benchmark replaces its preparation owner with the retained native owner before timing.
+`resident_bytes` counts that owner and the production inverse by backing allocation.
+`preparation_storage_bytes` names the load owner and its original inverse separately.
+Preparation and production storage overlap; their values must not be added.
+Raw old-pure uniform rows are diagnostics, not the production acceptance control.
+The matched D41 panel compares the pinned master production adapter with the PR production adapter.
+It calls `PackedWindowMoeBundles.adapter`, `native_call` and `FusedRoutedWindowMoE.__call__` in separate source-isolated processes.
+Weight and routed-input bytes must match. The PR boundary retains its identity inverse before the native call.
+The event timer is `bench_t8r.time_events`; input copies and source construction are outside its samples.
+The panel covers uniform R512/R768/R1024 at M1/M2048, eager/graph, and both F/R arm orders.
+It reports both arm spreads. The conditional fast-path criterion uses their larger measured relative F/R spread.
+The source snapshot advertises the pinned master ref; each arm retains a separate extension bank and project declaration.
+These rows qualify no rung, serving behavior or kernel default.
+
+The D30 class harness checks the owned process group after launcher exit.
+It sends SIGTERM, waits up to five seconds, and sends SIGKILL if group members remain.
+Its final cleanup uses the same path after a memory read fails.
+Process-group proof does not qualify Docker workload termination. PrismaBuild issue 1599 owns the shared signal relay.
+
+Mixed layers bind `_LutClassKernel` and call the unchanged CUDA decoder on two streams.
+Uniform layers bind `_UniformWindowKernel` and use the direct native launch on the caller stream.
+Register-direct remains a separate build. Its mixed dispatcher interface does not change.
+It can supply M+1 activation buffers with a zero final row and scratch indexed by absolute work unit.
+A later single-launch dispatcher can replace this dispatcher only after its speed matches or exceeds it.
+
+Successful native-owner retirement drops preparation-only offset/rate/code
+metadata. Residency charges actual distinct backing storage: selected table
+dtype, retained rank-local planes, run pairs/descriptors, 4 bytes per expert
+for the inverse and 8 bytes per class for counters. Source approval and CPU
+export/read/accounting checks are not GPU serving or quality qualification.
+Uniform eager/captured bit parity, changed-routing replay and full-plugin
+loading are device proof obligations. No serving pin, allowable-rung/contract
+row or seal is promoted here; live measurement source/artifact pins stay fixed.
+
+Standalone CPU stock and selected decoders remain reference controls, not a plugin fallback.
+The production D41 harness calls the native owner and records the mapped production boundary.
+Only mixed layers use the opaque operation.
+Heterogeneous timing comparators are explicit pure-control interpolations, never claimed mixed single launches.
 
 Re-stamped 2026-10-05 for D32 dev-mode run-identity seals in the managed
 window (Rob: sealing off until further notice). Dev mode is ON unless
@@ -376,6 +695,18 @@ SHA into the submitted inputs; each rank emits
 baseline, minimum, raw samples and counters kept so a future window can measure
 the 6 GiB allowance, not a measured RSS decomposition — and the Envelope
 outcome carries the termination list with container termination evidence.
+
+`Envelope._terminate` retains the original work failure when its final
+`Popen.wait` times out after SIGKILL (#1053).
+Each termination record includes `reap_timeout_seconds`, `reap_timed_out`,
+`returncode` and `ended_unix`, including a delayed reap.
+The existing reap bound remains 0.01 to one second, limited by the absolute deadline.
+A null return code does not prove process exit.
+Signals still target only the process group that the Envelope created.
+The PB worker retains final responsibility for physical scope cleanup.
+
+The real-child regression awaits asynchronous death within its unchanged 9.5-second elapsed limit.
+
 Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
@@ -728,22 +1059,24 @@ stages. At 0 the layout is master's and the SASS is master's up to commuted
 only into MMA8 compile flags, and checked against the loaded export. The value
 and `f16` libraries are untouched.
 
-Re-stamped 2026-10-02 for the opt-in routed R4 piece-major resident layout
-(#739, `sol/739-piece-major-common-20261002`). `TESSERA_ROUTED_PIECE_MAJOR=1`
-selects the E4M3 MMA reader only when fused routing is enabled. Intake freezes
-that choice before loading; each eligible one-run R4 unit is permuted from
-`[tile][column][64-row piece][word]` to `[tile][64-row piece][column][word]`
-before its one `WindowUnitAxis.put`. Serialized bytes, word counts, scales,
-column permutation and TP-cut initial states stay unchanged. The owner carries
-the layout through its signature and finished SoA; finish copies no word plane.
-BF16 (including A8SE layer45), forced f16 and routed opt-out retain legacy
-placement. A prepared PM stack refuses an incompatible reader or fallback.
-Dense Triton/fused/custom-op owners, GEMV argument extraction and E2M1 WINDOW
-readers require legacy words before dropping their layout metadata. Native PM
-dispatch is limited to routed E4M3 MMA, one-run R4, modes 0/1/2; history reads
-the same column's preceding piece/tile or its incoming state. This opt-in has
-no numerical, performance, graph or serving qualification from CPU checks or
-compilation alone. No serving cell, default, precision menu or pin is promoted.
+Re-stamped 2026-10-08 for the default-on routed R4 piece-major resident layout (Refs #739 and #750).
+Rob approved this default. An unset TESSERA_ROUTED_PIECE_MAJOR selects only a uniform R4 stack with the E4M3 MMA reader.
+Explicit 0 retains legacy placement. Explicit 1 still refuses a non-uniform stack before intake.
+All other allowable rates and mixed stacks remain usable with the flag unset.
+
+BF16, forced f16 and ineligible units retain legacy placement.
+The flag uses the existing strict, process-stable flag owner.
+
+Intake freezes the choice before load. Each eligible unit enters WindowUnitAxis.put once after the piece-major permutation.
+The permutation maps [tile][column][64-row piece][word] to [tile][64-row piece][column][word].
+Serialized bytes, word counts, scales, column permutation and tensor-parallel history states remain unchanged.
+The owner carries the layout through its signature and finished arrays. Finalization copies no word plane.
+
+A prepared piece-major stack refuses an incompatible reader or fallback.
+Dense readers, GEMV argument extraction and E2M1 WINDOW readers still require legacy words before metadata removal.
+Native piece-major dispatch remains limited to routed E4M3 MMA, one-run R4, modes 0/1/2.
+CPU checks and compilation alone do not qualify GPU numerics, graph behavior or serving.
+No qualified cell, precision menu, runtime pin or measurement source changes.
 
 The finite PM experiment extends the existing benchmark, StagedInputs and
 NativeCallback owners. A versioned protocol binds the authenticated A8SE L10
@@ -805,10 +1138,9 @@ Re-stamped 2026-10-02 for successful native routed-owner retirement (#869).
 The selected fused owner retains immutable projection views of the words,
 scale and initial-state planes plus its composed native tables, run pairs,
 descriptors and counters. The resident route replaces its compact preparation
-owner only after native selection succeeds. Caller-held compact bundles and
-views remain intact; a refused or unavailable native lane keeps the complete
-compact fallback. Retired projection views refuse compact execution and
-recomposition. Wire bytes, arithmetic and native dispatch do not change.
+owner only after native selection succeeds. Caller-held compact bundles and views remain intact.
+The required class route refuses an unsupported or unavailable native lane; it has no compact serving fallback.
+Retired projection views refuse compact execution and recomposition. Wire bytes, arithmetic and native dispatch do not change.
 CPU lifetime controls establish ownership, not GPU allocator savings or
 served throughput; the fullserve admission bounds remain unchanged pending
 matched before/after device and host measurements.
@@ -1063,31 +1395,30 @@ savings (`docs/measurements/2026-10-04-mhc-fused-783.md`).
 No production pin, route cell, default, artifact or ship gate moves. Design:
 `docs/design/mhc-fusion-783.md`.
 
-Re-stamped 2026-10-05 for the default-off decode-once E4M3 dense prefill lane
-(contract v56, Refs #931). Under `TESSERA_E4M3_DECODE_ONCE=1`,
-`fp8_route.process_weights_after_loading` decodes each RESIDENT dense module
-once to plain E4M3 bytes (`serving.e4m3_prefill.decode_e4m3`: each role's own
-Triton window decoder run with unit row scales on an FP8 identity, which is
-exact) and attaches the copy to the module
-(`PreparedDenseNativeModule.attach_decoded`). The module then serves
-M >= `e4m3_prefill.MIN_M` (256, the measured crossover) with
-`torch._scaled_mm` row-wise on the unchanged E4M3 epilogue contract, and every
-smaller M on its window lane. The lane is EAGER-ONLY: the M branch is host
-Python, so the route refuses the flag AT LOAD when the compilation mode saved
-at model construction is not NONE (`compile_identity.declared_forward_is_compiled`),
-even after the current-config context exits. A raise in `apply` under
-`torch.compile` is only a backstop, since Dynamo may run around it. A
-copy-holding module declares a distinct compile-cache dispatch fact
-(`<window op>|<decode-once op>`). The route stamps `launch_pair_for(M)` (the
-pair that ran) only for a copy-holding module; every other module stamps its
-one `launch_pair` without reading the token count, as before v56. The copy is one byte per weight plus the fp32 row scale, yielded by
-`named_tensors`, so the residency accounting prices it. The launch
-`(tessera.serving.e4m3_prefill.prefill_apply, native_window_decode_once_e4m3)`
-enters `scheme.ROUTE_LAUNCHES[TESSERA_FP8]` (dense, both regimes, resident
-only, no extension lane) and `EXPERIMENTAL_LAUNCHES` together, so no cell names
-it until a served census of a T-8-projection artifact with the flag on earns
-one. Streamed modules, the flag unset and every other route are unchanged.
-Receipt: `docs/measurements/2026-10-04-e4m3-decode-once-prefill.md`.
+Re-stamped 2026-10-08 for the default-on decode-once E4M3 dense and shared projection lane.
+Rob approved this default. The route keeps the existing eligibility and correctness guards.
+With TESSERA_E4M3_DECODE_ONCE unset, each resident module with an eager forward receives a decoded copy at load.
+Explicit 0 disables the copy. Explicit 1 retains the load-time refusal for a compiled forward.
+
+A compiled forward with the flag unset keeps the existing window lane.
+The saved construction-time compile mode remains authoritative after the current configuration context exits.
+Streamed modules retain the existing packed path without a decoded copy.
+
+Each role uses its own Triton window decoder with unit scales on an FP8 identity.
+The decoded values and row scales retain the E4M3 epilogue contract.
+PreparedDenseNativeModule.attach_decoded retains its family, shape and single-attachment checks.
+The module serves M >= e4m3_prefill.MIN_M (256) through torch._scaled_mm.
+Smaller inputs use the existing window lane. The compiled-forward backstop remains a refusal.
+
+The copy adds one byte per weight and the fp32 row scale to named_tensors and resident accounting.
+The route records launch_pair_for(M) only for a module with a decoded copy.
+Its compile-cache dispatch fact remains <window op>|<decode-once op>.
+Every other module records its fixed launch pair without a token-count read.
+
+The launch remains in EXPERIMENTAL_LAUNCHES under contract v56 (Refs #931).
+This source default does not add a qualified cell or change a serving pin.
+The existing served-census and quality holds remain. No new performance or quality result follows from this default.
+Prior operator evidence: docs/measurements/2026-10-04-e4m3-decode-once-prefill.md.
 
 Re-stamped 2026-10-02 for the default-off eager sparse-MLA prefill override
 (contract v55, Refs #812). `TESSERA_RESEARCH_MLA_MASK_SKIP=1` registers a
@@ -1804,7 +2135,7 @@ which splits K into fp32 partials that a fixed-order reduce sums when fewer
 work items than SMs exist (`dense_k_split`, a bandwidth model in the SM count
 and the byte counts, S = 1 in prefill) and rounds once to bf16
 (`tessera::fused_window_dense`, decoders `native_fused_window_dense` /
-`native_fused_window_dense_folded`). The integration is per Linear, not per
+`native_fused_window_dense_bf16`). The integration is per Linear, not per
 MLP: vLLM applies the activation between the two Linears it owns, so each
 module's roles run as one op into column slices of one output and the census
 module count is unchanged. `native_window.prepare_dense_native_module` decides
@@ -2236,7 +2567,7 @@ without an engine; `tests/test_route_census_mtp_step.py` replays the r5
 records from a trimmed fixture. This is observation capability, not a new cell
 or a model-fit claim.
 Draft decoder coverage requires the family-owned native launch in each
-observed phase, including the folded BF16 MoE decoder. A fallback record
+observed phase, including `native_window_moe_compact_bf16`. A fallback record
 cannot qualify the draft just because its route publishes that pair.
 The stock `--language-model-only` engine argument is forwarded only when
 explicitly requested and recorded as text-only scope in the receipt. An
@@ -2356,42 +2687,24 @@ streamed residency, quality, timing. `tests/test_glm_x_census_cells.py`
 replays the receipt against the table. The routed `TESSERA_E2M1_K2` cells are
 untouched.
 
-Re-stamped 2026-09-25 for the folded dense BF16 arithmetic (tessera#614,
-contract v37). The dense `TESSERA_BF16` route now serves the same arithmetic
-as the routed stack: each weight is `bf16(value * row_scale)`, rounded once in
-registers before the MMA, with no epilogue scale
-(`decode.materialize_bf16_folded`'s tile). `window_gemm` gains
-`arithmetic="folded"`, the `tessera::window_gemm_dense` op takes it as an
-argument, and the route stamps a new decoder, `native_window_gemm_folded`.
-The decision (tessera#606) is pricing identity: a consumer that prices a BF16
-rung prices the decoded tile rounded once to bf16, so the served function has
-to be that one. Its measured quality cost is below what the corpus resolves
-(`bf16_route` docstring, #45). The v34 BF16 dense cells census'd the epilogue
-kernel, so they are WITHDRAWN and the folded pair enters
-`scheme.EXPERIMENTAL_LAUNCHES`. Dense `TESSERA_BF16_K1` at `q256 1792` on
-`sm_121` reads unattested again until a census of the folded GEMM earns cells.
-Dense export is not blocked (the dense branch of
-`scheme.refuse_unserveable_wire` reads the reader range, not cells). The E4M3
-dense cells and the epilogue pair they name do not move. Dense BF16 operator
-prices measured on the epilogue kernel need re-pricing. The fold costs +5.0 %
-kernel time at the median over the GLM dense shapes (+7.3 % at M = 1, +3.5 % at
-M >= 512), and the epilogue kernel does not move
-(`docs/measurements/tessera-window-gemm-folded-profile-2026-09-25.md`).
+Historical record: contract v37 (2026-09-25, tessera#614) folded the row scale
+into each BF16 weight before the dot. That build used
+`native_window_gemm_folded` and withdrew the earlier v34 epilogue cells.
+The v37 decision matched the earlier pricing render. Contract v59 replaces
+that render and removes its selectors and materializers. Neither the earlier
+epilogue receipts nor the folded receipts qualify the new decoder identities.
 
-Re-stamped 2026-09-25 for the production BF16 expert builder (tessera#609,
-contract v36). A compressed `TESSERA_BF16` routed stack has a production
-builder: `scheme.MOE_BUILDERS` names `moe_route` for it, and it is served on
-the compact native window lane with the row scale folded into the decoded tile
-before the MMA (`bf16(value * row_scale)`, no epilogue scale) -- the grouped
-kernel's `FOLDED` arithmetic, which the research-selected BF16 owner already
-ran. The format row's `structures` gains `routed_moe`, as the validator
-requires of any route in `MOE_BUILDERS`. The launch
-`(tessera.native_window_moe.NativeWindowMoE.__call__,
-native_window_moe_compact_folded)` is EXPERIMENTAL: no cell is minted and no
-BF16 rung becomes exportable without `--allow-unserveable` until a served
-census earns cells (tessera#606). `moe_route.census_expected` now counts
-experimental pairs for both window families, as the `EXPERIMENTAL_LAUNCHES`
-rule states, so a census can match the compact lane's records. The compact
+The historical profile reported a +5.0% median cost across the GLM dense
+shapes: +7.3% at M=1 and +3.5% at M>=512. These numbers describe that build
+only (`docs/measurements/tessera-window-gemm-folded-profile-2026-09-25.md`).
+
+Historical record: contract v36 (2026-09-25, tessera#609) added the BF16
+production expert builder on the compact native window lane. Its
+`native_window_moe_compact_folded` pair used the earlier per-weight BF16
+conversion and initially had no served cell. `moe_route.census_expected`
+included experimental pairs so a census could identify that dispatch.
+Contract v59 replaces the arithmetic and decoder identity; old receipts
+remain historical evidence only. The compact
 lane no longer registers the stock fp8 expert tiles at `create_weights` (zero
 size for both families), which at GLM-5.3 scale was about 10.9 GB per layer
 that nothing read.
@@ -2618,7 +2931,7 @@ acceptance, and separately the lane's own DEVICE proof, not a qualification.
 Construction-level evidence: PB action `0a02b919…` (14 passed, CPU, no
 device), with the pre-fix failure recorded as `moe_route.py:738` ->
 `select_unquantized_moe_backend`.  Device evidence for the component: the
-canonical stock-oracle crosscheck runs the A16 folded-BF16 arms at TP1 and both
+historical stock-oracle crosscheck ran the A16 folded-BF16 arms at TP1 and both
 TP2 cuts on the fixture's own layer-4 containers on a GB10 (sm_121) in the
 pinned image, all arms bounded, and measures the dispatch rather than inferring
 it -- `native_calls=2 selected_path_calls=0 monolithic_calls=0`, no
@@ -2861,24 +3174,17 @@ or default changes. The bounded original E4M3 and BF16 proof is in
 `/home/rob/dq-runs/glm-campaign-takeover-20260913/export/historical-selected-wires-proof.json`;
 it is an intake/decoder proof, not a complete served artifact.
 
-Re-stamped 2026-09-13 for opt-in folded BF16 selected experts. The research
-checkpoint grammar accepts `TESSERA_BF16/BF16` routed targets alongside
-`TESSERA_FP8/E4M3`. Its selected BF16 owner reuses the window parser, TP shard
-plan and rank-local packed intake, then folds the row scale once into a BF16
-tile equal to PrismaQuant's joint PWC render (`read_unit_artifact(...).to(bf16)`).
-The stock unquantized Triton modular MoE consumes only selected experts, with
-the existing eager TP/EP/DP/PCP/SP guards. This is distinct from Tessera's
-dense BF16 route, which applies row scale after GEMM. The exporter accepts
-reader-range rungs through an explicit research-selected decoder gate and
-stamps `serving_gate.research_selected_decoder_only`; ordinary production
-routed-cell attestation, `MOE_BUILDERS`, runtime contract cells, release pin and
-ship gate remain unchanged. Exact TP2 GLM numerical, memory and latency serves
-are still required before claiming qualification. The bounded TP1 native
-stock-kernel and shared-runner control is in
-`docs/measurements/bf16_selected_moe_native_2026-09-13.md`. The selected BF16
-fold keeps raw and FP32 intermediates bounded by `max_experts_per_chunk`; the
-final selected BF16 tile remains a required output. Its one-box before/after
-allocator-peak measurement is in
+The selected BF16 research owner keeps raw BF16 tiles and FP32 row scales
+separate. It uses the window parser, TP shard plan and rank-local packed
+intake. Its Torch path applies FP32 row-scale epilogues and preserves the
+BF16 gate/up, activation and route boundaries. The runner owns shared output.
+The existing eager TP/EP/DP/PCP/SP guards remain in force.
+
+The exporter accepts reader-range rungs through its explicit research gate
+and stamps `serving_gate.research_selected_decoder_only`. This does not grant
+served qualification. Numerical, memory and latency serves need new evidence.
+The earlier folded stock controls remain historical records in
+`docs/measurements/bf16_selected_moe_native_2026-09-13.md` and
 `docs/measurements/bf16_selected_moe_chunk_memory_2026-09-13.md`.
 
 Re-stamped 2026-09-13 for what the fp4 activation quantizer EMITS (#484):
@@ -3573,6 +3879,31 @@ that demanded the stronger evidence from stdout that never carried it would
 lose them. `tests/test_merge_suite.py` drives one real
 `pytest --surface-json` run's stdout through the reader, so the join is
 exercised by output no test wrote.
+
+**A selected population of shards** (tessera#1069). `tools/selected_population.py`
+runs the test files `tools/impacted_tests.py` selects as shards, each one a
+`merge_suite.py` x86 arm that runs named files and publishes its own
+`--surface-json`. It owns no verdict. Each shard is read through `_resume`
+(the published population, its source identity, and the exit status the pool
+recorded for the action its producer stamp names), and the receipt comes from
+`merge_suite._assemble_receipt`. The set adds four checks that a single arm
+cannot make. The sealed commands must run the selected files exactly, each
+once. No pbrun return code may be non-zero. Each client writes its result to
+`client.<shard>.json` when it exits, and `--resume` reads those files back, so a
+population rejected for a pbrun code stays rejected; a shard with no file says
+`not recorded` and the pool's records decide it alone. No shard may leave a
+module uncollected. These checks refuse in both modes. The comparison of the
+shards' effective source with the checkout's own is a seal (D32), so it goes
+through `tessera.dev_mode.seal_check`. In dev mode, the default, it stamps one
+`[DEV-MODE]` line, computes no digest of the checkout and does not refuse. In
+certified mode (`PRISMAQUANT_DEV_MODE=0`) it measures the checkout with no
+verifier, and a population over another tree is not green. At most eight pbrun
+clients run at once (D21); more shards queue behind them. The report keeps one
+block per shard and every skip reason verbatim, from the surface's own
+histogram. `--resume` rebuilds the receipt without submitting. An aggregate that
+reads a shard's last summary line alone, drops the exit status, or counts a
+missing summary as zero is the defect #1069 records, and this tool is its
+replacement.
 
 **One publication, read once** (tessera#340). A pathname is not a publication:
 it is a name a pool retry can point at different bytes at two instants, and a
@@ -4339,19 +4670,18 @@ identity, and patches are restored after observation. Dynamic input and output
 tensor references preserve backings crossing each boundary. For original-wire
 references, native parameters and buffers, including scale storage, are candidate
 owners; tensors also registered outside canonical native modules remain fixed.
-Every Tessera route holds its prepared weights outside registered state (the
-slotted `PreparedDenseNativeModule` on the FP8/BF16 window routes, `A4Unit`s and
-epilogues on the NVFP4 route, `A4UnitStack`s on the NVFP4 MoE route, the compact
-`PackedWindowMoeBundles` on the window MoE route) and declares them through one
-protocol, `tessera.serving.residency`: `quant_method.resident_tensors(layer)`
-yields each tensor by reference, and each prepared object names its own tensors
-through `named_tensors()`. The census walks only that declaration and records the
-tensors under `model:native:<module>.<attribute>.*`, so they resolve to the same
-canonical unit as registered state; a unit no longer depends on the
-one-unit-per-family fallback in `derive_owner_views`. This adds no buffers,
-device movement, or allocation. Shared storage is charged once, because every
-declared view joins its backing allocation; external tensor aliases stay fixed,
-and storage alias conflicts retain the existing refusal. An object a route does
+Every Tessera route declares its unregistered prepared inputs through
+`tessera.serving.residency`. FP8/BF16 dense routes use
+`PreparedDenseNativeModule`. The NVFP4 dense route holds
+`DenseE2M1Role` objects; its routed route holds `FusedRoutedE2M1MoE`.
+Each object exposes `named_tensors()`, and the quant method yields those
+references through `resident_tensors(layer)`. The census uses only this
+declaration. It assigns each backing allocation to the canonical native
+module and charges shared storage once. This observer adds no model buffers,
+device movement, or tensor copy.
+The native operator receipt uses the same route interface.
+It hashes resident tensor contents before and after each measurement.
+Storage alias conflicts retain the existing refusal. An object a route does
 not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
 bytes stay uncharged in the report rather than attributed by guess. Dense export
 footprints now derive native packed storage from each role's verified rates,
@@ -4531,20 +4861,14 @@ absorbed (tessera#557: the manifest prices the tile, the per-row scales, the
 NVFP4 A-side scalar and the load-pinned trellis tables, and the mixed3
 capture re-derived over those figures closes; per-module pricing of the
 shared tables is exact for one NVFP4 unit per trellis). A routed FP8/BF16
-stack is priced as the compact window lane holds it (tessera#624): the
-repacked planes, per-expert tables, permutations and bookkeeping of
-`WindowUnitAxis`, the per-part `run_off` (int64 `[E + 1]`: `finish`'s
-`torch.cumsum` promotes its int32 counts), and the fused lane's composed
-tables (#685) with, since contract v45, each projection's run pair and block
-descriptors (`serving_parts.routed_fused_unit_bytes`) where the stack's wire
-shape admits the lane (`routed_fused.fused_routed_unit_shape_refusal`: one
-rate or two adjacent rates, the gate/up launch within `ROUTED_LANE_RATES` on
-sm_121) -- never a decoded tile, which that lane does not allocate. The figure is the whole stack at TP1; the
-manifest's `totals.per_rank` block (`--fit-tp-size`) prices each rank's cut
-beside the legacy MTP draft embed/head duplicate allowance as its own line
-item (tessera#645). The source-guarded draft lifetime integration above avoids
-that allocation, but CPU evidence alone does not remove the conservative
-fit allowance or qualify a serving image. `cache_capacity` may
+stack uses the required native class route. The exporter prices each unit from its verified manifest geometry and rates.
+Retained storage consists of words, weight scales, init, selected composed tables, run pairs and block descriptors.
+The inverse map costs 4 bytes per expert. Class counters cost 8 bytes per class.
+Raw runs, permutations, offsets and grid planes belong to preparation and have no retained native owner.
+The TP1 total and `totals.per_rank` use the same accountant on each actual rank cut.
+The legacy MTP draft embed/head duplicate remains a separate line item.
+CPU allocation controls do not qualify native wire repack, a serving image or GPU arithmetic.
+The CPU proof does not remove the conservative fit allowance. `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
@@ -4702,7 +5026,7 @@ research boundary does not promote a runtime cell or qualify a release.
 and that format is the only place its recipe is read. `owner_wire` splits
 `TESSERA_<grid>_K<arity>_R<q256>` and resolves the grid through
 `scheme.route_for_grid`, so `TESSERA_E2M1x2_K2_R896` (A4,
-`TESSERA_NVFP4`/TCQ/LUT), `TESSERA_E4M3_K1_R1024` (A8, `TESSERA_FP8`/WINDOW/
+`TESSERA_NVFP4`/WINDOW/LUT), `TESSERA_E4M3_K1_R1024` (A8, `TESSERA_FP8`/WINDOW/
 CHANNEL) and `TESSERA_BF16_K1_R1024` (A16, `TESSERA_BF16`) are the same code
 path at their own recipe rather than three branches. The sidecar handed to the
 loader is `scheme.validate_tessera_moe_scheme` over that wire, at the MODULE's
@@ -4785,12 +5109,12 @@ declare this owner's own `expected_tensor_parallel_size`. A family with its
 own expert builder keeps it. For `TESSERA_NVFP4` the selected block refuses to
 name a target it does not serve, so attaching one to an A4 owner is a refusal
 rather than a wider admission. `TESSERA_BF16` is priced on its production
-builder since tessera#613 (the compact lane, folded arithmetic, tessera#609):
+builder since tessera#613 (the compact lane, FP32 row-scale epilogue math):
 the served checkpoint carries no block, so the harness refuses one by name
-rather than price an object that is not the served one. On the same wires and
-inputs the two BF16 owners return identical bits at TP1 and at both TP2 ranks
-(`test_bf16_production_and_research_owners_are_bit_identical`), so the move
-changes no number. A world above one needs an explicit
+rather than price a different object. The
+`test_bf16_production_and_research_owners_are_bit_identical` check compares
+uniform owners at TP1 and both TP2 cuts. It does not qualify old operator
+prices after this kernel change. A world above one needs an explicit
 `distributed` block (world size, rank, a `tcp://` rendezvous, a timeout);
 `bind_owner_rank` then reads the live group and refuses a mismatch, an
 uninitialized world, or a rank outside it, rather than assuming rank 0. At
@@ -5279,7 +5603,7 @@ is read through its single index-mapped shard rather than whole.  The retained
 `prepare_tessera_fp8_module`/`prepare_tessera_bf16_module` preparations keep
 their own load-time agreement for the reference path.  The lane stamps
 `native_window_gemm` for FP8 (the epilogue arithmetic) and
-`native_window_gemm_folded` for BF16 (the folded arithmetic, tessera#614),
+`native_window_gemm_bf16` for BF16 (FP32 row-scale epilogue math),
 decoders distinct from `torch_window` and `window_gemv` and from each other,
 so a census can tell a native serve from a reference one and one arithmetic
 from the other.
@@ -5335,23 +5659,16 @@ BF16 cells stay withdrawn because no ROCm census of this launch exists.  The
 the ambiguity #104 exploited does not exist on a route whose admissible set is
 one launch.
 
-**The BF16 half went again on 2026-09-25 (tessera#614, contract v37), because
-the BF16 arithmetic moved.**  The v34 BF16 census measured the epilogue kernel
--- `tl.dot` on the raw table values, the fp32 accumulator times the row scale.
-The route now folds the row scale into each decoded weight and rounds once
-before the dot, the arithmetic the routed BF16 stack serves (tessera#609) and
-the tile `decode.materialize_bf16_folded` renders, and it stamps
-`native_window_gemm_folded`. The two `tessera_bf16_k1_dense_sm121_*` cells
-therefore named an arithmetic the build no longer makes for BF16, and were
-withdrawn in the same change that put the folded pair into
-`scheme.EXPERIMENTAL_LAUNCHES` -- the v34 move in reverse, for the same
-validator reason. The `TESSERA_BF16` dense attested launch set is EMPTY again;
-`TESSERA_FP8`'s is still the epilogue pair. A census run with
-`--require-decoder native_window_gemm_folded` is what earns the cells back.
-The dense GEMM and the grouped GEMM share one register expression for the fold,
-and `tests/test_window_gemm.py` holds them bit-identical on a one-expert stack.
-What the fold costs in kernel time is measured in
-`docs/measurements/tessera-window-gemm-folded-profile-2026-09-25.md`.
+Historical record: contract v37 withdrew the v34 BF16 epilogue cells after
+the old folded arithmetic entered the dense route. Its
+`native_window_gemm_folded` identity described one BF16 conversion per weight
+before the dot. The earlier profile and receipts remain historical records
+in `docs/measurements/tessera-window-gemm-folded-profile-2026-09-25.md`.
+
+Contract v59 returns to raw-value dots and FP32 row-scale epilogues under
+new BF16 identities. Dense and grouped paths share that arithmetic. Their
+one-expert identity check compares actual kernel outputs. A new served census
+must qualify these identities; no old receipt transfers automatically.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,
@@ -5359,8 +5676,8 @@ routed stack reaches the compact intake through ONE predicate,
 world size, and so does `TESSERA_BF16_K1` since tessera#609, with or without
 an explicit research-selected config (whose own TP1/TP2 contract,
 `_require_research_parallel_contract`, is config acceptance and not device
-qualification).  FP8 runs the epilogue arithmetic there and BF16 the folded
-one.  Without the shared compact reader nothing takes the lane: FP8 keeps its
+qualification). Both families apply row scales in the FP32 epilogue.
+Without the shared compact reader nothing takes the lane: FP8 keeps its
 materialising branch and a production BF16 stack is refused by name at
 construction, because there is no materialising BF16 expert path.  A family
 this builder does not serve is answered False rather than admitted through
@@ -5381,20 +5698,14 @@ reuses the word-reversal source and destination buffers. The activation is `silu
 with the model's SwiGLU clamp (`swiglu_limit` / vLLM's `gemm1_clamp_limit`)
 reproduced on the fp32 accumulators -- gate saturated at `+limit`, up branch at
 `+-limit`, the arithmetic vLLM's own `silu_and_mul` performs; `swiglu_alpha`,
-`swiglu_beta` and another activation still refuse.  It stamps `moe_route.py`'s
-`native_window_moe_compact` decoder and the
-`tessera.native_window_moe.NativeWindowMoE.__call__` symbol (BF16 stamps
-`native_window_moe_compact_folded`). Both pairs were EXPERIMENTAL until
-contract v38, when a served TP1 eager census on the GLM serving image earned
-them cells (routed E4M3 at `q256 896`, routed BF16 at 1024; tessera#604), and
-the materialising FP8 launch the older cells named left the dispatch table.
-The numerical evidence is the PB receipt `b3dfb9b0…` (55 passed, 13
-device-allocated, one GB10) plus stage-by-stage comparison against stock
-`scaled_mm`/`fused_experts`. A two-node serve of this lane has NOT been
-censused, so nothing beyond TP 1 is promoted: the shared-expert combination stays the runner's
-(`SharedExpertsOrder.NO_OVERLAP`), no internal MK kernel is claimed, and the
-family's activation contract (quantizer, scale grouping, accumulation order)
-is the one the family already publishes.
+`swiglu_beta` and another activation still refuse. The compact route stamps
+`native_window_moe_compact` for FP8 and `native_window_moe_compact_bf16`
+for BF16, with the `tessera.native_window_moe.NativeWindowMoE.__call__` symbol.
+Contract v38 qualified the older compact pairs on a TP1 eager census.
+Contract v59 withdraws the BF16 cells and their rung stamps after the
+epilogue cutover. The E4M3 receipts remain unchanged. The new BF16 identity
+has no served census or TP2 qualification. The shared-expert combination
+remains the runner responsibility (`SharedExpertsOrder.NO_OVERLAP`).
 
 **Since 2026-09-28 the routed window stack has a SECOND adapter behind the
 same attribute, and it is the default (tessera#640, contract v42).**
@@ -5411,8 +5722,8 @@ decoration, the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128
 lane is ONE persistent, warp-specialised CUDA kernel
 (`serving/csrc/routed_fused_window.cu`, JIT-built once per window family as
 `tessera_routed_fused_{e4m3,value}`): 256 producer threads decode the window
-words into bf16 (value family, row scale folded and rounded once) or f16
-(E4M3 family, the exact `e4m3 -> f16` table, scale in the epilogue) B tiles
+words into raw BF16 values (value family) or exact E4M3-to-F16 values.
+Both families keep the row scale for the FP32 epilogue. B tiles reside
 in shared memory, eight consumer warps run `mma.sync m16n8k16`, and work
 items -- (expert, 128-column block, 64-route superblock) triples -- are
 claimed through a device counter the caller zeroes in-stream, so the grid is
@@ -5430,9 +5741,8 @@ graph bitwise equal to eager. Every weight is decoded once per tile and
 reused across up to 64 routes; the compact Triton kernel re-decodes per
 `block_m`. The lane stamps its OWN identity, never the compact one:
 `(tessera.routed_fused.FusedRoutedWindowMoE.__call__,
-native_routed_fused_window)` for FP8 and `(..., native_routed_fused_window_
-folded)` for BF16, read off the adapter's `launch_pair` by `moe_route` (so is
-the compact pair, since the same change), and the forward runs under its own
+native_routed_fused_window)` for FP8 and `(..., native_routed_fused_window_bf16)`
+for BF16. `moe_route` reads each adapter identity, and the forward uses its own
 `torch.profiler` range (`tessera_routed_fused_window`), never the compact
 adapter's. Both pairs sit in `scheme.ROUTE_LAUNCHES` as the first
 LANE-BEARING rows since v31: each names the extension it needs, so
@@ -5440,10 +5750,9 @@ LANE-BEARING rows since v31: each names the extension it needs, so
 extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`,
 which since v45 reads the cell's structure: a routed cell reaches the lane only
 where every rate of the rung is in `column_rates_routed_moe`, a dense cell
-wherever every rate is in `column_rates`), and the compact rows keep
-`when_lane_absent` False because the compact adapter still runs beside the
-lane -- for the stacks the predicate refuses and for the opt-out. A TP1 eager
-resident route census of the rate-4 u1 stub B on the GLM serving image
+wherever every rate is in `column_rates`). The compact rows and opt-out described here belong to the former dispatcher.
+The required native class route replaces that dispatcher; the census receipts below keep their historical scope.
+A TP1 eager resident route census of the rate-4 u1 stub B on the GLM serving image
 (`experiments/results/glm53_u1_stub_b_fused_tp1_eager_census.json`, replayed
 by `tests/test_glm_u1_census_cells.py`) recorded the fused pair on the q256
 1024 E4M3 and BF16 stacks and the compact pair on the three mixed-rate E4M3
@@ -5454,39 +5763,64 @@ cannot compile the extension is the published `when_unavailable` case:
 `adapter()` builds it at construction, and a build failure is logged and
 answered with the compact adapter, so the substitute the table names is the
 one the code makes. The oracle, profile, NCU, census and bench receipts are
-recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
-not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
-path; that gap is measured in the same document.
+recorded in `docs/measurements/2026-09-28-routed-fused-640.md`.
+The E2M1 family now has its own native serving owner, described below.
+Historical span-2 measurements do not qualify that replacement route.
 
-**The E2M1 family (not a serving lane yet, Refs #750).** A fourth library of
-the same source, `tessera_routed_fused_e2m1` (`-DTESSERA_ROUTED_FUSED_FP4=1`,
-built for the architecture-specific `sm_121a` only), runs the Tessera-4 wire
--- the E2M1x2 window body over the LUT16 plane -- on the block-scaled FP4
-instruction `mma.sync ... kind::mxf4nvf4.block_scale.scale_vec::4X.m16n8k64
-.e2m1.e2m1.f32.ue4m3`. The producers decode each 64-column chunk's tuple codes
-into a packed E2M1 B tile and its LUT16 nibbles into the instruction's UE4M3
-group scales; the activation is the NVFP4 routes' own `scaled_fp4_quant` at the
-layer's static global `gs`, staged unconverted; the epilogue is one fp32
-multiply by `global / gs` before the bf16 boundary. That is the activation
-contract the NVFP4 routes already execute (`e2m1_group16_ue4m3_static`),
-unchanged. An item is 256 output rows (gate/up: 128 of each), so the
-intermediate size must be a multiple of 128 and the hidden size of 256. A
-dense projection's rows need only be a multiple of 32: the last block is
-decoded whole from the wire's padded 1024-row tile and written only below its
-rows, so GLM-5.3's DSA indexer `wk` (128) and `weights_proj` (32) and a TP2
-`lm_head` (77,440) are in. Every
-rate 1..8 and every adjacent two-run table is instantiated at three word
-stages (gate/up at rate 8 needs 93,648 B). The dense identity's K split keeps
-two chunks per item (`routed_fused_e2m1.dense_split_max`, refused by name
-past it), because the producers rewrite an item's descriptor slot two items
-later. Adding the family leaves the three existing libraries' SASS
-instruction-identical. It is NOT in `native_extensions`, `ROUTE_LAUNCHES` or
-any cell: `ROUTES["TESSERA_NVFP4"]` admits the TCQ span-2 body only, so no
-route can hold a window-body E2M1 stack, and `tessera.routed_fused_e2m1` is
-kept out of the import graph of `tessera.serving` (the contract scanner holds
-reachability to the published table). The route change that admits the window
-body adds the entry, the launch rows and the census. Oracle:
-`tests/test_routed_fused_e2m1.py`.
+Contract v64 withdraws the current FP4 activation attestations.
+The v61/v62 gaps remain reserved for PR1046 and PR1028.
+Source approval remains separate from native arithmetic, D41 and serving qualification.
+
+**Native fused E2M1 serving (contract v63, Refs #750).** The NVFP4 route admits E2M1x2
+WINDOW L14 over LUT16, with group-16 UE4M3 scales. Dense and routed exports
+use the same served recipe. Pure pair widths 1 through 8 correspond to
+q128 through q1024. The research recipe and explicit TCQ encoding stay
+available, but the production route has no TCQ compatibility path.
+
+The required library is `tessera_routed_fused_e2m1`, built from
+`serving/csrc/routed_fused_window.cu` for sm_121a. It uses the block-scaled
+FP4 instruction `mma.sync.kind::mxf4nvf4.block_scale.scale_vec::4X`
+with E2M1 operands, UE4M3 group scales, and FP32 accumulation.
+Each projection's FP32 epilogue ratio is weight global / activation global.
+The decoder reads the packed WINDOW words directly; no whole-weight stock
+tile or generic FP8/BF16 substitute exists on this route.
+
+Dense intake prepares `DenseE2M1Role` objects. The forward quantizes the
+activation once, then calls `dense_forward_quantized` for each role.
+Each role writes into its own output view and retains its own LUT/global.
+The shared `scheme.e2m1_shape_reason` rule checks whole and rank-local
+geometry before costly preparation. K is a multiple of 64 and at least
+256. Dense rows are a positive multiple of 32. Routed gate/up rows are a
+multiple of 128; down rows are a multiple of 256. Gate/up must share a tile
+stride, but their column permutations can differ. Each projection has one
+expert stride; the down projection can use an independent rate.
+
+The extension and launch rows publish the actual Python entry points.
+Old TCQ cells and current T4 attestations are withdrawn, not transferred.
+Dispatch support does not prove a serving cell, D41 eligibility, performance,
+or end-to-end quality. The shared qualification harness owns independent
+numerical references, required populations, raw timings, and graph checks.
+The current mainloop still decodes weights per 64-route superblock; this
+cutover does not claim decode-once speed or the projected twofold FP4 gain.
+
+The graph helper copies each eager output before warmup, capture and replay.
+The reference snapshot must remain independent of any persistent output buffer.
+The prior 192 mode-0 graph claims remain withdrawn.
+New graph receipts compare independent eager snapshots.
+GPU-exclusive timing rows do not establish quiet-host or measurement-class qualification.
+
+The step-4 preflight builds the required E2M1 extension and checks its ABI before it starts an engine.
+It records the actual library path and SHA256.
+The dispatch qualifier admits the native WINDOW dense and routed entry points, not the retired TCQ pairs.
+Historical TCQ fixtures replay original receipts outside the published contract.
+Neither a build proof nor a historical replay attests the current serving owner.
+
+The weight-space screen uses a common upper-byte budget for each unit.
+A feasible TCQ candidate completes that comparison even when its byte count differs.
+The receipt reports the actual byte counts, exact-match flag and remaining byte slack.
+A missing feasible candidate leaves the comparison incomplete.
+The measurement encoder drains the window Viterbi cache after each serialized unit.
+This releases its traceback buffers without a different recipe or a new encoder default.
 
 **The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
 unweighted case of the routed lane, and since v43 the same kernel serves the
@@ -5499,7 +5833,7 @@ rows of the module, so a 4096 x 2048 down projection at M = 1 is 32 items on
 48 SMs -- so the dense entry splits K: S work items per (row block, M block)
 each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
 S partials in a fixed order before the one epilogue (`(acc * a_scale) *
-w_scale` for E4M3, the bare accumulator for the folded value family) and the
+w_scale` for E4M3, `acc * w_scale` for BF16) and the
 one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
 of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/64,
 ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
@@ -5568,24 +5902,25 @@ column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
 multiple of 4 (`DENSE_ROW_QUANTUM`; a multiple of 128 before the N-tail,
 tessera#750 WP2, so the GLM KDA input module's 32- and 64-row roles kept the
 whole module on the Triton lane), columns a multiple of 32 and at least 128, window 14, the
-identity column order, the family's arithmetic -- `epilogue` for E4M3, `folded`
-for value -- a bundle prepared with the attested native quantiser, and a
+identity column order, the family-specific table representation, a
+bundle prepared with the native quantizer, and a
 word-stage slot the device's shared memory holds); a refusal names its reason
 (`lane_reason`, logged), `TESSERA_DENSE_FUSED=0` keeps the Triton lane for
 every module, and a build failure of the library after admission is the
 published `when_unavailable` substitution. The module answers its own
 `launch_pair` (`(tessera::fused_window_dense, native_fused_window_dense)` or
-`_folded`), which `fp8_route.apply` / `bf16_route.apply` stamp, and both
+`native_fused_window_dense_bf16`), which `fp8_route.apply` / `bf16_route.apply` stamp, and both
 routes publish it beside the Triton pair as `DENSE_LAUNCHES`; the compile
 identity (#91) names whichever op the module runs. The pair sits on the
 existing `tessera_routed_fused_e4m3` / `tessera_routed_fused_value` lanes in
 `scheme.ROUTE_LAUNCHES` (a lane's decoder string stays the routed one; the
 dense decoders live on the rows), so `_validate_cell_executes` derives it for
 every window dense cell whose rungs the lane reaches and refuses a cell that
-omits it. That reached six cells. The four GLM-image dense cells were
-re-earned by a TP1 eager census of stub B on image X
-(`experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json`,
-replayed by `tests/test_glm_u1_census_cells.py`): its three q256 1024 dense
+omits it. The historical v43 census covered six cells. Four GLM-image dense
+cells used a TP1 eager census of stub B on image X. Contract v59 withdraws
+the BF16 half. The retained receipt is
+`experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json`.
+`tests/test_glm_u1_census_cells.py` replays it. Its three q256 1024 dense
 modules (layer 5 shared down E4M3, layer 5 shared gate/up BF16, layer 7 shared
 gate/up E4M3) recorded the fused pair and its thirteen mixed-rate dense modules
 the Triton pair, both regimes, `problems: []`. The two pinned-image E4M3 dense
@@ -6730,73 +7065,42 @@ Which families have a production expert route is `scheme.MOE_BUILDERS`, and
 family's builder off that table exactly as a Linear is dispatched off
 `ROUTES`. Three families have one. `TESSERA_FP8` is the route above, and
 `TESSERA_BF16` shares it (tessera#609): the same `moe_route` builder on the
-compact lane, with folded arithmetic.
-`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492),
-NATIVE since the A4 serving integration: one E2M1x2 container per expert
-projection is read by the shared compact validator
-(`scheme.parse_compact_tessera_expert_blob`, the same refusals as the
-materialising reader, no weight-plane expansion), cut to the rank by the
-group's plan (rows of `w13`, columns of `w2`), and prepared into
-`kernel_a4`'s bundle per (group, role) on an `A4ExpertAxis` --
-`serving/native_a4.py` -- with the gate/up LUT tables joined by
-`fused.shared_lut_global` under the fused tile's one global.  No stock
-NVFP4 tile is built at load or in a forward and no expanded expert pool is
-resident: the compact planes ride through residency and the fused decode
-happens in the kernel.  The expert intake writes each projection's prepared planes
-**directly into that expert's preallocated axis slot** the moment the wire
-arrives (`A4ExpertAxis.destination`/`set_lut_bytes`/`set_global`), so no
-per-wire output tensor exists and `finish` copies nothing; only the 16-byte
-LUT table and its scalar global wait in `_ExpertIntake.pending` for the mate
-(the fused tile's shared global), which keeps arbitrary wire order legal and
-the join semantics exactly the stock lane's.  That direct destination is what
-removes the per-wire point-plane allocation the ml19 runtime showed pooling
-288 dead 20 MiB blocks.  The loader's parse is bounded and owned by the
-load too: the two mandated SHA-256 passes over a wire overlap (per-plane
-checks on one short-lived worker thread, the whole-region payload digest on
-the caller, payload-digest precedence unchanged), the geometry-keyed
-derivations that are constant across a layer (encoder-profile pair, rate
-schedule, completion depth, shard granularity) are memoised in a
-caller-owned per-layer dict whose keys carry the full rate schedule, and the
-byte-reversed word view is built once per wire for all three packers.  The
-staging is bounded and owned by the
-load: the per-wire packed-plane transfers fill caller-owned reusable buffers
-(`compact_prep._plane_u8`, `kernel_bits._plane_words`; one scratch dict per
-`_ExpertIntake`, never module-global) instead of allocating a fresh device
-tensor per wire, and `A4ExpertAxis` allocates its stacked planes once on the
-first `put` and copies each expert into its own slot, so `finish` copies
-nothing and no per-expert temporaries are retained.  That staging is what
-keeps a load under the runtime's `max_split_size_mb=20` allocator context
-from churning dead CUDA slabs; the measured before/after is
-`docs/measurements/tessera-a4-loader-staging-20260916.md`.  The stock
-modelopt names stay registered as
-ZERO-SIZE anchors whose loader refuses checkpoint bytes, so a stock tensor
-in a Tessera stack is still refused by name while the 4.5-bpp pool is never
-allocated.  `apply` is the native two-stage pipeline: separate grouped
-gate/up calls (per-role tables and globals intact), vLLM's own
-`apply_moe_activation` for the layer's activation, the down grouped call on
-the per-route rows under a second static scale, and the router weights
-applied only in the final combine; shared experts are the runner's and are
-never recomputed here.  The method's protocol is MODULAR BY ITS OWN
-DEFINITION: `is_monolithic` is False, and neither `experts_cls` nor
-`moe_kernel` is owned (the base class delegates `is_monolithic` to a
-selected stock class when one is present, which is exactly the ownership
-this lane refuses); `get_fused_moe_quant_config` carries the model's swiglu
-alphas and no stock tensors.  The static A side is a checkpoint fact: the
-exporter writes `experts.{e}.{proj}.input_global_scale` beside each wire
-(capacity over amax, the dense route's `trellis_input_global_scale`
-quantity, from `--input-scales`), a stack missing any refuses rather than
-quantising at 1.0, and the selected backend's aggregation is preserved
-unchanged -- ONE scalar per layer/projection, the max of the loader's
-reciprocal (the layer's largest calibrated amax) broadcast to every expert,
-from `amax_for_moe_activation_quant` via
-`is_global_sf_supported_for_nvfp4_backend`, per the scale review; the
-per-expert tensors are what a per-expert price describes, and priced ==
-served only when the amax spread is zero.  The executed symbols are the
-native ones (`scheme.A4_GROUPED_GEMM_SYMBOL`,
-`telemetry.DECODER_NATIVE_SPAN2_GROUPED`), published as EXPERIMENTAL pairs
-(`scheme.experimental_launch_pairs`) so a census accepts the candidate while
-`launch_pairs` keeps the cell validator on the attested dispatch -- no
-qualification is promoted by this change.
+compact lane, with raw BF16 values and FP32 row-scale epilogue math.
+`TESSERA_NVFP4` uses `tessera.serving.nvfp4_moe_route` and the native
+E2M1 WINDOW owner. The shared compact validator reads one framed unit per
+expert projection and checks its actual metadata before a rank-local cut.
+Gate/up rows and down columns follow the group's TP plan.
+
+One `WindowUnitAxis` per group stores projection inputs in preallocated
+structure-of-arrays storage. Each prepared unit copies into its expert slot;
+its temporary storage is not retained as a separate expert pool.
+The finalizer builds `FusedRoutedE2M1MoE` and releases the intake owner.
+It retains separate gate, up, and down weight globals. It preserves the
+checkpoint's reciprocal input-scale reduction. The runtime runner retains
+shared experts and TP reduction; the native owner preserves router-weight
+placement and its fixed-order output sum.
+
+The dense and routed owners declare every retained tensor by reference.
+Resident prices include code tables, packed words, scale planes, incoming
+state, run metadata, descriptors, epilogue ratios, and native work counters.
+They do not charge a materialized whole weight or obsolete TCQ tables.
+Historical A4ExpertAxis destination and shared-LUT receipts remain history;
+they do not describe the current WINDOW owner.
+The stock modelopt parameters remain zero-size loader anchors. Their
+loaders reject stock checkpoint bytes instead of allocating an expanded
+expert pool. The calibrated static input scale is required for every
+expert projection. A missing or invalid scale refuses finalization.
+The native owner uses one input scalar for gate/up and one for down, with
+the checkpoint's existing reciprocal reduction and rounding sequence.
+
+The method is modular by its own definition. It does not own a stock MoE
+kernel or experts class. The runner retains its shared-expert behavior.
+The native owner executes fused gate/up, the intermediate activation
+quantization, routed down, and the fixed-order token sum. The actual
+entry point is `tessera.routed_fused_e2m1.FusedRoutedE2M1MoE.__call__`.
+Its trace decoder is `native_routed_fused_window_e2m1`. Those names are
+dispatch facts, not current serving attestations. The row table, graph
+packet, and full-model quality receipts must earn their own qualification.
 
 A builder is a
 dispatch fact and not a served qualification: the
@@ -6805,11 +7109,11 @@ container receipt. Contract v28 publishes two, at q256 896, eager and resident,
 on the two-rank stub serve's image; contract v32 (tessera#506 leg 2, the
 2026-09-18 re-stamp at the top) widens both to the full trellis domain
 [128, 896] step 128, so an NVFP4 stack at an in-domain rung exports without
-`--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires take the compact
-folded lane above, with or without the research-selected block. Contract v38
-publishes BF16 `routed_moe` decode and batch cells at q256 1024 on the GLM
-serving image, eager and resident (tessera#604); their evidence is route-only,
-with no recorded smoke or KL. Other BF16 expert rungs still need the override.
+`--allow-unserveable` and only an off-domain rung needs the override.
+Compressed BF16 expert wires use the compact row-scale epilogue path,
+with or without a research-selected block. Contract v59 withdraws all
+historical BF16 routed cells. A production BF16 expert export needs the
+explicit unqualified override until a new served census supplies cells.
 Plain source BF16 passthrough uses
 `quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob
@@ -7767,6 +8071,12 @@ holds a LIST of attestations, one per image it publishes (tessera#555, schema
 v2): the rounding decision belongs to the runtime's compiled operator, and a
 consumer admits an fp4 cell only under the attestation whose image is the one
 executing.
+The required object can have `platforms: {}` when no current activation
+attestation exists. An empty root collection publishes no arithmetic claim.
+Any claimed platform must still have a nonempty image list. Any claimed
+image must still have nonempty contracts. The validator rejects a contract
+that no current cell executes. Historical T4 activation receipt bytes are
+preserved separately; they cannot qualify the replacement WINDOW route.
 
 - The **inputs** are the repository's. `serving/activation_attestation.py`
   constructs them as BF16 bit patterns and `validate_activation_quantizers`
@@ -9239,15 +9549,9 @@ When a build is unavailable the outcome is per extension
 and per residency, and it is a value the route record stamps, never a
 boolean:
 
-- `substituted` -- a *named* substitute decoder ran and the serve is a
-  different numeric object than the native one. The resident NVFP4 route
-  decodes once at load and may substitute `tessera.stock.materialize_stock`;
-  the window GEMV substitutes the torch window decode in both residencies.
-- `refused` -- no serve exists. The retired streamed NVFP4 route decoded
-  inside a traced forward whose data-dependent shapes the substitute could not
-  run, so it refused instead of serving something else; with the A4 retirement
-  the native lane requires its kernels outright (fail closed on an absent
-  backend), which is the same refusal reached earlier.
+- `substituted` -- A named substitute decoder ran. Its arithmetic differs from the native owner.
+  The old resident NVFP4 route allowed a stock substitute; the native WINDOW route does not.
+- `refused` -- No serve exists. The native NVFP4 route requires its extension and fails closed without it.
 
 The decoder that actually ran is the `decoder` field on every route record
 (`telemetry.py`), which is how a fingerprint tells a native serve from a
@@ -9423,3 +9727,55 @@ CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
 explicit `enforce_eager=True` requirement. This enables the real native factory
 without fabricating a model configuration, and does not admit compiled or
 captured selected execution.
+
+## Explicit GLM projection owners
+
+The dense owner rule identifies the KDA six-member input, the MLA low-rank input, and the DSA key and head-weight pair.
+The source config identifies KDA layers and standalone MLA queries.
+The construction receipt supplies output partitions; the exporter does not derive them from weight shapes.
+KDA roles four and five keep their full source rows on each tensor parallel rank.
+
+The stock NoPE loader pads only kv_a_proj_with_mqa output rows.
+The exporter preserves its source range and records the added zero rows separately.
+BF16 passthrough keeps every original tensor and bias unchanged.
+An explicit plan can select the router and vision Linear units without a default change.
+The selected vision qkv target keeps the stock prefix.
+
+The direct consumer byte rule belongs to serving.projection_routes.
+The DSA head tail uses its stock FP32 cache.
+The MLA absorbed path uses one decoded BF16 matrix and the stock split helper.
+Their decoded buffers increase resident prices; they do not become compressed BMM routes.
+The exporter refuses compressed stock twins for constructors that suppress quantization.
+
+The plugin installs a selective LinearBase constructor hook before model construction.
+The hook supplies TesseraConfig only for an explicit target whose constructor has no quant_config.
+Every unselected BF16 module keeps its stock method, prefix, bias, and dtype.
+The KDA shard planner reads replicated_shard_ids from the actual layer.
+It does not infer replication from a shape total.
+
+The direct consumer contract separates the head operation from its unused dense output.
+The indexer head uses FP32 inputs and weights without activation quantization.
+The MLA split helper uses a BF16 matrix; the dense prefill path keeps its family contract.
+The producer reads direct_consumer_activation_contract and direct_consumer_weight from the runtime owner.
+T-16 direct weights use canonical FP32 value-scale products. The direct consumer selects its final cache dtype.
+
+The projection diagnostic uses raw BF16 values and separate FP32 row scales for its FP64 dense reference.
+Its exact indexer reference uses the canonical FP32 product, as the direct buffer does.
+Only its explicit stock control casts a derived BF16 tensor.
+The device screen checks the current BF16 decoder and exact native launch pair.
+Its bitwise, finite-value, derived-bound and changed-input graph checks remain mandatory.
+
+The constructor census records stock and selected views separately.
+Only actual get_quant_method calls establish an offered selected route.
+A meta census proves construction, not a loaded forward or CUDA graph execution.
+The current CPU sparse backend cannot construct the full GLM model.
+That refusal does not qualify a GPU route or permit a substitute backend.
+The census records input width variants separately from reachability disagreements.
+An output projection can have different input widths on KDA and MLA layers without a routing disagreement.
+The TP2 smoke accepts a Torch rendezvous URL for native gang members on distinct GPU hosts.
+Runtime identities remain observations. Only mode and artifact input mismatches stop the peer arithmetic check.
+The active construction entry names one selected receipt for each architecture. Historical receipts remain unchanged.
+The current GLM entry derives from actual T-8/T-16 constructor calls on the current image.
+The topology specifies two nodes with one rank and one CUDA device per node.
+
+Defaults, serving pins, kernels, and the T-16 decode-once interface remain unchanged.

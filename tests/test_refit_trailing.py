@@ -252,13 +252,42 @@ def _tiny_capture(tmp_path: Path) -> Path:
     return path
 
 
+_FIXTURE_OUTPUT_SIZES = {
+    "language_model.model.layers.*.mlp.down_proj": [32],
+}
+
+
+def _declare_fixture_geometry(monkeypatch):
+    """Use the fixture's own partition list, and nothing else."""
+    import copy
+    from tessera.serving.contract import construction_entry as live_entry
+    real = live_entry
+
+    def _entry(architectures, contract=None):
+        entry = real(architectures) if contract is None else real(architectures, contract)
+        if entry is None or entry.get("architecture") != "Glm5NextForConditionalGeneration":
+            return entry
+        entry = copy.deepcopy(entry)
+        entry.setdefault("output_sizes", {}).update(_FIXTURE_OUTPUT_SIZES)
+        return entry
+
+    monkeypatch.setattr(_exporter(), "construction_entry", _entry)
+
+
 def _export(tmp_path: Path, monkeypatch, name: str, *extra: str) -> Path:
     out = tmp_path / name
+    src = _tiny_checkpoint(tmp_path)
+    # Only down_proj is routed (#99). The pinned runtime now routes o_proj
+    # too, so the fixture names it PASSTHROUGH: deliberate source precision.
+    plan_path = tmp_path / f"{name}-plan.json"
+    plan_path.write_text(json.dumps({_UNROUTED + ".weight": "PASSTHROUGH"}))
+    _declare_fixture_geometry(monkeypatch)
     monkeypatch.setattr(
         "sys.argv",
-        ["export_tessera_serving.py", str(_tiny_checkpoint(tmp_path)), str(out),
+        ["export_tessera_serving.py", str(src), str(out),
          "--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--no-verify",
-         "--passthrough-unrouted", "--hessian", str(_tiny_capture(tmp_path)),
+         "--passthrough-unrouted", "--plan-json", str(plan_path),
+         "--hessian", str(_tiny_capture(tmp_path)),
          "--refit-metric", "h^1.0", *extra])
     _exporter().main()
     return out

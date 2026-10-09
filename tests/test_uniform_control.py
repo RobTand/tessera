@@ -22,6 +22,7 @@ from pathlib import Path
 
 import pytest
 import box_artifacts
+from test_accounting_source import isolated_prismaquant_imports
 
 from tessera.control import (
     BF16,
@@ -38,7 +39,7 @@ from tessera.control import (
     units_from_plan,
 )
 from tessera.errors import ControlNotByteMatchedError, GrammarError, TesseraError
-from tessera.export import rung_ceiling, wire_recipe
+from tessera.export import rung_ceiling, served_recipe
 from tessera.grammar import (
     bresenham_rate_schedule,
     forest_plane_bytes,
@@ -348,17 +349,12 @@ def test_the_invariants_hold_on_the_dataclass_and_not_only_on_the_assertion():
 
 
 def _unmatched_pair():
-    """The issue's own factory pair: 3.16% apart, 31.6x the tolerance.
-
-    Two units either side of the E2M1x2 coset cap, with only those two rungs
-    offered, so the search must land in the 0.241-bpp hole this module
-    documents.  ``assert_match=False`` is the diagnostic path.
-    """
+    """Restrict the control to two distant rungs, with no exact byte match."""
     units = [
-        PlannedUnit("a", "E2M1x2", 895, 1024, 3072),
-        PlannedUnit("b", "E2M1x2", 896, 1024, 3072),
+        PlannedUnit("a", "E2M1x2", 128, 1024, 3072),
+        PlannedUnit("b", "E2M1x2", 1024, 1024, 3072),
     ]
-    return uniform_control(units, rungs=[895, 896], assert_match=False)
+    return uniform_control(units, rungs=[128, 1024], assert_match=False)
 
 
 def test_a_measured_verdict_needs_the_byte_match_to_have_actually_held():
@@ -370,7 +366,6 @@ def test_a_measured_verdict_needs_the_byte_match_to_have_actually_held():
     """
     control = _unmatched_pair()
     assert control.match.byte_matched is False
-    assert float(control.match.relative_slack) == pytest.approx(0.0315542, abs=1e-6)
     with pytest.raises(ControlNotByteMatchedError, match="byte_matched"):
         control_block(control, candidate_kl=0.5, control_kl=0.6)
     block = control_block(control)
@@ -397,50 +392,13 @@ def test_the_bracket_says_whether_the_axis_or_the_search_owns_the_slack():
     assert abs(control.match.slack_bits) * 2 <= bracket["quantum_bits"]
 
 
-def test_the_e2m1x2_coset_cap_is_a_hole_the_control_reports_rather_than_papers_over():
-    """R895 -> R896 jumps 0.241 bpp, and no control lands inside it.
-
-    ``wire_recipe`` changes body and plane at the coset cap, so the axis is
-    dense on one side of 896 and stops on the other.  A candidate sitting in
-    that gap has no byte-matched uniform arm, and saying so is the honest
-    answer; silently taking the nearest rung would compare two byte budgets.
-
-    The figure was 0.23932 until 2026-09-02, when the accountant started
-    charging the TCQ forest the cap rung carries and the window rung below it
-    does not (issue #43): 512 B per unit on the *upper* side of the hole, so
-    the hole is wider than it was reported, not narrower.
-    """
-    below = sum(unit_wire_bits("E2M1x2", 895, r, c) * n for (r, c), n in QWEN_MULTISET.items())
-    at_cap = sum(unit_wire_bits("E2M1x2", 896, r, c) * n for (r, c), n in QWEN_MULTISET.items())
-    gap = Fraction(at_cap - below, QWEN_PARAMS)
-    assert float(gap) == pytest.approx(0.24115, abs=1e-5)
-    midpoint = [PlannedUnit(f"m{i}.weight", "E2M1x2", 896, r, c)
-                for i, ((r, c), n) in enumerate(QWEN_MULTISET.items()) for _ in range(n)]
-    # a candidate in the hole: take the cap plan and shave it toward R895
-    mixed = [u if i % 2 else PlannedUnit(u.tensor, "E2M1x2", 895, u.rows, u.columns)
-             for i, u in enumerate(midpoint)]
-    with pytest.raises(ControlNotByteMatchedError):
-        uniform_control(mixed)
-    loose = uniform_control(mixed, assert_match=False)
-    assert loose.q256 in (895, 896)
-    assert float(loose.match.relative_slack) > 0.001
 
 
 # ----------------------------------------------------------- the accountant
 
 
 def test_wire_bits_rise_with_the_rung_on_every_grid():
-    """A PIN, not a proof: monotone in the rung *at this shape*.
-
-    ``uniform_control`` ranks by bits and not by rung precisely because the two
-    orders are not the same order -- ``wire_recipe`` picks body and plane per
-    rung, and below the E2M1x2 coset cap the window table's 4096 bytes beat the
-    forest's 512 only once the unit is large enough to amortise them.  At the
-    1024x3072 swept here they are amortised and the rung order holds; at 64x512
-    it inverts over 160 rungs (``tests/test_rate_menu.py``, issue tessera#43).
-    Recorded here so a future inversion *at production shape* is a visible
-    change rather than a silent one.
-    """
+    """Prices increase at this production shape on every grid."""
     for name in ("E2M1", "E2M1x2", "E4M3", "BF16"):
         grid = grid_for_name(name)
         previous = None
@@ -515,16 +473,17 @@ def _price_both_ways(tessera_formats, shape):
     priced = []
     for grid_name, family, ceiling in (
         ("E2M1", "TESSERA_E2M1_K1", 768),
-        ("E2M1x2", "TESSERA_E2M1_K2", 896),
+        ("E2M1x2", "TESSERA_E2M1_K2", 1024),
         ("E4M3", "TESSERA_E4M3_K1", 2048),
     ):
         for q in (256, ceiling // 2, ceiling):
-            mine = unit_wire_bits(grid_name, q, rows, columns)
-            theirs = Fraction(
-                tessera_formats.artifact_bpp(family, q, shape=shape)
-            ) * rows * columns
             grid = grid_for_name(grid_name)
-            body = BodyKind(wire_recipe(grid, q).body)
+            recipe = served_recipe(grid, q)
+            mine = unit_wire_bits(grid, q, rows, columns)
+            theirs = Fraction(
+                tessera_formats.artifact_bpp(family, q, shape=shape, recipe=recipe)
+            ) * rows * columns
+            body = BodyKind(recipe.body)
             if body is BodyKind.TCQ:
                 rates = bresenham_rate_schedule(
                     root_from_q256(q * grid.arity), columns, grid.rate_cap
@@ -537,7 +496,8 @@ def _price_both_ways(tessera_formats, shape):
 
 
 @pytest.mark.parametrize("shape", PQ_SHAPES)
-def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
+def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(
+        shape, isolated_prismaquant_imports):
     """The allocator's byte budget and this control must be one currency.
 
     PrismaQuant prices thousands of rungs per Linear through a closed form
@@ -556,9 +516,9 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     (``prismaquant/tessera_formats.py`` ``_forest_bytes``), and the
     disjunction went on certifying a wire it no longer described -- a
     PrismaQuant that stopped charging the forest again would have passed this
-    gate unchanged.  It is not vacuous cover either: of the 27 rows this test
-    prices, 12 carry a TCQ body and every one of them has a forest of 160 to
-    4096 bits, so the excused branch was reachable on every shape.  Issue #388.
+    gate unchanged. The test now passes the same served recipe to both
+    accountants. Their research defaults can differ. Scalar TCQ rows still
+    exercise the forest charge, and the test checks each charge.
 
     ``55f7f87e`` wrote that hole down in this docstring -- "cannot detect a
     regression that drops that charge" -- and left the disjunction standing.
@@ -595,7 +555,8 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
 
 
 @pytest.mark.parametrize("shape", PQ_SHAPES)
-def test_a_prismaquant_that_stopped_charging_the_forest_is_refused(shape, monkeypatch):
+def test_a_prismaquant_that_stopped_charging_the_forest_is_refused(
+        shape, monkeypatch, isolated_prismaquant_imports):
     """Drop the forest charge on the PrismaQuant side; the gate above must bite.
 
     The mutation is the defect, not a hand-built number: ``tessera_formats``

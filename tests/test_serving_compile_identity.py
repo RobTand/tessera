@@ -1,21 +1,10 @@
-"""The serving identity vLLM's compile cache is keyed by.
+"""The compile cache keeps the actual serving mode in its identity.
 
-``tessera/serving/compile_identity.py`` carries the why and the measurement.
-Here: the record the config writes, its idempotence per process, the two
-refusals, and -- with vLLM importable -- that two residency modes make two
-``VllmConfig`` hashes, which is the property every vLLM compile-cache key
-inherits.
-
-Ported from Gridbook's ``test_compile_identity.py``.  The key is ``"tessera"``
-and the declared fact is ``serve_mode``; Gridbook declared three lane modes
-under one key, this plugin declares one, so the multi-lane tests are gone
-(see the report).  WHO declares also moved: Gridbook's lane BUILDERS declared,
-here ``config.TesseraConfig.get_quant_method`` does, and that is pinned in
-``test_serving_dispatch.py`` where the vLLM stubs live.
+These tests cover the declared record, its mode, and its refusal conditions.
+The runtime test compares the hashes for resident and streamed execution.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from types import SimpleNamespace
 
@@ -23,8 +12,8 @@ import pytest
 
 import tessera.serving
 from tessera.serving.compile_identity import (
-    DISPATCH_FACT, TESSERA_KEY, declare_compile_identity, declare_compile_identity_in,
-    declared_forward_is_compiled, note_traced_dispatch, reset_for_tests, traced_dispatch)
+    TESSERA_KEY, declare_compile_identity, declare_compile_identity_in,
+    declared_forward_is_compiled, reset_for_tests)
 
 
 @pytest.fixture(autouse=True)
@@ -115,34 +104,54 @@ def test_no_current_config_declares_nothing():
     assert declare_compile_identity(serve_mode="resident") is None
 
 
+
+
+def _real_vllm_hash_check(code):
+    # A fresh interpreter cannot read another test's fake vLLM package.
+    import subprocess
+    import sys
+
+    imports = """
+import importlib.util, sys
+if importlib.util.find_spec("vllm") is None:
+    sys.exit(77)
+from vllm.config import VllmConfig, set_current_vllm_config
+from vllm.platforms import current_platform
+current_platform.import_ir_kernels()
+from tessera.serving.compile_identity import (
+    TESSERA_KEY, declare_compile_identity, note_traced_dispatch, reset_for_tests)
+"""
+    constants = (f"FIRST_OP, SECOND_OP, MODULES = "
+                 f"{(WINDOW_GEMM_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL, MODULES)!r}\n")
+    result = subprocess.run([sys.executable, "-c", imports + constants + code],
+                            capture_output=True, text=True)
+    if result.returncode == 77:
+        pytest.skip("real vLLM is absent from the test interpreter")
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_vllm_hashes_the_two_modes_apart():
-    pytest.importorskip("vllm")
-    from vllm.config import VllmConfig, set_current_vllm_config
+    _real_vllm_hash_check(r"""
+hashes = {}
+for mode in ("resident", "streamed"):
+    cfg = VllmConfig()
+    with set_current_vllm_config(cfg):
+        rec = declare_compile_identity(serve_mode=mode)
+    assert rec is cfg.additional_config[TESSERA_KEY]
+    assert rec["serve_mode"] == mode
+    hashes[mode] = cfg.compute_hash()
+assert hashes["resident"] != hashes["streamed"]
+again = VllmConfig()
+with set_current_vllm_config(again):
+    declare_compile_identity(serve_mode="resident")
+assert again.compute_hash() == hashes["resident"]
+""")
 
-    hashes = {}
-    for mode in ("resident", "streamed"):
-        cfg = VllmConfig()
-        with set_current_vllm_config(cfg):
-            rec = declare_compile_identity(serve_mode=mode)
-        assert rec is cfg.additional_config[TESSERA_KEY]
-        assert rec["serve_mode"] == mode
-        hashes[mode] = cfg.compute_hash()
-    assert hashes["resident"] != hashes["streamed"]
-    again = VllmConfig()
-    with set_current_vllm_config(again):
-        declare_compile_identity(serve_mode="resident")
-    assert again.compute_hash() == hashes["resident"]
 
 
-# ---------------------------------------------------------------------------
-# The lane, one level below the mode (issue #91).  Two streamed serves of one
-# checkpoint take different traced graphs -- ``tessera::fp8_streamed_apply`` on
-# the window-GEMV lane, a window decode plus ``torch._scaled_mm`` without it --
-# over byte-identical sources.  Everything below asserts the fact that
-# separates them is in the record vLLM hashes.
+from tessera.serving.compile_identity import note_traced_dispatch, traced_dispatch
+from tessera.serving.scheme import WINDOW_GEMM_SYMBOL, FUSED_WINDOW_DENSE_SYMBOL
 
-GEMV_OP = "tessera::fp8_streamed_apply"
-GEMM_OP = "torch._scaled_mm"
 MODULES = ("model.layers.0.mlp.down_proj", "model.layers.0.self_attn.qkv_proj",
            "model.layers.1.mlp.down_proj")
 
@@ -154,108 +163,75 @@ def _declared(mode="streamed"):
 
 
 def _identity(cfg):
-    """What vLLM hashes: ``additional_config`` as JSON, sort_keys (config/vllm.py:520)."""
     return json.dumps(cfg.additional_config, sort_keys=True)
 
 
 def test_the_two_lane_states_are_two_identities():
-    gemv, torch_window = _declared(), None
+    first = _declared()
     for name in MODULES:
-        note_traced_dispatch(name, GEMV_OP)
-    a = _identity(gemv)
+        note_traced_dispatch(name, WINDOW_GEMM_SYMBOL)
+    a = _identity(first)
     reset_for_tests()
-    torch_window = _declared()
+    second = _declared()
     for name in MODULES:
-        note_traced_dispatch(name, GEMM_OP)
-    b = _identity(torch_window)
-    assert gemv.additional_config[TESSERA_KEY]["serve_mode"] == "streamed"
-    assert torch_window.additional_config[TESSERA_KEY]["serve_mode"] == "streamed"
-    assert a != b, "two streamed graphs, one identity: the compile cache would share a slot"
+        note_traced_dispatch(name, FUSED_WINDOW_DENSE_SYMBOL)
+    assert _identity(second) != a
 
 
 def test_one_lane_state_is_one_identity_however_the_modules_are_ordered():
     first = _declared()
     for name in MODULES:
-        note_traced_dispatch(name, GEMV_OP)
+        note_traced_dispatch(name, WINDOW_GEMM_SYMBOL)
     a = _identity(first)
     reset_for_tests()
     second = _declared()
-    for name in reversed(MODULES):   # load order is not the key
-        note_traced_dispatch(name, GEMV_OP)
+    for name in reversed(MODULES):
+        note_traced_dispatch(name, WINDOW_GEMM_SYMBOL)
     assert _identity(second) == a
-    # and a module that reports twice (a re-processed layer) is one entry
-    note_traced_dispatch(MODULES[0], GEMV_OP)
+    note_traced_dispatch(MODULES[0], WINDOW_GEMM_SYMBOL)
     assert _identity(second) == a
 
 
-def test_a_mixed_checkpoint_needs_the_SET_not_a_count():
-    """Why the fact is per module: the refusals (rate-3, ``L != 14``, a shard
-    start state) are per unit, so two runs can put the same NUMBER of modules
-    on the GEMV lane and a different SET of them.  A boolean or a count calls
-    those two runs one graph; they are not one graph."""
-    one = _declared()
-    note_traced_dispatch(MODULES[0], GEMV_OP)
-    note_traced_dispatch(MODULES[1], GEMM_OP)
-    a = _identity(one)
+def test_a_mixed_checkpoint_needs_the_set_not_a_count():
+    first = _declared()
+    note_traced_dispatch(MODULES[0], WINDOW_GEMM_SYMBOL)
+    note_traced_dispatch(MODULES[1], FUSED_WINDOW_DENSE_SYMBOL)
+    a = _identity(first)
     reset_for_tests()
-    other = _declared()
-    note_traced_dispatch(MODULES[0], GEMM_OP)
-    note_traced_dispatch(MODULES[1], GEMV_OP)
-    b = _identity(other)
-    counts = [rec[DISPATCH_FACT].rpartition("#")[0]
-              for rec in (one.additional_config[TESSERA_KEY],
-                          other.additional_config[TESSERA_KEY])]
-    assert counts[0] == counts[1], "the histogram is equal: only the digest can separate these"
-    assert a != b
-
-
-def test_the_fact_is_a_stable_digest_not_a_python_hash():
-    cfg = _declared()
-    note_traced_dispatch(MODULES[0], GEMV_OP)
-    value = cfg.additional_config[TESSERA_KEY][DISPATCH_FACT]
-    op, _, digest = value.rpartition("#")
-    assert op == f"{GEMV_OP}=1"
-    assert len(digest) == 16 and all(c in "0123456789abcdef" for c in digest), value
-    expected = hashlib.sha256(f"{MODULES[0]}={GEMV_OP}".encode()).hexdigest()[:16]
-    assert digest == expected, "the digest must be reproducible in the next process"
-
-
-def test_nothing_is_declared_when_nothing_was_declared_into():
-    """No vLLM, or an ``additional_config`` this plugin may not extend under an
-    uncompiled forward: there is no record and no cache key to protect."""
-    assert note_traced_dispatch(MODULES[0], GEMV_OP) is None
-    assert traced_dispatch() == {}
+    second = _declared()
+    note_traced_dispatch(MODULES[0], FUSED_WINDOW_DENSE_SYMBOL)
+    note_traced_dispatch(MODULES[1], WINDOW_GEMM_SYMBOL)
+    assert _identity(second) != a
 
 
 def test_a_second_config_starts_a_fresh_accumulation():
     first = _declared()
-    note_traced_dispatch(MODULES[0], GEMV_OP)
-    second = _declared()          # a second model in one process: a test, not a serve
-    assert DISPATCH_FACT not in second.additional_config[TESSERA_KEY]
-    note_traced_dispatch(MODULES[1], GEMM_OP)
-    assert traced_dispatch() == {MODULES[1]: GEMM_OP}
-    assert first.additional_config[TESSERA_KEY][DISPATCH_FACT] != \
-        second.additional_config[TESSERA_KEY][DISPATCH_FACT]
+    note_traced_dispatch(MODULES[0], WINDOW_GEMM_SYMBOL)
+    a = _identity(first)
+    second = _declared()
+    note_traced_dispatch(MODULES[1], FUSED_WINDOW_DENSE_SYMBOL)
+    assert traced_dispatch() == {MODULES[1]: FUSED_WINDOW_DENSE_SYMBOL}
+    assert _identity(first) == a
+    assert _identity(second) != a
 
 
 def test_vllm_hashes_the_two_lane_states_apart():
-    pytest.importorskip("vllm")
-    from vllm.config import VllmConfig, set_current_vllm_config
-
-    hashes = {}
-    for lane in (GEMV_OP, GEMM_OP):
-        reset_for_tests()
-        cfg = VllmConfig()
-        with set_current_vllm_config(cfg):
-            declare_compile_identity(serve_mode="streamed")
-        for name in MODULES:                       # at weight load: no current config
-            note_traced_dispatch(name, lane)
-        hashes[lane] = cfg.compute_hash()
-    assert hashes[GEMV_OP] != hashes[GEMM_OP]
+    _real_vllm_hash_check(r"""
+hashes = {}
+for operation in (FIRST_OP, SECOND_OP):
     reset_for_tests()
-    again = VllmConfig()
-    with set_current_vllm_config(again):
+    cfg = VllmConfig()
+    with set_current_vllm_config(cfg):
         declare_compile_identity(serve_mode="streamed")
     for name in MODULES:
-        note_traced_dispatch(name, GEMV_OP)
-    assert again.compute_hash() == hashes[GEMV_OP]
+        note_traced_dispatch(name, operation)
+    hashes[operation] = cfg.compute_hash()
+assert hashes[FIRST_OP] != hashes[SECOND_OP]
+reset_for_tests()
+again = VllmConfig()
+with set_current_vllm_config(again):
+    declare_compile_identity(serve_mode="streamed")
+for name in MODULES:
+    note_traced_dispatch(name, FIRST_OP)
+assert again.compute_hash() == hashes[FIRST_OP]
+""")

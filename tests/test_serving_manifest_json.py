@@ -113,3 +113,45 @@ def test_refresh_writes_compact_manifest_without_changing_source(tmp_path):
     assert (source / "tessera_serving_manifest.json").read_bytes() == original
     assert (source / "model.safetensors").read_bytes() == b"fixture"
     assert (output / "model.safetensors").read_bytes() == b"fixture"
+
+
+def test_refresh_counts_served_e2m1_window_without_rewriting_wire(tmp_path):
+    torch = pytest.importorskip("torch")
+    safetensors = pytest.importorskip("safetensors.torch")
+    from experiments.refresh_native_resident_manifest import refresh
+    from tessera.alphabet import E2M1_GRID, tuple_grid
+    from tessera.export import encode_linear, served_recipe
+    from tessera.fused_frame import pack_fused
+
+    source = tmp_path / "source"
+    source.mkdir()
+    grid = tuple_grid(E2M1_GRID, 2)
+    recipe = served_recipe(grid, 256, "dense")
+    weight = torch.linspace(-0.25, 0.375, 32 * 256).reshape(32, 256)
+    encoded = encode_linear(weight, grid=grid, q256=256, name="proj", verify=False,
+        body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+        window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+        window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
+    blob = pack_fused([("proj", 32, encoded.blob)])
+    shard = source / "model.safetensors"
+    safetensors.save_file({"model.proj.wire_bytes": torch.frombuffer(bytearray(blob), dtype=torch.uint8)}, str(shard))
+    manifest = {"modules": {"model.proj": {"family": "TESSERA_NVFP4", "rows": 32, "cols": 256,
+        "roles": [{"role": "proj", "rows": 32, "cols": 256}],
+        "wire_bytes": encoded.exact_bytes, "container_bytes": len(blob),
+        "resident_bytes_resident_mode": 1}},
+        "totals": {"passthrough_bytes": 0, "checkpoint_bytes": shard.stat().st_size}}
+    manifest_bytes = json.dumps(manifest).encode()
+    (source / "tessera_serving_manifest.json").write_bytes(manifest_bytes)
+    shard_bytes = shard.read_bytes()
+
+    output = tmp_path / "fresh"
+    refresh(source, output)
+
+    updated = json.loads((output / "tessera_serving_manifest.json").read_text())
+    expected = 4 + 512 * 256 * 2 // 8 + 16384 + 256 + 16 + 1024 + 64 + 4 + 4 + 32
+    assert updated["modules"]["model.proj"]["resident_bytes_resident_mode"] == expected
+    assert updated["totals"]["resident_mode_bytes"] == expected
+    assert (source / "tessera_serving_manifest.json").read_bytes() == manifest_bytes
+    assert shard.read_bytes() == shard_bytes
+    assert (output / "model.safetensors").read_bytes() == shard_bytes
+    assert shard.stat().st_ino == (output / "model.safetensors").stat().st_ino

@@ -46,12 +46,13 @@ def native_constructor(monkeypatch):
     monkeypatch.setattr(rf, 'fused_routed_window_supported', lambda *args: None)
     monkeypatch.setattr(rf, 'library_for', lambda family: 'e4m3mma')
     monkeypatch.setattr(rf, '_ext', lambda library: object())
+    monkeypatch.setattr(rf, "_make_dispatch_resources", lambda device, kernel: rf._DispatchResources(
+        (object(), object()), object(), (object(), object()),
+        torch.empty(0, dtype=torch.float32, device=device), kernel))
 
 
 def native_owner(packed):
-    # Exercise the old full-owner behavior for causal RED instead of failing
-    # merely because the new ownership method does not exist yet.
-    return packed.native_owner() if hasattr(packed, 'native_owner') else packed
+    return packed.native_owner()
 
 
 def test_success_retires_unheld_compact_planes_preserves_required_storage(native_constructor):
@@ -60,7 +61,7 @@ def test_success_retires_unheld_compact_planes_preserves_required_storage(native
             for index, role in enumerate(roles) for field in ('codes_all', 'native_all', 'perm_all')}
     required = [(role.words_all.data_ptr(), role.init_all.data_ptr(), role.scale_all.data_ptr())
                 for role in roles]
-    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     packed.adapter()
     owner = native_owner(packed)
     del packed, roles
@@ -75,7 +76,7 @@ def test_success_retires_unheld_compact_planes_preserves_required_storage(native
 
 def test_external_original_bundles_and_views_remain_usable(native_constructor):
     roles = [projection() for _ in range(3)]
-    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     held_codes = roles[0].codes_all[:1]
     snapshot = held_codes.clone()
     ref = weakref.ref(roles[0].codes_all)
@@ -91,7 +92,7 @@ def test_external_original_bundles_and_views_remain_usable(native_constructor):
 
 def test_external_view_alone_keeps_storage_until_its_last_reference(native_constructor):
     roles = [projection() for _ in range(3)]
-    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     held_codes = roles[0].codes_all[:1]
     snapshot = held_codes.clone()
     ref = weakref.ref(roles[0].codes_all)
@@ -107,24 +108,8 @@ def test_external_view_alone_keeps_storage_until_its_last_reference(native_const
     assert ref() is None
 
 
-@pytest.mark.parametrize('failure', ['unsupported', 'build'])
-def test_refusal_or_build_failure_keeps_complete_compact_fallback(native_constructor, monkeypatch, failure):
-    roles = [projection() for _ in range(3)]
-    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
-    fallback = object()
-    monkeypatch.setattr(nwm, 'native_window_moe_from_bundles', lambda *args, **kwargs: fallback)
-    if failure == 'unsupported':
-        monkeypatch.setattr(rf, 'fused_routed_window_supported', lambda *args: 'unsupported')
-    else:
-        monkeypatch.setattr(rf, '_ext', lambda library: (_ for _ in ()).throw(RuntimeError('no toolchain')))
-    assert packed.adapter() is fallback
-    assert native_owner(packed) is packed
-    assert all(packed_role is original and original.codes_all is not None and original.perm_all is not None
-               for packed_role, original in zip((packed.gate, packed.up, packed.down), roles))
-
-
 def test_retired_projection_cannot_enter_compact_execution(native_constructor):
-    packed = nwm.PackedWindowMoeBundles(*[projection() for _ in range(3)], family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*[projection() for _ in range(3)], family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     packed.adapter()
     owner = native_owner(packed)
     with pytest.raises(GrammarError, match='retired|native projection'):
@@ -133,20 +118,20 @@ def test_retired_projection_cannot_enter_compact_execution(native_constructor):
 
 
 def test_retired_projection_cannot_be_recomposed(native_constructor, monkeypatch):
-    packed = nwm.PackedWindowMoeBundles(*[projection() for _ in range(3)], family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*[projection() for _ in range(3)], family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     owner = native_owner(packed)
-    monkeypatch.delenv(rf.ENV_TOGGLE, raising=False)
     monkeypatch.setattr(rf, 'fused_routed_window_supported', SUPPORTED)
     reason = rf.fused_routed_window_supported(owner.gate, owner.up, owner.down)
     assert 'retired' in reason
     with pytest.raises(GrammarError, match='retired'):
-        rf.FusedRoutedWindowMoE.from_bundles(owner.gate, owner.up, owner.down)
+        rf.FusedRoutedWindowMoE.from_bundles(owner.gate, owner.up, owner.down,
+                                           expert_classes=owner.expert_classes)
 
 
 @pytest.mark.parametrize('failure', [RuntimeError, GrammarError])
 def test_late_descriptor_failure_keeps_original_owner(native_constructor, monkeypatch, failure):
     roles = [projection() for _ in range(3)]
-    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     original = rf.projection_tables
     calls = []
 
@@ -157,16 +142,9 @@ def test_late_descriptor_failure_keeps_original_owner(native_constructor, monkey
         return original(bundle)
 
     monkeypatch.setattr(rf, 'projection_tables', descriptor)
-    fallback = object()
-    monkeypatch.setattr(nwm, 'native_window_moe_from_bundles', lambda *args, **kwargs: fallback)
-    if failure is GrammarError:
-        with pytest.raises(GrammarError, match='third projection failed'):
-            packed.adapter()
-        assert '_adapter' not in packed.__dict__
-    else:
-        assert packed.adapter() is fallback
-        assert native_owner(packed) is packed
-    assert '_fused_adapter' not in packed.__dict__
+    with pytest.raises(failure, match="third projection failed"):
+        packed.adapter()
+    assert "_adapter" not in packed.__dict__
     assert all(held is role and role.codes_all is not None and role.perm_all is not None
                for held, role in zip((packed.gate, packed.up, packed.down), roles))
 
@@ -186,12 +164,11 @@ def test_owner_bytes_charge_selected_storage_once_and_include_counters(
     family = 'value' if library == 'value' else 'e4m3'
     roles = [projection() for _ in range(3)]
     if family == 'value':
-        roles = [dataclasses.replace(role, family='value', arithmetic='folded',
-                 table_all=torch.zeros(role.experts, rf.TABLE_ENTRIES, dtype=torch.bfloat16),
-                 codes_all=torch.empty(0, dtype=torch.uint8),
-                 native_all=torch.empty(0, dtype=torch.uint8)) for role in roles]
+        roles = [dataclasses.replace(role, family='value', table_all=torch.zeros(role.experts, rf.TABLE_ENTRIES, dtype=torch.bfloat16),
+        codes_all=torch.empty(0, dtype=torch.uint8),
+        native_all=torch.empty(0, dtype=torch.uint8)) for role in roles]
     monkeypatch.setattr(rf, 'library_for', lambda family: library)
-    packed = nwm.PackedWindowMoeBundles(*roles, family=family)
+    packed = nwm.PackedWindowMoeBundles(*roles, family=family, expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     adapter = packed.adapter()
     expected_dtype = torch.uint8 if library == 'e4m3mma' else torch.int16
     assert adapter.table_gate.dtype == expected_dtype
@@ -202,7 +179,7 @@ def test_owner_bytes_charge_selected_storage_once_and_include_counters(
     owner = native_owner(packed)
     expected = storage_union([t for _, t in owner.named_tensors()] + [adapter.counters])
     assert owner.resident_bytes() == expected
-    assert dict(adapter.named_tables())['routed_fused.counters'] is adapter.counters
+    assert dict(adapter.named_tables())['routed_classes.counters'] is adapter.counters
 
 
 def test_a_retained_slice_charges_the_whole_backing_allocation():
@@ -210,6 +187,6 @@ def test_a_retained_slice_charges_the_whole_backing_allocation():
     gate = roles[0]
     backing = torch.empty(3, gate.words_all.shape[1], dtype=torch.int32)
     roles[0] = dataclasses.replace(gate, words_all=backing[:gate.experts])
-    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3')
+    packed = nwm.PackedWindowMoeBundles(*roles, family='e4m3', expert_classes=[{"start": 0, "end": 2, "q256": {"w13": [1024, 1024], "w2": [1024]}}])
     expected = storage_union(t for _, t in packed.named_tensors())
     assert packed.resident_bytes() == expected

@@ -350,5 +350,172 @@ class MeasurementMatchesSpec(unittest.TestCase):
                 self.assertFalse(self._kept(meta={k: v for k, v in self.meta.items() if k != field}))
 
 
+def _needs_harvest_deps():
+    try:
+        import torch  # noqa: F401
+        import jsonschema  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+NEEDS_HARVEST = _needs_harvest_deps()
+HARVEST_FIXTURE = os.path.join(HERE, "fixtures", "d41_structure_spec_harvest")
+HARVEST_SPEC = os.path.join(HARVEST_FIXTURE, "glm53_tp2_spec.json")
+HARVEST_GEOMETRY = os.path.join(HARVEST_FIXTURE, "gpu0", "bench_geometry_harvest.json")
+REPO_ROOT = os.path.normpath(os.path.join(HERE, ".."))
+
+
+class HarvestPublicCLI(unittest.TestCase):
+    """The public harvest CLI joins fixture rows only at their recorded coordinates.
+
+    The committed fixture carries no timings (every cell records ms 0), so every
+    joined measurement stays pending: these tests prove coordinate selection, never
+    a GPU timing. Each test runs the real CLI in a subprocess and needs torch and
+    jsonschema; without them it skips instead of failing.
+    """
+
+    def _run_harvest(self, version, *extra):
+        import shutil
+        import tempfile
+
+        if not NEEDS_HARVEST:
+            self.skipTest("harvest needs torch and jsonschema")
+        target = tempfile.mkdtemp(prefix="d50-harvest-")
+        self.addCleanup(shutil.rmtree, target, True)
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.path.join(REPO_ROOT, "src") + (
+            ":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+        )
+        cmd = [
+            sys.executable,
+            os.path.join(SPEED, "rung_allowability_table.py"),
+            "--root", HARVEST_FIXTURE,
+            "--schema", os.path.join(REPO_ROOT, "docs", "schema",
+                                     "allowable-rung-table.v2.schema.json"),
+            "--index-schema", os.path.join(REPO_ROOT, "docs", "schema",
+                                           "index.v2.schema.json"),
+            "--out", target,
+            "--version", str(version),
+            "--format", "TESSERA_E4M3_K1",
+        ] + list(extra)
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              env=env, timeout=600)
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr[-2000:])
+        table = json.load(open(os.path.join(target, "table.json")))
+        validation = json.load(open(os.path.join(target, "validation.json")))
+        return table, validation
+
+    def _spec_shapes(self, spec_path):
+        with open(spec_path) as handle:
+            doc = json.load(handle)
+        return {
+            (entry["kernel_kind"], entry["shape_id"]): entry
+            for entry in doc["shapes"]
+        }
+
+    def _measurements_by_rung(self, table):
+        return {row["rung"]: row for row in table["rungs"]}
+
+    def test_public_cli_keeps_fixture_coordinates(self):
+        table, validation = self._run_harvest(9004, "--structure-spec", HARVEST_SPEC)
+        self.assertEqual(validation["status"], "schema_and_semantic_validation_passed")
+        parsed = tab.parse_structure_spec(HARVEST_SPEC)
+        expected_cells = {cell["cell_id"] for cell in tab.roster(parsed["shapes"], parsed["ms"])}
+        self.assertEqual({cell["cell_id"] for cell in table["scope"]["required_cells"]}, expected_cells)
+        shapes = self._spec_shapes(HARVEST_SPEC)
+        by_rung = self._measurements_by_rung(table)
+        for rung in (768, 769):
+            row = by_rung[rung]
+            self.assertEqual({m["cell_id"] for m in row["measurements"]}, expected_cells)
+            for meas in row["measurements"]:
+                entry = shapes[(meas["kernel_kind"], meas["shape_id"])]
+                self.assertEqual(meas["evidence"]["geometry_file"], HARVEST_GEOMETRY)
+                self.assertEqual(meas["evidence"]["rows"], entry["rows"])
+                self.assertEqual(meas["evidence"]["columns"], entry["columns"])
+                self.assertEqual(meas["evidence"]["mode"], entry["mode"])
+                self.assertEqual(meas["measurement_status"], "pending")
+                self.assertIsNone(meas["kernel_time_us"])
+            self.assertEqual(row["quality"]["measurement_status"], "pending")
+            self.assertEqual(row["measurement_status"], "pending")
+
+    def test_serialized_default_and_equivalent_spec_tables_agree(self):
+        default, _ = self._run_harvest(9001)
+        flagged, _ = self._run_harvest(9001, "--structure-spec", HARVEST_SPEC)
+        self.assertNotIn("structure_spec", default["scope"])
+        record = flagged["scope"]["structure_spec"]
+        self.assertEqual(record["spec_id"], "glm53-tp2")
+        self.assertEqual((record["experts"], record["top_k"], record["hidden"], record["inter"]),
+                         (288, 8, 4096, 1024))
+        self.assertEqual(len(record["sha256"]), 64)
+        for key in ("generated_at",):
+            default.pop(key, None)
+            flagged.pop(key, None)
+        default_scope = dict(default["scope"])
+        flagged_scope = dict(flagged["scope"])
+        default_scope.pop("shape_owner")
+        flagged_scope.pop("shape_owner")
+        flagged_scope.pop("structure_spec")
+        self.assertEqual(flagged_scope, default_scope)
+        self.assertEqual(flagged["rungs"], default["rungs"])
+        for row in flagged["rungs"][:2]:
+            for meas in row["measurements"]:
+                for key in ("bits_per_256_weight_tile", "alignment", "shared_memory",
+                            "register_pressure", "decode_width", "raw"):
+                    self.assertIn(key, meas["geometry"])
+                for key in ("rows", "columns", "mode", "geometry_file"):
+                    self.assertIn(key, meas["evidence"])
+
+    def test_altered_dimension_leaves_affected_cells_out(self):
+        import shutil
+        import tempfile
+
+        payload = json.load(open(HARVEST_SPEC))
+        payload["shapes"][0]["rows"] = 768
+        tmp = tempfile.mkdtemp(prefix="d50-spec-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        altered = os.path.join(tmp, "altered.json")
+        json.dump(payload, open(altered, "w"))
+        table, validation = self._run_harvest(9002, "--structure-spec", altered)
+        self.assertEqual(validation["status"], "schema_and_semantic_validation_passed")
+        parsed = tab.parse_structure_spec(altered)
+        expected_cells = {cell["cell_id"] for cell in tab.roster(parsed["shapes"], parsed["ms"])}
+        gate_cells = {cell for cell in expected_cells if cell.startswith("routed:gate_up")}
+        self.assertTrue(gate_cells)
+        by_rung = self._measurements_by_rung(table)
+        for rung in (768, 769):
+            seen = {m["cell_id"] for m in by_rung[rung]["measurements"]}
+            self.assertTrue(seen)
+            self.assertFalse(any(cell.startswith("routed:gate_up") for cell in seen))
+            self.assertEqual(seen, expected_cells - gate_cells)
+            down = [m for m in by_rung[rung]["measurements"] if m["shape_id"] == "down"]
+            self.assertTrue(down)
+            self.assertEqual(by_rung[rung]["measurement_status"], "pending")
+
+    def test_mismatched_mode_cannot_enter_table(self):
+        import shutil
+        import tempfile
+
+        payload = json.load(open(HARVEST_SPEC))
+        payload["shapes"][0]["mode"] = 2
+        tmp = tempfile.mkdtemp(prefix="d50-spec-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        altered = os.path.join(tmp, "mode.json")
+        json.dump(payload, open(altered, "w"))
+        table, validation = self._run_harvest(9003, "--structure-spec", altered)
+        self.assertEqual(validation["status"], "schema_and_semantic_validation_passed")
+        parsed = tab.parse_structure_spec(altered)
+        expected_cells = {cell["cell_id"] for cell in tab.roster(parsed["shapes"], parsed["ms"])}
+        gate_cells = {cell for cell in expected_cells if cell.startswith("routed:gate_up")}
+        self.assertTrue(gate_cells)
+        by_rung = self._measurements_by_rung(table)
+        for rung in (768, 769):
+            seen = {m["cell_id"] for m in by_rung[rung]["measurements"]}
+            self.assertTrue(seen)
+            self.assertFalse(any(cell.startswith("routed:gate_up") for cell in seen))
+            self.assertEqual(seen, expected_cells - gate_cells)
+            self.assertEqual(by_rung[rung]["measurement_status"], "pending")
+
+
 if __name__ == "__main__":
     unittest.main()

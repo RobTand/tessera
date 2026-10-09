@@ -1,10 +1,10 @@
-"""The native A4 loader's bounded staging: reusable buffers and a packed axis.
+"""The transfer buffers and the explicit TCQ research axis remain bounded.
 
-The loader runs under the runtime's ``max_split_size_mb=20`` allocator context
-(``vllm/v1/worker/gpu_worker.py``), where a fresh per-wire device transfer of a
-few megabytes left a dead 20 MiB allocator slab per wire.  Three ownership
-contracts keep the load bounded (measured in
-``docs/measurements/tessera-a4-loader-staging-20260916.md``):
+The current WINDOW serving route does not use A4ExpertAxis. These tests
+retain its independent research controls and the generic transfer-buffer
+checks. The historical TCQ capture at
+``docs/measurements/tessera-a4-loader-staging-20260916.md`` does not attest
+the new serving owner.
 
 * ``compact_prep._plane_u8`` and ``kernel_bits._plane_words`` fill a
   **caller-owned** reusable buffer when one is handed in, return exactly the

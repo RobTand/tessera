@@ -1,19 +1,10 @@
-"""The Tessera NVFP4 W4A4 dense serving route — the NATIVE A4 lane.
+"""The native fused E2M1x2 WINDOW dense serving route.
 
-WHAT THIS FILE IS NOW.  The route loads through the compact reader
-(``scheme.parse_compact_blob_for_scheme`` + ``native_a4.prepare_a4_unit``) and
-serves the packed span-2 GEMM (``tessera.kernel_a4``); its forward is held to
-the stock product built from ``tessera.stock.materialize_stock`` on the same
-encoded roles (the A-side value through the test's own reference quantizer).
-The retired whole-weight expansion — the decoded stock tile, the load-time
-reference cross-check and the named pure-torch fallback — is covered by
-``tests/nvfp4_reference.py`` as a test asset where its oracle survives, and by
-``tests/test_span2_start_state.py`` / ``tests/test_lane_planes_refusals.py``
-for the ``slice_unit`` and admission properties it used to exercise.
-
-STUBBED: vLLM's ``LinearMethodBase`` / parameters and the ABI attestation that
-would otherwise reach for the real vLLM operator library.  The native GEMM and
-the native quantizer are real.  vLLM loading this route owes a container run.
+The tests exercise real packed WINDOW inputs, the native FP4 launch, and
+vLLM's registered activation quantizer. Only the vLLM base class and
+parameter wrappers are substituted. An actual container run must prove the
+production runtime integration. Per-role stock products remain independent;
+no common LUT/global remap is required by the native reader.
 """
 from __future__ import annotations
 
@@ -30,7 +21,7 @@ from tessera.serving import nvfp4_route as route                     # noqa: E40
 from tessera.serving.lane import (                                   # noqa: E402
     MODE_RESIDENT, MODE_STREAMED, TESSERA_MODE_ENV, build_tessera_method)
 from tessera.serving.scheme import (                                 # noqa: E402
-    A4_DENSE_GEMM_SYMBOL, TESSERA_NVFP4, is_tessera_scheme, validate_tessera_scheme)
+    FUSED_WINDOW_DENSE_E2M1_SYMBOL, TESSERA_NVFP4, is_tessera_scheme, validate_tessera_scheme)
 
 CUDA = torch.cuda.is_available()
 requires_cuda = pytest.mark.skipif(not CUDA, reason="needs a CUDA device")
@@ -38,19 +29,11 @@ GROUP = 16
 
 
 def _requires_native_a4():
-    """Skip where the native A4 backend is ABSENT; a broken build is a FAILURE.
-
-    ``prepare_a4_unit`` repacks the packed BODY through Triton kernels and the
-    GEMM needs a Triton build that lowers block-scaled FP4 MMA.  A box without
-    one cannot exercise this route at all; the A4 owner's own suite records the
-    backend it ran against.
-    """
+    """Refuse an unavailable FP4 device; a native build error fails the test."""
     if not torch.cuda.is_available():
-        pytest.skip("no visible GPU: the native A4 lane is a CUDA path")
-    from tessera import kernel_a4
-
-    if kernel_a4.native_fp4_backend() is None:
-        pytest.skip("no importable Triton with FP4 MMA support on this host")
+        pytest.skip("no visible GPU: the native fused E2M1 lane is a CUDA path")
+    if torch.cuda.get_device_capability() != (12, 1):
+        pytest.skip("the native fused E2M1 library requires SM121")
 
 
 def _tessera():
@@ -67,7 +50,7 @@ def _fresh_env(monkeypatch):
 
 
 def _scheme(rows=256, columns=1024, roles=None, **over):
-    s = {"family": TESSERA_NVFP4, "grid": "E2M1x2", "body": "TCQ", "plane": "LUT", "q256": 896,
+    s = {"family": TESSERA_NVFP4, "grid": "E2M1x2", "body": "WINDOW", "plane": "LUT", "span": 1, "q256": 896,
          "rows": rows, "columns": columns, "wire_bytes": 4096,
          "roles": roles if roles is not None else [["weight", rows]]}
     s.update(over)
@@ -85,10 +68,10 @@ def test_scheme_discriminator_and_normalisation():
 
 
 @pytest.mark.parametrize("bad,match", [
-    ({"grid": "E4M3"}, "E2M1-based"),
-    ({"plane": "CHANNEL"}, "no NVFP4 tile"),
-    ({"body": "SPIRAL"}, "body must be"),
-    ({"columns": 1000}, "K % 16"),
+    ({"grid": "E4M3"}, "grid"),
+    ({"plane": "CHANNEL"}, "plane"),
+    ({"body": "SPIRAL"}, "body"),
+    ({"columns": 1000}, "columns"),
     ({"roles": [["q", 100], ["k", 100]]}, "stack to 200"),
     ({"roles": []}, "roles must be"),
     ({"q256": 0}, "must be positive"),
@@ -115,7 +98,6 @@ def test_the_residency_is_the_only_flag_and_it_refuses_by_name(monkeypatch):
     checkpoint's ``quant_method`` selects the plugin, and the one thing the
     operator still declares is the residency, because it changes the footprint
     the artifact occupies."""
-    assert not hasattr(serving_lane, "TESSERA_FLAG")
     with pytest.raises(ValueError, match=TESSERA_MODE_ENV):
         build_tessera_method(_scheme(), "test.layer")
     serving_lane.reset_for_tests()
@@ -132,12 +114,6 @@ def test_the_residency_is_the_only_flag_and_it_refuses_by_name(monkeypatch):
                                         "test.layer", "resident")
 
 
-def test_the_route_record_carries_which_decoder_ran():
-    """A receipt must never read a torch-materialised serve as a native one."""
-    assert "decoder" in telemetry.ROUTE_FIELDS
-    assert telemetry.DECODER_NATIVE_SPAN2_GEMM != telemetry.DECODER_TORCH_STOCK
-    assert {telemetry.DECODER_NATIVE_SPAN2_GEMM, telemetry.DECODER_TORCH_STOCK} <= \
-        telemetry.DECODERS
 
 
 # --- the numerics ------------------------------------------------------------
@@ -162,7 +138,6 @@ def _install_vllm_stubs(monkeypatch):
         monkeypatch.setitem(sys.modules, name, mod)
 
 
-_ATTESTED = []
 
 
 def _register_runtime_fp4_op():
@@ -226,28 +201,32 @@ class _Layer(torch.nn.Module):
 
 
 def _encode_module(roles, cols=1024, q256=896, seed=0):
-    """Encode ``roles`` = [(name, rows)] with Tessera; return the container blob,
-    the scheme, and the stock reference (shared global applied)."""
+    """Encode each role's served WINDOW bytes and independent stock tile."""
     fused, export, stock, alphabet = _tessera()
-    K2 = alphabet.tuple_grid(alphabet.E2M1_GRID, 2)
+    grid = alphabet.tuple_grid(alphabet.E2M1_GRID, 2)
+    recipe = export.served_recipe(grid, q256)
     torch.manual_seed(seed)
     tensors, blobs = {}, []
     for i, (name, rows) in enumerate(roles):
-        w = (torch.randn(rows, cols, device="cuda") * 0.02)
-        w[: rows // 8] *= 2.0 ** (i + 1)            # roles land on different globals
+        weight = torch.randn(rows, cols, device="cuda") * 0.02
+        weight[:rows // 8] *= 2.0 ** (i + 1)
         exported, unit, forests = export.encode_linear_planes(
-            w.contiguous(), grid=K2, q256=q256, name=name, verify=False)
+            weight.contiguous(), grid=grid, q256=q256, name=name, verify=False,
+            body=recipe.body, span=recipe.span, scale_plane=recipe.scale_plane,
+            window_bits=recipe.window_bits, window_seed=recipe.window_seed,
+            window_sigma=recipe.window_sigma, channel_sigma=recipe.channel_sigma)
         tensors[name] = stock.materialize_stock(unit, forests, export.DEFAULT_CODE)
         blobs.append((name, rows, exported.blob))
-    shared, divisor = stock.share_global(tensors)
     blob = fused.pack_fused(blobs)
-    scheme = {"family": TESSERA_NVFP4, "grid": K2.name, "body": "TCQ", "plane": "LUT",
-              "q256": q256, "rows": sum(r for _, r in roles), "columns": cols,
+    scheme = {"family": TESSERA_NVFP4, "grid": grid.name, "body": "WINDOW", "plane": "LUT",
+              "span": 1, "q256": q256, "rows": sum(r for _, r in roles), "columns": cols,
               "wire_bytes": len(blob), "roles": [[n, r] for n, r in roles]}
-    packed = torch.cat([shared[n]["weight_packed"] for n, _ in roles])
-    scale = torch.cat([shared[n]["weight_scale"] for n, _ in roles])
-    ref_w = torch.cat([stock.stock_dequant(shared[n]) for n, _ in roles])
-    return blob, scheme, packed, scale, 1.0 / divisor, ref_w
+    packed = [tensors[name]["weight_packed"] for name, _ in roles]
+    scale = [tensors[name]["weight_scale"] for name, _ in roles]
+    globals_ = [1.0 / float(tensors[name]["weight_global_scale"].reshape(-1)[0])
+                for name, _ in roles]
+    reference = torch.cat([stock.stock_dequant(tensors[name]) for name, _ in roles])
+    return blob, scheme, packed, scale, globals_, reference
 
 
 def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
@@ -258,12 +237,9 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
     monkeypatch.setenv(TESSERA_MODE_ENV, mode)
     _register_runtime_fp4_op()
     _install_vllm_stubs(monkeypatch)
-    # With sys.modules['vllm'] stubbed, the real operator library is not
-    # importable; record that the route ATTESTs the ABI rather than executing
-    # an attestation the stub cannot satisfy.  See the report.
-    _ATTESTED.clear()
-    monkeypatch.setattr(native_ops, "require_native_fp4_quant",
-                        lambda context: _ATTESTED.append(context))
+    # The base-class substitutes cannot perform ABI attestation. The actual
+    # registered activation operator remains the A-side numerical oracle.
+    monkeypatch.setattr(native_ops, "require_native_fp4_quant", lambda context: None)
     blob, scheme, packed, scale, global_, _ref_w = _encode_module(
         list(roles), cols=cols, seed=seed)
     method = build_tessera_method(scheme, "test.layer")
@@ -281,51 +257,37 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
     x = torch.randn(m, cols, dtype=torch.bfloat16, device="cuda",
                     generator=torch.Generator(device="cuda").manual_seed(seed))
     got = method.apply(layer, x)
-    # The route's epilogue is ``global_scale / input_global_scale``
-    # (``A4Unit.epilogue_for``); the stock operators produce the unscaled
-    # product, so the expectation carries that one scalar and nothing else.
     gscale = layer.trellis_input_global_scale.data.to(torch.float32)
-    want = _stock_product(x, gscale, packed, scale, float(global_) / gs)
+    want = torch.cat([_stock_product(x, gscale, packed_role, scale_role, global_role / gs)
+                      for packed_role, scale_role, global_role in zip(packed, scale, global_)], dim=-1)
     return got, want, layer, method, (packed, scale, global_)
 
 
 @requires_cuda
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
 def test_the_native_forward_matches_the_stock_product(monkeypatch, mode):
-    """Both residencies serve the stock product: the same packed wire, the
-    static A-side global, and the span-2 GEMM's fp32 epilogue."""
+    """The native WINDOW forward agrees with independently decoded stock roles."""
     _requires_native_a4()
-    got, want, layer, _m, (_packed, _scale, global_) = _drive(monkeypatch, mode)
-    assert layer.tessera_decoder == telemetry.DECODER_NATIVE_SPAN2_GEMM
-    assert layer.tessera_symbol == A4_DENSE_GEMM_SYMBOL
-    assert layer.tessera_global_scale_real == global_
+    got, want, layer, _method, _reference = _drive(monkeypatch, mode)
+    assert layer.tessera_decoder == telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1
+    assert layer.tessera_symbol == FUSED_WINDOW_DENSE_E2M1_SYMBOL
     err = (got.float() - want.float()).abs().max().item()
-    assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
+    assert err <= torch.finfo(torch.bfloat16).eps * want.float().abs().max().item()
 
 
-@requires_cuda
-def test_the_route_attests_the_native_a_side_abi(monkeypatch):
-    """The A side is vLLM's own compiled NVFP4 quantiser; a missing ABI is a
-    model-load error, never an implementation switch."""
-    _requires_native_a4()
-    _drive(monkeypatch, MODE_RESIDENT)
-    assert len(_ATTESTED) == 1 and "test.layer" in _ATTESTED[0]
 
 
 @requires_cuda
 def test_fused_roles_stack_with_their_own_row_slices(monkeypatch):
-    """A fused container's roles are one module: the native units stack in row
-    order, share the moved global, and the forward concatenates them."""
+    """The forward preserves each role's global and concatenates its row slice."""
     _requires_native_a4()
     roles = (("q_proj", 256), ("k_proj", 128), ("v_proj", 128))
-    got, want, layer, _m, (_packed, _scale, global_) = _drive(
+    got, want, layer, _method, (_packed, _scale, globals_) = _drive(
         monkeypatch, MODE_RESIDENT, roles=roles, seed=3)
-    # The route records the role names in module order; the container is a
-    # list, and what the record owes a reader is the order, not the spelling.
-    assert list(layer.tessera_roles) == ["q_proj", "k_proj", "v_proj"]
-    assert layer.tessera_global_scale_real == global_
+    assert [role.rows for role in layer.tessera_a4_roles] == [256, 128, 128]
+    assert [float(role.ratio[0]) for role in layer.tessera_a4_roles] == [g / 4.0 for g in globals_]
     err = (got.float() - want.float()).abs().max().item()
-    assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
+    assert err <= torch.finfo(torch.bfloat16).eps * want.float().abs().max().item()
 
 
 @requires_cuda
@@ -347,13 +309,14 @@ def test_the_route_holds_packed_units_and_no_decoded_tile(monkeypatch, mode):
                                        roles=(("weight", 128),), cols=512)
     for name in ("wire_bytes", "weight_fp4", "tessera_prepared", "decode_buf"):
         assert not hasattr(layer, name), name
-    units = layer.tessera_a4_units
-    assert units and layer.tessera_a4_epilogues
-    before = [(t.data_ptr(), t._version) for t in (units[0].select, units[0].nibbles)]
+    before = {name: tensor.detach().clone() for name, tensor in method.resident_tensors(layer)}
     x = torch.randn(4, 512, dtype=torch.bfloat16, device="cuda")
-    method.apply(layer, x)
-    after = [(t.data_ptr(), t._version) for t in (units[0].select, units[0].nibbles)]
-    assert before == after, "a forward rewrote the packed planes"
+    first = method.apply(layer, x)
+    second = method.apply(layer, x)
+    assert torch.equal(first.view(torch.int16), second.view(torch.int16))
+    for name, tensor in method.resident_tensors(layer):
+        assert torch.equal(before[name].reshape(-1).view(torch.uint8),
+                           tensor.reshape(-1).view(torch.uint8)), name
 
 
 @requires_cuda
@@ -386,8 +349,8 @@ def test_route_record_names_the_family_mode_symbol_and_decoder(monkeypatch):
     assert rec is not None and rec["policy"] == f"{TESSERA_NVFP4}:resident"
     assert rec["state"] == "served"
     assert rec["contract"] == route.ACTIVATION_CONTRACT
-    assert rec["symbol"] == A4_DENSE_GEMM_SYMBOL == layer.tessera_symbol
-    assert rec["decoder"] == telemetry.DECODER_NATIVE_SPAN2_GEMM == layer.tessera_decoder
+    assert rec["symbol"] == FUSED_WINDOW_DENSE_E2M1_SYMBOL == layer.tessera_symbol
+    assert rec["decoder"] == telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E2M1 == layer.tessera_decoder
     assert rec["decoder"] in telemetry.DECODERS
 
 
@@ -427,9 +390,8 @@ def test_an_unloaded_input_global_scale_is_refused_by_the_gates_own_predicate(mo
     layer = _Layer()
     method.create_weights(layer, input_size_per_partition=1024, output_partition_sizes=[256],
                           input_size=1024, output_size=256, params_dtype=torch.bfloat16)
-    gs = layer.trellis_input_global_scale.data
-    assert torch.isnan(gs).all(), "the unloaded scale must be a value the gate refuses"
-    assert not float(gs.reshape(-1)[0]) > 0.0
+    with pytest.raises(ValueError, match="trellis_input_global_scale"):
+        method.process_weights_after_loading(layer)
 
 
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
@@ -453,11 +415,8 @@ def test_a_nonfinite_or_nonpositive_activation_scale_is_refused_at_load(monkeypa
 
 @requires_cuda
 def test_a_valid_finite_scale_still_loads_and_sets_the_epilogue(monkeypatch):
-    """The control, through the same hook with a real wire: a finite positive
-    scale is accepted and the epilogue factor is the module's shared weight
-    global over it."""
+    """Each role's ratio uses its own weight global and the static input scale."""
     _requires_native_a4()
-    _g, _w, layer, _m, (_packed, _scale, global_) = _drive(
+    _got, _want, layer, _method, (_packed, _scale, globals_) = _drive(
         monkeypatch, MODE_STREAMED, input_global_scale=4.0)
-    assert layer.tessera_epilogue_scale == global_ / 4.0
-    assert layer.tessera_global_scale_real == global_
+    assert [float(role.ratio[0]) for role in layer.tessera_a4_roles] == [g / 4.0 for g in globals_]

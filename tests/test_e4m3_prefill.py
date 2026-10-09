@@ -153,7 +153,7 @@ def test_the_decoded_copy_is_counted_and_attached_once_and_only_where_it_fits():
         other.attach_decoded(wrong)
 
 
-def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE"):
+def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE", roles=ROLES):
     """``(method, layer)``: the FP8 route built, loaded and prepared on one
     rank of one, under ``TESSERA_E4M3_DECODE_ONCE=flag``, with a compile
     identity record so the dispatch fact is observable, and vLLM's current
@@ -170,8 +170,11 @@ def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE"):
     monkeypatch.setattr(vllm_parameter, "get_tensor_model_parallel_world_size", lambda: 1,
                         raising=False)
     monkeypatch.delitem(flags._LATCHED, e4m3_prefill.FLAG, raising=False)
-    monkeypatch.setenv(e4m3_prefill.FLAG, flag)
-    blob, scheme, _w, _s = _encode(ROLES, cols=512, seed=seed)
+    if flag is None:
+        monkeypatch.delenv(e4m3_prefill.FLAG, raising=False)
+    else:
+        monkeypatch.setenv(e4m3_prefill.FLAG, flag)
+    blob, scheme, _w, _s = _encode(roles, cols=512, seed=seed)
 
     class _Layer(torch.nn.Module):
         tp_rank, tp_size = 0, 1
@@ -185,7 +188,7 @@ def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE"):
     method = build_tessera_method(scheme, "test.layer", mode=mode)
     layer = _Layer()
     method.create_weights(layer, input_size_per_partition=512,
-                          output_partition_sizes=[r for _, r in ROLES], input_size=512,
+                          output_partition_sizes=[r for _, r in roles], input_size=512,
                           output_size=scheme["rows"], params_dtype=torch.bfloat16)
     layer.wire_bytes.data = torch.frombuffer(bytearray(blob), dtype=torch.uint8).cuda()
     method.process_weights_after_loading(layer)
@@ -193,17 +196,18 @@ def _route_layer(monkeypatch, flag, mode, seed, vllm_mode="NONE"):
 
 
 @cuda
-@pytest.mark.parametrize("flag,mode,attached", [("1", "resident", True), ("", "resident", False),
-                                                ("0", "resident", False), ("1", "streamed", False)])
-def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached):
-    """The route's load path decides: flag on and a resident module, or no
-    copy at all; ``apply`` stamps the pair that actually ran, and the
-    compile-cache dispatch fact tells the two apart (issue #91's rule)."""
+@pytest.mark.parametrize("roles", [ROLES, [("gate_proj", 128), ("up_proj", 128)],
+                                  [("down_proj", 128)]], ids=["dense", "shared-gate-up", "shared-down"])
+@pytest.mark.parametrize("flag,mode,attached", [(None, "resident", True), ("1", "resident", True),
+                                                ("", "resident", True), ("0", "resident", False),
+                                                (None, "streamed", False), ("1", "streamed", False)])
+def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, flag, mode, attached, roles):
+    """The real load and forward cover dense and shared projection modules."""
     pytest.importorskip("vllm")   # the route's A side is vLLM's native FP8 quantiser
     from tessera.serving import compile_identity, e4m3_prefill, telemetry
     from tessera.serving.scheme import DECODE_ONCE_DENSE_SYMBOL
 
-    method, layer = _route_layer(monkeypatch, flag, mode, seed=23)
+    method, layer = _route_layer(monkeypatch, flag, mode, seed=23, roles=roles)
     native = layer.tessera_native
     assert (native.decoded is not None) == attached
     fact = compile_identity.traced_dispatch()["test.layer"]
@@ -212,7 +216,7 @@ def test_the_fp8_route_attaches_only_under_the_flag_and_resident(monkeypatch, fl
     for m in (8, e4m3_prefill.MIN_M):
         x = torch.randn(m, 512, device="cuda").bfloat16()
         y = method.apply(layer, x)
-        assert y.shape == (m, sum(r for _, r in ROLES))
+        assert y.shape == (m, layer.tessera_native.rows)
         record = telemetry.read_route(layer)
         assert (record["symbol"], record["decoder"]) == native.launch_pair_for(m)
         took = (record["symbol"], record["decoder"]) == (
@@ -250,7 +254,8 @@ def test_a_dynamic_token_dimension_compiles_without_a_copy_and_refuses_with_one(
 
     from tessera.serving import fp8_route
 
-    method, layer = _route_layer(monkeypatch, flag, "resident", seed=25)
+    method, layer = _route_layer(monkeypatch, flag, "resident", seed=25,
+                                 vllm_mode="VLLM_COMPILE" if flag == "" else "NONE")
     # vLLM compiles the whole forward (fullgraph); the route record is
     # host-side telemetry the eager tests above check, and the token-count
     # read this test is about happens before it is called
@@ -296,7 +301,10 @@ def _cpu_load_entry(monkeypatch, flag, mode, vllm_mode):
     from tessera.serving.native_window import PreparedDenseNativeModule
 
     _install_vllm_stubs(monkeypatch)
-    monkeypatch.setenv(e4m3_prefill.FLAG, flag)
+    if flag is None:
+        monkeypatch.delenv(e4m3_prefill.FLAG, raising=False)
+    else:
+        monkeypatch.setenv(e4m3_prefill.FLAG, flag)
     bundle = prepared()
     native = PreparedDenseNativeModule(
         [SimpleNamespace(name="weight", rows=bundle.rows, bundle=bundle)],
@@ -356,9 +364,14 @@ def test_declared_compiled_forward_refuses_decode_once_after_config_exits(cpu_lo
 
 
 @pytest.mark.parametrize("flag,mode,vllm_mode,attached", [
+    (None, "resident", "NONE", True),
+    ("", "resident", "NONE", True),
+    (None, "resident", "VLLM_COMPILE", False),
     ("", "resident", "VLLM_COMPILE", False),
     ("0", "resident", "VLLM_COMPILE", False),
+    ("0", "resident", "NONE", False),
     ("1", "resident", "NONE", True),
+    (None, "streamed", "NONE", False),
     ("1", "streamed", "VLLM_COMPILE", False),
 ])
 def test_load_boundaries_survive_the_current_config_exiting(
