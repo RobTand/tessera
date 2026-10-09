@@ -1,5 +1,6 @@
 #!/bin/bash
 # ig790 caller byte-verification row: bridge cache-hit + caller re-read of projected units.
+# One-time measurement script. Shared package and cache paths are historical inputs.
 # Args: <caller-python> <out-dir> [source] [stack] [cache]
 set -u
 PY="$1"; OUT="$2"
@@ -8,8 +9,6 @@ STACK="${4:-model.language_model.layers.10.mlp.experts}"
 CACHE="${5:-/mnt/shared/tessera-measurements/ig790-source-digest-cache}"
 echo "HOST $(hostname)"
 export PYTHONPATH="$PWD/src"
-# This measurement must compare live bytes, including under the caller's seal policy.
-export PRISMAQUANT_DEV_MODE=0
 echo "ROW-START $(date -u +%FT%TZ)"
 START=$SECONDS
 "$PY" - "$OUT" "$SRC" "$STACK" "$CACHE" <<'PYEOF' &

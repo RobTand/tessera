@@ -20,6 +20,11 @@ def verify_projected_units(source, projection, stack):
                 total += tensor.numel() * tensor.element_size()
                 del tensor
         receipt = owner.receipt()
+        consumed_shards = {tensors[rec["source_tensor"]] for rec in units}
+        verified_shards = {row["name"] for row in receipt["verified_files"]}
+        missing = consumed_shards - verified_shards
+        if missing:
+            raise RuntimeError("caller verification omits consumed shards: " + ", ".join(sorted(missing)))
         for row in receipt["verified_files"]:
             expected = projection["source"]["files"][row["name"]]
             actual = row["sha256"]

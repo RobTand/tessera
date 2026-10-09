@@ -1,5 +1,6 @@
 #!/bin/bash
 # ig790 PQ bridge cache-hit row: PQ origin/main worktree + installed producer.
+# One-time measurement script. Shared package and cache paths are historical inputs.
 # Args: <caller-python> <out-dir>
 set -u
 PY="$1"; OUT="$2"
@@ -26,7 +27,7 @@ link = os.path.join(linkroot, "prismaquant")
 if not os.path.exists(link):
     os.symlink("/mnt/shared/tessera-measurements/ig790-pqbridge-pkg", link)
 sys.path.insert(0, linkroot)
-print("PQ-REV b597fc363b (shared copy of pq-790-bridge)")
+print("PQ-REV-CLAIM b597fc363b (shared copy of pq-790-bridge; not a measured revision)")
 import prismaquant.tessera_expert_projection as tep
 import inspect
 print("bridge:", inspect.getsourcefile(tep))

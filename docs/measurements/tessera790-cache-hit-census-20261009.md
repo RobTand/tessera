@@ -73,8 +73,8 @@ This acceptance criterion remains unmet.
   50.0 MB scope read), not from per-file counters.
 - Row E read four tensors and printed hashes. It did not compare those hashes with expected values.
 - No historical row proves caller byte integrity.
-- Row A took 1981.87 s, which exceeds this attempt's 1800-second limit.
-- No new full baseline can run without an approved duration exception.
+- Row A took 1981.87 s, which exceeded the fourth attempt's 1800-second limit.
+- The later CEO exception permits a 2700-second baseline and matched repeat. The fifth revision below retains that decision.
 - Historical projection files stayed in worker `/tmp`. This attempt recovered them separately, as described below.
 - Historical GPU power is a box-window observation, not a census workload observation.
 
@@ -256,7 +256,7 @@ The fixture kept the tensor shapes and shard size unchanged.
 
 The first corrective test action, `c19377d32fd044afdba428b4b769c86e268e2a3cf1e0e552b3506092f59a50b7`, failed with one failure and five passes.
 The caller's default dev mode suppressed its own seal refusal; the explicit digest comparison still stopped the smoke with `AssertionError`.
-The corrected launcher selects `PRISMAQUANT_DEV_MODE=0` for this integrity measurement.
+That corrective smoke selected `PRISMAQUANT_DEV_MODE=0`. The fifth revision below removes this override to preserve D32.
 The helper also raises a byte-mismatch error without dependence on Python assertions.
 It uses `CaptureSourceAuthentication.recording` and `owner.safe_open` for every projected unit.
 It preserves the caller's held descriptors and full-shard digest comparison.
@@ -297,13 +297,13 @@ These controls do not substitute for the absent matched production census compar
 The baseline and hit must use the same real caller scope and host conditions.
 They must retain phase timestamps, full source custody, independent caller comparisons, and separated physical pool traffic.
 The historical observations do not supply those facts.
-The hosted `pure` result at the corrected head has not yet been observed.
+The fourth attempt did not observe the hosted `pure` result at its corrected head.
 The issue cannot close from this report.
 
 The baseline took 1981.87 seconds under an earlier 3600-second action limit.
-The present brief limits every job to 1800 seconds and forbids a repeat of an unsplittable longer measurement.
+The fourth attempt had an 1800-second limit and could not repeat that indivisible seal.
 A complete one-call source seal cannot resume across separate jobs without a different measurement.
-Request an approved duration exception and a pool observation window before a new matched census pair.
+The later CEO exception permits 2700 seconds for the baseline and matched repeat. Physical traffic separation remains required.
 Do not reinterpret the action-duration delta as a reduced acceptance criterion.
 
 ### Direct CAS links
@@ -314,3 +314,67 @@ Do not reinterpret the action-duration delta as a reduced acceptance criterion.
 - D: [payload](file:///mnt/shared/prismabuild-fleet/cas/blobs/94/9481ce0a073e0e1007f3960822da36b5bdf9ac748d7431a058f4e5df628ca4ae), [profile](file:///mnt/shared/prismabuild-fleet/cas/blobs/77/778a8262a8d3929fda6798d067283287e1634a4c13a39139a0026e5476436d87).
 - E: [payload](file:///mnt/shared/prismabuild-fleet/cas/blobs/f3/f38b1808acb484cee3676c06e84c38e0cd371af6a22c7d1328e3fda6424cb2d6), [profile](file:///mnt/shared/prismabuild-fleet/cas/blobs/4d/4d128111819c9a7012be5c1e86877709543c5a4c6e613f6db59bb21ecd2b5f22).
 
+
+## Fifth revision: seals stay off and acceptance stays open
+
+The branch merges `origin/master` and keeps both changelog entries from the conflict.
+The launcher no longer sets `PRISMAQUANT_DEV_MODE=0`.
+The helper still compares actual descriptor digests with the producer's expected digests.
+It also requires a digest receipt for every consumed shard.
+The scripts identify their fixed paths as one-time measurement inputs.
+The bridge labels its fixed revision string as a claim, not a measured revision.
+
+### Permanent regressions
+
+`tests/test_ig790_verify.py` uses real expert geometry, safetensors files, and the existing caller authentication owner.
+Its subprocesses select dev mode and keep external caller imports out of the suite.
+The tests cover six units across two shards, a same-size byte change, and an omitted consumed shard.
+The same-size regression retains the original red action `735b69fab58be315e29d1382fc99243e6bf351ae851958459cd5da46ad5a9ae9`.
+That original failure was `Failed: DID NOT RAISE RuntimeError`.
+
+New repro action `cdc4a287603d1246d49cd2528695bba971aa20289d255e5c4140fd5835aba17a` reported one failure and two passes.
+The omitted-shard case failed at `assert result.returncode != 0` because the incomplete receipt returned zero.
+The unchanged and same-size byte-change cases already passed with dev mode enabled.
+The helper now refuses the missing consumed shard before it reports success.
+
+Action `f98711cbb13ecfc4e4cc32f07e57195e40a823ec1c3f1ab353baa3a1d3695391` passed all eight targeted checks.
+The selected files were `test_ig790_verify.py`, `test_ig790_row_scripts.py`, and `test_issue_refs.py`.
+Mode: x86, two xdist workers, `--dist worksteal`, one native math thread per worker, and `--durations=10`.
+Population: 8 passed, 0 failed, 0 skipped, 0 uncollected modules, and 0 CUDA allocations.
+Verbatim device reason: `NO CUDA -- torch 2.11.0+cpu reports no CUDA device`.
+No skip reasons exist. This population does not cover CUDA.
+Payload SHA256: `89f04d9ecaf46753220d06960505f4e62b704b1e39e625159324c280afc3a9b4`.
+
+### Revised launcher smoke
+
+Action `34b9c5bf3eb8b1384418fd6a7060232f6bca3f0c2462be42a6d7a3b9d6091a64` ran the actual launcher through PrismaBuild on x86.
+CUDA was hidden. The smoke selected `PRISMAQUANT_DEV_MODE=1` and the installed `pb-cpu` interpreter.
+The launcher consumed all six fixture units: 196608 tensor bytes and 197304 shard bytes.
+It retained both cache receipts and a `fresh_descriptor_sha256` comparison.
+Expected and actual SHA256: `f6e3c6143ff664a17b683db352244dceb2f02be4159e2631acc3df60693bc205`.
+The producer reported hashed 1, cached 0; the new fixture was not quiescent.
+The caller reported cache use `true`. The child and action returned zero.
+Payload SHA256: `9092ade42545d3bbfa51163b9af48d8ef02c9ec4c29ccfced7da2e38c39749eb`.
+
+The first smoke action `d9d36db2412c6862f85048233093a16718da1989c149ee40c302dddc61870a8c` failed in the temporary smoke assertion.
+It looked for `source_digest_cache_use` in the producer's output file.
+The bridge adds that receipt only to its returned projection; the launcher retains it in stdout.
+The corrected smoke reads the retained caller receipt from stdout. It keeps the byte checks unchanged.
+
+### Measurement authority and integration route
+
+The CEO granted a 2700-second exception for one baseline and its matched repeat.
+The decision requires priority zero, PrismaBuild, placement behind PACT, physical traffic separation, and producer-phase timestamps.
+See [the approved decision](https://github.com/RobTand/tessera/issues/790#issuecomment-6079364094).
+No duration request remains.
+
+No new GLM or GPU row ran in this revision.
+Historical rows still lack a matched caller baseline, full production byte comparisons, phase timestamps, and separated physical pool traffic.
+Live Netdata process observations have `has_history=false`; they cannot recover the absent historical consumer trace.
+The shared pool also carries other PrismaBuild jobs. No controlled 2700-second observation window was established.
+The missing prerequisite is a controlled pool window or a physical read trace with consumer attribution.
+
+This report does not complete issue 790. The result status remains `failed`, not `done` or `close`.
+Keep `Refs #790` in the PR description.
+Do not merge this PR as the completion of the issuegraph item.
+The pipeline owns item state and issue closure; this agent does not edit its ledger.
