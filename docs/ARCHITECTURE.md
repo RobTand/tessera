@@ -30,6 +30,24 @@ Version two and version three input-table metadata use the alphabet's pure grid 
 The existing version one conversion and actual raw-input normalization retain their owner paths.
 The meaningful hosted pure test stays active. No measurement or qualification changes.
 
+Contract v66 admits R768 and table [3] on the two base routed E4M3 cells (tessera#1080, PR #1045).
+The base-image TP2 receipt proves decoder `native_routed_window_classes_e4m3mma` on both ranks in decode M1 and batch M64.
+Qualification covers only `sm_121`, the base image, eager execution, resident service, and R768.
+The current execution registry remains experimental outside that receipt scope.
+Historical decoder identities keep their original census rungs and run tables.
+Lane schema v12 adds optional `executes[].rungs_q256`. Absence means the cell's full scope.
+Each launch covers its census rungs and the allowable rungs of their derived run tables.
+The validator derives each launch scope from its execution receipts. The census checks the record's actual rung.
+PrismaQuant refuses lane schema v12 by name until its reader admits the schema.
+That reader must also apply `executes[].rungs_q256`. A reader that ignores the key reads the class pair at every rung and the historical pairs at R768.
+Issue [prismaquant#2511](https://github.com/RobTand/prismaquant/issues/2511) tracks that reader. Rob and the CEO approved lane schema v12 on 2026-10-09 (tessera#1080).
+The PrismaQuant serving and export pin names an exact Tessera commit and contract digest. It stays at lane schema v11 until that reader lands and its tests pass.
+This contract reaches serving and export only when a later pin bump adopts it.
+The runtime twins retain their master scope and refuse R768. R640 and R1280-R2048 remain refused.
+No kernel, decoder implementation, pin, or default changes. This receipt proves no KL or speed.
+Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
+Configuration: `experiments/results/glm53_r768_stub_base_config.json`.
+
 Re-stamped 2026-10-08 for the canonical class publication (issue #1018).
 
 The existing class interface publishes retained timing samples and exact performance scope.

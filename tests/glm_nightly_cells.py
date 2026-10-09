@@ -20,7 +20,7 @@ NIGHTLY_RUNTIME = {"image": NIGHTLY_IMAGE, "execution_modes": ["eager"],
 NIGHTLY_SUFFIX = "_runtime_" + hashlib.sha256(json.dumps(
     {"image": NIGHTLY_IMAGE, "execution_modes": NIGHTLY_RUNTIME["execution_modes"]},
     sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
-#: (family, structure) -> the rungs the nightly stub-B census carried.
+#: (family, structure) -> the rungs the qualified nightly stub-B receipt carries.
 NIGHTLY_RUNGS = {("TESSERA_E4M3_K1", "dense"): [832, 960, 1024, 1088],
                  ("TESSERA_BF16_K1", "dense"): [832, 880, 960, 1024, 1088],
                  ("TESSERA_E4M3_K1", "routed_moe"): [896, 928, 1024, 1088],

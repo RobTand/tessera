@@ -1,21 +1,23 @@
-"""The four GLM E4M3 cells on the vLLM nightly image rest on a committed receipt.
+"""The four GLM E4M3 cells on the vLLM nightly image rest on committed receipts.
 
 Contract v48 (tessera#702) minted the E4M3/BF16 dense and routed GLM-image
 scopes on the image the GLM-5.3 release serves on: the eugr nightly
-155ce16b with the nccl230 layer, vLLM 0.30.1rc1.dev336.  Until then every GLM
+155ce16b with the nccl230 layer, vLLM 0.30.1rc1.dev336. Until then every GLM
 cell named ``f8dbe1a0`` (vLLM 0.28.1rc1.dev397, the GLM53 NoPE plugin, vLLM's
 CUSTOM attention), so a serve on the nightly resolved every Tessera module to
-no cell.  The receipt is one TP1 eager route census of u1 stub B on the
+no cell. The first receipt is one TP1 eager route census of u1 stub B on the
 nightly with the NoPE plugin off and the image's own attention
 (``FLASHINFER_MLA_SPARSE_SM120``), committed byte for byte with its serve log
-under ``experiments/results/``.  This module replays the census tool's own
-join over the receipt's records against the PACKAGED table.
+under ``experiments/results/``. This module replays the census tool's join
+against the packaged table. The additional R768 TP2 receipt remains
+historical evidence. It does not expand the runtime twins (tessera#1080).
 
 What it pins:
 
-1. the receipt is the one the cells cite: same checkpoint config as the
-   f8dbe1a0 stub-B receipts, the nightly image and toolchain, the NoPE plugin
-   off, no attention override, and the serve log naming the image's backend;
+1. the stub-B receipt is the one the cells cite: same checkpoint config as
+   the f8dbe1a0 stub-B receipts, the nightly image and toolchain, the NoPE
+   plugin off, no attention override, and the serve log naming the image's
+   backend;
 2. every served E4M3 module joins a nightly cell in both phases, and the BF16
    records join none. Contract v59 withdrew the nightly BF16 cells with the
    folded arithmetic they measured. The folded launches the receipt recorded
@@ -23,7 +25,7 @@ What it pins:
 3. every module ran the launch the f8dbe1a0 E4M3-instruction receipt recorded
    for it, with both required lanes engaged, so the nightly cells name the
    launches their twins name;
-4. each nightly E4M3 cell covers EXACTLY the rungs the receipt carried.
+4. each nightly E4M3 cell covers EXACTLY the rungs the receipts carried.
 
 It pins nothing about CUDA graphs: the cells are eager only (see the
 measurement doc for why no compiled scope is claimed on this image).
@@ -41,6 +43,8 @@ from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
     cell_runtime_id_suffix,
+    cell_executes,
+    format_entry,
     load_serving_contract,
 )
 
@@ -77,8 +81,8 @@ def _nightly_cells(contract) -> dict:
             if c["runtime"]["image"] == IMAGE}
 
 
-def _declared_rungs(tool, receipt) -> dict:
-    groups = _load(CONFIG)["quantization_config"]["config_groups"]
+def _declared_rungs(tool, receipt, config_path=CONFIG) -> dict:
+    groups = _load(config_path)["quantization_config"]["config_groups"]
     rungs = {target: tool.declared_rung(group["scheme"])
              for group in groups.values() for target in group["targets"]}
     mapping = receipt["declared_name_mapping"]
@@ -185,24 +189,28 @@ def test_every_module_ran_its_f8dbe1a0_twins_launch_and_the_cells_name_it():
     shipped = {c["id"]: c for c in contract["lane_eligibility"]["cells"]}
     for cell in _nightly_cells(contract).values():
         base = cell["id"][: -len(cell_runtime_id_suffix(cell))]
-        assert cell["executes"] == shipped[base]["executes"], cell["id"]
+        entry = format_entry(cell["family"], contract)
+        for rung in cell["rungs_q256"]:
+            assert cell_executes(cell, q256=rung, entry=entry) == \
+                cell_executes(shipped[base], q256=rung, entry=entry), (cell["id"], rung)
 
 
-def test_the_nightly_cells_cover_exactly_the_rungs_the_receipt_carried():
+def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():
     tool = _tool()
-    receipt = _load(RECEIPT)
-    rungs = _declared_rungs(tool, receipt)
     carried: dict = {}
-    for phase, records in receipt["records"].items():
-        for name, record in records.items():
-            owner = receipt["record_owner"][phase][name]
-            family = PAYLOAD_FAMILY_BY_ROUTE[record["policy"].partition(":")[0]]
-            structure = "routed_moe" if record["kind"] == "moe" else "dense"
-            carried.setdefault((family, structure), set()).add(rungs[owner])
+    for receipt_path, config_path in ((RECEIPT, CONFIG),):
+        receipt = _load(receipt_path)
+        rungs = _declared_rungs(tool, receipt, config_path)
+        for phase, records in receipt["records"].items():
+            for name, record in records.items():
+                owner = receipt["record_owner"][phase][name]
+                family = PAYLOAD_FAMILY_BY_ROUTE[record["policy"].partition(":")[0]]
+                structure = "routed_moe" if record["kind"] == "moe" else "dense"
+                carried.setdefault((family, structure), set()).add(rungs[owner])
     assert sorted(k for k in carried if k[0] != "TESSERA_BF16_K1") == sorted(SCOPES)
     cells = _nightly_cells(load_serving_contract())
     assert sorted({(c["family"], c["structure"]) for c in cells.values()}) == sorted(SCOPES)
-    # The BF16 scopes the receipt carried have no current cell (contract v59).
+    # The BF16 scopes the stub-B receipt carried have no current cell (contract v59).
     assert ("TESSERA_BF16_K1", "dense") in carried and ("TESSERA_BF16_K1", "routed_moe") in carried
     for cell in cells.values():
         assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell["id"]

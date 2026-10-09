@@ -38,6 +38,16 @@ The input-table metadata path resolves grids through the alphabet, not the tenso
 Version one conversion and actual raw-input normalization keep their existing behavior.
 The hosted pure regression remains active. No tests skip the import error.
 
+## 2026-10-09 — base-image R768 qualification (issue #1080)
+
+Contract v66 admits R768 and table [3] on the two base routed E4M3 cells.
+The committed TP2 receipt proves the exact class decoder on both ranks in decode and batch.
+Lane schema v12 gives each launch its own census rungs and derived run-table scope.
+PrismaQuant refuses v12 by name until its reader admits the schema and applies the per-launch rungs.
+Issue prismaquant#2511 tracks that reader. The PrismaQuant pin stays at v11 until the reader lands.
+Historical pairs retain their original scope. Runtime twins, kernels, decoders, pins, and defaults stay unchanged.
+R640 and R1280-R2048 remain refused. No D41 receipt allowance, KL result, or speed result follows.
+
 ## 2026-10-08 — canonical class publication (issue #1018)
 
 Extend the existing producer with immutable class timing records and exact declared-cell scope matrices.
