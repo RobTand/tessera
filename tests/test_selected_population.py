@@ -411,3 +411,66 @@ def test_each_clients_result_is_written_when_that_client_exits(tmp_path, monkeyp
     for name, answer in answers.items():
         assert sp.read_client_result(tmp_path, name) == answer
     assert sp.read_client_result(tmp_path, "shard-02") is None
+
+
+def _dev_mode(monkeypatch, certified=False):
+    """Dev mode is ON unless PRISMAQUANT_DEV_MODE is exactly 0 (D32)."""
+
+    if certified:
+        monkeypatch.setenv("PRISMAQUANT_DEV_MODE", "0")
+    else:
+        monkeypatch.delenv("PRISMAQUANT_DEV_MODE", raising=False)
+
+
+@pytest.mark.parametrize("fault", ["another-tree", "dirty-checkout"])
+def test_in_dev_mode_the_checkout_source_comparison_is_stamped_and_not_computed(
+        tmp_path, monkeypatch, capsys, fault):
+    """D32: a source identity comparison never refuses in dev mode and computes no digest for itself."""
+
+    _dev_mode(monkeypatch)
+    world = _world(tmp_path, monkeypatch, source="e" * 64 if fault == "another-tree" else None)
+    if fault == "dirty-checkout":
+        (world.checkout / "stray.py").write_text("x = 1\n")
+
+    def measured(*args, **kwargs):
+        raise AssertionError("dev mode computed the checkout's digest for a seal")
+
+    monkeypatch.setattr(sp, "measured_source", measured)
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("green on 2 population(s)"), receipt["verdict"]
+    assert receipt["population_problems"] == []
+    assert receipt["checkout_source"]["verification"] == "not computed"
+    assert capsys.readouterr().out.count("[DEV-MODE]") == 1
+
+
+@pytest.mark.parametrize("fault, phrase", [
+    pytest.param("another-tree", "not the checkout's", id="another-tree"),
+    pytest.param("dirty-checkout", "checkout's own source identity is not verified", id="dirty-checkout"),
+])
+def test_in_certified_mode_the_checkout_source_comparison_still_refuses(
+        tmp_path, monkeypatch, fault, phrase):
+    _dev_mode(monkeypatch, certified=True)
+    world = _world(tmp_path, monkeypatch, source="e" * 64 if fault == "another-tree" else None)
+    if fault == "dirty-checkout":
+        (world.checkout / "stray.py").write_text("x = 1\n")
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert any(phrase in problem for problem in receipt["population_problems"])
+
+
+def test_in_certified_mode_a_matching_source_is_green(tmp_path, monkeypatch):
+    _dev_mode(monkeypatch, certified=True)
+    receipt = _receipt(_world(tmp_path, monkeypatch))
+    assert receipt["verdict"].startswith("green on 2 population(s)"), receipt["verdict"]
+    assert receipt["checkout_source"]["verification"] == "verified"
+
+
+@pytest.mark.parametrize("certified", [False, True])
+def test_file_coverage_stays_strict_in_both_modes(tmp_path, monkeypatch, certified):
+    """D32 converts seals only.  Which files ran is correctness, and it refuses in both modes."""
+
+    _dev_mode(monkeypatch, certified=certified)
+    world = _world(tmp_path, monkeypatch, ran={"shard-00": ["tests/test_a.py"]})
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert any("never run" in problem for problem in receipt["population_problems"])
