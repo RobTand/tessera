@@ -8,6 +8,9 @@ Historical decoder identities keep their original census rungs and run tables.
 Lane schema v12 adds optional `executes[].rungs_q256`. Absence means the cell's full scope.
 Each launch covers its census rungs and the allowable rungs of their derived run tables.
 The validator derives each launch scope from its execution receipts. The census checks the record's actual rung.
+PrismaQuant refuses lane schema v12 by name until its reader admits the schema.
+That reader must also apply `executes[].rungs_q256`. A reader that ignores the key reads the class pair at every rung and the historical pairs at R768.
+The PrismaQuant serving and export pin names an exact Tessera commit and contract digest. This contract reaches serving and export only when a pin bump adopts it.
 The runtime twins retain their master scope and refuse R768. R640 and R1280-R2048 remain refused.
 No kernel, decoder implementation, pin, or default changes. This receipt proves no KL or speed.
 Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
