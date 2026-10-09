@@ -341,3 +341,42 @@ def test_collector_refuses_static_receiver_left_in_signature(monkeypatch, packet
     monkeypatch.setattr(published_client, "PoolQueue", StaticQueue)
     with __import__("pytest").raises(ValueError, match="PoolQueue.offers"):
         prerequisites.collect(packet, "")
+
+
+@pytest.mark.parametrize("defect", ["absent_name", "incompatible_signature"])
+def test_observer_refuses_required_api_defects(defect):
+    from test_stageprev_793_prepare import _run_published_sdk
+
+    mutation = ("del client.PoolQueue.offers" if defect == "absent_name" else
+                "client.PoolQueue.offers = staticmethod(lambda self, *, max_age_s=120.0: [])")
+    problem = ("PoolQueue.offers" if defect == "absent_name" else
+               "PoolQueue.offers(max_age_s)")
+    _run_published_sdk(f"""
+        import json
+        import stageprev_793_claim_contract as contract
+        manifest = json.loads((Path(sys.argv[1]) / "RUNTIME_VERSION.json").read_text())
+        assert contract.observe_current_claim_contract(manifest)["verified"] is True
+        {mutation}
+        observed = contract.observe_current_claim_contract(manifest)
+        assert observed["api_problems"] == [{problem!r}]
+        assert observed["api_verified"] is False
+        assert observed["identity_verified"] is False
+        assert observed["verified"] is False
+        assert observed["claim_invoked"] is False
+        assert observed["denial_synthesized"] is False
+    """)
+
+
+def test_collector_refuses_absent_required_api_name():
+    from test_stageprev_793_prepare import _run_published_sdk
+
+    _run_published_sdk("""
+        import json
+        import pytest
+        import stageprev_793_prepare as prepare
+        import stageprev_793_prerequisites as prerequisites
+        packet = json.loads((prepare.SOURCE_ROOT / prepare.PACKET_PATH).read_text())
+        del client.PoolQueue.offers
+        with pytest.raises(ValueError, match=r"Actual published public claim API lacks: PoolQueue\\.offers"):
+            prerequisites.collect(packet, "")
+    """)

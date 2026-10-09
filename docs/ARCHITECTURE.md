@@ -837,6 +837,8 @@ that keeps its receiver refuses, as do an extra required argument and a keyword
 collision. `observe_current_claim_contract` records that verdict beside the pool
 digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
 The version number stays in the record as provenance only.
+CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
+They exercise the observer and collector without a claim or GPU submission.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
