@@ -2,8 +2,9 @@
 
 The packet names the source tree that action 6a5389858382 ran: snapshot
 da97efbb37f44daded3efd8cb173bd953a1f8c37 whose parent 9eef9fea6e is the
-serving and producer commit. Each test recomputes its value from the
-committed blobs or the retained action inputs.
+serving and producer commit. The packet vendors the sealed snapshot block
+with the sealed request digest, so each check reads committed bytes only.
+Each test recomputes its value from the committed packet or blobs.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ ACTION = "6a53898583824d17b622a54e4722b88b6d2b2b2c052ffa2ce31392fabeb617ed"
 SNAPSHOT = "da97efbb37f44daded3efd8cb173bd953a1f8c37"
 PARENT = "9eef9fea6edce32f4e64abf87f0058b11dab2287"
 SUPERSEDED = "fca4c6ce0e16c41d94a1a3c4cfc21c4548dec6bb"
+SEALED_REQUEST_SHA256 = "55390c025d6758eb03df649cdf0d5573db27f7f284e7eb91af893ea48a9cda01"
 
 
 def _packet():
@@ -64,8 +66,9 @@ def test_the_action_snapshot_matches_the_named_source_tree():
     assert action["snapshot_parent"] == PARENT
     assert action["status"] == "executed"
     assert action["src_tree_diff_vs_parent"] == []
-    sealed = json.loads(Path(action["sealed_request"]).read_bytes())
-    snap = sealed["params"]["checkout_snapshot"]
+    assert action["sealed_request"] is None
+    snap = action["sealed_snapshot"]
+    assert snap["sealed_request_sha256"] == SEALED_REQUEST_SHA256
     assert snap["commit"] == SNAPSHOT
     assert snap["parent"] == PARENT
     assert snap["input"]["sha256"] == action["input"]["sha256"]
