@@ -19,6 +19,13 @@ COVERAGE = "successful-loader-inputs-and-post-load-resident-state"
 QUALIFICATION_SCOPE = "runtime_byte_binding"
 TOKENIZER_NAMES = ("tokenizer.json", "tokenizer_config.json", "vocab.json",
                    "merges.txt", "special_tokens_map.json")
+# ByteLevel flags that no token ID depends on. A pre-tokenizer's `trim_offsets` only
+# shapes reported offsets, and the ByteLevel decoder ignores every flag it carries.
+# transformers rewrites them after loading `tokenizer.json`; the `tokenizers` library
+# alone reproduces the file exactly (measured on the pinned image, tessera#1134).
+# A pre-tokenizer's `add_prefix_space` and `use_regex` stay exact, because they change IDs.
+BYTE_LEVEL_UNREAD_FLAGS = {"pre_tokenizer": ("trim_offsets",),
+                           "decoder": ("add_prefix_space", "trim_offsets", "use_regex")}
 DTYPE_BYTES = {"BOOL": 1, "I8": 1, "U8": 1, "I16": 2, "U16": 2, "I32": 4, "U32": 4,
                "I64": 8, "U64": 8, "F16": 2, "BF16": 2, "F32": 4, "F64": 8,
                "F8_E4M3": 1, "F8_E5M2": 1, "F8_E8M0": 1}
@@ -94,6 +101,26 @@ def tokenizer_vocab(backend):
             "tokenizer vocabulary has an invalid token ID")
     require(len(set(vocab.values())) == len(vocab), "tokenizer vocabulary repeats an ID")
     return vocab
+
+
+def token_identity(backend):
+    """The backend without the ByteLevel flags in BYTE_LEVEL_UNREAD_FLAGS."""
+    def strip(node, flags):
+        if not isinstance(node, dict):
+            return node
+        node = dict(node)
+        if node.get("type") == "ByteLevel":
+            for flag in flags:
+                node.pop(flag, None)
+        for key in ("pretokenizers", "decoders"):
+            if isinstance(node.get(key), list):
+                node[key] = [strip(child, flags) for child in node[key]]
+        return node
+    result = dict(backend)
+    for slot, flags in BYTE_LEVEL_UNREAD_FLAGS.items():
+        if slot in result:
+            result[slot] = strip(result[slot], flags)
+    return result
 
 
 def file_fact(value, where):
@@ -237,7 +264,7 @@ def check_join(receipt):
         fields(fact, ("sha256", "bytes", "content"), "tokenizer source")
         sha(fact["sha256"], "tokenizer source digest")
         require(type(fact["bytes"]) is int and fact["bytes"] > 0, "tokenizer source size is invalid")
-    require(tokenizer["backend"] == tokenizer["files"]["tokenizer.json"]["content"],
+    require(token_identity(tokenizer["backend"]) == token_identity(tokenizer["files"]["tokenizer.json"]["content"]),
             "loaded tokenizer backend differs from tokenizer bytes")
     require(tokenizer["vocab"] == tokenizer_vocab(tokenizer["backend"]),
             "loaded tokenizer mapping differs from tokenizer bytes")
