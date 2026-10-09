@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-10-09T00:31:34Z",
+ "generated": "2026-10-09T12:14:01Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2224,7 +2224,7 @@
     "title": "[P1] Overlay fence re-hashes a wire whose stat drifted but whose bytes did not"
    },
    "1499": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Attribute ctime-only wire sweeps overlapping PB test actions"
    },
    "15": {
@@ -2252,7 +2252,7 @@
     "title": "[P2] build_t4_logical_request.py is r13-only"
    },
    "1504": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Byte accountants price the research wire for routed E2M1x2 sub-cap units"
    },
    "1505": {
@@ -5416,7 +5416,7 @@
     "title": "Integrate 12 accepted PrismaQuant heads after isolating image fixture cutover"
    },
    "2216": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bind original reader target/producer identities and repin the consumer to SDK5 (Refs #2152)"
    },
    "2217": {
@@ -5808,7 +5808,7 @@
     "title": "Integration batch 32: #2298 retired SDK3 placement receipts (stacked on batch 31)"
    },
    "2304": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "test_an_unrecognised_deferral_reason_is_surfaced_not_waited_on times out under host load (30 s BoundaryStagingTimeout)"
    },
    "2305": {
@@ -5980,7 +5980,7 @@
     "title": "[P1] Apply declared bind-seal classification to forward-split relaunches"
    },
    "2343": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Support explicit selected calibration capture and disjoint research moments"
    },
    "2344": {
@@ -6176,11 +6176,11 @@
     "title": "Reuse digests.text_sha256hex for the two shipcard canonical-text digests"
    },
    "2388": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Reuse the safetensors fixture owner in byte-budget tests"
    },
    "2389": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reuse test_footprint writer in byte-budget fixture"
    },
    "239": {
@@ -6268,7 +6268,7 @@
     "title": "Integration vehicle batch81: PR #2371 (explicit GLM projection source owners, Refs #2400)"
    },
    "2408": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Read kernel-build serving cell keys"
    },
    "2409": {
@@ -6353,7 +6353,7 @@
    },
    "2427": {
     "state": "OPEN",
-    "title": "[P2] Move the PACT harness, frontier, and price adapter behind the model profile"
+    "title": "[P1] Move the PACT harness, frontier, and price adapter behind the model profile"
    },
    "2428": {
     "state": "CLOSED",
@@ -6443,25 +6443,233 @@
     "state": "OPEN",
     "title": "[P2] D44 guard reports scientific publication for a dry run"
    },
+   "2448": {
+    "state": "CLOSED",
+    "title": "test_an_unrecognised_deferral_reason_is_surfaced_not_waited_on times out under host load (30 s BoundaryStagingTimeout)"
+   },
+   "2449": {
+    "state": "OPEN",
+    "title": "[P1] Add code-owned resume, lifetime cost checks and per-child D1 to the native D44 phase"
+   },
    "245": {
     "state": "CLOSED",
     "title": "Retain refused pairing evidence and add bounded stack diagnostics"
+   },
+   "2450": {
+    "state": "CLOSED",
+    "title": "[P3] Prevent: Require unpatched write, read, and checksum evidence on the selected worker"
+   },
+   "2451": {
+    "state": "CLOSED",
+    "title": "[P3] Prevent: Use one structure-aware recipe resolver for encoding, rendering, planning, and byte..."
+   },
+   "2452": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Use one effective build identity for compatibility keys and lookup"
+   },
+   "2453": {
+    "state": "CLOSED",
+    "title": "[P2] Land PR #2389: Reuse test_footprint writer in byte-budget fixture"
+   },
+   "2454": {
+    "state": "CLOSED",
+    "title": "[P2] Land PR #2343: Support explicit selected calibration capture and disjoint research moments"
+   },
+   "2455": {
+    "state": "CLOSED",
+    "title": "[P1] Land PR #2216: Bind original reader target/producer identities and repin the consumer to SDK5 (Refs #2152)"
+   },
+   "2456": {
+    "state": "CLOSED",
+    "title": "[P2] GLM profile without a declared config silently gives no KDA fused owners"
+   },
+   "2457": {
+    "state": "CLOSED",
+    "title": "[P3] Key the direct-consumer activation rule on the profile architecture, not a name suffix"
+   },
+   "2458": {
+    "state": "OPEN",
+    "title": "[P2+] Publish task-consumable serving runtime witness and public verifier"
+   },
+   "2459": {
+    "state": "OPEN",
+    "title": "[P2] Publish immutable Tessera serving-code qualification evidence"
    },
    "246": {
     "state": "CLOSED",
     "title": "Declare exact treatment stacks for paired quantized validation"
    },
+   "2460": {
+    "state": "OPEN",
+    "title": "[P2] Activate the qualified Tessera v3 pin atomically"
+   },
+   "2461": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-2: 1 accepted fixes"
+   },
+   "2462": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Keep prerequisite staging outside release measurements"
+   },
+   "2463": {
+    "state": "OPEN",
+    "title": "[P2] Measure Stage A/B container-cache peak and derive the cache ceiling"
+   },
+   "2464": {
+    "state": "CLOSED",
+    "title": "[P3] GPU validation of the container-cache reservation slice"
+   },
+   "2465": {
+    "state": "OPEN",
+    "title": "[P2] Decide the routed-expert drift bound of the D42 research split capture"
+   },
+   "2466": {
+    "state": "OPEN",
+    "title": "[P3] Run the CUDA capture chain cases on a GPU host"
+   },
+   "2467": {
+    "state": "CLOSED",
+    "title": "[P1] Provision the SDK5 PQ test interpreter and repoint the merge-train PQ suite before PR #2216 lands"
+   },
+   "2468": {
+    "state": "CLOSED",
+    "title": "[P2] GLM profile without a declared config silently gives no KDA fused owners"
+   },
+   "2469": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of serving runtime witness against live serve"
+   },
    "247": {
     "state": "CLOSED",
     "title": "Preserve parent-owned LFM expert bias during packed routing"
+   },
+   "2470": {
+    "state": "OPEN",
+    "title": "[P2+] Publish task-consumable serving runtime witness and public verifier"
+   },
+   "2471": {
+    "state": "CLOSED",
+    "title": "[P2] Record GLM T-8 serve evidence and coordinator GPU authorization for #2459"
+   },
+   "2472": {
+    "state": "OPEN",
+    "title": "[P2] D44 guard reports scientific publication for a dry run"
+   },
+   "2473": {
+    "state": "OPEN",
+    "title": "[P2] Repair the -S SDK-loader child import in the original CUDA control artifacts test"
+   },
+   "2474": {
+    "state": "CLOSED",
+    "title": "[P3] Key the direct-consumer activation rule on the profile architecture, not a name suffix"
+   },
+   "2475": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Use own_process for tests that require the vendored DSv4 namespace"
+   },
+   "2476": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Assign PR metadata updates to one authorized owner"
+   },
+   "2477": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Separate code corrections from blocked metadata operations"
+   },
+   "2478": {
+    "state": "CLOSED",
+    "title": "[P2] Record GLM T-8 serve evidence and coordinator authorization"
+   },
+   "2479": {
+    "state": "OPEN",
+    "title": "[P1] Remove unused G3 routed-source reads and consume PB phased residency"
    },
    "248": {
     "state": "CLOSED",
     "title": "Record completed Qwen3 validation and held-out NVFP4 refusal"
    },
+   "2480": {
+    "state": "CLOSED",
+    "title": "[P1] Provision the SDK5 PQ test interpreter and repoint the merge-train PQ suite before PR #2216 lands"
+   },
+   "2481": {
+    "state": "OPEN",
+    "title": "[P2] Deliver the accepted standalone D44 source through a repository-owned production path"
+   },
+   "2482": {
+    "state": "OPEN",
+    "title": "[P2] Import the canonical replay entry point and accept the approved deadline"
+   },
+   "2483": {
+    "state": "OPEN",
+    "title": "[P2] Complete the PACT contract in the existing model profile"
+   },
+   "2484": {
+    "state": "OPEN",
+    "title": "[P2] Migrate the PACT harness and its callers to the model profile"
+   },
+   "2485": {
+    "state": "OPEN",
+    "title": "[P2] Migrate the measured-price adapter and its callers"
+   },
+   "2486": {
+    "state": "OPEN",
+    "title": "[P2] Migrate the research frontier and complete the caller cutover"
+   },
+   "2487": {
+    "state": "OPEN",
+    "title": "[P1] PACT band CLI refuses the approved 3500-second deadline"
+   },
+   "2488": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Require the declared head and validation receipts to match the current PR head"
+   },
+   "2489": {
+    "state": "OPEN",
+    "title": "[P2] Import the canonical replay entry point and accept the approved deadline"
+   },
    "249": {
     "state": "CLOSED",
     "title": "Read saved Tessera rung strings in export assignments"
+   },
+   "2490": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-3: 1 accepted fixes"
+   },
+   "2491": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Require explicit profile context throughout architecture-specific decisions"
+   },
+   "2492": {
+    "state": "OPEN",
+    "title": "[P2] Deliver the accepted D44 guard through the repository snapshot"
+   },
+   "2493": {
+    "state": "OPEN",
+    "title": "Measure the workload-specific cache peak and reject incomplete sampler evidence"
+   },
+   "2494": {
+    "state": "CLOSED",
+    "title": "[P3] A missing profile silently drops the GLM direct-consumer contract in the anchor helpers"
+   },
+   "2495": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-4: 3 accepted fixes"
+   },
+   "2496": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Use one shared safetensors writer for fixtures with the same byte contract"
+   },
+   "2497": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Require the PR head, review approval, and test receipt to agree before merge"
+   },
+   "2498": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Test publication mutations at both join and completed adoption"
+   },
+   "2499": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Bind approval, test receipts, and the PR evidence body to the same head"
    },
    "25": {
     "state": "CLOSED",
@@ -6471,9 +6679,61 @@
     "state": "CLOSED",
     "title": "Complete bounded LFM priced-to-served validation"
    },
+   "2500": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Reserve None for known absence of a fused owner"
+   },
+   "2501": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Assert expected owners for declared fused groups, not only equal results"
+   },
+   "2502": {
+    "state": "CLOSED",
+    "title": "[P3] A missing profile silently drops the GLM direct-consumer contract in the anchor helpers"
+   },
+   "2503": {
+    "state": "OPEN",
+    "title": "[P2] Complete the PACT contract in the existing model profile"
+   },
+   "2504": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train pq-5: 4 accepted fixes"
+   },
+   "2505": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Block GPU qualification assignments until the coordinator records evidence and..."
+   },
+   "2506": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Reject absent policy context before contract selection for affected leaves"
+   },
+   "2507": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Execute the actual selector for the exact candidate vehicle before train admission"
+   },
+   "2508": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Require agreement between the reader pin and shared fixture pin"
+   },
+   "2509": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Test each producer identity mismatch in both modes"
+   },
    "251": {
     "state": "CLOSED",
     "title": "[P2] E4M3 CPU rendering integration tests exceed the 300-second CI limit"
+   },
+   "2510": {
+    "state": "OPEN",
+    "title": "[P2] Publish immutable Tessera serving-code qualification evidence"
+   },
+   "2511": {
+    "state": "OPEN",
+    "title": "[P2] Read Tessera lane schema v12 and apply the per-launch rung scope"
+   },
+   "2512": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation queue (prismaquant, issuegraph)"
    },
    "252": {
     "state": "CLOSED",
@@ -9866,7 +10126,7 @@
     "title": "[P2] Resolve module glob.glob/iglob bases and follow links through wildcard components (#1010, #1011)"
    },
    "1014": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Triage the listed unnameable-base directory reads and lower the pinned ceiling"
    },
    "1015": {
@@ -9878,11 +10138,11 @@
     "title": "bench: express G2 joined geometry and preflight its before profiles"
    },
    "1017": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Repair issue 875 native qualification pytest runtime"
    },
    "1018": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Price D41 by measured geometry classes and report exact release-unit coverage"
    },
    "1019": {
@@ -9926,7 +10186,7 @@
     "title": "D41 v2: register_direct decoder kind, per-shape rung grids, serving-qualification hold"
    },
    "1028": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Apply T16 row scales in FP32 epilogues"
    },
    "1029": {
@@ -9962,7 +10222,7 @@
     "title": "Add T-4 route admission with CPU proof"
    },
    "1036": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2+] Store the serving image and use kernel-build cell keys"
    },
    "1037": {
@@ -10003,7 +10263,7 @@
    },
    "1045": {
     "state": "OPEN",
-    "title": "Admit run table [3] on base routed T-8 cells (contract v59)"
+    "title": "Qualify R768 on base routed T-8 cells (contract v66)"
    },
    "1046": {
     "state": "CLOSED",
@@ -10038,7 +10298,7 @@
     "title": "[P2] Give the child interpreters of two tests the checkout's src path"
    },
    "1053": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] test_finite_cleanup_deadline_shortens_the_kill_grace raises TimeoutExpired in a loaded shard and passes alone"
    },
    "1054": {
@@ -10090,7 +10350,7 @@
     "title": "[P2+] Add replay-free selection to the native matrix entry"
    },
    "1065": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Guard four vllm tests on the submodule they import, so the bench stub cannot break collection"
    },
    "1066": {
@@ -10102,11 +10362,11 @@
     "title": "[P2] Count a process reaped mid-read as gone in four test helpers"
    },
    "1068": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Prevent: Before timing, compare every role extent with the pinned runtime construction contract"
    },
    "1069": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Require shard exit statuses and error counts before integration population acceptance"
    },
    "107": {
@@ -10114,16 +10374,132 @@
     "title": "refit_gauss_seidel is per-source where refit_objective is per-plane, so it refuses every mixed-plane export"
    },
    "1070": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Publish canonical class timing and complete supplier scope"
+   },
+   "1071": {
+    "state": "CLOSED",
+    "title": "[P3] Prevent: Reuse the existing receipt owner for each shard"
+   },
+   "1072": {
+    "state": "CLOSED",
+    "title": "[P1] Run a change's selected tests as shards judged from merge_suite's receipt (#1069)"
+   },
+   "1073": {
+    "state": "CLOSED",
+    "title": "[P2] test_finite_cleanup_deadline_shortens_the_kill_grace raises TimeoutExpired in a loaded shard and passes alone"
+   },
+   "1074": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Use one receipt owner for population acceptance"
+   },
+   "1075": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Exercise acceptance with collection, setup, and teardown errors, launcher failure, and a..."
+   },
+   "1076": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Separate image provenance from kernel eligibility"
+   },
+   "1077": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Require a repository-owned recipe, patch files, licenses, and pinned inputs before..."
+   },
+   "1078": {
+    "state": "CLOSED",
+    "title": "[P2] Two stageprev 793 tests fail on master because the published PrismaBuild SDK is version 5 and they pin 4"
+   },
+   "1079": {
+    "state": "CLOSED",
+    "title": "[P3] Triage the listed unnameable-base directory reads and lower the pinned ceiling"
    },
    "108": {
     "state": "CLOSED",
     "title": "contract.vllm_module_name reimplements vLLM's WeightsMapper and diverges from it in three places"
    },
+   "1080": {
+    "state": "OPEN",
+    "title": "[P2] Land PR #1045: Admit run table [3] on base routed T-8 cells (contract v59)"
+   },
+   "1081": {
+    "state": "CLOSED",
+    "title": "[P1] Land PR #1017: Repair issue 875 native qualification pytest runtime"
+   },
+   "1082": {
+    "state": "OPEN",
+    "title": "[P2] Land PR #994: Measure actual E2M1 recipes for D41 rung allowability"
+   },
+   "1083": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-1: 1 accepted fixes"
+   },
+   "1084": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Separate the primary error from bounded cleanup results"
+   },
+   "1085": {
+    "state": "OPEN",
+    "title": "Migrate the GB and D1 producer caller with the explicit source (tessera 944)"
+   },
+   "1086": {
+    "state": "CLOSED",
+    "title": "[P1] Reject incomplete retained MNBT profile evidence"
+   },
+   "1087": {
+    "state": "CLOSED",
+    "title": "[P1] Land PR #1070: Publish canonical class timing evidence"
+   },
+   "1088": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation of endpoint witness producer"
+   },
+   "1089": {
+    "state": "OPEN",
+    "title": "[P2+] Publish a runtime endpoint-to-artifact binding for the D50 task adapter"
+   },
    "109": {
     "state": "CLOSED",
     "title": "The window-GEMV served latency A/B has no owner and no issue"
+   },
+   "1090": {
+    "state": "CLOSED",
+    "title": "[P2] Two stageprev 793 tests fail on master because the published PrismaBuild SDK is version 5 and they pin 4"
+   },
+   "1091": {
+    "state": "OPEN",
+    "title": "[P2] Serve R768 TP2 census on base GLM image for base routed cells"
+   },
+   "1092": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-2: 1 accepted fixes"
+   },
+   "1093": {
+    "state": "CLOSED",
+    "title": "[P3] Prevent: Exercise a maintained caller through its actual preamble and wrapper inside the pinned..."
+   },
+   "1094": {
+    "state": "CLOSED",
+    "title": "[P3] GPU validation of packed E2M1 reader surface"
+   },
+   "1095": {
+    "state": "CLOSED",
+    "title": "[P2] Publish immutable producer and serving-code identity for #2459 qualification"
+   },
+   "1096": {
+    "state": "CLOSED",
+    "title": "[P2] Publish immutable producer and serving-code identity for #2459 qualification"
+   },
+   "1097": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-3: 1 accepted fixes"
+   },
+   "1098": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Test the canonical publication contract across measured, derived, unavailable, and..."
+   },
+   "1099": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Use a schema-checked result serializer before submission"
    },
    "11": {
     "state": "CLOSED",
@@ -10133,9 +10509,81 @@
     "state": "CLOSED",
     "title": "The window GEMV and its torch fallback disagree as served at M=1: mutual KL 0.012, top-1 91%"
    },
+   "1100": {
+    "state": "CLOSED",
+    "title": "[P3] GPU validation of the endpoint witness producer"
+   },
+   "1101": {
+    "state": "OPEN",
+    "title": "[P2+] Measure and publish the canonical T4 E2M1 performant class menu for PQ2364"
+   },
+   "1102": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-4: 1 accepted fixes"
+   },
+   "1103": {
+    "state": "OPEN",
+    "title": "[P1] Publish the canonical TESSERA_E2M1_K2 performant menu"
+   },
+   "1104": {
+    "state": "OPEN",
+    "title": "[P2] Correct tessera#790 measurement scripts and retain acceptance gaps"
+   },
+   "1105": {
+    "state": "CLOSED",
+    "title": "[P2] issuegraph merge train ts-5: 3 accepted fixes"
+   },
+   "1106": {
+    "state": "CLOSED",
+    "title": "[P1] Kernels evidence packet for the canonical T4 E2M1 performant menu"
+   },
+   "1107": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Test directory selection through tuple, list, and set loops"
+   },
+   "1108": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Require a published owner packet before the parent accepts source attribution"
+   },
+   "1109": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Use one API compatibility gate for all consumers"
+   },
    "111": {
     "state": "CLOSED",
     "title": "The E4M3 lane_eligibility cells name no route for the window-GEMV lane, so the contract cannot attest what the census observed"
+   },
+   "1110": {
+    "state": "CLOSED",
+    "title": "[P2] Prevent: Check each identity copy against independently authenticated values"
+   },
+   "1111": {
+    "state": "CLOSED",
+    "title": "[P3] Decision or action by a person for tessera#1080: Approve lane schema v12 in PR 1045, or name another design."
+   },
+   "1112": {
+    "state": "CLOSED",
+    "title": "[P3] GPU validation of the canonical T4 q896 performant menu"
+   },
+   "1113": {
+    "state": "OPEN",
+    "title": "[P1] Publish the canonical TESSERA_E2M1_K2 performant menu"
+   },
+   "1114": {
+    "state": "CLOSED",
+    "title": "[P3] Decision or action by a person for tessera#790: An approved duration exception for the complete baseline source seal."
+   },
+   "1115": {
+    "state": "CLOSED",
+    "title": "[P3] GPU and hosted validation of the T4 semantic-scope fix"
+   },
+   "1116": {
+    "state": "OPEN",
+    "title": "[P3] GPU validation queue (tessera, issuegraph)"
+   },
+   "1117": {
+    "state": "OPEN",
+    "title": "[P3] Decision or action by a person for tessera#790: Run the matched caller baseline and cache-hit rows with the approved 270\n[... 45 characters cut]"
    },
    "112": {
     "state": "CLOSED",
@@ -14051,7 +14499,7 @@
    },
    "994": {
     "state": "OPEN",
-    "title": "Measure actual E2M1 recipes for D41 rung allowability"
+    "title": "Restore four D41 E2M1 adapter contract tests"
    },
    "995": {
     "state": "CLOSED",

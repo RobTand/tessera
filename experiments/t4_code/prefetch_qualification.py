@@ -287,6 +287,9 @@ class NativePopulation:
 
 
 def consume(args):
+    if args.arm is not None:
+        import pytest
+
     with leased_banks(args.manifest, args.out, gpu=not args.cpu_map) as banks:
         if args.cpu_map:
             print(json.dumps({"kind": "CPU held staged native-map proof", "arms": list(banks)}), flush=True)
@@ -294,7 +297,6 @@ def consume(args):
         if args.arm is None:
             from fused_e2m1_check import main
             return main(["--out", str(Path(args.out) / "numeric"), "--compare-prefetch"], banks=banks)
-        import pytest
         from tessera import routed_fused_e2m1 as fe
         os.environ[fe.PREFETCH_ENV] = str(args.arm)
         fe._LIB, fe._LIB_PREFETCH = banks[args.arm], args.arm
