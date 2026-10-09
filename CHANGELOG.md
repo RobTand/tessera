@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09 — keep stageprev 793 tests free of host paths
+
+Remove the redundant published-root override from the observer test (#1078).
+Keep all API, manifest identity, refusal and GPU HOLD checks unchanged.
+The box-artifact path gate and the published-SDK observer both pass.
+
 ## 2026-10-08 — retain deadline failures after a delayed process reap
 
 Record the final bounded reap timeout without replacement of the original work error (#1053).

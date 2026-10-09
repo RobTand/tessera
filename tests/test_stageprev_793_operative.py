@@ -320,8 +320,6 @@ def test_observer_reports_receiver_name_variants_without_false_refusal(monkeypat
             return super().offers(max_age_s=max_age_s)
 
     monkeypatch.setattr(published_client, "PoolQueue", RenamedQueue)
-    import stageprev_793_prepare as prepare_module
-    monkeypatch.setattr(prepare_module, "PB_ROOT", "/mnt/shared/prismabuild-fleet/repo")
     probe = claim_contract.observe_current_claim_contract(
         {"generation": "renamed-receiver-probe", "files": {"src/prismabuild/pool.py": "0" * 64}})
     manifest = {"generation": "renamed-receiver-probe",
