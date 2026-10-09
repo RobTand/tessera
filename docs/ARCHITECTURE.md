@@ -1,5 +1,12 @@
 # Tessera plan-to-serve architecture
 
+The hosted `pure` check enforces branch rule 12 for pull requests.
+The branch must match `tessera-<issue>` or `tessera-<issue>-<word>` and link that issue in the body.
+The suffix follows `[a-z0-9][a-z0-9-]*`. The script reads local references and GitHub issue URLs from the event JSON.
+Branches with `ig/` or `release` prefixes are exempt. Pull requests created before `2026-10-09T17:00:00Z` are also exempt.
+The workflow checks new commits and body edits. The cutoff itself requires the check.
+The script uses only the Python standard library and never treats pull request fields as shell source.
+
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
 The menu binds build native_span2-sm_121-f01b61f906b7d7fe and table v0003 (SHA-256 35e1f829...dad3c6).

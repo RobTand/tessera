@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-09 — pull request branch rule 12
+
+The hosted `pure` check requires a branch issue number that matches an issue link in the pull request body (#1125).
+The check accepts `tessera-<issue>` and `tessera-<issue>-<word>`.
+Branches with `ig/` or `release` prefixes remain exempt.
+Pull requests created before `2026-10-09T17:00:00Z` remain exempt. The cutoff itself requires the check.
+The workflow checks body edits as well as new commits.
+CPU tests cover matches, refusals, exemptions, the cutoff, malformed suffixes, repository scope, and shell syntax as data.
+
 ## 2026-10-09 — issue 790 measurement corrections
 
 Both measurement launchers return the child exit status after final diagnostics.
