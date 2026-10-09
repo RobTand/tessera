@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-09 — issue 790 measurement corrections
+
+Both measurement launchers return the child exit status after final diagnostics.
+The caller verification uses the existing PrismaQuant descriptor owner for every projected unit.
+It compares the expected and actual full-shard digests.
+The corrected report retains original action evidence and source identities, and states the missing census acceptance observations.
+The revised launcher keeps the caller's seal policy unchanged.
+Permanent CPU tests cover same-size byte changes and omitted consumed shards.
+
 ## 2026-10-09 — state the E2M1 adapter evidence scope
 
 Restore four adapter contract tests beside the current master regressions (#1082).
