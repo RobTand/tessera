@@ -3,8 +3,8 @@
 Coverage means successful weight-loader input bytes, before the loader's
 rank-local cut or format conversion. Resident observations cover the resulting
 parameters and Tessera resident tensors. They do not prove numerical equivalence.
-The listener obtains rank observations through its live engine RPC. A verifier
-must contact that listener to establish that the receipt still describes it.
+The listener obtains rank observations through its live engine RPC. Live proof
+requires that listener. Offline proof covers only the recorded launch and bytes.
 """
 from __future__ import annotations
 
@@ -258,6 +258,45 @@ def check_join(receipt):
     return common_files
 
 
+def check_expected_files(expected, observed, where):
+    require(isinstance(expected, dict) and expected, f"{where} has no file bytes")
+    for name, fact in expected.items():
+        relative(name)
+        fields(fact, ("sha256", "bytes"), f"{where} file {name}")
+        sha(fact["sha256"], f"{where} file {name}")
+        require(type(fact["bytes"]) is int and fact["bytes"] > 0,
+                f"{where} file {name} bytes is not positive")
+    actual = {name: {key: fact[key] for key in ("sha256", "bytes")}
+              for name, fact in observed.items()}
+    require(expected == actual, f"{where} file bytes differ from runtime observations")
+
+
+def check_expectations(receipt, expected):
+    """Check consumer facts without using them as runtime observations."""
+    sources = check_join(receipt)
+    fields(expected, ("endpoint", "served_alias", "artifacts", "tokenizer", "attempt_id", "ranks"),
+           "expected facts")
+    for key, actual, where in (
+        ("endpoint", receipt["listener"]["endpoint"], "endpoint"),
+        ("served_alias", receipt["listener"]["served_alias"], "alias"),
+        ("attempt_id", receipt["launch"]["attempt_id"], "attempt"),
+    ):
+        text(expected[key], f"expected {where}")
+        require(expected[key] == actual, f"expected {where} differs from runtime observations")
+    ranks = expected["ranks"]
+    require(isinstance(ranks, list) and ranks and all(type(rank) is int for rank in ranks)
+            and ranks == list(range(len(ranks))), "expected ranks do not cover the complete world")
+    require(ranks == receipt["launch"]["ranks"], "receipt ranks differ from expected ranks")
+    check_expected_files(expected["artifacts"], sources, "expected artifact")
+    tokenizer = expected["tokenizer"]
+    fields(tokenizer, ("files", "backend", "vocab", "special_ids"), "expected tokenizer")
+    check_expected_files(tokenizer["files"], receipt["tokenizer"]["files"], "expected tokenizer")
+    for key in ("backend", "vocab", "special_ids"):
+        # Canonical JSON keeps booleans distinct from integer token IDs.
+        require(canonical(tokenizer[key]) == canonical(receipt["tokenizer"][key]),
+                f"expected tokenizer {key} differs from runtime observations")
+
+
 def prove_files(receipt, served_dir, tokenizer_dir=None):
     sources = check_join(receipt)
     root = Path(served_dir)
@@ -301,6 +340,17 @@ def prove_files(receipt, served_dir, tokenizer_dir=None):
         require(len(raw) == fact["bytes"] and hashlib.sha256(raw).hexdigest() == fact["sha256"], "tokenizer file bytes differ from server observations")
         content = json.loads(raw) if name.endswith(".json") else raw.decode()
         require(content == fact["content"], "tokenizer source content differs from its bytes")
+
+
+def verify_recorded_witness(receipt, *, expected, served_dir=None, tokenizer_dir=None):
+    """Return a refusal, or None after recorded proof. Prove no current endpoint."""
+    try:
+        check_expectations(receipt, expected)
+        require(served_dir is not None, "no artifact directory proves the loaded bytes")
+        prove_files(receipt, served_dir, tokenizer_dir)
+    except (ValueError, KeyError, TypeError, AttributeError, OSError, OverflowError, IndexError) as exc:
+        return f"REFUSED: {exc}"
+    return None
 
 
 def binding(receipt):
