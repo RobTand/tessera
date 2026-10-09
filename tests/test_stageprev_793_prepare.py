@@ -31,7 +31,9 @@ def _run_published_sdk(program):
 import sys
 from prismabuild import client
 assert Path(client.__file__).resolve().is_relative_to(Path(sys.argv[1]) / "src")
-assert client.SDK_VERSION == 4
+from stageprev_793_claim_contract import required_api_problems
+problems = required_api_problems(client)
+assert problems == [], problems
 """
     result = subprocess.run([sys.executable, "-c", prefix + textwrap.dedent(program), str(published)],
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
