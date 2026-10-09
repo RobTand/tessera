@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-10-09 — authenticate the snapshot input in the identity packet
+
+Pin both snapshot input copies to the digest and byte count from the sealed request (#1095).
+Reject separate and joint changes to those fields.
+Keep the published producer commit, serving commit, contract digest and source digest unchanged.
+The packet proves construction scope only, not GPU qualification.
+
 ## 2026-10-09 — hosted pure producer dependency (issue #1018)
 
 The hosted pure job installs jsonschema 4.25.1 for the real immutable producer.
