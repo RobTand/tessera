@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-10-09 — complete the endpoint verifier contract (issue #1128)
+
+Require explicit endpoint, alias, artifact bytes, tokenizer facts, launch attempt, and complete rank expectations in the public CPU CLI.
+Return one JSON verdict for success or refusal, with a nonzero refusal status.
+Add a separate offline operation that proves recorded observations against actual source bytes.
+Keep the live API and its listener ownership checks unchanged.
+Offline success makes no claim about the current endpoint.
+Preserve byte integrity, lane gates, and D32.
+Reuse the accepted issue 1056 producer and its published GPU witness.
+
 ## 2026-10-09 — restore the issue 1056 integration gate
 
 Integrate current master into the existing issue 1056 branch.
