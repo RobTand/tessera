@@ -9196,6 +9196,23 @@ not reproduce itself.
 
 Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-graph-equals-eager.md).
 
+### 5.1.2b A task endpoint binds its served alias to loaded bytes (tessera#1056)
+
+`src/tessera/endpoint_witness.py` is the one home of the
+`tessera.endpoint_runtime_witness.v1` receipt, its join rule and
+`verify_witness(witness)`. It sits outside `tessera.serving` so the D50 task
+adapter consumes it with no serving import and no rank lifecycle work. The
+join binds the listener endpoint and served alias, the launch attempt and
+complete rank set, rank-local loaded artifact byte observations, and server
+tokenizer facts. All facts share one `lifetime_id`: observations from two
+serves never join. Rank bytes agree across ranks over one file set, or the
+join refuses. `tools/verify_endpoint_witness.py` is the standalone verifier.
+It reads one witness file and re-derives the join. It needs no Tessera
+serving import. Input manifests, aliases, leases, launch arguments, and
+publication receipts establish no loaded fact. Byte checks use parsed
+artifact metadata. Scientific comparability needs matched bytes. No
+recorded-identity seal exists here.
+
 ### 5.1.3 GLM-5.3 prefill overrides
 
 `src/tessera/serving/glm53_prefill.py` changes the pinned vLLM's stock
