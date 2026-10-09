@@ -2181,6 +2181,7 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # Runtime parameters, external box paths, and temporary test fixtures retain
 # the accepted unnamed-base limit. A new read must name its base or raise
 # both relevant limits here with its reason (PB1496).
+# The endpoint producer consumes the loader's file list and adds no directory read.
 _UNNAMED_DIRECTORY_READ_MODULES = 114
 _UNNAMED_DIRECTORY_READ_SITES = 168
 

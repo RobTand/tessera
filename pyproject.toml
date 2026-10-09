@@ -50,6 +50,9 @@ Issues = "https://github.com/RobTand/tessera/issues"
 # checkpoint selects it; the only operator knob is TESSERA_SERVE_MODE.
 tessera = "tessera.serving:register"
 
+[project.entry-points."vllm.endpoint_plugins"]
+tessera_endpoint_witness = "tessera.serving.endpoint_runtime:EndpointWitnessPlugin"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 # `tessera._dev` is the repository's own tooling -- the merge-suite deadline
