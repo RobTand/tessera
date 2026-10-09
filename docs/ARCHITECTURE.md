@@ -1,5 +1,6 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
 The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
 Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
@@ -7319,6 +7320,10 @@ names to one parent-relative component and exclusively reserves a fresh venv
 and owned temporary build directory; no pre-existing build path is removed.
 The committed packaging parser preserves Python 3.10 through the declared
 conditional `tomli` dependency, not an implicit interpreter-version cutover.
+
+The repository caller `experiments/submit_gb_d1_producer.sh` forwards both selector values unchanged into each of its three submission actions. It preserves the historical caller command and scientific meaning and adds only the missing explicit source. Both selector variables are required by name and never derived from the working directory. Authentication runs before any submission through the existing exporter owner.
+
+`SUBMIT=0` is the explicit processor entry: authentication only, with no submission and no graphics work. All caller refusals are correctness refusals in both modes. No new receipt or provenance convention is added. The historical caller stays unchanged at `/home/rob/tmp/resubmit-gb-d1.sh`.
 
 ### 4.4f The joined fresh encode: a machine schedule, sealed anyway
 

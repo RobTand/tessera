@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-10-09 — migrate the GB and D1 producer caller into the repository
+
+Migrate the historical outside caller to `experiments/submit_gb_d1_producer.sh` for tessera#944.
+Preserve its command and scientific meaning and add the missing explicit producer source to all three submissions.
+Require both selector variables by name and authenticate before any submission through the existing exporter owner.
+Keep the historical caller unchanged as retained proof.
+The six caller refusal regressions failed before the fix with the caller absent.
+The caller, launcher, and wrapper receipt suites pass on the processor through PrismaBuild.
+
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 
 The grouped owner now has one FP32 row-scale epilogue.
