@@ -29,6 +29,49 @@ def decide(table, rung=768, **kwargs):
     return admit_rung(table, format=table['format'], kernel_build_id=table['kernel_build']['id'], rung=rung, **kwargs)
 
 
+def approved_t4_table():
+    # Ground truth read from the approved table v0003 (SHA-256 35e1f829...dad3c6).
+    # The source fix must record this same scope in E2M1_K2_PERFORMANT_MENU.
+    dims = {'gate_up': (1024, 4096, 0, 'SwiGLU clipped at 10'),
+            'down': (4096, 1024, 2, 'route-weighted BF16 down'),
+            'o_proj': (4096, 4096, 2, 'BF16 linear output'),
+            'q_b': (8192, 1536, 2, 'BF16 linear output')}
+    from tessera.rung_allowability import E2M1_K2_PERFORMANT_MENU
+    table = fixture_v2('tcq', 'native_tcq')
+    table['schema'] = 'fleet.rung_allowability.v3'
+    table['performant_policy'] = dict(PERFORMANT_POLICY)
+    menu = E2M1_K2_PERFORMANT_MENU
+    table['scope']['required_cells'] = [
+        {'cell_id': cell_id, 'kernel_kind': 'routed' if cell_id.startswith('routed') else 'dense',
+         'shape_id': cell_id.split(':')[1], 'M': int(cell_id.split(':')[2][1:])}
+        if not cell_id.endswith(':recorded') else
+        {'cell_id': cell_id, 'kernel_kind': 'routed', 'shape_id': cell_id.split(':')[1],
+         'M': int(cell_id.split(':')[2][1:]), 'routing': 'recorded'}
+        for cell_id in menu['cell_ids']]
+    table['scope']['shapes'] = [{'kernel_kind': 'routed' if name in ('gate_up', 'down') else 'dense',
+                                 'shape_id': name, 'rows': rows, 'columns': columns, 'mode': mode}
+                                for name, (rows, columns, mode, _epilogue) in dims.items()]
+    table['kernel_build']['id'] = menu['kernel_build_id']
+    table['kernel_build']['activation_contract'] = menu['activation_contract']
+    paths = {'routed': 'tessera.kernel_a4.a4_span2_grouped_gemm', 'dense': 'tessera.kernel_a4.a4_span2_gemm'}
+    base = table['rungs'][0]['measurements'][0]
+    row = table['rungs'][0]
+    row['measurements'] = []
+    for cell in table['scope']['required_cells']:
+        measurement = copy.deepcopy(base)
+        rows, columns, mode, epilogue = dims[cell['shape_id']]
+        routing = 'recorded' if cell['cell_id'].endswith(':recorded') else ('balanced' if cell['kernel_kind'] == 'routed' else 'none')
+        measurement.update(cell_id=cell['cell_id'], kernel_kind=cell['kernel_kind'],
+                           shape_id=cell['shape_id'], M=cell['M'],
+                           measurement_build_id=menu['kernel_build_id'],
+                           kernel_path=paths[cell['kernel_kind']])
+        measurement['evidence'].update(rows=rows, columns=columns, mode=mode, routing=routing,
+                                       epilogue=epilogue, input_distribution=menu['activation_contract'])
+        row['measurements'].append(measurement)
+    table['geometry_classes'] = measured_geometry_classes(table)
+    return table
+
+
 class PerformantPolicy(unittest.TestCase):
     def test_menu_is_structure_specific(self):
         self.assertEqual(performant_rungs('TESSERA_E4M3_K1', 'dense'), (768, 896, 1024))
@@ -260,37 +303,7 @@ class TimingPublication(unittest.TestCase):
         self.assertFalse(scope['rate_semantics']['metadata_fees_included'])
 
     def test_approved_scope_admits_exact_cells_and_waits_elsewhere(self):
-        import copy
-        from tessera.rung_allowability import E2M1_K2_PERFORMANT_MENU
-        table = fixture_v2('tcq', 'native_tcq')
-        table['schema'] = 'fleet.rung_allowability.v3'
-        table['performant_policy'] = dict(PERFORMANT_POLICY)
-        cells = [{'cell_id': cell_id, 'kernel_kind': 'routed' if cell_id.startswith('routed') else 'dense',
-                  'shape_id': cell_id.split(':')[1], 'M': int(cell_id.split(':')[2][1:])}
-                 if not cell_id.endswith(':recorded') else
-                 {'cell_id': cell_id, 'kernel_kind': 'routed', 'shape_id': cell_id.split(':')[1],
-                  'M': int(cell_id.split(':')[2][1:]), 'routing': 'recorded'}
-                 for cell_id in E2M1_K2_PERFORMANT_MENU['cell_ids']]
-        table['scope']['required_cells'] = cells
-        table['scope']['shapes'] = [{'kernel_kind': 'dense', 'shape_id': 'o_proj', 'rows': 4096, 'columns': 4096, 'mode': 2},
-                                    {'kernel_kind': 'dense', 'shape_id': 'q_b', 'rows': 8192, 'columns': 1536, 'mode': 2},
-                                    {'kernel_kind': 'routed', 'shape_id': 'gate_up', 'rows': 1024, 'columns': 4096, 'mode': 0},
-                                    {'kernel_kind': 'routed', 'shape_id': 'down', 'rows': 4096, 'columns': 1024, 'mode': 2}]
-        table['kernel_build']['id'] = E2M1_K2_PERFORMANT_MENU['kernel_build_id']
-        table['kernel_build']['activation_contract'] = E2M1_K2_PERFORMANT_MENU['activation_contract']
-        base = table['rungs'][0]['measurements'][0]
-        row = table['rungs'][0]
-        row['measurements'] = []
-        for cell in cells:
-            measurement = copy.deepcopy(base)
-            measurement.update(cell_id=cell['cell_id'], kernel_kind=cell['kernel_kind'],
-                               shape_id=cell['shape_id'], M=cell['M'],
-                               measurement_build_id=E2M1_K2_PERFORMANT_MENU['kernel_build_id'])
-            dims = next(shape for shape in table['scope']['shapes']
-                        if shape['kernel_kind'] == cell['kernel_kind'] and shape['shape_id'] == cell['shape_id'])
-            measurement['evidence'].update(rows=dims['rows'], columns=dims['columns'])
-            row['measurements'].append(measurement)
-        table['geometry_classes'] = measured_geometry_classes(table)
+        table = approved_t4_table()
         scope = publication_scope(table)
         self.assertEqual(scope['qualified_menu'], {'dense': [896], 'routed': [896]})
         allowed = decide(table, 896)
@@ -305,12 +318,6 @@ class TimingPublication(unittest.TestCase):
         refused = decide(foreign, 896)
         self.assertEqual(refused['status'], 'wait')
         self.assertTrue(all(cell['reason'] == 'performance_admission_not_established' for cell in refused['cells']))
-        other_recipe = copy.deepcopy(table)
-        other_recipe['rungs'][0]['measurements'][0]['geometry']['recipe'] = dict(E2M1_K2_PERFORMANT_MENU['recipe'], body='window')
-        other_recipe['geometry_classes'] = measured_geometry_classes(other_recipe)
-        recipe_wait = decide(other_recipe, 896, cell_ids=[other_recipe['rungs'][0]['measurements'][0]['cell_id']])
-        self.assertEqual(recipe_wait['cells'][0]['status'], 'wait')
-        self.assertEqual(recipe_wait['cells'][0]['reason'], 'unmeasured_recipe_scope')
         self.assertEqual(decide(table, 768)['cells'][0]['reason'], 'performance_admission_not_established')
         held = copy.deepcopy(table)
         held['rungs'][0]['anomaly_flags'] = held['rungs'][0]['quality']['anomaly_flags'] = ['reader_bounds']
@@ -319,6 +326,78 @@ class TimingPublication(unittest.TestCase):
         failed['rungs'][0].update(measurement_status='failed', supported=None, measurements=[], quality={})
         failed['geometry_classes'] = measured_geometry_classes(failed)
         self.assertEqual(decide(failed, 896)['status'], 'wait')
+
+    def test_approved_semantic_scope_binds_every_field(self):
+        from tessera.rung_allowability import E2M1_K2_PERFORMANT_MENU
+        menu = E2M1_K2_PERFORMANT_MENU
+        table = approved_t4_table()
+        self.assertEqual(decide(table, 896)['status'], 'allow')
+        self.assertEqual(publication_scope(table)['qualified_menu'], {'dense': [896], 'routed': [896]})
+        cell_id = 'dense:o_proj:M1'
+        cases = [
+            ('dims', {'rows': 1, 'columns': 1}, 'unmeasured_shape_or_M_scope'),
+            ('routing', {'routing': 'shuffled'}, 'unmeasured_shape_or_M_scope'),
+            ('mode', {'mode': 99}, 'unmeasured_execution_scope'),
+            ('epilogue', {'epilogue': 'other epilogue'}, 'unmeasured_execution_scope'),
+            ('kernel_path', {'kernel_path': 'tessera.kernel_a4.other'}, 'unmeasured_execution_scope'),
+            ('input_distribution', {'input_distribution': 'other contract'}, 'unmeasured_activation_scope'),
+            ('recipe', {'recipe': dict(menu['recipe'], body='window')}, 'unmeasured_recipe_scope'),
+        ]
+        for name, mutation, reason in cases:
+            with self.subTest(field=name):
+                mutated = copy.deepcopy(table)
+                target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+                for key, value in mutation.items():
+                    if key == 'kernel_path':
+                        target[key] = value
+                    elif key == 'recipe':
+                        target['geometry']['recipe'] = value
+                    else:
+                        target['evidence'][key] = value
+                mutated['geometry_classes'] = measured_geometry_classes(mutated)
+                result = decide(mutated, 896, cell_ids=[cell_id])
+                self.assertEqual(result['cells'][0]['status'], 'wait', name)
+                self.assertEqual(result['cells'][0]['reason'], reason, name)
+        with self.subTest(field='decoder'):
+            mutated = copy.deepcopy(table)
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            target['geometry']['decoder_kind'] = 'fused_window'
+            with self.assertRaises(ValueError):
+                validate_table(mutated)
+        with self.subTest(field='extra_M'):
+            mutated = copy.deepcopy(table)
+            extra = copy.deepcopy(mutated['rungs'][0]['measurements'][0])
+            extra.update(cell_id='dense:o_proj:M7', M=7, measurement_build_id=menu['kernel_build_id'])
+            mutated['scope']['required_cells'].append(
+                {'cell_id': 'dense:o_proj:M7', 'kernel_kind': 'dense', 'shape_id': 'o_proj', 'M': 7})
+            mutated['rungs'][0]['measurements'].append(extra)
+            mutated['geometry_classes'] = measured_geometry_classes(mutated)
+            result = decide(mutated, 896)
+            self.assertEqual(result['status'], 'wait')
+            self.assertTrue(all(cell['reason'] == 'performance_admission_not_established'
+                                for cell in result['cells']))
+        with self.subTest(field='shape_dims'):
+            mutated = copy.deepcopy(table)
+            shape = next(s for s in mutated['scope']['shapes'] if s['shape_id'] == 'o_proj')
+            shape.update(rows=1, columns=1)
+            for measurement in mutated['rungs'][0]['measurements']:
+                if measurement['shape_id'] == 'o_proj':
+                    measurement['evidence'].update(rows=1, columns=1)
+            mutated['geometry_classes'] = measured_geometry_classes(mutated)
+            result = decide(mutated, 896)
+            self.assertEqual(result['status'], 'wait')
+            self.assertTrue(all(cell['reason'] == 'performance_admission_not_established'
+                                for cell in result['cells']))
+        with self.subTest(field='absent_cell'):
+            absent = copy.deepcopy(table)
+            absent['scope']['required_cells'] = [cell for cell in absent['scope']['required_cells']
+                                                 if cell['cell_id'] != cell_id]
+            absent['rungs'][0]['measurements'] = [m for m in absent['rungs'][0]['measurements']
+                                                  if m['cell_id'] != cell_id]
+            absent['geometry_classes'] = measured_geometry_classes(absent)
+            self.assertEqual(publication_scope(absent)['qualified_menu'], {'dense': [], 'routed': []})
+            missing = decide(absent, 896, cell_ids=[cell_id])
+            self.assertEqual(missing['reason'], 'unmeasured_shape_or_M_scope')
 
     def test_release_units_link_exact_rank_shapes_without_qualification(self):
         from tessera.rung_allowability import publication_scope
