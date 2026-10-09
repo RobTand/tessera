@@ -333,8 +333,7 @@ def performance_increment(table, raw_inputs, version, findings=()):
     validate_table(table)
     original_schema = table['schema']
     base, arity_text = table['format'].removeprefix('TESSERA_').rsplit('_K', 1)
-    from tessera.alphabet import tuple_grid
-    from tessera.control import grid_for_name
+    from tessera.alphabet import grid_for_name, tuple_grid
     grid = grid_for_name(base)
     if int(arity_text) != 1:
         grid = tuple_grid(grid, int(arity_text))

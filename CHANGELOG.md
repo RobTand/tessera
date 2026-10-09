@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09 — pure class publication metadata (issue #1018)
+
+The input-table metadata path resolves grids through the alphabet, not the tensor-backed control.
+Version one conversion and actual raw-input normalization keep their existing behavior.
+The hosted pure regression remains active. No tests skip the import error.
+
 ## 2026-10-08 — canonical class publication (issue #1018)
 
 Extend the existing producer with immutable class timing records and exact declared-cell scope matrices.

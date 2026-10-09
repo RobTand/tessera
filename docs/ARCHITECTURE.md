@@ -1,5 +1,10 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for the pure metadata boundary correction (issue #1018).
+Version two and version three input-table metadata use the alphabet's pure grid owner.
+The existing version one conversion and actual raw-input normalization retain their owner paths.
+The meaningful hosted pure test stays active. No measurement or qualification changes.
+
 Re-stamped 2026-10-08 for the canonical class publication (issue #1018).
 
 The existing class interface publishes retained timing samples and exact performance scope.

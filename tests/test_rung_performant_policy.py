@@ -344,3 +344,28 @@ class TimingPublication(unittest.TestCase):
             result = subprocess.run(command, env=CHILD_ENV, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
 
+
+class SupplierRevision(unittest.TestCase):
+    def test_metadata_increment_uses_pure_grid_owner(self):
+        import json
+        import subprocess
+        import sys
+        from test_rung_allowability import CHILD_ENV, SRC
+        for version in ('fleet.rung_allowability.v2', 'fleet.rung_allowability.v3'):
+            table = v3_fixture()
+            table['schema'] = version
+            table['evidence'] = {}
+            program = (
+                'import json,sys; '
+                'sys.path.insert(0, "experiments/t8r_speed"); '
+                'from rung_allowability_table import performance_increment; '
+                'table=json.loads(sys.argv[1]); '
+                'result=performance_increment(table, [], 2); '
+                'assert result["schema"] == "fleet.rung_allowability.v3"; '
+                'assert "torch" not in sys.modules; '
+                'assert "tessera.control" not in sys.modules'
+            )
+            result = subprocess.run([sys.executable, '-c', program, json.dumps(table)],
+                                    cwd=SRC.parent, env=CHILD_ENV, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
