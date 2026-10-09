@@ -1,25 +1,26 @@
 #!/bin/bash
 # Submit the GB routed parts and the D1 dense stub with the selected producer.
 #
-# Migrated repository caller for tessera#944. It preserves the command and
-# the scientific meaning of /home/rob/tmp/resubmit-gb-d1.sh: two routed
-# parts (GB 3/8, GB 4/8) through experiments/t8_census/export_routed_part.sh
-# and the D1 dense stub through experiments/t16_census/export_census_stub.sh,
-# with the same census root, authority, image, scales, profile, cache and
-# resource bounds. The one change is the fix: every submission also carries
-# the explicit genuine producer source, which the historical caller omits.
+# This repository caller preserves the scientific inputs and resource bounds
+# of /home/rob/tmp/resubmit-gb-d1.sh.
+# It submits GB 3/8, GB 4/8 and the D1 dense stub from the current checkout.
+# The historical caller used separate frozen checkouts for GB and D1.
+# Every submission also carries the explicit genuine producer source.
 # usage: TESSERA_PRODUCER_PYTHON=/abs/venv/bin/python \
 #        TESSERA_PRODUCER_SOURCE=/abs/frozen/src/tessera \
 #        [SUBMIT=0] submit_gb_d1_producer.sh
 # Run with cwd = the Tessera checkout. Optional overrides: CENSUS_ROOT,
-# PRODUCER_AUTHORITY, PART_IMAGE, ROUTED_CACHE, INPUT_SCALES, PROFILE.
+# PRODUCER_AUTHORITY, PART_IMAGE, ROUTED_CACHE, INPUT_SCALES, PROFILE, PBRUN.
+# PBRUN selects the submission client; its default is the published PB client.
+# Run submission mode on a fleet box. The preflight imports torch and hashes
+# the installed package. Run SUBMIT=0 through PrismaBuild for CPU proof.
 #
 # The producer (#944): TESSERA_PRODUCER_PYTHON names the interpreter that
 # runs the exporter and TESSERA_PRODUCER_SOURCE names, explicitly and
 # immutably, the qualified genuine source checkout's src/tessera it must
 # authenticate against. Both are required by name and travel UNCHANGED --
-# never derived from $PWD (a PrismaBuild snapshot is an intentionally
-# parentless tree and cannot qualify), never overwritten, and a relative
+# never derived from $PWD (a PrismaBuild snapshot is not the qualified source
+# reference), never overwritten, and a relative
 # reference refuses. The interpreter is authenticated BEFORE anything
 # submits through tessera.export_serving.authenticate_producer_python, the
 # same owner the wrappers call; the receipt's package digest is checked
@@ -52,7 +53,7 @@ U=/mnt/shared/tessera-measurements/glm-canonical-census-20260908/activation-runt
 SCALES=${INPUT_SCALES:-$U/input_scales.safetensors}
 PROFILE=${PROFILE:-0}
 SUBMIT=${SUBMIT:-1}
-P=/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py
+P=${PBRUN:-/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py}
 TESSERA_HEAD_HISTORICAL=414e5a257a76887aea754041a9fe019707da9e1a
 
 refuse() { echo "[submit_gb_d1_producer] refuse: $*" >&2; exit 2; }

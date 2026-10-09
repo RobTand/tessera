@@ -7321,9 +7321,18 @@ and owned temporary build directory; no pre-existing build path is removed.
 The committed packaging parser preserves Python 3.10 through the declared
 conditional `tomli` dependency, not an implicit interpreter-version cutover.
 
-The repository caller `experiments/submit_gb_d1_producer.sh` forwards both selector values unchanged into each of its three submission actions. It preserves the historical caller command and scientific meaning and adds only the missing explicit source. Both selector variables are required by name and never derived from the working directory. Authentication runs before any submission through the existing exporter owner.
+The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three submission actions.
+It preserves the historical scientific inputs and resource bounds.
+It uses the wrappers in the current checkout, not the separate frozen GB and D1 checkouts.
+The caller requires both selectors by name and never derives them from the current directory.
+The exporter owner authenticates the producer before any submission.
+`PBRUN` can select a submission client. Its default is the published PrismaBuild client.
+Run submission mode on a fleet box because the preflight imports torch and hashes the installed package.
 
-`SUBMIT=0` is the explicit processor entry: authentication only, with no submission and no graphics work. All caller refusals are correctness refusals in both modes. No new receipt or provenance convention is added. The historical caller stays unchanged at `/home/rob/tmp/resubmit-gb-d1.sh`.
+`SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry through PrismaBuild.
+All caller refusals are correctness refusals in dev and certified modes.
+The caller adds no receipt or provenance convention.
+The historical caller stays unchanged at `/home/rob/tmp/resubmit-gb-d1.sh`.
 
 ### 4.4f The joined fresh encode: a machine schedule, sealed anyway
 
