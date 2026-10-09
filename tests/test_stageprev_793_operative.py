@@ -38,6 +38,7 @@ def metadata(packet):
         "public_claim_contract": {"owner": claim_contract.OWNER, "chain": claim_contract.CHAIN,
             "sdk_version": 4, "verified": True, "identity_verified": True,
             "chain_verified": True, "positive_reservation_refusal_verified": True,
+            "api_verified": True, "api_problems": [],
             "observation_only": True, "claim_invoked": False, "denial_synthesized": False,
             "pool_sha256": "a" * 64, "published_pool_sha256": "a" * 64,
             "generation": "explicitCPUfixture-not-actual-runtime-proof"},
@@ -97,18 +98,18 @@ def test_denial_events_are_observed_only_not_a_new_execution_gate(packet, events
 
 
 @pytest.mark.parametrize("defect", [
-    "missing_contract", "wrong_owner", "wrong_chain", "wrong_sdk", "unverified_identity",
-    "unverified_predicate", "pool_hash", "published_hash", "changed_generation",
-    "claim_invoked", "denial_synthesized", "fake_kind", "zero_need", "wrong_need",
-    "stale_ledger", "incomplete_ledger", "changed_ledger", "positive_capacity",
-    "unreadable_ledger", "wrong_revision"
-])
+    "missing_contract", "wrong_owner", "wrong_chain", "missing_api", "stale_api",
+    "unverified_identity", "unverified_predicate", "pool_hash", "published_hash",
+    "changed_generation", "claim_invoked", "denial_synthesized", "fake_kind",
+    "zero_need", "wrong_need", "stale_ledger", "incomplete_ledger", "changed_ledger",
+    "positive_capacity", "unreadable_ledger", "wrong_revision"])
 def test_current_source_and_effective_zero_guarantee_are_required(packet, defect):
     record = metadata(packet)
     if defect == "missing_contract": record["public_claim_contract"] = None
     elif defect == "wrong_owner": record["public_claim_contract"]["owner"] = "private-dispatcher"
     elif defect == "wrong_chain": record["public_claim_contract"]["chain"] = []
-    elif defect == "wrong_sdk": record["public_claim_contract"]["sdk_version"] = 3
+    elif defect == "missing_api": record["public_claim_contract"]["api_problems"] = ["PoolQueue.offers"]
+    elif defect == "stale_api": record["public_claim_contract"]["api_verified"] = False
     elif defect == "unverified_identity": record["public_claim_contract"]["identity_verified"] = False
     elif defect == "unverified_predicate": record["public_claim_contract"]["positive_reservation_refusal_verified"] = False
     elif defect == "pool_hash": record["public_claim_contract"]["pool_sha256"] = "b" * 64
@@ -192,3 +193,188 @@ def test_pure_metadata_controls_do_not_import_the_public_sdk(packet, monkeypatch
     assert prerequisites.evaluate(record, packet, now=NOW)["control_ready"] is True
     record["positive_kind_reservation"]["need"] += 1
     assert prerequisites.evaluate(record, packet, now=NOW)["control_ready"] is False
+
+def _client_double(**overrides):
+    queue = type("PoolQueue", (), {
+        "claim": staticmethod(lambda **kwargs: None),
+        "_claim": staticmethod(lambda **kwargs: None),
+        "_claim_pass": staticmethod(lambda **kwargs: None),
+        "ledger": staticmethod(lambda host=None: None),
+        "latest_denials": staticmethod(lambda keys, *, include_local=True: {}),
+        "offers": staticmethod(lambda *, max_age_s=120.0: []),
+    })
+    ledger = type("ResourceLedger", (), {
+        "capacity_census": lambda self: ({}, []),
+        "available": lambda self: {},
+    })
+    for name, value in overrides.items():
+        if name == "ledger_cls":
+            ledger = value
+        else:
+            setattr(queue, name, value)
+    return type("client", (), {"PoolQueue": queue}), ledger
+
+
+def test_required_api_check_passes_on_full_contract():
+    module, ledger = _client_double()
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
+def test_required_api_check_binds_receiver_whatever_name_it_uses():
+    queue = type("PoolQueue", (), {
+        "claim": staticmethod(lambda **kwargs: None),
+        "_claim": staticmethod(lambda **kwargs: None),
+        "_claim_pass": staticmethod(lambda **kwargs: None),
+        "ledger": lambda this, host=None: None,
+        "latest_denials": lambda this, keys, *, include_local=True: {},
+        "offers": lambda this, *, max_age_s=120.0: [],
+    })
+    ledger = type("ResourceLedger", (), {
+        "capacity_census": lambda this: ({}, []),
+        "available": lambda this: {},
+    })
+    module = type("client", (), {"PoolQueue": queue})
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
+def test_required_api_check_binds_classmethod_receiver():
+    module, ledger = _client_double(ledger=classmethod(lambda cls, host=None: None))
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
+def test_required_api_check_refuses_static_receiver_left_in_signature():
+    module, ledger = _client_double(offers=staticmethod(lambda self, *, max_age_s=120.0: []))
+    assert "PoolQueue.offers(max_age_s)" in claim_contract.required_api_problems(module, ledger)
+
+
+def test_required_api_check_names_each_absent_call():
+    for name in claim_contract.REQUIRED_QUEUE_METHODS:
+        module, ledger = _client_double(**{name: None})
+        problems = claim_contract.required_api_problems(module, ledger)
+        assert "PoolQueue." + name in problems
+    for name in claim_contract.REQUIRED_LEDGER_METHODS:
+        module, ledger = _client_double(ledger_cls=type("ResourceLedger", (), {}))
+        problems = claim_contract.required_api_problems(module, ledger)
+        assert "ResourceLedger." + name in problems
+
+
+def test_required_api_check_names_incompatible_signatures():
+    module, ledger = _client_double(ledger=staticmethod(lambda: None))
+    assert "PoolQueue.ledger(host)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(latest_denials=staticmethod(lambda keys: {}))
+    assert "PoolQueue.latest_denials(keys,include_local)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(offers=staticmethod(lambda: []))
+    assert "PoolQueue.offers(max_age_s)" in claim_contract.required_api_problems(module, ledger)
+    ledger = type("ResourceLedger", (), {
+        "capacity_census": lambda self, extra: ({}, []),
+        "available": lambda self: {},
+    })
+    module, _ = _client_double()
+    assert "ResourceLedger.capacity_census()" in claim_contract.required_api_problems(module, ledger)
+
+
+def test_required_api_check_refuses_extra_required_arguments():
+    module, ledger = _client_double(ledger=staticmethod(lambda host, region: None))
+    assert "PoolQueue.ledger(host)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(latest_denials=staticmethod(lambda keys, scope, *, include_local=False: {}))
+    assert "PoolQueue.latest_denials(keys,include_local)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(offers=staticmethod(lambda *, max_age_s, limit: []))
+    assert "PoolQueue.offers(max_age_s)" in claim_contract.required_api_problems(module, ledger)
+    ledger = type("ResourceLedger", (), {
+        "available": lambda self, unreadable: {},
+        "capacity_census": lambda self: ({}, []),
+    })
+    module, _ = _client_double()
+    assert "ResourceLedger.available()" in claim_contract.required_api_problems(module, ledger)
+
+
+def test_required_api_check_refuses_denials_keyword_collision():
+    module, ledger = _client_double(
+        latest_denials=staticmethod(lambda include_local, keys: {}))
+    assert "PoolQueue.latest_denials(keys,include_local)" in claim_contract.required_api_problems(module, ledger)
+    module, ledger = _client_double(offers=staticmethod(lambda max_age_s: []))
+    assert claim_contract.required_api_problems(module, ledger) == []
+
+
+def test_evaluator_refuses_a_contract_with_api_problems(packet):
+    record = metadata(packet)
+    record["public_claim_contract"]["api_verified"] = False
+    record["public_claim_contract"]["api_problems"] = ["PoolQueue.offers"]
+    result = prerequisites.evaluate(record, packet, now=NOW)
+    assert result["status"] == "HOLD" and result["control_ready"] is False
+
+
+def test_observer_reports_receiver_name_variants_without_false_refusal(monkeypatch):
+    pytest.importorskip("prismabuild.client")
+    import prismabuild.client as published_client
+    real_queue = published_client.PoolQueue
+
+    class RenamedQueue(real_queue):
+        def ledger(this, host=None):
+            return super().ledger(host)
+
+        def latest_denials(this, keys, *, include_local=True):
+            return super().latest_denials(keys, include_local=include_local)
+
+        def offers(this, *, max_age_s=120.0):
+            return super().offers(max_age_s=max_age_s)
+
+    monkeypatch.setattr(published_client, "PoolQueue", RenamedQueue)
+    probe = claim_contract.observe_current_claim_contract(
+        {"generation": "renamed-receiver-probe", "files": {"src/prismabuild/pool.py": "0" * 64}})
+    manifest = {"generation": "renamed-receiver-probe",
+                "files": {"src/prismabuild/pool.py": probe["pool_sha256"]}}
+    observed = claim_contract.observe_current_claim_contract(manifest)
+    assert observed["api_problems"] == [] and observed["api_verified"] is True
+
+
+def test_collector_refuses_static_receiver_left_in_signature(monkeypatch, packet):
+    pytest.importorskip("prismabuild.client")
+    import prismabuild.client as published_client
+    real_queue = published_client.PoolQueue
+
+    class StaticQueue(real_queue):
+        offers = staticmethod(lambda self, *, max_age_s=120.0: [])
+
+    monkeypatch.setattr(published_client, "PoolQueue", StaticQueue)
+    with __import__("pytest").raises(ValueError, match="PoolQueue.offers"):
+        prerequisites.collect(packet, "")
+
+
+@pytest.mark.parametrize("defect", ["absent_name", "incompatible_signature"])
+def test_observer_refuses_required_api_defects(defect):
+    from test_stageprev_793_prepare import _run_published_sdk
+
+    mutation = ("del client.PoolQueue.offers" if defect == "absent_name" else
+                "client.PoolQueue.offers = staticmethod(lambda self, *, max_age_s=120.0: [])")
+    problem = ("PoolQueue.offers" if defect == "absent_name" else
+               "PoolQueue.offers(max_age_s)")
+    _run_published_sdk(f"""
+        import json
+        import stageprev_793_claim_contract as contract
+        manifest = json.loads((Path(sys.argv[1]) / "RUNTIME_VERSION.json").read_text())
+        assert contract.observe_current_claim_contract(manifest)["verified"] is True
+        {mutation}
+        observed = contract.observe_current_claim_contract(manifest)
+        assert observed["api_problems"] == [{problem!r}]
+        assert observed["api_verified"] is False
+        assert observed["identity_verified"] is False
+        assert observed["verified"] is False
+        assert observed["claim_invoked"] is False
+        assert observed["denial_synthesized"] is False
+    """)
+
+
+def test_collector_refuses_absent_required_api_name():
+    from test_stageprev_793_prepare import _run_published_sdk
+
+    _run_published_sdk("""
+        import json
+        import pytest
+        import stageprev_793_prepare as prepare
+        import stageprev_793_prerequisites as prerequisites
+        packet = json.loads((prepare.SOURCE_ROOT / prepare.PACKET_PATH).read_text())
+        del client.PoolQueue.offers
+        with pytest.raises(ValueError, match=r"Actual published public claim API lacks: PoolQueue\\.offers"):
+            prerequisites.collect(packet, "")
+    """)
