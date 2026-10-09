@@ -18,7 +18,11 @@ def main():
     commit = runpy.run_path(helper)["commit"]
     output = Path(sys.argv[2])
     checkpoint = output.with_name(output.name + "-unit-checkpoints")
-    checkpoint.mkdir(parents=True, exist_ok=False)
+    try:
+        checkpoint.mkdir(parents=True, exist_ok=False)
+    except FileExistsError:
+        if not checkpoint.is_dir() or any(checkpoint.iterdir()):
+            raise SystemExit(f"checkpoint directory holds previous evidence: {checkpoint}")
     count = 0
     original_encode = exporter.encode_linear_planes
     original_save = exporter.save_serving_shard
@@ -36,10 +40,14 @@ def main():
         name = kwargs["name"]
         blob = result[0].blob
         path = checkpoint / (hashlib.sha256(name.encode()).hexdigest() + ".tessera")
-        with path.open("xb") as handle:
-            handle.write(blob)
-            handle.flush()
-            os.fsync(handle.fileno())
+        try:
+            with path.open("xb") as handle:
+                handle.write(blob)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            if hashlib.sha256(path.read_bytes()).hexdigest() != hashlib.sha256(blob).hexdigest():
+                raise SystemExit(f"stale checkpoint differs for unit: {name}")
         fence_directory(checkpoint)
         count += 1
         commit(count, "construct", unit="durable checkpoints")
