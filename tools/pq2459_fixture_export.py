@@ -180,7 +180,8 @@ def main(argv=None):
                     "--hessian", str(args.hessian), "--cached-hessian-identity", "committed",
                     "--cached-intake-threads", str(args.intake_threads)]
     else:
-        command += ["--hessian", str(args.hessian)]
+        command += ["--producer-authority", str(args.producer_authority.resolve()),
+                    "--hessian", str(args.hessian)]
     command += ["--source-digest-cache", str(args.source_digest_cache),
                 "--fit-tp-size", "2"]
     if args.device == "cuda":
