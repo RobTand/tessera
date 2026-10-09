@@ -12,6 +12,8 @@ import hashlib
 import importlib.util
 import json
 import subprocess
+import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -328,3 +330,37 @@ def test_every_shard_runs_under_the_interpreter_the_run_names(tmp_path, monkeypa
     lines = [line for line in capsys.readouterr().out.splitlines() if "pbrun.py" in line]
     assert status == 0 and len(lines) == 2
     assert all("/opt/venv/bin/python -m pytest" in line for line in lines)
+
+
+def test_no_more_than_eight_pbrun_clients_run_at_once(tmp_path, monkeypatch):
+    """D21 caps one agent at eight PrismaBuild clients; the shard count is a separate number.
+
+    Twelve shards queue behind eight clients.  The fake client holds until
+    eight are in flight, so a runner that starts all twelve at once shows a
+    peak of twelve and one that starts eight shows exactly eight.
+    """
+
+    shards = {f"shard-{i:02d}": [f"tests/test_{i}.py"] for i in range(12)}
+    selection = {"shards": shards}
+    lock, release = threading.Lock(), threading.Event()
+    state = {"now": 0, "peak": 0}
+
+    def client(name, arm, args, receipt_dir):
+        with lock:
+            state["now"] += 1
+            state["peak"] = max(state["peak"], state["now"])
+            if state["now"] >= 8:
+                release.set()
+        release.wait(5)
+        time.sleep(0.02)
+        with lock:
+            state["now"] -= 1
+        return {"arm": name, "returncode": 0}
+
+    monkeypatch.setattr(sp.merge_suite, "_submit", client)
+    args = SimpleNamespace(cpus=2, mem_gb=4, pytest_arg=[], timeout_s=1.0, wait_s=1.0,
+                           checkout=tmp_path, dry_run=True, artifact_root=[])
+    results = sp.submit_all(selection, args, tmp_path)
+    assert sorted(results) == sorted(shards)
+    assert sp.MAX_CLIENTS == 8
+    assert state["peak"] == 8
