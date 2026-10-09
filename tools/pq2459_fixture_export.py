@@ -182,8 +182,11 @@ def main(argv=None):
     else:
         command += ["--producer-authority", str(args.producer_authority.resolve()),
                     "--hessian", str(args.hessian)]
-    command += ["--source-digest-cache", str(args.source_digest_cache),
-                "--fit-tp-size", "2"]
+    if not args.dense_only:
+        command += ["--source-digest-cache", str(args.source_digest_cache),
+                    "--fit-tp-size", "2"]
+    else:
+        command += ["--fit-tp-size", "2"]
     if args.device == "cuda":
         command[1:3] = [str(ROOT / "tools/pq2459_export_progress.py")]
     print(json.dumps({"source": source_info, "qualified_cells": 0}, sort_keys=True), flush=True)
