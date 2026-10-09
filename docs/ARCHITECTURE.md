@@ -1,5 +1,6 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
 Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
 CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
 The menu binds build native_span2-sm_121-f01b61f906b7d7fe and table v0003 (SHA-256 35e1f829...dad3c6).
@@ -69,7 +70,6 @@ Older T16 timings retain their actual build and do not qualify the new decoded-w
 New index entries bind each immutable table to its byte digest.
 The producer stages the candidate index without a change to the active index.
 Timing supplies no numerical, native, or serving qualification.
-
 Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
 The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
 Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
@@ -7431,6 +7431,19 @@ names to one parent-relative component and exclusively reserves a fresh venv
 and owned temporary build directory; no pre-existing build path is removed.
 The committed packaging parser preserves Python 3.10 through the declared
 conditional `tomli` dependency, not an implicit interpreter-version cutover.
+
+The repository caller `experiments/submit_gb_d1_producer.sh` forwards both producer selectors unchanged into all three submission actions.
+It preserves the historical scientific inputs and resource bounds.
+It uses the wrappers in the current checkout, not the separate frozen GB and D1 checkouts.
+The caller requires both selectors by name and never derives them from the current directory.
+The exporter owner authenticates the producer before any submission.
+`PBRUN` can select a submission client. Its default is the published PrismaBuild client.
+Run submission mode on a fleet box because the preflight imports torch and hashes the installed package.
+
+`SUBMIT=0` authenticates the producer without submission or GPU work. Run this CPU entry through PrismaBuild.
+All caller refusals are correctness refusals in dev and certified modes.
+The caller adds no receipt or provenance convention.
+The historical caller stays unchanged at `/home/rob/tmp/resubmit-gb-d1.sh`.
 
 ### 4.4f The joined fresh encode: a machine schedule, sealed anyway
 

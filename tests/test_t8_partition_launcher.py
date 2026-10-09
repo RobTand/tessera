@@ -194,7 +194,13 @@ def _launch_env(tmp_path, **over):
 
 
 def _full_stamp(tmp_path, producer, source, input_scales=None,
-                input_scales_bytes=None):
+                input_scales_bytes=None, hessian=None):
+    """The stamp digest reads ``hessian`` when given, else the shared capture.
+
+    Tests that never built a bundle pass their own capture file: the shared
+    global may point at another test's directory, which per-test cleanup
+    removes before this runs.
+    """
     authority = tmp_path / "producer_authority.py"
     # The authority file the launcher will be handed; same bytes _launch_env
     # writes, created here so the stamp's digest is over a real file.
@@ -211,7 +217,7 @@ def _full_stamp(tmp_path, producer, source, input_scales=None,
         "input_scales": scales,
         "content": {
             "plan_sha256": sha_file(PLAN),
-            "hessian_sha256": sha_file(HESSIAN),
+            "hessian_sha256": sha_file(hessian if hessian is not None else HESSIAN),
             "authority_sha256": sha_file(authority),
             "input_scales_sha256": sha_file(input_scales) if scales else None,
         },
@@ -287,9 +293,13 @@ def test_t8_refuses_missing_producer_before_done_marker(tmp_path, qualified_sour
 
 def test_t8_refuses_missing_source_reference(tmp_path, producer_python):
     """The source reference is required by name; $PWD is never a fallback."""
-    mark, _ = _write_marker(tmp_path, _full_stamp(tmp_path, producer_python, Path("/genuine/src/tessera")))
+    capture = tmp_path / "capture.json"
+    capture.write_text("{}\n")
+    mark, _ = _write_marker(tmp_path, _full_stamp(tmp_path, producer_python, Path("/genuine/src/tessera"),
+                                                   hessian=capture))
     before = mark.read_bytes()
-    proc = _run_t8(tmp_path, _launch_env(tmp_path, TESSERA_PRODUCER_PYTHON=producer_python))
+    proc = _run_t8(tmp_path, _launch_env(tmp_path, TESSERA_PRODUCER_PYTHON=producer_python,
+                                         HESSIAN_CAPTURE=capture))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 2, f"expected refusal, got rc={proc.returncode}\n{text}"
     assert "TESSERA_PRODUCER_SOURCE" in text
@@ -325,9 +335,14 @@ def test_t8_refuses_real_unqualified_interpreter(tmp_path):
     """
     pytest.importorskip("torch")
     pytest.importorskip("safetensors")
+    # This test owns its capture file: the shared global may point at another
+    # test's directory, which per-test cleanup removes before this runs.
+    capture = tmp_path / "capture.json"
+    capture.write_text("{}\n")
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=sys.executable,
-        TESSERA_PRODUCER_SOURCE=CHECKOUT / "src" / "tessera"))
+        TESSERA_PRODUCER_SOURCE=CHECKOUT / "src" / "tessera",
+        HESSIAN_CAPTURE=capture))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 2, f"expected refusal, got rc={proc.returncode}\n{text}"
     assert "TESSERA_PRODUCER_PYTHON" in text
@@ -370,16 +385,21 @@ def test_t8_refuses_encode_batch_garbage(tmp_path, producer_python, qualified_so
 def test_t8_refuses_same_path_scale_file_mutation(tmp_path, producer_python, qualified_source):
     """A bound file mutated in place is caught by its digest, not its name."""
     scales = tmp_path / "input_scales.safetensors"
+    capture = tmp_path / "capture.json"
+    capture.write_text("{}\n")
     stamp = _full_stamp(tmp_path, producer_python, qualified_source,
-                        input_scales=scales, input_scales_bytes="scale bytes v1\n")
+                        input_scales=scales, input_scales_bytes="scale bytes v1\n",
+                        hessian=capture)
     mark, _ = _write_marker(tmp_path, stamp, _manifest_bytes(
-        tmp_path / "producer_authority.py", input_scales_seal=sha_file(scales)))
+        tmp_path / "producer_authority.py", input_scales_seal=sha_file(scales),
+        hessian_seal=sha_file(capture)))
     before = mark.read_bytes()
     part_out = mark.parent / "part-0"
     Path(scales).write_text("scale bytes v2\n")
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer_python,
-        TESSERA_PRODUCER_SOURCE=qualified_source, INPUT_SCALES=scales))
+        TESSERA_PRODUCER_SOURCE=qualified_source, INPUT_SCALES=scales,
+        HESSIAN_CAPTURE=capture))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 2, f"expected refusal, got rc={proc.returncode}\n{text}"
     assert "input_scales_sha256" in text, "refusal must name the changed content digest"
@@ -400,15 +420,19 @@ def test_t8_refuses_mutation_behind_restamped_marker(tmp_path, producer_python, 
     scales = tmp_path / "input_scales.safetensors"
     open(scales, "w").write("scale bytes v1\n")
     v1_digest = sha_file(scales)
+    capture = tmp_path / "capture.json"
+    capture.write_text("{}\n")
     stamp = _full_stamp(tmp_path, producer_python, qualified_source,
-                        input_scales=scales, input_scales_bytes="scale bytes v2\n")
+                        input_scales=scales, input_scales_bytes="scale bytes v2\n",
+                        hessian=capture)
     mark, _ = _write_marker(tmp_path, stamp, _manifest_bytes(
-        tmp_path / "producer_authority.py", input_scales_seal=v1_digest))
+        tmp_path / "producer_authority.py", input_scales_seal=v1_digest,
+        hessian_seal=sha_file(capture)))
     before = mark.read_bytes()
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer_python,
         TESSERA_PRODUCER_SOURCE=qualified_source, INPUT_SCALES=scales,
-        PYTHONPATH=CHECKOUT / "src"))
+        HESSIAN_CAPTURE=capture, PYTHONPATH=CHECKOUT / "src"))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 2, f"expected refusal, got rc={proc.returncode}\n{text}"
     assert "consumed.input_scales_sha256" in text, \
@@ -423,9 +447,11 @@ def test_t8_refuses_unvalidated_historical_marker(tmp_path, producer_python, qua
     mark = parts / "part-0.done.json"
     mark.write_text(json.dumps({"stub": STUB, "partition": "0/8", "image": IMG}, indent=1) + "\n")
     before = mark.read_bytes()
+    capture = tmp_path / "capture.json"
+    capture.write_text("{}\n")
     proc = _run_t8(tmp_path, _launch_env(
         tmp_path, TESSERA_PRODUCER_PYTHON=producer_python,
-        TESSERA_PRODUCER_SOURCE=qualified_source))
+        TESSERA_PRODUCER_SOURCE=qualified_source, HESSIAN_CAPTURE=capture))
     text = proc.stdout + proc.stderr
     assert proc.returncode == 2, f"expected refusal, got rc={proc.returncode}\n{text}"
     assert "content" in text and "unvalidated historical marker" in text
