@@ -288,9 +288,12 @@ def routed_wire_facts(blob, declaration):
                     member, role_decl, f"shape-panel {group}[{expert}]")
                 if len(parsed) != 1:
                     raise ValueError(f"expert wire is not one unit: {group}[{expert}]")
+                member_name, unit = parsed[0]
                 name = f"{group}[{expert}].{role_decl['roles'][0][0]}"
+                if member_name != role_decl["roles"][0][0]:
+                    raise ValueError(f"expert wire role differs: {group}[{expert}]")
                 roles.append({"name": name, "rows": role_decl["roles"][0][1],
-                              "facts": _unit_facts(parsed[0], scheme.STRUCTURE_ROUTED_MOE),
+                              "facts": _unit_facts(unit, scheme.STRUCTURE_ROUTED_MOE),
                               "unit_sha256": hashlib.sha256(member).hexdigest()})
     return declared, roles
 

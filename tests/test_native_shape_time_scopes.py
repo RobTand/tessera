@@ -306,10 +306,13 @@ def test_worker_dense_tp2_uses_public_builder(panel, monkeypatch):
     from tessera.serving import lane, native_window
     events = []
 
+    path, request = _dense_request(panel, monkeypatch, tp_degree=2, tp_rank=1)
+    wire = app.tp.read_bound(request["wire"])
+
     class Method:
         def create_weights(self, layer, **kw):
             events.append(("create", kw))
-            layer.wire_bytes = torch.nn.Parameter(torch.empty(16 * 128, dtype=torch.uint8),
+            layer.wire_bytes = torch.nn.Parameter(torch.empty(len(wire), dtype=torch.uint8),
                                                   requires_grad=False)
 
         def process_weights_after_loading(self, layer):
@@ -321,8 +324,6 @@ def test_worker_dense_tp2_uses_public_builder(panel, monkeypatch):
 
     method = Method()
     monkeypatch.setattr(lane, "build_tessera_method", lambda *a: (events.append(("build", a)) or method))
-    path, request = _dense_request(panel, monkeypatch, tp_degree=2, tp_rank=1)
-    wire = app.tp.read_bound(request["wire"])
     layer, got, prep = worker.prepare_dense(
         dict(request, _wire_roles=app.tp.wire_facts(wire, request["scheme"])[1]), wire)
     assert got is method
@@ -358,6 +359,8 @@ def test_worker_routed_tp2_uses_production_builder(panel, monkeypatch, tmp_path)
         calls.append(("build", prefix, mode))
         return FakeMethod()
 
+    path, request = _routed_request(panel, monkeypatch, tmp_path)
+    wire = app.tp.read_bound(request["wire"])
     module = types.ModuleType("shape_time_fake_moe")
     module.build_fake_moe_method = build_fake_moe_method
     monkeypatch.setitem(sys.modules, "shape_time_fake_moe", module)
@@ -369,8 +372,6 @@ def test_worker_routed_tp2_uses_production_builder(panel, monkeypatch, tmp_path)
     monkeypatch.setattr(moe_route, "prepare_tessera_packed_bf16_moe_experts",
                         lambda *a, **k: (_ for _ in ()).throw(
                             AssertionError("research packed path is not the TP2 intake")))
-    path, request = _routed_request(panel, monkeypatch, tmp_path)
-    wire = app.tp.read_bound(request["wire"])
     layer, got, prep = worker.prepare_routed(
         dict(request, _wire_roles=app.tp.wire_facts(wire, request["scheme"])[1]), wire)
     assert isinstance(got, FakeMethod)
