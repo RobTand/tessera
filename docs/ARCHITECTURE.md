@@ -1,5 +1,9 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-10-09 for the hosted producer dependency (issue #1018).
+Hosted pure installs the existing jsonschema dependency required by the real producer.
+Torch stays absent. The producer keeps its structural and semantic validation.
+
 Re-stamped 2026-10-09 for absent rank-shape coverage (issue #1018).
 A release unit without tensor_parallel_shapes returns an explicit geometry wait.
 No shape, rank cut, timing, or qualification is invented for an absent field.

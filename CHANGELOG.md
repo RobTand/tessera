@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-09 — hosted pure producer dependency (issue #1018)
+
+The hosted pure job installs jsonschema 4.25.1 for the real immutable producer.
+It installs no Torch package. The meaningful producer test and both validation steps stay active.
+
 ## 2026-10-09 — absent rank-shape coverage (issue #1018)
 
 A release unit without tensor_parallel_shapes returns a geometry wait instead of KeyError.
