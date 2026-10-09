@@ -45,6 +45,12 @@ The real-child case passes alone and in twelve shards with two workers each.
 Twenty-four CPU burners shared four admitted CPUs with those shards.
 These CPU-only checks do not qualify the CUDA surface.
 
+## 2026-10-09 — keep stageprev 793 tests free of host paths
+
+Remove the redundant published-root override from the observer test (#1078).
+Keep all API, manifest identity, refusal and GPU HOLD checks unchanged.
+The box-artifact path gate and the published-SDK observer both pass.
+
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 
 The grouped owner now has one FP32 row-scale epilogue.
