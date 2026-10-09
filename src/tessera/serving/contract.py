@@ -185,7 +185,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v11"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v12"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -1778,7 +1778,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 "cell that names no launch attests a route nobody can identify, and an empty "
                 "list would read as 'this regime runs nothing'")
         for j, launch in enumerate(executes):
-            _require_keys(launch, f"{where}.executes[{j}]", required={"symbol", "decoder"})
+            _require_keys(launch, f"{where}.executes[{j}]", required={"symbol", "decoder"},
+                          optional={"rungs_q256"})
         if len(cell_executes(cell)) != len(executes):
             raise ValueError(
                 f"{where}.executes repeats a (symbol, decoder) pair; the field is a SET of "
@@ -2288,9 +2289,15 @@ def _all_modes() -> tuple:
     return MODES
 
 
-def cell_executes(cell: Mapping[str, Any]) -> set:
-    """``{(symbol, decoder)}`` a cell publishes -- the census's own shape."""
-    return {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
+def cell_executes(cell: Mapping[str, Any], *, q256: int | None = None,
+                 entry: Mapping[str, Any] | None = None) -> set:
+    """Read published pairs, optionally within their census and run-table scope."""
+    return {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]
+            if q256 is None or "rungs_q256" not in e
+            or cell_covers_rung(
+                {"rungs_q256": e["rungs_q256"],
+                 "run_tables": derived_cell_run_tables(e, entry) if entry is not None else []},
+                q256, entry)}
 
 
 def _is_int(value: Any) -> bool:
@@ -2936,14 +2943,43 @@ def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping
     return tuple(out)
 
 
-def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
-                         contract: Mapping[str, Any], where: str = "cell") -> set:
-    """Derive attested execution identities from the cell axes and qualification records.
+# This receipt qualifies one current decoder, not the global execution registry.
+# Historical identities remain valid only on their original run tables.
+_SCOPED_EXECUTION_RECEIPTS = ({
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "routed_moe",
+    "regimes": ("decode", "batch"),
+    "residencies": ("resident",),
+    "image": ("localhost/prismaquant/spark-vllm-nccl230@sha256:"
+              "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"),
+    "execution_modes": ("eager",),
+    "rungs_q256": (768,),
+    "pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+             "native_routed_window_classes_e4m3mma"),
+    "receipt": "experiments/results/glm53_r768_stub_base_tp2_eager_census.json",
+},)
 
-    Historical WINDOW receipts retain their original identities.
-    They do not qualify the current class operation.
-    """
+
+def _receipt_executes_at_rung(cell: Mapping[str, Any], rung: int) -> set:
+    """Read receipt-qualified pairs for the exact runtime and census rung."""
+    runtime = cell.get("runtime", {})
+    return {receipt["pair"] for receipt in _SCOPED_EXECUTION_RECEIPTS
+            if all(cell.get(axis) == receipt[axis] for axis in ("platform", "family", "structure"))
+            and cell["regime"] in receipt["regimes"]
+            and cell_residency_modes(cell) == receipt["residencies"]
+            and runtime.get("image") == receipt["image"]
+            and tuple(runtime.get("execution_modes", ())) == receipt["execution_modes"]
+            and rung in receipt["rungs_q256"]}
+
+
+def _cell_executes_at_rung(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                          contract: Mapping[str, Any], rung: int, where: str) -> set:
+    """Derive execution identities for one census rung."""
     from .scheme import qualification_launch_pairs
+    served = _receipt_executes_at_rung(cell, rung)
+    if served:
+        return served
 
     wires = {int(w["q256"]): w for w in entry["attested_wire"]}
     # The family's own published terminal rate, so a rung above what this
@@ -2961,15 +2997,19 @@ def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str
     # derives over every rung the cell covers.
     _family_arity_cap(entry, where)
     modes = cell_residency_modes(cell, where)
-    want: set = set()
-    for rung in cell["rungs_q256"]:
-        rates = rung_rates(entry, int(rung))
-        lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
-                                      str(entry["grid"]), str(cell["structure"]))
-        for mode in modes:
-            want |= qualification_launch_pairs(route, structure=cell["structure"],
-                                 regime=cell["regime"], mode=mode, lanes=lanes)
-    return want
+    rates = rung_rates(entry, int(rung))
+    lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
+                                  str(entry["grid"]), str(cell["structure"]))
+    return set().union(*(qualification_launch_pairs(
+        route, structure=cell["structure"], regime=cell["regime"], mode=mode, lanes=lanes)
+        for mode in modes))
+
+
+def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
+                         contract: Mapping[str, Any], where: str = "cell") -> set:
+    """Derive the union of qualified execution identities over the census rungs."""
+    return set().union(*(_cell_executes_at_rung(cell, route, entry, contract, rung, where)
+                         for rung in cell["rungs_q256"]))
 
 
 def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str, Any],
@@ -2981,7 +3021,9 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     """
     # The per-code root, the family cap and the covered run tables are
     # derive_cell_executes's; this compares.
-    want = derive_cell_executes(cell, route, entry, contract, where)
+    by_rung = {rung: _cell_executes_at_rung(cell, route, entry, contract, rung, where)
+               for rung in cell["rungs_q256"]}
+    want = set().union(*by_rung.values())
     modes = cell_residency_modes(cell, where)
     got = cell_executes(cell)
     if got != want:
@@ -2991,6 +3033,20 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
             f"{cell['regime']!r} regime at residency {list(modes)} "
             f"on rung(s) {list(cell['rungs_q256'])}. "
             "Current experimental operations are not attested by historical receipts.")
+    # Only cells with a new scoped receipt need explicit per-launch coverage.
+    scoped = any(_receipt_executes_at_rung(cell, rung) for rung in by_rung)
+    for index, launch in enumerate(cell["executes"]):
+        rungs = launch.get("rungs_q256", cell["rungs_q256"])
+        if "rungs_q256" not in launch and not scoped:
+            continue
+        pair = (launch["symbol"], launch["decoder"])
+        expected = sorted(rung for rung, pairs in by_rung.items() if pair in pairs)
+        if (not isinstance(rungs, list) or not rungs
+                or any(not _is_int(rung) for rung in rungs)
+                or rungs != expected):
+            raise ValueError(
+                f"{where}.executes[{index}].rungs_q256 is {rungs!r}; "
+                f"the execution receipts require {expected!r} for {pair!r}.")
 
 
 #: ``formats[]`` family -> the ``scheme.ROUTES`` key that serves it.  Two names

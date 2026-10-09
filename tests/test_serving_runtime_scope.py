@@ -44,6 +44,12 @@ def _scoped_contract():
     assert IMAGE not in list(mapped.values())[1:] and OTHER_IMAGE not in mapped.values()
     for cell in contract["lane_eligibility"]["cells"]:
         cell["runtime"] = {**copy.deepcopy(RUNTIME), "image": mapped[cell["runtime"]["image"]]}
+        # A synthetic image cannot retain the base-image class qualification.
+        entry = runtime_contract.format_entry(cell["family"], contract)
+        cell["executes"] = [
+            {"symbol": symbol, "decoder": decoder}
+            for symbol, decoder in sorted(runtime_contract.derive_cell_executes(
+                cell, runtime_contract._FAMILY_TO_ROUTE[cell["family"]], entry, contract))]
         # Since contract v48 some cells carry the runtime suffix the validator
         # derives from the scope (tessera#702: the nightly GLM cells share a
         # scope with the f8dbe1a0 cells that hold the bare ids).  A rewritten

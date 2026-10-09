@@ -23,7 +23,7 @@ from ..dev_mode import dev_mode_enabled, seal_check
 from ..errors import TesseraError
 from ..fused_frame import parse_fused
 from . import census_plan, scheme
-from .contract import (PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, cell_runtime_scope,
+from .contract import (PAYLOAD_FAMILY_BY_ROUTE, cell_covers_rung, cell_executes, cell_runtime_scope,
                        cell_runtime_code, cell_runtime_versions, cell_residency_modes,
                        cell_is_device_backed, refuse_unevaluated_predicates,
                        validate_serving_contract, require_runtime_image)
@@ -240,7 +240,7 @@ def admitted_cell(contract, scope, runtime, pair, roles):
         flags = runtime["serve_flags"]
         if any("=" not in flag or flags.get(flag.split("=", 1)[0]) not in flag.split("=", 1)[1].split("|") for flag in cell["requires_serve_flags"]):
             continue
-        if tuple(pair) not in {(v["symbol"], v["decoder"]) for v in cell["executes"]}:
+        if tuple(pair) not in cell_executes(cell, q256=scope["q256"], entry=fmt):
             continue
         candidates.append(cell)
     if len(candidates) != 1:

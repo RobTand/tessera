@@ -1,6 +1,75 @@
 # Tessera plan-to-serve architecture
 
 Re-stamped 2026-10-09 for the migrated GB and D1 producer caller (tessera#944).
+Re-stamped 2026-10-09 for the canonical T4 performant menu (issue #1103).
+CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as performance-only TCQ menus.
+The menu binds build native_span2-sm_121-f01b61f906b7d7fe and table v0003 (SHA-256 35e1f829...dad3c6).
+The recipe is TCQ span2 lut16 with seed 0 and no sigma value. The activation contract is e2m1_group16_ue4m3_static.
+Seven bits apply to each paired code. The body rate is 3.5 bits per scalar weight, before metadata fees.
+`performant_rungs` returns (896,) for both T4 structures and keeps T8 and T16 menus unchanged.
+`admit_rung` allows only measured q896 cells in the exact twenty-cell scope with approved shapes and M values.
+Admission also binds routing, mode, epilogue, kernel path, decoder, execution scope, and input distribution.
+Other builds, rungs, recipes, shapes, routes, modes, epilogues, paths, or cell rosters wait.
+A wrong scope field waits with its own reason. An unknown scope waits with performance_admission_not_established.
+Correctness holds, source refusals, and the kernel_not_serving_qualified refusal stay in force.
+The old build keeps its reader-bounds hold and failed cells. No WINDOW L12 or L14 admission follows.
+Re-stamped 2026-10-09 for the hosted producer dependency (issue #1018).
+Hosted pure installs the existing jsonschema dependency required by the real producer.
+Torch stays absent. The producer keeps its structural and semantic validation.
+
+Re-stamped 2026-10-09 for absent rank-shape coverage (issue #1018).
+A release unit without tensor_parallel_shapes returns an explicit geometry wait.
+No shape, rank cut, timing, or qualification is invented for an absent field.
+
+Re-stamped 2026-10-09 for structure-scoped release coverage (issue #1018).
+Release units match only their actual kernel kind or existing structure mapping.
+Routed units never borrow dense timing cells. Legacy shared and dense units keep their dense scope.
+Unknown structures retain missing-geometry waits.
+
+Re-stamped 2026-10-09 for the pure metadata boundary correction (issue #1018).
+Version two and version three input-table metadata use the alphabet's pure grid owner.
+The existing version one conversion and actual raw-input normalization retain their owner paths.
+The meaningful hosted pure test stays active. No measurement or qualification changes.
+
+Contract v66 admits R768 and table [3] on the two base routed E4M3 cells (tessera#1080, PR #1045).
+The base-image TP2 receipt proves decoder `native_routed_window_classes_e4m3mma` on both ranks in decode M1 and batch M64.
+Qualification covers only `sm_121`, the base image, eager execution, resident service, and R768.
+The current execution registry remains experimental outside that receipt scope.
+Historical decoder identities keep their original census rungs and run tables.
+Lane schema v12 adds optional `executes[].rungs_q256`. Absence means the cell's full scope.
+Each launch covers its census rungs and the allowable rungs of their derived run tables.
+The validator derives each launch scope from its execution receipts. The census checks the record's actual rung.
+PrismaQuant refuses lane schema v12 by name until its reader admits the schema.
+That reader must also apply `executes[].rungs_q256`. A reader that ignores the key reads the class pair at every rung and the historical pairs at R768.
+Issue [prismaquant#2511](https://github.com/RobTand/prismaquant/issues/2511) tracks that reader. Rob and the CEO approved lane schema v12 on 2026-10-09 (tessera#1080).
+The PrismaQuant serving and export pin names an exact Tessera commit and contract digest. It stays at lane schema v11 until that reader lands and its tests pass.
+This contract reaches serving and export only when a later pin bump adopts it.
+The runtime twins retain their master scope and refuse R768. R640 and R1280-R2048 remain refused.
+No kernel, decoder implementation, pin, or default changes. This receipt proves no KL or speed.
+Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
+Configuration: `experiments/results/glm53_r768_stub_base_config.json`.
+
+Re-stamped 2026-10-08 for the canonical class publication (issue #1018).
+
+The existing class interface publishes retained timing samples and exact performance scope.
+Each measured value names its original action, source, binary, paired seed, and clock window.
+Pass ranges, sample standard deviations, and paired drift describe the retained samples.
+No confidence interval exists without a retained independent estimate.
+Raw samples must agree with finite paired-pass times.
+Class-derived values name every eligible donor and do not become measured values.
+
+The immutable producer adds class timing records and a complete declared-cell scope matrix.
+Historical sample variation stays separate from hard correctness flags.
+Missing shapes, recipes, activations, and token rows still wait.
+An absent tensor-parallel shape has an explicit wait marker, not an empty successful population.
+T4 uses one code for two scalar weights. Its qualified dense and routed menus hold only approved q896.
+Supplier prose does not control admission. The producer checks physical arity and the approved menu.
+T8 R640 has no supported publication. R1280 stays a pricing anchor, not a performance option.
+Older T16 timings retain their actual build and do not qualify the new decoded-weight epilogue.
+
+New index entries bind each immutable table to its byte digest.
+The producer stages the candidate index without a change to the active index.
+Timing supplies no numerical, native, or serving qualification.
 Re-stamped 2026-10-08 for the grouped arithmetic consumer cutover.
 The grouped owner has one FP32 row-scale epilogue and no arithmetic selector.
 Register-direct consumers read row scales from scale_all and keep the family, window and table checks.
@@ -14,6 +83,7 @@ Dense and grouped kernels accumulate the raw-value dot in FP32, then apply
 the row scale before the output conversion. Routed gate/up outputs, the
 activation and each weighted route preserve their BF16 conversion boundaries.
 The token reducer adds routes in a fixed order. The runner owns shared output.
+
 Re-stamped 2026-10-08 for the graph witness rank correction (issue #1062).
 
 The witness joins the explicit rank and world size from each receipt row.
@@ -433,19 +503,28 @@ cells. The terminal WINDOW recipe is not replaced with a BF16 passthrough
 reference. Missing timings, compiler resources or actual sampled expert
 quality leave the versioned table rows pending; no T8 timings are inherited.
 
-Re-stamped 2026-10-06 for PB1496 (unnameable base): the impacted-test selector's
-documented limit is unchanged -- a directory read whose base nothing names, in a
-module that executes nothing, states no dependency and selects no test (#148;
-treating it as an unplaced read selected 424 of 424 test files for any change).
-The result now lists each such read under `unnamed_directory_reads` and the
-text receipt prints it, so a reader of this shape is seen instead of silently
-unselected. `tests/test_impacted_tests.py` holds the count at what the tree had
-when this was added (115 modules, 168 sites, most taking the directory as a
-parameter or calling the standard library's `glob.glob(pattern)`) and fails if
-it rises. The count was 114 modules and 167 sites on 2026-10-07 and the ceiling
-now holds there (#1014). Selector infrastructure only: no wire, recipe
-table, serving lane, plugin contract, numerical path, residency or performance
-default moves.
+Re-stamped 2026-10-08 for issue #1014: the impacted-test selector retains the
+accepted unnamed-base limit (#148).
+A directory read with no nameable base states no dependency when its module executes no source.
+The selector reports each such site under `unnamed_directory_reads`.
+The text receipt prints the same sites.
+
+`docs/reports/unnamed-directory-reads-1014.md` classifies all 169 sites that
+`select()` reported in 115 modules on base `83a1f38c4965`.
+The classes contain one nameable base, 103 runtime bases, 28 external box reads,
+37 temporary test reads, and no recognizer false positives.
+The report records reverse module and test counts for all 35 runtime-base modules with test consumers.
+An imported module's source path remains runtime state, not proof of this checkout's path.
+
+Literal tuple, list, and set elements now supply separate loop-variable alternatives.
+This correction names the conftest's three import roots without a parameter guess or a scalar sequence conversion.
+`select()` now reports 114 modules and 168 sites.
+`tests/test_impacted_tests.py` holds both ceilings at those measured counts.
+The merge-base smoke on master `572539ad224c` confirmed the same census and all 35 runtime-module consumer counts.
+The report records its PrismaBuild action and source evidence.
+Refused bases and source loaders retain their conservative selection.
+External box globs and temporary test fixtures do not gain unrelated tests.
+No wire, recipe, serving contract, numerical rule, or performance default changes.
 
 Re-stamped 2026-10-06 for PB1496: the impacted-test selector no longer treats a
 `.md`, `.txt` or `.rst` change as proof that an unknown loader did not read it.
@@ -696,6 +775,18 @@ SHA into the submitted inputs; each rank emits
 baseline, minimum, raw samples and counters kept so a future window can measure
 the 6 GiB allowance, not a measured RSS decomposition — and the Envelope
 outcome carries the termination list with container termination evidence.
+
+`Envelope._terminate` retains the original work failure when its final
+`Popen.wait` times out after SIGKILL (#1053).
+Each termination record includes `reap_timeout_seconds`, `reap_timed_out`,
+`returncode` and `ended_unix`, including a delayed reap.
+The existing reap bound remains 0.01 to one second, limited by the absolute deadline.
+A null return code does not prove process exit.
+Signals still target only the process group that the Envelope created.
+The PB worker retains final responsibility for physical scope cleanup.
+
+The real-child regression awaits asynchronous death within its unchanged 9.5-second elapsed limit.
+
 Protected sysctl, ARC, cache and service settings are untouched. This mints no
 performance, fit or pin claim; old producer approvals do not transfer, and pool
 review must check both the derivation and the guard against the exact new
@@ -816,6 +907,18 @@ root; the actual frozen Python/native choice must match before arm preparation.
 Only the numeric phase is admitted: no old numericV4 receipt, timing/profile,
 NCU or repeated720-event population can stand for changed-source proof. These
 CPU schema/refusal controls are not CUDA numerical/performance/energy authority.
+
+Re-stamped 2026-10-09 for the stageprev 793 operative gate (tessera#1078).
+The gate checks the public claim names and exact consumer calls the proof uses,
+not the SDK version number. `stageprev_793_claim_contract.required_api_problems`
+binds each `PoolQueue` or ledger call through a blank owner instance, so the
+descriptor protocol removes the receiver whatever name it uses. A static entry
+that keeps its receiver refuses, as do an extra required argument and a keyword
+collision. `observe_current_claim_contract` records that verdict beside the pool
+digest. `stageprev_793_prerequisites` refuses a contract with open API problems.
+The version number stays in the record as provenance only.
+CPU refusal controls remove `PoolQueue.offers` and supply an incompatible signature.
+They exercise the observer and collector without a claim or GPU submission.
 
 Re-stamped 2026-10-04 (`v6/ts696-stock-runner-guard-20261004`, #696):
 the GLM53 NoPE runner-identity owner rejects the known stock V2 runner in
@@ -1677,8 +1780,16 @@ T4 activation-prefetch experiment (2026-10-02, #875):
   checks, exact hashes, fp64 dtype bounds and graph/eager identity. Native
   consumer execution additionally requires all48 GPU cases (42 FP4 cases and
   six terminal patterns); skipped or changed populations fail qualification.
+  The qualification container does not ship pytest. Its wrapper uses the existing
+  routed-fused test-runner convention: `TEST_RUNNER_SP` supplies only pytest,
+  `_pytest`, pluggy, iniconfig, packaging and `py.py`, copied under the action
+  output and appended to `PYTHONPATH`. Torch, Triton and vLLM remain the image
+  versions. Native-arm CPU mapping checks the pytest import before mapping the
+  retained banks; portable x86 dry runs and the actual arm64 container smoke
+  are separate evidence, neither a GPU or serving qualification.
   Nonfinite outputs/references/bounds refuse (actual false-pass RED: PB62e3e5ee).
-* Before GPU qualification, root must authorize the resource/readset. Use the
+* GPU qualification uses normal PrismaBuild admission after fresh D1 disk
+  checks; no separate root-authorization gate remains. Use the
   same real captured/calibrated T4 bundle bank, input/global scales, residency,
   recorded routing and quantizer in both arms. Full matrix: modes0/1/2 and
   chain, all admitted uniform/adjacent rates, TP1 and each legal TP2 cut with

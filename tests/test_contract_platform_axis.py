@@ -236,7 +236,10 @@ def test_the_packaged_contract_validates_at_v33(contract):
     assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
-    assert LANE_ELIGIBILITY_SCHEMA.endswith(".v11")
+    old_reader = copy.deepcopy(contract)
+    old_reader["lane_eligibility"]["schema"] = "tessera.lane-eligibility.v11"
+    with pytest.raises(ValueError, match="lane_eligibility.schema"):
+        validate_serving_contract(old_reader)
 
 
 def test_v46_publishes_the_e4m3_instruction_library(contract):

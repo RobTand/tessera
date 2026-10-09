@@ -477,6 +477,148 @@ INDEX_SCHEMAS={'fleet.rung_allowability.index.v1':INDEX_SCHEMA,'fleet.rung_allow
 PERFORMANT_POLICY = {"kind": "whole_bit_per_structure", "authority": "D41 whole-bit and measured half-bit authority, 2026-10-06",
                      "qualification_scope": "Performance evidence does not replace independent export, numerical, or serving gates."}
 
+## CEO decision dec-1009-095820-aebb approves dense [896] and routed [896] as
+## performance-only TCQ menus for build native_span2-sm_121-f01b61f906b7d7fe
+## table v0003 (tessera#1106). Seven bits apply to each paired code; the body
+## rate is 3.5 bits per scalar weight, before metadata fees. The scope below
+## binds the build, activation contract, recipe, shapes, M values, routing,
+## mode, epilogue, kernel path, decoder and input distribution read from
+## that table. No WINDOW L12 or L14 admission follows from this approval.
+## Independent numerical, native and serving gates stay in force. The old
+## build native_span2-sm_121-92e1315ad1b173b0 keeps its reader-bounds hold
+## and failed cells and receives no admission from this approval.
+E2M1_K2_PERFORMANT_MENU = {"dense": (896,), "routed": (896,),
+                           "kernel_build_id": "native_span2-sm_121-f01b61f906b7d7fe",
+                           "table_path": "/mnt/shared/fleet-ceo/rung-allowability/TESSERA_E2M1_K2/native_span2-sm_121-f01b61f906b7d7fe/v0003.json",
+                           "table_sha256": "35e1f82998f92116bba30af77161d7c7b1092b368723113ede99ce7a74dad3c6",
+                           "activation_contract": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer",
+                           "recipe": {"body": "tcq", "span": 2, "plane": "lut16", "window_bits": 0, "seed": 0, "sigma": None, "channel_sigma": None},
+                           "approval": "dec-1009-095820-aebb",
+                           "cell_ids": ("routed:gate_up:M1", "routed:gate_up:M16", "routed:gate_up:M2048", "routed:gate_up:M4096",
+                                        "routed:down:M1", "routed:down:M16", "routed:down:M2048", "routed:down:M4096",
+                                        "dense:o_proj:M1", "dense:o_proj:M16", "dense:o_proj:M2048", "dense:o_proj:M4096",
+                                        "dense:q_b:M1", "dense:q_b:M16", "dense:q_b:M2048", "dense:q_b:M4096",
+                                        "routed:gate_up:M2048:recorded", "routed:gate_up:M4096:recorded",
+                                        "routed:down:M2048:recorded", "routed:down:M4096:recorded"),
+                           "shapes": {"gate_up": {"kernel_kind": "routed", "rows": 1024, "columns": 4096, "mode": 0},
+                                      "down": {"kernel_kind": "routed", "rows": 4096, "columns": 1024, "mode": 2},
+                                      "o_proj": {"kernel_kind": "dense", "rows": 4096, "columns": 4096, "mode": 2},
+                                      "q_b": {"kernel_kind": "dense", "rows": 8192, "columns": 1536, "mode": 2}},
+                           "M": (1, 16, 2048, 4096),
+                           "routing": {"routed": "balanced", "dense": "none", "recorded": "recorded"},
+                           "epilogues": {"gate_up": "SwiGLU clipped at 10", "down": "route-weighted BF16 down",
+                                         "o_proj": "BF16 linear output", "q_b": "BF16 linear output"},
+                           "execution": {"body_kind": "tcq", "decoder_kind": "native_tcq", "decoder_owner": "tessera.kernel_a4",
+                                         "execution_scope": "native_tcq_decode_gemm",
+                                         "kernel_path": {"routed": "tessera.kernel_a4.a4_span2_grouped_gemm",
+                                                         "dense": "tessera.kernel_a4.a4_span2_gemm"}},
+                           "input_distribution": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer"}
+
+
+def _e2m1_k2_parse_cell_id(cell_id):
+    """Parse an approved cell ID into its immutable parts."""
+    if not isinstance(cell_id, str):
+        return None
+    parts = cell_id.split(":")
+    if len(parts) not in (3, 4):
+        return None
+    kind, shape_id, m_part = parts[0], parts[1], parts[2]
+    if kind not in ("routed", "dense") or not shape_id or not m_part.startswith("M"):
+        return None
+    try:
+        m_value = int(m_part[1:])
+    except ValueError:
+        return None
+    if m_value <= 0:
+        return None
+    if len(parts) == 4:
+        if parts[3] != "recorded":
+            return None
+        recorded = True
+    else:
+        recorded = False
+    return {"kernel_kind": kind, "shape_id": shape_id, "M": m_value, "recorded": recorded}
+
+
+def _e2m1_k2_approved_cell_record(table, cell_id):
+    """Return the approved semantic record for one cell, or None."""
+    menu = E2M1_K2_PERFORMANT_MENU
+    if cell_id not in menu["cell_ids"]:
+        return None
+    parsed = _e2m1_k2_parse_cell_id(cell_id)
+    if parsed is None or parsed["M"] not in menu["M"]:
+        return None
+    required = {cell["cell_id"]: cell for cell in table["scope"]["required_cells"]}
+    declared = required.get(cell_id)
+    if declared is None or declared.get("cell_id") != cell_id:
+        return None
+    if (declared.get("kernel_kind"), declared.get("shape_id"), declared.get("M")) != (
+            parsed["kernel_kind"], parsed["shape_id"], parsed["M"]):
+        return None
+    shape = menu["shapes"].get(parsed["shape_id"])
+    if shape is None or shape["kernel_kind"] != parsed["kernel_kind"]:
+        return None
+    routing = menu["routing"]["recorded"] if parsed["recorded"] else menu["routing"][parsed["kernel_kind"]]
+    if declared.get("routing", routing) != routing:
+        return None
+    return {"cell_id": cell_id, "kernel_kind": parsed["kernel_kind"], "shape_id": parsed["shape_id"],
+            "M": parsed["M"], "shape": shape, "routing": routing,
+            "epilogue": menu["epilogues"][parsed["shape_id"]],
+            "kernel_path": menu["execution"]["kernel_path"][parsed["kernel_kind"]]}
+
+
+def _e2m1_k2_approved_measurement(record, measurement):
+    """Name the first approved semantic field a measured cell breaks."""
+    menu = E2M1_K2_PERFORMANT_MENU
+    if measurement.get("cell_id") != record["cell_id"]:
+        return "unmeasured_shape_or_M_scope"
+    if (measurement.get("kernel_kind"), measurement.get("shape_id"), measurement.get("M")) != (
+            record["kernel_kind"], record["shape_id"], record["M"]):
+        return "unmeasured_shape_or_M_scope"
+    evidence = measurement.get("evidence") or {}
+    geometry = measurement.get("geometry") or {}
+    if (evidence.get("rows"), evidence.get("columns")) != (record["shape"]["rows"], record["shape"]["columns"]):
+        return "unmeasured_shape_or_M_scope"
+    if evidence.get("routing") != record["routing"]:
+        return "unmeasured_shape_or_M_scope"
+    if evidence.get("input_distribution") != menu["input_distribution"]:
+        return "unmeasured_activation_scope"
+    if evidence.get("mode") != record["shape"]["mode"] or evidence.get("epilogue") != record["epilogue"]:
+        return "unmeasured_execution_scope"
+    if measurement.get("kernel_path") != record["kernel_path"]:
+        return "unmeasured_execution_scope"
+    if (geometry.get("body_kind"), geometry.get("decoder_kind"), geometry.get("decoder_owner"),
+            geometry.get("execution_scope")) != (menu["execution"]["body_kind"], menu["execution"]["decoder_kind"],
+                                                menu["execution"]["decoder_owner"], menu["execution"]["execution_scope"]):
+        return "unmeasured_execution_scope"
+    if geometry.get("recipe") != menu["recipe"]:
+        return "unmeasured_recipe_scope"
+    return None
+
+
+def _e2m1_k2_approved_scope(table):
+    """True only for the exact approved build, activation, shapes, and roster."""
+    menu = E2M1_K2_PERFORMANT_MENU
+    if table["format"] != "TESSERA_E2M1_K2":
+        return False
+    if table["kernel_build"]["id"] != menu["kernel_build_id"]:
+        return False
+    if table["kernel_build"]["activation_contract"] != menu["activation_contract"]:
+        return False
+    required = table["scope"]["required_cells"]
+    if {cell["cell_id"] for cell in required} != set(menu["cell_ids"]):
+        return False
+    declared_shapes = {(shape["kernel_kind"], shape["shape_id"]): shape for shape in table["scope"].get("shapes", [])}
+    for shape_id, spec in menu["shapes"].items():
+        declared = declared_shapes.get((spec["kernel_kind"], shape_id))
+        if declared is None:
+            return False
+        if (declared["rows"], declared["columns"], declared.get("mode")) != (spec["rows"], spec["columns"], spec["mode"]):
+            return False
+    if len(declared_shapes) != len(menu["shapes"]):
+        return False
+    return all(_e2m1_k2_approved_cell_record(table, cell["cell_id"]) is not None for cell in required)
+
 
 def performant_rungs(format, kernel_kind):
     """The owning menu, not a consumer-side copy or an encoder-capacity guess."""
@@ -486,7 +628,7 @@ def performant_rungs(format, kernel_kind):
     if format == "TESSERA_BF16_K1":
         return tuple(sorted((*range(256, (3584 if kernel_kind == "dense" else 2048) + 1, 256), 896)))
     if format == "TESSERA_E2M1_K2":
-        return ()
+        return E2M1_K2_PERFORMANT_MENU[kernel_kind]
     return ()
 
 
@@ -499,6 +641,44 @@ def scope_cell_ids(table, *, kernel_kind, rows, columns, M, routing=None):
     return tuple(cell['cell_id'] for cell in table['scope']['required_cells']
                  if cell['kernel_kind'] == kernel_kind and cell['shape_id'] in matches and cell['M'] == M
                  and (routing is None or cell.get('routing', 'balanced' if kernel_kind == 'routed' else 'none') == routing))
+
+
+TIMING_PUBLICATION = {
+    'schema': 'tessera.class_timing.v1',
+    'sample_scope': 'Retained samples describe each timed pass, not independent paired repetitions.',
+    'qualification_scope': 'Timing does not confer numerical, native, or serving qualification.',
+}
+
+
+def timing_evidence(measurement):
+    """Report retained variability. Do not manufacture a confidence interval."""
+    import statistics
+    passes = {}
+    evidence = measurement['evidence']
+    for name, median_us in zip(('F', 'R'), measurement['pass_times_us']):
+        recorded = evidence.get(name) or {}
+        samples = recorded.get('samples_ms')
+        if samples is None or samples == []:
+            passes[name] = {'status': 'unavailable', 'sample_count': 0,
+                            'median_us': median_us, 'reason': 'No retained raw samples.'}
+            continue
+        _require(isinstance(samples, list) and all(_number(value) and value > 0 for value in samples), 'invalid retained timing samples')
+        actual = statistics.median(samples) * 1000
+        _require(_number(actual) and abs(actual - median_us) <= math.ulp(actual) + math.ulp(median_us), 'retained sample median differs from paired pass')
+        values = [value * 1000 for value in samples]
+        passes[name] = {'status': 'measured', 'sample_count': len(values), 'median_us': median_us,
+                        'sample_range_us': [min(values), max(values)],
+                        'sample_stddev_us': statistics.stdev(values) if len(values) > 1 else None,
+                        'unix': recorded.get('unix'), 'clock': recorded.get('clock')}
+    a, b = measurement['pass_times_us']
+    return {'passes': passes, 'paired_median_range_us': [min(a, b), max(a, b)],
+            'paired_relative_spread': abs(a - b) / measurement['kernel_time_us'],
+            'confidence_interval': {'status': 'unavailable', 'reason': 'No retained confidence estimate for independent paired repetitions.'},
+            'sample_scope': TIMING_PUBLICATION['sample_scope'],
+            'source': {key: evidence.get(key) for key in (
+                'action_key', 'comparison_id', 'geometry_file', 'paired_seed_contract', 'timing_statistic',
+                'timer', 'quantum_window_unix', 'loaded_library_sha256', 'kernel_source_sha256',
+                'observed_measurement_build_id')}}
 
 
 def geometry_class_identity(table, rung, measurement):
@@ -537,6 +717,9 @@ def measured_geometry_classes(table):
             key = json.dumps(identity, sort_keys=True, separators=(',', ':'))
             group = groups.setdefault(key, {'identity': identity, 'observed_rungs': []})
             group['observed_rungs'].append(row['rung'])
+            if table.get('timing_publication') is not None:
+                group.setdefault('timings', []).append({'rung': row['rung'], 'value_kind': 'measured',
+                    'kernel_time_us': measurement['kernel_time_us'], 'timing': timing_evidence(measurement)})
     return [groups[key] for key in sorted(groups)]
 
 
@@ -555,7 +738,20 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
             status = 'wait' if table['format'] == 'TESSERA_E2M1_K2' else 'excluded'
             results.append({'cell_id': cell_id, 'status': status, 'reason': 'performance_admission_not_established' if status == 'wait' else 'outside_performant_menu'})
             continue
+        if table['format'] == 'TESSERA_E2M1_K2' and not _e2m1_k2_approved_scope(table):
+            results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'performance_admission_not_established'})
+            continue
         measurement = cells.get(cell_id)
+        if table['format'] == 'TESSERA_E2M1_K2':
+            record = _e2m1_k2_approved_cell_record(table, cell_id)
+            if record is None:
+                results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'performance_admission_not_established'})
+                continue
+            if measurement is not None and measurement['measurement_status'] == 'measured':
+                broken = _e2m1_k2_approved_measurement(record, measurement)
+                if broken is not None:
+                    results.append({'cell_id': cell_id, 'status': 'wait', 'reason': broken})
+                    continue
         if measurement is None or measurement['measurement_status'] == 'pending':
             results.append({'cell_id': cell_id, 'status': 'wait', 'reason': 'missing_actual_measurement'})
         elif measurement['measurement_status'] != 'measured':
@@ -578,6 +774,10 @@ def _admit_performance_scope(table, row, rung, cell_ids, activation_contract, re
 def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     """Return actual or safe class-derived times without inherited admission."""
     validate_table(table)
+    return _rung_speed(table, rung=rung, cell_id=cell_id, class_identity=class_identity)
+
+
+def _rung_speed(table, *, rung, cell_id=None, class_identity=None):
     if not _integer(rung) or not table["scope"]["rung_min"] <= rung <= table["scope"]["rung_max"]:
         return {"status": "wait", "reason": "outside_declared_rate_scope"}
     row = next((row for row in table['rungs'] if row['rung'] == rung), None)
@@ -596,9 +796,11 @@ def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     if measurement is not None:
         if class_identity is not None and geometry_class_identity(table, rung, measurement) != class_identity:
             return {"status": "wait", "reason": "different_geometry_class"}
-        return {'status': 'measured', 'rung': rung, 'measurement': measurement,
+        return {'status': 'measured', 'value_kind': 'measured', 'rung': rung, 'measurement': measurement,
+                'kernel_time_us': measurement['kernel_time_us'], 'timing': timing_evidence(measurement),
                 'menu_admitted': rung in performant_rungs(table['format'], measurement['kernel_kind']),
-                'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+                'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
+                'serving_qualification_inherited': False}
     if class_identity is None:
         return {'status': 'wait', 'reason': 'missing_actual_measurement'}
     low, remainder = divmod(rung * class_identity.get('arity', 0), 256)
@@ -622,14 +824,90 @@ def rung_speed(table, *, rung, cell_id=None, class_identity=None):
     if len(eligible) < 2:
         return {'status': 'hold' if held else 'wait',
                 'reason': 'recorded_donor_correctness_hold' if held else 'missing_eligible_class_spots'}
-    observed = sorted(eligible)
-    anchors = sorted(set((observed[0], observed[len(observed) // 2], observed[-1])))
+    anchors = sorted(eligible)
     cells = [eligible[q] for q in anchors]
     times = [cell['kernel_time_us'] for cell in cells]
-    return {'status': 'inherited', 'rung': rung, 'kernel_time_us': max(times),
+    return {'status': 'inherited', 'value_kind': 'derived', 'rung': rung, 'kernel_time_us': max(times),
             'observed_range_us': [min(times), max(times)], 'anchors': anchors,
+            'derivation': 'Maximum of all eligible observed spots in this exact mixed class.',
+            'timing_sources': [{'rung': q, 'timing': timing_evidence(eligible[q])} for q in anchors],
+            'confidence_interval': {'status': 'unavailable', 'reason': 'A class spot range is not a confidence interval.'},
             'action_keys': [cell['evidence'].get('action_key') for cell in cells], 'menu_admitted': False,
-            'numerical_qualification_inherited': False, 'serving_qualification_inherited': False}
+            'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
+            'serving_qualification_inherited': False}
+
+
+def publication_scope(table, *, unit_inventory=None):
+    """Publish every declared cell and its actual performance decisions."""
+    validate_table(table)
+    by_rung = {row['rung']: row for row in table['rungs']}
+    shapes = {(shape['kernel_kind'], shape['shape_id']): shape for shape in table['scope'].get('shapes', [])}
+    cells, qualified = [], {'dense': set(), 'routed': set()}
+    for cell in table['scope']['required_cells']:
+        rates = []
+        for rung in performant_rungs(table['format'], cell['kernel_kind']):
+            admission = _admit_performance_scope(table, by_rung.get(rung), rung, [cell['cell_id']], None, None)
+            if (table['kernel_build'].get('metadata') or {}).get('serving_qualified') is False:
+                admission = {'status': 'wait', 'reason': 'kernel_not_serving_qualified', 'rung': rung}
+            if admission['status'] == 'allow':
+                qualified[cell['kernel_kind']].add(rung)
+            rates.append({'rung': rung, 'admission': admission,
+                          'timing': _rung_speed(table, rung=rung, cell_id=cell['cell_id'])})
+        observed = [{'rung': row['rung'], 'status': measurement['measurement_status']}
+                    for row in table['rungs'] for measurement in row['measurements']
+                    if measurement['cell_id'] == cell['cell_id']]
+        cells.append({'cell': cell, 'shape': shapes.get((cell['kernel_kind'], cell['shape_id'])),
+                      'rates': rates, 'observed_rates': observed})
+    arity = int(table['format'].rsplit('_K', 1)[1])
+    result = {'schema': 'tessera.class_publication_scope.v1', 'format': table['format'],
+            'kernel_build': table['kernel_build'], 'table_version': table['table_version'],
+            'rate_semantics': {'scalar_weights_per_code': arity, 'body_bits_per_scalar_denominator': 256,
+                               'code_bits_per_symbol_denominator': 256 // arity,
+                               'metadata_fees_included': False},
+            'qualified_menu': {kind: sorted(rungs) for kind, rungs in qualified.items()},
+            'qualification_scope': 'Performance only. Independent numerical, native, and serving gates remain required.',
+            'cells': cells,
+            'quality_observations': [{'rung': row['rung'], 'blocking': False, 'exclusion_basis': False,
+                'kind': 'historical_sample_variation', 'source_kind': row['quality'].get('source_kind'),
+                'adjacent_higher_raw_error_ratios': row['quality']['adjacent_higher_raw_error_ratios']}
+                for row in table['rungs'] if 'adjacent_higher_raw_error_ratios' in row['quality']],
+            'correctness_holds': [{'rung': row['rung'], 'flags': row['anomaly_flags']}
+                                  for row in table['rungs'] if row['anomaly_flags']],
+            'unavailable_rates': [{'rung': 640, 'status': 'wait', 'reason': 'No supported canonical T8 scope.'}]
+                                 if table['format'] == 'TESSERA_E4M3_K1' else [],
+            'pricing_anchors': [{'rung': 1280, 'role': 'pricing_anchor_only', 'performance_admitted': False,
+                                 'timing_status': 'unavailable' if 1280 not in by_rung else by_rung[1280]['measurement_status']}]
+                               if table['format'] == 'TESSERA_E4M3_K1' else [],
+            'numerical_qualification_inherited': False, 'native_qualification_inherited': False,
+            'serving_qualification_inherited': False}
+    if unit_inventory is not None:
+        _require(isinstance(unit_inventory.get('units'), list), 'release unit inventory missing')
+        result['release'] = unit_inventory.get('release')
+        result['release_config'] = unit_inventory.get('config')
+        result['release_unit_coverage'] = []
+        for unit in unit_inventory['units']:
+            from .structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
+            kind = unit.get('kernel_kind')
+            if kind is None:
+                structure = unit.get('structure', unit.get('category'))
+                kind = {STRUCTURE_DENSE: 'dense', STRUCTURE_ROUTED_MOE: 'routed',
+                        'dense_mlp': 'dense', 'shared': 'dense', 'attention': 'dense'}.get(structure)
+            coverage = []
+            for tensor_parallel, shape in (unit.get('tensor_parallel_shapes') or {}).items():
+                matched = [cell for cell in cells if cell['cell']['kernel_kind'] == kind
+                           and cell['shape'] is not None
+                           and [cell['shape']['rows'], cell['shape']['columns']] == shape]
+                coverage.append({'tensor_parallel': int(tensor_parallel), 'shape': shape,
+                    'status': 'declared_geometry' if matched else 'wait',
+                    'reason': 'Rank-local scope only; inspect each cell rate for actual timing and admission.' if matched else 'Missing actual geometry.',
+                    'measured_cell_ids': [cell['cell']['cell_id'] for cell in matched
+                                          if any(rate['status'] == 'measured' for rate in cell['observed_rates'])],
+                    'cell_ids': [cell['cell']['cell_id'] for cell in matched]})
+            result['release_unit_coverage'].append({
+                **{key: unit.get(key) for key in ('name', 'category', 'role', 'shape', 'dtype', 'source_shard', 'plan')},
+                'coverage': coverage, 'geometry_status': 'declared' if coverage else 'wait',
+                'unavailable_reason': None if coverage else 'The retained inventory supplies no tensor-parallel shape.'})
+    return result
 
 
 
@@ -641,6 +919,15 @@ TABLE_SCHEMA_V3['properties']['performant_policy'] = {'type': 'object', 'require
 TABLE_SCHEMA_V3['properties']['geometry_classes'] = {'type': 'array', 'items': {'type': 'object', 'required': ['identity', 'observed_rungs'], 'properties': {'identity': {'type': 'object'}, 'observed_rungs': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1}}}}}
 TABLE_SCHEMAS['fleet.rung_allowability.v3'] = TABLE_SCHEMA_V3
 _version_schema['properties']['table_schema']['enum'].append('fleet.rung_allowability.v3')
+TABLE_SCHEMA_V3['properties']['timing_publication'] = {
+    'type': 'object', 'required': ['schema', 'sample_scope', 'qualification_scope'],
+    'properties': {'schema': {'const': 'tessera.class_timing.v1'},
+                   'sample_scope': {'type': 'string'}, 'qualification_scope': {'type': 'string'}}}
+TABLE_SCHEMA_V3['properties']['geometry_classes']['items']['properties']['timings'] = {
+    'type': 'array', 'items': {'type': 'object', 'required': ['rung', 'value_kind', 'kernel_time_us', 'timing'],
+    'properties': {'rung': {'type': 'integer', 'minimum': 1}, 'value_kind': {'const': 'measured'},
+                   'kernel_time_us': {'type': 'number', 'minimum': 0}, 'timing': {'type': 'object'}}}}
+_version_schema['properties']['sha256'] = {'type': 'string', 'pattern': '^[0-9a-f]{64}$'}
 
 
 

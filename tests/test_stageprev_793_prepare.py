@@ -31,7 +31,9 @@ def _run_published_sdk(program):
 import sys
 from prismabuild import client
 assert Path(client.__file__).resolve().is_relative_to(Path(sys.argv[1]) / "src")
-assert client.SDK_VERSION == 4
+from stageprev_793_claim_contract import required_api_problems
+problems = required_api_problems(client)
+assert problems == [], problems
 """
     result = subprocess.run([sys.executable, "-c", prefix + textwrap.dedent(program), str(published)],
                             cwd=ROOT, env=env, capture_output=True, text=True, timeout=60)
@@ -134,11 +136,13 @@ def test_actual_published_pbrun_class_scope_is_not_submitter_pin():
         from stageprev_793_prepare import SL_COORDINATOR
         owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool")
         for hostname in ("sparky", "sparklina"):
-            assert owner.placement_tags(Path(SL_COORDINATOR), explicit=["gb10"],
+            placement, _, _, _ = owner.placement_contract(Path(SL_COORDINATOR), explicit=["gb10"],
                                         here=False, hostname=hostname, portable_checkout=True,
-                                        command=["bash", "experiments/t8r_speed/ab_arms.sh"]) == ["gb10"]
-            assert owner.placement_tags(Path(SL_COORDINATOR), explicit=["gb10"],
-                                        here=True, hostname=hostname) == ["gb10", hostname]
+                                        command=["bash", "experiments/t8r_speed/ab_arms.sh"])
+            assert placement == ["gb10"]
+            placement, _, _, _ = owner.placement_contract(Path(SL_COORDINATOR), explicit=["gb10"],
+                                        here=True, hostname=hostname)
+            assert placement == ["gb10", hostname]
         with pytest.raises(SystemExit, match="drop --anywhere"):
             owner.require_host_class_scope(measurement=True, host_class="gb10", transport="pool", anywhere=True)
     """)
