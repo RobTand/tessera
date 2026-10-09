@@ -4,7 +4,7 @@ The packet names the source tree that action 6a5389858382 ran: snapshot
 da97efbb37f44daded3efd8cb173bd953a1f8c37 whose parent 9eef9fea6e is the
 serving and producer commit. The packet vendors the sealed snapshot block
 with the sealed request digest, so each check reads committed bytes only.
-Each test recomputes its value from the committed packet or blobs.
+The checks use authenticated constants and immutable source blobs.
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ import json
 import re
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from tessera.serving.source_identity import (
     SOURCE_IDENTITY_ALGORITHM,
@@ -28,6 +30,10 @@ SNAPSHOT = "da97efbb37f44daded3efd8cb173bd953a1f8c37"
 PARENT = "9eef9fea6edce32f4e64abf87f0058b11dab2287"
 SUPERSEDED = "fca4c6ce0e16c41d94a1a3c4cfc21c4548dec6bb"
 SEALED_REQUEST_SHA256 = "55390c025d6758eb03df649cdf0d5573db27f7f284e7eb91af893ea48a9cda01"
+# Authenticated from inputs[0] and params.checkout_snapshot.input in the
+# sealed request for ACTION (SHA-256 above), not from the committed packet.
+SNAPSHOT_INPUT_SHA256 = "6ffe67e5ddcad48d47b50141498d4c1b4a342a556cecaeb76ca57d5560b4f41e"
+SNAPSHOT_INPUT_BYTES = 14818690
 
 
 def _packet():
@@ -58,8 +64,7 @@ def test_the_packet_names_full_producer_and_serving_commits():
     assert packet["producer_commit"] == PARENT
 
 
-def test_the_action_snapshot_matches_the_named_source_tree():
-    packet = _packet()
+def _assert_action_snapshot(packet):
     action = packet["action"]
     assert action["key"] == ACTION
     assert action["snapshot_commit"] == SNAPSHOT
@@ -71,8 +76,25 @@ def test_the_action_snapshot_matches_the_named_source_tree():
     assert snap["sealed_request_sha256"] == SEALED_REQUEST_SHA256
     assert snap["commit"] == SNAPSHOT
     assert snap["parent"] == PARENT
-    assert snap["input"]["sha256"] == action["input"]["sha256"]
-    assert snap["input"]["bytes"] == action["input"]["bytes"]
+    assert action["input"]["sha256"] == SNAPSHOT_INPUT_SHA256
+    assert action["input"]["bytes"] == SNAPSHOT_INPUT_BYTES
+    assert snap["input"]["sha256"] == SNAPSHOT_INPUT_SHA256
+    assert snap["input"]["bytes"] == SNAPSHOT_INPUT_BYTES
+
+
+def test_the_action_snapshot_matches_the_named_source_tree():
+    _assert_action_snapshot(_packet())
+
+
+@pytest.mark.parametrize("field,value", [("sha256", "0" * 64), ("bytes", 14818691)])
+@pytest.mark.parametrize("copies", [("action",), ("sealed_snapshot",), ("action", "sealed_snapshot")])
+def test_the_action_snapshot_rejects_changed_input_identity(field, value, copies):
+    packet = _packet()
+    for copy in copies:
+        target = packet["action"] if copy == "action" else packet["action"][copy]
+        target["input"][field] = value
+    with pytest.raises(AssertionError):
+        _assert_action_snapshot(packet)
 
 
 def test_the_v1_digest_reproduces_through_the_serving_api(tmp_path):
