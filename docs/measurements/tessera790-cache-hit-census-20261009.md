@@ -52,7 +52,6 @@ serve from this host, so windows below bracket each row's claim-to-finish.
 | B 07:58:22-08:26:24 (1682 s) | 655905 MiB (625.5 GiB), mean 399314 KiB/s | 131590 MiB (128.5 GiB) | 669845 MiB |
 | C 08:28:34-08:29:35 (61 s) | 53.9 MiB, mean 905 KiB/s | 303 MiB (0.3 GiB) | 424 MiB |
 
-Pool-disk totals sit below `nfsd.io` because the pool's NVMe cache and ARC
 absorb repeat reads; row B (second full read, ~40 min after A) served
 ~80 pct less disk than row A for identical bytes. The comparison that
 matters is row C vs rows A/B: `nfsd.io` falls from ~625 GiB to 54 MiB
@@ -63,11 +62,30 @@ not recorded, so residual traffic (row C `system.io` 424 MiB vs `nfsd.io`
 
 ## Limits
 
-- Rows call the producer CLI direct, not the PQ `request_expert_projection`
-  bridge: no `source_digest_cache_use` receipt exists for these rows. The
-  caller handoff (PQ #2239, merge `e9b65f45`, on PQ `origin/main`) was read,
-  not executed: this checkout cannot run another repository's code.
 - Per-file header/config/aux read split is derived from code path
   (`quantizable` header scan + `config.json` + 7 aux files ~24 MB inside the
   50.0 MB scope read), not from per-file counters.
 - Caller-side independent byte verification was not run.
+
+## Row D: PQ bridge cache-hit (2026-10-09T09:21:43Z, sparklina)
+
+Action `16386001...` (take 3; takes 1-2 failed rc1, retained below) ran the
+PQ `request_expert_projection` bridge from a shared copy of PQ worktree
+`pq-790-bridge` at `b597fc363b` (PQ `origin/main`, carries #2239 handoff;
+copy sha `f43d75540517` matches the worktree file) through
+`tools-ig790-pqbridge-row.sh` with caller python `pb-cpu` and
+`PYTHONPATH=$PWD/src` (this snapshot, so the producer probe resolves
+`tessera.producer_plan`). Same source, stack, and warm shared cache as row C.
+Elapsed 20.5 s, rc 0, `PQ-ELAPSED` 2.1 s (bridge overhead only; the producer
+phase dominates the 20 s row). Producer receipt: cached 120, hashed 0,
+stat-bound. Caller receipt: schema
+`prismaquant.source_digest_cache_use.v1`, used true, reason names the
+advertised option and the handed cache. GPU power after: 4.66 W, 0 pct.
+py-spy `--profile sample:10` blob `778a8262...` (37 samples). Child
+read_bytes sampled NA (child already reaped at the 20 s sample).
+
+Takes 1-2: `76d8b64e...` rc1 (`No module named 'prismaquant'`; worker lacks
+`/home/rob/pq-wt`, fixed with the shared copy) and `59dadb90...` rc1 in
+0.5 s (`OUT: unbound variable` from a bad script edit, fixed and
+syntax-checked). An x86 probe of the same script (`e6472c04...`, dl380g10,
+rc0) returned the same receipts with `PQ-ELAPSED` 6.9 s.
