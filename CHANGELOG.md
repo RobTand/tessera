@@ -9,6 +9,55 @@ Correct the adapter's stale L12 and served-TCQ descriptions.
 Name the preparer-refusal test for the served WINDOW cases it checks.
 No decoder, CUDA source, wire, recipe default, gate or serving pin changes.
 
+## 2026-10-09 — authenticate the snapshot input in the identity packet
+
+Pin both snapshot input copies to the digest and byte count from the sealed request (#1095).
+Reject separate and joint changes to those fields.
+Keep the published producer commit, serving commit, contract digest and source digest unchanged.
+The packet proves construction scope only, not GPU qualification.
+
+## 2026-10-09 — hosted pure producer dependency (issue #1018)
+
+The hosted pure job installs jsonschema 4.25.1 for the real immutable producer.
+It installs no Torch package. The meaningful producer test and both validation steps stay active.
+
+## 2026-10-09 — absent rank-shape coverage (issue #1018)
+
+A release unit without tensor_parallel_shapes returns a geometry wait instead of KeyError.
+Existing declared shapes and their timing records remain unchanged.
+
+## 2026-10-09 — structure-scoped release coverage (issue #1018)
+
+Coverage uses each unit's kernel kind or the existing structure names.
+Routed units cannot borrow dense cells. Legacy dense, shared, and attention categories keep their owner mapping.
+Unknown structures wait for geometry.
+
+## 2026-10-09 — pure class publication metadata (issue #1018)
+
+The input-table metadata path resolves grids through the alphabet, not the tensor-backed control.
+Version one conversion and actual raw-input normalization keep their existing behavior.
+The hosted pure regression remains active. No tests skip the import error.
+
+## 2026-10-08 — canonical class publication (issue #1018)
+
+Extend the existing producer with immutable class timing records and exact declared-cell scope matrices.
+Retain original samples, action bindings, build identities, failures, and quality observations.
+Report measured sample variability and explicit unavailable confidence intervals.
+Non-finite time conversions refuse.
+Keep hard correctness refusals separate from historical sample variation.
+Keep the T4 menus empty and bind the producer's paired-value semantics.
+Supplier prose does not control admission. Physical arity and the empty menu remain correctness checks.
+Preserve unavailable T8 rates and the R1280 pricing anchor.
+Bind new table bytes in the candidate index. Leave the active index unchanged.
+
+## 2026-10-08 — classify unnamed directory reads and name finite loop bases
+
+Classify all 169 selector sites and record runtime-base modules with test consumers.
+Retain literal tuple, list, and set elements as loop-variable alternatives.
+Lower the measured ceiling from 115 modules and 169 sites to 114 modules and 168 sites.
+Keep scalar sequence arguments unresolved and preserve the accepted runtime-base limit.
+Keep refused bases, source loaders, external box paths, and temporary test fixtures on their existing selection paths.
+
 ## 2026-10-08 — retain deadline failures after a delayed process reap
 
 Record the final bounded reap timeout without replacement of the original work error (#1053).
@@ -19,6 +68,12 @@ The deterministic regression exposed the expired 0.01-second wait before the fix
 The real-child case passes alone and in twelve shards with two workers each.
 Twenty-four CPU burners shared four admitted CPUs with those shards.
 These CPU-only checks do not qualify the CUDA surface.
+
+## 2026-10-09 — keep stageprev 793 tests free of host paths
+
+Remove the redundant published-root override from the observer test (#1078).
+Keep all API, manifest identity, refusal and GPU HOLD checks unchanged.
+The box-artifact path gate and the published-SDK observer both pass.
 
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 

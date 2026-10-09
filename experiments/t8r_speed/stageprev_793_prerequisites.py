@@ -15,7 +15,7 @@ import sys
 import time
 
 from ab_stageprev_accept import load
-from stageprev_793_claim_contract import OWNER, CHAIN, observe_current_claim_contract
+from stageprev_793_claim_contract import OWNER, CHAIN, observe_current_claim_contract, required_api_problems
 
 SCHEMA = "tessera.stageprev.operative_prerequisites.v2"
 SDK_SOURCE = "prismabuild.client.PoolQueue.ledger().capacity_census+available+current_claim_source+latest_denials(include_local=False)"
@@ -86,7 +86,8 @@ def evaluate(record, packet, *, now=None):
         contract = {}
     published_sha = manifest.get("files", {}).get("src/prismabuild/pool.py") if isinstance(manifest.get("files"), dict) else None
     if (contract.get("owner") != OWNER or contract.get("chain") != CHAIN
-            or contract.get("sdk_version") != 4
+            or not isinstance(contract.get("sdk_version"), int)
+            or contract.get("api_verified") is not True or contract.get("api_problems") != []
             or any(contract.get(flag) is not True for flag in
                    ("verified", "identity_verified", "chain_verified", "positive_reservation_refusal_verified", "observation_only"))
             or contract.get("claim_invoked") is not False or contract.get("denial_synthesized") is not False
@@ -151,11 +152,13 @@ def evaluate(record, packet, *, now=None):
 
 
 def collect(packet, refusal_action_key):
-    from prismabuild.client import PoolQueue, SDK_VERSION
+    from prismabuild import client
+    from prismabuild.client import PoolQueue
     from stageprev_793_prepare import SOURCE_ROOT, PACKET_PATH, public_resource_demand
     admission_revision()
-    if SDK_VERSION != 4:
-        raise ValueError("Actual published public SDK4 required")
+    problems = required_api_problems(client)
+    if problems:
+        raise ValueError("Actual published public claim API lacks: " + ", ".join(problems))
     admission = packet["operative_admission"]
     if socket.gethostname() != admission["coordinator_host"]:
         raise ValueError("Observe actual healthy coordinator, not unsafe/excluded SP")

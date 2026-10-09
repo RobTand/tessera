@@ -353,6 +353,15 @@ class _Scope:
             if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
                 self.bindings[node.id].append(value)
 
+    def bind_iteration(self, target, iterable):
+        # Sequence elements are alternatives only when the loop iterates them.
+        # A scalar Path((a, b)) or str([a, b]) must not resolve as either element.
+        if isinstance(target, ast.Name) and isinstance(iterable, (ast.Tuple, ast.List, ast.Set)):
+            for element in iterable.elts:
+                self.bind(target, element)
+        else:
+            self.bind(target, iterable if isinstance(target, ast.Name) else None)
+
 
 class _Scanner(ast.NodeVisitor):
     def __init__(self, path, module=None):
@@ -415,7 +424,7 @@ class _Scanner(ast.NodeVisitor):
         self.visit(node.value)
 
     def visit_For(self, node: ast.For | ast.AsyncFor):
-        self.scope.bind(node.target, node.iter if isinstance(node.target, ast.Name) else None)
+        self.scope.bind_iteration(node.target, node.iter)
         self.generic_visit(node)
 
     def visit_AsyncFor(self, node):
