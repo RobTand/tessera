@@ -9,6 +9,15 @@ The corrected report retains original action evidence and source identities, and
 The revised launcher keeps the caller's seal policy unchanged.
 Permanent CPU tests cover same-size byte changes and omitted consumed shards.
 
+## 2026-10-09 — state the E2M1 adapter evidence scope
+
+Restore four adapter contract tests beside the current master regressions (#1082).
+Describe the current served E2M1x2 recipe as WINDOW L14 over LUT16.
+Keep historical span-two TCQ measurements separate from D41 allowability evidence for that served recipe.
+Correct the adapter's stale L12 and served-TCQ descriptions.
+Name the preparer-refusal test for the served WINDOW cases it checks.
+No decoder, CUDA source, wire, recipe default, gate or serving pin changes.
+
 ## 2026-10-09 — authenticate the snapshot input in the identity packet
 
 Pin both snapshot input copies to the digest and byte count from the sealed request (#1095).

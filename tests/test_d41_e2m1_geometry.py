@@ -1,11 +1,15 @@
-"""Explicit research reader checks, separate from native WINDOW L14 serving."""
+"""Research reader checks and E2M1 measurement-adapter contracts."""
+from fractions import Fraction
+
 import pytest
 
 torch = pytest.importorskip("torch")
 
-from tessera.alphabet import grid_for_name
-from tessera.compact_prep import parse_compact_wire
-from tessera.export import TCQ_RECIPE, encode_linear, wire_recipe
+from tessera.alphabet import SERIALISABLE_GRIDS, grid_for_name
+from tessera.compact_prep import parse_compact_wire, prepare_span2_compact
+from tessera.errors import GrammarError
+from tessera.export import TCQ_RECIPE, encode_linear, served_recipe, wire_recipe
+from tessera.manifest import BodyKind, body_rate_cap
 from tessera.structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
 
 
@@ -254,3 +258,64 @@ def test_subnormal_output_diagnostic_does_not_establish_the_intermediate_domain(
     receipt = adapter.check_packed_fp4_arithmetic(subnormal, subnormal, 1.0, k=128)
     assert receipt["arithmetic_qualified"] is False
     assert receipt["intermediate_domain_established"] is False
+
+
+def test_family_catalog_enumerates_every_serializable_e2m1_rung():
+    adapter = _load_geometry_adapter()
+    grids = [g for g in SERIALISABLE_GRIDS.values() if g.name.startswith("E2M1")]
+    result = adapter.catalog()["families"]
+    assert len(result) == len(grids)
+    for grid in grids:
+        family = result[f"TESSERA_E2M1_K{grid.arity}"]
+        low = Fraction(256, grid.arity)
+        high = Fraction(body_rate_cap(wire_recipe(grid).body, grid) * 256, grid.arity)
+        assert low.denominator == high.denominator == 1
+        assert [r["q256"] for r in family["rungs"]] == list(range(int(low), int(high) + 1))
+        for row in family["rungs"]:
+            q = row["q256"]
+            assert row["research_recipe"] == wire_recipe(grid, q).to_config()
+            assert row["served_recipes"]["routed"] == served_recipe(grid, q, STRUCTURE_ROUTED_MOE).to_config()
+            assert row["served_recipes"]["dense"] == served_recipe(grid, q, STRUCTURE_DENSE).to_config()
+
+
+def test_served_window_refusals_are_actual_preparer_refusals():
+    adapter = _load_geometry_adapter()
+    grid = grid_for_name("E2M1x2")
+    source = torch.linspace(-0.2, 0.2, 32 * 256).reshape(32, 256).to(torch.bfloat16)
+    for q, kind in ((641, "routed"), (640, "dense")):
+        structure = STRUCTURE_ROUTED_MOE if kind == "routed" else STRUCTURE_DENSE
+        recipe = served_recipe(grid, q, structure)
+        encoded = encode_linear(source, grid=grid, q256=q, **adapter.recipe_kwargs(recipe))
+        wire = parse_compact_wire(encoded.blob, device="cpu")
+        refusal = adapter.owner_refusal(grid, q, kind)
+        with pytest.raises(GrammarError) as caught:
+            prepare_span2_compact(wire, device="cpu")
+        assert refusal["reason"] in str(caught.value)
+        assert refusal["owner"] == "tessera.compact_prep.prepare_span2_compact"
+        assert adapter.exact_bits(grid, q, 32, 256, recipe) == encoded.exact_bytes * 8
+
+
+def test_scalar_is_not_silently_sent_to_tuple_reader():
+    from tessera.kernel_a4 import build_code_nibbles
+    adapter = _load_geometry_adapter()
+    grid = grid_for_name("E2M1")
+    lo, hi = adapter.bounds(grid)
+    for q in (lo, hi):
+        refusal = adapter.owner_refusal(grid, q, "routed")
+        assert refusal["owner"] == "tessera.kernel_a4.build_code_nibbles"
+        with pytest.raises(GrammarError, match="defined for arity 2"):
+            build_code_nibbles(torch.zeros(8, dtype=torch.uint8), points=2, arity=grid.arity)
+
+
+def test_served_tuple_recipes_refuse_the_span2_tcq_preparer():
+    adapter = _load_geometry_adapter()
+    grid = grid_for_name("E2M1x2")
+    lo, hi = adapter.bounds(grid)
+    for q in range(lo, hi + 1):
+        for kind, structure in (("routed", STRUCTURE_ROUTED_MOE), ("dense", STRUCTURE_DENSE)):
+            recipe = served_recipe(grid, q, structure)
+            assert recipe.body is BodyKind.WINDOW
+            refusal = adapter.owner_refusal(grid, q, kind)
+            assert refusal["owner"] == "tessera.compact_prep.prepare_span2_compact"
+            assert refusal["actual_window_bits"] == recipe.window_bits
+
