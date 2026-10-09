@@ -1,12 +1,18 @@
 # Changelog
 
-
 ## 2026-10-09 — issue 790 measurement corrections
 
 Both measurement launchers return the child exit status after final diagnostics.
 The caller verification uses the existing PrismaQuant descriptor owner for every projected unit.
 It compares the expected and actual full-shard digests.
 The corrected report retains original action evidence and source identities, and states the missing census acceptance observations.
+
+## 2026-10-09 — authenticate the snapshot input in the identity packet
+
+Pin both snapshot input copies to the digest and byte count from the sealed request (#1095).
+Reject separate and joint changes to those fields.
+Keep the published producer commit, serving commit, contract digest and source digest unchanged.
+The packet proves construction scope only, not GPU qualification.
 
 ## 2026-10-09 — hosted pure producer dependency (issue #1018)
 
@@ -42,6 +48,14 @@ Supplier prose does not control admission. Physical arity and the empty menu rem
 Preserve unavailable T8 rates and the R1280 pricing anchor.
 Bind new table bytes in the candidate index. Leave the active index unchanged.
 
+## 2026-10-08 — classify unnamed directory reads and name finite loop bases
+
+Classify all 169 selector sites and record runtime-base modules with test consumers.
+Retain literal tuple, list, and set elements as loop-variable alternatives.
+Lower the measured ceiling from 115 modules and 169 sites to 114 modules and 168 sites.
+Keep scalar sequence arguments unresolved and preserve the accepted runtime-base limit.
+Keep refused bases, source loaders, external box paths, and temporary test fixtures on their existing selection paths.
+
 ## 2026-10-08 — retain deadline failures after a delayed process reap
 
 Record the final bounded reap timeout without replacement of the original work error (#1053).
@@ -52,6 +66,12 @@ The deterministic regression exposed the expired 0.01-second wait before the fix
 The real-child case passes alone and in twelve shards with two workers each.
 Twenty-four CPU burners shared four admitted CPUs with those shards.
 These CPU-only checks do not qualify the CUDA surface.
+
+## 2026-10-09 — keep stageprev 793 tests free of host paths
+
+Remove the redundant published-root override from the observer test (#1078).
+Keep all API, manifest identity, refusal and GPU HOLD checks unchanged.
+The box-artifact path gate and the published-SDK observer both pass.
 
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 
