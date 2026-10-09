@@ -1,0 +1,308 @@
+"""A population of shards is green only if the files, the tree and the exits all agree.
+
+``tools/selected_population.py`` submits the files a change selects as shards
+through ``tools/merge_suite.py`` and judges them from merge_suite's receipt.
+These tests give it a pool of its own (the fleet's layout, built in
+``tmp_path``) and a real git checkout, then change one fact at a time.  A
+population that skipped a file, measured another tree, or hid a failed shard
+is the defect tessera#1069 records, so each of those is a case.
+"""
+
+import hashlib
+import importlib.util
+import json
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from tessera._dev.suite_source import measured_source
+
+TESTS = Path(__file__).resolve().parent
+ROOT = TESTS.parent
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+sp = _load("_selected_population", ROOT / "tools" / "selected_population.py")
+helpers = _load("_merge_test_helpers_for_population", TESTS / "test_merge_suite.py")
+
+SHARDS = {"shard-00": ["tests/test_a.py", "tests/test_b.py"], "shard-01": ["tests/test_c.py"]}
+
+
+@pytest.fixture(autouse=True)
+def _restore_pool_paths(monkeypatch):
+    """``main`` points merge_suite at a pool; every test puts it back."""
+
+    monkeypatch.setattr(sp.merge_suite, "POOL_QUEUE", sp.merge_suite.POOL_QUEUE)
+    monkeypatch.setattr(sp.merge_suite, "POOL_CAS_REQUESTS", sp.merge_suite.POOL_CAS_REQUESTS)
+
+
+def _git(root, *args):
+    subprocess.run(["git", "-C", str(root), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.invalid", *args],
+                   check=True, capture_output=True)
+
+
+def _checkout(tmp_path):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    _git(root, "init", "-q")
+    (root / "source.py").write_text("VALUE = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "source")
+    return root
+
+
+def _key(index):
+    return f"{index:02x}" + "0" * 62
+
+
+def _publish(path, producer, source, skip_reasons, not_collected):
+    """A shard's population with the producer stamp a real run carries."""
+
+    surface = helpers._population("x86", source=source)["surface"]
+    surface["skip_reasons"] = skip_reasons
+    surface["not_collected"] = not_collected
+    surface["source_identity"]["excluded_metadata"] = [{
+        "path": f".pbrun-closure.{producer.stem[:16]}.json", "bytes": 153,
+        "sha256": "d" * 64, "action_key": producer.stem,
+        "request_sha256": hashlib.sha256(producer.read_bytes()).hexdigest()}]
+    path.write_text(json.dumps(surface))
+
+
+def _world(tmp_path, monkeypatch, *, shards=None, ran=None, state=None, source=None,
+           skip_reasons=None, not_collected=None, selected=None, sources=None):
+    """A checkout, a pool and a receipt directory holding exactly this population.
+
+    ``ran`` is what each sealed command ran (default: the files it was given),
+    ``state`` each action's queue ending (default: done, exit 0), and ``source``
+    the effective source every shard published (default: the checkout's own).
+    A shard named in ``shards`` and left out of ``state`` has no pool record.
+    """
+
+    shards = SHARDS if shards is None else shards
+    checkout = _checkout(tmp_path)
+    receipt_dir = tmp_path / "receipt"
+    receipt_dir.mkdir()
+    own = measured_source(checkout, verifier=None)["sha256"]
+    for index, (name, files) in enumerate(shards.items()):
+        surface = receipt_dir / f"surface.{name}.json"
+        arm = sp.shard_arm(name, ran.get(name, files) if ran else files)
+        command = sp.merge_suite._timed_command(
+            sp.merge_suite._command(arm, surface, sp.PYTEST_ARGS, 2), 2400.0)
+        queue = (state or {}).get(name, ("done", 0))
+        actions = [(_key(index), queue[0], queue[1], "dl380g10")] if queue else []
+        pool_queue, pool_requests = helpers._fake_pool(
+            tmp_path / "pool", surface, actions, command=command)
+        request = helpers._request_of(pool_requests, _key(index))
+        if not request.exists():
+            helpers._fake_pool(tmp_path / "pool", surface, [(_key(index), "done", 0, "x")],
+                               command=command)
+        _publish(surface, request, (sources or {}).get(name, source or own),
+                 (skip_reasons or {}).get(name, {}), (not_collected or {}).get(name, []))
+        if not queue:
+            for folder in ("done", "failed"):
+                (pool_queue / folder / f"{_key(index)}.json").unlink(missing_ok=True)
+    selection = {"base": "origin/master", "verdict": "narrowed", "forces_full": [],
+                 "excluded_tests": [], "shards": shards,
+                 "tests": sorted(selected or {path for files in shards.values() for path in files})}
+    (receipt_dir / sp.SELECTION).write_text(json.dumps(selection))
+    sp.merge_suite.POOL_QUEUE, sp.merge_suite.POOL_CAS_REQUESTS = pool_queue, pool_requests
+    return SimpleNamespace(checkout=checkout, receipt_dir=receipt_dir, selection=selection,
+                           pool=tmp_path / "pool")
+
+
+def _receipt(world, **kwargs):
+    return sp.assemble(world.selection, world.receipt_dir, world.checkout, **kwargs)
+
+
+def test_a_population_is_green_when_the_files_the_tree_and_the_exits_agree(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch)
+    receipt = _receipt(world)
+    assert receipt["population_problems"] == []
+    assert receipt["verdict"].startswith("green on 2 population(s)"), receipt["verdict"]
+    assert all(record["exit_status_observed"] for record in receipt["arms"])
+
+
+@pytest.mark.parametrize("ran, phrase", [
+    pytest.param({"shard-00": ["tests/test_a.py"]}, "selected but never run: tests/test_b.py",
+                 id="a-selected-file-nobody-ran"),
+    pytest.param({"shard-01": ["tests/test_c.py", "tests/test_x.py"]},
+                 "run but not selected: tests/test_x.py", id="a-file-nobody-selected"),
+    pytest.param({"shard-01": ["tests/test_c.py", "tests/test_a.py"]},
+                 "run more than once: tests/test_a.py", id="a-file-run-twice"),
+])
+def test_the_sealed_commands_must_run_the_selected_files_exactly(tmp_path, monkeypatch, ran, phrase):
+    world = _world(tmp_path, monkeypatch, ran=ran)
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert any(phrase in problem for problem in receipt["population_problems"]), \
+        receipt["population_problems"]
+
+
+def test_shards_of_another_tree_than_the_checkouts_are_not_green(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch, source="e" * 64)
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert any("not the checkout's" in problem for problem in receipt["population_problems"])
+
+
+def test_a_dirty_checkout_cannot_vouch_for_the_shards(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch)
+    (world.checkout / "stray.py").write_text("x = 1\n")
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert any("checkout's own source identity is not verified" in problem
+               for problem in receipt["population_problems"])
+
+
+def test_two_shards_that_measured_different_source_are_not_green(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch, sources={"shard-01": "f" * 64})
+    assert not _receipt(world)["verdict"].startswith("green on")
+
+
+def test_a_nonzero_pbrun_code_is_not_hidden_by_a_clean_pool_record(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch)
+    submitted = {"shard-00": {"returncode": 0}, "shard-01": {"returncode": 1}}
+    receipt = _receipt(world, submitted=submitted)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert "shard-01: pbrun returned 1" in receipt["population_problems"]
+
+
+def test_a_shard_the_pool_failed_is_red(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch, state={"shard-01": ("failed", 1)})
+    verdict = _receipt(world)["verdict"]
+    assert verdict.startswith("red"), verdict
+
+
+def test_a_shard_with_no_pool_record_is_not_green(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch, state={"shard-01": None})
+    receipt = _receipt(world)
+    assert not receipt["verdict"].startswith("green on"), receipt["verdict"]
+    assert any("no sealed command is bound" in problem for problem in receipt["population_problems"])
+
+
+def test_a_module_a_shard_did_not_collect_is_a_problem_a_pass_count_hides(tmp_path, monkeypatch):
+    world = _world(tmp_path, monkeypatch, not_collected={"shard-00": ["tests/test_native.py"]})
+    receipt = _receipt(world)
+    assert receipt["verdict"].startswith("incomplete:"), receipt["verdict"]
+    assert any("not collected: tests/test_native.py" in problem
+               for problem in receipt["population_problems"])
+
+
+def test_the_report_keeps_one_block_per_shard_and_every_reason_verbatim(tmp_path, monkeypatch):
+    """Two reasons that share a long opening are two rows, and neither is cut."""
+
+    shared = "box artifact absent: checkpoints and serve logs this box produced -- /runs/stock/serve_qwen_"
+    reasons = {shared + "k2.log is not on this box": 1, shared + "k2-graph.log is not on this box": 1,
+               "needs a CUDA device": 14}
+    world = _world(tmp_path, monkeypatch, skip_reasons={"shard-00": reasons, "shard-01": reasons})
+    lines = sp.report_lines(_receipt(world))
+    assert [line.split()[0] for line in lines if " rc=" in line] == ["shard-00", "shard-01"]
+    for reason in reasons:
+        assert sum(line.endswith("  " + reason) for line in lines) == 2, reason
+    assert sum(line.strip().split()[0].isdigit() for line in lines if line.startswith("     ")) == 6
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 7])
+def test_every_file_lands_in_exactly_one_shard_and_the_split_is_stable(count):
+    sizes = {f"tests/test_{i}.py": size for i, size in enumerate([90, 5, 5, 40, 40, 1, 33])}
+    shards = sp.balanced_shards(sizes, count)
+    assert sorted(path for shard in shards for path in shard) == sorted(sizes)
+    assert shards == sp.balanced_shards(dict(reversed(list(sizes.items()))), count)
+    assert all(shards)
+    loads = [sum(sizes[path] for path in shard) for shard in shards]
+    assert max(loads) - min(loads) <= max(sizes.values())
+
+
+def test_a_selection_smaller_than_the_shard_count_gets_fewer_shards():
+    assert len(sp.balanced_shards({"a.py": 1, "b.py": 2}, 12)) == 2
+    with pytest.raises(ValueError, match="at least one shard"):
+        sp.balanced_shards({"a.py": 1}, 0)
+
+
+def _selector(monkeypatch, stdout="", returncode=0, stderr=""):
+    asked = []
+
+    def fake(command, **kwargs):
+        asked.append((command, kwargs))
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr(sp.subprocess, "run", fake)
+    return asked
+
+
+def test_the_selection_is_the_selectors_answer_split_into_shards(tmp_path, monkeypatch):
+    for name, size in (("test_a.py", 30), ("test_b.py", 20), ("test_c.py", 10)):
+        (tmp_path / name).write_text("x" * size)
+    answer = {"verdict": "narrowed", "forces_full": [], "excluded_tests": [],
+              "tests": ["test_c.py", "test_a.py", "test_b.py"]}
+    asked = _selector(monkeypatch, json.dumps(answer))
+    selection = sp.choose(tmp_path, "origin/master", 2)
+    assert selection["tests"] == ["test_a.py", "test_b.py", "test_c.py"]
+    assert sorted(path for files in selection["shards"].values() for path in files) == selection["tests"]
+    assert list(selection["shards"]) == ["shard-00", "shard-01"]
+    assert "origin/master...HEAD" in asked[0][0]
+    assert asked[0][1]["cwd"] == tmp_path
+
+
+@pytest.mark.parametrize("stdout, returncode, phrase", [
+    pytest.param("", 0, "no selection", id="an-empty-change-prints-nothing"),
+    pytest.param("", 2, "no selection", id="a-selector-that-failed"),
+    pytest.param(json.dumps({"verdict": "narrowed", "tests": ["gone.py"]}), 0,
+                 "does not hold: ['gone.py']", id="a-file-the-tree-lacks"),
+])
+def test_a_selection_that_cannot_be_run_is_refused_by_name(tmp_path, monkeypatch, stdout, returncode, phrase):
+    _selector(monkeypatch, stdout, returncode)
+    with pytest.raises(ValueError, match="no selection|does not hold") as error:
+        sp.choose(tmp_path, "origin/master", 2)
+    assert phrase in str(error.value)
+
+
+def test_resume_rebuilds_the_receipt_and_submits_nothing(tmp_path, monkeypatch, capsys):
+    world = _world(tmp_path, monkeypatch)
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("--resume submitted a shard")
+
+    monkeypatch.setattr(sp.merge_suite, "_submit", refuse)
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
+                      "--pool-root", str(world.pool)])
+    out = capsys.readouterr().out
+    receipt = json.loads((world.receipt_dir / sp.RECEIPT).read_text())
+    assert status == 0, out
+    assert receipt["schema"] == "tessera.selected_population.v1"
+    assert receipt["assembled_by"] == "resume"
+    assert "selected_population: green on 2 population(s)" in out
+
+
+def test_resume_exits_nonzero_for_a_population_that_is_not_green(tmp_path, monkeypatch, capsys):
+    world = _world(tmp_path, monkeypatch, ran={"shard-00": ["tests/test_a.py"]})
+    status = sp.main(["--resume", str(world.receipt_dir), "--checkout", str(world.checkout),
+                      "--pool-root", str(world.pool)])
+    assert status == 1
+    assert "PROBLEM: " in capsys.readouterr().out
+
+
+def test_a_dry_run_prints_each_shards_command_and_creates_nothing(tmp_path, monkeypatch, capsys):
+    selection = {"base": "origin/master", "verdict": "narrowed", "forces_full": [],
+                 "excluded_tests": [], "tests": sorted(sum(SHARDS.values(), [])), "shards": SHARDS}
+    monkeypatch.setattr(sp, "choose", lambda checkout, base, count: selection)
+    out_dir = tmp_path / "never-created"
+    status = sp.main(["--dry-run", "--checkout", str(_checkout(tmp_path)), "--out", str(out_dir)])
+    lines = [line for line in capsys.readouterr().out.splitlines() if "pbrun.py" in line]
+    assert status == 0
+    assert not out_dir.exists()
+    assert len(lines) == 2
+    for line, files in zip(lines, SHARDS.values()):
+        assert all(path in line for path in files)
+        assert f"--surface-json {out_dir}/surface.shard-" in line
+        assert "-n 2 --dist worksteal" in line
+        assert "--cpus 2" in line
