@@ -1,4 +1,12 @@
 # Changelog
+## 2026-10-09 — additive PQ2459 fixture inputs (issue #1124)
+
+Publish the eight-cell fixture input packet for PrismaQuant #2459.
+The packet binds actual wire bytes from three additive artifacts to family, structure, q256 rung, and rank-local shape.
+The A8S release artifact stays unchanged, and CPU fixtures qualify no cell.
+The eager tr3_batch, speed_batch, and speed_decode entry points name every permitted M value and c1/c4 concurrency.
+PrismaBuild CPU preflight verifies the actual parsers, sealed token reads, fixture geometry, and scorer imports.
+The dense supplement encodes eleven actual source tensors on CUDA under the accepted 9eef9fea6 producer source.
 
 ## 2026-10-09 — pull request branch rule 12
 

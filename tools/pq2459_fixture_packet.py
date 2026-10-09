@@ -128,7 +128,7 @@ def artifact_wires(key, root, scope):
     return wires, excluded, manifest, inventory
 
 
-def build_packet(artifacts, *, export_request, historical_package, historical_commit,
+def build_packet(artifacts, *, export_requests, historical_package, historical_commit,
                  source_info, threads):
     from tessera.cached_unit import encoder_source_sha256
     from tessera.serving.source_identity import serving_source_sha256
@@ -142,9 +142,11 @@ def build_packet(artifacts, *, export_request, historical_package, historical_co
         "source_sha256": serving_source_sha256(package_root),
         "contract": bound_file(package_root / "tessera/serving/runtime_contract.json")}
     packet["source_input"] = source_info
-    request = json.loads(export_request.read_bytes())
-    packet["export"] = {"action": request["action_key"], "request": bound_file(export_request),
-                        "snapshot": request["params"]["checkout_snapshot"]}
+    packet["exports"] = {}
+    for name, request_path in export_requests.items():
+        request = json.loads(request_path.read_bytes())
+        packet["exports"][name] = {"action": request["action_key"], "request": bound_file(request_path),
+                                   "snapshot": request["params"]["checkout_snapshot"]}
     from tools.pq2459_fixture_workloads import read_panel_inputs
     inputs = scope["token_inputs"]
     _panel, _tokens, token_receipts = read_panel_inputs(
@@ -167,7 +169,7 @@ def build_packet(artifacts, *, export_request, historical_package, historical_co
         shard_names = sorted(set(inventory.values()))
         digests = sha256_files([root / name for name in shard_names], workers=threads)
         historical = manifest.get("cached_units", manifest.get("cached_expert_units", {}))
-        fresh = key == "supplement"
+        fresh = key in export_requests
         producer = {
             "commit": source_info["commit"] if fresh else historical_commit,
             "source_algorithm": "tessera.encoder_source.v1",
@@ -211,7 +213,7 @@ def build_packet(artifacts, *, export_request, historical_package, historical_co
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", action="append", required=True, metavar="NAME=PATH")
-    parser.add_argument("--export-request", required=True, type=Path)
+    parser.add_argument("--export-request", action="append", required=True, metavar="NAME=PATH")
     parser.add_argument("--historical-package", required=True, type=Path)
     parser.add_argument("--historical-commit", required=True)
     from tools.pq2459_source import add_source_arguments, activate_source
@@ -228,7 +230,16 @@ def main(argv=None):
         if not sep or not name or name in artifacts:
             parser.error("artifact must be a unique NAME=PATH")
         artifacts[name] = Path(path)
-    packet = build_packet(artifacts, export_request=args.export_request,
+    export_requests = {}
+    for entry in args.export_request:
+        name, sep, path = entry.partition("=")
+        if not sep or not name or name in export_requests:
+            parser.error("export request must be a unique NAME=PATH")
+        export_requests[name] = Path(path)
+    for name in artifacts:
+        if name != "B" and name not in export_requests:
+            parser.error(f"fresh artifact {name} needs its export request")
+    packet = build_packet(artifacts, export_requests=export_requests,
                           historical_package=args.historical_package,
                           historical_commit=args.historical_commit,
                           source_info=source_info, threads=args.threads)
