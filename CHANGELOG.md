@@ -6,6 +6,26 @@ Remove the temporary stderr file after successful producer authentication.
 Retain the stderr file when authentication fails.
 The real CPU caller smoke exposed one retained file per successful call before this correction.
 
+## 2026-10-09 — restore the issue 1056 integration gate
+
+Integrate current master into the existing issue 1056 branch.
+Retain both change histories and the accepted PR1070 publication semantics.
+Use master's stricter directory-read ceiling without a new producer allowance.
+
+## 2026-10-09 — bind task endpoints to actual serving observations (issue #1056)
+
+Connect the producer to vLLM's loader, worker RPC, and opt-in HTTP plugin.
+Replace detached worker files and caller launch identities with actual runtime observations.
+Bind successful loader inputs to source tensor ranges and resulting resident state.
+Bind the loaded tokenizer backend, vocabulary mapping, and special IDs to their source bytes.
+Reject cached replies, incomplete coverage, mixed requests, changed state, and replacement listeners.
+Keep original load callbacks and correctness checks unchanged.
+An unobserved in-place reload invalidates the witness, not the valid serve.
+Publish complete immutable JSON receipts through the accepted publication boundary.
+The standalone verifier needs no serving imports or rank lifecycle work.
+The structured scope is runtime byte binding only.
+No identity seal, supplier-table change, scientific qualification, or D50 consumer release follows.
+
 ## 2026-10-09 — issue 790 measurement corrections
 
 Both measurement launchers return the child exit status after final diagnostics.
