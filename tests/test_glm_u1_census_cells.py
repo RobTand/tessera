@@ -51,6 +51,8 @@ import pytest
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
+    cell_executes,
+    format_entry,
     load_serving_contract,
     rung_rates,
 )
@@ -326,7 +328,7 @@ def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for regime in ("decode", "batch"):
         cell = cells["tessera_e4m3_k1_routed_moe_sm121_%s_resident" % regime]
-        pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
+        pairs = cell_executes(cell, q256=1024, entry=format_entry(cell["family"]))
         assert (fused, "native_routed_fused_window") in pairs, cell["id"]
         # Contract v47 adds the E4M3 instruction's routed pair to the E4M3 cells.
         assert len(pairs) == 3, cell["id"]
@@ -570,6 +572,8 @@ def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
     carried: dict = {}
     sources = [_paths(stub) for stub in sorted(RECEIPTS)]
     sources.append((RESULTS / V38[0], RESULTS / V38[1]))
+    sources.append((RESULTS / "glm53_r768_stub_base_tp2_eager_census.json",
+                    RESULTS / "glm53_r768_stub_base_config.json"))
     for receipt_path, config_path in sources:
         for key, rungs in _carried(tool, _load(receipt_path), config_path).items():
             carried.setdefault(key, set()).update(rungs)

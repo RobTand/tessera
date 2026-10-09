@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-10-09 — base-image R768 qualification (issue #1080)
+
+Contract v66 admits R768 and table [3] on the two base routed E4M3 cells.
+The committed TP2 receipt proves the exact class decoder on both ranks in decode and batch.
+Lane schema v12 gives each launch its own census rungs and derived run-table scope.
+Historical pairs retain their original scope. Runtime twins, kernels, decoders, pins, and defaults stay unchanged.
+R640 and R1280-R2048 remain refused. No D41 receipt allowance, KL result, or speed result follows.
+
 ## 2026-10-09 — hosted pure producer dependency (issue #1018)
 
 The hosted pure job installs jsonschema 4.25.1 for the real immutable producer.

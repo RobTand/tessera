@@ -1,11 +1,15 @@
 # Tessera plan-to-serve architecture
 
-Contract v65 retains R768 TP2 evidence without admission (tessera#1080, PR #1045).
-The base-image receipt records both ranks in decode and batch with decoder `native_routed_window_classes_e4m3mma`.
-The current execution registry marks this decoder experimental. Historical cells cannot qualify it.
-Both base cells refuse R768 and table [3] until a separate change qualifies the current operation.
-The runtime twins retain their master scope. R640 and R1280-R2048 remain refused.
-No kernel, decoder, pin, or default changes.
+Contract v66 admits R768 and table [3] on the two base routed E4M3 cells (tessera#1080, PR #1045).
+The base-image TP2 receipt proves decoder `native_routed_window_classes_e4m3mma` on both ranks in decode M1 and batch M64.
+Qualification covers only `sm_121`, the base image, eager execution, resident service, and R768.
+The current execution registry remains experimental outside that receipt scope.
+Historical decoder identities keep their original census rungs and run tables.
+Lane schema v12 adds optional `executes[].rungs_q256`. Absence means the cell's full scope.
+Each launch covers its census rungs and the allowable rungs of their derived run tables.
+The validator derives each launch scope from its execution receipts. The census checks the record's actual rung.
+The runtime twins retain their master scope and refuse R768. R640 and R1280-R2048 remain refused.
+No kernel, decoder implementation, pin, or default changes. This receipt proves no KL or speed.
 Receipt: `experiments/results/glm53_r768_stub_base_tp2_eager_census.json`.
 Configuration: `experiments/results/glm53_r768_stub_base_config.json`.
 

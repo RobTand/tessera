@@ -1,9 +1,8 @@
-"""Keep R768 outside historical routed cells until the current operation qualifies.
+"""Admit R768 only on the base routed E4M3 cells.
 
-The base cells retain tables [[3, 4], [4], [4, 5]] and cover 769..1279.
-The runtime twins retain their master scope. The base-image TP2 receipt
-records the current class decoder, not the historical qualified pair.
-The D41 slice remains kernel evidence. It does not authorize admission.
+The base-image TP2 receipt proves the current class decoder at R768.
+The runtime twins retain their master scope.
+The D41 slice remains kernel evidence, not a receipt allowance.
 R640 and R1280-R2048 remain refused.
 """
 from __future__ import annotations
@@ -28,8 +27,8 @@ TWIN_IDS = (
     "tessera_e4m3_k1_routed_moe_sm121_decode_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident_runtime_1bd4e9052e00b217fe52b40a9b9a9e2445b6cdd504bef051d8410d3fbc72a96e",
 )
-CENSUS_RUNGS = [832, 864, 896, 928, 944, 960, 1024, 1088]
-REFUSED = (256, 640, 768, 1280, 1300, 1536, 1792, 2048)
+CENSUS_RUNGS = [768, 832, 864, 896, 928, 944, 960, 1024, 1088]
+REFUSED = (256, 640, 1280, 1300, 1536, 1792, 2048)
 CENSUS = Path(__file__).resolve().parents[1] / "experiments" / "results" / "t8_d41_r768_census.json"
 
 
@@ -46,11 +45,11 @@ def _row(contract):
     return next(e for e in contract["formats"] if e["family"] == E4M3)
 
 
-def test_base_routed_cells_refuse_table_3_for_their_unserved_image(contract):
+def test_base_routed_cells_admit_table_3_from_their_served_image(contract):
     for cell_id in BASE_IDS:
         cell = _cell(contract, cell_id)
         assert cell["rungs_q256"] == CENSUS_RUNGS, cell_id
-        assert cell["run_tables"] == [[3, 4], [4], [4, 5]], cell_id
+        assert cell["run_tables"] == [[3], [3, 4], [4], [4, 5]], cell_id
 
 
 def test_covered_rungs_stop_below_768_and_above_1279(contract):
@@ -58,7 +57,7 @@ def test_covered_rungs_stop_below_768_and_above_1279(contract):
     for cell_id in BASE_IDS:
         cell = _cell(contract, cell_id)
         covered = [q for q in range(256, 2049) if cell_covers_rung(cell, q, row)]
-        assert covered == list(range(769, 1280)), cell_id
+        assert covered == list(range(768, 1280)), cell_id
 
 
 def test_unmeasured_and_unserved_rungs_are_refused(contract):
@@ -69,13 +68,12 @@ def test_unmeasured_and_unserved_rungs_are_refused(contract):
             assert not cell_covers_rung(cell, q, row), (cell_id, q)
 
 
-def test_the_export_gate_refuses_r768_without_a_qualified_base_operation(contract):
+def test_the_export_gate_admits_r768_with_a_qualified_base_operation(contract):
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, refuse_unserveable_wire
 
-    with pytest.raises(ValueError):
-        refuse_unserveable_wire(
-            "E4M3", 768, "WINDOW", "CHANNEL", family="TESSERA_FP8", span=1,
-            target="stack.probe", structure=STRUCTURE_ROUTED_MOE, contract=contract)
+    assert refuse_unserveable_wire(
+        "E4M3", 768, "WINDOW", "CHANNEL", family="TESSERA_FP8", span=1,
+        target="stack.probe", structure=STRUCTURE_ROUTED_MOE, contract=contract) == "TESSERA_FP8"
 
 
 @pytest.mark.parametrize("q", [1280, 1536, 2048])

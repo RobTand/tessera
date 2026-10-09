@@ -122,14 +122,12 @@ def test_a_rung_resolves_to_its_run_table():
 
 
 def test_a_cell_covers_its_census_rungs_and_the_allowable_rungs_of_their_run_tables(contract):
-    """The routed E4M3 cell's census rungs are 832..1088; their run tables are
-    [3, 4], [4] and [4, 5], so it covers every rung of 769..1279 and nothing
-    at rate 3 alone (768) or at rate 5 and above."""
+    """The base routed cell covers R768 through R1279 from its served run tables."""
     row, cell = _row(contract), _cell(contract, ROUTED)
-    assert cell["run_tables"] == [[3, 4], [4], [4, 5]]
+    assert cell["run_tables"] == [[3], [3, 4], [4], [4, 5]]
     covered = [q for q in range(256, 2049) if cell_covers_rung(cell, q, row)]
-    assert covered == list(range(769, 1280))
-    for q in (768, 1280, 1300, 1536, 2048, 256):
+    assert covered == list(range(768, 1280))
+    for q in (640, 1280, 1300, 1536, 2048, 256):
         assert not cell_covers_rung(cell, q, row), q
     # without its family's row only the census rungs are covered
     assert [q for q in range(256, 2049) if cell_covers_rung(cell, q, None)] == cell["rungs_q256"]
@@ -154,7 +152,7 @@ def test_the_e4m3_dense_cells_cover_every_rung_of_the_rule(contract):
                    if c["id"].startswith(f"tessera_e4m3_k1_dense_sm121_{regime}_resident_runtime_")]
         assert twin["run_tables"] == [[3, 4], [4], [4, 5]]
         routed = by_id[f"tessera_e4m3_k1_routed_moe_sm121_{regime}_resident"]
-        assert routed["run_tables"] == [[3, 4], [4], [4, 5]]
+        assert routed["run_tables"] == [[3], [3, 4], [4], [4, 5]]
 
 
 def test_every_cell_publishes_exactly_its_derived_run_tables(contract):
@@ -189,7 +187,7 @@ def test_an_excluded_run_table_leaves_its_census_rungs_covered_and_nothing_else(
     _rederive(table)
     validate_serving_contract(table)
     row, cell = _row(table), _cell(table, ROUTED)
-    assert cell["run_tables"] == [[3, 4], [4]]
+    assert cell["run_tables"] == [[3], [3, 4], [4]]
     assert cell_covers_rung(cell, 1088, row)
     assert not cell_covers_rung(cell, 1100, row) and not rung_allowable(row, 1100)
 
@@ -253,10 +251,7 @@ def test_a_run_table_no_rung_of_the_range_reaches_is_refused(contract):
 
 
 def test_the_routed_export_gate_admits_every_rung_the_cells_cover(contract):
-    """The gate admits covered run tables. It refuses R768 and R1300.
-
-    The R768 receipts do not qualify the historical base cells.
-    """
+    """The gate admits R768 from the base receipt and refuses uncovered tables."""
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, refuse_unserveable_wire
 
     def gate(q):
@@ -264,9 +259,9 @@ def test_the_routed_export_gate_admits_every_rung_the_cells_cover(contract):
                                        span=1, target="stack.probe",
                                        structure=STRUCTURE_ROUTED_MOE, contract=contract)
 
-    for q in (769, 1000, 1100, 1279):
+    for q in (768, 769, 1000, 1100, 1279):
         assert gate(q) == "TESSERA_FP8", q
-    for q in (768, 1300):
+    for q in (640, 1300):
         with pytest.raises(ValueError) as caught:
             gate(q)
         assert ROUTED in str(caught.value) and "run tables" in str(caught.value)

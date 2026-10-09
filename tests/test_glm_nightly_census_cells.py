@@ -43,6 +43,8 @@ from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
     PAYLOAD_FAMILY_BY_ROUTE,
     cell_runtime_id_suffix,
+    cell_executes,
+    format_entry,
     load_serving_contract,
 )
 
@@ -187,7 +189,10 @@ def test_every_module_ran_its_f8dbe1a0_twins_launch_and_the_cells_name_it():
     shipped = {c["id"]: c for c in contract["lane_eligibility"]["cells"]}
     for cell in _nightly_cells(contract).values():
         base = cell["id"][: -len(cell_runtime_id_suffix(cell))]
-        assert cell["executes"] == shipped[base]["executes"], cell["id"]
+        entry = format_entry(cell["family"], contract)
+        for rung in cell["rungs_q256"]:
+            assert cell_executes(cell, q256=rung, entry=entry) == \
+                cell_executes(shipped[base], q256=rung, entry=entry), (cell["id"], rung)
 
 
 def test_the_nightly_cells_cover_exactly_the_rungs_the_receipts_carried():
