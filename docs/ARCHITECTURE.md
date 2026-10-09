@@ -9200,27 +9200,34 @@ Receipts: [graph equals eager on the release image](measurements/2026-10-04-glm-
 
 `src/tessera/endpoint_witness.py` is the one home of the
 `tessera.endpoint_runtime_witness.v1` receipt, its join rule and
-`verify_witness(witness)`. `src/tessera/endpoint_observer.py` is the
-producer half: it reads the served alias from the listener `/v1/models`
-reply, each rank byte fact from file bytes at observation time, and the
-vocabulary size from the served config or a loaded object. Both sit outside
-the serving package, so the D50 task adapter consumes the receipt with no
-serving import and no rank lifecycle work. `tools/probe_endpoint_witness.py`
-is the producer entry point: it observes, joins, proves, and publishes one
-receipt with its sha256 sidecar through an exclusive create. The join binds
-the listener endpoint and served alias, the launch attempt and complete rank
-set, rank-local loaded artifact byte observations, and server tokenizer facts.
-All facts share one `lifetime_id`: observations from two serves never join.
-Each rank observation covers every served file with digest and size, and the
-rank total equals the sum of its sizes. `stamp_byte_proof` rehashes one live
-served directory and stamps the proven roster; `verify_witness` requires that
-stamp and re-derives the coverage block, so fixture joins and tampered sizes
-never verify. `tools/verify_endpoint_witness.py` is the standalone verifier.
-It reads one witness file, re-derives the join, checks the sidecar, and with
-`--served-dir` re-proves the bytes. It needs no Tessera serving import.
-Input manifests, aliases, leases, launch arguments, and publication receipts
-establish no loaded fact. Scientific comparability needs matched bytes. No
-recorded-identity seal exists here.
+`verify_witness(witness, served_dir)`. `src/tessera/serving/endpoint_runtime.py`
+is the producer half inside the serve: each worker reads its rank identity
+from the live distributed group, its model path and served names from its own
+model config, its loaded wire digests from resident module state, and the
+vocabulary length from the engine's initialized tokenizer. `src/tessera/
+endpoint_observer.py` is the joining half outside the serve: it reads the
+worker observation files, reads the served alias from the listener's live
+`/v1/models` reply while the listener still answers, and refuses a listener
+whose alias no worker serves. Both join modules sit outside the serving
+package, so the D50 task adapter consumes the receipt with no serving import
+and no rank lifecycle work. `tools/probe_endpoint_witness.py` is the producer
+entry point: it joins, proves, and publishes one receipt with its sha256
+sidecar through an exclusive create. The join binds the listener endpoint and
+served alias, the launch attempt and complete rank set, rank-local loaded wire
+observations, and server tokenizer facts. All facts share one `lifetime_id`:
+observations from two serves never join. Each rank observation covers every
+served file with digest and size plus its worker's loaded wire digests, and
+the rank total equals the sum of its sizes. `stamp_byte_proof` rehashes one
+live served directory and stamps the proven roster; `verify_witness` requires
+that stamp, re-derives the coverage block, then re-proves the bytes against a
+caller-named served directory. JSON-only agreement is structural validation,
+never loaded-state evidence: fixture joins, fabricated proofs and tampered
+sizes never verify. `tools/verify_endpoint_witness.py` is the standalone
+verifier. It reads one witness file, re-derives the join, checks the sidecar,
+and re-proves the bytes against the required `--served-dir`. It needs no
+Tessera serving import. Input manifests, aliases, leases, launch arguments,
+and publication receipts establish no loaded fact. Scientific comparability
+needs matched bytes. No recorded-identity seal exists here.
 
 ### 5.1.3 GLM-5.3 prefill overrides
 

@@ -2189,8 +2189,14 @@ def test_only_the_silent_directory_read_is_listed(tmp_path, reader, why):
 # grouped-*.pt from external --retained-outputs evidence, not from tracked source
 # directories.  Its two reads raise the count to 115 and 169, measured on the tree
 # that holds the audit.  Numerical gates stay unchanged.
-_UNNAMED_DIRECTORY_READ_MODULES = 115
-_UNNAMED_DIRECTORY_READ_SITES = 169
+# The endpoint witness (tessera#1056) reads the served artifact roster from a
+# launch-time directory parameter through one shared helper,
+# ``tessera.endpoint_witness.served_roster``. The directory is the serve's
+# artifact path, never a tracked path, so no static base can name it. Its one
+# read raises the count to 116 and 170. The observer and verifier read the
+# same roster through that helper and add no site.
+_UNNAMED_DIRECTORY_READ_MODULES = 116
+_UNNAMED_DIRECTORY_READ_SITES = 170
 
 
 def _exceeds_unnamed_directory_read_ceiling(modules: int, sites: int) -> bool:

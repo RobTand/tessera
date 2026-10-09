@@ -17,9 +17,8 @@ self-contained JSON document with schema ``tessera.endpoint_runtime_witness.v1``
 
 THE RULE. :func:`verify_witness` re-derives the join and refuses missing,
 incomplete or inconsistent evidence by name. No Tessera serving import lives
-here or in :mod:`tessera.endpoint_observer`: the producer observes file
-bytes and HTTP replies with the standard library, never a live rank object
-or listener handle.
+here: the join reads JSON only. :mod:`tessera.endpoint_observer` owns the
+producer reads; the serving-owned observer beside it owns the runtime facts.
 
 BYTE COVERAGE. Each rank observation names every file it covered, the
 sha256 of each file's loaded bytes, and the byte size of each file; the
@@ -39,14 +38,17 @@ proof from another lifetime never verifies.
 THE BYTE PROOF. :func:`stamp_byte_proof` reads one served directory, proves
 the witness against its bytes through :func:`prove_loaded_bytes`, and stamps
 a ``byte_proof`` block with the proven roster, total bytes, digest of the
-proof input, and stamp time. :func:`verify_witness` requires that block and
-re-derives it, so a receipt without a live proof, a contradictory
-``byte_coverage`` block, or a forged size never verifies.
+proof input, and stamp time. :func:`verify_witness` requires that block,
+re-derives it, then re-proves the bytes against a caller-named served
+directory: JSON-only agreement is structural validation, never loaded-state
+evidence. A receipt without a live proof, a contradictory ``byte_coverage``
+block, a forged size, or a proof no directory re-proves never verifies.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -70,15 +72,18 @@ LAUNCH_KEYS = frozenset({"attempt_id", "ranks", "lifetime_id", "observed_unix"})
 ARTIFACT_KEYS = frozenset({"rank", "files", "sizes", "bytes", "lifetime_id", "observed_unix"})
 
 #: The fields a server tokenizer observation must carry. ``vocab_size`` is
-#: the size read from the served configuration or loaded object.
+#: the size read from the served configuration or the server tokenizer.
 #: ``vocab_source`` names which one supplied it. ``files`` maps each served
 #: tokenizer file name to its ``sha256`` as read from the served artifact,
 #: and ``sizes`` maps the same name to its byte size.
 TOKENIZER_KEYS = frozenset({"vocab_size", "vocab_source", "files", "sizes",
                             "lifetime_id", "observed_unix"})
 
-#: Vocabulary sources the tokenizer observation accepts.
-VOCAB_SOURCES = frozenset({"served-config", "loaded"})
+#: Vocabulary sources the tokenizer observation accepts. ``served-config``
+#: is the served ``config.json``; ``loaded`` is a loaded tokenizer object
+#: the observer measured; ``server-tokenizer`` is the engine's initialized
+#: tokenizer inside the serving worker.
+VOCAB_SOURCES = frozenset({"served-config", "loaded", "server-tokenizer"})
 
 _HEX64 = frozenset("0123456789abcdef")
 
@@ -101,10 +106,11 @@ def _require_keys(observed: Mapping[str, Any], keys: frozenset, where: str) -> N
 
 
 def _check_name(name: Any, where: str) -> None:
+    if isinstance(name, str) and name.startswith("loaded:") and len(name) > len("loaded:"):
+        return
     _refuse(isinstance(name, str) and name and "\\" not in name
             and not name.startswith("/") and ".." not in name.split("/"),
             f"{where} file name {name!r} is not a relative name")
-
 
 def _check_sizes(sizes: Any, files: Mapping[str, Any], where: str) -> int:
     _refuse(isinstance(sizes, Mapping) and sizes, f"{where} sizes is not a non-empty map")
@@ -199,13 +205,25 @@ def witness_fingerprint(witness: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical(body).encode()).hexdigest()
 
 
-def _served_files(served_dir: Path) -> dict[str, Path]:
+def served_roster(served_dir: str | Path) -> dict[str, Path]:
+    """Every file under the served directory, by relative name.
+
+    One home for the served-directory enumeration: the observer and the
+    byte proof read the same roster through this function, so the
+    unnamed-base budget counts one site for the runtime parameter all
+    served reads share. The directory is a launch argument, never a
+    tracked path, so no static base can name it (tessera#1056).
+    """
     root = Path(served_dir)
     _refuse(root.is_dir(), f"served directory {root} is not a directory")
     found = {str(path.relative_to(root)): path for path in sorted(root.rglob("*"))
              if path.is_file() and not path.is_symlink()}
     _refuse(found, f"served directory {root} holds no files")
     return found
+
+
+def _served_files(served_dir: Path) -> dict[str, Path]:
+    return served_roster(served_dir)
 
 
 def _digest_file(path: Path) -> str:
@@ -220,8 +238,11 @@ def prove_loaded_bytes(witness: Mapping[str, Any], served_dir: str | Path) -> st
     """Why the witness bytes differ from the served directory, or None when they match.
 
     Reads every file under ``served_dir`` and compares the live roster,
-    digests and sizes against the joined body. Never raises: an unreadable
-    directory is a refusal string, not an exception.
+    digests and sizes against the joined body. ``loaded:`` entries name
+    resident wire digests the workers read from module state; the served
+    directory cannot re-prove them, so they are checked for presence and
+    shape here and trusted to the worker observation. Never raises: an
+    unreadable directory is a refusal string, not an exception.
     """
     try:
         live = _served_files(Path(served_dir))
@@ -231,10 +252,14 @@ def prove_loaded_bytes(witness: Mapping[str, Any], served_dir: str | Path) -> st
         body_files = sorted(witness["artifacts"][0]["files"])
     except (KeyError, TypeError, AttributeError, IndexError) as exc:
         return f"malformed witness ({type(exc).__name__}: {exc})"
+    roster = sorted(name for name in body_files if not name.startswith("loaded:"))
+    loaded = sorted(name for name in body_files if name.startswith("loaded:"))
+    if not loaded:
+        return "byte proof holds no loaded wire entry; file bytes alone never prove a load"
     live_names = sorted(live)
-    if live_names != body_files:
-        missing = sorted(set(body_files) - set(live_names))
-        extra = sorted(set(live_names) - set(body_files))
+    if live_names != roster:
+        missing = sorted(set(roster) - set(live_names))
+        extra = sorted(set(live_names) - set(roster))
         if missing:
             return f"byte proof misses served files: {missing}"
         return f"byte proof holds unexpected served files: {extra}"
@@ -269,15 +294,19 @@ def stamp_byte_proof(witness: Mapping[str, Any], served_dir: str | Path, *,
     """Stamp a live byte proof onto a joined witness, or refuse by name.
 
     Proves the witness against the served directory first: a witness whose
-    digests, sizes or roster differ from the live bytes never stamps.
+    digests, sizes or roster differ from the live bytes never stamps. The
+    stamp covers the served roster and the loaded wire entries together, so
+    a proof without a worker-observed load never stamps.
     """
     reason = prove_loaded_bytes(witness, served_dir)
     _refuse(reason is None, reason or "byte proof failed")
     live = _served_files(Path(served_dir))
     files = sorted(live)
     sizes = {name: live[name].stat().st_size for name in files}
-    total = sum(sizes.values())
-    observed = (clock() if clock is not None else __import__("time").time())
+    loaded = sorted(name for name in witness["artifacts"][0]["files"]
+                    if name.startswith("loaded:"))
+    total = sum(sizes.values()) + 32 * len(loaded)
+    observed = (clock() if clock is not None else time.time())
     _refuse(isinstance(observed, (int, float)) and observed > 0,
             "byte proof observed_unix is not a positive time")
     stamped = json.loads(canonical(witness))
@@ -286,8 +315,10 @@ def stamp_byte_proof(witness: Mapping[str, Any], served_dir: str | Path, *,
         "served_sizes": sizes,
         "served_bytes": total,
         "proof_input": hashlib.sha256(canonical(
-            {"files": {name: witness["artifacts"][0]["files"][name] for name in files},
-             "sizes": {name: witness["artifacts"][0]["sizes"][name] for name in files},
+            {"files": {name: witness["artifacts"][0]["files"][name]
+                       for name in files + loaded},
+             "sizes": {name: witness["artifacts"][0]["sizes"][name]
+                       for name in files + loaded},
              "served_sizes": sizes}).encode()).hexdigest(),
         "lifetime_id": witness["listener"]["lifetime_id"],
         "observed_unix": observed,
@@ -295,19 +326,56 @@ def stamp_byte_proof(witness: Mapping[str, Any], served_dir: str | Path, *,
     return stamped
 
 
-def _expected_proof(rebuilt: Mapping[str, Any], presented: Mapping[str, Any]) -> dict:
-    live_names = sorted(rebuilt["artifacts"][0]["files"])
+BYTE_PROOF_KEYS = frozenset({"served_files", "served_sizes", "served_bytes",
+                             "proof_input", "lifetime_id", "observed_unix"})
+
+
+def _check_byte_proof(proof: Any) -> str | None:
+    """Why the presented proof block is incomplete, or None when it is whole.
+
+    Runs before :func:`_expected_proof` reads any inner field, so an empty
+    or partial block is a named refusal, never a ``KeyError``.
+    """
+    if not isinstance(proof, Mapping):
+        return "witness byte_proof holds no live byte proof; fixture joins qualify nothing"
+    missing = sorted(BYTE_PROOF_KEYS - set(proof))
+    if missing:
+        return f"witness byte_proof misses {missing}"
+    unknown = sorted(set(proof) - BYTE_PROOF_KEYS)
+    if unknown:
+        return f"witness byte_proof carries unknown field(s) {unknown}"
+    if not isinstance(proof["served_files"], list) or not proof["served_files"]:
+        return "witness byte_proof served_files is not a non-empty list"
+    if not isinstance(proof["served_sizes"], Mapping) or not proof["served_sizes"]:
+        return "witness byte_proof served_sizes is not a non-empty map"
+    if type(proof["served_bytes"]) is not int or proof["served_bytes"] <= 0:
+        return "witness byte_proof served_bytes is not a positive count"
+    if not _is_hex64(proof["proof_input"]):
+        return "witness byte_proof proof_input is not a digest"
+    if not isinstance(proof["lifetime_id"], str) or not proof["lifetime_id"]:
+        return "witness byte_proof lifetime_id is not a non-empty string"
+    if not isinstance(proof["observed_unix"], (int, float)) or proof["observed_unix"] <= 0:
+        return "witness byte_proof observed_unix is not a positive time"
+    return None
+
+
+def _expected_proof(rebuilt: Mapping[str, Any]) -> dict:
+    live_names = sorted(name for name in rebuilt["artifacts"][0]["files"]
+                        if not name.startswith("loaded:"))
+    loaded = sorted(name for name in rebuilt["artifacts"][0]["files"]
+                    if name.startswith("loaded:"))
     sizes = {name: rebuilt["artifacts"][0]["sizes"][name] for name in live_names}
     return {
         "served_files": live_names,
         "served_sizes": sizes,
-        "served_bytes": sum(sizes.values()),
+        "served_bytes": sum(sizes.values()) + 32 * len(loaded),
         "proof_input": hashlib.sha256(canonical(
-            {"files": {name: rebuilt["artifacts"][0]["files"][name] for name in live_names},
-             "sizes": sizes,
+            {"files": {name: rebuilt["artifacts"][0]["files"][name]
+                       for name in live_names + loaded},
+             "sizes": {name: rebuilt["artifacts"][0]["sizes"][name]
+                       for name in live_names + loaded},
              "served_sizes": sizes}).encode()).hexdigest(),
         "lifetime_id": rebuilt["listener"]["lifetime_id"],
-        "observed_unix": presented["byte_proof"]["observed_unix"],
     }
 
 
@@ -339,6 +407,8 @@ def build_witness(*, listener: Mapping[str, Any], launch: Mapping[str, Any],
     _refuse(all(name == names[0] for name in names),
             "artifact ranks cover different file sets")
     for name in names[0]:
+        if name.startswith("loaded:"):
+            continue
         digests = {observed["files"][name] for observed in artifacts}
         _refuse(len(digests) == 1, f"artifact file {name!r} digest differs across ranks")
         sizes = {observed["sizes"][name] for observed in artifacts}
@@ -367,14 +437,21 @@ def build_witness(*, listener: Mapping[str, Any], launch: Mapping[str, Any],
     return witness
 
 
-def verify_witness(witness: Mapping[str, Any], *, ranks: list | None = None) -> str | None:
+def verify_witness(witness: Mapping[str, Any], *, ranks: list | None = None,
+                   served_dir: str | Path | None = None) -> str | None:
     """Why this witness does not bind its runtime join, or None when it does.
 
     Never raises: malformed input is a refusal string, not an exception. A
     caller that names an expected rank set gets that check too; the join
-    itself already refuses anything the launch record does not cover. A
-    witness without a verified live byte proof never passes: fixture joins
-    refuse as unverified, never as bound evidence.
+    itself already refuses anything the launch record does not cover.
+
+    Two checks, in order. The structural check re-derives the join: schema,
+    fingerprint, coverage and the proof block's shape and values. The byte
+    check rehashes ``served_dir`` and compares every digest, size and roster
+    entry; without it a fabricated proof block is JSON agreement only, never
+    loaded-state evidence. A witness without a verified live byte proof
+    never passes: fixture joins refuse as unverified, never as bound
+    evidence.
     """
     try:
         rebuilt = build_witness(listener=witness["listener"], launch=witness["launch"],
@@ -389,22 +466,25 @@ def verify_witness(witness: Mapping[str, Any], *, ranks: list | None = None) -> 
         return "witness fingerprint differs from its joined body"
     if witness.get("byte_coverage") != rebuilt["byte_coverage"]:
         return "witness byte_coverage differs from its joined body"
-    proof = witness.get("byte_proof")
-    if not isinstance(proof, Mapping):
-        return "witness byte_proof holds no live byte proof; fixture joins qualify nothing"
-    expected = _expected_proof(rebuilt, witness)
+    flawed = _check_byte_proof(witness.get("byte_proof"))
+    if flawed is not None:
+        return flawed
+    proof = witness["byte_proof"]
+    expected = _expected_proof(rebuilt)
     for key in ("served_files", "served_sizes", "served_bytes", "proof_input", "lifetime_id"):
         if proof.get(key) != expected[key]:
             return f"witness byte_proof {key} differs from its joined body"
-    if not isinstance(proof.get("observed_unix"), (int, float)) or proof["observed_unix"] <= 0:
-        return "witness byte_proof observed_unix is not a positive time"
-    if proof.get("lifetime_id") != rebuilt["listener"]["lifetime_id"]:
+    if proof["lifetime_id"] != rebuilt["listener"]["lifetime_id"]:
         return "witness byte_proof lifetime differs from listener lifetime"
     if ranks is not None and sorted(ranks) != rebuilt["launch"]["ranks"]:
         return f"witness ranks {rebuilt['launch']['ranks']} do not match expected {sorted(ranks)}"
-    return None
+    if served_dir is None:
+        return ("witness byte_proof is structural agreement only; "
+                "no served directory proved its bytes")
+    return prove_loaded_bytes(witness, served_dir)
 
 
-__all__ = ["ARTIFACT_KEYS", "LAUNCH_KEYS", "LISTENER_KEYS", "SCHEMA", "TOKENIZER_KEYS",
-           "VOCAB_SOURCES", "build_witness", "canonical", "prove_loaded_bytes",
+__all__ = ["ARTIFACT_KEYS", "BYTE_PROOF_KEYS", "LAUNCH_KEYS", "LISTENER_KEYS",
+           "SCHEMA", "TOKENIZER_KEYS", "VOCAB_SOURCES", "build_witness",
+           "canonical", "prove_loaded_bytes", "served_roster",
            "stamp_byte_proof", "verify_witness", "witness_fingerprint"]

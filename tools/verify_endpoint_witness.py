@@ -4,9 +4,10 @@
 The D50 task adapter is a consumer: it must not import serving modules or
 manage rank lifecycles. This tool is the standalone verifier the receipt
 publishes beside itself. It reads one witness JSON file, re-derives the
-join through ``tessera.endpoint_witness`` alone, and refuses missing,
-incomplete or inconsistent evidence by name. With ``--served-dir`` it also
-re-proves every digest and size against the live served bytes.
+join through ``tessera.endpoint_witness`` alone, refuses missing,
+incomplete or inconsistent evidence by name, and re-proves every digest
+and size against the live served bytes. JSON-only agreement is structural
+validation, never loaded-state evidence: ``--served-dir`` is required.
 
 Exit 0: the witness binds its runtime join. Exit 4: the witness is refused
 and the reason is on stderr. Any other exit is a tool failure.
@@ -30,7 +31,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("witness", help="the witness JSON file to verify")
     ap.add_argument("--expect-ranks", default=None,
                     help="comma-separated rank ids the witness must cover, e.g. 0,1")
-    ap.add_argument("--served-dir", default=None,
+    ap.add_argument("--served-dir", required=True,
                     help="served artifact directory to prove digests and sizes against")
     args = ap.parse_args(argv)
     try:
@@ -57,15 +58,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REFUSED: --expect-ranks is not a rank list: {args.expect_ranks!r}",
                   file=sys.stderr)
             return 4
-    reason = ew.verify_witness(witness, ranks=ranks)
+    reason = ew.verify_witness(witness, ranks=ranks, served_dir=args.served_dir)
     if reason is not None:
         print(f"REFUSED: {reason}", file=sys.stderr)
         return 4
-    if args.served_dir is not None:
-        reason = ew.prove_loaded_bytes(witness, args.served_dir)
-        if reason is not None:
-            print(f"REFUSED: {reason}", file=sys.stderr)
-            return 4
     print(f"witness ok: endpoint {witness['listener']['endpoint']} "
           f"alias {witness['listener']['served_alias']} "
           f"attempt {witness['launch']['attempt_id']} "
