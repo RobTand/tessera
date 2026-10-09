@@ -459,3 +459,39 @@ The SDK assertion belongs to separate controls, not to directory dependency disc
 The persistent environment belongs to the PrismaBuild test provider.
 Both findings have direct failure evidence and the exact-base comparison above.
 Both temporary evidence scripts were removed after the admitted actions captured their source.
+
+## Merge-base census, 2026-10-09
+
+The work branch now includes master `572539ad224c9ca3f36b9754051f73aed9ca99b4`.
+The only merge conflict was in `CHANGELOG.md`; both entries remain.
+The approved selector correction and all regression assertions remain unchanged.
+
+PrismaBuild action `a75204c93bfc29835b8647ed4a2201ca143cdbfc85a2a9dd21566e15520de867` ran the census smoke on `dl380g10`.
+The action completed with exit code zero.
+Its `select(root, [])` result still contains 114 modules and 168 sites.
+Every remaining module, site count, and line number matches the classified baseline after removal of the one corrected site.
+The remaining classes contain 103 runtime bases, 28 external box reads, and 37 temporary test reads.
+All 35 runtime-module consumer rows retain the reverse module and test counts in the table above.
+
+The smoke also exercised `select(root, ["README.md"])`, which returned `narrowed`.
+This CPU-only result does not qualify the CUDA surface.
+The temporary smoke script was removed after the action captured its source.
+
+## Merge-base selector receipt
+
+PrismaBuild action `f42150c482e54e3cc3e85d05636934a23133fd5840bd524b33abf238106515e8` passed all 464 tests in the same six selector contract files.
+The action tested the merged worktree and completed with exit code zero on `dl380g10`.
+The run used four xdist workers, `--dist worksteal`, and `--durations=20`.
+Each worker had one native math thread.
+The controller reconciled all 464 collected tests with 464 passed call outcomes.
+The retained payload had no setup, teardown, or collection failures.
+
+Torch `2.11.0+cpu` reported no CUDA device.
+The population had zero skips, zero uncollected modules, and zero device allocations.
+This result does not qualify the CUDA surface.
+The pre-fix regression evidence above remains valid; the merge changed none of those assertions.
+
+The CAS receipt digest is `eb5b0dae579dbbfc207fd4102a6179b72392cb2a99d702d15c4160e205e74ed6`.
+The retained payload digest is `e87a8ab051349acc167906bdf0999cfe01c0fef120e43214a01c8f0ba6ba21fe`.
+The controller population digest is `427f8eaeab0294aaa7f7f317e454cd79286364023c56a1c1ebc048b5c9805425`.
+

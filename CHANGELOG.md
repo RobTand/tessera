@@ -8,6 +8,17 @@ Lower the measured ceiling from 115 modules and 169 sites to 114 modules and 168
 Keep scalar sequence arguments unresolved and preserve the accepted runtime-base limit.
 Keep refused bases, source loaders, external box paths, and temporary test fixtures on their existing selection paths.
 
+## 2026-10-08 — retain deadline failures after a delayed process reap
+
+Record the final bounded reap timeout without replacement of the original work error (#1053).
+Keep the absolute deadline, TERM grace, signal ownership and reap bounds unchanged.
+Await asynchronous child death within the existing elapsed limit.
+
+The deterministic regression exposed the expired 0.01-second wait before the fix.
+The real-child case passes alone and in twelve shards with two workers each.
+Twenty-four CPU burners shared four admitted CPUs with those shards.
+These CPU-only checks do not qualify the CUDA surface.
+
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 
 The grouped owner now has one FP32 row-scale epilogue.
