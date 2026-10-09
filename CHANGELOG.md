@@ -34,6 +34,14 @@ Supplier prose does not control admission. Physical arity and the empty menu rem
 Preserve unavailable T8 rates and the R1280 pricing anchor.
 Bind new table bytes in the candidate index. Leave the active index unchanged.
 
+## 2026-10-08 — classify unnamed directory reads and name finite loop bases
+
+Classify all 169 selector sites and record runtime-base modules with test consumers.
+Retain literal tuple, list, and set elements as loop-variable alternatives.
+Lower the measured ceiling from 115 modules and 169 sites to 114 modules and 168 sites.
+Keep scalar sequence arguments unresolved and preserve the accepted runtime-base limit.
+Keep refused bases, source loaders, external box paths, and temporary test fixtures on their existing selection paths.
+
 ## 2026-10-08 — retain deadline failures after a delayed process reap
 
 Record the final bounded reap timeout without replacement of the original work error (#1053).
