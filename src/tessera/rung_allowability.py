@@ -515,35 +515,69 @@ E2M1_K2_PERFORMANT_MENU = {"dense": (896,), "routed": (896,),
                            "input_distribution": "e2m1_group16_ue4m3_static; BF16 inputs, fixed static global448*6/3, native quantizer"}
 
 
+def _e2m1_k2_parse_cell_id(cell_id):
+    """Parse an approved cell ID into its immutable parts."""
+    if not isinstance(cell_id, str):
+        return None
+    parts = cell_id.split(":")
+    if len(parts) not in (3, 4):
+        return None
+    kind, shape_id, m_part = parts[0], parts[1], parts[2]
+    if kind not in ("routed", "dense") or not shape_id or not m_part.startswith("M"):
+        return None
+    try:
+        m_value = int(m_part[1:])
+    except ValueError:
+        return None
+    if m_value <= 0:
+        return None
+    if len(parts) == 4:
+        if parts[3] != "recorded":
+            return None
+        recorded = True
+    else:
+        recorded = False
+    return {"kernel_kind": kind, "shape_id": shape_id, "M": m_value, "recorded": recorded}
+
+
 def _e2m1_k2_approved_cell_record(table, cell_id):
     """Return the approved semantic record for one cell, or None."""
     menu = E2M1_K2_PERFORMANT_MENU
+    if cell_id not in menu["cell_ids"]:
+        return None
+    parsed = _e2m1_k2_parse_cell_id(cell_id)
+    if parsed is None or parsed["M"] not in menu["M"]:
+        return None
     required = {cell["cell_id"]: cell for cell in table["scope"]["required_cells"]}
     declared = required.get(cell_id)
-    if declared is None or declared["cell_id"] not in menu["cell_ids"]:
+    if declared is None or declared.get("cell_id") != cell_id:
         return None
-    if declared["M"] not in menu["M"]:
+    if (declared.get("kernel_kind"), declared.get("shape_id"), declared.get("M")) != (
+            parsed["kernel_kind"], parsed["shape_id"], parsed["M"]):
         return None
-    shape = menu["shapes"].get(declared["shape_id"])
-    if shape is None or shape["kernel_kind"] != declared["kernel_kind"]:
+    shape = menu["shapes"].get(parsed["shape_id"])
+    if shape is None or shape["kernel_kind"] != parsed["kernel_kind"]:
         return None
-    recorded = declared["cell_id"].endswith(":recorded")
-    routing = menu["routing"]["recorded"] if recorded else menu["routing"][declared["kernel_kind"]]
+    routing = menu["routing"]["recorded"] if parsed["recorded"] else menu["routing"][parsed["kernel_kind"]]
     if declared.get("routing", routing) != routing:
         return None
-    return {"shape": shape, "routing": routing,
-            "epilogue": menu["epilogues"][declared["shape_id"]],
-            "kernel_path": menu["execution"]["kernel_path"][declared["kernel_kind"]]}
+    return {"cell_id": cell_id, "kernel_kind": parsed["kernel_kind"], "shape_id": parsed["shape_id"],
+            "M": parsed["M"], "shape": shape, "routing": routing,
+            "epilogue": menu["epilogues"][parsed["shape_id"]],
+            "kernel_path": menu["execution"]["kernel_path"][parsed["kernel_kind"]]}
 
 
 def _e2m1_k2_approved_measurement(record, measurement):
     """Name the first approved semantic field a measured cell breaks."""
     menu = E2M1_K2_PERFORMANT_MENU
+    if measurement.get("cell_id") != record["cell_id"]:
+        return "unmeasured_shape_or_M_scope"
+    if (measurement.get("kernel_kind"), measurement.get("shape_id"), measurement.get("M")) != (
+            record["kernel_kind"], record["shape_id"], record["M"]):
+        return "unmeasured_shape_or_M_scope"
     evidence = measurement.get("evidence") or {}
     geometry = measurement.get("geometry") or {}
     if (evidence.get("rows"), evidence.get("columns")) != (record["shape"]["rows"], record["shape"]["columns"]):
-        return "unmeasured_shape_or_M_scope"
-    if measurement.get("M") not in menu["M"]:
         return "unmeasured_shape_or_M_scope"
     if evidence.get("routing") != record["routing"]:
         return "unmeasured_shape_or_M_scope"

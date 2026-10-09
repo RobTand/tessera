@@ -411,6 +411,73 @@ class TimingPublication(unittest.TestCase):
             self.assertEqual(publication_scope(absent)['qualified_menu'], {'dense': [], 'routed': []})
             missing = decide(absent, 896, cell_ids=[cell_id])
             self.assertEqual(missing['reason'], 'unmeasured_shape_or_M_scope')
+    def test_approved_cell_records_bind_M_shape_and_kind(self):
+        from tessera.rung_allowability import E2M1_K2_PERFORMANT_MENU
+        menu = E2M1_K2_PERFORMANT_MENU
+        table = approved_t4_table()
+        cell_id = 'dense:o_proj:M1'
+        with self.subTest(field='substituted_M'):
+            mutated = copy.deepcopy(table)
+            declared = next(c for c in mutated['scope']['required_cells'] if c['cell_id'] == cell_id)
+            declared['M'] = 16
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            target['M'] = 16
+            mutated['geometry_classes'] = measured_geometry_classes(mutated)
+            result = decide(mutated, 896, cell_ids=[cell_id])
+            self.assertEqual(result['cells'][0]['status'], 'wait')
+            self.assertEqual(result['cells'][0]['reason'], 'performance_admission_not_established')
+            self.assertEqual(publication_scope(mutated)['qualified_menu'], {'dense': [], 'routed': []})
+        with self.subTest(field='substituted_shape'):
+            mutated = copy.deepcopy(table)
+            declared = next(c for c in mutated['scope']['required_cells'] if c['cell_id'] == cell_id)
+            declared['shape_id'] = 'q_b'
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            target['shape_id'] = 'q_b'
+            target['evidence'].update(rows=8192, columns=1536)
+            mutated['geometry_classes'] = measured_geometry_classes(mutated)
+            result = decide(mutated, 896, cell_ids=[cell_id])
+            self.assertEqual(result['cells'][0]['status'], 'wait')
+            self.assertEqual(result['cells'][0]['reason'], 'performance_admission_not_established')
+            self.assertEqual(publication_scope(mutated)['qualified_menu'], {'dense': [], 'routed': []})
+        with self.subTest(field='substituted_kind'):
+            mutated = copy.deepcopy(table)
+            mutated['scope']['shapes'].append(
+                {'kernel_kind': 'routed', 'shape_id': 'o_proj', 'rows': 4096, 'columns': 4096, 'mode': 2})
+            declared = next(c for c in mutated['scope']['required_cells'] if c['cell_id'] == cell_id)
+            declared['kernel_kind'] = 'routed'
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            target['kernel_kind'] = 'routed'
+            target['kernel_path'] = 'tessera.kernel_a4.a4_span2_grouped_gemm'
+            target['evidence']['routing'] = 'balanced'
+            mutated['geometry_classes'] = measured_geometry_classes(mutated)
+            result = decide(mutated, 896, cell_ids=[cell_id])
+            self.assertEqual(result['cells'][0]['status'], 'wait')
+            self.assertEqual(result['cells'][0]['reason'], 'performance_admission_not_established')
+            self.assertEqual(publication_scope(mutated)['qualified_menu'], {'dense': [], 'routed': []})
+        with self.subTest(field='substituted_measurement_M'):
+            mutated = copy.deepcopy(table)
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            target['M'] = 16
+            with self.assertRaisesRegex(ValueError, 'unknown/duplicate measurement cell'):
+                validate_table(mutated)
+        with self.subTest(field='substituted_measurement_shape'):
+            mutated = copy.deepcopy(table)
+            target = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == cell_id)
+            target['shape_id'] = 'q_b'
+            with self.assertRaisesRegex(ValueError, 'unknown/duplicate measurement cell'):
+                validate_table(mutated)
+        with self.subTest(field='swapped_measurement_identity'):
+            mutated = copy.deepcopy(table)
+            first = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == 'dense:o_proj:M1')
+            second = next(m for m in mutated['rungs'][0]['measurements'] if m['cell_id'] == 'dense:o_proj:M16')
+            first['M'], second['M'] = second['M'], first['M']
+            with self.assertRaisesRegex(ValueError, 'unknown/duplicate measurement cell'):
+                validate_table(mutated)
+        with self.subTest(field='approved_record_admits'):
+            result = decide(table, 896, cell_ids=[cell_id])
+            self.assertEqual(result['cells'][0]['status'], 'allow')
+            self.assertEqual(result['cells'][0]['reason'], 'measured_performant_scope')
+
 
     def test_release_units_link_exact_rank_shapes_without_qualification(self):
         from tessera.rung_allowability import publication_scope
