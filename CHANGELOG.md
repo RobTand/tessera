@@ -1,5 +1,13 @@
 # Changelog
 
+
+## 2026-10-09 — issue 790 measurement corrections
+
+Both measurement launchers return the child exit status after final diagnostics.
+The caller verification uses the existing PrismaQuant descriptor owner for every projected unit.
+It compares the expected and actual full-shard digests.
+The corrected report retains original action evidence and source identities, and states the missing census acceptance observations.
+
 ## 2026-10-09 — hosted pure producer dependency (issue #1018)
 
 The hosted pure job installs jsonschema 4.25.1 for the real immutable producer.

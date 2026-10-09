@@ -40,7 +40,7 @@ proj = tep.request_expert_projection(
 print("PQ-ELAPSED %.1f" % (time.time() - t0))
 print("files:", len(proj.get("source", {}).get("files", {})))
 r = proj.get("source_digest_cache")
-print("producer-receipt:", json.dumps({k: r.get(k) for k in ("cached_shards", "hashed_shards", "mode")}) if r else "ABSENT")
+print("producer-receipt:", json.dumps(r))
 print("caller-use:", json.dumps(proj.get("source_digest_cache_use")) if proj.get("source_digest_cache_use") else "ABSENT")
 PYEOF
 CHILD=$!
@@ -58,3 +58,4 @@ wait $CHILD; RC=$?
 echo "ROW-END rc=$RC elapsed_s=$((SECONDS-START))"
 nvidia-smi --query-gpu=power.draw,utilization.gpu --format=csv 2>/dev/null | head -2 || echo NO-NVIDIA-SMI
 echo ROW-DONE
+exit "$RC"
