@@ -6,8 +6,10 @@ The menu binds build native_span2-sm_121-f01b61f906b7d7fe and table v0003 (SHA-2
 The recipe is TCQ span2 lut16 with seed 0 and no sigma value. The activation contract is e2m1_group16_ue4m3_static.
 Seven bits apply to each paired code. The body rate is 3.5 bits per scalar weight, before metadata fees.
 `performant_rungs` returns (896,) for both T4 structures and keeps T8 and T16 menus unchanged.
-`admit_rung` allows only measured q896 cells in the exact twenty-cell scope with the approved recipe.
-Other builds, rungs, recipes, or cell rosters wait with performance_admission_not_established.
+`admit_rung` allows only measured q896 cells in the exact twenty-cell scope with approved shapes and M values.
+Admission also binds routing, mode, epilogue, kernel path, decoder, execution scope, and input distribution.
+Other builds, rungs, recipes, shapes, routes, modes, epilogues, paths, or cell rosters wait.
+A wrong scope field waits with its own reason. An unknown scope waits with performance_admission_not_established.
 Correctness holds, source refusals, and the kernel_not_serving_qualified refusal stay in force.
 The old build keeps its reader-bounds hold and failed cells. No WINDOW L12 or L14 admission follows.
 Re-stamped 2026-10-09 for the hosted producer dependency (issue #1018).
