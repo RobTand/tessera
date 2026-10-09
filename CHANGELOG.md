@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-09 — remove successful caller authentication files
+
+Remove the temporary stderr file after successful producer authentication.
+Retain the stderr file when authentication fails.
+The real CPU caller smoke exposed one retained file per successful call before this correction.
+
 ## 2026-10-09 — restore the issue 1056 integration gate
 
 Integrate current master into the existing issue 1056 branch.
@@ -113,6 +119,19 @@ These CPU-only checks do not qualify the CUDA surface.
 Remove the redundant published-root override from the observer test (#1078).
 Keep all API, manifest identity, refusal and GPU HOLD checks unchanged.
 The box-artifact path gate and the published-SDK observer both pass.
+
+## 2026-10-09 — migrate the GB and D1 producer caller into the repository
+
+Migrate the historical outside caller to `experiments/submit_gb_d1_producer.sh` for tessera#944.
+Preserve its scientific inputs and resource bounds and add the explicit producer source to all three submissions.
+Use the wrappers in the current checkout, not the separate frozen GB and D1 checkouts.
+Require both selector variables by name and authenticate before any submission through the existing exporter owner.
+Keep the historical caller unchanged as retained proof.
+The six caller refusal regressions failed before the fix with the caller absent.
+Capture all three submission commands and both selectors after authentication, in dev and certified modes.
+Use a test-owned `PBRUN` client; the default remains the published PrismaBuild client.
+The submission test first refused the fixed client path before the override existed.
+The caller, launcher, and wrapper receipt suites pass on the processor through PrismaBuild.
 
 ## 2026-10-08 — retire arithmetic attributes from register-direct consumers
 
