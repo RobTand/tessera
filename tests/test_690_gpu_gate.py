@@ -62,3 +62,8 @@ def test_e2m1_source_stays_parked():
     assert "parked" in text
     assert "routed_fused_e2m1" in text
 
+
+def test_gate_names_filed_parked_e2m1_issue():
+    text = _gate_text()
+    assert "tessera#1149" in text
+    assert "2026-09-28" in text
