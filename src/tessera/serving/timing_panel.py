@@ -284,16 +284,26 @@ def routed_wire_facts(blob, declaration):
                 member = read_bound(entry)
                 role_decl = scheme.expert_role_declarations(
                     declared["groups"][group], expert=expert)[position]
-                parsed = scheme.parse_tessera_expert_blob(
-                    member, role_decl, f"shape-panel {group}[{expert}]")
+                target = f"shape-panel {group}[{expert}]"
+                parsed = scheme.parse_tessera_expert_blob(member, role_decl, target)
                 if len(parsed) != 1:
                     raise ValueError(f"expert wire is not one unit: {group}[{expert}]")
-                member_name, unit = parsed[0]
-                name = f"{group}[{expert}].{role_decl['roles'][0][0]}"
+                member_name, _ = parsed[0]
                 if member_name != role_decl["roles"][0][0]:
                     raise ValueError(f"expert wire role differs: {group}[{expert}]")
+                try:
+                    members = parse_fused(member)
+                except TesseraError as exc:
+                    raise ValueError(f"canonical fused wire refuses: {exc}") from exc
+                if len(members) != 1 or members[0].name != member_name:
+                    raise ValueError(f"expert wire roles differ: {group}[{expert}]")
+                try:
+                    factual = parse(members[0].blob)
+                except TesseraError as exc:
+                    raise ValueError(f"canonical unit wire refuses: {exc}") from exc
+                name = f"{group}[{expert}].{member_name}"
                 roles.append({"name": name, "rows": role_decl["roles"][0][1],
-                              "facts": _unit_facts(unit, scheme.STRUCTURE_ROUTED_MOE),
+                              "facts": _unit_facts(factual, scheme.STRUCTURE_ROUTED_MOE),
                               "unit_sha256": hashlib.sha256(member).hexdigest()})
     return declared, roles
 
